@@ -27,8 +27,17 @@ type Props = {
   action: (formData: FormData) => void | Promise<void>;
 };
 
+type FeeComponentOption = {
+  id: string;
+  label: string;
+  amount: number;
+  order_index: number;
+};
+
 function normalize(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function formatMoney(value: number) {
@@ -84,6 +93,9 @@ export default function PaymentsComposer({
   const [search, setSearch] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [selectedChargeId, setSelectedChargeId] = useState("");
+  const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>(
+    [],
+  );
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [paymentType, setPaymentType] = useState("cash");
   const [amount, setAmount] = useState("");
@@ -103,7 +115,10 @@ export default function PaymentsComposer({
   const classOptions = useMemo(() => {
     if (!selectedLevel) return [];
     return classes
-      .filter((cls) => normalize(cls.level || "Sans niveau") === normalize(selectedLevel))
+      .filter(
+        (cls) =>
+          normalize(cls.level || "Sans niveau") === normalize(selectedLevel),
+      )
       .sort((a, b) =>
         a.label.localeCompare(b.label, "fr", {
           numeric: true,
@@ -117,6 +132,7 @@ export default function PaymentsComposer({
       setSelectedClassId(classOptions[0]?.id ?? "");
       setSelectedStudentId("");
       setSelectedChargeId("");
+      setSelectedComponentIds([]);
       setSearch("");
     }
   }, [classOptions, selectedClassId]);
@@ -155,6 +171,7 @@ export default function PaymentsComposer({
     if (!filteredRows.some((row) => row.student_id === selectedStudentId)) {
       setSelectedStudentId("");
       setSelectedChargeId("");
+      setSelectedComponentIds([]);
     }
   }, [filteredRows, selectedStudentId]);
 
@@ -179,16 +196,21 @@ export default function PaymentsComposer({
   }, [selectedCategoryId, selectedStudent]);
 
   const selectedCategory = useMemo(
-    () => feeCategories.find((category) => category.id === selectedCategoryId) ?? null,
+    () =>
+      feeCategories.find((category) => category.id === selectedCategoryId) ??
+      null,
     [feeCategories, selectedCategoryId],
   );
 
-  function applyCharge(charge: PaymentStudentRow["open_charges"][number] | null) {
+  function applyCharge(
+    charge: PaymentStudentRow["open_charges"][number] | null,
+  ) {
     setSelectedChargeId(charge?.charge_id ?? "");
+    setSelectedComponentIds([]);
     if (charge) {
       setSelectedCategoryId(charge.fee_category_id);
-      setAmount(String(charge.balance_due));
       setExpectedAmount(String(charge.net_amount));
+      setAmount(charge.components?.length ? "" : String(charge.balance_due));
     } else {
       setAmount("");
       setExpectedAmount("");
@@ -213,14 +235,39 @@ export default function PaymentsComposer({
   useEffect(() => {
     if (selectedCharge) {
       setSelectedCategoryId(selectedCharge.fee_category_id);
-      setAmount(String(selectedCharge.balance_due));
+      setSelectedComponentIds([]);
       setExpectedAmount(String(selectedCharge.net_amount));
+      setAmount(
+        selectedCharge.components?.length
+          ? ""
+          : String(selectedCharge.balance_due),
+      );
     }
   }, [selectedCharge?.charge_id]);
 
+  const selectedChargeComponents = selectedCharge?.components ?? [];
+  const selectedComponentsTotal = useMemo(() => {
+    if (selectedChargeComponents.length === 0) return 0;
+    const selected = new Set(selectedComponentIds);
+    return selectedChargeComponents
+      .filter((component) => selected.has(component.id))
+      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+  }, [selectedChargeComponents, selectedComponentIds]);
+
+  useEffect(() => {
+    if (selectedChargeComponents.length > 0) {
+      setAmount(
+        selectedComponentsTotal > 0 ? String(selectedComponentsTotal) : "",
+      );
+    }
+  }, [selectedChargeComponents.length, selectedComponentsTotal]);
+
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
-    selectedStudent && selectedClassId && selectedCategoryId && Number(amount) > 0,
+    selectedStudent &&
+    selectedClassId &&
+    selectedCategoryId &&
+    Number(amount) > 0,
   );
 
   return (
@@ -231,8 +278,8 @@ export default function PaymentsComposer({
           Encaisser un paiement
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          Choisissez la classe, puis recherchez par nom ou matricule. Aucun élève
-          n’est affiché tant que la recherche n’est pas saisie.
+          Choisissez la classe, puis recherchez par nom ou matricule. Aucun
+          élève n’est affiché tant que la recherche n’est pas saisie.
         </p>
 
         <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -250,7 +297,9 @@ export default function PaymentsComposer({
               }}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
             >
-              {levels.length === 0 ? <option value="">Aucun niveau</option> : null}
+              {levels.length === 0 ? (
+                <option value="">Aucun niveau</option>
+              ) : null}
               {levels.map((level) => (
                 <option key={level} value={level}>
                   {level}
@@ -349,7 +398,8 @@ export default function PaymentsComposer({
                           ) : null}
                         </div>
                         <div className="mt-2 text-xs font-semibold text-slate-500">
-                          {row.class_label} · {row.open_charges.length} frais ouvert(s)
+                          {row.class_label} · {row.open_charges.length} frais
+                          ouvert(s)
                         </div>
                       </div>
                       <div className="shrink-0 rounded-full bg-rose-50 px-3 py-1.5 text-sm font-black text-rose-700 ring-1 ring-rose-200">
@@ -363,16 +413,35 @@ export default function PaymentsComposer({
           )}
         </div>
 
-        <form action={action} className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50/70 p-4">
+        <form
+          action={action}
+          className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50/70 p-4"
+        >
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <Receipt className="h-4 w-4 text-emerald-600" />
             Paiement
           </div>
 
           <input type="hidden" name="mode" value="existing" />
-          <input type="hidden" name="student_id" value={selectedStudent?.student_id ?? ""} />
+          <input
+            type="hidden"
+            name="student_id"
+            value={selectedStudent?.student_id ?? ""}
+          />
           <input type="hidden" name="class_id" value={selectedClassId} />
-          <input type="hidden" name="student_charge_id" value={selectedChargeId} />
+          <input
+            type="hidden"
+            name="student_charge_id"
+            value={selectedChargeId}
+          />
+          {selectedComponentIds.map((componentId) => (
+            <input
+              key={componentId}
+              type="hidden"
+              name="component_ids"
+              value={componentId}
+            />
+          ))}
 
           {!selectedStudent ? (
             <div className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-600">
@@ -387,9 +456,12 @@ export default function PaymentsComposer({
                       <UserRound className="h-3.5 w-3.5" />
                       Élève sélectionné
                     </div>
-                    <h2 className="mt-3 text-xl font-black">{selectedStudent.student_name}</h2>
+                    <h2 className="mt-3 text-xl font-black">
+                      {selectedStudent.student_name}
+                    </h2>
                     <p className="mt-1 text-sm text-slate-200">
-                      {selectedStudent.class_label} · {selectedStudent.matricule || "Matricule non renseigné"}
+                      {selectedStudent.class_label} ·{" "}
+                      {selectedStudent.matricule || "Matricule non renseigné"}
                     </p>
                   </div>
                   <div className="rounded-2xl bg-white/10 px-3 py-2 text-right ring-1 ring-white/15">
@@ -434,11 +506,15 @@ export default function PaymentsComposer({
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
                     >
                       {categoryChargeOptions.length === 0 ? (
-                        <option value="">Aucun frais ouvert dans cette catégorie</option>
+                        <option value="">
+                          Aucun frais ouvert dans cette catégorie
+                        </option>
                       ) : null}
                       {categoryChargeOptions.map((charge) => (
                         <option key={charge.charge_id} value={charge.charge_id}>
-                          {charge.label} — attendu {formatMoney(charge.net_amount)} · reste {formatMoney(charge.balance_due)}
+                          {charge.label} — attendu{" "}
+                          {formatMoney(charge.net_amount)} · reste{" "}
+                          {formatMoney(charge.balance_due)}
                         </option>
                       ))}
                     </select>
@@ -466,7 +542,9 @@ export default function PaymentsComposer({
                     Montant attendu
                   </div>
                   <div className="mt-1 text-sm font-black text-slate-900">
-                    {selectedCharge ? formatMoney(selectedCharge.net_amount) : "À saisir"}
+                    {selectedCharge
+                      ? formatMoney(selectedCharge.net_amount)
+                      : "À saisir"}
                   </div>
                 </div>
                 <div>
@@ -474,10 +552,21 @@ export default function PaymentsComposer({
                     Reste à régler
                   </div>
                   <div className="mt-1 text-sm font-black text-rose-700">
-                    {selectedCharge ? formatMoney(selectedCharge.balance_due) : formatMoney(Number(amount || 0))}
+                    {selectedCharge
+                      ? formatMoney(selectedCharge.balance_due)
+                      : formatMoney(Number(amount || 0))}
                   </div>
                 </div>
               </div>
+
+              <ChargeComponentChecklist
+                components={selectedChargeComponents}
+                selectedComponentIds={selectedComponentIds}
+                onChange={(nextIds) => setSelectedComponentIds(nextIds)}
+                remainingAmount={
+                  selectedCharge ? selectedCharge.balance_due : 0
+                }
+              />
 
               <PaymentFields
                 paymentType={paymentType}
@@ -488,6 +577,7 @@ export default function PaymentsComposer({
                 setAmount={setAmount}
                 today={today}
                 expectedAmountLocked={Boolean(selectedCharge)}
+                amountLocked={selectedChargeComponents.length > 0}
               />
 
               <PendingButton
@@ -501,7 +591,10 @@ export default function PaymentsComposer({
         </form>
       </div>
 
-      <form action={action} className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <form
+        action={action}
+        className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+      >
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           <UserPlus className="h-4 w-4 text-emerald-600" />
           Nouvelle inscription
@@ -563,7 +656,9 @@ export default function PaymentsComposer({
               onChange={(e) => setNewClassId(e.target.value)}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
             >
-              {classes.length === 0 ? <option value="">Aucune classe</option> : null}
+              {classes.length === 0 ? (
+                <option value="">Aucune classe</option>
+              ) : null}
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>
                   {cls.label}
@@ -600,6 +695,7 @@ export default function PaymentsComposer({
             setAmount={setAmount}
             today={today}
             expectedAmountLocked={false}
+            amountLocked={false}
           />
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -641,13 +737,114 @@ function FeeCategorySelect({
         required
         className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
       >
-        {feeCategories.length === 0 ? <option value="">Aucune catégorie</option> : null}
+        {feeCategories.length === 0 ? (
+          <option value="">Aucune catégorie</option>
+        ) : null}
         {feeCategories.map((category) => (
           <option key={category.id} value={category.id}>
             {category.name}
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function ChargeComponentChecklist({
+  components,
+  selectedComponentIds,
+  onChange,
+  remainingAmount,
+}: {
+  components: FeeComponentOption[];
+  selectedComponentIds: string[];
+  onChange: (value: string[]) => void;
+  remainingAmount: number;
+}) {
+  if (components.length === 0) return null;
+
+  const selected = new Set(selectedComponentIds);
+  const selectedTotal = components
+    .filter((component) => selected.has(component.id))
+    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+
+  function toggle(componentId: string) {
+    const next = new Set(selectedComponentIds);
+    if (next.has(componentId)) next.delete(componentId);
+    else next.add(componentId);
+    onChange(Array.from(next));
+  }
+
+  return (
+    <div className="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">
+            Détail des frais annexes
+          </div>
+          <p className="mt-1 text-sm text-emerald-900/80">
+            Cochez les sous-rubriques réellement réglées. Le montant encaissé se
+            calcule automatiquement.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Total coché
+          </div>
+          <div className="mt-1 text-lg font-black text-emerald-700">
+            {formatMoney(selectedTotal)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {components.map((component) => {
+          const checked = selected.has(component.id);
+          return (
+            <label
+              key={component.id}
+              className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm transition ${
+                checked
+                  ? "border-emerald-300 bg-white shadow-sm"
+                  : "border-emerald-100 bg-white/70 hover:bg-white"
+              }`}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(component.id)}
+                  className="h-4 w-4 rounded border-emerald-300 text-emerald-600"
+                />
+                <span className="truncate font-semibold text-slate-800">
+                  {component.label}
+                </span>
+              </span>
+              <span className="shrink-0 font-black text-slate-900">
+                {formatMoney(component.amount)}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-slate-600">
+        <button
+          type="button"
+          onClick={() => onChange(components.map((component) => component.id))}
+          className="rounded-full bg-white px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+        >
+          Tout cocher
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange([])}
+          className="rounded-full bg-white px-3 py-1.5 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+        >
+          Tout décocher
+        </button>
+        <span>Reste du frais ouvert : {formatMoney(remainingAmount)}</span>
+      </div>
     </div>
   );
 }
@@ -661,6 +858,7 @@ function PaymentFields({
   setAmount,
   today,
   expectedAmountLocked,
+  amountLocked,
 }: {
   paymentType: string;
   setPaymentType: (value: string) => void;
@@ -670,6 +868,7 @@ function PaymentFields({
   setAmount: (value: string) => void;
   today: string;
   expectedAmountLocked: boolean;
+  amountLocked: boolean;
 }) {
   return (
     <div className="space-y-4">
@@ -708,8 +907,9 @@ function PaymentFields({
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            readOnly={amountLocked}
             placeholder="Ex. 25000"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400 read-only:bg-slate-100 read-only:text-slate-600"
           />
         </div>
       </div>

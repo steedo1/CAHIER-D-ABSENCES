@@ -61,6 +61,23 @@ type FeeScheduleRow = {
   notes: string | null;
 };
 
+type FeeScheduleComponentRow = {
+  id: string;
+  school_id: string;
+  fee_schedule_id: string;
+  component_code: string | null;
+  label: string;
+  amount: number | string;
+  order_index: number | null;
+  is_active: boolean;
+};
+
+type PaidComponentRow = {
+  student_charge_id: string;
+  fee_schedule_component_id: string;
+  receipt_status: string | null;
+};
+
 type ChargeBalanceRow = {
   id: string;
   school_id: string;
@@ -108,6 +125,12 @@ export type ChargeOptionRow = {
   net_amount: number;
   paid_amount: number;
   balance_due: number;
+  components: Array<{
+    id: string;
+    label: string;
+    amount: number;
+    order_index: number;
+  }>;
 };
 
 export type PaymentStudentRow = {
@@ -124,7 +147,11 @@ export type PaymentStudentRow = {
 };
 
 const DEFAULT_FEE_CATEGORIES = [
-  { code: "frais_inscription", name: "Frais d’inscription", is_mandatory: true },
+  {
+    code: "frais_inscription",
+    name: "Frais d’inscription",
+    is_mandatory: true,
+  },
   { code: "scolarite", name: "Scolarité", is_mandatory: true },
   { code: "tenue_uniforme", name: "Tenue / uniforme", is_mandatory: false },
   { code: "transport", name: "Transport", is_mandatory: false },
@@ -412,7 +439,9 @@ async function ensureChargesForStudent(
       due_date: schedule.due_date || null,
       charge_date: today,
       status: "pending",
-      notes: schedule.notes || `Situation créée automatiquement depuis ${schedule.label}`,
+      notes:
+        schedule.notes ||
+        `Situation créée automatiquement depuis ${schedule.label}`,
       created_by: userId,
       created_at: nowIso,
       updated_at: nowIso,
@@ -537,7 +566,9 @@ async function createStudentAndEnroll({
 
     if (dupErr) throw new Error(dupErr.message);
     if (duplicate) {
-      throw new Error("Ce matricule existe déjà. Recherchez plutôt l’élève existant.");
+      throw new Error(
+        "Ce matricule existe déjà. Recherchez plutôt l’élève existant.",
+      );
     }
   }
 
@@ -557,23 +588,21 @@ async function createStudentAndEnroll({
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const { error: enrollErr } = await admin
-    .from("class_enrollments")
-    .upsert(
-      [
-        {
-          class_id: classId,
-          student_id: created.id,
-          institution_id: institutionId,
-          start_date: today,
-          end_date: null,
-        },
-      ],
+  const { error: enrollErr } = await admin.from("class_enrollments").upsert(
+    [
       {
-        onConflict: "class_id,student_id",
-        ignoreDuplicates: true,
+        class_id: classId,
+        student_id: created.id,
+        institution_id: institutionId,
+        start_date: today,
+        end_date: null,
       },
-    );
+    ],
+    {
+      onConflict: "class_id,student_id",
+      ignoreDuplicates: true,
+    },
+  );
 
   if (enrollErr) throw new Error(enrollErr.message);
 
@@ -655,6 +684,131 @@ async function resolveChargeForPayment({
   });
 }
 
+async function fetchActiveScheduleComponents(
+  institutionId: string,
+  scheduleIds: string[],
+): Promise<FeeScheduleComponentRow[]> {
+  if (scheduleIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const { data, error } = await admin
+    .schema("finance")
+    .from("fee_schedule_components")
+    .select(
+      "id,school_id,fee_schedule_id,component_code,label,amount,order_index,is_active",
+    )
+    .eq("school_id", institutionId)
+    .in("fee_schedule_id", scheduleIds)
+    .eq("is_active", true)
+    .order("order_index", { ascending: true })
+    .order("label", { ascending: true });
+
+  if (error) {
+    const msg = String(error.message || "").toLowerCase();
+    if (msg.includes("does not exist") || msg.includes("introuvable"))
+      return [];
+    throw new Error(error.message);
+  }
+  return (data ?? []) as FeeScheduleComponentRow[];
+}
+
+async function fetchPaidComponentsForCharges(
+  institutionId: string,
+  chargeIds: string[],
+): Promise<PaidComponentRow[]> {
+  if (chargeIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const { data, error } = await admin
+    .schema("finance")
+    .from("v_receipt_allocation_components")
+    .select("student_charge_id,fee_schedule_component_id,receipt_status")
+    .eq("school_id", institutionId)
+    .in("student_charge_id", chargeIds);
+
+  if (error) {
+    const msg = String(error.message || "").toLowerCase();
+    if (msg.includes("does not exist") || msg.includes("introuvable"))
+      return [];
+    throw new Error(error.message);
+  }
+  return (data ?? []) as PaidComponentRow[];
+}
+
+async function resolveSelectedComponentsForPayment({
+  institutionId,
+  charge,
+  componentIds,
+  amount,
+}: {
+  institutionId: string;
+  charge: ChargeBalanceRow;
+  componentIds: string[];
+  amount: number;
+}): Promise<FeeScheduleComponentRow[]> {
+  const ids = Array.from(new Set(componentIds.filter(Boolean)));
+  if (ids.length === 0) return [];
+
+  if (!charge.fee_schedule_id) {
+    throw new Error("Ce frais n’est pas lié à un barème détaillable.");
+  }
+
+  const admin = getSupabaseServiceClient();
+
+  const { data: components, error: compErr } = await admin
+    .schema("finance")
+    .from("fee_schedule_components")
+    .select(
+      "id,school_id,fee_schedule_id,component_code,label,amount,order_index,is_active",
+    )
+    .eq("school_id", institutionId)
+    .eq("fee_schedule_id", charge.fee_schedule_id)
+    .in("id", ids)
+    .eq("is_active", true);
+
+  if (compErr) throw new Error(compErr.message);
+
+  const rows = (components ?? []) as FeeScheduleComponentRow[];
+  if (rows.length !== ids.length) {
+    throw new Error(
+      "Une sous-rubrique sélectionnée est introuvable ou inactive.",
+    );
+  }
+
+  const { data: alreadyPaid, error: paidErr } = await admin
+    .schema("finance")
+    .from("v_receipt_allocation_components")
+    .select("student_charge_id,fee_schedule_component_id,receipt_status")
+    .eq("school_id", institutionId)
+    .eq("student_charge_id", charge.id)
+    .in("fee_schedule_component_id", ids);
+
+  if (paidErr) throw new Error(paidErr.message);
+
+  const paidRows = ((alreadyPaid ?? []) as PaidComponentRow[]).filter(
+    (row) => row.receipt_status !== "cancelled",
+  );
+  if (paidRows.length > 0) {
+    throw new Error(
+      "Une sous-rubrique sélectionnée a déjà été encaissée sur ce frais.",
+    );
+  }
+
+  const selectedTotal = rows.reduce(
+    (sum, row) => sum + Number(row.amount || 0),
+    0,
+  );
+  if (Math.abs(selectedTotal - amount) > 0.01) {
+    throw new Error(
+      `Le montant encaissé (${formatMoney(amount)}) doit correspondre au total des sous-rubriques cochées (${formatMoney(selectedTotal)}).`,
+    );
+  }
+
+  return rows.sort(
+    (a, b) => Number(a.order_index || 0) - Number(b.order_index || 0),
+  );
+}
+
 async function createPaymentAction(formData: FormData) {
   "use server";
 
@@ -677,12 +831,17 @@ async function createPaymentAction(formData: FormData) {
   const expectedAmountRaw = normalize(formData.get("expected_amount"));
   const payerName = normalize(formData.get("payer_name"));
   const referenceNo = normalize(formData.get("reference_no"));
+  const componentIds = formData
+    .getAll("component_ids")
+    .map((value) => normalize(value))
+    .filter(Boolean);
   const paymentDate = normalize(formData.get("payment_date"));
   const notes = normalize(formData.get("notes"));
   const parentPhone = normalize(formData.get("parent_phone"));
 
   if (!classId) throw new Error("Veuillez choisir une classe.");
-  if (!feeCategoryId) throw new Error("Veuillez choisir une catégorie de frais.");
+  if (!feeCategoryId)
+    throw new Error("Veuillez choisir une catégorie de frais.");
 
   const amount = Number(amountRaw);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -694,7 +853,9 @@ async function createPaymentAction(formData: FormData) {
     expectedAmountRaw &&
     (!Number.isFinite(expectedAmount) || Number(expectedAmount) <= 0)
   ) {
-    throw new Error("Le montant attendu doit être supérieur à 0 ou rester vide.");
+    throw new Error(
+      "Le montant attendu doit être supérieur à 0 ou rester vide.",
+    );
   }
 
   const { data: feeCategory, error: catErr } = await admin
@@ -709,7 +870,9 @@ async function createPaymentAction(formData: FormData) {
   if (!feeCategory) throw new Error("Catégorie de frais introuvable.");
 
   let studentId = selectedStudentId;
-  const extraNotes: string[] = [`Mode d’encaissement : ${paymentTypeLabel(paymentType)}`];
+  const extraNotes: string[] = [
+    `Mode d’encaissement : ${paymentTypeLabel(paymentType)}`,
+  ];
 
   if (mode === "new") {
     const lastName = normalize(formData.get("last_name"));
@@ -758,6 +921,13 @@ async function createPaymentAction(formData: FormData) {
     );
   }
 
+  const selectedComponents = await resolveSelectedComponentsForPayment({
+    institutionId,
+    charge,
+    componentIds,
+    amount,
+  });
+
   let academicYear: string | null = null;
   let academicYearId: string | null = charge.academic_year_id || null;
 
@@ -773,14 +943,19 @@ async function createPaymentAction(formData: FormData) {
   const className = normalize((cls as any)?.label) || "Classe non précisée";
 
   if (!academicYearId && academicYear) {
-    academicYearId = await getAcademicYearId(admin, institutionId, academicYear);
+    academicYearId = await getAcademicYearId(
+      admin,
+      institutionId,
+      academicYear,
+    );
   }
 
   const receiptNo = makeReceiptNo();
   const paymentDateIso = paymentDate
     ? `${paymentDate}T12:00:00`
     : new Date().toISOString();
-  const receiptNotes = [notes, ...extraNotes].filter(Boolean).join("\n") || null;
+  const receiptNotes =
+    [notes, ...extraNotes].filter(Boolean).join("\n") || null;
 
   const { data: receipt, error: receiptErr } = await admin
     .schema("finance")
@@ -811,7 +986,7 @@ async function createPaymentAction(formData: FormData) {
 
   if (receiptErr) throw new Error(receiptErr.message);
 
-  const { error: allocErr } = await admin
+  const { data: allocation, error: allocErr } = await admin
     .schema("finance")
     .from("receipt_allocations")
     .insert({
@@ -819,11 +994,43 @@ async function createPaymentAction(formData: FormData) {
       student_charge_id: charge.id,
       amount,
       created_at: new Date().toISOString(),
-    } as any);
+    } as any)
+    .select("id")
+    .single();
 
   if (allocErr) {
-    await admin.schema("finance").from("receipts").delete().eq("id", receipt.id);
+    await admin
+      .schema("finance")
+      .from("receipts")
+      .delete()
+      .eq("id", receipt.id);
     throw new Error(allocErr.message);
+  }
+
+  if (selectedComponents.length > 0) {
+    const nowIso = new Date().toISOString();
+    const { error: compAllocErr } = await admin
+      .schema("finance")
+      .from("receipt_allocation_components")
+      .insert(
+        selectedComponents.map((component) => ({
+          receipt_allocation_id: allocation.id,
+          fee_schedule_component_id: component.id,
+          label: component.label,
+          amount: Number(component.amount || 0),
+          order_index: Number(component.order_index || 0),
+          created_at: nowIso,
+        })) as any[],
+      );
+
+    if (compAllocErr) {
+      await admin
+        .schema("finance")
+        .from("receipts")
+        .delete()
+        .eq("id", receipt.id);
+      throw new Error(compAllocErr.message);
+    }
   }
 
   const remainingDueAfterPayment = Math.max(balanceDue - amount, 0);
@@ -848,7 +1055,10 @@ async function createPaymentAction(formData: FormData) {
         "Élève non précisé";
     }
   } catch (e: any) {
-    console.warn("[finance/payments] student notification lookup skipped", e?.message || e);
+    console.warn(
+      "[finance/payments] student notification lookup skipped",
+      e?.message || e,
+    );
   }
 
   try {
@@ -859,12 +1069,17 @@ async function createPaymentAction(formData: FormData) {
       payerName: payerName || null,
       studentName: studentNameForNotification || null,
       className,
-      categoryName: String((feeCategory as any).name || charge.label || "Frais scolaire"),
+      categoryName: String(
+        (feeCategory as any).name || charge.label || "Frais scolaire",
+      ),
       remainingDue: remainingDueAfterPayment,
       paidAt: paymentDateIso,
     });
   } catch (e: any) {
-    console.warn("[finance/payments] founder finance notification skipped", e?.message || e);
+    console.warn(
+      "[finance/payments] founder finance notification skipped",
+      e?.message || e,
+    );
   }
 
   revalidatePath("/admin/finance/payments");
@@ -1046,6 +1261,42 @@ export default async function FinancePaymentsPage({
 
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
+
+  const balanceChargeIds = Array.from(
+    new Set(balanceRows.map((row) => row.id)),
+  );
+  const balanceScheduleIds = Array.from(
+    new Set(
+      balanceRows
+        .map((row) => row.fee_schedule_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  const [componentRows, paidComponentRows] = await Promise.all([
+    fetchActiveScheduleComponents(institutionId, balanceScheduleIds),
+    fetchPaidComponentsForCharges(institutionId, balanceChargeIds),
+  ]);
+
+  const componentsBySchedule = new Map<string, FeeScheduleComponentRow[]>();
+  for (const component of componentRows) {
+    if (!componentsBySchedule.has(component.fee_schedule_id)) {
+      componentsBySchedule.set(component.fee_schedule_id, []);
+    }
+    componentsBySchedule.get(component.fee_schedule_id)!.push(component);
+  }
+
+  const paidComponentsByCharge = new Map<string, Set<string>>();
+  for (const paid of paidComponentRows) {
+    if (paid.receipt_status === "cancelled") continue;
+    if (!paidComponentsByCharge.has(paid.student_charge_id)) {
+      paidComponentsByCharge.set(paid.student_charge_id, new Set<string>());
+    }
+    paidComponentsByCharge
+      .get(paid.student_charge_id)!
+      .add(paid.fee_schedule_component_id);
+  }
+
   const balancesByStudent = new Map<string, ChargeBalanceRow[]>();
 
   for (const row of balanceRows) {
@@ -1063,18 +1314,36 @@ export default async function FinancePaymentsPage({
         const studentBalances = balancesByStudent.get(student.id) ?? [];
         const openCharges = studentBalances
           .filter(
-            (row) => row.class_id === student.class_id && Number(row.balance_due || 0) > 0,
+            (row) =>
+              row.class_id === student.class_id &&
+              Number(row.balance_due || 0) > 0,
           )
-          .map((row) => ({
-            charge_id: row.id,
-            fee_category_id: row.fee_category_id,
-            fee_schedule_id: row.fee_schedule_id,
-            label: row.label,
-            due_date: row.due_date,
-            net_amount: Number(row.net_amount || 0),
-            paid_amount: Number(row.paid_amount || 0),
-            balance_due: Number(row.balance_due || 0),
-          }));
+          .map((row) => {
+            const paidIds =
+              paidComponentsByCharge.get(row.id) ?? new Set<string>();
+            const components = row.fee_schedule_id
+              ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
+                  .filter((component) => !paidIds.has(component.id))
+                  .map((component) => ({
+                    id: component.id,
+                    label: component.label,
+                    amount: Number(component.amount || 0),
+                    order_index: Number(component.order_index || 0),
+                  }))
+              : [];
+
+            return {
+              charge_id: row.id,
+              fee_category_id: row.fee_category_id,
+              fee_schedule_id: row.fee_schedule_id,
+              label: row.label,
+              due_date: row.due_date,
+              net_amount: Number(row.net_amount || 0),
+              paid_amount: Number(row.paid_amount || 0),
+              balance_due: Number(row.balance_due || 0),
+              components,
+            };
+          });
 
         return {
           student_id: student.id,
@@ -1227,7 +1496,11 @@ export default async function FinancePaymentsPage({
                           {row.receipt_no}
                         </h2>
                         <StatusPill
-                          label={row.receipt_status === "posted" ? "Validé" : "Annulé"}
+                          label={
+                            row.receipt_status === "posted"
+                              ? "Validé"
+                              : "Annulé"
+                          }
                         />
                       </div>
                       <div className="mt-2 text-sm text-slate-600">
