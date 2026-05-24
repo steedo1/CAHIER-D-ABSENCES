@@ -1291,7 +1291,7 @@ export default async function FinanceReceiptPrintPage({
               Document généré le {formatDateTime(new Date().toISOString())} — {schoolName}
             </span>
             <span className="font-bold text-slate-700">
-              www.mon-cahier.com · Reçu sécurisé par Mon Cahier
+              www.mon-cahier.com · Reçu généré par Mon Cahier
             </span>
           </div>
         </div>
