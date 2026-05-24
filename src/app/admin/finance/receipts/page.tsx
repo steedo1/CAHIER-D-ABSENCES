@@ -64,11 +64,18 @@ type ChargeRow = {
   id: string;
   student_id: string;
   class_id: string | null;
+  fee_category_id: string | null;
   label: string;
   due_date: string | null;
   net_amount: number | string;
   paid_amount: number | string;
   balance_due: number | string;
+};
+
+type FeeCategoryRow = {
+  id: string;
+  code: string | null;
+  name: string | null;
 };
 
 function formatMoney(value: number | string) {
@@ -85,6 +92,23 @@ function normalize(input: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isScolariteCategory(category: FeeCategoryRow | null | undefined) {
+  const text = normalize(`${category?.code || ""} ${category?.name || ""}`);
+  return text.includes("scolarite");
+}
+
+function displayChargeLabel(
+  charge: ChargeRow | undefined,
+  categoryMap: Map<string, FeeCategoryRow>,
+) {
+  if (!charge) return "Dette introuvable";
+  const category = charge.fee_category_id
+    ? categoryMap.get(charge.fee_category_id)
+    : null;
+  if (isScolariteCategory(category)) return category?.name || "Scolarité";
+  return charge.label;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -305,7 +329,7 @@ export default async function FinanceReceiptsPage({
         .schema("finance")
         .from("v_charge_balances")
         .select(
-          "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due",
+          "id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
         )
         .in("id", chargeIds)
     : { data: [], error: null as any };
@@ -314,6 +338,27 @@ export default async function FinanceReceiptsPage({
 
   const chargeRows = (charges ?? []) as ChargeRow[];
   const chargeMap = new Map(chargeRows.map((c) => [c.id, c]));
+  const chargeCategoryIds = Array.from(
+    new Set(
+      chargeRows.map((row) => row.fee_category_id).filter(Boolean) as string[],
+    ),
+  );
+  const { data: categoryRowsRaw, error: categoryRowsErr } =
+    chargeCategoryIds.length
+      ? await admin
+          .schema("finance")
+          .from("fee_categories")
+          .select("id,code,name")
+          .in("id", chargeCategoryIds)
+      : { data: [], error: null as any };
+
+  if (categoryRowsErr) throw new Error(categoryRowsErr.message);
+  const categoryMap = new Map(
+    ((categoryRowsRaw ?? []) as FeeCategoryRow[]).map((category) => [
+      category.id,
+      category,
+    ]),
+  );
 
   const allocationsByReceipt = allocationRows.reduce<
     Record<string, ReceiptAllocationRow[]>
@@ -580,7 +625,7 @@ export default async function FinanceReceiptsPage({
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                               <div>
                                 <div className="text-base font-black text-slate-900">
-                                  {charge?.label || "Dette introuvable"}
+                                  {displayChargeLabel(charge, categoryMap)}
                                 </div>
                                 <div className="mt-1 text-sm text-slate-600">
                                   Échéance : {charge?.due_date || "—"}

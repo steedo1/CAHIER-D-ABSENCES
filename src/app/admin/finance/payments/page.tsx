@@ -78,6 +78,18 @@ type PaidComponentRow = {
   receipt_status: string | null;
 };
 
+type PaymentAllocationPlanItem = {
+  chargeId: string;
+  amount: number;
+  componentIds: string[];
+};
+
+type ResolvedPaymentAllocation = {
+  charge: ChargeBalanceRow;
+  amount: number;
+  selectedComponents: FeeScheduleComponentRow[];
+};
+
 type ChargeBalanceRow = {
   id: string;
   school_id: string;
@@ -720,7 +732,9 @@ async function fetchActiveScheduleComponents(
       if (msg.includes("does not exist") || msg.includes("introuvable")) {
         return [];
       }
-      throw new Error(`Lecture des composants de frais impossible : ${error.message}`);
+      throw new Error(
+        `Lecture des composants de frais impossible : ${error.message}`,
+      );
     }
 
     rows.push(...((data ?? []) as FeeScheduleComponentRow[]));
@@ -729,7 +743,10 @@ async function fetchActiveScheduleComponents(
   return rows.sort(
     (a, b) =>
       Number(a.order_index || 0) - Number(b.order_index || 0) ||
-      a.label.localeCompare(b.label, "fr", { numeric: true, sensitivity: "base" }),
+      a.label.localeCompare(b.label, "fr", {
+        numeric: true,
+        sensitivity: "base",
+      }),
   );
 }
 
@@ -759,7 +776,9 @@ async function fetchPaidComponentsForCharges(
       if (msg.includes("does not exist") || msg.includes("introuvable")) {
         return [];
       }
-      throw new Error(`Lecture des sous-rubriques déjà payées impossible : ${error.message}`);
+      throw new Error(
+        `Lecture des sous-rubriques déjà payées impossible : ${error.message}`,
+      );
     }
 
     rows.push(...((data ?? []) as PaidComponentRow[]));
@@ -842,6 +861,126 @@ async function resolveSelectedComponentsForPayment({
   );
 }
 
+function parsePaymentAllocationPlan(
+  raw: FormDataEntryValue | null,
+): PaymentAllocationPlanItem[] {
+  const text = String(raw ?? "").trim();
+  if (!text) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("La ventilation du paiement est invalide.");
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  const merged = new Map<string, PaymentAllocationPlanItem>();
+
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const chargeId = normalize((item as any).chargeId);
+    if (!chargeId) continue;
+
+    const rawAmount = Number((item as any).amount || 0);
+    const amount = Number.isFinite(rawAmount) ? Math.max(rawAmount, 0) : 0;
+    const componentIds = Array.isArray((item as any).componentIds)
+      ? (item as any).componentIds
+          .map((value: unknown) => normalize(value))
+          .filter(Boolean)
+      : [];
+
+    const existing = merged.get(chargeId);
+    if (existing) {
+      existing.amount += amount;
+      existing.componentIds = Array.from(
+        new Set([...existing.componentIds, ...componentIds]),
+      );
+    } else {
+      merged.set(chargeId, {
+        chargeId,
+        amount,
+        componentIds: Array.from(new Set(componentIds)),
+      });
+    }
+  }
+
+  return Array.from(merged.values()).filter((item) => item.amount > 0);
+}
+
+async function resolveAllocationPlanForPayment({
+  institutionId,
+  studentId,
+  classId,
+  feeCategoryId,
+  plan,
+}: {
+  institutionId: string;
+  studentId: string;
+  classId: string;
+  feeCategoryId: string;
+  plan: PaymentAllocationPlanItem[];
+}): Promise<ResolvedPaymentAllocation[]> {
+  if (plan.length === 0) return [];
+
+  const resolved: ResolvedPaymentAllocation[] = [];
+
+  for (const item of plan) {
+    const charge = await fetchChargeById(item.chargeId, institutionId);
+    if (!charge) throw new Error("Un frais sélectionné est introuvable.");
+    if (charge.student_id !== studentId) {
+      throw new Error("Un frais sélectionné ne correspond pas à cet élève.");
+    }
+    if (classId && charge.class_id !== classId) {
+      throw new Error(
+        "Un frais sélectionné ne correspond pas à la classe choisie.",
+      );
+    }
+    if (feeCategoryId && charge.fee_category_id !== feeCategoryId) {
+      throw new Error(
+        "Un frais sélectionné ne correspond pas à la catégorie choisie.",
+      );
+    }
+
+    const balanceDue = Number(charge.balance_due || 0);
+    if (balanceDue <= 0) throw new Error(`${charge.label} est déjà soldé.`);
+    if (item.amount > balanceDue) {
+      throw new Error(
+        `Le montant saisi pour ${charge.label} dépasse le reste dû (${formatMoney(balanceDue)}).`,
+      );
+    }
+
+    let selectedComponents: FeeScheduleComponentRow[] = [];
+    if (item.componentIds.length > 0) {
+      selectedComponents = await resolveSelectedComponentsForPayment({
+        institutionId,
+        charge,
+        componentIds: item.componentIds,
+        amount: item.amount,
+      });
+    } else if (charge.fee_schedule_id) {
+      const activeComponents = await fetchActiveScheduleComponents(
+        institutionId,
+        [charge.fee_schedule_id],
+      );
+      if (activeComponents.length > 0) {
+        throw new Error(
+          `Veuillez cocher les sous-rubriques réglées pour ${charge.label}.`,
+        );
+      }
+    }
+
+    resolved.push({
+      charge,
+      amount: item.amount,
+      selectedComponents,
+    });
+  }
+
+  return resolved;
+}
+
 async function createPaymentAction(formData: FormData) {
   "use server";
 
@@ -868,6 +1007,9 @@ async function createPaymentAction(formData: FormData) {
     .getAll("component_ids")
     .map((value) => normalize(value))
     .filter(Boolean);
+  const allocationPlan = parsePaymentAllocationPlan(
+    formData.get("allocation_plan"),
+  );
   const paymentDate = normalize(formData.get("payment_date"));
   const notes = normalize(formData.get("notes"));
   const parentPhone = normalize(formData.get("parent_phone"));
@@ -876,8 +1018,9 @@ async function createPaymentAction(formData: FormData) {
   if (!feeCategoryId)
     throw new Error("Veuillez choisir une catégorie de frais.");
 
-  const amount = Number(amountRaw);
-  if (!Number.isFinite(amount) || amount <= 0) {
+  let amount = Number(amountRaw);
+  const hasAllocationPlan = allocationPlan.length > 0;
+  if ((!Number.isFinite(amount) || amount <= 0) && !hasAllocationPlan) {
     throw new Error("Le montant encaissé doit être supérieur à 0.");
   }
 
@@ -932,37 +1075,73 @@ async function createPaymentAction(formData: FormData) {
     throw new Error("Veuillez choisir ou créer un élève.");
   }
 
-  const charge = await resolveChargeForPayment({
-    institutionId,
-    userId,
-    studentId,
-    classId,
-    selectedChargeId,
-    feeCategoryId,
-    feeCategoryName: String((feeCategory as any).name || "Frais scolaire"),
-    paymentType,
-    amount,
-    expectedAmount,
-    notes: [notes, ...extraNotes].filter(Boolean).join("\n") || null,
-  });
+  let allocationDrafts: ResolvedPaymentAllocation[] = [];
 
-  const balanceDue = Number(charge.balance_due || 0);
-  if (balanceDue <= 0) throw new Error("Ce frais est déjà soldé.");
-  if (amount > balanceDue) {
+  if (hasAllocationPlan) {
+    allocationDrafts = await resolveAllocationPlanForPayment({
+      institutionId,
+      studentId,
+      classId,
+      feeCategoryId,
+      plan: allocationPlan,
+    });
+
+    const plannedAmount = allocationDrafts.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0,
+    );
+    if (plannedAmount <= 0) {
+      throw new Error("Veuillez saisir au moins un montant à encaisser.");
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      amount = plannedAmount;
+    } else if (Math.abs(amount - plannedAmount) > 0.01) {
+      throw new Error(
+        `Le montant encaissé (${formatMoney(amount)}) ne correspond pas à la ventilation (${formatMoney(plannedAmount)}).`,
+      );
+    }
+  } else {
+    const charge = await resolveChargeForPayment({
+      institutionId,
+      userId,
+      studentId,
+      classId,
+      selectedChargeId,
+      feeCategoryId,
+      feeCategoryName: String((feeCategory as any).name || "Frais scolaire"),
+      paymentType,
+      amount,
+      expectedAmount,
+      notes: [notes, ...extraNotes].filter(Boolean).join("\n") || null,
+    });
+
+    const balanceDue = Number(charge.balance_due || 0);
+    if (balanceDue <= 0) throw new Error("Ce frais est déjà soldé.");
+    if (amount > balanceDue) {
+      throw new Error(
+        `Le montant saisi dépasse le reste dû (${formatMoney(balanceDue)}).`,
+      );
+    }
+
+    const selectedComponents = await resolveSelectedComponentsForPayment({
+      institutionId,
+      charge,
+      componentIds,
+      amount,
+    });
+
+    allocationDrafts = [{ charge, amount, selectedComponents }];
+  }
+
+  const primaryCharge = allocationDrafts[0]?.charge;
+  if (!primaryCharge) {
     throw new Error(
-      `Le montant saisi dépasse le reste dû (${formatMoney(balanceDue)}).`,
+      "Aucune ventilation valide n’a été trouvée pour ce paiement.",
     );
   }
 
-  const selectedComponents = await resolveSelectedComponentsForPayment({
-    institutionId,
-    charge,
-    componentIds,
-    amount,
-  });
-
   let academicYear: string | null = null;
-  let academicYearId: string | null = charge.academic_year_id || null;
+  let academicYearId: string | null = primaryCharge.academic_year_id || null;
 
   const { data: cls, error: clsErr } = await admin
     .from("classes")
@@ -1019,17 +1198,19 @@ async function createPaymentAction(formData: FormData) {
 
   if (receiptErr) throw new Error(receiptErr.message);
 
-  const { data: allocation, error: allocErr } = await admin
+  const nowAllocationIso = new Date().toISOString();
+  const { data: allocationsInserted, error: allocErr } = await admin
     .schema("finance")
     .from("receipt_allocations")
-    .insert({
-      receipt_id: receipt.id,
-      student_charge_id: charge.id,
-      amount,
-      created_at: new Date().toISOString(),
-    } as any)
-    .select("id")
-    .single();
+    .insert(
+      allocationDrafts.map((item) => ({
+        receipt_id: receipt.id,
+        student_charge_id: item.charge.id,
+        amount: item.amount,
+        created_at: nowAllocationIso,
+      })) as any[],
+    )
+    .select("id,student_charge_id");
 
   if (allocErr) {
     await admin
@@ -1040,21 +1221,32 @@ async function createPaymentAction(formData: FormData) {
     throw new Error(allocErr.message);
   }
 
-  if (selectedComponents.length > 0) {
-    const nowIso = new Date().toISOString();
+  const allocationIdByChargeId = new Map<string, string>();
+  for (const row of (allocationsInserted ?? []) as Array<{
+    id: string;
+    student_charge_id: string;
+  }>) {
+    allocationIdByChargeId.set(row.student_charge_id, row.id);
+  }
+
+  const componentAllocations = allocationDrafts.flatMap((item) => {
+    const allocationId = allocationIdByChargeId.get(item.charge.id);
+    if (!allocationId) return [];
+    return item.selectedComponents.map((component) => ({
+      receipt_allocation_id: allocationId,
+      fee_schedule_component_id: component.id,
+      label: component.label,
+      amount: Number(component.amount || 0),
+      order_index: Number(component.order_index || 0),
+      created_at: nowAllocationIso,
+    }));
+  });
+
+  if (componentAllocations.length > 0) {
     const { error: compAllocErr } = await admin
       .schema("finance")
       .from("receipt_allocation_components")
-      .insert(
-        selectedComponents.map((component) => ({
-          receipt_allocation_id: allocation.id,
-          fee_schedule_component_id: component.id,
-          label: component.label,
-          amount: Number(component.amount || 0),
-          order_index: Number(component.order_index || 0),
-          created_at: nowIso,
-        })) as any[],
-      );
+      .insert(componentAllocations as any[]);
 
     if (compAllocErr) {
       await admin
@@ -1066,7 +1258,15 @@ async function createPaymentAction(formData: FormData) {
     }
   }
 
-  const remainingDueAfterPayment = Math.max(balanceDue - amount, 0);
+  const remainingDueAfterPayment = allocationDrafts.reduce(
+    (sum, item) =>
+      sum +
+      Math.max(
+        Number(item.charge.balance_due || 0) - Number(item.amount || 0),
+        0,
+      ),
+    0,
+  );
 
   let studentNameForNotification = payerName || "";
   try {
@@ -1103,7 +1303,7 @@ async function createPaymentAction(formData: FormData) {
       studentName: studentNameForNotification || null,
       className,
       categoryName: String(
-        (feeCategory as any).name || charge.label || "Frais scolaire",
+        (feeCategory as any).name || primaryCharge.label || "Frais scolaire",
       ),
       remainingDue: remainingDueAfterPayment,
       paidAt: paymentDateIso,
@@ -1157,7 +1357,9 @@ async function fetchAllChargeBalancesForPayments({
         .range(from, to);
 
       if (error) {
-        throw new Error(`Lecture des dettes ouvertes impossible : ${error.message}`);
+        throw new Error(
+          `Lecture des dettes ouvertes impossible : ${error.message}`,
+        );
       }
 
       const pageRows = (data ?? []) as ChargeBalanceRow[];
