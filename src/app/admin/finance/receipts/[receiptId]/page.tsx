@@ -1065,13 +1065,6 @@ export default async function FinanceReceiptPrintPage({
                             <tr className="border-t border-slate-200 align-top">
                               <td className="px-5 py-4 text-slate-900">
                                 <div className="font-semibold">{line.label}</div>
-                                {line.components.length > 0 ? (
-                                  <div className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-700">
-                                    {line.components.length} sous-rubrique
-                                    {line.components.length > 1 ? "s" : ""} réglée
-                                    {line.components.length > 1 ? "s" : ""}
-                                  </div>
-                                ) : null}
                               </td>
                               <td className="px-5 py-4 text-slate-600">
                                 {formatDate(line.dueDate)}
