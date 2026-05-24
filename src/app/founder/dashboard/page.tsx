@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 
 export const dynamic = "force-dynamic";
 
@@ -253,6 +254,20 @@ export default async function FounderDashboardPage() {
     }
   }
 
+  let balanceRows: any[] = [];
+  if (classIds.length > 0) {
+    try {
+      balanceRows = await fetchFinanceChargeBalancesByClasses({
+        institutionIds,
+        classIds,
+        select: "id,school_id,student_id,class_id,net_amount,paid_amount,balance_due,due_date,computed_status",
+      });
+    } catch (e: any) {
+      console.warn("[founder/dashboard] finance.v_charge_balances:", e?.message || e);
+      balanceRows = [];
+    }
+  }
+
   const [sessions, periods, receipts, expenses] = await Promise.all([
     safeData<any[]>(
       "teacher_sessions",
@@ -298,9 +313,10 @@ export default async function FounderDashboardPage() {
     ),
   ]);
 
-  const totalReceipts = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+  const totalReceiptsToday = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+  const totalCollectedCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
   const totalExpenses = expenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
-  const net = totalReceipts - totalExpenses;
+  const net = totalReceiptsToday - totalExpenses;
   const totalStudentStats = buildStudentStats(enrollments);
 
   const rows = institutions.map((school) => {
@@ -310,15 +326,18 @@ export default async function FounderDashboardPage() {
     const schoolSessions = sessions.filter((row: any) => row.institution_id === schoolId);
     const schoolEnrollments = enrollments.filter((row: any) => row.institution_id === schoolId);
     const schoolPeriods = periods.filter((row: any) => row.institution_id === schoolId);
-    const receiptTotal = schoolReceipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+    const schoolBalances = balanceRows.filter((row: any) => row.school_id === schoolId);
+    const receiptTotalToday = schoolReceipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+    const collectedCurrentYear = schoolBalances.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
     const expenseTotal = schoolExpenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
     const studentStats = buildStudentStats(schoolEnrollments);
 
     return {
       school,
-      receiptTotal,
+      collectedCurrentYear,
+      receiptTotalToday,
       expenseTotal,
-      net: receiptTotal - expenseTotal,
+      net: receiptTotalToday - expenseTotal,
       receiptsCount: schoolReceipts.length,
       expensesCount: schoolExpenses.length,
       sessionsCount: schoolSessions.length,
@@ -331,7 +350,12 @@ export default async function FounderDashboardPage() {
   const statCards = [
     { label: "Écoles suivies", value: institutions.length, hint: "Établissements rattachés", Icon: School2 },
     { label: "Élèves", value: totalStudentStats.total, hint: "Inscrits actifs année courante", Icon: GraduationCap },
-    { label: "Encaissements", value: money(totalReceipts), hint: `${receipts.length} reçu(s) aujourd’hui`, Icon: Receipt },
+    {
+      label: "Encaissements",
+      value: money(totalCollectedCurrentYear),
+      hint: `Année courante · aujourd’hui ${money(totalReceiptsToday)}`,
+      Icon: Receipt,
+    },
     { label: "Dépenses", value: money(totalExpenses), hint: `${expenses.length} dépense(s) aujourd’hui`, Icon: Wallet },
     { label: "Solde du jour", value: money(net), hint: "Encaissements moins dépenses", Icon: Activity },
     { label: "Appels détectés", value: sessions.length, hint: "Séances ouvertes aujourd’hui", Icon: CalendarCheck2 },
@@ -427,7 +451,7 @@ export default async function FounderDashboardPage() {
                 <Building2 className="h-4 w-4" />
                 Écoles rattachées
               </div>
-              <p className="mt-1 text-sm text-slate-500">Lecture consolidée par établissement pour aujourd’hui.</p>
+              <p className="mt-1 text-sm text-slate-500">Lecture consolidée : encaissements de l’année courante et activité du jour.</p>
             </div>
             <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
               {today}
@@ -440,7 +464,7 @@ export default async function FounderDashboardPage() {
                 Aucune école trouvée pour ce compte fondateur.
               </div>
             ) : (
-              rows.map(({ school, receiptTotal, expenseTotal, net, sessionsCount, periodsCount, studentStats }) => (
+              rows.map(({ school, collectedCurrentYear, receiptTotalToday, expenseTotal, net, sessionsCount, periodsCount, studentStats }) => (
                 <div key={school.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
                   <div className="mt-1 truncate text-xs text-slate-500">{school.id}</div>
@@ -448,9 +472,9 @@ export default async function FounderDashboardPage() {
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <div className="rounded-2xl bg-white p-3">
                       <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-emerald-700">
-                        <ArrowUpRight className="h-4 w-4" /> Encaissé
+                        <ArrowUpRight className="h-4 w-4" /> Encaissé année
                       </div>
-                      <div className="mt-1 text-lg font-black text-slate-950">{money(receiptTotal)}</div>
+                      <div className="mt-1 text-lg font-black text-slate-950">{money(collectedCurrentYear)}</div>
                     </div>
                     <div className="rounded-2xl bg-white p-3">
                       <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-amber-700">
@@ -461,7 +485,8 @@ export default async function FounderDashboardPage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
-                    <span className="rounded-full bg-white px-3 py-1">Solde : {money(net)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Reçus jour : {money(receiptTotalToday)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Solde jour : {money(net)}</span>
                     <span className="rounded-full bg-white px-3 py-1">Élèves : {studentStats.total}</span>
                     <span className="rounded-full bg-white px-3 py-1">Affectés : {studentStats.assigned}</span>
                     <span className="rounded-full bg-white px-3 py-1">Non affectés : {studentStats.notAssigned}</span>
