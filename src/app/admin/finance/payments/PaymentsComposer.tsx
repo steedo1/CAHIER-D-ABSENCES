@@ -65,6 +65,32 @@ function isPensionCharge(label: string | null | undefined) {
   return normalize(label).includes("pension");
 }
 
+function getSelectedComponentsTotal(
+  charge: PaymentStudentRow["open_charges"][number],
+  componentIdsByCharge: Record<string, string[]>,
+) {
+  const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
+  return charge.components
+    .filter((component) => selected.has(component.id))
+    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+}
+
+function getInternatRecoverableTotal(
+  charges: PaymentStudentRow["open_charges"],
+  componentIdsByCharge: Record<string, string[]>,
+) {
+  return charges.reduce((sum, charge) => {
+    if (charge.components.length > 0) {
+      return sum + getSelectedComponentsTotal(charge, componentIdsByCharge);
+    }
+
+    // La pension reste un montant fixe. Les sous-rubriques annexes peuvent
+    // varier, mais la pension ouverte ne doit pas disparaître du total à
+    // recouvrer tant qu'elle n'est pas soldée.
+    return sum + Number(charge.balance_due || 0);
+  }, 0);
+}
+
 function PendingButton({
   icon,
   label,
@@ -287,10 +313,10 @@ export default function PaymentsComposer({
       const componentIds = selectedCategoryIsInternat
         ? (internatComponentIdsByCharge[charge.charge_id] ?? [])
         : [];
-      const componentSet = new Set(componentIds);
-      const componentTotal = charge.components
-        .filter((component) => componentSet.has(component.id))
-        .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+      const componentTotal = getSelectedComponentsTotal(
+        charge,
+        internatComponentIdsByCharge,
+      );
       const typedAmount = Number(internatAmounts[charge.charge_id] || 0);
       const safeTypedAmount = Number.isFinite(typedAmount)
         ? Math.max(typedAmount, 0)
@@ -353,8 +379,27 @@ export default function PaymentsComposer({
     [categoryChargeOptions],
   );
 
+  const internatRecoverableTotal = useMemo(
+    () =>
+      selectedCategoryIsInternat
+        ? getInternatRecoverableTotal(
+            categoryChargeOptions,
+            internatComponentIdsByCharge,
+          )
+        : 0,
+    [
+      categoryChargeOptions,
+      internatComponentIdsByCharge,
+      selectedCategoryIsInternat,
+    ],
+  );
+
+  const effectiveCategoryBalanceTotal = selectedCategoryIsInternat
+    ? internatRecoverableTotal
+    : categoryBalanceTotal;
+
   const remainingAfterCurrentPayment = Math.max(
-    categoryBalanceTotal - groupedPaymentTotal,
+    effectiveCategoryBalanceTotal - groupedPaymentTotal,
     0,
   );
 
@@ -362,7 +407,9 @@ export default function PaymentsComposer({
     if (selectedCategoryUsesGroupedPlan) {
       const expectedForDisplay = selectedCategoryIsScolarite
         ? categoryExpectedTotal
-        : groupedPaymentTotal;
+        : selectedCategoryIsInternat
+          ? internatRecoverableTotal
+          : groupedPaymentTotal;
       setExpectedAmount(
         expectedForDisplay > 0 ? String(expectedForDisplay) : "",
       );
@@ -371,6 +418,8 @@ export default function PaymentsComposer({
   }, [
     categoryExpectedTotal,
     groupedPaymentTotal,
+    internatRecoverableTotal,
+    selectedCategoryIsInternat,
     selectedCategoryIsScolarite,
     selectedCategoryUsesGroupedPlan,
   ]);
@@ -762,8 +811,8 @@ export default function PaymentsComposer({
                     {selectedCategoryIsScolarite
                       ? formatMoney(categoryExpectedTotal)
                       : selectedCategoryIsInternat
-                        ? groupedPaymentTotal > 0
-                          ? formatMoney(groupedPaymentTotal)
+                        ? internatRecoverableTotal > 0
+                          ? formatMoney(internatRecoverableTotal)
                           : "À sélectionner"
                         : selectedCharge
                           ? formatMoney(selectedCharge.net_amount)
@@ -805,6 +854,7 @@ export default function PaymentsComposer({
                   charges={categoryChargeOptions}
                   amounts={internatAmounts}
                   componentIdsByCharge={internatComponentIdsByCharge}
+                  recoverableTotal={internatRecoverableTotal}
                   onAmountChange={(chargeId, value) =>
                     setInternatAmounts((prev) => ({
                       ...prev,
@@ -1120,12 +1170,14 @@ function InternatPaymentPlanner({
   charges,
   amounts,
   componentIdsByCharge,
+  recoverableTotal,
   onAmountChange,
   onComponentChange,
 }: {
   charges: PaymentStudentRow["open_charges"];
   amounts: Record<string, string>;
   componentIdsByCharge: Record<string, string[]>;
+  recoverableTotal: number;
   onAmountChange: (chargeId: string, value: string) => void;
   onComponentChange: (chargeId: string, componentIds: string[]) => void;
 }) {
@@ -1161,16 +1213,26 @@ function InternatPaymentPlanner({
             Encaissement internat
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Renseignez la pension et/ou cochez les frais annexes réglés. Les
-            deux lignes pourront sortir sur le même reçu.
+            La pension reste fixe. Les frais annexes ne comptent dans le barème
+            retenu que lorsqu’ils sont cochés : pension + éléments cochés.
           </p>
         </div>
-        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
-          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-            Total à encaisser
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              Barème retenu
+            </div>
+            <div className="mt-1 text-lg font-black text-slate-900">
+              {formatMoney(recoverableTotal)}
+            </div>
           </div>
-          <div className="mt-1 text-lg font-black text-emerald-700">
-            {formatMoney(total)}
+          <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              Total à encaisser
+            </div>
+            <div className="mt-1 text-lg font-black text-emerald-700">
+              {formatMoney(total)}
+            </div>
           </div>
         </div>
       </div>
@@ -1350,7 +1412,10 @@ function ChargeComponentChecklist({
         >
           Tout décocher
         </button>
-        <span>Reste du frais ouvert : {formatMoney(remainingAmount)}</span>
+        <span>
+          Base initiale : {formatMoney(remainingAmount)} · Base retenue :{" "}
+          {formatMoney(selectedTotal)}
+        </span>
       </div>
     </div>
   );

@@ -147,6 +147,10 @@ function isInternatCharge(label: string | null | undefined) {
   return normalizeText(label).includes("internat");
 }
 
+function isPensionCharge(label: string | null | undefined) {
+  return normalizeText(label).includes("pension");
+}
+
 function safeNumber(value: number | string | null | undefined) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
@@ -442,34 +446,41 @@ export default async function FinanceReceiptPrintPage({
           components: [] as ReceiptAllocationComponentRow[],
         },
       ]
-    : rawLines.map((line) => {
-        const visibleComponents = line.components.filter(
-          (component) => safeNumber(component.amount) > 0,
-        );
-        const hasClosedOptionalComponents = line.components.some(
-          (component) => safeNumber(component.amount) === 0,
-        );
-        const componentExpected = visibleComponents.reduce(
-          (sum, component) => sum + safeNumber(component.amount),
-          0,
-        );
+    : rawLines
+        .map((line) => {
+          const visibleComponents = line.components.filter(
+            (component) => safeNumber(component.amount) > 0,
+          );
+          const hasClosedOptionalComponents = line.components.some(
+            (component) => safeNumber(component.amount) === 0,
+          );
+          const componentExpected = visibleComponents.reduce(
+            (sum, component) => sum + safeNumber(component.amount),
+            0,
+          );
 
-        return {
-          key: line.alloc.id,
-          label: line.charge?.label || "Dette introuvable",
-          dueDate: line.charge?.due_date ?? null,
-          expected:
-            componentExpected > 0
-              ? componentExpected
-              : safeNumber(line.charge?.net_amount),
-          paid: safeNumber(line.charge?.paid_amount),
-          remaining: hasClosedOptionalComponents
-            ? 0
-            : safeNumber(line.charge?.balance_due),
-          amount: safeNumber(line.alloc.amount),
-          components: visibleComponents,
-        };
-      });
+          return {
+            key: line.alloc.id,
+            label: line.charge?.label || "Dette introuvable",
+            dueDate: line.charge?.due_date ?? null,
+            expected:
+              componentExpected > 0
+                ? componentExpected
+                : safeNumber(line.charge?.net_amount),
+            paid: safeNumber(line.charge?.paid_amount),
+            remaining: hasClosedOptionalComponents
+              ? 0
+              : safeNumber(line.charge?.balance_due),
+            amount: safeNumber(line.alloc.amount),
+            components: visibleComponents,
+          };
+        })
+        .filter(
+          (line) =>
+            safeNumber(line.amount) > 0 ||
+            line.components.length > 0 ||
+            isPensionCharge(line.label),
+        );
 
   const totalAllocated = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.amount),

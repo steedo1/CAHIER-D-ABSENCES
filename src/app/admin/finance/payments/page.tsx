@@ -950,7 +950,8 @@ function parsePaymentAllocationPlan(
   }
 
   return Array.from(merged.values()).filter(
-    (item) => item.amount > 0 || item.includeOnReceipt,
+    (item) =>
+      item.amount > 0 || item.includeOnReceipt || item.closeUnselectedComponents,
   );
 }
 
@@ -1025,6 +1026,19 @@ async function resolveAllocationPlanForPayment({
             !selectedIds.has(component.id) && !alreadyPaidIds.has(component.id),
         );
       }
+    } else if (item.closeUnselectedComponents && charge.fee_schedule_id) {
+      const [activeComponents, alreadyPaidComponents] = await Promise.all([
+        fetchActiveScheduleComponents(institutionId, [charge.fee_schedule_id]),
+        fetchPaidComponentsForCharges(institutionId, [charge.id]),
+      ]);
+      const alreadyPaidIds = new Set(
+        alreadyPaidComponents
+          .filter((row) => row.receipt_status !== "cancelled")
+          .map((row) => row.fee_schedule_component_id),
+      );
+      skippedComponents = activeComponents.filter(
+        (component) => !alreadyPaidIds.has(component.id),
+      );
     } else if (charge.fee_schedule_id && item.componentMode !== "hidden") {
       const activeComponents = await fetchActiveScheduleComponents(
         institutionId,
