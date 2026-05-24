@@ -170,22 +170,26 @@ export async function getCommunicationInstitution(
     return { id: "", name: null as string | null, acronym: null as string | null, display_name: "Mon Cahier" };
   }
 
+  // Important : certaines bases Mon Cahier déjà déployées n'ont pas encore
+  // de colonne `acronym` dans `institutions`. Pour le module Communication,
+  // on n'a besoin que du nom officiel afin de signer les messages.
+  // On évite donc de sélectionner une colonne optionnelle qui peut casser
+  // toute la page avec l'erreur : column institutions.acronym does not exist.
   const { data, error } = await srv
     .from("institutions")
-    .select("id,name,acronym")
+    .select("id,name")
     .eq("id", id)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
 
   const name = s((data as any)?.name) || null;
-  const acronym = s((data as any)?.acronym) || null;
 
   return {
     id,
     name,
-    acronym,
-    display_name: name || acronym || "Mon Cahier",
+    acronym: null as string | null,
+    display_name: name || "Mon Cahier",
   };
 }
 
