@@ -1419,7 +1419,9 @@ async function createPaymentAction(formData: FormData) {
   revalidatePath("/admin/finance/arrears");
   revalidatePath("/admin/finance");
 
-  redirect(`/admin/finance/receipts/${receipt.id}?autoprint=1`);
+  // On ne lance plus l’impression automatiquement : le gestionnaire doit
+  // pouvoir vérifier le reçu et corriger une éventuelle erreur avant PDF/papier.
+  redirect(`/admin/finance/receipts/${receipt.id}`);
 }
 
 async function fetchAllChargeBalancesForPayments({
@@ -1509,7 +1511,12 @@ function StatusPill({ label }: { label: string }) {
 export default async function FinancePaymentsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ academic_year?: string }>;
+  searchParams?: Promise<{
+    academic_year?: string;
+    correction_receipt?: string;
+    student_id?: string;
+    class_id?: string;
+  }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -1519,6 +1526,9 @@ export default async function FinancePaymentsPage({
 
   const params = searchParams ? await searchParams : undefined;
   const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const correctionReceiptNo = String(params?.correction_receipt || "").trim();
+  const correctionStudentId = String(params?.student_id || "").trim();
+  const correctionClassId = String(params?.class_id || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
   await ensureDefaultFeeCategories(institutionId);
@@ -1813,6 +1823,13 @@ export default async function FinancePaymentsPage({
         classes={classRows}
         feeCategories={feeCategoryRows}
         rows={paymentStudentRows}
+        initialClassId={correctionClassId}
+        initialStudentId={correctionStudentId}
+        correctionNotice={
+          correctionReceiptNo
+            ? `Le reçu ${correctionReceiptNo} a été annulé pour correction. Vous pouvez maintenant saisir le paiement corrigé.`
+            : ""
+        }
       />
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">

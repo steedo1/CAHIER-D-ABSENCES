@@ -25,6 +25,9 @@ type Props = {
   rows: PaymentStudentRow[];
   feeCategories: FeeCategoryRow[];
   action: (formData: FormData) => void | Promise<void>;
+  initialClassId?: string;
+  initialStudentId?: string;
+  correctionNotice?: string;
 };
 
 type ActiveFinanceWorkflow = "menu" | "payment" | "new";
@@ -120,6 +123,9 @@ export default function PaymentsComposer({
   rows,
   feeCategories,
   action,
+  initialClassId = "",
+  initialStudentId = "",
+  correctionNotice = "",
 }: Props) {
   const levels = useMemo(() => {
     const map = new Map<string, string>();
@@ -135,10 +141,25 @@ export default function PaymentsComposer({
     );
   }, [classes]);
 
-  const [selectedLevel, setSelectedLevel] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
-  const [search, setSearch] = useState("");
-  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const initialStudent = initialStudentId
+    ? rows.find((row) => row.student_id === initialStudentId) ?? null
+    : null;
+  const initialClass =
+    classes.find(
+      (cls) =>
+        cls.id === (initialClassId || initialStudent?.class_id || ""),
+    ) ?? null;
+
+  const [selectedLevel, setSelectedLevel] = useState(
+    initialClass?.level || (initialClass ? "Sans niveau" : ""),
+  );
+  const [selectedClassId, setSelectedClassId] = useState(initialClass?.id ?? "");
+  const [search, setSearch] = useState(
+    initialStudent?.student_name || initialStudent?.matricule || "",
+  );
+  const [selectedStudentId, setSelectedStudentId] = useState(
+    initialStudent?.student_id ?? "",
+  );
   const [selectedChargeId, setSelectedChargeId] = useState("");
   const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>(
     [],
@@ -153,8 +174,9 @@ export default function PaymentsComposer({
   const [amount, setAmount] = useState("");
   const [expectedAmount, setExpectedAmount] = useState("");
   const [newClassId, setNewClassId] = useState("");
-  const [activeWorkflow, setActiveWorkflow] =
-    useState<ActiveFinanceWorkflow>("menu");
+  const [activeWorkflow, setActiveWorkflow] = useState<ActiveFinanceWorkflow>(
+    initialStudent ? "payment" : "menu",
+  );
 
   useEffect(() => {
     if (!selectedLevel && levels.length > 0) setSelectedLevel(levels[0]);
@@ -206,22 +228,39 @@ export default function PaymentsComposer({
 
   const query = normalize(search);
   const filteredRows = useMemo(() => {
-    if (!selectedClassId || query.length < 2) return [];
+    if (!selectedClassId) return [];
 
-    return rows.filter((row) => {
-      if (row.class_id !== selectedClassId) return false;
-      const haystack = [
-        row.student_name,
-        row.matricule,
-        row.class_label,
-        row.level,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [query, rows, selectedClassId]);
+    const selectedRow = selectedStudentId
+      ? rows.find(
+          (row) =>
+            row.student_id === selectedStudentId &&
+            row.class_id === selectedClassId,
+        ) ?? null
+      : null;
+
+    const matches =
+      query.length < 2
+        ? []
+        : rows.filter((row) => {
+            if (row.class_id !== selectedClassId) return false;
+            const haystack = [
+              row.student_name,
+              row.matricule,
+              row.class_label,
+              row.level,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+            return haystack.includes(query);
+          });
+
+    if (selectedRow && !matches.some((row) => row.student_id === selectedRow.student_id)) {
+      return [selectedRow, ...matches];
+    }
+
+    return matches;
+  }, [query, rows, selectedClassId, selectedStudentId]);
 
   useEffect(() => {
     if (!filteredRows.some((row) => row.student_id === selectedStudentId)) {
@@ -483,6 +522,12 @@ export default function PaymentsComposer({
 
   return (
     <section className="space-y-6">
+      {correctionNotice ? (
+        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-900 shadow-sm">
+          {correctionNotice}
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">

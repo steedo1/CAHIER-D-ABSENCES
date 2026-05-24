@@ -2,17 +2,21 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { cookies, headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import {
   ArrowLeft,
+  AlertTriangle,
   BadgeCheck,
   GraduationCap,
   Printer,
   Receipt,
+  RefreshCcw,
   School2,
   Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
   getFinanceInstitutionIdForCurrentUser,
@@ -182,6 +186,116 @@ function safeNumber(value: number | string | null | undefined) {
 
 async function getCurrentInstitutionIdOrThrow() {
   return getFinanceInstitutionIdForCurrentUser();
+}
+
+async function cancelReceiptForCorrectionAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) {
+    redirect("/admin/finance/locked");
+  }
+
+  const receiptId = String(formData.get("receipt_id") || "").trim();
+  const reasonInput = String(formData.get("reason") || "").trim();
+  const reason =
+    reasonInput ||
+    "Correction d'une erreur de saisie demandée par le gestionnaire.";
+
+  if (!receiptId) {
+    throw new Error("Reçu introuvable.");
+  }
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const supabase = await getSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const admin = getSupabaseServiceClient();
+
+  const { data: receipt, error: receiptErr } = await admin
+    .schema("finance")
+    .from("receipts")
+    .select(
+      "id,school_id,receipt_no,receipt_status,academic_year,student_id,notes",
+    )
+    .eq("id", receiptId)
+    .eq("school_id", institutionId)
+    .maybeSingle();
+
+  if (receiptErr) throw new Error(receiptErr.message);
+  if (!receipt) throw new Error("Reçu introuvable pour cet établissement.");
+
+  if ((receipt as any).receipt_status !== "posted") {
+    redirect(`/admin/finance/receipts/${receiptId}`);
+  }
+
+  let correctionClassId = "";
+  try {
+    const { data: firstAllocation } = await admin
+      .schema("finance")
+      .from("receipt_allocations")
+      .select("student_charge_id")
+      .eq("receipt_id", receiptId)
+      .limit(1)
+      .maybeSingle();
+
+    const chargeId = String((firstAllocation as any)?.student_charge_id || "");
+    if (chargeId) {
+      const { data: charge } = await admin
+        .schema("finance")
+        .from("student_charges")
+        .select("class_id")
+        .eq("id", chargeId)
+        .maybeSingle();
+      correctionClassId = String((charge as any)?.class_id || "");
+    }
+  } catch {
+    correctionClassId = "";
+  }
+
+  const nowIso = new Date().toISOString();
+  const previousNotes = String((receipt as any).notes || "").trim();
+  const auditLine = `[${nowIso}] Reçu annulé pour correction. Motif : ${reason}`;
+  const nextNotes = [previousNotes, auditLine].filter(Boolean).join("\n");
+
+  const { error: updateErr } = await admin
+    .schema("finance")
+    .from("receipts")
+    .update({
+      receipt_status: "cancelled",
+      cancelled_at: nowIso,
+      cancelled_by: user?.id ?? null,
+      cancel_reason: reason,
+      notes: nextNotes,
+      updated_at: nowIso,
+    } as any)
+    .eq("id", receiptId)
+    .eq("school_id", institutionId)
+    .eq("receipt_status", "posted");
+
+  if (updateErr) throw new Error(updateErr.message);
+
+  revalidatePath("/admin/finance");
+  revalidatePath("/admin/finance/payments");
+  revalidatePath("/admin/finance/receipts");
+  revalidatePath(`/admin/finance/receipts/${receiptId}`);
+  revalidatePath("/admin/finance/charges");
+  revalidatePath("/admin/finance/arrears");
+  revalidatePath("/admin/finance/reports");
+
+  const query = new URLSearchParams();
+  const academicYear = String((receipt as any).academic_year || "").trim();
+  const studentId = String((receipt as any).student_id || "").trim();
+  const receiptNo = String((receipt as any).receipt_no || "").trim();
+
+  if (academicYear) query.set("academic_year", academicYear);
+  if (receiptNo) query.set("correction_receipt", receiptNo);
+  if (studentId) query.set("student_id", studentId);
+  if (correctionClassId) query.set("class_id", correctionClassId);
+
+  const qs = query.toString();
+  redirect(`/admin/finance/payments${qs ? `?${qs}` : ""}`);
 }
 
 function buildOriginFromHeaders(h: Headers) {
@@ -880,15 +994,75 @@ export default async function FinanceReceiptPrintPage({
             Retour aux reçus
           </Link>
 
-          <Link
-            href={printHref}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
-          >
-            <Printer className="h-4 w-4" />
-            Imprimer / PDF
-          </Link>
+          {typedReceipt.receipt_status === "posted" ? (
+            <Link
+              href={printHref}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimer / PDF
+            </Link>
+          ) : (
+            <Link
+              href={`/admin/finance/payments?${new URLSearchParams({
+                ...(typedReceipt.academic_year
+                  ? { academic_year: typedReceipt.academic_year }
+                  : {}),
+                student_id: typedReceipt.student_id,
+                correction_receipt: typedReceipt.receipt_no,
+                ...(currentClass?.id ? { class_id: currentClass.id } : {}),
+              }).toString()}`}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Ressaisir le paiement
+            </Link>
+          )}
         </div>
       </div>
+
+      {typedReceipt.receipt_status === "posted" ? (
+        <details className="no-print rounded-[28px] border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950 shadow-sm">
+          <summary className="flex cursor-pointer list-none items-center gap-2 font-black uppercase tracking-[0.12em]">
+            <AlertTriangle className="h-4 w-4" />
+            Corriger une erreur de saisie
+          </summary>
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
+            <div className="leading-6">
+              Si le montant, l’élève, la catégorie ou la date est faux, on ne modifie pas silencieusement le reçu.
+              Le reçu sera marqué <strong>annulé pour correction</strong>, puis le solde sera rouvert pour permettre une nouvelle saisie propre.
+              Cela fonctionne avant comme après impression.
+            </div>
+            <form action={cancelReceiptForCorrectionAction} className="space-y-3 rounded-3xl border border-amber-200 bg-white p-4">
+              <input type="hidden" name="receipt_id" value={typedReceipt.id} />
+              <label className="block text-xs font-black uppercase tracking-[0.14em] text-amber-800">
+                Motif de correction
+              </label>
+              <textarea
+                name="reason"
+                required
+                rows={3}
+                defaultValue={`Erreur de saisie sur le reçu ${typedReceipt.receipt_no}.`}
+                className="w-full rounded-2xl border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-amber-400"
+              />
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-600 px-4 py-3 text-sm font-black text-white hover:bg-amber-700"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Annuler et ressaisir
+              </button>
+            </form>
+          </div>
+        </details>
+      ) : typedReceipt.cancel_reason ? (
+        <div className="no-print rounded-[28px] border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700 shadow-sm">
+          <div className="font-black uppercase tracking-[0.12em] text-slate-800">
+            Reçu annulé pour correction
+          </div>
+          <div className="mt-2">{typedReceipt.cancel_reason}</div>
+        </div>
+      ) : null}
 
       <article className="receipt-card relative overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
         {institutionSettings.institution_logo_url ? (
