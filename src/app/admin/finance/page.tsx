@@ -16,9 +16,11 @@ import {
   TrendingUp,
   BadgeDollarSign,
 } from "lucide-react";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getFinanceAccessForCurrentUser,
+  getFinanceInstitutionIdForCurrentUser,
+} from "@/lib/finance-access";
 import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 import {
@@ -112,29 +114,7 @@ function fullName(student: AdminStudentRow | undefined | null) {
 }
 
 async function getCurrentInstitutionIdOrThrow() {
-  const supabase = await getSupabaseServerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error("Utilisateur non authentifié.");
-  }
-
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-
-  if (!profile?.institution_id) {
-    throw new Error("Aucun établissement associé à cet utilisateur.");
-  }
-
-  return profile.institution_id as string;
+  return getFinanceInstitutionIdForCurrentUser();
 }
 
 function StatCard({

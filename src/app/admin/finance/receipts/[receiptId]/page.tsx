@@ -13,7 +13,10 @@ import {
   Wallet,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import {
+  getFinanceAccessForCurrentUser,
+  getFinanceInstitutionIdForCurrentUser,
+} from "@/lib/finance-access";
 import {
   getAdminStudentsServer,
   type AdminStudentRow,
@@ -178,29 +181,7 @@ function safeNumber(value: number | string | null | undefined) {
 }
 
 async function getCurrentInstitutionIdOrThrow() {
-  const supabase = await getSupabaseServerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error("Utilisateur non authentifié.");
-  }
-
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-
-  if (!profile?.institution_id) {
-    throw new Error("Aucun établissement associé à cet utilisateur.");
-  }
-
-  return profile.institution_id as string;
+  return getFinanceInstitutionIdForCurrentUser();
 }
 
 function buildOriginFromHeaders(h: Headers) {
@@ -610,8 +591,11 @@ export default async function FinanceReceiptPrintPage({
         @media print {
           html,
           body {
+            width: auto !important;
+            min-width: 0 !important;
             margin: 0 !important;
             padding: 0 !important;
+            overflow: visible !important;
             background: #ffffff !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
@@ -621,13 +605,28 @@ export default async function FinanceReceiptPrintPage({
             visibility: hidden !important;
           }
 
+          aside,
+          header,
+          nav,
+          .no-print {
+            display: none !important;
+          }
+
+          main {
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
           .receipt-print-root,
           .receipt-print-root * {
             visibility: visible !important;
           }
 
           .receipt-print-root {
-            position: absolute !important;
+            display: block !important;
+            position: fixed !important;
             inset: 0 !important;
             width: 100% !important;
             max-width: none !important;
@@ -637,20 +636,19 @@ export default async function FinanceReceiptPrintPage({
             background: #ffffff !important;
           }
 
-          .no-print {
-            display: none !important;
-          }
-
           .receipt-card {
+            display: flex !important;
+            flex-direction: column !important;
             width: 202mm !important;
-            min-height: 289mm !important;
             height: 289mm !important;
+            min-height: 289mm !important;
             max-height: 289mm !important;
             margin: 0 auto !important;
             overflow: hidden !important;
             border-radius: 0 !important;
             box-shadow: none !important;
             border: 1px solid #cbd5e1 !important;
+            font-family: Arial, Helvetica, sans-serif !important;
           }
 
           .receipt-watermark {
@@ -667,6 +665,7 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-header,
+          .receipt-title-strip,
           .receipt-main-grid,
           .receipt-footer {
             position: relative !important;
@@ -674,14 +673,23 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-header {
-            padding: 3.5mm 5mm !important;
+            padding: 3mm 5mm 2.5mm !important;
+            flex: 0 0 auto !important;
+          }
+
+          .receipt-title-strip {
+            margin: 2.5mm 5mm 0 !important;
+            padding: 2.3mm 3.5mm !important;
+            border-radius: 10px !important;
           }
 
           .receipt-main-grid {
             display: grid !important;
-            grid-template-columns: 1.15fr 0.85fr !important;
-            gap: 3.5mm !important;
-            padding: 3.5mm 5mm !important;
+            flex: 1 1 auto !important;
+            grid-template-columns: 1.14fr 0.86fr !important;
+            gap: 3mm !important;
+            padding: 3mm 5mm 2.5mm !important;
+            min-height: 0 !important;
           }
 
           .receipt-col {
@@ -729,8 +737,16 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-lines-table th,
           .receipt-lines-table td {
-            padding: 2.2mm 2.5mm !important;
-            font-size: 11px !important;
+            padding: 1.9mm 2.2mm !important;
+            font-size: 10.5px !important;
+            line-height: 1.22 !important;
+          }
+
+          .receipt-components-table th,
+          .receipt-components-table td {
+            padding: 1.45mm 2mm !important;
+            font-size: 10px !important;
+            line-height: 1.15 !important;
           }
 
           .receipt-lines-table,
@@ -821,8 +837,10 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-footer {
-            padding: 2.5mm 5mm !important;
-            font-size: 10px !important;
+            margin-top: auto !important;
+            padding: 2.2mm 5mm !important;
+            font-size: 9.8px !important;
+            line-height: 1.2 !important;
           }
         }
       `}</style>
@@ -961,6 +979,18 @@ export default async function FinanceReceiptPrintPage({
                 ) : null}
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="receipt-title-strip relative z-10 mx-6 mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-center">
+          <div className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">
+            Document officiel de paiement
+          </div>
+          <div className="mt-1 text-2xl font-black uppercase tracking-wide text-slate-950">
+            {receiptKindLabel}
+          </div>
+          <div className="mt-1 text-sm font-bold text-slate-600">
+            N° {typedReceipt.receipt_no}
           </div>
         </div>
 
@@ -1256,8 +1286,14 @@ export default async function FinanceReceiptPrintPage({
         </div>
 
         <div className="receipt-footer relative z-10 border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
-          Document généré le {formatDateTime(new Date().toISOString())} —{" "}
-          {schoolName}
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Document généré le {formatDateTime(new Date().toISOString())} — {schoolName}
+            </span>
+            <span className="font-bold text-slate-700">
+              www.mon-cahier.com · Reçu sécurisé par Mon Cahier
+            </span>
+          </div>
         </div>
       </article>
     </div>

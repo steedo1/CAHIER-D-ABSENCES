@@ -23,6 +23,48 @@ const FINANCE_ALLOWED_ROLES = new Set([
   "finance_manager",
 ]);
 
+function cleanId(value: unknown) {
+  return String(value || "").trim();
+}
+
+function roleMatchesInstitution(
+  role: string,
+  roleInstitutionId: unknown,
+  institutionId: string,
+) {
+  if (role === "super_admin") return true;
+
+  const roleInst = cleanId(roleInstitutionId);
+  if (!roleInst) return Boolean(institutionId);
+
+  return roleInst === institutionId;
+}
+
+export async function getFinanceInstitutionIdForCurrentUser(): Promise<string> {
+  const access = await getFinanceAccessForCurrentUser();
+
+  if (!access.ok || !access.institutionId) {
+    if (access.reason === "not_authenticated") {
+      throw new Error("Utilisateur non authentifié.");
+    }
+    if (access.reason === "no_institution") {
+      throw new Error("Aucun établissement associé à cet utilisateur.");
+    }
+    if (access.reason === "role_not_allowed") {
+      throw new Error("Accès financier non autorisé pour cet utilisateur.");
+    }
+    if (access.reason === "finance_not_enabled") {
+      throw new Error("Le module Finance n’est pas activé pour cet établissement.");
+    }
+    if (access.reason === "subscription_expired") {
+      throw new Error("L’abonnement Finance de cet établissement est expiré.");
+    }
+    throw new Error("Accès financier indisponible.");
+  }
+
+  return access.institutionId;
+}
+
 export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessResult> {
   const supabase = await getSupabaseServerClient();
 
@@ -38,17 +80,35 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
     };
   }
 
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: profile, error: profileErr }, { data: roleRows, error: roleErr }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("institution_id")
+        .eq("id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("user_roles")
+        .select("role,institution_id")
+        .eq("profile_id", user.id),
+    ]);
 
   if (profileErr) {
     throw new Error(profileErr.message);
   }
+  if (roleErr) {
+    throw new Error(roleErr.message);
+  }
 
-  const institutionId = profile?.institution_id ?? null;
+  const financeRoles = (roleRows ?? []).filter((row: any) =>
+    FINANCE_ALLOWED_ROLES.has(String(row.role || "")),
+  );
+
+  let institutionId = cleanId((profile as any)?.institution_id);
+  if (!institutionId) {
+    const roleInstitution = financeRoles.find((row: any) => cleanId(row.institution_id));
+    institutionId = cleanId((roleInstitution as any)?.institution_id);
+  }
 
   if (!institutionId) {
     return {
@@ -58,24 +118,9 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
     };
   }
 
-  const { data: roleRows, error: roleErr } = await supabase
-    .from("user_roles")
-    .select("role,institution_id")
-    .eq("profile_id", user.id);
-
-  if (roleErr) {
-    throw new Error(roleErr.message);
-  }
-
-  const hasFinanceRole = (roleRows ?? []).some((row) => {
-    const role = String(row.role);
-    const roleInstitutionId = row.institution_id ? String(row.institution_id) : null;
-
-    if (role === "super_admin") return true;
-    if (!FINANCE_ALLOWED_ROLES.has(role)) return false;
-
-    return roleInstitutionId === institutionId;
-  });
+  const hasFinanceRole = financeRoles.some((row: any) =>
+    roleMatchesInstitution(String(row.role || ""), row.institution_id, institutionId),
+  );
 
   if (!hasFinanceRole) {
     return {
@@ -85,6 +130,14 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
     };
   }
 
+  const hasFounderBypass = financeRoles.some((row: any) => {
+    const role = String(row.role || "");
+    return (
+      (role === "founder" || role === "super_admin") &&
+      roleMatchesInstitution(role, row.institution_id, institutionId)
+    );
+  });
+
   const { data: institution, error: institutionErr } = await supabase
     .from("institutions")
     .select("subscription_expires_at")
@@ -93,6 +146,21 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
 
   if (institutionErr) {
     throw new Error(institutionErr.message);
+  }
+
+  const expiresAt = institution?.subscription_expires_at ?? null;
+
+  // Le fondateur est le propriétaire opérationnel : il doit pouvoir contrôler
+  // la finance comme l'admin, même si le module est verrouillé côté école.
+  if (hasFounderBypass) {
+    return {
+      ok: true,
+      reason: "ok",
+      institutionId,
+      premiumEnabled: true,
+      subscriptionValid: true,
+      expiresAt,
+    };
   }
 
   const { data: financeSettings, error: financeErr } = await supabase
@@ -106,7 +174,6 @@ export async function getFinanceAccessForCurrentUser(): Promise<FinanceAccessRes
   }
 
   const premiumEnabled = financeSettings?.finance_premium_enabled === true;
-  const expiresAt = institution?.subscription_expires_at ?? null;
 
   const subscriptionValid =
     !!expiresAt &&

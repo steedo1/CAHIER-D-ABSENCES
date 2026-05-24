@@ -1,7 +1,7 @@
 // src/app/founder/ui/Shell.tsx
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,9 +12,35 @@ import {
   LayoutDashboard,
   ShieldCheck,
   Wallet,
+  Loader2,
 } from "lucide-react";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import TrueLogoutButton from "@/components/auth/TrueLogoutButton";
+
+function LoadingOverlay({ label }: { label: string }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-[28px] border border-white/10 bg-slate-950/95 p-6 text-white shadow-2xl">
+        <div className="flex items-center gap-4">
+          <div className="relative grid h-14 w-14 place-items-center rounded-2xl border border-emerald-400/20 bg-emerald-500/10">
+            <span className="absolute inset-0 rounded-2xl bg-emerald-400/10 blur-md" />
+            <Loader2 className="relative z-10 h-7 w-7 animate-spin text-emerald-300" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">
+              Chargement
+            </div>
+            <div className="mt-1 truncate text-lg font-black text-white">{label}</div>
+          </div>
+        </div>
+        <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-emerald-400" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 const NAV = [
   {
@@ -32,10 +58,10 @@ const NAV = [
     Icon: CalendarDays,
   },
   {
-    href: "/founder/finance",
-    label: "Finance",
+    href: "/admin/finance",
+    label: "Gestion financière",
     shortLabel: "Finance",
-    description: "Encaissements et dépenses",
+    description: "Module complet admin",
     Icon: Wallet,
   },
 ];
@@ -46,11 +72,70 @@ function isActivePath(pathname: string, href: string) {
 
 export default function FounderShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "/founder/dashboard";
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeLabel, setRouteLabel] = useState("Chargement…");
+
+  useEffect(() => {
+    setRouteLoading(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!routeLoading) return;
+    const timer = window.setTimeout(() => setRouteLoading(false), 25000);
+    return () => window.clearTimeout(timer);
+  }, [routeLoading]);
+
+  function startLoading(label: string) {
+    setRouteLabel(label || "Chargement…");
+    setRouteLoading(true);
+  }
+
+  function handleShellClickCapture(event: MouseEvent<HTMLDivElement>) {
+    if (event.defaultPrevented) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    const target = event.target as HTMLElement | null;
+    const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    if (anchor.target && anchor.target !== "_self") return;
+    if (anchor.hasAttribute("download")) return;
+
+    const href = anchor.getAttribute("href") || "";
+    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) return;
+
+    let nextUrl: URL;
+    try {
+      nextUrl = new URL(anchor.href, window.location.href);
+    } catch {
+      return;
+    }
+
+    if (nextUrl.origin !== window.location.origin) return;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const next = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    if (current === next) return;
+
+    const label =
+      anchor.getAttribute("aria-label") ||
+      anchor.textContent?.replace(/\s+/g, " ").trim() ||
+      "Ouverture de la page…";
+
+    startLoading(label.length > 48 ? "Ouverture de la page…" : label);
+  }
+
+  function handleShellSubmitCapture(event: FormEvent<HTMLDivElement>) {
+    const form = event.target as HTMLFormElement | null;
+    if (!form || form.tagName !== "FORM") return;
+    if (form.target && form.target !== "_self") return;
+    startLoading("Traitement en cours…");
+  }
+
   const activeItem = NAV.find((item) => isActivePath(pathname, item.href)) ?? NAV[0];
   const ActiveIcon = activeItem.Icon;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
+    <div className="min-h-screen bg-slate-50 text-slate-950" onClickCapture={handleShellClickCapture} onSubmitCapture={handleShellSubmitCapture}>
+      {routeLoading ? <LoadingOverlay label={routeLabel} /> : null}
       <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
