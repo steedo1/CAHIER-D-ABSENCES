@@ -1,4 +1,5 @@
 // src/app/founder/dashboard/page.tsx
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Activity,
@@ -268,7 +269,7 @@ export default async function FounderDashboardPage() {
     }
   }
 
-  const [sessions, periods, receipts, expenses] = await Promise.all([
+  const [sessions, periods, receipts, expenses, feeCategories, feeSchedules] = await Promise.all([
     safeData<any[]>(
       "teacher_sessions",
       service
@@ -311,13 +312,40 @@ export default async function FounderDashboardPage() {
         .eq("expense_date", today),
       [],
     ),
+    safeData<any[]>(
+      "finance.fee_categories",
+      service
+        .schema("finance")
+        .from("fee_categories")
+        .select("id,school_id,is_active")
+        .in("school_id", institutionIds)
+        .eq("is_active", true),
+      [],
+    ),
+    safeData<any[]>(
+      "finance.fee_schedules",
+      service
+        .schema("finance")
+        .from("fee_schedules")
+        .select("id,school_id,academic_year,is_active")
+        .in("school_id", institutionIds)
+        .eq("is_active", true),
+      [],
+    ),
   ]);
 
   const totalReceiptsToday = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
   const totalCollectedCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
+  const totalBilledCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.net_amount || 0), 0);
+  const totalBalanceDueCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.balance_due || 0), 0);
   const totalExpenses = expenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
   const net = totalReceiptsToday - totalExpenses;
   const totalStudentStats = buildStudentStats(enrollments);
+  const activeFeeCategories = (feeCategories ?? []).length;
+  const activeFeeSchedules = (feeSchedules ?? []).filter((row: any) => {
+    const schoolId = String(row.school_id || "");
+    return String(row.academic_year || "") === currentYearByInstitution.get(schoolId);
+  }).length;
 
   const rows = institutions.map((school) => {
     const schoolId = school.id;
@@ -368,6 +396,72 @@ export default async function FounderDashboardPage() {
     { label: "Non internes", value: totalStudentStats.notBoarders, hint: "Internat non", Icon: School2 },
     { label: "Garçons", value: totalStudentStats.boys, hint: "Sexe masculin", Icon: GraduationCap },
     { label: "Filles", value: totalStudentStats.girls, hint: "Sexe féminin", Icon: GraduationCap },
+  ];
+
+  const financeActionCards = [
+    {
+      href: "/admin/finance",
+      label: "Tableau financier",
+      value: money(totalBilledCurrentYear),
+      hint: "Même tableau complet que l’admin",
+      Icon: Wallet,
+    },
+    {
+      href: "/admin/finance/fees",
+      label: "Catégories de frais",
+      value: activeFeeCategories,
+      hint: "Créer et gérer les catégories",
+      Icon: School2,
+    },
+    {
+      href: "/admin/finance/fees/schedules",
+      label: "Barèmes & échéanciers",
+      value: activeFeeSchedules,
+      hint: "Définir les montants par classe",
+      Icon: CalendarCheck2,
+    },
+    {
+      href: "/admin/finance/charges",
+      label: "Dettes élèves",
+      value: balanceRows.length,
+      hint: "Contrôler les situations ouvertes",
+      Icon: Receipt,
+    },
+    {
+      href: "/admin/finance/payments",
+      label: "Encaissements",
+      value: money(totalCollectedCurrentYear),
+      hint: "Enregistrer les paiements",
+      Icon: ArrowUpRight,
+    },
+    {
+      href: "/admin/finance/receipts",
+      label: "Reçus",
+      value: receipts.length,
+      hint: "Consulter et imprimer les reçus",
+      Icon: Receipt,
+    },
+    {
+      href: "/admin/finance/arrears",
+      label: "Impayés",
+      value: money(totalBalanceDueCurrentYear),
+      hint: "Suivre les restes à payer",
+      Icon: ArrowDownRight,
+    },
+    {
+      href: "/admin/finance/expenses",
+      label: "Dépenses",
+      value: money(totalExpenses),
+      hint: "Saisir les dépenses",
+      Icon: Wallet,
+    },
+    {
+      href: "/admin/finance/reports",
+      label: "Rapports",
+      value: "Stats",
+      hint: "Synthèses et exports",
+      Icon: Activity,
+    },
   ];
 
   return (
@@ -441,6 +535,47 @@ export default async function FounderDashboardPage() {
             À compléter : {totalStudentStats.assignmentUnknown} affectation(s), {totalStudentStats.boardingUnknown} internat(s), {totalStudentStats.genderUnknown} sexe(s) non renseigné(s).
           </div>
         )}
+      </section>
+
+      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
+              <Wallet className="h-4 w-4" />
+              Accès finance complet
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Le fondateur utilise les mêmes écrans d’action que l’administrateur : catégories, barèmes, dettes, encaissements, reçus, impayés, dépenses et rapports.
+            </p>
+          </div>
+          <Link
+            href="/admin/finance"
+            className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-slate-800"
+          >
+            Ouvrir le module admin complet
+          </Link>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+          {financeActionCards.map(({ href, label, value, hint, Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50/50 hover:shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">{label}</div>
+                  <div className="mt-1 truncate text-xl font-black text-slate-950">{value}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
+                </div>
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-emerald-700 ring-1 ring-slate-200 transition group-hover:ring-emerald-200">
+                  <Icon className="h-5 w-5" />
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
