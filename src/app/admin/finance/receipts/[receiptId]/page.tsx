@@ -1,4 +1,5 @@
 // src/app/admin/finance/receipts/[receiptId]/page.tsx
+import { Fragment } from "react";
 import Link from "next/link";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
@@ -1052,49 +1053,114 @@ export default async function FinanceReceiptPrintPage({
                       </tr>
                     </thead>
                     <tbody>
-                      {displayLines.map((line) => (
-                        <tr
-                          key={line.key}
-                          className="border-t border-slate-200"
-                        >
-                          <td className="px-5 py-4 text-slate-900">
-                            <div className="font-semibold">{line.label}</div>
-                            {line.components.length > 0 ? (
-                              <div className="mt-2 space-y-1 text-xs font-medium text-slate-500">
-                                {line.components.map((component) => (
-                                  <div
-                                    key={component.id}
-                                    className="flex items-center justify-between gap-3"
-                                  >
-                                    <span>{component.label}</span>
-                                    <span>{formatMoney(component.amount)}</span>
+                      {displayLines.map((line) => {
+                        const componentsTotal = line.components.reduce(
+                          (sum, component) =>
+                            sum + safeNumber(component.amount),
+                          0,
+                        );
+
+                        return (
+                          <Fragment key={line.key}>
+                            <tr className="border-t border-slate-200 align-top">
+                              <td className="px-5 py-4 text-slate-900">
+                                <div className="font-semibold">{line.label}</div>
+                                {line.components.length > 0 ? (
+                                  <div className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-emerald-700">
+                                    {line.components.length} sous-rubrique
+                                    {line.components.length > 1 ? "s" : ""} réglée
+                                    {line.components.length > 1 ? "s" : ""}
                                   </div>
-                                ))}
-                              </div>
+                                ) : null}
+                              </td>
+                              <td className="px-5 py-4 text-slate-600">
+                                {formatDate(line.dueDate)}
+                              </td>
+                              <td className="px-5 py-4 text-slate-700">
+                                {formatMoney(line.expected)}
+                              </td>
+                              <td className="px-5 py-4 text-emerald-700">
+                                {formatMoney(
+                                  Math.max(
+                                    safeNumber(line.paid) -
+                                      safeNumber(line.amount),
+                                    0,
+                                  ),
+                                )}
+                              </td>
+                              <td className="px-5 py-4 text-rose-700">
+                                {formatMoney(line.remaining)}
+                              </td>
+                              <td className="px-5 py-4 font-bold text-slate-900">
+                                {formatMoney(line.amount)}
+                              </td>
+                            </tr>
+
+                            {line.components.length > 0 ? (
+                              <tr
+                                key={`${line.key}-components`}
+                                className="border-t border-slate-100 bg-slate-50/60"
+                              >
+                                <td colSpan={6} className="px-5 pb-5 pt-3">
+                                  <div className="receipt-components-panel overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-sm">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 bg-emerald-50/80 px-4 py-3">
+                                      <div>
+                                        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                                          Détail des frais annexes réglés
+                                        </div>
+                                        <div className="mt-1 text-xs text-slate-600">
+                                          Sous-rubriques couvertes par ce reçu.
+                                        </div>
+                                      </div>
+                                      <div className="rounded-full bg-white px-3 py-1.5 text-sm font-black text-emerald-700 shadow-sm">
+                                        {formatMoney(componentsTotal)}
+                                      </div>
+                                    </div>
+
+                                    <table className="receipt-components-table w-full text-xs">
+                                      <thead className="bg-slate-50 text-left text-slate-500">
+                                        <tr>
+                                          <th className="px-4 py-2 font-bold">
+                                            Sous-rubrique
+                                          </th>
+                                          <th className="px-4 py-2 text-right font-bold">
+                                            Montant couvert
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {line.components.map((component) => (
+                                          <tr
+                                            key={component.id}
+                                            className="border-t border-slate-100"
+                                          >
+                                            <td className="px-4 py-2 font-semibold text-slate-700">
+                                              {component.label}
+                                            </td>
+                                            <td className="px-4 py-2 text-right font-black text-slate-900">
+                                              {formatMoney(component.amount)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                      <tfoot>
+                                        <tr className="border-t border-emerald-100 bg-emerald-50/60">
+                                          <td className="px-4 py-2 font-black text-slate-900">
+                                            Total des sous-rubriques réglées
+                                          </td>
+                                          <td className="px-4 py-2 text-right font-black text-emerald-700">
+                                            {formatMoney(componentsTotal)}
+                                          </td>
+                                        </tr>
+                                      </tfoot>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
                             ) : null}
-                          </td>
-                          <td className="px-5 py-4 text-slate-600">
-                            {formatDate(line.dueDate)}
-                          </td>
-                          <td className="px-5 py-4 text-slate-700">
-                            {formatMoney(line.expected)}
-                          </td>
-                          <td className="px-5 py-4 text-emerald-700">
-                            {formatMoney(
-                              Math.max(
-                                safeNumber(line.paid) - safeNumber(line.amount),
-                                0,
-                              ),
-                            )}
-                          </td>
-                          <td className="px-5 py-4 text-rose-700">
-                            {formatMoney(line.remaining)}
-                          </td>
-                          <td className="px-5 py-4 font-bold text-slate-900">
-                            {formatMoney(line.amount)}
-                          </td>
-                        </tr>
-                      ))}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-slate-200 bg-slate-50">
