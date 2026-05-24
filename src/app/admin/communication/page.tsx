@@ -23,6 +23,7 @@ type ClassItem = {
 
 type MetaResponse = {
   ok: boolean;
+  institution_name?: string | null;
   academic_year: string | null;
   channels: {
     push_enabled: boolean;
@@ -208,6 +209,8 @@ export default function AdminCommunicationPage() {
   const [body, setBody] = useState("");
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
 
+  const automaticSignature = meta?.institution_name ? `— ${meta.institution_name}` : "— Mon Cahier";
+
   const levels = useMemo(() => {
     const list = meta?.levels?.length ? meta.levels : ["6e", "5e", "4e", "3e", "2nde", "1re", "Terminale"];
     return Array.from(new Set(list));
@@ -372,7 +375,7 @@ export default function AdminCommunicationPage() {
             </div>
             <h1 className="mt-4 text-2xl font-black tracking-tight md:text-4xl">Messages ciblés</h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200">
-              Envoyer une information aux parents selon le cycle, le niveau ou la classe, ou au personnel avec une cible simple : tout le personnel, enseignants ou professeurs principaux.
+              Envoyer une information aux parents selon le cycle, le niveau ou la classe, ou au personnel avec une cible simple. Les messages sont signés automatiquement au nom de l’établissement.
             </p>
           </div>
 
@@ -527,7 +530,12 @@ export default function AdminCommunicationPage() {
               <div>
                 <Label>Message</Label>
                 <Textarea value={body} maxLength={900} onChange={(e) => setBody(e.target.value)} placeholder="Rédige le message à envoyer..." />
-                <div className="mt-2 text-right text-xs font-bold text-slate-400">{body.length}/900</div>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="rounded-2xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-slate-200">
+                    Signature automatique : <span className="text-slate-950">{automaticSignature}</span>
+                  </div>
+                  <div className="text-right text-xs font-bold text-slate-400">{body.length}/900</div>
+                </div>
               </div>
             </div>
 

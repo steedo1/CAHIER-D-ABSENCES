@@ -160,6 +160,35 @@ export async function getCommunicationChannelState(
   };
 }
 
+
+export async function getCommunicationInstitution(
+  srv: SupabaseClient,
+  institutionId: string
+) {
+  const id = s(institutionId);
+  if (!id) {
+    return { id: "", name: null as string | null, acronym: null as string | null, display_name: "Mon Cahier" };
+  }
+
+  const { data, error } = await srv
+    .from("institutions")
+    .select("id,name,acronym")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+
+  const name = s((data as any)?.name) || null;
+  const acronym = s((data as any)?.acronym) || null;
+
+  return {
+    id,
+    name,
+    acronym,
+    display_name: name || acronym || "Mon Cahier",
+  };
+}
+
 export async function getCommunicationClasses(
   srv: SupabaseClient,
   institutionId: string,

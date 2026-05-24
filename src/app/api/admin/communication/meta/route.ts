@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getCommunicationChannelState,
   getCommunicationClasses,
+  getCommunicationInstitution,
   requireCommunicationAdmin,
 } from "../_helpers";
 
@@ -13,9 +14,10 @@ export async function GET() {
     const ctx = await requireCommunicationAdmin();
     if ("error" in ctx) return ctx.error;
 
-    const [channels, classes] = await Promise.all([
+    const [channels, classes, institution] = await Promise.all([
       getCommunicationChannelState(ctx.srv, ctx.institutionId),
       getCommunicationClasses(ctx.srv, ctx.institutionId, ctx.academicYear),
+      getCommunicationInstitution(ctx.srv, ctx.institutionId),
     ]);
 
     const levels = Array.from(new Set(classes.map((cls) => cls.level).filter(Boolean)));
@@ -23,6 +25,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       institution_id: ctx.institutionId,
+      institution_name: institution.display_name,
       academic_year: ctx.academicYear,
       channels,
       classes,

@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
-  const kindOr = "payload->>kind.eq.attendance,payload->>kind.eq.penalty";
+  const kindOr = "payload->>kind.eq.attendance,payload->>kind.eq.penalty,payload->>kind.eq.communication,payload->>event.eq.communication";
 
   if (user) {
     // ── Mode A: profil parent Supabase (inchangé)

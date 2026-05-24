@@ -4,6 +4,7 @@ import { triggerSmsDispatch } from "@/lib/sms-dispatch";
 import {
   enrichRecipientCapabilities,
   getCommunicationChannelState,
+  getCommunicationInstitution,
   requireCommunicationAdmin,
   resolveCommunicationRecipients,
   summarizeRecipients,
@@ -22,6 +23,24 @@ function s(value: unknown) {
 
 function safeText(value: unknown, max: number) {
   return s(value).replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function buildSignedCommunicationBody(message: string, senderName: string) {
+  const cleanMessage = s(message);
+  const cleanSender = s(senderName) || "Mon Cahier";
+  const signature = `— ${cleanSender}`;
+
+  if (!cleanMessage) return signature;
+
+  const lowerMessage = cleanMessage.toLowerCase();
+  const lowerSender = cleanSender.toLowerCase();
+  const lowerSignature = signature.toLowerCase();
+
+  if (lowerMessage.endsWith(lowerSender) || lowerMessage.endsWith(lowerSignature)) {
+    return cleanMessage;
+  }
+
+  return `${cleanMessage}\n\n${signature}`;
 }
 
 function jsonClone<T>(value: T): T {
@@ -54,7 +73,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "title_and_body_required" }, { status: 400 });
     }
 
-    const channels = await getCommunicationChannelState(ctx.srv, ctx.institutionId);
+    const [channels, institution] = await Promise.all([
+      getCommunicationChannelState(ctx.srv, ctx.institutionId),
+      getCommunicationInstitution(ctx.srv, ctx.institutionId),
+    ]);
+    const senderName = institution.display_name || "Mon Cahier";
+    const signedMessageBody = buildSignedCommunicationBody(messageBody, senderName);
+    const pushTitle = senderName;
+
     const wantsPush = channel === "push" || channel === "push_sms";
     const wantsSms = channel === "sms" || channel === "push_sms";
 
@@ -105,7 +131,7 @@ export async function POST(req: NextRequest) {
       target_label: resolved.target_label,
       channel,
       title,
-      body: messageBody,
+      body: signedMessageBody,
       status: "queued",
       recipient_count: summary.recipient_count,
       push_queued_count: pushRecipients.length,
@@ -117,6 +143,10 @@ export async function POST(req: NextRequest) {
         class_count: resolved.class_count,
         preview: summary,
         channels,
+        sender_name: senderName,
+        signature: `— ${senderName}`,
+        original_title: title,
+        original_body: messageBody,
       },
       sent_at: nowIso,
     } as any;
@@ -175,14 +205,16 @@ export async function POST(req: NextRequest) {
     const commonPayload = {
       kind: "communication",
       event: "communication",
-      title,
-      body: messageBody,
+      title: pushTitle,
+      body: signedMessageBody,
+      campaign_title: title,
       campaign_id: campaignId,
       audience_type: audienceType,
       target_type: targetType,
       target_value: targetValue,
       target_label: resolved.target_label,
-      institution: { id: ctx.institutionId },
+      institution: { id: ctx.institutionId, name: senderName },
+      sender_name: senderName,
       created_at: nowIso,
       url: "/",
     };
@@ -203,8 +235,8 @@ export async function POST(req: NextRequest) {
             channel: "push",
             related_student_ids: r.related_student_ids,
           },
-          title,
-          body: messageBody,
+          title: pushTitle,
+          body: signedMessageBody,
           status: WAIT_STATUS,
           send_after: nowIso,
           meta: {
@@ -234,8 +266,8 @@ export async function POST(req: NextRequest) {
             channel: "sms",
             related_student_ids: r.related_student_ids,
           },
-          title,
-          body: messageBody,
+          title: pushTitle,
+          body: signedMessageBody,
           status: WAIT_STATUS,
           send_after: nowIso,
           meta: {
