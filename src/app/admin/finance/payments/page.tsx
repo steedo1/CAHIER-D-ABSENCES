@@ -1174,7 +1174,7 @@ async function createPaymentAction(formData: FormData) {
       amount,
     });
 
-    allocationDrafts = [{ charge, amount, selectedComponents }];
+    allocationDrafts = [{ charge, amount, selectedComponents, skippedComponents: [] }];
   }
 
   const primaryCharge = allocationDrafts[0]?.charge;
