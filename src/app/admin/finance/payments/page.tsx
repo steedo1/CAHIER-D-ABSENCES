@@ -230,20 +230,48 @@ function normalizeSearch(value: unknown) {
 function isFinanceInternatCategory(
   category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
 ) {
-  const text = normalizeSearch(`${category?.code || ""} ${category?.name || ""}`);
+  const text = normalizeSearch(
+    `${category?.code || ""} ${category?.name || ""}`,
+  );
   return text.includes("internat");
 }
 
 function isFinanceScolariteCategory(
   category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
 ) {
-  const text = normalizeSearch(`${category?.code || ""} ${category?.name || ""}`);
+  const text = normalizeSearch(
+    `${category?.code || ""} ${category?.name || ""}`,
+  );
   return (
     text.includes("scolar") ||
     text.includes("ecolage") ||
     text.includes("écolage") ||
     text.includes("inscription")
   );
+}
+
+function scheduleAppliesToFinanceStudent(
+  schedule: Pick<FeeScheduleRow, "label">,
+  student: Pick<AdminStudentRow, "is_affecte" | "is_boarder">,
+) {
+  const label = normalizeSearch(schedule.label);
+
+  if (label.includes("ecolage affect") || label.includes("écolage affect")) {
+    return student.is_affecte === true;
+  }
+
+  if (
+    label.includes("ecolage non affect") ||
+    label.includes("écolage non affect")
+  ) {
+    return student.is_affecte === false;
+  }
+
+  if (label.includes("internat") || label.includes("pension")) {
+    return student.is_boarder === true;
+  }
+
+  return true;
 }
 
 function paymentTypeLabel(value: string) {
@@ -950,8 +978,7 @@ function parsePaymentAllocationPlan(
   }
 
   return Array.from(merged.values()).filter(
-    (item) =>
-      item.amount > 0 || item.includeOnReceipt || item.closeUnselectedComponents,
+    (item) => item.amount > 0 || item.includeOnReceipt,
   );
 }
 
@@ -1026,19 +1053,6 @@ async function resolveAllocationPlanForPayment({
             !selectedIds.has(component.id) && !alreadyPaidIds.has(component.id),
         );
       }
-    } else if (item.closeUnselectedComponents && charge.fee_schedule_id) {
-      const [activeComponents, alreadyPaidComponents] = await Promise.all([
-        fetchActiveScheduleComponents(institutionId, [charge.fee_schedule_id]),
-        fetchPaidComponentsForCharges(institutionId, [charge.id]),
-      ]);
-      const alreadyPaidIds = new Set(
-        alreadyPaidComponents
-          .filter((row) => row.receipt_status !== "cancelled")
-          .map((row) => row.fee_schedule_component_id),
-      );
-      skippedComponents = activeComponents.filter(
-        (component) => !alreadyPaidIds.has(component.id),
-      );
     } else if (charge.fee_schedule_id && item.componentMode !== "hidden") {
       const activeComponents = await fetchActiveScheduleComponents(
         institutionId,
@@ -1211,7 +1225,9 @@ async function createPaymentAction(formData: FormData) {
       amount,
     });
 
-    allocationDrafts = [{ charge, amount, selectedComponents, skippedComponents: [] }];
+    allocationDrafts = [
+      { charge, amount, selectedComponents, skippedComponents: [] },
+    ];
   }
 
   const primaryCharge = allocationDrafts[0]?.charge;
@@ -1422,6 +1438,155 @@ async function createPaymentAction(formData: FormData) {
   redirect(`/admin/finance/receipts/${receipt.id}?autoprint=1`);
 }
 
+async function ensureMissingChargesForPaymentPage({
+  institutionId,
+  userId,
+  classRows,
+  studentRows,
+}: {
+  institutionId: string;
+  userId: string;
+  classRows: ClassRow[];
+  studentRows: AdminStudentRow[];
+}) {
+  const classIds = Array.from(
+    new Set(classRows.map((row) => row.id).filter(Boolean)),
+  );
+  if (classIds.length === 0 || studentRows.length === 0) return;
+
+  const admin = getSupabaseServiceClient();
+
+  const schedules: FeeScheduleRow[] = [];
+  for (const ids of chunkArray(classIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("fee_schedules")
+      .select(
+        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes",
+      )
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .in("class_id", ids);
+
+    if (error) {
+      throw new Error(`Lecture des barèmes impossible : ${error.message}`);
+    }
+
+    schedules.push(...((data ?? []) as FeeScheduleRow[]));
+  }
+
+  if (schedules.length === 0) return;
+
+  const schedulesByClass = new Map<string, FeeScheduleRow[]>();
+  for (const schedule of schedules) {
+    if (!schedule.class_id) continue;
+    if (!schedulesByClass.has(schedule.class_id)) {
+      schedulesByClass.set(schedule.class_id, []);
+    }
+    schedulesByClass.get(schedule.class_id)!.push(schedule);
+  }
+
+  const scheduleIds = schedules.map((row) => row.id);
+  const existingSet = new Set<string>();
+  for (const ids of chunkArray(scheduleIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("student_charges")
+      .select("student_id,fee_schedule_id")
+      .eq("school_id", institutionId)
+      .in("fee_schedule_id", ids)
+      .range(0, 9999);
+
+    if (error) {
+      throw new Error(
+        `Lecture des situations financières existantes impossible : ${error.message}`,
+      );
+    }
+
+    for (const row of (data ?? []) as Array<{
+      student_id: string;
+      fee_schedule_id: string | null;
+    }>) {
+      if (row.student_id && row.fee_schedule_id) {
+        existingSet.add(`${row.student_id}:${row.fee_schedule_id}`);
+      }
+    }
+  }
+
+  const academicYearCodes = Array.from(
+    new Set(
+      classRows
+        .map((row) => row.academic_year)
+        .filter((code): code is string => Boolean(code)),
+    ),
+  );
+  const academicYearIdByCode = new Map<string, string>();
+
+  if (academicYearCodes.length > 0) {
+    const { data, error } = await admin
+      .from("academic_years")
+      .select("id,code")
+      .eq("institution_id", institutionId)
+      .in("code", academicYearCodes);
+
+    if (error) throw new Error(error.message);
+
+    for (const row of (data ?? []) as Array<{ id: string; code: string }>) {
+      if (row.code) academicYearIdByCode.set(row.code, row.id);
+    }
+  }
+
+  const classById = new Map(classRows.map((row) => [row.id, row]));
+  const today = new Date().toISOString().slice(0, 10);
+  const nowIso = new Date().toISOString();
+  const inserts: any[] = [];
+
+  for (const student of studentRows) {
+    if (!student.class_id) continue;
+    const cls = classById.get(student.class_id);
+    if (!cls) continue;
+
+    const classSchedules = schedulesByClass.get(student.class_id) ?? [];
+    for (const schedule of classSchedules) {
+      if (!scheduleAppliesToFinanceStudent(schedule, student)) continue;
+      if (existingSet.has(`${student.id}:${schedule.id}`)) continue;
+
+      existingSet.add(`${student.id}:${schedule.id}`);
+      inserts.push({
+        school_id: institutionId,
+        academic_year_id: cls.academic_year
+          ? academicYearIdByCode.get(cls.academic_year) || null
+          : null,
+        academic_year: schedule.academic_year || cls.academic_year || null,
+        student_id: student.id,
+        class_id: student.class_id,
+        fee_schedule_id: schedule.id,
+        fee_category_id: schedule.fee_category_id,
+        label: schedule.label,
+        base_amount: Number(schedule.amount || 0),
+        due_date: schedule.due_date || null,
+        charge_date: today,
+        status: "pending",
+        notes:
+          schedule.notes ||
+          `Situation créée automatiquement depuis le barème ${schedule.label}`,
+        created_by: userId,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+    }
+  }
+
+  for (const part of chunkArray(inserts, 500)) {
+    if (part.length === 0) continue;
+    const { error } = await admin
+      .schema("finance")
+      .from("student_charges")
+      .insert(part);
+    if (error) throw new Error(error.message);
+  }
+}
+
 async function fetchAllChargeBalancesForPayments({
   institutionId,
   classIds,
@@ -1520,7 +1685,7 @@ export default async function FinancePaymentsPage({
   const params = searchParams ? await searchParams : undefined;
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
-  const { institutionId } = await getCurrentContextOrThrow();
+  const { institutionId, userId } = await getCurrentContextOrThrow();
   await ensureDefaultFeeCategories(institutionId);
 
   const admin = getSupabaseServiceClient();
@@ -1570,6 +1735,13 @@ export default async function FinancePaymentsPage({
     student.class_id ? classIdSet.has(student.class_id) : false,
   );
   const studentIds = studentRows.map((student) => student.id);
+
+  await ensureMissingChargesForPaymentPage({
+    institutionId,
+    userId,
+    classRows,
+    studentRows,
+  });
 
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([

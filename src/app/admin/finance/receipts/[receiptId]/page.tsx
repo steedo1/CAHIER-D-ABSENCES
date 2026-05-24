@@ -147,10 +147,6 @@ function isInternatCharge(label: string | null | undefined) {
   return normalizeText(label).includes("internat");
 }
 
-function isPensionCharge(label: string | null | undefined) {
-  return normalizeText(label).includes("pension");
-}
-
 function safeNumber(value: number | string | null | undefined) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
@@ -407,8 +403,7 @@ export default async function FinanceReceiptPrintPage({
         );
       }
 
-      const { data: scolariteData, error: scolariteErr } =
-        await scolariteQuery;
+      const { data: scolariteData, error: scolariteErr } = await scolariteQuery;
 
       if (!scolariteErr) {
         scolariteReferenceCharges = (scolariteData ?? []) as ChargeRow[];
@@ -419,7 +414,9 @@ export default async function FinanceReceiptPrintPage({
   const scolariteLinesForTotals =
     scolariteReferenceCharges.length > 0
       ? scolariteReferenceCharges
-      : rawLines.map((line) => line.charge).filter((c): c is ChargeRow => Boolean(c));
+      : rawLines
+          .map((line) => line.charge)
+          .filter((c): c is ChargeRow => Boolean(c));
 
   const displayLines = allLinesAreScolarite
     ? [
@@ -446,41 +443,34 @@ export default async function FinanceReceiptPrintPage({
           components: [] as ReceiptAllocationComponentRow[],
         },
       ]
-    : rawLines
-        .map((line) => {
-          const visibleComponents = line.components.filter(
-            (component) => safeNumber(component.amount) > 0,
-          );
-          const hasClosedOptionalComponents = line.components.some(
-            (component) => safeNumber(component.amount) === 0,
-          );
-          const componentExpected = visibleComponents.reduce(
-            (sum, component) => sum + safeNumber(component.amount),
-            0,
-          );
-
-          return {
-            key: line.alloc.id,
-            label: line.charge?.label || "Dette introuvable",
-            dueDate: line.charge?.due_date ?? null,
-            expected:
-              componentExpected > 0
-                ? componentExpected
-                : safeNumber(line.charge?.net_amount),
-            paid: safeNumber(line.charge?.paid_amount),
-            remaining: hasClosedOptionalComponents
-              ? 0
-              : safeNumber(line.charge?.balance_due),
-            amount: safeNumber(line.alloc.amount),
-            components: visibleComponents,
-          };
-        })
-        .filter(
-          (line) =>
-            safeNumber(line.amount) > 0 ||
-            line.components.length > 0 ||
-            isPensionCharge(line.label),
+    : rawLines.map((line) => {
+        const visibleComponents = line.components.filter(
+          (component) => safeNumber(component.amount) > 0,
         );
+        const hasClosedOptionalComponents = line.components.some(
+          (component) => safeNumber(component.amount) === 0,
+        );
+        const componentExpected = visibleComponents.reduce(
+          (sum, component) => sum + safeNumber(component.amount),
+          0,
+        );
+
+        return {
+          key: line.alloc.id,
+          label: line.charge?.label || "Dette introuvable",
+          dueDate: line.charge?.due_date ?? null,
+          expected:
+            componentExpected > 0
+              ? componentExpected
+              : safeNumber(line.charge?.net_amount),
+          paid: safeNumber(line.charge?.paid_amount),
+          remaining: hasClosedOptionalComponents
+            ? 0
+            : safeNumber(line.charge?.balance_due),
+          amount: safeNumber(line.alloc.amount),
+          components: visibleComponents,
+        };
+      });
 
   const totalAllocated = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.amount),
@@ -492,6 +482,10 @@ export default async function FinanceReceiptPrintPage({
   );
   const totalPaidAfterReceipt = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.paid),
+    0,
+  );
+  const totalPaidBeforeReceipt = Math.max(
+    totalPaidAfterReceipt - totalAllocated,
     0,
   );
   const totalRemainingAfterReceipt = displayLines.reduce(
@@ -996,7 +990,12 @@ export default async function FinanceReceiptPrintPage({
                             {formatMoney(line.expected)}
                           </td>
                           <td className="px-5 py-4 text-emerald-700">
-                            {formatMoney(line.paid)}
+                            {formatMoney(
+                              Math.max(
+                                safeNumber(line.paid) - safeNumber(line.amount),
+                                0,
+                              ),
+                            )}
                           </td>
                           <td className="px-5 py-4 text-rose-700">
                             {formatMoney(line.remaining)}
@@ -1042,19 +1041,25 @@ export default async function FinanceReceiptPrintPage({
 
                 <div className="receipt-summary-grid mt-4 grid gap-3 text-sm text-slate-700">
                   <div className="flex items-center justify-between gap-3">
-                    <span>Ventilation totale</span>
-                    <span className="font-bold text-slate-900">
-                      {formatMoney(totalAllocated)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
                     <span>Total attendu</span>
                     <span className="font-bold text-slate-900">
                       {formatMoney(totalExpected)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span>Total déjà versé</span>
+                    <span>Déjà payé</span>
+                    <span className="font-bold text-slate-900">
+                      {formatMoney(totalPaidBeforeReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Montant du reçu</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatMoney(totalAllocated)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Total versé</span>
                     <span className="font-bold text-emerald-700">
                       {formatMoney(totalPaidAfterReceipt)}
                     </span>
