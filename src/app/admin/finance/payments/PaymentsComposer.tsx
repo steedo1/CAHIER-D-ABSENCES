@@ -49,6 +49,16 @@ function isInternatCategory(category: FeeCategoryRow | null | undefined) {
   return text.includes("internat");
 }
 
+function isScolariteCategory(category: FeeCategoryRow | null | undefined) {
+  const text = normalize(`${category?.code || ""} ${category?.name || ""}`);
+  return (
+    text.includes("scolar") ||
+    text.includes("ecolage") ||
+    text.includes("écolage") ||
+    text.includes("inscription")
+  );
+}
+
 function isPensionCharge(label: string | null | undefined) {
   return normalize(label).includes("pension");
 }
@@ -221,6 +231,9 @@ export default function PaymentsComposer({
   );
 
   const selectedCategoryIsInternat = isInternatCategory(selectedCategory);
+  const selectedCategoryIsScolarite = isScolariteCategory(selectedCategory);
+  const selectedCategoryUsesGroupedPlan =
+    selectedCategoryIsInternat || selectedCategoryIsScolarite;
 
   function applyCharge(
     charge: PaymentStudentRow["open_charges"][number] | null,
@@ -255,26 +268,30 @@ export default function PaymentsComposer({
   }, [selectedChargeId, selectedStudent]);
 
   useEffect(() => {
-    if (selectedCharge && !selectedCategoryIsInternat) {
+    if (selectedCharge && !selectedCategoryUsesGroupedPlan) {
       setSelectedCategoryId(selectedCharge.fee_category_id);
       setSelectedComponentIds([]);
       setExpectedAmount(String(selectedCharge.net_amount));
       setAmount(String(selectedCharge.balance_due));
     }
-  }, [selectedCharge?.charge_id, selectedCategoryIsInternat]);
+  }, [selectedCharge?.charge_id, selectedCategoryUsesGroupedPlan]);
 
-  const internatPaymentPlan = useMemo(() => {
-    if (!selectedCategoryIsInternat) return [];
+  const groupedPaymentPlan = useMemo(() => {
+    if (!selectedCategoryUsesGroupedPlan) return [];
 
     return categoryChargeOptions.map((charge) => {
-      const componentIds = internatComponentIdsByCharge[charge.charge_id] ?? [];
+      const componentIds = selectedCategoryIsInternat
+        ? (internatComponentIdsByCharge[charge.charge_id] ?? [])
+        : [];
       const componentSet = new Set(componentIds);
       const componentTotal = charge.components
         .filter((component) => componentSet.has(component.id))
         .reduce((sum, component) => sum + Number(component.amount || 0), 0);
       const freeAmount = Number(internatAmounts[charge.charge_id] || 0);
       const amountForCharge =
-        charge.components.length > 0 ? componentTotal : freeAmount;
+        selectedCategoryIsInternat && charge.components.length > 0
+          ? componentTotal
+          : freeAmount;
 
       return {
         chargeId: charge.charge_id,
@@ -282,6 +299,11 @@ export default function PaymentsComposer({
           ? Math.max(amountForCharge, 0)
           : 0,
         componentIds,
+        componentMode: selectedCategoryIsScolarite ? "hidden" : "detail",
+        closeUnselectedComponents:
+          selectedCategoryIsInternat && charge.components.length > 0,
+        includeOnReceipt:
+          selectedCategoryIsInternat && isPensionCharge(charge.label),
       };
     });
   }, [
@@ -289,35 +311,44 @@ export default function PaymentsComposer({
     internatAmounts,
     internatComponentIdsByCharge,
     selectedCategoryIsInternat,
+    selectedCategoryIsScolarite,
+    selectedCategoryUsesGroupedPlan,
   ]);
 
-  const internatPaymentTotal = useMemo(
+  const groupedPaymentTotal = useMemo(
     () =>
-      internatPaymentPlan.reduce(
+      groupedPaymentPlan.reduce(
         (sum, item) => sum + Number(item.amount || 0),
         0,
       ),
-    [internatPaymentPlan],
+    [groupedPaymentPlan],
+  );
+
+  const categoryBalanceTotal = useMemo(
+    () =>
+      categoryChargeOptions.reduce(
+        (sum, charge) => sum + Number(charge.balance_due || 0),
+        0,
+      ),
+    [categoryChargeOptions],
   );
 
   useEffect(() => {
-    if (selectedCategoryIsInternat) {
-      const expectedTotal = categoryChargeOptions.reduce(
-        (sum, charge) => sum + Number(charge.net_amount || 0),
-        0,
+    if (selectedCategoryUsesGroupedPlan) {
+      setExpectedAmount(
+        groupedPaymentTotal > 0 ? String(groupedPaymentTotal) : "",
       );
-      setExpectedAmount(expectedTotal > 0 ? String(expectedTotal) : "");
-      setAmount(internatPaymentTotal > 0 ? String(internatPaymentTotal) : "");
+      setAmount(groupedPaymentTotal > 0 ? String(groupedPaymentTotal) : "");
     }
-  }, [categoryChargeOptions, internatPaymentTotal, selectedCategoryIsInternat]);
+  }, [groupedPaymentTotal, selectedCategoryUsesGroupedPlan]);
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
     selectedStudent &&
     selectedClassId &&
     selectedCategoryId &&
-    (selectedCategoryIsInternat
-      ? internatPaymentTotal > 0
+    (selectedCategoryUsesGroupedPlan
+      ? groupedPaymentTotal > 0
       : Number(amount) > 0),
   );
 
@@ -487,13 +518,13 @@ export default function PaymentsComposer({
           <input
             type="hidden"
             name="student_charge_id"
-            value={selectedCategoryIsInternat ? "" : selectedChargeId}
+            value={selectedCategoryUsesGroupedPlan ? "" : selectedChargeId}
           />
-          {selectedCategoryIsInternat ? (
+          {selectedCategoryUsesGroupedPlan ? (
             <input
               type="hidden"
               name="allocation_plan"
-              value={JSON.stringify(internatPaymentPlan)}
+              value={JSON.stringify(groupedPaymentPlan)}
             />
           ) : null}
           {selectedComponentIds.map((componentId) => (
@@ -552,11 +583,23 @@ export default function PaymentsComposer({
                 />
 
                 {selectedStudent.open_charges.length > 0 &&
-                selectedCategoryIsInternat ? (
+                selectedCategoryUsesGroupedPlan ? (
                   <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm font-semibold text-emerald-900 md:col-span-2">
-                    L’internat peut être encaissé en une seule opération :
-                    pension + frais annexes. La ligne pension restera visible
-                    sur le reçu, même si aucun montant n’est versé dessus.
+                    {selectedCategoryIsInternat ? (
+                      <>
+                        L’internat peut être encaissé en une seule opération :
+                        pension + frais annexes. La ligne pension restera
+                        visible sur le reçu, même si aucun montant n’est versé
+                        dessus.
+                      </>
+                    ) : (
+                      <>
+                        La scolarité peut être encaissée en une seule opération,
+                        même si le paiement concerne plusieurs lignes comme
+                        l’inscription ou l’écolage. Sur le reçu, ces
+                        sous-rubriques ne seront pas détaillées.
+                      </>
+                    )}
                   </div>
                 ) : selectedStudent.open_charges.length > 0 ? (
                   <div>
@@ -611,14 +654,10 @@ export default function PaymentsComposer({
                     Montant attendu
                   </div>
                   <div className="mt-1 text-sm font-black text-slate-900">
-                    {selectedCategoryIsInternat
-                      ? formatMoney(
-                          categoryChargeOptions.reduce(
-                            (sum, charge) =>
-                              sum + Number(charge.net_amount || 0),
-                            0,
-                          ),
-                        )
+                    {selectedCategoryUsesGroupedPlan
+                      ? groupedPaymentTotal > 0
+                        ? formatMoney(groupedPaymentTotal)
+                        : "À sélectionner"
                       : selectedCharge
                         ? formatMoney(selectedCharge.net_amount)
                         : "À saisir"}
@@ -629,14 +668,8 @@ export default function PaymentsComposer({
                     Reste à régler
                   </div>
                   <div className="mt-1 text-sm font-black text-rose-700">
-                    {selectedCategoryIsInternat
-                      ? formatMoney(
-                          categoryChargeOptions.reduce(
-                            (sum, charge) =>
-                              sum + Number(charge.balance_due || 0),
-                            0,
-                          ),
-                        )
+                    {selectedCategoryUsesGroupedPlan
+                      ? formatMoney(categoryBalanceTotal)
                       : selectedCharge
                         ? formatMoney(selectedCharge.balance_due)
                         : formatMoney(Number(amount || 0))}
@@ -662,6 +695,17 @@ export default function PaymentsComposer({
                     }))
                   }
                 />
+              ) : selectedCategoryIsScolarite ? (
+                <ScolaritePaymentPlanner
+                  charges={categoryChargeOptions}
+                  amounts={internatAmounts}
+                  onAmountChange={(chargeId, value) =>
+                    setInternatAmounts((prev) => ({
+                      ...prev,
+                      [chargeId]: value,
+                    }))
+                  }
+                />
               ) : null}
 
               <PaymentFields
@@ -673,9 +717,9 @@ export default function PaymentsComposer({
                 setAmount={setAmount}
                 today={today}
                 expectedAmountLocked={
-                  Boolean(selectedCharge) || selectedCategoryIsInternat
+                  Boolean(selectedCharge) || selectedCategoryUsesGroupedPlan
                 }
-                amountLocked={selectedCategoryIsInternat}
+                amountLocked={selectedCategoryUsesGroupedPlan}
               />
 
               <PendingButton
@@ -844,6 +888,104 @@ function FeeCategorySelect({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function ScolaritePaymentPlanner({
+  charges,
+  amounts,
+  onAmountChange,
+}: {
+  charges: PaymentStudentRow["open_charges"];
+  amounts: Record<string, string>;
+  onAmountChange: (chargeId: string, value: string) => void;
+}) {
+  if (charges.length === 0) {
+    return (
+      <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50 px-4 py-5 text-sm font-semibold text-amber-800">
+        Aucun frais de scolarité ouvert n’a été trouvé pour cet élève.
+      </div>
+    );
+  }
+
+  const total = charges.reduce(
+    (sum, charge) => sum + Number(amounts[charge.charge_id] || 0),
+    0,
+  );
+
+  return (
+    <div className="rounded-3xl border border-sky-200 bg-sky-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-800">
+            Encaissement scolarité
+          </div>
+          <p className="mt-1 text-sm text-sky-900/80">
+            Saisissez les montants réellement payés sur chaque ligne ouverte. Le
+            reçu imprimé restera un reçu de scolarité, sans détail des
+            sous-rubriques.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-sky-200">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Total scolarité
+          </div>
+          <div className="mt-1 text-lg font-black text-sky-700">
+            {formatMoney(total)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {charges.map((charge) => {
+          const value = amounts[charge.charge_id] ?? "";
+          const amountForCharge = Number(value || 0);
+
+          return (
+            <div
+              key={charge.charge_id}
+              className="rounded-3xl border border-sky-100 bg-white p-4 shadow-sm"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-slate-900">
+                    {charge.label}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">
+                    Attendu : {formatMoney(charge.net_amount)} · Déjà payé :{" "}
+                    {formatMoney(charge.paid_amount)} · Reste :{" "}
+                    {formatMoney(charge.balance_due)}
+                  </div>
+                </div>
+                <div className="w-full sm:w-44">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                    Montant payé
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={charge.balance_due}
+                    step="1"
+                    value={value}
+                    onChange={(e) =>
+                      onAmountChange(charge.charge_id, e.target.value)
+                    }
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              {amountForCharge > Number(charge.balance_due || 0) ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                  Le montant dépasse le reste dû pour cette ligne.
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

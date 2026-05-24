@@ -82,12 +82,16 @@ type PaymentAllocationPlanItem = {
   chargeId: string;
   amount: number;
   componentIds: string[];
+  componentMode: "detail" | "hidden";
+  closeUnselectedComponents: boolean;
+  includeOnReceipt: boolean;
 };
 
 type ResolvedPaymentAllocation = {
   charge: ChargeBalanceRow;
   amount: number;
   selectedComponents: FeeScheduleComponentRow[];
+  skippedComponents: FeeScheduleComponentRow[];
 };
 
 type ChargeBalanceRow = {
@@ -890,6 +894,12 @@ function parsePaymentAllocationPlan(
           .map((value: unknown) => normalize(value))
           .filter(Boolean)
       : [];
+    const componentMode =
+      (item as any).componentMode === "hidden" ? "hidden" : "detail";
+    const closeUnselectedComponents = Boolean(
+      (item as any).closeUnselectedComponents,
+    );
+    const includeOnReceipt = Boolean((item as any).includeOnReceipt);
 
     const existing = merged.get(chargeId);
     if (existing) {
@@ -897,16 +907,28 @@ function parsePaymentAllocationPlan(
       existing.componentIds = Array.from(
         new Set([...existing.componentIds, ...componentIds]),
       );
+      existing.closeUnselectedComponents =
+        existing.closeUnselectedComponents || closeUnselectedComponents;
+      existing.includeOnReceipt = existing.includeOnReceipt || includeOnReceipt;
+      existing.componentMode =
+        existing.componentMode === "hidden" || componentMode === "hidden"
+          ? "hidden"
+          : "detail";
     } else {
       merged.set(chargeId, {
         chargeId,
         amount,
         componentIds: Array.from(new Set(componentIds)),
+        componentMode,
+        closeUnselectedComponents,
+        includeOnReceipt,
       });
     }
   }
 
-  return Array.from(merged.values()).filter((item) => item.amount > 0);
+  return Array.from(merged.values()).filter(
+    (item) => item.amount > 0 || item.includeOnReceipt,
+  );
 }
 
 async function resolveAllocationPlanForPayment({
@@ -952,6 +974,8 @@ async function resolveAllocationPlanForPayment({
     }
 
     let selectedComponents: FeeScheduleComponentRow[] = [];
+    let skippedComponents: FeeScheduleComponentRow[] = [];
+
     if (item.componentIds.length > 0) {
       selectedComponents = await resolveSelectedComponentsForPayment({
         institutionId,
@@ -959,7 +983,26 @@ async function resolveAllocationPlanForPayment({
         componentIds: item.componentIds,
         amount: item.amount,
       });
-    } else if (charge.fee_schedule_id) {
+
+      if (item.closeUnselectedComponents && charge.fee_schedule_id) {
+        const [activeComponents, alreadyPaidComponents] = await Promise.all([
+          fetchActiveScheduleComponents(institutionId, [
+            charge.fee_schedule_id,
+          ]),
+          fetchPaidComponentsForCharges(institutionId, [charge.id]),
+        ]);
+        const selectedIds = new Set(selectedComponents.map((c) => c.id));
+        const alreadyPaidIds = new Set(
+          alreadyPaidComponents
+            .filter((row) => row.receipt_status !== "cancelled")
+            .map((row) => row.fee_schedule_component_id),
+        );
+        skippedComponents = activeComponents.filter(
+          (component) =>
+            !selectedIds.has(component.id) && !alreadyPaidIds.has(component.id),
+        );
+      }
+    } else if (charge.fee_schedule_id && item.componentMode !== "hidden") {
       const activeComponents = await fetchActiveScheduleComponents(
         institutionId,
         [charge.fee_schedule_id],
@@ -975,6 +1018,7 @@ async function resolveAllocationPlanForPayment({
       charge,
       amount: item.amount,
       selectedComponents,
+      skippedComponents,
     });
   }
 
@@ -1232,7 +1276,8 @@ async function createPaymentAction(formData: FormData) {
   const componentAllocations = allocationDrafts.flatMap((item) => {
     const allocationId = allocationIdByChargeId.get(item.charge.id);
     if (!allocationId) return [];
-    return item.selectedComponents.map((component) => ({
+
+    const paidComponents = item.selectedComponents.map((component) => ({
       receipt_allocation_id: allocationId,
       fee_schedule_component_id: component.id,
       label: component.label,
@@ -1240,6 +1285,17 @@ async function createPaymentAction(formData: FormData) {
       order_index: Number(component.order_index || 0),
       created_at: nowAllocationIso,
     }));
+
+    const skippedComponents = item.skippedComponents.map((component) => ({
+      receipt_allocation_id: allocationId,
+      fee_schedule_component_id: component.id,
+      label: component.label,
+      amount: 0,
+      order_index: Number(component.order_index || 0),
+      created_at: nowAllocationIso,
+    }));
+
+    return [...paidComponents, ...skippedComponents];
   });
 
   if (componentAllocations.length > 0) {
@@ -1555,24 +1611,32 @@ export default async function FinancePaymentsPage({
 
         const studentBalances = balancesByStudent.get(student.id) ?? [];
         const openCharges = studentBalances
-          .filter(
-            (row) =>
-              row.class_id === student.class_id &&
-              Number(row.balance_due || 0) > 0,
-          )
+          .filter((row) => row.class_id === student.class_id)
           .map((row) => {
             const paidIds =
               paidComponentsByCharge.get(row.id) ?? new Set<string>();
-            const components = row.fee_schedule_id
+            const allComponents = row.fee_schedule_id
               ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
-                  .filter((component) => !paidIds.has(component.id))
-                  .map((component) => ({
-                    id: component.id,
-                    label: component.label,
-                    amount: Number(component.amount || 0),
-                    order_index: Number(component.order_index || 0),
-                  }))
               : [];
+            const components = allComponents
+              .filter((component) => !paidIds.has(component.id))
+              .map((component) => ({
+                id: component.id,
+                label: component.label,
+                amount: Number(component.amount || 0),
+                order_index: Number(component.order_index || 0),
+              }));
+            const rawBalanceDue = Number(row.balance_due || 0);
+            const remainingComponentTotal = components.reduce(
+              (sum, component) => sum + Number(component.amount || 0),
+              0,
+            );
+            const effectiveBalanceDue =
+              allComponents.length > 0
+                ? Math.min(rawBalanceDue, remainingComponentTotal)
+                : rawBalanceDue;
+
+            if (effectiveBalanceDue <= 0) return null;
 
             return {
               charge_id: row.id,
@@ -1580,12 +1644,19 @@ export default async function FinancePaymentsPage({
               fee_schedule_id: row.fee_schedule_id,
               label: row.label,
               due_date: row.due_date,
-              net_amount: Number(row.net_amount || 0),
+              net_amount:
+                allComponents.length > 0
+                  ? Math.min(
+                      Number(row.net_amount || 0),
+                      remainingComponentTotal,
+                    )
+                  : Number(row.net_amount || 0),
               paid_amount: Number(row.paid_amount || 0),
-              balance_due: Number(row.balance_due || 0),
+              balance_due: effectiveBalanceDue,
               components,
             };
-          });
+          })
+          .filter((row): row is ChargeOptionRow => Boolean(row));
 
         return {
           student_id: student.id,
