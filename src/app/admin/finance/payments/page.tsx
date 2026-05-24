@@ -717,9 +717,10 @@ async function resolveChargeForPayment({
     return selected;
   }
 
-  const openCharges = await ensureChargesForStudent(
+  // On lit uniquement les frais ouverts existants.
+  // On ne crée plus automatiquement toutes les dettes depuis les barèmes ici.
+  const openCharges = await fetchOpenChargesForStudent(
     institutionId,
-    userId,
     studentId,
     classId,
   );
@@ -787,9 +788,11 @@ async function fetchActiveScheduleComponents(
       if (msg.includes("does not exist") || msg.includes("introuvable")) {
         return [];
       }
-      throw new Error(
-        `Lecture des composants de frais impossible : ${error.message}`,
+      console.warn(
+        "[finance/payments] composants de frais ignorés :",
+        error.message,
       );
+      return [];
     }
 
     rows.push(...((data ?? []) as FeeScheduleComponentRow[]));
@@ -831,9 +834,11 @@ async function fetchPaidComponentsForCharges(
       if (msg.includes("does not exist") || msg.includes("introuvable")) {
         return [];
       }
-      throw new Error(
-        `Lecture des sous-rubriques déjà payées impossible : ${error.message}`,
+      console.warn(
+        "[finance/payments] sous-rubriques déjà payées ignorées :",
+        error.message,
       );
+      return [];
     }
 
     rows.push(...((data ?? []) as PaidComponentRow[]));
@@ -1736,13 +1741,11 @@ export default async function FinancePaymentsPage({
   );
   const studentIds = studentRows.map((student) => student.id);
 
-  await ensureMissingChargesForPaymentPage({
-    institutionId,
-    userId,
-    classRows,
-    studentRows,
-  });
-
+  // IMPORTANT :
+  // L'écran Encaissements ne doit JAMAIS générer automatiquement des dettes
+  // au simple chargement de la page. Les dettes doivent être créées par le
+  // module Dettes/Barèmes ou par un SQL/traitement contrôlé.
+  // Cela évite les doublons et les montants erronés après changement de classe.
   const [{ data: balances, error: balErr }, { data: receipts, error: recErr }] =
     await Promise.all([
       classIds.length > 0
