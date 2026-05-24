@@ -2,7 +2,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { OperatorLogoStack } from "@/components/payments/OperatorLogo";
 
 /* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
@@ -95,14 +94,19 @@ function getInitials(name: string) {
   return pick(parts[0]) + pick(parts[parts.length - 1]);
 }
 
-function startOfWeek(date: Date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
+function dateFr(value?: string | null) {
+  if (!value) return "";
+  try {
+    return new Date(`${value}T00:00:00`).toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  } catch {
+    return value;
+  }
 }
+
 
 function isInDateRange(iso: string, from?: string | null, to?: string | null) {
   const d = new Date(iso);
@@ -239,7 +243,13 @@ const RUBRIC_THEMES = {
 type RubricKey = keyof typeof RUBRIC_THEMES;
 
 /* ————————— types ————————— */
-type Kid = { id: string; full_name: string; class_label: string | null };
+type Kid = {
+  id: string;
+  full_name: string;
+  class_label: string | null;
+  matricule?: string | null;
+  institution_id?: string | null;
+};
 
 type Ev = {
   id: string;
@@ -292,6 +302,44 @@ type KidGradeRow = {
   score: number | null;
   subject_name?: string | null;
   subject_id?: string | null;
+};
+
+type ParentPaymentProvider = {
+  id: string;
+  provider: string;
+  label: string;
+  environment: string;
+};
+
+type ParentPaymentChild = {
+  student_id: string;
+  providers?: ParentPaymentProvider[];
+  charges?: Array<{ id: string; balance_due?: number }>;
+};
+
+type GradePeriod = {
+  id: string;
+  institution_id: string;
+  academic_year: string;
+  code: string | null;
+  label: string;
+  short_label: string;
+  kind: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  order_index: number;
+  coeff: number | null;
+};
+
+type ParentBulletin = {
+  code: string;
+  url: string;
+  student_id: string;
+  academic_year: string | null;
+  period_label: string;
+  period_from: string | null;
+  period_to: string | null;
+  created_at: string | null;
 };
 
 type NavSection = "home" | "conduct" | "absences" | "notes";
@@ -978,12 +1026,15 @@ export default function ParentPage() {
     Record<string, boolean>
   >({});
 
-  // Filtre période notes
-  const [gradeFilterMode, setGradeFilterMode] = useState<
-    "week" | "month" | "all" | "custom"
-  >("week");
+  // Périodes parent : on travaille par trimestre, pas par semaine/mois.
+  const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
+
+  // Paiements et bulletins disponibles côté parent
+  const [paymentItems, setPaymentItems] = useState<ParentPaymentChild[]>([]);
+  const [bulletins, setBulletins] = useState<ParentBulletin[]>([]);
 
   // Matière sélectionnée par enfant
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
@@ -1039,6 +1090,34 @@ export default function ParentPage() {
   const filteredKids = useMemo(() => {
     return selectedKid ? [selectedKid] : [];
   }, [selectedKid]);
+
+  const hasOnlinePaymentProviders = useMemo(
+    () => paymentItems.some((item) => (item.providers || []).length > 0),
+    [paymentItems],
+  );
+
+  const bulletinsByKid = useMemo(() => {
+    const map = new Map<string, ParentBulletin[]>();
+    for (const item of bulletins) {
+      if (!map.has(item.student_id)) map.set(item.student_id, []);
+      map.get(item.student_id)!.push(item);
+    }
+    return map;
+  }, [bulletins]);
+
+  const selectedKidBulletins = useMemo(() => {
+    return selectedKid ? bulletinsByKid.get(selectedKid.id) || [] : [];
+  }, [bulletinsByKid, selectedKid]);
+
+  const selectedKidPeriods = useMemo(() => {
+    if (!selectedKid?.institution_id) return gradePeriods;
+    const own = gradePeriods.filter((p) => p.institution_id === selectedKid.institution_id);
+    return own.length ? own : gradePeriods;
+  }, [gradePeriods, selectedKid?.institution_id]);
+
+  const activeGradePeriod = useMemo(() => {
+    return selectedKidPeriods.find((p) => p.id === selectedPeriodId) || selectedKidPeriods[0] || null;
+  }, [selectedKidPeriods, selectedPeriodId]);
 
   const isHome = activeSection === "home";
   const isConduct = activeSection === "conduct";
@@ -1157,22 +1236,6 @@ export default function ParentPage() {
     return () => document.removeEventListener("visibilitychange", refresh);
   }, []);
 
-  // init période notes
-  useEffect(() => {
-    const today = new Date();
-    if (gradeFilterMode === "week") {
-      const start = startOfWeek(today);
-      setGradeFrom(yyyyMMdd(start));
-      setGradeTo(yyyyMMdd(today));
-    } else if (gradeFilterMode === "month") {
-      const start = new Date(today.getFullYear(), today.getMonth(), 1);
-      setGradeFrom(yyyyMMdd(start));
-      setGradeTo(yyyyMMdd(today));
-    } else if (gradeFilterMode === "all") {
-      setGradeFrom("");
-      setGradeTo("");
-    }
-  }, [gradeFilterMode]);
 
   async function loadConductForAll(
     kidsList: Kid[] = kids,
@@ -1241,6 +1304,45 @@ export default function ParentPage() {
       setSmsMsg(e?.message || "Erreur de chargement SMS.");
     } finally {
       if (!silent) setSmsLoading(false);
+    }
+  }
+
+  async function loadPaymentOptions() {
+    try {
+      const res = await fetch("/api/parent/payments/options", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = await res.json().catch(() => ({}));
+      setPaymentItems(Array.isArray(j?.items) ? j.items : []);
+    } catch {
+      setPaymentItems([]);
+    }
+  }
+
+  async function loadGradePeriods() {
+    try {
+      const res = await fetch("/api/parent/grading-periods", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = await res.json().catch(() => ({}));
+      setGradePeriods(Array.isArray(j?.items) ? j.items : []);
+    } catch {
+      setGradePeriods([]);
+    }
+  }
+
+  async function loadBulletins() {
+    try {
+      const res = await fetch("/api/parent/bulletins", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = await res.json().catch(() => ({}));
+      setBulletins(Array.isArray(j?.items) ? j.items : []);
+    } catch {
+      setBulletins([]);
     }
   }
 
@@ -1369,7 +1471,7 @@ export default function ParentPage() {
           gradeEntries.push([k.id, (gRes.items || []) as KidGradeRow[]]);
         } else {
           gradeEntries.push([k.id, []]);
-          gradeErrs[k.id] = gRes.err;
+          gradeErrs[k.id] = "err" in gRes ? gRes.err : "Notes indisponibles.";
         }
       }
 
@@ -1446,20 +1548,44 @@ export default function ParentPage() {
     }
   }
 
-  async function applyConductFilter() {
-    await loadConductForAll(kids, conductFrom, conductTo);
-  }
 
   // premier chargement
   useEffect(() => {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
     loadSmsContacts(true);
+    loadPaymentOptions();
+    loadGradePeriods();
+    loadBulletins();
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conductFrom, conductTo]);
+
+  useEffect(() => {
+    if (!selectedKidPeriods.length) return;
+    setSelectedPeriodId((prev) => {
+      if (prev && selectedKidPeriods.some((p) => p.id === prev)) return prev;
+      const today = yyyyMMdd(new Date());
+      const current = selectedKidPeriods.find(
+        (p) => p.start_date && p.end_date && p.start_date <= today && today <= p.end_date,
+      );
+      return (current || selectedKidPeriods[0]).id;
+    });
+  }, [selectedKidPeriods]);
+
+  useEffect(() => {
+    if (!activeGradePeriod) return;
+    setGradeFrom(activeGradePeriod.start_date || "");
+    setGradeTo(activeGradePeriod.end_date || "");
+    if (activeGradePeriod.start_date && activeGradePeriod.end_date && kids.length) {
+      loadConductForAll(kids, activeGradePeriod.start_date, activeGradePeriod.end_date);
+      setConductFrom(activeGradePeriod.start_date);
+      setConductTo(activeGradePeriod.end_date);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGradePeriod?.id]);
 
   async function enablePush() {
     setMsg(null);
@@ -1538,12 +1664,6 @@ export default function ParentPage() {
       window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function gradeFilterLabel(mode: typeof gradeFilterMode): string {
-    if (mode === "week") return "Semaine";
-    if (mode === "month") return "Mois";
-    if (mode === "all") return "Toute l’année";
-    return "Période libre";
-  }
 
   function rubricCellValue(val: number, max: number) {
     if (!(Number.isFinite(max) && max > 0)) return "Désactivée";
@@ -1609,22 +1729,17 @@ export default function ParentPage() {
                 </span>
                 <span>Accueil</span>
               </button>
-              <a
-                href="/parents/payments"
-                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+              {hasOnlinePaymentProviders ? (
+                <a
+                  href="/parents/payments"
+                  className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-white/15"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/15 text-white">
                     <IconShield />
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
-                    Paiement en ligne
-                  </span>
-                </div>
-                <div className="mt-3 flex justify-center">
-                  <OperatorLogoStack className="shrink-0" />
-                </div>
-              </a>
+                  <span className="min-w-0 flex-1 truncate">Frais scolaires</span>
+                </a>
+              ) : null}
             </div>
 
             <div className="border-b border-white/10 px-4 py-3">
@@ -1708,7 +1823,7 @@ export default function ParentPage() {
               <div className="mt-4 leading-tight text-white/80">
                 <div className="text-[12px] opacity-80">Développé par</div>
                 <div className="text-[15px] font-extrabold text-amber-300">
-                  Nexa Digital
+                  Nexa Digital SARL
                 </div>
               </div>
             </div>
@@ -1807,22 +1922,17 @@ export default function ParentPage() {
               </span>
               <span>Accueil</span>
             </button>
-              <a
-                href="/parents/payments"
-                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+              {hasOnlinePaymentProviders ? (
+                <a
+                  href="/parents/payments"
+                  className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-white/15"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/15 text-white">
                     <IconShield />
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
-                    Paiement en ligne
-                  </span>
-                </div>
-                <div className="mt-3 flex justify-center">
-                  <OperatorLogoStack className="shrink-0" />
-                </div>
-              </a>
+                  <span className="min-w-0 flex-1 truncate">Frais scolaires</span>
+                </a>
+              ) : null}
           </div>
 
           <div className="border-b border-white/15 px-4 py-3">
@@ -1904,7 +2014,7 @@ export default function ParentPage() {
             <div className="mt-4 leading-tight text-white/80">
               <div className="text-[12px] opacity-80">Développé par</div>
               <div className="text-[15px] font-extrabold text-amber-300">
-                Nexa Digital
+                Nexa Digital SARL
               </div>
             </div>
           </div>
@@ -1940,7 +2050,7 @@ export default function ParentPage() {
           {isHome && (
             <>
               <section className="mb-6 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6 xl:min-h-[260px]">
+                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6 xl:min-h-[240px]">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex items-start gap-4">
                       <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white">
@@ -1958,58 +2068,59 @@ export default function ParentPage() {
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-3">
-              <a
-                href="/parents/payments"
-                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                    <IconShield />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
-                    Paiement en ligne
-                  </span>
-                </div>
-                <div className="mt-3 flex justify-center">
-                  <OperatorLogoStack className="shrink-0" />
-                </div>
-              </a>
                     {selectedKid ? (
-                      <button
-                        type="button"
-                        onClick={() => openChildSection(selectedKid.id, "notes")}
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openChildSection(selectedKid.id, "notes")}
+                          className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
+                        >
+                          Voir les notes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openChildSection(selectedKid.id, "absences")}
+                          className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
+                        >
+                          Absences
+                        </button>
+                      </>
+                    ) : null}
+                    {hasOnlinePaymentProviders ? (
+                      <a
+                        href="/parents/payments"
                         className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
                       >
-                        Voir les notes
-                      </button>
+                        Frais scolaires
+                      </a>
                     ) : null}
                   </div>
                 </div>
 
-                <div className="rounded-[32px] border border-emerald-200 bg-white p-5 shadow-sm lg:p-6">
-                  <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">Paiement en ligne</div>
-                  <h3 className="mt-1 text-xl font-black text-slate-950">Opérateurs disponibles</h3>
-                  <p className="mt-2 text-sm text-slate-600">Consultez les frais, choisissez l’opérateur actif et récupérez votre reçu officiel après confirmation.</p>
-                  <div className="mt-4">
-                    <OperatorLogoStack />
-                  </div>
-                  <div className="mt-3 text-xs font-semibold text-slate-500">Orange Money, Wave, MTN Mobile Money et autres opérateurs activés par l’établissement.</div>
-              <a
-                href="/parents/payments"
-                className="mt-2 block w-full rounded-[24px] border-2 border-amber-300 bg-white px-4 py-3 text-left text-[#003766] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm">
-                    <IconShield />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] font-black leading-tight">
-                    Paiement en ligne
-                  </span>
-                </div>
-                <div className="mt-3 flex justify-center">
-                  <OperatorLogoStack className="shrink-0" />
-                </div>
-              </a>
+                <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                  <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Documents</div>
+                  <h3 className="mt-1 text-xl font-black text-slate-950">Bulletins disponibles</h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Quand un bulletin trimestriel est publié avec son code QR, il apparaît ici pour le parent.
+                  </p>
+                  {selectedKidBulletins.length ? (
+                    <div className="mt-4 space-y-2">
+                      {selectedKidBulletins.slice(0, 3).map((b) => (
+                        <a
+                          key={b.code}
+                          href={b.url}
+                          className="block rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-extrabold text-emerald-800 transition hover:bg-emerald-100"
+                        >
+                          {b.period_label || "Bulletin"}
+                          {b.period_from && b.period_to ? ` · ${dateFr(b.period_from)} au ${dateFr(b.period_to)}` : ""}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                      Aucun bulletin publié pour l’instant.
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -2036,6 +2147,7 @@ export default function ParentPage() {
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {kids.map((k) => {
                       const active = activeChildId === k.id;
+                      const latestBulletin = (bulletinsByKid.get(k.id) || [])[0] || null;
                       return (
                         <div
                           key={k.id}
@@ -2076,6 +2188,14 @@ export default function ParentPage() {
                             >
                               Notes
                             </button>
+                            {latestBulletin ? (
+                              <a
+                                href={latestBulletin.url}
+                                className="rounded-2xl bg-emerald-600 px-3 py-2 text-[13px] font-extrabold text-white transition hover:bg-emerald-700"
+                              >
+                                Bulletin
+                              </a>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -2239,54 +2359,42 @@ export default function ParentPage() {
 
           {showConductSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
-                  Conduite — points par rubrique
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
+                    Conduite — points par rubrique
+                  </div>
+                  <div className="mt-1 text-[13px] text-slate-500">
+                    Filtre par trimestre de l’année scolaire.
+                  </div>
                 </div>
 
-                <div className="hidden items-center gap-2 md:flex">
-                  <Input
-                    type="date"
-                    value={conductFrom}
-                    onChange={(e) => setConductFrom(e.target.value)}
-                  />
-                  <span className="text-[13px] text-slate-600">au</span>
-                  <Input
-                    type="date"
-                    value={conductTo}
-                    onChange={(e) => setConductTo(e.target.value)}
-                  />
-                  <Button
-                    onClick={applyConductFilter}
-                    disabled={loadingConduct}
-                    className="px-4 py-3 text-[14px]"
-                  >
-                    {loadingConduct ? "…" : "Valider"}
-                  </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedKidPeriods.length ? (
+                    <select
+                      value={activeGradePeriod?.id || ""}
+                      onChange={(e) => setSelectedPeriodId(e.target.value)}
+                      className="h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    >
+                      {selectedKidPeriods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.short_label || period.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-2xl bg-slate-100 px-4 py-2 text-[13px] font-bold text-slate-600">
+                      Trimestres non configurés
+                    </div>
+                  )}
+                  {conductFrom && conductTo ? (
+                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-bold text-slate-600">
+                      {dateFr(conductFrom)} au {dateFr(conductTo)}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
-                <Input
-                  type="date"
-                  value={conductFrom}
-                  onChange={(e) => setConductFrom(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  value={conductTo}
-                  onChange={(e) => setConductTo(e.target.value)}
-                />
-                <div className="col-span-2 flex justify-center">
-                  <Button
-                    className="mx-auto w-full max-w-[220px]"
-                    onClick={applyConductFilter}
-                    disabled={loadingConduct}
-                  >
-                    {loadingConduct ? "…" : "Valider"}
-                  </Button>
-                </div>
-              </div>
 
               {loadingKids ? (
                 <div className="space-y-3">
@@ -2792,44 +2900,50 @@ export default function ParentPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 text-[13px]">
-                  {(["week", "month", "all", "custom"] as const).map((m) => {
-                    const active = gradeFilterMode === m;
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setGradeFilterMode(m)}
-                        className={[
-                          "rounded-full px-4 py-2 font-bold",
-                          active
-                            ? "bg-[#003766] text-white"
-                            : "bg-slate-100 text-slate-700 hover:bg-slate-200",
-                        ].join(" ")}
-                      >
-                        {gradeFilterLabel(m)}
-                      </button>
-                    );
-                  })}
+                  {selectedKidPeriods.length ? (
+                    <select
+                      value={activeGradePeriod?.id || ""}
+                      onChange={(e) => setSelectedPeriodId(e.target.value)}
+                      className="h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    >
+                      {selectedKidPeriods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.short_label || period.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-2xl bg-slate-100 px-4 py-2 text-[13px] font-bold text-slate-600">
+                      Trimestres non configurés
+                    </div>
+                  )}
 
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="date"
-                      value={gradeFrom}
-                      disabled={gradeFilterMode !== "custom"}
-                      onChange={(e) => setGradeFrom(e.target.value)}
-                      className="h-11 w-[150px] px-3 py-2 text-[14px]"
-                    />
-                    <span className="text-[13px] text-slate-500">au</span>
-                    <Input
-                      type="date"
-                      value={gradeTo}
-                      disabled={gradeFilterMode !== "custom"}
-                      onChange={(e) => setGradeTo(e.target.value)}
-                      className="h-11 w-[150px] px-3 py-2 text-[14px]"
-                    />
-                  </div>
+                  {gradeFrom && gradeTo ? (
+                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-bold text-slate-600">
+                      {dateFr(gradeFrom)} au {dateFr(gradeTo)}
+                    </span>
+                  ) : null}
                 </div>
               </div>
+
+              {selectedKidBulletins.length ? (
+                <div className="mb-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="text-[13px] font-black uppercase tracking-wide text-emerald-700">
+                    Bulletin trimestriel disponible
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedKidBulletins.slice(0, 3).map((b) => (
+                      <a
+                        key={b.code}
+                        href={b.url}
+                        className="rounded-2xl bg-white px-4 py-2 text-sm font-extrabold text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                      >
+                        {b.period_label || "Bulletin"}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               {loadingKids ? (
                 <div className="space-y-3">

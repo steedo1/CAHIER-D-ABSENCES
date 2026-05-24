@@ -41,7 +41,7 @@ export async function GET(_req: NextRequest) {
     // Élèves
     const { data: studs, error: sErr } = await srv
       .from("students")
-      .select("id, first_name, last_name, matricule")
+      .select("id, first_name, last_name, matricule, institution_id")
       .in("id", studentIds);
 
     if (sErr) {
@@ -52,14 +52,18 @@ export async function GET(_req: NextRequest) {
     // Classe (inscription active)
     const { data: enrolls, error: eErr } = await srv
       .from("class_enrollments")
-      .select("student_id, classes:class_id(label)")
+      .select("student_id, institution_id, classes:class_id(label, institution_id)")
       .in("student_id", studentIds)
       .is("end_date", null);
 
     if (eErr) console.error(`[parent.children:${trace}] enrolls error`, eErr);
     const clsByStudent = new Map<string, string>();
+    const institutionByStudent = new Map<string, string>();
     for (const e of enrolls || []) {
-      clsByStudent.set(String((e as any).student_id), String((e as any).classes?.label ?? ""));
+      const sid = String((e as any).student_id);
+      clsByStudent.set(sid, String((e as any).classes?.label ?? ""));
+      const instId = String((e as any).classes?.institution_id || (e as any).institution_id || "").trim();
+      if (instId) institutionByStudent.set(sid, instId);
     }
 
     const items = (studs ?? []).map(s => ({
@@ -67,6 +71,7 @@ export async function GET(_req: NextRequest) {
       full_name: full(s.first_name, s.last_name),
       class_label: clsByStudent.get(String(s.id)) || null,
       matricule: (s as any).matricule ?? null,
+      institution_id: institutionByStudent.get(String(s.id)) || (s as any).institution_id || null,
     }));
 
     console.info(`[parent.children:${trace}] ok`, { items: items.length });

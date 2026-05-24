@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock3, Loader2, RefreshCw, XCircle } from "lucide-react";
-import { OperatorLogo, OperatorLogoStack } from "@/components/payments/OperatorLogo";
+import { OperatorLogo } from "@/components/payments/OperatorLogo";
 
 type ProviderOption = {
   id: string;
@@ -169,6 +169,10 @@ export default function ParentOnlinePaymentsPage() {
     return selectedChild?.charges.find((charge) => charge.id === selectedChargeId) || null;
   }, [selectedChild, selectedChargeId]);
 
+  const hasAnyConfiguredProvider = useMemo(() => {
+    return items.some((item) => (item.providers || []).length > 0);
+  }, [items]);
+
   useEffect(() => {
     if (!selectedChild) return;
     const firstCharge = selectedChild.charges[0];
@@ -242,7 +246,7 @@ export default function ParentOnlinePaymentsPage() {
             <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">
               Mon Cahier
             </div>
-            <h1 className="truncate text-lg font-black">Paiement en ligne</h1>
+            <h1 className="truncate text-lg font-black">Frais scolaires</h1>
           </div>
           <Link
             href="/parents"
@@ -258,19 +262,20 @@ export default function ParentOnlinePaymentsPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
-                Mobile Money
+                Frais scolaires
               </div>
               <h2 className="mt-1 text-xl font-black text-slate-950">
-                Régler les frais de votre enfant
+                Règlement des frais de votre enfant
               </h2>
-              <p className="mt-2 text-sm text-slate-600">Choisissez un enfant, un frais puis l’opérateur disponible pour finaliser le paiement.</p>
+              <p className="mt-2 text-sm text-slate-600">
+                L’option de paiement s’affiche seulement si l’établissement l’a activée.
+              </p>
             </div>
-            <div className="flex flex-col items-start gap-3 sm:items-end">
+            {hasAnyConfiguredProvider ? (
               <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
                 Reçu officiel après confirmation
               </div>
-              <OperatorLogoStack />
-            </div>
+            ) : null}
           </div>
         </section>
 
@@ -338,7 +343,16 @@ export default function ParentOnlinePaymentsPage() {
           </div>
         )}
 
-        {!loading && items.length > 0 && (
+        {!loading && items.length > 0 && !hasAnyConfiguredProvider && (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+            <div className="text-lg font-black text-slate-900">Paiement en ligne non activé</div>
+            <p className="mt-2 text-sm text-slate-600">
+              Cet établissement n’a configuré aucun opérateur de paiement. L’écran reste donc volontairement simple, sans bloc opérateur.
+            </p>
+          </div>
+        )}
+
+        {!loading && items.length > 0 && hasAnyConfiguredProvider && (
           <form onSubmit={submitPayment} className="grid gap-4 lg:grid-cols-[1fr_360px]">
             <section className="space-y-3">
               <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -371,7 +385,11 @@ export default function ParentOnlinePaymentsPage() {
                           <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
                             {child.charges.length} frais à régler
                           </span>
-                          {(child.providers || []).length > 0 ? <OperatorLogoStack providers={child.providers.map((provider) => ({ provider: provider.provider, label: provider.label }))} /> : null}
+                          {(child.providers || []).length > 0 ? (
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700 ring-1 ring-emerald-200">
+                              Paiement en ligne actif
+                            </span>
+                          ) : null}
                         </div>
                       </button>
                     );
@@ -485,7 +503,7 @@ export default function ParentOnlinePaymentsPage() {
               </div>
 
               <div>
-                <label className="text-sm font-black text-slate-800">Numéro Mobile Money</label>
+                <label className="text-sm font-black text-slate-800">Numéro du payeur</label>
                 <input
                   value={payerPhone}
                   onChange={(e) => setPayerPhone(e.target.value)}
