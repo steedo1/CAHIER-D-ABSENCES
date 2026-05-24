@@ -157,6 +157,19 @@ function toNumber(value: number | string | null | undefined) {
   return Number(value || 0);
 }
 
+function normalizeDateParam(value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return "";
+  return trimmed;
+}
+
+function normalizeDateRange(startDate: string, endDate: string) {
+  if (startDate && endDate && startDate > endDate) {
+    return { startDate: endDate, endDate: startDate };
+  }
+  return { startDate, endDate };
+}
+
 function ratioPercent(value: number, total: number) {
   if (!total || total <= 0) return 0;
   return (value / total) * 100;
@@ -191,12 +204,45 @@ function formatDate(value: string) {
   return date.toLocaleDateString("fr-FR");
 }
 
+function reportPeriodLabel(startDate: string, endDate: string, fallback: string) {
+  if (startDate && endDate) return `Du ${formatDate(startDate)} au ${formatDate(endDate)}`;
+  if (startDate) return `À partir du ${formatDate(startDate)}`;
+  if (endDate) return `Jusqu’au ${formatDate(endDate)}`;
+  return fallback;
+}
+
+function buildReportsHref(params: {
+  academicYear?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const sp = new URLSearchParams();
+  if (params.academicYear) sp.set("academic_year", params.academicYear);
+  if (params.startDate) sp.set("start_date", params.startDate);
+  if (params.endDate) sp.set("end_date", params.endDate);
+  const query = sp.toString();
+  return query ? `/admin/finance/reports?${query}` : "/admin/finance/reports";
+}
+
+function balanceStatusLabel(status: ChargeBalanceRow["computed_status"]) {
+  if (status === "paid") return "Soldé";
+  if (status === "partial") return "Partiellement payé";
+  if (status === "overdue") return "En retard";
+  if (status === "pending") return "En attente";
+  if (status === "cancelled") return "Annulé";
+  return "Autre";
+}
+
 async function fetchAllChargeBalancesForReports({
   institutionId,
   classIds,
+  startDate,
+  endDate,
 }: {
   institutionId: string;
   classIds: string[];
+  startDate?: string;
+  endDate?: string;
 }): Promise<ChargeBalanceRow[]> {
   const uniqueClassIds = Array.from(new Set(classIds.filter(Boolean)));
   if (uniqueClassIds.length === 0) return [];
@@ -208,7 +254,7 @@ async function fetchAllChargeBalancesForReports({
   for (const ids of chunkArray(uniqueClassIds, 50)) {
     for (let from = 0; ; from += pageSize) {
       const to = from + pageSize - 1;
-      const { data, error } = await admin
+      let query = admin
         .schema("finance")
         .from("v_charge_balances")
         .select(
@@ -216,7 +262,16 @@ async function fetchAllChargeBalancesForReports({
         )
         .eq("school_id", institutionId)
         .in("class_id", ids)
-        .neq("computed_status", "cancelled")
+        .neq("computed_status", "cancelled");
+
+      if (startDate) {
+        query = query.gte("charge_date", startDate);
+      }
+      if (endDate) {
+        query = query.lte("charge_date", endDate);
+      }
+
+      const { data, error } = await query
         .order("due_date", { ascending: true, nullsFirst: false })
         .range(from, to);
 
@@ -312,10 +367,79 @@ function ProgressLine({ rate }: { rate: number }) {
   );
 }
 
+function DateRangeSelector({
+  academicYear,
+  startDate,
+  endDate,
+  periodLabel,
+}: {
+  academicYear: string;
+  startDate: string;
+  endDate: string;
+  periodLabel: string;
+}) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+      <form
+        method="GET"
+        action="/admin/finance/reports"
+        className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
+      >
+        <div className="flex items-start gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+            <CalendarClock className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">
+              Période du rapport
+            </div>
+            <div className="mt-1 text-sm leading-6 text-slate-600">
+              Les encaissements, dépenses et créances analysés suivent cette période : <strong>{periodLabel}</strong>.
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] sm:items-end">
+          {academicYear ? (
+            <input type="hidden" name="academic_year" value={academicYear} />
+          ) : null}
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Date début
+            <input
+              type="date"
+              name="start_date"
+              defaultValue={startDate}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            />
+          </label>
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Date fin
+            <input
+              type="date"
+              name="end_date"
+              defaultValue={endDate}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            />
+          </label>
+          <button className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800">
+            Filtrer
+          </button>
+          <a
+            href={buildReportsHref({ academicYear })}
+            className="inline-flex items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
+          >
+            Réinitialiser
+          </a>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export default async function FinanceReportsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ academic_year?: string }>;
+  searchParams?: Promise<{ academic_year?: string; start_date?: string; end_date?: string }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -325,6 +449,8 @@ export default async function FinanceReportsPage({
 
   const params = searchParams ? await searchParams : undefined;
   const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const requestedStartDate = normalizeDateParam(params?.start_date);
+  const requestedEndDate = normalizeDateParam(params?.end_date);
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
@@ -335,9 +461,22 @@ export default async function FinanceReportsPage({
   const {
     academicYears,
     selectedAcademicYearCode,
+    selectedAcademicYearLabel,
     selectedAcademicYearStart,
     selectedAcademicYearEnd,
   } = academicYearCtx;
+
+  const normalizedRange = normalizeDateRange(
+    requestedStartDate || selectedAcademicYearStart || "",
+    requestedEndDate || selectedAcademicYearEnd || "",
+  );
+  const selectedStartDate = normalizedRange.startDate;
+  const selectedEndDate = normalizedRange.endDate;
+  const selectedPeriodLabel = reportPeriodLabel(
+    selectedStartDate,
+    selectedEndDate,
+    selectedAcademicYearLabel || "Toutes les périodes",
+  );
 
   const [
     { data: institution, error: institutionErr },
@@ -394,11 +533,11 @@ export default async function FinanceReportsPage({
         )
         .eq("school_id", institutionId);
 
-      if (selectedAcademicYearStart) {
-        query = query.gte("expense_date", selectedAcademicYearStart);
+      if (selectedStartDate) {
+        query = query.gte("expense_date", selectedStartDate);
       }
-      if (selectedAcademicYearEnd) {
-        query = query.lte("expense_date", selectedAcademicYearEnd);
+      if (selectedEndDate) {
+        query = query.lte("expense_date", selectedEndDate);
       }
 
       return query
@@ -430,13 +569,12 @@ export default async function FinanceReportsPage({
 
       if (selectedAcademicYearCode) {
         query = query.eq("academic_year", selectedAcademicYearCode);
-      } else {
-        if (selectedAcademicYearStart) {
-          query = query.gte("payment_date", selectedAcademicYearStart);
-        }
-        if (selectedAcademicYearEnd) {
-          query = query.lte("payment_date", selectedAcademicYearEnd);
-        }
+      }
+      if (selectedStartDate) {
+        query = query.gte("payment_date", selectedStartDate);
+      }
+      if (selectedEndDate) {
+        query = query.lte("payment_date", selectedEndDate);
       }
 
       return query
@@ -444,7 +582,7 @@ export default async function FinanceReportsPage({
         .order("created_at", { ascending: false });
     })(),
 
-    getAdminStudentsServer(),
+    getAdminStudentsServer(selectedAcademicYearCode),
   ]);
 
   if (institutionErr) throw new Error(institutionErr.message);
@@ -472,9 +610,12 @@ export default async function FinanceReportsPage({
   const balanceRows = await fetchAllChargeBalancesForReports({
     institutionId,
     classIds,
+    startDate: selectedStartDate,
+    endDate: selectedEndDate,
   });
 
   const classMap = new Map(classRows.map((c) => [c.id, c]));
+  const feeCategoryMap = new Map(feeCategoryRows.map((c) => [c.id, c]));
   const expenseCategoryMap = new Map(expenseCategoryRows.map((c) => [c.id, c]));
   const studentsByClass = new Map<string, number>();
 
@@ -543,6 +684,58 @@ export default async function FinanceReportsPage({
     const due = items.reduce((sum, row) => sum + toNumber(row.balance_due), 0);
     return expected > 0 && due <= 0;
   }).length;
+
+  const studentFinancialSummary = studentRows
+    .map((student) => {
+      const items = balancesByStudent.get(student.id) ?? [];
+      const expected = items.reduce((sum, row) => sum + toNumber(row.net_amount), 0);
+      const paid = items.reduce((sum, row) => sum + toNumber(row.paid_amount), 0);
+      const due = items.reduce(
+        (sum, row) => sum + Math.max(0, toNumber(row.balance_due)),
+        0,
+      );
+      const overdue = items.some((row) => row.computed_status === "overdue");
+      const partial = items.some((row) => row.computed_status === "partial");
+      const status =
+        expected <= 0
+          ? "Sans frais"
+          : due <= 0
+            ? "Soldé"
+            : overdue
+              ? "En retard"
+              : partial
+                ? "Partiel"
+                : "À payer";
+
+      return {
+        matricule: student.matricule || "—",
+        fullName: student.full_name || "Élève sans nom",
+        classLabel: student.class_label || classMap.get(String(student.class_id || ""))?.label || "—",
+        expected,
+        paid,
+        due,
+        rate: ratioPercent(paid, expected),
+        status,
+      };
+    })
+    .filter((row) => row.expected > 0 || row.due > 0)
+    .sort((a, b) => b.due - a.due || a.fullName.localeCompare(b.fullName));
+
+  const balanceStatusSummary = ["paid", "partial", "pending", "overdue"].map((status) => {
+    const items = balanceRows.filter((row) => row.computed_status === status);
+    return {
+      label: balanceStatusLabel(status as ChargeBalanceRow["computed_status"]),
+      count: items.length,
+      amount: items.reduce(
+        (sum, row) =>
+          sum +
+          (status === "paid"
+            ? toNumber(row.net_amount)
+            : Math.max(0, toNumber(row.balance_due))),
+        0,
+      ),
+    };
+  }).filter((row) => row.count > 0 || row.amount > 0);
 
   const feePerformanceByCategory = feeCategoryRows
     .map((cat) => {
@@ -654,10 +847,28 @@ export default async function FinanceReportsPage({
     .sort((a, b) => b.rate - a.rate)[0];
   const highestClassDebt = classSummary[0];
 
+  const schedulesForExport = activeSchedules
+    .map((row) => {
+      const cat = feeCategoryMap.get(row.fee_category_id);
+      const cls = row.class_id ? classMap.get(row.class_id) : null;
+      return {
+        label: row.label || "Barème sans libellé",
+        category: cat?.name || "Sans catégorie",
+        classLabel: cls?.label || "Toutes les classes",
+        dueDate: row.due_date ? formatDate(row.due_date) : "—",
+        amount: toNumber(row.amount),
+        active: row.is_active ? "Actif" : "Inactif",
+      };
+    })
+    .sort((a, b) => a.category.localeCompare(b.category) || a.classLabel.localeCompare(b.classLabel));
+
   const exportPayload: FinanceReportExportPayload = {
     title: "Rapport financier enrichi",
     institutionName: institutionRow?.name || "Établissement",
-    academicYear: selectedAcademicYearCode || "Année courante",
+    academicYear: selectedAcademicYearLabel || selectedAcademicYearCode || "Année courante",
+    periodLabel: selectedPeriodLabel,
+    periodStart: selectedStartDate,
+    periodEnd: selectedEndDate,
     generatedAt: new Date().toISOString(),
     summary: [
       {
@@ -724,14 +935,26 @@ export default async function FinanceReportsPage({
       due: row.due,
       rate: row.rate,
     })),
+    statuses: balanceStatusSummary,
+    students: studentFinancialSummary.map((row) => ({
+      matricule: row.matricule,
+      fullName: row.fullName,
+      classLabel: row.classLabel,
+      expected: row.expected,
+      paid: row.paid,
+      due: row.due,
+      rate: row.rate,
+      status: row.status,
+    })),
+    schedules: schedulesForExport,
     months: monthlySummary,
-    receipts: postedReceipts.slice(0, 30).map((row) => ({
+    receipts: postedReceipts.map((row) => ({
       date: formatDate(row.payment_date),
       label: `${row.receipt_no}${row.payer_name ? ` — ${row.payer_name}` : ""}`,
       category: row.reference_no || "Encaissement validé",
       amount: toNumber(row.total_amount),
     })),
-    expenses: postedExpenses.slice(0, 30).map((row) => {
+    expenses: postedExpenses.map((row) => {
       const cat = row.category_id ? expenseCategoryMap.get(row.category_id) : null;
       return {
         date: formatDate(row.expense_date),
@@ -781,6 +1004,17 @@ export default async function FinanceReportsPage({
         academicYears={academicYears}
         selectedAcademicYearCode={selectedAcademicYearCode}
         currentPath="/admin/finance/reports"
+        hiddenParams={{
+          start_date: requestedStartDate || undefined,
+          end_date: requestedEndDate || undefined,
+        }}
+      />
+
+      <DateRangeSelector
+        academicYear={selectedAcademicYearCode}
+        startDate={selectedStartDate}
+        endDate={selectedEndDate}
+        periodLabel={selectedPeriodLabel}
       />
 
       <FinanceReportsExports payload={exportPayload} />
