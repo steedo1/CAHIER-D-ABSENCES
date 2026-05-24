@@ -59,8 +59,10 @@ type ReceiptAllocationComponentRow = {
 
 type ChargeRow = {
   id: string;
+  school_id?: string | null;
   student_id: string;
   class_id: string | null;
+  fee_category_id?: string | null;
   label: string;
   due_date: string | null;
   net_amount: number | string;
@@ -306,7 +308,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("v_charge_balances")
         .select(
-          "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due",
+          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
         )
         .in("id", chargeIds)
     : { data: [], error: null as null | { message?: string } };
@@ -373,22 +375,64 @@ export default async function FinanceReceiptPrintPage({
         !isInternatCharge(line.charge?.label),
     );
 
+  let scolariteReferenceCharges: ChargeRow[] = [];
+  if (allLinesAreScolarite) {
+    const categoryIds = Array.from(
+      new Set(
+        rawLines
+          .map((line) => line.charge?.fee_category_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (categoryIds.length > 0) {
+      let scolariteQuery = supabase
+        .schema("finance")
+        .from("v_charge_balances")
+        .select(
+          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
+        )
+        .eq("school_id", institutionId)
+        .eq("student_id", typedReceipt.student_id)
+        .in("fee_category_id", categoryIds);
+
+      if (rawLines[0]?.charge?.class_id) {
+        scolariteQuery = scolariteQuery.eq(
+          "class_id",
+          rawLines[0].charge.class_id,
+        );
+      }
+
+      const { data: scolariteData, error: scolariteErr } =
+        await scolariteQuery;
+
+      if (!scolariteErr) {
+        scolariteReferenceCharges = (scolariteData ?? []) as ChargeRow[];
+      }
+    }
+  }
+
+  const scolariteLinesForTotals =
+    scolariteReferenceCharges.length > 0
+      ? scolariteReferenceCharges
+      : rawLines.map((line) => line.charge).filter((c): c is ChargeRow => Boolean(c));
+
   const displayLines = allLinesAreScolarite
     ? [
         {
           key: "scolarite",
           label: "Scolarité",
           dueDate: null as string | null,
-          expected: rawLines.reduce(
-            (sum, line) => sum + safeNumber(line.charge?.net_amount),
+          expected: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.net_amount),
             0,
           ),
-          paid: rawLines.reduce(
-            (sum, line) => sum + safeNumber(line.charge?.paid_amount),
+          paid: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.paid_amount),
             0,
           ),
-          remaining: rawLines.reduce(
-            (sum, line) => sum + safeNumber(line.charge?.balance_due),
+          remaining: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.balance_due),
             0,
           ),
           amount: rawLines.reduce(

@@ -27,6 +27,8 @@ type Props = {
   action: (formData: FormData) => void | Promise<void>;
 };
 
+type ActiveFinanceWorkflow = "menu" | "payment" | "new";
+
 type FeeComponentOption = {
   id: string;
   label: string;
@@ -125,6 +127,8 @@ export default function PaymentsComposer({
   const [amount, setAmount] = useState("");
   const [expectedAmount, setExpectedAmount] = useState("");
   const [newClassId, setNewClassId] = useState("");
+  const [activeWorkflow, setActiveWorkflow] =
+    useState<ActiveFinanceWorkflow>("menu");
 
   useEffect(() => {
     if (!selectedLevel && levels.length > 0) setSelectedLevel(levels[0]);
@@ -287,11 +291,14 @@ export default function PaymentsComposer({
       const componentTotal = charge.components
         .filter((component) => componentSet.has(component.id))
         .reduce((sum, component) => sum + Number(component.amount || 0), 0);
-      const freeAmount = Number(internatAmounts[charge.charge_id] || 0);
+      const typedAmount = Number(internatAmounts[charge.charge_id] || 0);
+      const safeTypedAmount = Number.isFinite(typedAmount)
+        ? Math.max(typedAmount, 0)
+        : 0;
       const amountForCharge =
         selectedCategoryIsInternat && charge.components.length > 0
           ? componentTotal
-          : freeAmount;
+          : Math.min(safeTypedAmount, Number(charge.balance_due || 0));
 
       return {
         chargeId: charge.charge_id,
@@ -299,7 +306,11 @@ export default function PaymentsComposer({
           ? Math.max(amountForCharge, 0)
           : 0,
         componentIds,
+        // Scolarité : les libellés servent aux statistiques et à la ventilation
+        // interne, mais ils ne doivent pas ressortir sur le reçu.
         componentMode: selectedCategoryIsScolarite ? "hidden" : "detail",
+        // Internat : les frais annexes non cochés sont considérés comme non dus
+        // pour ce reçu. Exemple : Bible décochée => total internat réduit.
         closeUnselectedComponents:
           selectedCategoryIsInternat && charge.components.length > 0,
         includeOnReceipt:
@@ -333,14 +344,36 @@ export default function PaymentsComposer({
     [categoryChargeOptions],
   );
 
+  const categoryExpectedTotal = useMemo(
+    () =>
+      categoryChargeOptions.reduce(
+        (sum, charge) => sum + Number(charge.net_amount || 0),
+        0,
+      ),
+    [categoryChargeOptions],
+  );
+
+  const remainingAfterCurrentPayment = Math.max(
+    categoryBalanceTotal - groupedPaymentTotal,
+    0,
+  );
+
   useEffect(() => {
     if (selectedCategoryUsesGroupedPlan) {
+      const expectedForDisplay = selectedCategoryIsScolarite
+        ? categoryExpectedTotal
+        : groupedPaymentTotal;
       setExpectedAmount(
-        groupedPaymentTotal > 0 ? String(groupedPaymentTotal) : "",
+        expectedForDisplay > 0 ? String(expectedForDisplay) : "",
       );
       setAmount(groupedPaymentTotal > 0 ? String(groupedPaymentTotal) : "");
     }
-  }, [groupedPaymentTotal, selectedCategoryUsesGroupedPlan]);
+  }, [
+    categoryExpectedTotal,
+    groupedPaymentTotal,
+    selectedCategoryIsScolarite,
+    selectedCategoryUsesGroupedPlan,
+  ]);
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
@@ -352,9 +385,77 @@ export default function PaymentsComposer({
       : Number(amount) > 0),
   );
 
+  if (activeWorkflow === "menu") {
+    return (
+      <section className="grid gap-5 lg:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("payment")}
+          className="group rounded-[28px] border border-emerald-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
+        >
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+            <Wallet className="h-5 w-5" />
+          </div>
+          <h2 className="mt-5 text-2xl font-black text-slate-950">
+            Encaisser un paiement
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ouvre le formulaire d’encaissement en plein écran : choix de
+            l’élève, catégorie, ventilation scolarité ou internat, puis
+            validation du reçu.
+          </p>
+          <span className="mt-5 inline-flex rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-emerald-700">
+            Commencer
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("new")}
+          className="group rounded-[28px] border border-sky-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md"
+        >
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+            <UserPlus className="h-5 w-5" />
+          </div>
+          <h2 className="mt-5 text-2xl font-black text-slate-950">
+            Nouvelle inscription
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ouvre uniquement le formulaire d’inscription et d’encaissement.
+            Après validation, le reçu est généré et l’écran revient au module.
+          </p>
+          <span className="mt-5 inline-flex rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-sky-700">
+            Inscrire
+          </span>
+        </button>
+      </section>
+    );
+  }
+
   return (
-    <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-      <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+            Module caisse
+          </div>
+          <div className="mt-1 text-lg font-black text-slate-950">
+            {activeWorkflow === "payment"
+              ? "Encaisser un paiement"
+              : "Nouvelle inscription"}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("menu")}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Retour aux deux actions
+        </button>
+      </div>
+
+      {activeWorkflow === "payment" ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           <Wallet className="h-4 w-4 text-emerald-600" />
           Encaisser un paiement
@@ -640,7 +741,7 @@ export default function PaymentsComposer({
                 )}
               </div>
 
-              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-3">
+              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                     Catégorie sélectionnée
@@ -651,28 +752,50 @@ export default function PaymentsComposer({
                 </div>
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    Montant attendu
+                    {selectedCategoryIsScolarite
+                      ? "Scolarité officielle"
+                      : selectedCategoryIsInternat
+                        ? "Internat retenu"
+                        : "Montant attendu"}
                   </div>
                   <div className="mt-1 text-sm font-black text-slate-900">
-                    {selectedCategoryUsesGroupedPlan
-                      ? groupedPaymentTotal > 0
-                        ? formatMoney(groupedPaymentTotal)
-                        : "À sélectionner"
-                      : selectedCharge
-                        ? formatMoney(selectedCharge.net_amount)
-                        : "À saisir"}
+                    {selectedCategoryIsScolarite
+                      ? formatMoney(categoryExpectedTotal)
+                      : selectedCategoryIsInternat
+                        ? groupedPaymentTotal > 0
+                          ? formatMoney(groupedPaymentTotal)
+                          : "À sélectionner"
+                        : selectedCharge
+                          ? formatMoney(selectedCharge.net_amount)
+                          : "À saisir"}
                   </div>
                 </div>
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    Reste à régler
+                    Montant encaissé
+                  </div>
+                  <div className="mt-1 text-sm font-black text-emerald-700">
+                    {selectedCategoryUsesGroupedPlan
+                      ? formatMoney(groupedPaymentTotal)
+                      : formatMoney(Number(amount || 0))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Reste après paiement
                   </div>
                   <div className="mt-1 text-sm font-black text-rose-700">
                     {selectedCategoryUsesGroupedPlan
-                      ? formatMoney(categoryBalanceTotal)
+                      ? formatMoney(remainingAfterCurrentPayment)
                       : selectedCharge
-                        ? formatMoney(selectedCharge.balance_due)
-                        : formatMoney(Number(amount || 0))}
+                        ? formatMoney(
+                            Math.max(
+                              Number(selectedCharge.balance_due || 0) -
+                                Number(amount || 0),
+                              0,
+                            ),
+                          )
+                        : formatMoney(0)}
                   </div>
                 </div>
               </div>
@@ -732,7 +855,9 @@ export default function PaymentsComposer({
           )}
         </form>
       </div>
+      ) : null}
 
+      {activeWorkflow === "new" ? (
       <form
         action={action}
         className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
@@ -854,6 +979,7 @@ export default function PaymentsComposer({
           />
         </div>
       </form>
+      ) : null}
     </section>
   );
 }
@@ -922,14 +1048,14 @@ function ScolaritePaymentPlanner({
             Encaissement scolarité
           </div>
           <p className="mt-1 text-sm text-sky-900/80">
-            Saisissez les montants réellement payés sur chaque ligne ouverte. Le
-            reçu imprimé restera un reçu de scolarité, sans détail des
-            sous-rubriques.
+            Saisissez uniquement ce que le parent paie réellement sur les
+            lignes internes. Le reçu imprimé restera un reçu de scolarité,
+            sans afficher inscription, écolage ou autres libellés internes.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-sky-200">
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-            Total scolarité
+            Total encaissé
           </div>
           <div className="mt-1 text-lg font-black text-sky-700">
             {formatMoney(total)}

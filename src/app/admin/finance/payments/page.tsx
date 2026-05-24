@@ -223,6 +223,29 @@ function normalize(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function normalizeSearch(value: unknown) {
+  return normalize(value).toLowerCase();
+}
+
+function isFinanceInternatCategory(
+  category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
+) {
+  const text = normalizeSearch(`${category?.code || ""} ${category?.name || ""}`);
+  return text.includes("internat");
+}
+
+function isFinanceScolariteCategory(
+  category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
+) {
+  const text = normalizeSearch(`${category?.code || ""} ${category?.name || ""}`);
+  return (
+    text.includes("scolar") ||
+    text.includes("ecolage") ||
+    text.includes("écolage") ||
+    text.includes("inscription")
+  );
+}
+
 function paymentTypeLabel(value: string) {
   return PAYMENT_TYPE_LABELS[value] || "Versement";
 }
@@ -1314,15 +1337,19 @@ async function createPaymentAction(formData: FormData) {
     }
   }
 
-  const remainingDueAfterPayment = allocationDrafts.reduce(
-    (sum, item) =>
+  const remainingDueAfterPayment = allocationDrafts.reduce((sum, item) => {
+    // Internat : quand des frais annexes ne sont pas cochés, ils sont fermés
+    // avec un montant à 0. Ils ne doivent donc plus compter dans le reste dû.
+    if (item.skippedComponents.length > 0) return sum;
+
+    return (
       sum +
       Math.max(
         Number(item.charge.balance_due || 0) - Number(item.amount || 0),
         0,
-      ),
-    0,
-  );
+      )
+    );
+  }, 0);
 
   let studentNameForNotification = payerName || "";
   try {
@@ -1520,6 +1547,7 @@ export default async function FinancePaymentsPage({
 
   const classRows = (classes ?? []) as ClassRow[];
   const feeCategoryRows = (categories ?? []) as FeeCategoryRow[];
+  const feeCategoryMap = new Map(feeCategoryRows.map((row) => [row.id, row]));
   const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
   const classIdSet = new Set(classIds);
@@ -1618,23 +1646,29 @@ export default async function FinancePaymentsPage({
             const allComponents = row.fee_schedule_id
               ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
               : [];
-            const components = allComponents
-              .filter((component) => !paidIds.has(component.id))
-              .map((component) => ({
-                id: component.id,
-                label: component.label,
-                amount: Number(component.amount || 0),
-                order_index: Number(component.order_index || 0),
-              }));
+            const category = feeCategoryMap.get(row.fee_category_id);
+            const isInternatCategory = isFinanceInternatCategory(category);
+            const isScolariteCategory = isFinanceScolariteCategory(category);
+            const componentDrivenBalance =
+              isInternatCategory && allComponents.length > 0;
+            const components = componentDrivenBalance
+              ? allComponents
+                  .filter((component) => !paidIds.has(component.id))
+                  .map((component) => ({
+                    id: component.id,
+                    label: component.label,
+                    amount: Number(component.amount || 0),
+                    order_index: Number(component.order_index || 0),
+                  }))
+              : [];
             const rawBalanceDue = Number(row.balance_due || 0);
             const remainingComponentTotal = components.reduce(
               (sum, component) => sum + Number(component.amount || 0),
               0,
             );
-            const effectiveBalanceDue =
-              allComponents.length > 0
-                ? Math.min(rawBalanceDue, remainingComponentTotal)
-                : rawBalanceDue;
+            const effectiveBalanceDue = componentDrivenBalance
+              ? Math.min(rawBalanceDue, remainingComponentTotal)
+              : rawBalanceDue;
 
             if (effectiveBalanceDue <= 0) return null;
 
@@ -1644,16 +1678,15 @@ export default async function FinancePaymentsPage({
               fee_schedule_id: row.fee_schedule_id,
               label: row.label,
               due_date: row.due_date,
-              net_amount:
-                allComponents.length > 0
-                  ? Math.min(
-                      Number(row.net_amount || 0),
-                      remainingComponentTotal,
-                    )
-                  : Number(row.net_amount || 0),
+              // Scolarité : le montant officiel reste celui du barème.
+              // On ne le réduit jamais selon des composants internes.
+              // Internat : seuls les frais annexes cochés restent dus.
+              net_amount: componentDrivenBalance
+                ? Math.min(Number(row.net_amount || 0), remainingComponentTotal)
+                : Number(row.net_amount || 0),
               paid_amount: Number(row.paid_amount || 0),
               balance_due: effectiveBalanceDue,
-              components,
+              components: isScolariteCategory ? [] : components,
             };
           })
           .filter((row): row is ChargeOptionRow => Boolean(row));
