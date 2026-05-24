@@ -272,6 +272,10 @@ export default function FounderShell({ children }: { children: ReactNode }) {
               </div>
             </div>
 
+            <div className="mb-3 lg:hidden">
+              <InstallAndPushCTA />
+            </div>
+
             {children}
           </main>
         </div>
