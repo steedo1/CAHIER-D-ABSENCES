@@ -27,12 +27,68 @@ type Props = {
   action: (formData: FormData) => void | Promise<void>;
 };
 
+type ActiveFinanceWorkflow = "menu" | "payment" | "new";
+
+type FeeComponentOption = {
+  id: string;
+  label: string;
+  amount: number;
+  order_index: number;
+};
+
 function normalize(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
+function isInternatCategory(category: FeeCategoryRow | null | undefined) {
+  const text = normalize(`${category?.code || ""} ${category?.name || ""}`);
+  return text.includes("internat");
+}
+
+function isScolariteCategory(category: FeeCategoryRow | null | undefined) {
+  const text = normalize(`${category?.code || ""} ${category?.name || ""}`);
+  return (
+    text.includes("scolar") ||
+    text.includes("ecolage") ||
+    text.includes("écolage") ||
+    text.includes("inscription")
+  );
+}
+
+function isPensionCharge(label: string | null | undefined) {
+  return normalize(label).includes("pension");
+}
+
+function getSelectedComponentsTotal(
+  charge: PaymentStudentRow["open_charges"][number],
+  componentIdsByCharge: Record<string, string[]>,
+) {
+  const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
+  return charge.components
+    .filter((component) => selected.has(component.id))
+    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+}
+
+function getInternatRecoverableTotal(
+  charges: PaymentStudentRow["open_charges"],
+  componentIdsByCharge: Record<string, string[]>,
+) {
+  return charges.reduce((sum, charge) => {
+    if (charge.components.length > 0) {
+      return sum + getSelectedComponentsTotal(charge, componentIdsByCharge);
+    }
+
+    // La pension reste un montant fixe. Les sous-rubriques annexes peuvent
+    // varier, mais la pension ouverte ne doit pas disparaître du total à
+    // recouvrer tant qu'elle n'est pas soldée.
+    return sum + Number(charge.balance_due || 0);
+  }, 0);
 }
 
 function PendingButton({
@@ -84,11 +140,21 @@ export default function PaymentsComposer({
   const [search, setSearch] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [selectedChargeId, setSelectedChargeId] = useState("");
+  const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>(
+    [],
+  );
+  const [internatAmounts, setInternatAmounts] = useState<
+    Record<string, string>
+  >({});
+  const [internatComponentIdsByCharge, setInternatComponentIdsByCharge] =
+    useState<Record<string, string[]>>({});
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [paymentType, setPaymentType] = useState("free");
+  const [paymentType, setPaymentType] = useState("cash");
   const [amount, setAmount] = useState("");
   const [expectedAmount, setExpectedAmount] = useState("");
   const [newClassId, setNewClassId] = useState("");
+  const [activeWorkflow, setActiveWorkflow] =
+    useState<ActiveFinanceWorkflow>("menu");
 
   useEffect(() => {
     if (!selectedLevel && levels.length > 0) setSelectedLevel(levels[0]);
@@ -103,7 +169,10 @@ export default function PaymentsComposer({
   const classOptions = useMemo(() => {
     if (!selectedLevel) return [];
     return classes
-      .filter((cls) => normalize(cls.level || "Sans niveau") === normalize(selectedLevel))
+      .filter(
+        (cls) =>
+          normalize(cls.level || "Sans niveau") === normalize(selectedLevel),
+      )
       .sort((a, b) =>
         a.label.localeCompare(b.label, "fr", {
           numeric: true,
@@ -117,6 +186,9 @@ export default function PaymentsComposer({
       setSelectedClassId(classOptions[0]?.id ?? "");
       setSelectedStudentId("");
       setSelectedChargeId("");
+      setSelectedComponentIds([]);
+      setInternatAmounts({});
+      setInternatComponentIdsByCharge({});
       setSearch("");
     }
   }, [classOptions, selectedClassId]);
@@ -155,6 +227,9 @@ export default function PaymentsComposer({
     if (!filteredRows.some((row) => row.student_id === selectedStudentId)) {
       setSelectedStudentId("");
       setSelectedChargeId("");
+      setSelectedComponentIds([]);
+      setInternatAmounts({});
+      setInternatComponentIdsByCharge({});
     }
   }, [filteredRows, selectedStudentId]);
 
@@ -171,45 +246,272 @@ export default function PaymentsComposer({
     [selectedChargeId, selectedStudent],
   );
 
+  const categoryChargeOptions = useMemo(() => {
+    if (!selectedStudent || !selectedCategoryId) return [];
+    return selectedStudent.open_charges.filter(
+      (charge) => charge.fee_category_id === selectedCategoryId,
+    );
+  }, [selectedCategoryId, selectedStudent]);
+
+  const selectedCategory = useMemo(
+    () =>
+      feeCategories.find((category) => category.id === selectedCategoryId) ??
+      null,
+    [feeCategories, selectedCategoryId],
+  );
+
+  const selectedCategoryIsInternat = isInternatCategory(selectedCategory);
+  const selectedCategoryIsScolarite = isScolariteCategory(selectedCategory);
+  const selectedCategoryUsesGroupedPlan =
+    selectedCategoryIsInternat || selectedCategoryIsScolarite;
+
+  function applyCharge(
+    charge: PaymentStudentRow["open_charges"][number] | null,
+  ) {
+    setSelectedChargeId(charge?.charge_id ?? "");
+    setSelectedComponentIds([]);
+    setInternatAmounts({});
+    setInternatComponentIdsByCharge({});
+    if (charge) {
+      setSelectedCategoryId(charge.fee_category_id);
+      setExpectedAmount(String(charge.net_amount));
+      setAmount(charge.components?.length ? "" : String(charge.balance_due));
+    } else {
+      setAmount("");
+      setExpectedAmount("");
+    }
+  }
+
   useEffect(() => {
     if (!selectedStudent) {
-      setSelectedChargeId("");
-      setAmount("");
+      applyCharge(null);
       return;
     }
 
     const firstCharge = selectedStudent.open_charges[0];
     if (firstCharge && !selectedChargeId) {
-      setSelectedChargeId(firstCharge.charge_id);
-      setSelectedCategoryId(firstCharge.fee_category_id);
-      setAmount(String(firstCharge.balance_due));
-      setExpectedAmount(String(firstCharge.net_amount));
+      applyCharge(firstCharge);
+    }
+    if (!firstCharge) {
+      applyCharge(null);
     }
   }, [selectedChargeId, selectedStudent]);
 
   useEffect(() => {
-    if (selectedCharge) {
+    if (selectedCharge && !selectedCategoryUsesGroupedPlan) {
       setSelectedCategoryId(selectedCharge.fee_category_id);
-      setAmount(String(selectedCharge.balance_due));
+      setSelectedComponentIds([]);
       setExpectedAmount(String(selectedCharge.net_amount));
+      setAmount(String(selectedCharge.balance_due));
     }
-  }, [selectedCharge?.charge_id]);
+  }, [selectedCharge?.charge_id, selectedCategoryUsesGroupedPlan]);
+
+  const groupedPaymentPlan = useMemo(() => {
+    if (!selectedCategoryUsesGroupedPlan) return [];
+
+    return categoryChargeOptions.map((charge) => {
+      const componentIds = selectedCategoryIsInternat
+        ? (internatComponentIdsByCharge[charge.charge_id] ?? [])
+        : [];
+      const componentTotal = getSelectedComponentsTotal(
+        charge,
+        internatComponentIdsByCharge,
+      );
+      const typedAmount = Number(internatAmounts[charge.charge_id] || 0);
+      const safeTypedAmount = Number.isFinite(typedAmount)
+        ? Math.max(typedAmount, 0)
+        : 0;
+      const amountForCharge =
+        selectedCategoryIsInternat && charge.components.length > 0
+          ? componentTotal
+          : Math.min(safeTypedAmount, Number(charge.balance_due || 0));
+
+      return {
+        chargeId: charge.charge_id,
+        amount: Number.isFinite(amountForCharge)
+          ? Math.max(amountForCharge, 0)
+          : 0,
+        componentIds,
+        // Scolarité : les libellés servent aux statistiques et à la ventilation
+        // interne, mais ils ne doivent pas ressortir sur le reçu.
+        componentMode: selectedCategoryIsScolarite ? "hidden" : "detail",
+        // Internat : les frais annexes non cochés sont considérés comme non dus
+        // pour ce reçu. Exemple : Bible décochée => total internat réduit.
+        closeUnselectedComponents:
+          selectedCategoryIsInternat && charge.components.length > 0,
+        includeOnReceipt:
+          selectedCategoryIsInternat && isPensionCharge(charge.label),
+      };
+    });
+  }, [
+    categoryChargeOptions,
+    internatAmounts,
+    internatComponentIdsByCharge,
+    selectedCategoryIsInternat,
+    selectedCategoryIsScolarite,
+    selectedCategoryUsesGroupedPlan,
+  ]);
+
+  const groupedPaymentTotal = useMemo(
+    () =>
+      groupedPaymentPlan.reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0,
+      ),
+    [groupedPaymentPlan],
+  );
+
+  const categoryBalanceTotal = useMemo(
+    () =>
+      categoryChargeOptions.reduce(
+        (sum, charge) => sum + Number(charge.balance_due || 0),
+        0,
+      ),
+    [categoryChargeOptions],
+  );
+
+  const categoryExpectedTotal = useMemo(
+    () =>
+      categoryChargeOptions.reduce(
+        (sum, charge) => sum + Number(charge.net_amount || 0),
+        0,
+      ),
+    [categoryChargeOptions],
+  );
+
+  const internatRecoverableTotal = useMemo(
+    () =>
+      selectedCategoryIsInternat
+        ? getInternatRecoverableTotal(
+            categoryChargeOptions,
+            internatComponentIdsByCharge,
+          )
+        : 0,
+    [
+      categoryChargeOptions,
+      internatComponentIdsByCharge,
+      selectedCategoryIsInternat,
+    ],
+  );
+
+  const effectiveCategoryBalanceTotal = selectedCategoryIsInternat
+    ? internatRecoverableTotal
+    : categoryBalanceTotal;
+
+  const remainingAfterCurrentPayment = Math.max(
+    effectiveCategoryBalanceTotal - groupedPaymentTotal,
+    0,
+  );
+
+  useEffect(() => {
+    if (selectedCategoryUsesGroupedPlan) {
+      const expectedForDisplay = selectedCategoryIsScolarite
+        ? categoryExpectedTotal
+        : selectedCategoryIsInternat
+          ? internatRecoverableTotal
+          : groupedPaymentTotal;
+      setExpectedAmount(
+        expectedForDisplay > 0 ? String(expectedForDisplay) : "",
+      );
+      setAmount(groupedPaymentTotal > 0 ? String(groupedPaymentTotal) : "");
+    }
+  }, [
+    categoryExpectedTotal,
+    groupedPaymentTotal,
+    internatRecoverableTotal,
+    selectedCategoryIsInternat,
+    selectedCategoryIsScolarite,
+    selectedCategoryUsesGroupedPlan,
+  ]);
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
-    selectedStudent && selectedClassId && selectedCategoryId && Number(amount) > 0,
+    selectedStudent &&
+    selectedClassId &&
+    selectedCategoryId &&
+    (selectedCategoryUsesGroupedPlan
+      ? groupedPaymentTotal > 0
+      : Number(amount) > 0),
   );
 
+  if (activeWorkflow === "menu") {
+    return (
+      <section className="grid gap-5 lg:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("payment")}
+          className="group rounded-[28px] border border-emerald-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
+        >
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+            <Wallet className="h-5 w-5" />
+          </div>
+          <h2 className="mt-5 text-2xl font-black text-slate-950">
+            Encaisser un paiement
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ouvre le formulaire d’encaissement en plein écran : choix de
+            l’élève, catégorie, ventilation scolarité ou internat, puis
+            validation du reçu.
+          </p>
+          <span className="mt-5 inline-flex rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-emerald-700">
+            Commencer
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("new")}
+          className="group rounded-[28px] border border-sky-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md"
+        >
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+            <UserPlus className="h-5 w-5" />
+          </div>
+          <h2 className="mt-5 text-2xl font-black text-slate-950">
+            Nouvelle inscription
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Ouvre uniquement le formulaire d’inscription et d’encaissement.
+            Après validation, le reçu est généré et l’écran revient au module.
+          </p>
+          <span className="mt-5 inline-flex rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-sky-700">
+            Inscrire
+          </span>
+        </button>
+      </section>
+    );
+  }
+
   return (
-    <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-      <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+            Module caisse
+          </div>
+          <div className="mt-1 text-lg font-black text-slate-950">
+            {activeWorkflow === "payment"
+              ? "Encaisser un paiement"
+              : "Nouvelle inscription"}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setActiveWorkflow("menu")}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Retour aux deux actions
+        </button>
+      </div>
+
+      {activeWorkflow === "payment" ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           <Wallet className="h-4 w-4 text-emerald-600" />
           Encaisser un paiement
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          Choisissez la classe, puis recherchez par nom ou matricule. Aucun élève
-          n’est affiché tant que la recherche n’est pas saisie.
+          Choisissez la classe, puis recherchez par nom ou matricule. Aucun
+          élève n’est affiché tant que la recherche n’est pas saisie.
         </p>
 
         <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -224,10 +526,14 @@ export default function PaymentsComposer({
                 setSelectedClassId("");
                 setSelectedStudentId("");
                 setSelectedChargeId("");
+                setInternatAmounts({});
+                setInternatComponentIdsByCharge({});
               }}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
             >
-              {levels.length === 0 ? <option value="">Aucun niveau</option> : null}
+              {levels.length === 0 ? (
+                <option value="">Aucun niveau</option>
+              ) : null}
               {levels.map((level) => (
                 <option key={level} value={level}>
                   {level}
@@ -246,6 +552,8 @@ export default function PaymentsComposer({
                 setSelectedClassId(e.target.value);
                 setSelectedStudentId("");
                 setSelectedChargeId("");
+                setInternatAmounts({});
+                setInternatComponentIdsByCharge({});
               }}
               disabled={!selectedLevel}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
@@ -304,13 +612,8 @@ export default function PaymentsComposer({
                     type="button"
                     onClick={() => {
                       setSelectedStudentId(row.student_id);
-                      const firstCharge = row.open_charges[0];
-                      setSelectedChargeId(firstCharge?.charge_id ?? "");
-                      if (firstCharge) {
-                        setSelectedCategoryId(firstCharge.fee_category_id);
-                        setAmount(String(firstCharge.balance_due));
-                        setExpectedAmount(String(firstCharge.net_amount));
-                      }
+                      const firstCharge = row.open_charges[0] ?? null;
+                      applyCharge(firstCharge);
                     }}
                     className={`w-full rounded-3xl border p-4 text-left transition ${
                       active
@@ -331,7 +634,8 @@ export default function PaymentsComposer({
                           ) : null}
                         </div>
                         <div className="mt-2 text-xs font-semibold text-slate-500">
-                          {row.class_label} · {row.open_charges.length} frais ouvert(s)
+                          {row.class_label} · {row.open_charges.length} frais
+                          ouvert(s)
                         </div>
                       </div>
                       <div className="shrink-0 rounded-full bg-rose-50 px-3 py-1.5 text-sm font-black text-rose-700 ring-1 ring-rose-200">
@@ -345,16 +649,42 @@ export default function PaymentsComposer({
           )}
         </div>
 
-        <form action={action} className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50/70 p-4">
+        <form
+          action={action}
+          className="mt-5 rounded-[26px] border border-slate-200 bg-slate-50/70 p-4"
+        >
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <Receipt className="h-4 w-4 text-emerald-600" />
             Paiement
           </div>
 
           <input type="hidden" name="mode" value="existing" />
-          <input type="hidden" name="student_id" value={selectedStudent?.student_id ?? ""} />
+          <input
+            type="hidden"
+            name="student_id"
+            value={selectedStudent?.student_id ?? ""}
+          />
           <input type="hidden" name="class_id" value={selectedClassId} />
-          <input type="hidden" name="student_charge_id" value={selectedChargeId} />
+          <input
+            type="hidden"
+            name="student_charge_id"
+            value={selectedCategoryUsesGroupedPlan ? "" : selectedChargeId}
+          />
+          {selectedCategoryUsesGroupedPlan ? (
+            <input
+              type="hidden"
+              name="allocation_plan"
+              value={JSON.stringify(groupedPaymentPlan)}
+            />
+          ) : null}
+          {selectedComponentIds.map((componentId) => (
+            <input
+              key={componentId}
+              type="hidden"
+              name="component_ids"
+              value={componentId}
+            />
+          ))}
 
           {!selectedStudent ? (
             <div className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-8 text-center text-sm text-slate-600">
@@ -369,9 +699,12 @@ export default function PaymentsComposer({
                       <UserRound className="h-3.5 w-3.5" />
                       Élève sélectionné
                     </div>
-                    <h2 className="mt-3 text-xl font-black">{selectedStudent.student_name}</h2>
+                    <h2 className="mt-3 text-xl font-black">
+                      {selectedStudent.student_name}
+                    </h2>
                     <p className="mt-1 text-sm text-slate-200">
-                      {selectedStudent.class_label} · {selectedStudent.matricule || "Matricule non renseigné"}
+                      {selectedStudent.class_label} ·{" "}
+                      {selectedStudent.matricule || "Matricule non renseigné"}
                     </p>
                   </div>
                   <div className="rounded-2xl bg-white/10 px-3 py-2 text-right ring-1 ring-white/15">
@@ -385,35 +718,170 @@ export default function PaymentsComposer({
                 </div>
               </div>
 
-              {selectedStudent.open_charges.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <FeeCategorySelect
+                  feeCategories={feeCategories}
+                  selectedCategoryId={selectedCategoryId}
+                  onChange={(nextCategoryId) => {
+                    setSelectedCategoryId(nextCategoryId);
+                    const nextCharge =
+                      selectedStudent.open_charges.find(
+                        (charge) => charge.fee_category_id === nextCategoryId,
+                      ) ?? null;
+                    applyCharge(nextCharge);
+                  }}
+                />
+
+                {selectedStudent.open_charges.length > 0 &&
+                selectedCategoryUsesGroupedPlan ? (
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm font-semibold text-emerald-900 md:col-span-2">
+                    {selectedCategoryIsInternat ? (
+                      <>
+                        L’internat peut être encaissé en une seule opération :
+                        pension + frais annexes. La ligne pension restera
+                        visible sur le reçu, même si aucun montant n’est versé
+                        dessus.
+                      </>
+                    ) : (
+                      <>
+                        La scolarité peut être encaissée en une seule opération,
+                        même si le paiement concerne plusieurs lignes comme
+                        l’inscription ou l’écolage. Sur le reçu, ces
+                        sous-rubriques ne seront pas détaillées.
+                      </>
+                    )}
+                  </div>
+                ) : selectedStudent.open_charges.length > 0 ? (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                      Frais ouvert à régler
+                    </label>
+                    <select
+                      value={selectedChargeId}
+                      onChange={(e) => {
+                        const nextCharge =
+                          selectedStudent.open_charges.find(
+                            (charge) => charge.charge_id === e.target.value,
+                          ) ?? null;
+                        applyCharge(nextCharge);
+                      }}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+                    >
+                      {categoryChargeOptions.length === 0 ? (
+                        <option value="">
+                          Aucun frais ouvert dans cette catégorie
+                        </option>
+                      ) : null}
+                      {categoryChargeOptions.map((charge) => (
+                        <option key={charge.charge_id} value={charge.charge_id}>
+                          {charge.label} — attendu{" "}
+                          {formatMoney(charge.net_amount)} · reste{" "}
+                          {formatMoney(charge.balance_due)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 md:col-span-2">
+                    Aucune situation ouverte n’est encore créée pour cet élève.
+                    Le système la créera automatiquement si un barème existe, ou
+                    créera une ligne manuelle à partir du montant attendu.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
-                  <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Frais ouvert à régler
-                  </label>
-                  <select
-                    value={selectedChargeId}
-                    onChange={(e) => setSelectedChargeId(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  >
-                    {selectedStudent.open_charges.map((charge) => (
-                      <option key={charge.charge_id} value={charge.charge_id}>
-                        {charge.label} — reste {formatMoney(charge.balance_due)}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Catégorie sélectionnée
+                  </div>
+                  <div className="mt-1 text-sm font-black text-slate-900">
+                    {selectedCategory?.name || "Non définie"}
+                  </div>
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-                  Aucune situation ouverte n’est encore créée pour cet élève.
-                  Le système la créera automatiquement si un barème existe, ou
-                  créera une ligne manuelle à partir du montant attendu.
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    {selectedCategoryIsScolarite
+                      ? "Scolarité officielle"
+                      : selectedCategoryIsInternat
+                        ? "Internat retenu"
+                        : "Montant attendu"}
+                  </div>
+                  <div className="mt-1 text-sm font-black text-slate-900">
+                    {selectedCategoryIsScolarite
+                      ? formatMoney(categoryExpectedTotal)
+                      : selectedCategoryIsInternat
+                        ? internatRecoverableTotal > 0
+                          ? formatMoney(internatRecoverableTotal)
+                          : "À sélectionner"
+                        : selectedCharge
+                          ? formatMoney(selectedCharge.net_amount)
+                          : "À saisir"}
+                  </div>
                 </div>
-              )}
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Montant encaissé
+                  </div>
+                  <div className="mt-1 text-sm font-black text-emerald-700">
+                    {selectedCategoryUsesGroupedPlan
+                      ? formatMoney(groupedPaymentTotal)
+                      : formatMoney(Number(amount || 0))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Reste après paiement
+                  </div>
+                  <div className="mt-1 text-sm font-black text-rose-700">
+                    {selectedCategoryUsesGroupedPlan
+                      ? formatMoney(remainingAfterCurrentPayment)
+                      : selectedCharge
+                        ? formatMoney(
+                            Math.max(
+                              Number(selectedCharge.balance_due || 0) -
+                                Number(amount || 0),
+                              0,
+                            ),
+                          )
+                        : formatMoney(0)}
+                  </div>
+                </div>
+              </div>
+
+              {selectedCategoryIsInternat ? (
+                <InternatPaymentPlanner
+                  charges={categoryChargeOptions}
+                  amounts={internatAmounts}
+                  componentIdsByCharge={internatComponentIdsByCharge}
+                  recoverableTotal={internatRecoverableTotal}
+                  onAmountChange={(chargeId, value) =>
+                    setInternatAmounts((prev) => ({
+                      ...prev,
+                      [chargeId]: value,
+                    }))
+                  }
+                  onComponentChange={(chargeId, componentIds) =>
+                    setInternatComponentIdsByCharge((prev) => ({
+                      ...prev,
+                      [chargeId]: componentIds,
+                    }))
+                  }
+                />
+              ) : selectedCategoryIsScolarite ? (
+                <ScolaritePaymentPlanner
+                  charges={categoryChargeOptions}
+                  amounts={internatAmounts}
+                  onAmountChange={(chargeId, value) =>
+                    setInternatAmounts((prev) => ({
+                      ...prev,
+                      [chargeId]: value,
+                    }))
+                  }
+                />
+              ) : null}
 
               <PaymentFields
-                feeCategories={feeCategories}
-                selectedCategoryId={selectedCategoryId}
-                setSelectedCategoryId={setSelectedCategoryId}
                 paymentType={paymentType}
                 setPaymentType={setPaymentType}
                 expectedAmount={expectedAmount}
@@ -421,6 +889,10 @@ export default function PaymentsComposer({
                 amount={amount}
                 setAmount={setAmount}
                 today={today}
+                expectedAmountLocked={
+                  Boolean(selectedCharge) || selectedCategoryUsesGroupedPlan
+                }
+                amountLocked={selectedCategoryUsesGroupedPlan}
               />
 
               <PendingButton
@@ -433,8 +905,13 @@ export default function PaymentsComposer({
           )}
         </form>
       </div>
+      ) : null}
 
-      <form action={action} className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      {activeWorkflow === "new" ? (
+      <form
+        action={action}
+        className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+      >
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
           <UserPlus className="h-4 w-4 text-emerald-600" />
           Nouvelle inscription
@@ -496,7 +973,9 @@ export default function PaymentsComposer({
               onChange={(e) => setNewClassId(e.target.value)}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
             >
-              {classes.length === 0 ? <option value="">Aucune classe</option> : null}
+              {classes.length === 0 ? (
+                <option value="">Aucune classe</option>
+              ) : null}
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>
                   {cls.label}
@@ -518,10 +997,13 @@ export default function PaymentsComposer({
             />
           </div>
 
-          <PaymentFields
+          <FeeCategorySelect
             feeCategories={feeCategories}
             selectedCategoryId={selectedCategoryId}
-            setSelectedCategoryId={setSelectedCategoryId}
+            onChange={setSelectedCategoryId}
+          />
+
+          <PaymentFields
             paymentType={paymentType}
             setPaymentType={setPaymentType}
             expectedAmount={expectedAmount}
@@ -529,6 +1011,8 @@ export default function PaymentsComposer({
             amount={amount}
             setAmount={setAmount}
             today={today}
+            expectedAmountLocked={false}
+            amountLocked={false}
           />
 
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -545,14 +1029,399 @@ export default function PaymentsComposer({
           />
         </div>
       </form>
+      ) : null}
     </section>
   );
 }
 
-function PaymentFields({
+function FeeCategorySelect({
   feeCategories,
   selectedCategoryId,
-  setSelectedCategoryId,
+  onChange,
+}: {
+  feeCategories: FeeCategoryRow[];
+  selectedCategoryId: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+        Catégorie
+      </label>
+      <select
+        name="fee_category_id"
+        value={selectedCategoryId}
+        onChange={(e) => onChange(e.target.value)}
+        required
+        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+      >
+        {feeCategories.length === 0 ? (
+          <option value="">Aucune catégorie</option>
+        ) : null}
+        {feeCategories.map((category) => (
+          <option key={category.id} value={category.id}>
+            {category.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ScolaritePaymentPlanner({
+  charges,
+  amounts,
+  onAmountChange,
+}: {
+  charges: PaymentStudentRow["open_charges"];
+  amounts: Record<string, string>;
+  onAmountChange: (chargeId: string, value: string) => void;
+}) {
+  if (charges.length === 0) {
+    return (
+      <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50 px-4 py-5 text-sm font-semibold text-amber-800">
+        Aucun frais de scolarité ouvert n’a été trouvé pour cet élève.
+      </div>
+    );
+  }
+
+  const total = charges.reduce(
+    (sum, charge) => sum + Number(amounts[charge.charge_id] || 0),
+    0,
+  );
+
+  return (
+    <div className="rounded-3xl border border-sky-200 bg-sky-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-sky-800">
+            Encaissement scolarité
+          </div>
+          <p className="mt-1 text-sm text-sky-900/80">
+            Saisissez uniquement ce que le parent paie réellement sur les
+            lignes internes. Le reçu imprimé restera un reçu de scolarité,
+            sans afficher inscription, écolage ou autres libellés internes.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-sky-200">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Total encaissé
+          </div>
+          <div className="mt-1 text-lg font-black text-sky-700">
+            {formatMoney(total)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {charges.map((charge) => {
+          const value = amounts[charge.charge_id] ?? "";
+          const amountForCharge = Number(value || 0);
+
+          return (
+            <div
+              key={charge.charge_id}
+              className="rounded-3xl border border-sky-100 bg-white p-4 shadow-sm"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-slate-900">
+                    {charge.label}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">
+                    Attendu : {formatMoney(charge.net_amount)} · Déjà payé :{" "}
+                    {formatMoney(charge.paid_amount)} · Reste :{" "}
+                    {formatMoney(charge.balance_due)}
+                  </div>
+                </div>
+                <div className="w-full sm:w-44">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                    Montant payé
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={charge.balance_due}
+                    step="1"
+                    value={value}
+                    onChange={(e) =>
+                      onAmountChange(charge.charge_id, e.target.value)
+                    }
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              {amountForCharge > Number(charge.balance_due || 0) ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                  Le montant dépasse le reste dû pour cette ligne.
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function InternatPaymentPlanner({
+  charges,
+  amounts,
+  componentIdsByCharge,
+  recoverableTotal,
+  onAmountChange,
+  onComponentChange,
+}: {
+  charges: PaymentStudentRow["open_charges"];
+  amounts: Record<string, string>;
+  componentIdsByCharge: Record<string, string[]>;
+  recoverableTotal: number;
+  onAmountChange: (chargeId: string, value: string) => void;
+  onComponentChange: (chargeId: string, componentIds: string[]) => void;
+}) {
+  if (charges.length === 0) {
+    return (
+      <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50 px-4 py-5 text-sm font-semibold text-amber-800">
+        Aucun frais d’internat ouvert n’a été trouvé pour cet élève.
+      </div>
+    );
+  }
+
+  const total = charges.reduce((sum, charge) => {
+    if (charge.components.length > 0) {
+      const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
+      return (
+        sum +
+        charge.components
+          .filter((component) => selected.has(component.id))
+          .reduce(
+            (inner, component) => inner + Number(component.amount || 0),
+            0,
+          )
+      );
+    }
+    return sum + Number(amounts[charge.charge_id] || 0);
+  }, 0);
+
+  return (
+    <div className="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">
+            Encaissement internat
+          </div>
+          <p className="mt-1 text-sm text-emerald-900/80">
+            La pension reste fixe. Les frais annexes ne comptent dans le barème
+            retenu que lorsqu’ils sont cochés : pension + éléments cochés.
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              Barème retenu
+            </div>
+            <div className="mt-1 text-lg font-black text-slate-900">
+              {formatMoney(recoverableTotal)}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              Total à encaisser
+            </div>
+            <div className="mt-1 text-lg font-black text-emerald-700">
+              {formatMoney(total)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {charges.map((charge) => {
+          const selectedIds = componentIdsByCharge[charge.charge_id] ?? [];
+          const selectedSet = new Set(selectedIds);
+          const componentTotal = charge.components
+            .filter((component) => selectedSet.has(component.id))
+            .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+          const chargeAmount =
+            charge.components.length > 0
+              ? componentTotal
+              : Number(amounts[charge.charge_id] || 0);
+          const isPension = isPensionCharge(charge.label);
+
+          return (
+            <div
+              key={charge.charge_id}
+              className="rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-slate-900">
+                    {charge.label}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">
+                    Attendu : {formatMoney(charge.net_amount)} · Déjà payé :{" "}
+                    {formatMoney(charge.paid_amount)} · Reste :{" "}
+                    {formatMoney(charge.balance_due)}
+                  </div>
+                  {isPension ? (
+                    <div className="mt-1 text-xs font-semibold text-emerald-700">
+                      La pension apparaîtra sur le reçu, même si le montant payé
+                      ici est 0 F.
+                    </div>
+                  ) : null}
+                </div>
+                <div className="w-full sm:w-44">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                    Montant payé
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={charge.balance_due}
+                    step="1"
+                    value={
+                      charge.components.length > 0
+                        ? String(componentTotal || 0)
+                        : (amounts[charge.charge_id] ?? (isPension ? "0" : ""))
+                    }
+                    onChange={(e) =>
+                      onAmountChange(charge.charge_id, e.target.value)
+                    }
+                    disabled={charge.components.length > 0}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none disabled:bg-slate-50 disabled:text-slate-500"
+                  />
+                </div>
+              </div>
+
+              {charge.components.length > 0 ? (
+                <ChargeComponentChecklist
+                  components={charge.components}
+                  selectedComponentIds={selectedIds}
+                  onChange={(nextIds) =>
+                    onComponentChange(charge.charge_id, nextIds)
+                  }
+                  remainingAmount={charge.balance_due}
+                />
+              ) : null}
+
+              {chargeAmount > Number(charge.balance_due || 0) ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                  Le montant dépasse le reste dû pour cette ligne.
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ChargeComponentChecklist({
+  components,
+  selectedComponentIds,
+  onChange,
+  remainingAmount,
+}: {
+  components: FeeComponentOption[];
+  selectedComponentIds: string[];
+  onChange: (value: string[]) => void;
+  remainingAmount: number;
+}) {
+  if (components.length === 0) return null;
+
+  const selected = new Set(selectedComponentIds);
+  const selectedTotal = components
+    .filter((component) => selected.has(component.id))
+    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+
+  function toggle(componentId: string) {
+    const next = new Set(selectedComponentIds);
+    if (next.has(componentId)) next.delete(componentId);
+    else next.add(componentId);
+    onChange(Array.from(next));
+  }
+
+  return (
+    <div className="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-800">
+            Détail des frais annexes
+          </div>
+          <p className="mt-1 text-sm text-emerald-900/80">
+            Cochez les sous-rubriques réellement réglées. Le montant encaissé se
+            calcule automatiquement.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Total coché
+          </div>
+          <div className="mt-1 text-lg font-black text-emerald-700">
+            {formatMoney(selectedTotal)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {components.map((component) => {
+          const checked = selected.has(component.id);
+          return (
+            <label
+              key={component.id}
+              className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm transition ${
+                checked
+                  ? "border-emerald-300 bg-white shadow-sm"
+                  : "border-emerald-100 bg-white/70 hover:bg-white"
+              }`}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(component.id)}
+                  className="h-4 w-4 rounded border-emerald-300 text-emerald-600"
+                />
+                <span className="truncate font-semibold text-slate-800">
+                  {component.label}
+                </span>
+              </span>
+              <span className="shrink-0 font-black text-slate-900">
+                {formatMoney(component.amount)}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-slate-600">
+        <button
+          type="button"
+          onClick={() => onChange(components.map((component) => component.id))}
+          className="rounded-full bg-white px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+        >
+          Tout cocher
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange([])}
+          className="rounded-full bg-white px-3 py-1.5 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+        >
+          Tout décocher
+        </button>
+        <span>
+          Base initiale : {formatMoney(remainingAmount)} · Base retenue :{" "}
+          {formatMoney(selectedTotal)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PaymentFields({
   paymentType,
   setPaymentType,
   expectedAmount,
@@ -560,10 +1429,9 @@ function PaymentFields({
   amount,
   setAmount,
   today,
+  expectedAmountLocked,
+  amountLocked,
 }: {
-  feeCategories: FeeCategoryRow[];
-  selectedCategoryId: string;
-  setSelectedCategoryId: (value: string) => void;
   paymentType: string;
   setPaymentType: (value: string) => void;
   expectedAmount: string;
@@ -571,52 +1439,11 @@ function PaymentFields({
   amount: string;
   setAmount: (value: string) => void;
   today: string;
+  expectedAmountLocked: boolean;
+  amountLocked: boolean;
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Catégorie
-          </label>
-          <select
-            name="fee_category_id"
-            value={selectedCategoryId}
-            onChange={(e) => setSelectedCategoryId(e.target.value)}
-            required
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-          >
-            {feeCategories.length === 0 ? (
-              <option value="">Aucune catégorie</option>
-            ) : null}
-            {feeCategories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Type de paiement
-          </label>
-          <select
-            name="payment_type"
-            value={paymentType}
-            onChange={(e) => setPaymentType(e.target.value)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-          >
-            <option value="registration">Frais d’inscription</option>
-            <option value="installment_1">1ère tranche</option>
-            <option value="installment_2">2e tranche</option>
-            <option value="installment_3">3e tranche</option>
-            <option value="full">Paiement complet</option>
-            <option value="free">Versement libre</option>
-          </select>
-        </div>
-      </div>
-
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
@@ -629,10 +1456,17 @@ function PaymentFields({
             step="0.01"
             value={expectedAmount}
             onChange={(e) => setExpectedAmount(e.target.value)}
-            placeholder="Facultatif si barème déjà défini"
-            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
+            readOnly={expectedAmountLocked}
+            placeholder="Renseigné automatiquement si le frais existe"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400 read-only:bg-slate-100 read-only:text-slate-600"
           />
+          <p className="mt-1 text-xs text-slate-500">
+            {expectedAmountLocked
+              ? "Montant repris automatiquement depuis le frais ouvert sélectionné."
+              : "À saisir seulement si le frais n’existe pas encore."}
+          </p>
         </div>
+
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
             Montant encaissé
@@ -645,7 +1479,42 @@ function PaymentFields({
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            readOnly={amountLocked}
             placeholder="Ex. 25000"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400 read-only:bg-slate-100 read-only:text-slate-600"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+            Type de paiement
+          </label>
+          <select
+            name="payment_type"
+            value={paymentType}
+            onChange={(e) => setPaymentType(e.target.value)}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+          >
+            <option value="cash">Espèces</option>
+            <option value="mobile_money">Mobile Money</option>
+            <option value="bank_deposit">Versement bancaire</option>
+            <option value="bank_transfer">Virement bancaire</option>
+            <option value="cheque">Chèque</option>
+            <option value="card">Carte bancaire</option>
+            <option value="other">Autre</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+            Référence paiement
+          </label>
+          <input
+            type="text"
+            name="reference_no"
+            placeholder="N° reçu banque, transaction, chèque..."
             className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
           />
         </div>
@@ -678,12 +1547,12 @@ function PaymentFields({
 
       <div>
         <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-          Référence / note
+          Note interne
         </label>
         <textarea
           name="notes"
           rows={3}
-          placeholder="Commentaire interne, référence caisse, précision utile..."
+          placeholder="Commentaire interne, précision utile..."
           className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
         />
       </div>

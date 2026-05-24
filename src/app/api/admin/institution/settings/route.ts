@@ -40,14 +40,14 @@ type InstitutionSettingsRow = {
 
 async function guard(
   supa: SupabaseClient,
-  srv: SupabaseClient
+  srv: SupabaseClient,
+  options: { write?: boolean } = {}
 ): Promise<GuardOk | GuardErr> {
   const {
     data: { user },
   } = await supa.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  // 1) Essai via profiles
   const { data: me } = await supa
     .from("profiles")
     .select("id, role, institution_id")
@@ -55,31 +55,42 @@ async function guard(
     .maybeSingle();
 
   let instId: string | null = (me?.institution_id as string) || null;
-  let roleProfile = String(me?.role || "");
+  const roleProfile = String(me?.role || "");
 
-  // 2) Complément via user_roles (admin / super_admin), si besoin
+  const allowedRoles = options.write
+    ? new Set(["admin", "super_admin"])
+    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+
   let roleFromUR: string | null = null;
-  if (!instId || !["admin", "super_admin"].includes(roleProfile)) {
-    const { data: urRows } = await srv
-      .from("user_roles")
-      .select("role, institution_id")
-      .eq("profile_id", user.id);
+  let hasAllowedRole = allowedRoles.has(roleProfile);
 
-    const adminRow = (urRows || []).find((r) =>
-      ["admin", "super_admin"].includes(String(r.role || ""))
-    );
-    if (adminRow) {
-      roleFromUR = String(adminRow.role);
-      if (!instId && adminRow.institution_id) instId = String(adminRow.institution_id);
+  const { data: urRows } = await srv
+    .from("user_roles")
+    .select("role, institution_id")
+    .eq("profile_id", user.id);
+
+  for (const row of urRows || []) {
+    const role = String((row as any).role || "");
+    if (!allowedRoles.has(role)) continue;
+
+    const rowInstitutionId = String((row as any).institution_id || "").trim();
+    if (!instId && rowInstitutionId) instId = rowInstitutionId;
+
+    if (role === "super_admin" || !rowInstitutionId || rowInstitutionId === instId) {
+      roleFromUR = role;
+      hasAllowedRole = true;
+      break;
     }
   }
 
-  const isAdmin =
-    ["admin", "super_admin"].includes(roleProfile) ||
-    ["admin", "super_admin"].includes(String(roleFromUR || ""));
-
   if (!instId) return { error: "no_institution" };
-  if (!isAdmin) return { error: "forbidden" };
+
+  const isAllowed =
+    allowedRoles.has(roleProfile) ||
+    allowedRoles.has(String(roleFromUR || "")) ||
+    hasAllowedRole;
+
+  if (!isAllowed) return { error: "forbidden" };
 
   return { user: { id: user.id }, instId };
 }
@@ -186,7 +197,7 @@ export async function PUT(req: NextRequest) {
   const supa = (await getSupabaseServerClient()) as unknown as SupabaseClient;
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
 
-  const g = await guard(supa, srv);
+  const g = await guard(supa, srv, { write: true });
   if ("error" in g) return NextResponse.json({ error: g.error }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));

@@ -18,6 +18,7 @@ import {
   NotebookPen,
   FileSpreadsheet,
   FileText,
+  MessageSquare,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -291,6 +292,11 @@ const ORGANISATION_ITEMS: NavItem[] = [
    Groupe : Administration & services
 ========================= */
 const ADMIN_ITEMS: NavItem[] = [
+  {
+    href: "/admin/communication",
+    label: "Communication",
+    Icon: MessageSquare,
+  },
   {
     href: "/admin/autorisations",
     label: "Autorisation absences",
@@ -868,8 +874,8 @@ export default function SidebarNav() {
   const isFinanceManager = role === "finance_manager";
 
   const topLevelItems = React.useMemo(
-    () => (isFinanceManager ? [] : TOP_LEVEL_ITEMS),
-    [isFinanceManager]
+    () => TOP_LEVEL_ITEMS,
+    []
   );
 
   const montageEdtItems = React.useMemo(
@@ -913,7 +919,10 @@ export default function SidebarNav() {
   );
 
   const organisationItems = React.useMemo(
-    () => (isFinanceManager ? [] : ORGANISATION_ITEMS),
+    () =>
+      isFinanceManager
+        ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
+        : ORGANISATION_ITEMS,
     [isFinanceManager]
   );
 
@@ -922,6 +931,7 @@ export default function SidebarNav() {
       ADMIN_ITEMS.filter((item) => {
         if (isFinanceManager) return item.href.startsWith("/admin/finance");
         if (isEducator && item.href.startsWith("/admin/finance")) return false;
+        if (isEducator && item.href.startsWith("/admin/communication")) return false;
         return true;
       }),
     [isEducator, isFinanceManager]
@@ -1141,7 +1151,7 @@ export default function SidebarNav() {
               />
             )}
 
-            {!isFinanceManager && organisationItems.length > 0 && (
+            {organisationItems.length > 0 && (
               <GroupSection
               title="Organisation scolaire"
               Icon={School}

@@ -1,4 +1,4 @@
-// src/app/admin/notes/bulletins/page.tsx
+// src/app/admin/bulletins/page.tsx
 "use client";
 
 import React, {
@@ -9,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 /* ───────── Types ───────── */
 
@@ -1179,6 +1180,7 @@ function StudentBulletinCard({
 
   /* ✅ FIT-TO-PAGE : si ça dépasse, on scale automatiquement à l’impression */
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [printFitScale, setPrintFitScale] = useState(1);
 
   const setScale = (s: number) => {
@@ -1190,43 +1192,45 @@ function StudentBulletinCard({
   };
 
   const computePrintFit = () => {
-    const el = pageRef.current;
-    if (!el || typeof window === "undefined") return;
+    const pageEl = pageRef.current;
+    const contentEl = contentRef.current;
+    if (!pageEl || !contentEl || typeof window === "undefined") return;
 
     const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
 
-    // hauteur réelle du bloc (corrigée du zoom d’aperçu)
-    const rect = el.getBoundingClientRect();
-    const naturalH = rect.height / zoom;
-
-    const cs = window.getComputedStyle(el);
-    const minHPx = parseFloat(cs.minHeight || "0");
+    // Hauteur réelle du CONTENU, corrigée du zoom d’aperçu.
+    // Important : on ignore la hauteur minimale artificielle de la page A4,
+    // sinon l’impression réduit toujours le bulletin même quand le contenu tient déjà.
+    const rect = contentEl.getBoundingClientRect();
+    const contentTop = rect.top;
+    const realBottom = Array.from(contentEl.children).reduce((bottom, child) => {
+      const el = child as HTMLElement;
+      if (el.classList.contains("bulletin-watermark")) return bottom;
+      const childRect = el.getBoundingClientRect();
+      return Math.max(bottom, childRect.bottom - contentTop);
+    }, 0);
+    const contentStyles = window.getComputedStyle(contentEl);
+    const paddingBottom = Number.parseFloat(contentStyles.paddingBottom || "0") || 0;
+    const measuredH = realBottom > 0 ? realBottom + paddingBottom : rect.height;
+    const naturalH = measuredH / zoom;
 
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
-    if (!Number.isFinite(minHPx) || minHPx <= 0) {
+
+    // Zone utile A4 imprimée : 297 mm - marges @page 4 mm x 2 = 289 mm.
+    // On garde une petite réserve, mais on évite de réduire inutilement la police.
+    const targetPx = (287 / 25.4) * 96;
+
+    if (naturalH <= targetPx) {
       setScale(1);
       return;
     }
 
-    // ✅ Si le bloc ne dépasse PAS la zone A4 utile → pas de scale
-    if (naturalH <= minHPx + 0.5) {
-      setScale(1);
-      return;
-    }
+    const raw = Math.min(1, targetPx / naturalH);
+    const safe = Math.min(1, raw * 0.995);
 
-    // ✅ marge de sécurité anti-arrondis / imprimantes (sinon 1px peut créer une 2e page)
-    const cushion = Math.max(10, Math.round(minHPx * 0.012)); // ~1.2% (≈ 13px sur A4 utile)
-    const usable = Math.max(1, minHPx - cushion);
-
-    // scale < 1 si dépasse
-    const raw = Math.min(1, usable / naturalH);
-
-    // ✅ garde une micro marge en plus
-    const safe = Math.min(1, raw * 0.99);
-
-    // ✅ plus de blocage à 0.82 (c’était la cause du débordement)
-    // on autorise à descendre plus bas pour GARANTIR 1 page
-    const clamped = Math.max(0.45, safe);
+    // En dessous de 0.55, le bulletin deviendrait illisible : on préfère garder
+    // le maximum possible tout en évitant les coupes ordinaires.
+    const clamped = Math.max(0.55, safe);
 
     setScale(clamped);
   };
@@ -1771,7 +1775,7 @@ function StudentBulletinCard({
           return (
             <tr
               key={`${s.subject_id}-${comp.id}`}
-              className="text-[9px] text-slate-700"
+              className="text-[9.5px] text-slate-700"
             >
               <td className="bdr px-1 py-[1px] pl-4">
                 {comp.short_label || comp.label}
@@ -1819,12 +1823,13 @@ function StudentBulletinCard({
   return (
     <div
       ref={pageRef}
-      className="print-page print-break relative mx-auto flex flex-col overflow-hidden bg-white text-black"
+      className="print-page print-break bulletin-sheet relative mx-auto overflow-hidden bg-white text-black"
       style={{
         ["--sig-box-h" as any]: `${sigBoxHeightPx}px`,
         ["--print-fit-scale" as any]: String(printFitScale),
       }}
     >
+      <div ref={contentRef} className="print-page-content bulletin-content relative flex flex-col text-black">
       {institution?.institution_logo_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -1836,32 +1841,32 @@ function StudentBulletinCard({
       ) : null}
 
       {/* ENTÊTE OFFICIEL */}
-      <div className="bdr mb-1 p-1">
+      <div className="bdr bulletin-header mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
-          <div className="text-center text-[9px] leading-tight">
+          <div className="official-block text-center text-[10px] leading-tight">
             <div className="font-semibold uppercase">{countryName}</div>
-            <div className="text-[8px]">{countryMotto}</div>
-            <div className="mt-1 text-[8px] font-semibold uppercase">
+            <div className="text-[9px]">{countryMotto}</div>
+            <div className="mt-1 text-[9px] font-semibold uppercase">
               {ministryName}
             </div>
-            <div className="mt-1 text-[8px] uppercase">
+            <div className="mt-1 text-[9px] uppercase">
               {String((institution?.institution_region || "").trim())}
             </div>
           </div>
 
           <div className="text-center">
-            <div className="text-[12px] font-bold uppercase leading-tight">
+            <div className="official-title text-[13px] font-bold uppercase leading-tight">
               BULLETIN TRIMESTRIEL DE NOTES
             </div>
-            <div className="text-[10px] font-semibold">{periodTitle(period)}</div>
+            <div className="official-subtitle text-[11px] font-semibold">{periodTitle(period)}</div>
           </div>
 
           <div className="relative flex justify-end gap-2">
-            <div className="text-right text-[9px] leading-tight mr-[118px]">
+            <div className="official-block text-right text-[10px] leading-tight mr-[118px]">
               <div>Année scolaire</div>
               <div className="font-semibold">{academicYear || "—"}</div>
               {institution?.institution_code && (
-                <div className="mt-1 text-[8px]">
+                <div className="mt-1 text-[9px]">
                   Code :{" "}
                   <span className="font-semibold">
                     {String(institution.institution_code)}
@@ -1869,14 +1874,14 @@ function StudentBulletinCard({
                 </div>
               )}
               {(period.from || period.to) && (
-                <div className="mt-1 text-[8px]">
+                <div className="mt-1 text-[9px]">
                   {period.from ? formatDateFR(period.from) : "—"} →{" "}
                   {period.to ? formatDateFR(period.to) : "—"}
                 </div>
               )}
             </div>
 
-            <div className="bdr absolute right-0 top-0 z-10 flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
+            <div className="bdr qr-box absolute right-0 top-0 z-10 flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white">
               {qrImgSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -1885,14 +1890,14 @@ function StudentBulletinCard({
                   className="h-[104px] w-[104px] object-contain"
                 />
               ) : (
-                <div className="text-[8px] text-slate-500">QR</div>
+                <div className="text-[9px] text-slate-500">QR</div>
               )}
             </div>
           </div>
         </div>
 
         <div className="mt-[2px] grid grid-cols-[110px_1fr_110px] items-start gap-2">
-          <div className="flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white p-1">
+          <div className="school-logo-box flex h-[110px] w-[110px] items-center justify-center overflow-hidden bg-white p-1">
             {institution?.institution_logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -1901,17 +1906,17 @@ function StudentBulletinCard({
                 className="max-h-full max-w-full object-contain"
               />
             ) : (
-              <div className="text-[8px] text-slate-500">Logo</div>
+              <div className="text-[9px] text-slate-500">Logo</div>
             )}
           </div>
 
           <div className="text-center">
-            <div className="text-[14px] font-bold uppercase leading-tight">
+            <div className="institution-title text-[15px] font-bold uppercase leading-tight">
               {safeUpper(
                 String((institution?.institution_name || "ÉTABLISSEMENT").trim())
               )}
             </div>
-            <div className="text-[9px]">
+            <div className="institution-info text-[10px]">
               {String(institution?.institution_postal_address || "")}
               {institution?.institution_phone
                 ? ` • Tél : ${institution.institution_phone}`
@@ -1927,8 +1932,8 @@ function StudentBulletinCard({
       </div>
 
       {/* IDENTITÉ ÉLÈVE */}
-      <div className="bdr mb-1 p-1">
-        <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[9px] leading-tight">
+      <div className="bdr student-identity mb-1 p-1">
+        <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[10px] leading-tight">
           <div className="space-y-[2px]">
             <div>
               <span className="font-semibold">Nom & prénom(s) : </span>
@@ -1986,7 +1991,7 @@ function StudentBulletinCard({
             </div>
           </div>
 
-          <div className="bdr flex h-[96px] w-[86px] items-center justify-center overflow-hidden">
+          <div className="bdr student-photo-box flex h-[96px] w-[86px] items-center justify-center overflow-hidden">
             {photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -1995,16 +2000,16 @@ function StudentBulletinCard({
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="text-center text-[8px] text-slate-500">Photo</div>
+              <div className="text-center text-[9px] text-slate-500">Photo</div>
             )}
           </div>
         </div>
       </div>
 
       {/* TABLEAU DISCIPLINES */}
-      <table className="bdr w-full text-[9px] leading-tight">
+      <table className="bdr discipline-table w-full text-[10px] leading-tight">
         <thead>
-          <tr className="bg-slate-100">
+          <tr className="discipline-head">
             <th className="bdr px-1 py-[2px] text-left">DISCIPLINES</th>
             <th className="bdr px-1 py-[2px] text-center">Moy.</th>
             <th className="bdr px-1 py-[2px] text-center">Coef.</th>
@@ -2063,7 +2068,7 @@ function StudentBulletinCard({
 
                 return [
                   ...groupSubjects.map((s) => renderSubjectBlock(s)),
-                  <tr key={`group-${g.id}`} className="bg-slate-50 font-bold">
+                  <tr key={`group-${g.id}`} className="group-total-row font-bold">
                     <td className="bdr px-1 py-[1px]">{bilanLabel}</td>
                     <td className="bdr px-1 py-[1px] text-center">
                       {formatNumber(groupAvg)}
@@ -2094,7 +2099,7 @@ function StudentBulletinCard({
             subjectsForTable.map((s) => renderSubjectBlock(s))
           )}
 
-          <tr className="bg-slate-50 font-bold">
+          <tr className="totals-row font-bold">
             <td className="bdr px-1 py-[1px] text-right">TOTAUX :</td>
             <td className="bdr px-1 py-[1px]" />
             <td className="bdr px-1 py-[1px] text-center">
@@ -2112,9 +2117,9 @@ function StudentBulletinCard({
       </table>
 
       {/* BLOCS BAS */}
-      <div className="mt-1 grid grid-cols-3 gap-2 text-[9px] leading-tight">
-        <div className="bdr p-1">
-          <div className="font-semibold text-center">Assiduité</div>
+      <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] leading-tight">
+        <div className="bdr bottom-card p-1">
+          <div className="bottom-card-title font-semibold text-center">Assiduité</div>
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
@@ -2126,7 +2131,7 @@ function StudentBulletinCard({
                 <span className="font-semibold">{conduct.tardy_count ?? 0}</span>
               </div>
               {conductRubricMax && conduct?.breakdown && (
-                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[8px] text-slate-700">
+                <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-[2px] text-[9px] text-slate-700">
                   <div>
                     Assiduité : {conduct.breakdown.assiduite} /{" "}
                     {conductRubricMax.assiduite}
@@ -2146,7 +2151,7 @@ function StudentBulletinCard({
               )}
             </div>
           ) : (
-            <div className="mt-[2px] text-[8px] text-slate-600">
+            <div className="mt-[2px] text-[9px] text-slate-600">
               Données de conduite indisponibles.
             </div>
           )}
@@ -2154,18 +2159,18 @@ function StudentBulletinCard({
 
         {/* ✅ Bloc moyennes : ajoute l’annuel quand disponible (dernière période) */}
         {showAnnual ? (
-          <div className="bdr p-1 text-center">
-            <div className="font-semibold">Moyennes</div>
+          <div className="bdr bottom-card average-card p-1 text-center">
+            <div className="bottom-card-title font-semibold">Moyennes</div>
             <div className="mt-[3px] grid grid-cols-2 gap-2">
               <div>
-                <div className="text-[8px] font-semibold uppercase">Trimestre</div>
-                <div className="mt-[2px] text-[10px] font-bold">
+                <div className="text-[9px] font-semibold uppercase">Trimestre</div>
+                <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     item.general_avg,
                     showGeneralIncompleteMarker
                   )} / 20
                 </div>
-                <div className="mt-[1px] text-[8px]">
+                <div className="mt-[1px] text-[9px]">
                   Rang :{" "}
                   <span className="font-semibold">
                     {generalAvgHasValue ? formatRankOrNC(item.rank) : "NC"}
@@ -2175,14 +2180,14 @@ function StudentBulletinCard({
               </div>
 
               <div>
-                <div className="text-[8px] font-semibold uppercase">Annuel</div>
-                <div className="mt-[2px] text-[10px] font-bold">
+                <div className="text-[9px] font-semibold uppercase">Annuel</div>
+                <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     annualAvgOn20,
                     showAnnualIncompleteMarker
                   )} / 20
                 </div>
-                <div className="mt-[1px] text-[8px]">
+                <div className="mt-[1px] text-[9px]">
                   Rang :{" "}
                   <span className="font-semibold">
                     {annualAvgHasValue ? formatRankOrNC(annualRank) : "NC"}
@@ -2193,9 +2198,9 @@ function StudentBulletinCard({
             </div>
           </div>
         ) : (
-          <div className="bdr p-1 text-center">
-            <div className="font-semibold">Moyenne trimestrielle</div>
-            <div className="mt-[3px] text-[10px] font-bold">
+          <div className="bdr bottom-card average-card p-1 text-center">
+            <div className="bottom-card-title font-semibold">Moyenne trimestrielle</div>
+            <div className="mt-[3px] text-[11px] font-bold">
               Moyenne trimestrielle :{" "}
               {formatNumberOrNCWithMarker(
                 item.general_avg,
@@ -2212,8 +2217,8 @@ function StudentBulletinCard({
           </div>
         )}
 
-        <div className="bdr p-1 text-center">
-          <div className="font-semibold">Résultats de la classe</div>
+        <div className="bdr bottom-card p-1 text-center">
+          <div className="bottom-card-title font-semibold">Résultats de la classe</div>
           <div className="mt-[2px] space-y-[2px]">
             <div>Moyenne générale : {formatNumber(stats.classAvg)}</div>
             <div>Moyenne maxi : {formatNumber(stats.highest)}</div>
@@ -2222,14 +2227,14 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[9px] leading-tight">
+      <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[10px] leading-tight">
         <div className="flex flex-col gap-1">
-          <div className="bdr flex-1 p-1">
-            <div className="font-semibold uppercase text-center">
+          <div className="bdr council-card flex-1 p-1">
+            <div className="bottom-card-title font-semibold uppercase text-center">
               Mentions du conseil de classe
             </div>
-            <div className="mt-[2px] text-[8px] font-semibold">DISTINCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[8px]">
+            <div className="mt-[2px] text-[9px] font-semibold">DISTINCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[9px]">
               <div className="flex items-center">
                 {tick(mentions.distinction === "honour")}
                 <span>Tableau d&apos;honneur / Félicitations</span>
@@ -2244,8 +2249,8 @@ function StudentBulletinCard({
               </div>
             </div>
 
-            <div className="mt-2 text-[8px] font-semibold">SANCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[8px]">
+            <div className="mt-2 text-[9px] font-semibold">SANCTIONS</div>
+            <div className="mt-[2px] space-y-[2px] text-[9px]">
               <div className="flex items-center">
                 {tick(mentions.sanction === "warningWork")}
                 <span>Avertissement travail</span>
@@ -2265,11 +2270,11 @@ function StudentBulletinCard({
             </div>
           </div>
 
-          <div className="bdr flex min-h-[78px] flex-col justify-between p-1">
-            <div className="font-semibold text-[8px]">Visa du professeur principal</div>
+          <div className="bdr visa-card flex min-h-[78px] flex-col justify-between p-1">
+            <div className="font-semibold text-[9px]">Visa du professeur principal</div>
             <div className="h-[50px]" />
             {classInfo.head_teacher?.display_name && (
-              <div className="text-center text-[8px]">
+              <div className="text-center text-[9px]">
                 {classInfo.head_teacher.display_name}
               </div>
             )}
@@ -2277,22 +2282,22 @@ function StudentBulletinCard({
         </div>
 
         <div className="flex flex-col gap-1">
-          <div className="bdr p-1">
-            <div className="font-semibold uppercase text-center">
+          <div className="bdr council-card p-1">
+            <div className="bottom-card-title font-semibold uppercase text-center">
               Appréciations du conseil de classe
             </div>
-            <div className="mt-1 flex h-[50px] items-center justify-center bg-white px-1 bdr">
-              <div className="text-center text-[10px] font-bold leading-snug">
+            <div className="council-appreciation mt-1 flex h-[50px] items-center justify-center bg-white px-1 bdr">
+              <div className="text-center text-[11px] font-bold leading-snug">
                 {councilText || "\u00A0"}
               </div>
             </div>
           </div>
 
-          <div className="bdr flex min-h-[128px] flex-1 flex-col justify-between p-1">
-            <div className="font-semibold text-[8px]">{headVisaLabel}</div>
+          <div className="bdr visa-card head-visa-card flex min-h-[128px] flex-1 flex-col justify-between p-1">
+            <div className="font-semibold text-[9px]">{headVisaLabel}</div>
             <div className="flex-1" />
             {institution?.institution_head_name && (
-              <div className="pb-1 text-center text-[8px]">
+              <div className="pb-1 text-center text-[9px]">
                 {institution.institution_head_name}
               </div>
             )}
@@ -2300,9 +2305,10 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="mt-1 text-center text-[8px] leading-tight text-black">
+      <div className="bulletin-footer mt-1 pb-[2mm] text-center text-[9px] leading-tight text-black">
         <div className="font-bold tracking-[0.04em]">www.mon-cahier.com</div>
         <div className="font-semibold">Bulletin sécurisé par code QR</div>
+      </div>
       </div>
     </div>
   );
@@ -2754,8 +2760,184 @@ export default function BulletinsPage() {
     <>
       {/* Styles A4 */}
       <style jsx global>{`
+        :root {
+          --bulletin-navy: #0b2f57;
+          --bulletin-navy-2: #123a63;
+          --bulletin-navy-soft: #eef6fc;
+          --bulletin-gold: #b7791f;
+          --bulletin-gold-soft: #fff3d8;
+          --bulletin-green: #0f766e;
+          --bulletin-green-soft: #eefdf9;
+          --bulletin-border: #1e293b;
+          --bulletin-muted-border: #a8b6c8;
+          --bulletin-text: #111827;
+        }
+
         .bdr {
-          border: 1px solid #000;
+          border: 1px solid var(--bulletin-border);
+        }
+
+        .bulletin-sheet,
+        .bulletin-content {
+          color: var(--bulletin-text);
+        }
+
+        .bulletin-header {
+          border: 1px solid var(--bulletin-muted-border);
+          border-top: 5px solid var(--bulletin-navy);
+          background: linear-gradient(180deg, #f6faff 0%, #ffffff 48%, #fffaf0 100%);
+          box-shadow: inset 0 -1px 0 rgba(183, 121, 31, 0.35);
+        }
+
+        .official-block {
+          color: var(--bulletin-text);
+        }
+
+        .official-title {
+          display: inline-block;
+          padding: 5px 18px 6px;
+          color: #ffffff;
+          background: var(--bulletin-navy);
+          border: 1px solid var(--bulletin-navy);
+          border-radius: 2px;
+          letter-spacing: 0.035em;
+          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+        }
+
+        .official-subtitle {
+          margin-top: 4px;
+          color: var(--bulletin-navy);
+          letter-spacing: 0.02em;
+        }
+
+        .institution-title {
+          color: var(--bulletin-navy);
+          letter-spacing: 0.025em;
+        }
+
+        .institution-title::after {
+          content: "";
+          display: block;
+          width: 56mm;
+          max-width: 78%;
+          margin: 4px auto 3px;
+          border-top: 2px solid var(--bulletin-gold);
+        }
+
+        .institution-info {
+          color: #334155;
+        }
+
+        .qr-box {
+          border-color: var(--bulletin-navy);
+        }
+
+        .school-logo-box {
+          border: 0;
+        }
+
+        .student-identity {
+          background: linear-gradient(90deg, var(--bulletin-navy-soft) 0%, #ffffff 100%);
+          border-color: var(--bulletin-muted-border);
+          border-left: 4px solid var(--bulletin-navy);
+        }
+
+        .student-identity .font-semibold {
+          color: var(--bulletin-navy);
+        }
+
+        .student-photo-box {
+          background: #ffffff;
+          border-color: var(--bulletin-muted-border);
+        }
+
+        .discipline-table {
+          border-color: var(--bulletin-border);
+          border-collapse: collapse;
+        }
+
+        .discipline-table .discipline-head th {
+          color: #ffffff;
+          background: var(--bulletin-navy);
+          border-color: #08243f;
+          font-weight: 700;
+          letter-spacing: 0.015em;
+        }
+
+        .discipline-table tbody tr:nth-child(even):not(.group-total-row):not(.totals-row) {
+          background: #f8fbff;
+        }
+
+        .discipline-table tbody tr.group-total-row {
+          background: #e7f1fb;
+          color: var(--bulletin-navy);
+          border-top: 1.5px solid var(--bulletin-navy-2);
+          border-bottom: 1.5px solid var(--bulletin-navy-2);
+        }
+
+        .discipline-table tbody tr.totals-row {
+          background: var(--bulletin-gold-soft);
+          color: var(--bulletin-text);
+          border-top: 2px solid var(--bulletin-gold);
+          border-bottom: 2px solid var(--bulletin-gold);
+        }
+
+        .bottom-card,
+        .council-card,
+        .visa-card {
+          background: #ffffff;
+          border-color: var(--bulletin-muted-border);
+        }
+
+        .bottom-card,
+        .council-card {
+          box-shadow: inset 0 2px 0 rgba(11, 47, 87, 0.08);
+        }
+
+        .bottom-card-title {
+          margin: -4px -4px 4px;
+          padding: 2px 4px;
+          color: #ffffff;
+          background: var(--bulletin-navy);
+          border-bottom: 1px solid var(--bulletin-navy);
+          letter-spacing: 0.015em;
+        }
+
+        .average-card {
+          background: var(--bulletin-green-soft);
+          border-color: #5eead4;
+          border-width: 1.5px;
+        }
+
+        .average-card .bottom-card-title {
+          color: #ffffff;
+          background: var(--bulletin-green);
+          border-bottom-color: var(--bulletin-green);
+        }
+
+        .average-card .font-bold {
+          color: #075e57;
+        }
+
+        .council-appreciation {
+          border-color: var(--bulletin-muted-border);
+          background: #ffffff;
+        }
+
+        .visa-card .font-semibold,
+        .council-card .font-semibold:not(.bottom-card-title) {
+          color: var(--bulletin-navy);
+        }
+
+        .head-visa-card {
+          min-height: 132px;
+        }
+
+        .bulletin-footer {
+          color: var(--bulletin-navy);
+          border-top: 1.5px solid var(--bulletin-gold);
+          padding-top: 3px;
+          background: linear-gradient(180deg, #ffffff 0%, #fffaf0 100%);
         }
 
         .sig-img {
@@ -2802,13 +2984,18 @@ export default function BulletinsPage() {
           width: 210mm;
           min-height: 297mm;
           margin: 0 auto;
-
-          /* marge intérieure par défaut écran */
-          padding: 8mm;
-
+          padding: 0;
           box-sizing: border-box;
           font-family: Arial, Helvetica, sans-serif;
           background: #fff;
+        }
+
+        .print-page-content {
+          width: 100%;
+          min-height: 297mm;
+          padding: 8mm;
+          box-sizing: border-box;
+          transform-origin: top left;
         }
 
         .bulletin-watermark {
@@ -2824,18 +3011,20 @@ export default function BulletinsPage() {
           user-select: none;
         }
 
-        .print-page > :not(.bulletin-watermark) {
+        .print-page-content > :not(.bulletin-watermark) {
           position: relative;
           z-index: 1;
         }
 
-        /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) + MARGES GAUCHE/DROITE */
+        /* ✅ Aperçu : zone imprimable (A4 - marges @page 4mm => 202mm / 289mm) */
         .preview-overlay .print-page {
           width: 202mm;
           min-height: 289mm;
+        }
 
-          /* ✅ marge intérieure visible (gauche/droite) sans casser la hauteur */
-          padding: 2mm 6mm;
+        .preview-overlay .print-page-content {
+          min-height: 289mm;
+          padding: 2mm 6mm 4mm;
         }
 
         @supports (zoom: 1) {
@@ -2854,83 +3043,143 @@ export default function BulletinsPage() {
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm; /* ✅ conserve la place utile */
+            margin: 4mm;
           }
 
           html,
           body {
+            width: auto !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
             background: #fff !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
 
-          body * {
-            visibility: hidden !important;
+          /* ✅ Le portail d'impression devient le seul contenu imprimable :
+             cela supprime la page blanche créée par le layout admin caché. */
+          body > *:not(.bulletin-print-portal) {
+            display: none !important;
           }
-          .preview-overlay,
-          .preview-overlay * {
+
+          .bulletin-print-portal,
+          .bulletin-print-portal * {
             visibility: visible !important;
           }
 
-          .preview-overlay {
+          .bulletin-print-portal {
+            display: block !important;
             position: static !important;
             inset: auto !important;
+            width: 100% !important;
+            min-height: 0 !important;
             overflow: visible !important;
             background: transparent !important;
             padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          .preview-pages {
+            display: block !important;
+            gap: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
 
           .preview-actions {
             display: none !important;
           }
 
-          /* ✅ PRINT FIT : 1 SEULE PAGE GARANTIE + marges intérieures gauche/droite */
+          /* ✅ La page extérieure reste à taille fixe pour fiabiliser les sauts de page.
+             Seul le contenu interne est réduit si nécessaire : plus de bas coupé. */
           .print-page {
-            width: 202mm;
-            height: 289mm; /* ✅ fixe la page utile */
-            max-height: 289mm; /* ✅ sécurité */
-            overflow: hidden; /* ✅ jamais de 2e page */
-
-            margin: 0 auto;
-
-            /* ✅ marge intérieure (gauche/droite) tout en gardant la couleur */
-            padding: 2mm 6mm;
-
-            box-sizing: border-box;
-
-            page-break-inside: avoid;
-            break-inside: avoid-page;
-
-            zoom: var(--print-fit-scale, 1) !important;
+            display: block !important;
+            position: relative !important;
+            width: 202mm !important;
+            height: 289mm !important;
+            min-height: 289mm !important;
+            max-height: 289mm !important;
+            padding: 0 !important;
+            margin: 0 auto !important;
+            overflow: hidden !important;
+            box-sizing: border-box !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid-page !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            zoom: 1 !important;
             transform: none !important;
           }
 
-          @supports not (zoom: 1) {
-            .print-page {
-              transform: scale(var(--print-fit-scale, 1)) !important;
-              transform-origin: top left !important;
-            }
+          .print-page-content {
+            width: calc(100% / var(--print-fit-scale, 1)) !important;
+            min-height: auto !important;
+            padding: 1.5mm 5mm 3.5mm !important;
+            box-sizing: border-box !important;
+            transform: scale(var(--print-fit-scale, 1)) !important;
+            transform-origin: top left !important;
           }
 
-          .print-break {
-            page-break-after: always;
-            break-after: page;
+          /* ✅ Lisibilité papier : règles limitées à l’impression du bulletin. */
+          .bulletin-print-portal .discipline-table,
+          .bulletin-print-portal .discipline-table tr,
+          .bulletin-print-portal .discipline-table th,
+          .bulletin-print-portal .discipline-table td {
+            font-size: 10.4px !important;
+            line-height: 1.12 !important;
           }
 
-          .print-break:last-of-type {
-            page-break-after: auto;
-            break-after: auto;
+          .bulletin-print-portal .student-identity,
+          .bulletin-print-portal .bottom-card,
+          .bulletin-print-portal .council-card,
+          .bulletin-print-portal .visa-card {
+            font-size: 10.2px !important;
+            line-height: 1.12 !important;
           }
 
-          .print\\:hidden {
+          .bulletin-print-portal .official-block {
+            font-size: 10.2px !important;
+          }
+
+          .bulletin-print-portal .official-title {
+            font-size: 13.6px !important;
+          }
+
+          .bulletin-print-portal .official-subtitle {
+            font-size: 11.4px !important;
+          }
+
+          .bulletin-print-portal .institution-title {
+            font-size: 15.6px !important;
+          }
+
+          .bulletin-print-portal .institution-info,
+          .bulletin-print-portal .bulletin-footer {
+            font-size: 9.8px !important;
+          }
+
+          .print-break:last-of-type,
+          .print-page:last-of-type {
+            page-break-after: auto !important;
+            break-after: auto !important;
+          }
+
+          .print\:hidden {
             display: none !important;
           }
         }
       `}</style>
 
-      {previewOpen && items.length > 0 && enriched && classInfo ? (
+      {previewOpen &&
+      items.length > 0 &&
+      enriched &&
+      classInfo &&
+      typeof document !== "undefined" ? (
+        createPortal(
         <div
-          className="preview-overlay fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
+          className="preview-overlay bulletin-print-portal fixed inset-0 z-[60] overflow-y-auto bg-slate-200 p-2 md:p-6"
           style={{ ["--preview-zoom" as any]: previewZoom }}
         >
           <div className="preview-actions sticky top-2 z-10 mb-3 flex justify-end gap-2">
@@ -2959,7 +3208,7 @@ export default function BulletinsPage() {
             </Button>
           </div>
 
-          <div className="flex flex-col gap-6 pb-6">
+          <div className="preview-pages flex flex-col gap-6 pb-6">
             {items.map((it, idx) => (
               <StudentBulletinCard
                 key={it.student_id}
@@ -2984,7 +3233,9 @@ export default function BulletinsPage() {
               />
             ))}
           </div>
-        </div>
+        </div>,
+        document.body
+        )
       ) : (
         <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:p-6">
           <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">

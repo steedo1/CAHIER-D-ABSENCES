@@ -47,10 +47,22 @@ type ReceiptAllocationRow = {
   created_at: string;
 };
 
+type ReceiptAllocationComponentRow = {
+  id: string;
+  receipt_allocation_id: string;
+  fee_schedule_component_id: string;
+  label: string;
+  amount: number | string;
+  order_index: number | string | null;
+  student_charge_id: string;
+};
+
 type ChargeRow = {
   id: string;
+  school_id?: string | null;
   student_id: string;
   class_id: string | null;
+  fee_category_id?: string | null;
   label: string;
   due_date: string | null;
   net_amount: number | string;
@@ -113,6 +125,35 @@ function institutionDisplayName(cfg: InstitutionSettings) {
     (cfg.name || "").trim() ||
     "Établissement scolaire"
   );
+}
+
+function normalizeText(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function isScolariteCharge(label: string | null | undefined) {
+  const text = normalizeText(label);
+  return (
+    text.includes("scolar") ||
+    text.includes("ecolage") ||
+    text.includes("écolage") ||
+    text.includes("inscription")
+  );
+}
+
+function isInternatCharge(label: string | null | undefined) {
+  return normalizeText(label).includes("internat");
+}
+
+function isPensionCharge(label: string | null | undefined) {
+  return normalizeText(label).includes("pension");
+}
+
+function safeNumber(value: number | string | null | undefined) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 async function getCurrentInstitutionIdOrThrow() {
@@ -223,7 +264,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("receipts")
         .select(
-          "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at"
+          "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at",
         )
         .eq("school_id", institutionId)
         .eq("id", receiptId)
@@ -263,7 +304,7 @@ export default async function FinanceReceiptPrintPage({
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   const chargeIds = Array.from(
-    new Set(allocationRows.map((a) => a.student_charge_id))
+    new Set(allocationRows.map((a) => a.student_charge_id)),
   );
 
   const { data: charges, error: chErr } = chargeIds.length
@@ -271,7 +312,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("v_charge_balances")
         .select(
-          "id,student_id,class_id,label,due_date,net_amount,paid_amount,balance_due"
+          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
         )
         .in("id", chargeIds)
     : { data: [], error: null as null | { message?: string } };
@@ -281,35 +322,196 @@ export default async function FinanceReceiptPrintPage({
   const chargeRows = (charges ?? []) as ChargeRow[];
   const chargeMap = new Map(chargeRows.map((c) => [c.id, c]));
 
-  const student = adminStudents.find((s) => s.id === typedReceipt.student_id);
-  const currentClass =
-    student?.class_id ? classMap.get(student.class_id) : undefined;
+  let allocationComponentRows: ReceiptAllocationComponentRow[] = [];
+  if (allocationRows.length > 0) {
+    const { data: componentData, error: compErr } = await supabase
+      .schema("finance")
+      .from("v_receipt_allocation_components")
+      .select(
+        "id,receipt_allocation_id,fee_schedule_component_id,label,amount,order_index,student_charge_id",
+      )
+      .eq("receipt_id", typedReceipt.id)
+      .order("order_index", { ascending: true });
 
-  const lines = allocationRows.map((alloc) => ({
+    if (compErr) {
+      const message = String(compErr.message || "").toLowerCase();
+      if (
+        !message.includes("does not exist") &&
+        !message.includes("introuvable")
+      ) {
+        throw new Error(compErr.message);
+      }
+    } else {
+      allocationComponentRows = (componentData ??
+        []) as ReceiptAllocationComponentRow[];
+    }
+  }
+
+  const componentsByAllocation = new Map<
+    string,
+    ReceiptAllocationComponentRow[]
+  >();
+  for (const component of allocationComponentRows) {
+    if (!componentsByAllocation.has(component.receipt_allocation_id)) {
+      componentsByAllocation.set(component.receipt_allocation_id, []);
+    }
+    componentsByAllocation
+      .get(component.receipt_allocation_id)!
+      .push(component);
+  }
+
+  const student = adminStudents.find((s) => s.id === typedReceipt.student_id);
+  const currentClass = student?.class_id
+    ? classMap.get(student.class_id)
+    : undefined;
+
+  const rawLines = allocationRows.map((alloc) => ({
     alloc,
     charge: chargeMap.get(alloc.student_charge_id),
+    components: componentsByAllocation.get(alloc.id) ?? [],
   }));
 
-  const totalAllocated = lines.reduce(
-    (sum, line) => sum + Number(line.alloc.amount || 0),
-    0
+  const allLinesAreScolarite =
+    rawLines.length > 0 &&
+    rawLines.every(
+      (line) =>
+        isScolariteCharge(line.charge?.label) &&
+        !isInternatCharge(line.charge?.label),
+    );
+
+  let scolariteReferenceCharges: ChargeRow[] = [];
+  if (allLinesAreScolarite) {
+    const categoryIds = Array.from(
+      new Set(
+        rawLines
+          .map((line) => line.charge?.fee_category_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (categoryIds.length > 0) {
+      let scolariteQuery = supabase
+        .schema("finance")
+        .from("v_charge_balances")
+        .select(
+          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
+        )
+        .eq("school_id", institutionId)
+        .eq("student_id", typedReceipt.student_id)
+        .in("fee_category_id", categoryIds);
+
+      if (rawLines[0]?.charge?.class_id) {
+        scolariteQuery = scolariteQuery.eq(
+          "class_id",
+          rawLines[0].charge.class_id,
+        );
+      }
+
+      const { data: scolariteData, error: scolariteErr } =
+        await scolariteQuery;
+
+      if (!scolariteErr) {
+        scolariteReferenceCharges = (scolariteData ?? []) as ChargeRow[];
+      }
+    }
+  }
+
+  const scolariteLinesForTotals =
+    scolariteReferenceCharges.length > 0
+      ? scolariteReferenceCharges
+      : rawLines.map((line) => line.charge).filter((c): c is ChargeRow => Boolean(c));
+
+  const displayLines = allLinesAreScolarite
+    ? [
+        {
+          key: "scolarite",
+          label: "Scolarité",
+          dueDate: null as string | null,
+          expected: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.net_amount),
+            0,
+          ),
+          paid: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.paid_amount),
+            0,
+          ),
+          remaining: scolariteLinesForTotals.reduce(
+            (sum, charge) => sum + safeNumber(charge.balance_due),
+            0,
+          ),
+          amount: rawLines.reduce(
+            (sum, line) => sum + safeNumber(line.alloc.amount),
+            0,
+          ),
+          components: [] as ReceiptAllocationComponentRow[],
+        },
+      ]
+    : rawLines
+        .map((line) => {
+          const visibleComponents = line.components.filter(
+            (component) => safeNumber(component.amount) > 0,
+          );
+          const hasClosedOptionalComponents = line.components.some(
+            (component) => safeNumber(component.amount) === 0,
+          );
+          const componentExpected = visibleComponents.reduce(
+            (sum, component) => sum + safeNumber(component.amount),
+            0,
+          );
+
+          return {
+            key: line.alloc.id,
+            label: line.charge?.label || "Dette introuvable",
+            dueDate: line.charge?.due_date ?? null,
+            expected:
+              componentExpected > 0
+                ? componentExpected
+                : safeNumber(line.charge?.net_amount),
+            paid: safeNumber(line.charge?.paid_amount),
+            remaining: hasClosedOptionalComponents
+              ? 0
+              : safeNumber(line.charge?.balance_due),
+            amount: safeNumber(line.alloc.amount),
+            components: visibleComponents,
+          };
+        })
+        .filter(
+          (line) =>
+            safeNumber(line.amount) > 0 ||
+            line.components.length > 0 ||
+            isPensionCharge(line.label),
+        );
+
+  const totalAllocated = displayLines.reduce(
+    (sum, line) => sum + safeNumber(line.amount),
+    0,
   );
-  const totalExpected = lines.reduce(
-    (sum, line) => sum + Number(line.charge?.net_amount || 0),
-    0
+  const totalExpected = displayLines.reduce(
+    (sum, line) => sum + safeNumber(line.expected),
+    0,
   );
-  const totalPaidAfterReceipt = lines.reduce(
-    (sum, line) => sum + Number(line.charge?.paid_amount || 0),
-    0
+  const totalPaidAfterReceipt = displayLines.reduce(
+    (sum, line) => sum + safeNumber(line.paid),
+    0,
   );
-  const totalRemainingAfterReceipt = lines.reduce(
-    (sum, line) => sum + Number(line.charge?.balance_due || 0),
-    0
+  const totalRemainingAfterReceipt = displayLines.reduce(
+    (sum, line) => sum + safeNumber(line.remaining),
+    0,
   );
+
+  const allLinesAreInternat =
+    rawLines.length > 0 &&
+    rawLines.every((line) => isInternatCharge(line.charge?.label));
+
+  const receiptKindLabel = allLinesAreScolarite
+    ? "Reçu de scolarité"
+    : allLinesAreInternat
+      ? "Reçu d’internat"
+      : "Reçu de paiement";
 
   const schoolName = institutionDisplayName(institutionSettings);
   const printHref = `/admin/finance/receipts/${encodeURIComponent(
-    receiptId
+    receiptId,
   )}?autoprint=1`;
 
   return (
@@ -364,6 +566,26 @@ export default async function FinanceReceiptPrintPage({
             border-radius: 0 !important;
             box-shadow: none !important;
             border: 1px solid #cbd5e1 !important;
+          }
+
+          .receipt-watermark {
+            display: block !important;
+            position: absolute !important;
+            left: 50% !important;
+            top: 52% !important;
+            width: 122mm !important;
+            height: 122mm !important;
+            transform: translate(-50%, -50%) !important;
+            object-fit: contain !important;
+            opacity: 0.055 !important;
+            z-index: 0 !important;
+          }
+
+          .receipt-header,
+          .receipt-main-grid,
+          .receipt-footer {
+            position: relative !important;
+            z-index: 1 !important;
           }
 
           .receipt-header {
@@ -565,8 +787,18 @@ export default async function FinanceReceiptPrintPage({
         </div>
       </div>
 
-      <article className="receipt-card overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="receipt-header border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6">
+      <article className="receipt-card relative overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+        {institutionSettings.institution_logo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={institutionSettings.institution_logo_url}
+            alt=""
+            aria-hidden="true"
+            className="receipt-watermark pointer-events-none absolute left-1/2 top-1/2 z-0 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.045]"
+          />
+        ) : null}
+
+        <div className="receipt-header relative z-10 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-4">
               {institutionSettings.institution_logo_url ? (
@@ -596,10 +828,14 @@ export default async function FinanceReceiptPrintPage({
                   ) : null}
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
                     {institutionSettings.institution_phone ? (
-                      <span>Tél. : {institutionSettings.institution_phone}</span>
+                      <span>
+                        Tél. : {institutionSettings.institution_phone}
+                      </span>
                     ) : null}
                     {institutionSettings.institution_email ? (
-                      <span>Email : {institutionSettings.institution_email}</span>
+                      <span>
+                        Email : {institutionSettings.institution_email}
+                      </span>
                     ) : null}
                     {institutionSettings.institution_region ? (
                       <span>{institutionSettings.institution_region}</span>
@@ -612,7 +848,7 @@ export default async function FinanceReceiptPrintPage({
             <div className="receipt-side-card rounded-3xl border border-slate-200 bg-white px-5 py-4 lg:min-w-[280px]">
               <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700 ring-1 ring-emerald-200">
                 <Receipt className="h-3.5 w-3.5" />
-                Reçu de paiement
+                {receiptKindLabel}
               </div>
 
               <div className="receipt-side-lines mt-4 grid gap-2 text-sm text-slate-700">
@@ -626,7 +862,9 @@ export default async function FinanceReceiptPrintPage({
                 </div>
                 <div>
                   <span className="font-semibold text-slate-900">Statut :</span>{" "}
-                  {typedReceipt.receipt_status === "posted" ? "Validé" : "Annulé"}
+                  {typedReceipt.receipt_status === "posted"
+                    ? "Validé"
+                    : "Annulé"}
                 </div>
                 {institutionSettings.institution_code ? (
                   <div>
@@ -641,7 +879,7 @@ export default async function FinanceReceiptPrintPage({
           </div>
         </div>
 
-        <div className="receipt-main-grid grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="receipt-main-grid relative z-10 grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="receipt-col space-y-6">
             <section className="receipt-box rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
               <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
@@ -655,7 +893,9 @@ export default async function FinanceReceiptPrintPage({
                   {fullName(student)}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-900">Matricule :</span>{" "}
+                  <span className="font-semibold text-slate-900">
+                    Matricule :
+                  </span>{" "}
                   {student?.matricule || "—"}
                 </div>
                 <div>
@@ -670,14 +910,18 @@ export default async function FinanceReceiptPrintPage({
                   <span className="font-semibold text-slate-900">
                     Année scolaire :
                   </span>{" "}
-                  {typedReceipt.academic_year || currentClass?.academic_year || "—"}
+                  {typedReceipt.academic_year ||
+                    currentClass?.academic_year ||
+                    "—"}
                 </div>
                 <div>
                   <span className="font-semibold text-slate-900">Payeur :</span>{" "}
                   {typedReceipt.payer_name || "—"}
                 </div>
                 <div className="sm:col-span-2">
-                  <span className="font-semibold text-slate-900">Référence :</span>{" "}
+                  <span className="font-semibold text-slate-900">
+                    Référence :
+                  </span>{" "}
                   {typedReceipt.reference_no || "—"}
                 </div>
               </div>
@@ -706,7 +950,7 @@ export default async function FinanceReceiptPrintPage({
                 </div>
               </div>
 
-              {lines.length === 0 ? (
+              {displayLines.length === 0 ? (
                 <div className="px-5 py-8 text-sm text-slate-600">
                   Aucune ligne de ventilation trouvée pour ce reçu.
                 </div>
@@ -724,25 +968,41 @@ export default async function FinanceReceiptPrintPage({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map(({ alloc, charge }) => (
-                        <tr key={alloc.id} className="border-t border-slate-200">
+                      {displayLines.map((line) => (
+                        <tr
+                          key={line.key}
+                          className="border-t border-slate-200"
+                        >
                           <td className="px-5 py-4 text-slate-900">
-                            {charge?.label || "Dette introuvable"}
+                            <div className="font-semibold">{line.label}</div>
+                            {line.components.length > 0 ? (
+                              <div className="mt-2 space-y-1 text-xs font-medium text-slate-500">
+                                {line.components.map((component) => (
+                                  <div
+                                    key={component.id}
+                                    className="flex items-center justify-between gap-3"
+                                  >
+                                    <span>{component.label}</span>
+                                    <span>{formatMoney(component.amount)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-5 py-4 text-slate-600">
-                            {formatDate(charge?.due_date)}
+                            {formatDate(line.dueDate)}
                           </td>
                           <td className="px-5 py-4 text-slate-700">
-                            {charge ? formatMoney(charge.net_amount) : "—"}
+                            {formatMoney(line.expected)}
                           </td>
                           <td className="px-5 py-4 text-emerald-700">
-                            {charge ? formatMoney(charge.paid_amount) : "—"}
+                            {formatMoney(line.paid)}
                           </td>
                           <td className="px-5 py-4 text-rose-700">
-                            {charge ? formatMoney(charge.balance_due) : "—"}
+                            {formatMoney(line.remaining)}
                           </td>
                           <td className="px-5 py-4 font-bold text-slate-900">
-                            {formatMoney(alloc.amount)}
+                            {formatMoney(line.amount)}
                           </td>
                         </tr>
                       ))}
@@ -773,7 +1033,9 @@ export default async function FinanceReceiptPrintPage({
               </div>
 
               <div className="receipt-summary-card mt-4 rounded-3xl bg-white px-5 py-5 shadow-sm">
-                <div className="receipt-amount-label text-sm text-slate-600">Montant du reçu</div>
+                <div className="receipt-amount-label text-sm text-slate-600">
+                  Montant du reçu
+                </div>
                 <div className="receipt-amount-value mt-2 text-3xl font-black text-slate-900">
                   {formatMoney(typedReceipt.total_amount)}
                 </div>
@@ -833,12 +1095,13 @@ export default async function FinanceReceiptPrintPage({
             </section>
 
             <section className="receipt-proof-note rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-              Ce reçu atteste du paiement enregistré dans le système. Il doit être conservé par le payeur comme justificatif.
+              Ce reçu atteste du paiement enregistré dans le système. Il doit
+              être conservé par le payeur comme justificatif.
             </section>
           </div>
         </div>
 
-        <div className="receipt-footer border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
+        <div className="receipt-footer relative z-10 border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
           Document généré le {formatDateTime(new Date().toISOString())} —{" "}
           {schoolName}
         </div>

@@ -51,6 +51,19 @@ export type GradeDigestSmsItem = {
   scale?: number | string | null;
 };
 
+export type CommunicationSmsPayload = {
+  kind?: string | null;
+  event?: string | null;
+  title?: string | null;
+  body?: string | null;
+  campaign_title?: string | null;
+  sender_name?: string | null;
+  institution?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+};
+
 export type NotesDigestSmsPayload = {
   kind?: string | null;
   event?: string | null;
@@ -271,6 +284,16 @@ function isAttendancePayload(payload: unknown): payload is AttendanceSmsPayload 
   return kind === "attendance" || ["absent", "late", "fix"].includes(event);
 }
 
+function isCommunicationPayload(payload: unknown): payload is CommunicationSmsPayload {
+  if (!payload || typeof payload !== "object") return false;
+
+  const obj = payload as Record<string, unknown>;
+  const kind = s(obj.kind).toLowerCase();
+  const event = s(obj.event).toLowerCase();
+
+  return kind === "communication" || event === "communication";
+}
+
 function isNotesDigestPayload(payload: unknown): payload is NotesDigestSmsPayload {
   if (!payload || typeof payload !== "object") return false;
 
@@ -393,6 +416,26 @@ export function buildGradesDigestSmsMessage(
   return limitSmsText(`${full}.`, maxLength);
 }
 
+export function buildCommunicationSmsMessage(
+  input: {
+    title?: string | null;
+    body?: string | null;
+    senderName?: string | null;
+  },
+  options: BuildSmsOptions = {}
+): string {
+  const maxLength = clampSmsMaxLength(options.maxLength);
+  const senderName = sanitizeSmsText(firstNonEmpty(input.senderName, options.institutionName, DEFAULT_APP_NAME));
+  const title = sanitizeSmsText(s(input.title));
+  const body = sanitizeSmsText(s(input.body));
+
+  const alreadySigned = body && senderName && body.toLowerCase().endsWith(senderName.toLowerCase());
+  const main = joinParts([title || "Information", body || "Nouveau message."], " - ");
+  const signed = alreadySigned ? main : joinParts([main, senderName], " - ");
+
+  return limitSmsText(signed, maxLength);
+}
+
 export function buildGenericSmsMessage(
   input: {
     title?: string | null;
@@ -423,6 +466,22 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
       institutionName: input.institutionName,
       maxLength: input.maxLength,
     });
+  }
+
+  if (isCommunicationPayload(payload)) {
+    const p = payload as CommunicationSmsPayload;
+    return buildCommunicationSmsMessage(
+      {
+        title: p.campaign_title || input.title || p.title,
+        body: p.body || input.body,
+        senderName: p.sender_name || p.institution?.name || input.institutionName,
+      },
+      {
+        appName: input.appName,
+        institutionName: p.sender_name || p.institution?.name || input.institutionName,
+        maxLength: input.maxLength,
+      }
+    );
   }
 
   if (isNotesDigestPayload(payload)) {

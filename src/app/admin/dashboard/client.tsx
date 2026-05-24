@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Clock4,
   BarChart3,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,9 +34,18 @@ type MetricsOk = {
     parents: number;
     students: number; // élèves ACTIFS
     students_total?: number;
+    assigned_students?: number;
+    not_assigned_students?: number;
+    assignment_unknown?: number;
+    boarder_students?: number;
+    not_boarder_students?: number;
+    boarding_unknown?: number;
+    boys?: number;
+    girls?: number;
+    gender_unknown?: number;
   };
   kpis: { absences: number; retards: number };
-  meta?: { days?: number };
+  meta?: { days?: number; academic_year?: string | null; academic_year_label?: string | null };
 };
 
 type MetricsErr = { ok: false; error: string };
@@ -265,6 +275,7 @@ export default function AdminDashboardClient() {
 
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
+  const [role, setRole] = useState<string | null>(null);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
@@ -284,6 +295,24 @@ export default function AdminDashboardClient() {
       setRefreshing(false);
     }
   }
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/role", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (alive && res.ok) setRole(json?.role ? String(json.role) : null);
+      } catch {
+        if (alive) setRole(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -341,12 +370,39 @@ export default function AdminDashboardClient() {
   const isOk = !!data && "ok" in data && (data as any).ok;
   const counts = isOk
     ? (data as MetricsOk).counts
-    : { classes: 0, teachers: 0, parents: 0, students: 0, students_total: 0 };
+    : {
+        classes: 0,
+        teachers: 0,
+        parents: 0,
+        students: 0,
+        students_total: 0,
+        assigned_students: 0,
+        not_assigned_students: 0,
+        assignment_unknown: 0,
+        boarder_students: 0,
+        not_boarder_students: 0,
+        boarding_unknown: 0,
+        boys: 0,
+        girls: 0,
+        gender_unknown: 0,
+      };
 
   const absences = isOk ? (data as MetricsOk).kpis?.absences ?? 0 : 0;
   const retards = isOk ? (data as MetricsOk).kpis?.retards ?? 0 : 0;
 
-  const periodLabel = `${(isOk && (data as MetricsOk).meta?.days) || days} derniers jours`;
+  const meta = isOk ? (data as MetricsOk).meta : undefined;
+  const periodLabel = `${meta?.days || days} derniers jours`;
+  const academicYearLabel = String(meta?.academic_year_label || meta?.academic_year || "").trim();
+  const assignedStudents = counts.assigned_students ?? 0;
+  const notAssignedStudents = counts.not_assigned_students ?? 0;
+  const assignmentUnknown = counts.assignment_unknown ?? 0;
+  const boarderStudents = counts.boarder_students ?? 0;
+  const notBoarderStudents = counts.not_boarder_students ?? 0;
+  const boardingUnknown = counts.boarding_unknown ?? 0;
+  const boys = counts.boys ?? 0;
+  const girls = counts.girls ?? 0;
+  const genderUnknown = counts.gender_unknown ?? 0;
+  const isFinanceManager = role === "finance_manager";
 
   return (
     <div className="space-y-6">
@@ -397,6 +453,12 @@ export default function AdminDashboardClient() {
               }}
             />
             <div className="flex items-center justify-end gap-2">
+              {academicYearLabel && (
+                <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
+                  <School className="mr-1 h-3.5 w-3.5" />
+                  Année : {academicYearLabel}
+                </Badge>
+              )}
               <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30">
                 <CalendarClock className="mr-1 h-3.5 w-3.5" />
                 {periodLabel}
@@ -463,6 +525,55 @@ export default function AdminDashboardClient() {
         />
       </section>
 
+      {/* Profil élèves : lecture financière et administrative sans casser le dashboard existant */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <StatCard
+          label="Affectés"
+          value={assignedStudents}
+          Icon={UserRoundCheck}
+          accent="emerald"
+          loading={loading}
+          sub={assignmentUnknown > 0 ? `${assignmentUnknown} non renseigné(s)` : undefined}
+        />
+        <StatCard
+          label="Non affectés"
+          value={notAssignedStudents}
+          Icon={Users}
+          accent="amber"
+          loading={loading}
+        />
+        <StatCard
+          label="Internes"
+          value={boarderStudents}
+          Icon={School}
+          accent="teal"
+          loading={loading}
+          sub={boardingUnknown > 0 ? `${boardingUnknown} internat non renseigné` : undefined}
+        />
+        <StatCard
+          label="Non internes"
+          value={notBoarderStudents}
+          Icon={School}
+          accent="sky"
+          loading={loading}
+        />
+        <StatCard
+          label="Garçons"
+          value={boys}
+          Icon={GraduationCap}
+          accent="violet"
+          loading={loading}
+          sub={genderUnknown > 0 ? `${genderUnknown} sexe non renseigné` : undefined}
+        />
+        <StatCard
+          label="Filles"
+          value={girls}
+          Icon={GraduationCap}
+          accent="emerald"
+          loading={loading}
+        />
+      </section>
+
       {/* KPIs + Raccourcis (raccourcis cachés sur mobile) */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <KpiCard
@@ -490,24 +601,37 @@ export default function AdminDashboardClient() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="space-y-2">
-              <QuickLink href="/admin/classes" icon={School}>
-                Créer des classes
-              </QuickLink>
-              <QuickLink href="/admin/users" icon={Users}>
-                Créer un enseignant
-              </QuickLink>
-              <QuickLink href="/admin/affectations" icon={UserRoundCheck}>
-                Affecter des classes
-              </QuickLink>
-              <QuickLink href="/admin/parents" icon={Users}>
-                Liste des classes
-              </QuickLink>
-              <QuickLink href="/admin/import" icon={GraduationCap}>
-                Importer élèves
-              </QuickLink>
-              <QuickLink href="/admin/statistiques" icon={BarChart3}>
-                Contrôle des enseignants
-              </QuickLink>
+              {isFinanceManager ? (
+                <>
+                  <QuickLink href="/admin/finance" icon={FileSpreadsheet}>
+                    Gestion financière
+                  </QuickLink>
+                  <QuickLink href="/admin/parents" icon={Users}>
+                    Listes de classe
+                  </QuickLink>
+                </>
+              ) : (
+                <>
+                  <QuickLink href="/admin/classes" icon={School}>
+                    Créer des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/users" icon={Users}>
+                    Créer un enseignant
+                  </QuickLink>
+                  <QuickLink href="/admin/affectations" icon={UserRoundCheck}>
+                    Affecter des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/parents" icon={Users}>
+                    Liste des classes
+                  </QuickLink>
+                  <QuickLink href="/admin/import" icon={GraduationCap}>
+                    Importer élèves
+                  </QuickLink>
+                  <QuickLink href="/admin/statistiques" icon={BarChart3}>
+                    Contrôle des enseignants
+                  </QuickLink>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>

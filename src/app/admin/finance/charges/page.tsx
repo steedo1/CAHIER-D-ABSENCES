@@ -10,6 +10,7 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -64,6 +65,44 @@ type ChargeBalanceRow = {
   created_at: string;
   updated_at: string;
 };
+
+type ChargeStudentRow = {
+  id: string;
+  full_name: string;
+  class_id: string | null;
+  is_affecte: boolean | null;
+  is_boarder: boolean | null;
+};
+
+function scheduleAppliesToStudent(
+  schedule: Pick<FeeScheduleRow, "label">,
+  student: Pick<ChargeStudentRow, "is_affecte" | "is_boarder">,
+) {
+  if (
+    schedule.label === "Scolarité - Inscription" ||
+    schedule.label === "Scolarité - Frais généraux" ||
+    schedule.label === "Scolarité - Frais annexes scolarité"
+  ) {
+    return true;
+  }
+
+  if (schedule.label === "Scolarité - Écolage affecté") {
+    return student.is_affecte === true;
+  }
+
+  if (schedule.label === "Scolarité - Écolage non affecté") {
+    return student.is_affecte === false;
+  }
+
+  if (
+    schedule.label === "Internat - Pension" ||
+    schedule.label === "Internat - Frais annexes internat"
+  ) {
+    return student.is_boarder === true;
+  }
+
+  return true;
+}
 
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
@@ -145,11 +184,46 @@ async function generateChargesForClassAction(formData: FormData) {
     );
   }
 
-  const adminStudents = await getAdminStudentsServer();
-  const studentRows = adminStudents.filter((s) => s.class_id === classId);
+  const { data: enrollmentRows, error: enrErr } = await admin
+    .from("class_enrollments")
+    .select(
+      `
+      class_id,
+      student_id,
+      students:student_id ( id, full_name, is_affecte, is_boarder )
+    `,
+    )
+    .eq("institution_id", institutionId)
+    .eq("class_id", classId)
+    .is("end_date", null);
+
+  if (enrErr) throw new Error(enrErr.message);
+
+  const studentRows = ((enrollmentRows ?? []) as any[]).map((row) => {
+    const student = row.students ?? {};
+    return {
+      id: String(student.id || row.student_id),
+      full_name: String(student.full_name || ""),
+      class_id: String(row.class_id || classId),
+      is_affecte:
+        typeof student.is_affecte === "boolean" ? student.is_affecte : null,
+      is_boarder:
+        typeof student.is_boarder === "boolean" ? student.is_boarder : null,
+    } satisfies ChargeStudentRow;
+  });
 
   if (studentRows.length === 0) {
     throw new Error("Aucun élève trouvé dans cette classe.");
+  }
+
+  const incompleteProfiles = studentRows.filter(
+    (student) => student.is_affecte === null || student.is_boarder === null,
+  );
+
+  if (incompleteProfiles.length > 0) {
+    throw new Error(
+      `${incompleteProfiles.length} élève(s) ont un profil financier incomplet : affectation ou internat non renseigné.`,
+    );
   }
 
   const { data: academicYearRow, error: academicYearErr } =
@@ -174,6 +248,7 @@ async function generateChargesForClassAction(formData: FormData) {
         .eq("school_id", institutionId)
         .eq("class_id", classId)
         .in("fee_schedule_id", scheduleIds)
+        .range(0, 9999)
     : { data: [], error: null as any };
 
   if (exErr) throw new Error(exErr.message);
@@ -192,7 +267,11 @@ async function generateChargesForClassAction(formData: FormData) {
 
   const inserts = studentRows.flatMap((student) =>
     scheduleRows
-      .filter((schedule) => !existingSet.has(`${student.id}:${schedule.id}`))
+      .filter(
+        (schedule) =>
+          scheduleAppliesToStudent(schedule, student) &&
+          !existingSet.has(`${student.id}:${schedule.id}`),
+      )
       .map((schedule) => ({
         school_id: institutionId,
         academic_year_id: academicYearRow?.id || null,
@@ -273,15 +352,18 @@ export default async function FinanceChargesPage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
-  const supabase = await getSupabaseServerClient();
-  const adminStudents = await getAdminStudentsServer();
+  const admin = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
   );
   const { academicYears, selectedAcademicYearCode } = academicYearCtx;
 
-  let classesQuery = supabase
+  const adminStudents = await getAdminStudentsServer(
+    selectedAcademicYearCode || undefined,
+  );
+
+  let classesQuery = admin
     .from("classes")
     .select("id,label,level,academic_year")
     .eq("institution_id", institutionId);
@@ -304,7 +386,7 @@ export default async function FinanceChargesPage({
     { data: balances, error: balErr },
   ] = await Promise.all([
     (() => {
-      let query = supabase
+      let query = admin
         .schema("finance")
         .from("fee_schedules")
         .select(
@@ -320,19 +402,16 @@ export default async function FinanceChargesPage({
         query = query.in("class_id", classIds);
       }
 
-      return query;
+      return query.range(0, 9999);
     })(),
 
     classIds.length > 0
-      ? supabase
-          .schema("finance")
-          .from("v_charge_balances")
-          .select(
-            "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,adjustment_total,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
-          )
-          .eq("school_id", institutionId)
-          .in("class_id", classIds)
-          .neq("computed_status", "cancelled")
+      ? fetchFinanceChargeBalancesByClasses({
+          institutionIds: [institutionId],
+          classIds,
+        })
+          .then((data) => ({ data, error: null }))
+          .catch((error) => ({ data: [], error }))
       : Promise.resolve({ data: [], error: null } as any),
   ]);
 
@@ -387,7 +466,17 @@ export default async function FinanceChargesPage({
     const classSchedules = schedulesByClass[cls.id] || [];
     const classBalances = balancesByClass[cls.id] || [];
 
-    const theoreticalCount = classStudents.length * classSchedules.length;
+    const theoreticalCount = classStudents.reduce(
+      (total, student) =>
+        total +
+        classSchedules.filter((schedule) =>
+          scheduleAppliesToStudent(schedule, {
+            is_affecte: student.is_affecte ?? null,
+            is_boarder: student.is_boarder ?? null,
+          }),
+        ).length,
+      0,
+    );
     const actualCount = classBalances.length;
     const missingCount = Math.max(theoreticalCount - actualCount, 0);
     const dueAmount = classBalances.reduce(

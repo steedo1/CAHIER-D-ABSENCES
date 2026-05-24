@@ -8,6 +8,12 @@ export type AdminStudentRow = {
   class_label: string | null;
   matricule?: string | null;
   level?: string | null;
+  class_level?: string | null;
+  academic_year?: string | null;
+  gender?: string | null;
+  is_affecte?: boolean | null;
+  is_boarder?: boolean | null;
+  regime?: string | null;
 };
 
 function buildOriginFromHeaders(h: Headers) {
@@ -21,13 +27,19 @@ function buildOriginFromHeaders(h: Headers) {
   return `${proto}://${host}`;
 }
 
-export async function getAdminStudentsServer(): Promise<AdminStudentRow[]> {
+export async function getAdminStudentsServer(
+  academicYear?: string | null,
+): Promise<AdminStudentRow[]> {
   const h = await headers();
   const c = await cookies();
 
   const origin = buildOriginFromHeaders(h);
 
-  const res = await fetch(`${origin}/api/admin/students`, {
+  const url = new URL(`${origin}/api/admin/students`);
+  const year = String(academicYear || "").trim();
+  if (year) url.searchParams.set("academic_year", year);
+
+  const res = await fetch(url.toString(), {
     method: "GET",
     headers: {
       cookie: c.toString(),
@@ -55,5 +67,13 @@ export async function getAdminStudentsServer(): Promise<AdminStudentRow[]> {
     class_label: row.class_label ? String(row.class_label) : null,
     matricule: row.matricule ? String(row.matricule) : null,
     level: row.level ? String(row.level) : null,
+    class_level: row.class_level ? String(row.class_level) : null,
+    academic_year: row.academic_year ? String(row.academic_year) : null,
+    gender: row.gender ? String(row.gender) : null,
+    is_affecte:
+      typeof row.is_affecte === "boolean" ? row.is_affecte : null,
+    is_boarder:
+      typeof row.is_boarder === "boolean" ? row.is_boarder : null,
+    regime: row.regime ? String(row.regime) : null,
   }));
 }

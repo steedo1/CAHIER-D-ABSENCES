@@ -6,6 +6,14 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const READ_ALLOWED_ROLES = new Set([
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+  "educator",
+]);
+
 async function getCurrentAcademicYear(
   institutionId: string,
 ): Promise<string | null> {
@@ -33,25 +41,76 @@ async function getCurrentAcademicYear(
   return latest?.code ? String(latest.code) : null;
 }
 
-export async function GET(req: NextRequest) {
+function roleMatchesInstitution(role: string, roleInstitutionId: unknown, institutionId: string) {
+  if (role === "super_admin") return true;
+
+  const roleInst = String(roleInstitutionId || "").trim();
+  if (!roleInst) return Boolean(institutionId);
+
+  return roleInst === institutionId;
+}
+
+async function requireReadableInstitution() {
   const supa = await getSupabaseServerClient();
+  const srv = getSupabaseServiceClient();
 
   const {
     data: { user },
   } = await supa.auth.getUser();
-  if (!user)
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (!user) {
+    return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+  }
 
   const { data: me, error: meErr } = await supa
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (meErr)
-    return NextResponse.json({ error: meErr.message }, { status: 400 });
 
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst) return NextResponse.json({ items: [] });
+  if (meErr) {
+    return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };
+  }
+
+  const { data: roleRows, error: roleErr } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+
+  if (roleErr) {
+    return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
+  }
+
+  const allowedRows = (roleRows || []).filter((row: any) =>
+    READ_ALLOWED_ROLES.has(String(row.role || "")),
+  );
+
+  let institutionId = String((me as any)?.institution_id || "").trim();
+  if (!institutionId) {
+    const roleInstitution = allowedRows.find((row: any) => row.institution_id)?.institution_id;
+    institutionId = roleInstitution ? String(roleInstitution).trim() : "";
+  }
+
+  if (!institutionId) {
+    return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
+  }
+
+  const canRead = allowedRows.some((row: any) =>
+    roleMatchesInstitution(String(row.role || ""), row.institution_id, institutionId),
+  );
+
+  if (!canRead) {
+    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  }
+
+  return { srv, institutionId };
+}
+
+export async function GET(req: NextRequest) {
+  const ctx = await requireReadableInstitution();
+  if ("error" in ctx) return ctx.error;
+
+  const { srv, institutionId: inst } = ctx;
 
   const url = new URL(req.url);
   const classId = String(
@@ -64,13 +123,13 @@ export async function GET(req: NextRequest) {
     academicYearParam || (await getCurrentAcademicYear(inst));
   const shouldFilterYear = Boolean(academicYear && academicYear !== "all");
 
-  let query = supa
+  let query = srv
     .from("class_enrollments")
     .select(
       `
       student_id,
       class_id,
-      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id, gender, regime, is_affecte, is_boarder ),
       classes:class_id!inner ( id, label, level, institution_id, academic_year )
     `,
     )
@@ -80,7 +139,7 @@ export async function GET(req: NextRequest) {
   if (classId) query = query.eq("class_id", classId);
   if (shouldFilterYear) query = query.eq("classes.academic_year", academicYear);
 
-  const { data, error } = await query;
+  const { data, error } = await query.limit(50000);
 
   if (error)
     return NextResponse.json({ error: error.message }, { status: 400 });
@@ -94,6 +153,10 @@ export async function GET(req: NextRequest) {
     class_label: string | null;
     class_level: string | null;
     academic_year: string | null;
+    gender: string | null;
+    is_affecte: boolean | null;
+    is_boarder: boolean | null;
+    regime: string | null;
   }> = [];
 
   for (const row of data ?? []) {
@@ -116,6 +179,12 @@ export async function GET(req: NextRequest) {
       class_label: (c.label ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
+      gender: (s.gender ?? null) as string | null,
+      is_affecte:
+        typeof s.is_affecte === "boolean" ? (s.is_affecte as boolean) : null,
+      is_boarder:
+        typeof s.is_boarder === "boolean" ? (s.is_boarder as boolean) : null,
+      regime: (s.regime ?? null) as string | null,
     });
   }
 

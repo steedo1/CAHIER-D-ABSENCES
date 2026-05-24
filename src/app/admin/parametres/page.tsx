@@ -1431,6 +1431,7 @@ export default function AdminSettingsPage() {
           (y.label || "").trim() ||
           (code ? `Année scolaire ${code}` : `Année ${idx + 1}`);
         return {
+          id: y.id && !y.id.startsWith("temp_") && !y.id.startsWith("year_") ? y.id : null,
           code,
           label,
           start_date: y.start_date || null,

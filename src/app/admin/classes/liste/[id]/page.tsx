@@ -28,6 +28,7 @@ type StudentRow = {
 
 type ClassListPayload = {
   ok?: boolean;
+  can_edit?: boolean;
   class: {
     id: string;
     label: string;
@@ -229,6 +230,7 @@ export default function ClassListPrintPage() {
   const academicYearLabel = buildAcademicYearLabel(data);
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
+  const canEdit = data?.can_edit !== false;
 
   const printedStudents = useMemo(
     () =>
@@ -258,7 +260,7 @@ export default function ClassListPrintPage() {
   }
 
   async function saveCorrections() {
-    if (!data) return;
+    if (!data || !canEdit) return;
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -578,14 +580,16 @@ export default function ClassListPrintPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setShowCorrections((v) => !v)}
-            disabled={loading || !!error || !data}
-            className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Corriger les champs
-          </button>
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => setShowCorrections((v) => !v)}
+              disabled={loading || !!error || !data}
+              className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Corriger les champs
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => router.back()}
@@ -604,7 +608,7 @@ export default function ClassListPrintPage() {
         </div>
       </div>
 
-      {showCorrections && data ? (
+      {showCorrections && data && canEdit ? (
         <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>

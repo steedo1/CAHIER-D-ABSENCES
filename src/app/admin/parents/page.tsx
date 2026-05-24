@@ -777,6 +777,7 @@ export default function AdminStudentsByClassPage() {
   const [loading, setLoading] = useState(true);
   const [docsLoading, setDocsLoading] = useState(false);
   const [authErr, setAuthErr] = useState(false);
+  const [role, setRole] = useState<string | null | undefined>(undefined);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<null | {
@@ -813,6 +814,26 @@ export default function AdminStudentsByClassPage() {
   }>(null);
 
   const searchAbort = useRef<AbortController | null>(null);
+
+  const canManageStudents = role !== undefined && role !== "finance_manager";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/role", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled) setRole(json?.role ? String(json.role) : null);
+      } catch {
+        if (!cancelled) setRole(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function resetAssign() {
     setAssignMode("new");
@@ -1551,18 +1572,20 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              tone="slate"
-              onClick={() => setAssignOpen(true)}
-              disabled={!classId || loading}
-              title={
-                classId
-                  ? "Ajouter ou transferer un eleve dans cette classe"
-                  : "Choisissez une classe d'abord"
-              }
-            >
-              Ajouter / Transferer
-            </Button>
+            {canManageStudents ? (
+              <Button
+                tone="slate"
+                onClick={() => setAssignOpen(true)}
+                disabled={!classId || loading}
+                title={
+                  classId
+                    ? "Ajouter ou transferer un eleve dans cette classe"
+                    : "Choisissez une classe d'abord"
+                }
+              >
+                Ajouter / Transferer
+              </Button>
+            ) : null}
 
             <span className="text-xs text-slate-600">Par page :</span>
 
@@ -1682,18 +1705,22 @@ export default function AdminStudentsByClassPage() {
                             Attestation
                           </Button>
 
-                          <Button tone="white" onClick={() => openEdit(student)}>
-                            Modifier
-                          </Button>
+                          {canManageStudents ? (
+                            <>
+                              <Button tone="white" onClick={() => openEdit(student)}>
+                                Modifier
+                              </Button>
 
-                          <Button
-                            tone="danger"
-                            onClick={() => removeFromClass(student)}
-                            disabled={!student.class_id || removingId === student.id}
-                            title="Retirer l'eleve de cette classe"
-                          >
-                            {removingId === student.id ? "Retrait..." : "Retirer"}
-                          </Button>
+                              <Button
+                                tone="danger"
+                                onClick={() => removeFromClass(student)}
+                                disabled={!student.class_id || removingId === student.id}
+                                title="Retirer l'eleve de cette classe"
+                              >
+                                {removingId === student.id ? "Retrait..." : "Retirer"}
+                              </Button>
+                            </>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -1711,7 +1738,7 @@ export default function AdminStudentsByClassPage() {
         )}
       </section>
 
-      {editing && (
+      {canManageStudents && editing && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
@@ -1774,7 +1801,7 @@ export default function AdminStudentsByClassPage() {
         </div>
       )}
 
-      {assignOpen && (
+      {canManageStudents && assignOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">

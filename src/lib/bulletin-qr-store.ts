@@ -33,7 +33,25 @@ export async function getOrCreateBulletinShortCode(
 
   if (existing?.code) {
     const exp = existing.expires_at ? new Date(existing.expires_at) : null;
-    if (!exp || exp.getTime() > Date.now()) return existing.code;
+    if (!exp || exp.getTime() > Date.now()) {
+      // Important : on garde le même code court, mais on rafraîchit
+      // toujours son payload. Sinon un QR déjà généré peut conserver une
+      // ancienne moyenne alors que le bulletin vient d'être recalculé.
+      // L'échec de cette mise à jour ne doit pas bloquer le bulletin.
+      try {
+        await srv
+          .from("bulletin_qr_codes")
+          .update({
+            payload: opts.payload,
+            expires_at: opts.expiresAt ?? null,
+          })
+          .eq("code", existing.code);
+      } catch {
+        // non bloquant : la vérification publique recalcule aussi les moyennes
+      }
+
+      return existing.code;
+    }
   }
 
   // 2) Sinon crée un nouveau code (anti-collision)

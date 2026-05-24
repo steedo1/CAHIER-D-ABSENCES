@@ -181,7 +181,10 @@ async function getEducators(
   return loadEducatorProfiles(matchingIds);
 }
 
-async function requireAdminContext(classId: string) {
+async function requireAdminContext(
+  classId: string,
+  options: { write?: boolean } = {},
+) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
@@ -210,23 +213,35 @@ async function requireAdminContext(classId: string) {
 
   if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
 
-  const adminRoles = (roleRows || []).filter((row: any) =>
-    ["admin", "super_admin"].includes(String(row.role || "")),
+  const allowedRoles = options.write
+    ? new Set(["admin", "super_admin"])
+    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+
+  const allowedRoleRows = (roleRows || []).filter((row: any) =>
+    allowedRoles.has(String(row.role || "")),
   );
 
   let institutionId = String((me as any)?.institution_id || "").trim();
   if (!institutionId) {
-    const roleInstitution = adminRoles.find((row: any) => row.institution_id)?.institution_id;
+    const roleInstitution = allowedRoleRows.find((row: any) => row.institution_id)?.institution_id;
     institutionId = roleInstitution ? String(roleInstitution).trim() : "";
   }
-
-  const isAdmin = adminRoles.length > 0;
 
   if (!institutionId) {
     return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
   }
 
-  if (!isAdmin) {
+  const hasAccess = allowedRoleRows.some((row: any) => {
+    const role = String(row.role || "");
+    if (role === "super_admin") return true;
+    const roleInstitutionId = String(row.institution_id || "").trim();
+    // Compatibilité avec les anciens user_roles sans institution_id :
+    // lecture/écriture limitée à l'établissement du profil connecté.
+    if (!roleInstitutionId) return Boolean(institutionId);
+    return roleInstitutionId === institutionId;
+  });
+
+  if (!hasAccess) {
     return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
@@ -444,7 +459,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const classId = String(id || "").trim();
   if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
-  const ctx = await requireAdminContext(classId);
+  const ctx = await requireAdminContext(classId, { write: true });
   if ("error" in ctx) return ctx.error;
 
   const { srv, institutionId } = ctx;
