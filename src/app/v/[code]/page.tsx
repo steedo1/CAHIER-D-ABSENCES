@@ -141,7 +141,7 @@ function isAutresGroup(group: any) {
 }
 
 export default async function VerifyByCodePage(props: any) {
-  const code = String(props?.params?.code ?? "").trim();
+  const code = String(props?.params?.code ?? "").trim().toUpperCase();
   const origin = await getOriginFromHeaders();
 
   const searchParams = (props as any)?.searchParams ?? {};

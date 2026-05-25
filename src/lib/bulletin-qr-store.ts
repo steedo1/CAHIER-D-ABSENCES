@@ -79,10 +79,12 @@ export async function getOrCreateBulletinShortCode(
 }
 
 export async function resolveBulletinByCode(srv: SupabaseClient, code: string) {
+  const normalizedCode = String(code || "").trim().toUpperCase();
+
   const { data, error } = await srv
     .from("bulletin_qr_codes")
     .select("payload, revoked, expires_at, scan_count")
-    .eq("code", code)
+    .eq("code", normalizedCode)
     .maybeSingle();
 
   if (error) throw error;
@@ -103,7 +105,7 @@ export async function resolveBulletinByCode(srv: SupabaseClient, code: string) {
       scan_count: (data.scan_count ?? 0) + 1,
       last_seen_at: new Date().toISOString(),
     })
-    .eq("code", code);
+    .eq("code", normalizedCode);
 
   return { ok: true as const, payload: data.payload };
 }

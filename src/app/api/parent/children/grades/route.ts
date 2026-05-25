@@ -308,46 +308,103 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // ────────── Notes publiées + filtre dates ──────────
-    let q = srv
-      .from("student_grades")
-      .select(
+    // ────────── Notes officielles publiées + filtre dates ──────────
+    // Source prioritaire : grade_published_scores.is_current = true.
+    // C'est la même source officielle utilisée par les bulletins après publication.
+    let flat: Array<{ ev: any; score: number | null }> = [];
+
+    async function loadFromPublishedScores() {
+      let q = srv
+        .from("grade_published_scores")
+        .select(
+          `
+          score,
+          grade_evaluations!inner (
+            id,
+            eval_date,
+            eval_kind,
+            scale,
+            coeff,
+            is_published,
+            title,
+            subject_id
+          )
         `
-        score,
-        grade_evaluations!inner (
-          id,
-          eval_date,
-          eval_kind,
-          scale,
-          coeff,
-          is_published,
-          title,
-          subject_id
         )
-      `
-      )
-      .eq("student_id", studentId)
-      .eq("grade_evaluations.is_published", true);
+        .eq("student_id", studentId)
+        .eq("institution_id", institution_id)
+        .eq("is_current", true);
 
-    if (from) q = q.gte("grade_evaluations.eval_date", from);
-    if (to) q = q.lte("grade_evaluations.eval_date", to);
+      if (from) q = q.gte("grade_evaluations.eval_date", from);
+      if (to) q = q.lte("grade_evaluations.eval_date", to);
 
-    const { data, error } = await q;
-    if (error) {
-      console.error("[parent.grades] query error", error);
-      return NextResponse.json({ ok: false, error: "Erreur de récupération des notes." }, { status: 500 });
+      const { data, error } = await q;
+      if (error) return { flat: [] as Array<{ ev: any; score: number | null }>, error };
+
+      const rows = (data || []) as Array<{ score: number | null; grade_evaluations: any }>;
+      const out = rows
+        .map((r) => {
+          const ge = r.grade_evaluations;
+          const ev = Array.isArray(ge) ? ge[0] : ge;
+          if (!ev?.id) return null;
+          return { ev, score: r.score };
+        })
+        .filter(Boolean) as Array<{ ev: any; score: number | null }>;
+
+      return { flat: out, error: null };
     }
 
-    const rows = (data || []) as Array<{ score: number | null; grade_evaluations: any }>;
+    async function loadFromLegacyStudentGrades() {
+      let q = srv
+        .from("student_grades")
+        .select(
+          `
+          score,
+          grade_evaluations!inner (
+            id,
+            eval_date,
+            eval_kind,
+            scale,
+            coeff,
+            is_published,
+            title,
+            subject_id
+          )
+        `
+        )
+        .eq("student_id", studentId)
+        .eq("grade_evaluations.is_published", true);
 
-    const flat = rows
-      .map((r) => {
-        const ge = r.grade_evaluations;
-        const ev = Array.isArray(ge) ? ge[0] : ge;
-        if (!ev?.id) return null;
-        return { ev, score: r.score };
-      })
-      .filter(Boolean) as Array<{ ev: any; score: number | null }>;
+      if (from) q = q.gte("grade_evaluations.eval_date", from);
+      if (to) q = q.lte("grade_evaluations.eval_date", to);
+
+      const { data, error } = await q;
+      if (error) return { flat: [] as Array<{ ev: any; score: number | null }>, error };
+
+      const rows = (data || []) as Array<{ score: number | null; grade_evaluations: any }>;
+      const out = rows
+        .map((r) => {
+          const ge = r.grade_evaluations;
+          const ev = Array.isArray(ge) ? ge[0] : ge;
+          if (!ev?.id) return null;
+          return { ev, score: r.score };
+        })
+        .filter(Boolean) as Array<{ ev: any; score: number | null }>;
+
+      return { flat: out, error: null };
+    }
+
+    const official = await loadFromPublishedScores();
+    if (!official.error && official.flat.length) {
+      flat = official.flat;
+    } else {
+      const legacy = await loadFromLegacyStudentGrades();
+      if (legacy.error) {
+        console.error("[parent.grades] query error", official.error || legacy.error);
+        return NextResponse.json({ ok: false, error: "Erreur de récupération des notes." }, { status: 500 });
+      }
+      flat = legacy.flat;
+    }
 
     const subjectIds = Array.from(new Set(flat.map((x) => x.ev.subject_id).filter(Boolean))) as string[];
     const subjectNameById = await resolveSubjectNames(srv, subjectIds);

@@ -176,18 +176,6 @@ function formatNotificationDate(value?: string | null) {
   }
 }
 
-function parentFriendlyError(message?: string | null) {
-  const raw = String(message || "").trim();
-  const low = raw.toLowerCase();
-  if (!raw || low === "unauthorized" || low === "non authentifié." || low === "non authentifie.") {
-    return "Session parent expirée ou accès indisponible. Veuillez actualiser la page ou vous reconnecter.";
-  }
-  if (low.includes("forbidden") || low.includes("accès interdit") || low.includes("acces interdit")) {
-    return "Accès refusé pour ce compte parent.";
-  }
-  return raw;
-}
-
 /* ————————— thèmes (couleurs différentes par enfant / matière) ————————— */
 const THEMES = [
   {
@@ -386,6 +374,38 @@ function formatAverage(value?: number | null) {
   return value.toFixed(2).replace(".", ",");
 }
 
+function averageFromBulletin(b?: ParentBulletin | null) {
+  if (!b || b.general_avg === null || b.general_avg === undefined) return null;
+  const n = Number(b.general_avg);
+  return Number.isFinite(n) ? n : null;
+}
+
+function findBulletinForPeriod(
+  list: ParentBulletin[],
+  from?: string | null,
+  to?: string | null,
+  periodLabel?: string | null,
+) {
+  if (!list.length) return null;
+  const exact = list.find((b) => {
+    if (from && to && b.period_from && b.period_to) {
+      return b.period_from === from && b.period_to === to;
+    }
+    return false;
+  });
+  if (exact) return exact;
+
+  const label = String(periodLabel || "").trim().toLowerCase();
+  if (label) {
+    const byLabel = list.find((b) =>
+      String(b.period_label || "").trim().toLowerCase() === label,
+    );
+    if (byLabel) return byLabel;
+  }
+
+  return list[0] || null;
+}
+
 function formatGradeScore(g?: KidGradeRow | null) {
   if (!g || g.score == null) return "—";
   return `${Number(g.score).toFixed(2).replace(".", ",")}/${g.scale || 20}`;
@@ -459,6 +479,8 @@ type ParentBulletin = {
   period_label: string;
   period_from: string | null;
   period_to: string | null;
+  general_avg?: number | null;
+  annual_avg?: number | null;
   created_at: string | null;
 };
 
@@ -1512,7 +1534,7 @@ export default function ParentPage() {
       if (!res.ok) throw new Error(j?.error || "Impossible de charger les notifications.");
       setNotifications(Array.isArray(j?.items) ? j.items : []);
     } catch (e: any) {
-      setNotificationsMsg(parentFriendlyError(e?.message || "Notifications indisponibles."));
+      setNotificationsMsg(e?.message || "Notifications indisponibles.");
     } finally {
       if (!silent) setNotificationsLoading(false);
     }
@@ -2311,7 +2333,17 @@ export default function ParentPage() {
                       isInDateRange(g.eval_date, gradeFrom || undefined, gradeTo || undefined),
                     )
                   : [];
-                const overallAverage = weightedAverageOn20(periodGrades);
+                const bulletinForPeriod = k
+                  ? findBulletinForPeriod(
+                      bulletinsByKid.get(k.id) || [],
+                      gradeFrom || undefined,
+                      gradeTo || undefined,
+                      periodLabel,
+                    )
+                  : null;
+                const officialAverage = averageFromBulletin(bulletinForPeriod);
+                const overallAverage = officialAverage ?? weightedAverageOn20(periodGrades);
+                const averageCaption = officialAverage !== null ? "Moyenne bulletin" : "Moyenne provisoire";
                 const latestGrade = latestGradeOf(periodGrades);
                 const periodEvents = k
                   ? (feed[k.id] || []).filter((ev) =>
@@ -2329,7 +2361,7 @@ export default function ParentPage() {
                   (sum, charge) => sum + Number(charge.balance_due || 0),
                   0,
                 );
-                const latestBulletin = k ? (bulletinsByKid.get(k.id) || [])[0] || null : null;
+                const latestBulletin = bulletinForPeriod || (k ? (bulletinsByKid.get(k.id) || [])[0] || null : null);
 
                 return (
                   <>
@@ -2341,10 +2373,7 @@ export default function ParentPage() {
                           </div>
                           <div className="min-w-0">
                             <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">Espace parent</div>
-                            <h2 className="mt-1 text-2xl font-black">Tableau de bord simplifié</h2>
-                            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/90">
-                              L’essentiel d’abord, les détails seulement au besoin.
-                            </p>
+                            <h2 className="mt-1 text-2xl font-black">Suivi de votre enfant</h2>
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -2409,7 +2438,7 @@ export default function ParentPage() {
                         >
                           <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">Notes</div>
                           <div className="mt-2 text-2xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">Moyenne provisoire</div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{averageCaption}</div>
                           <div className="mt-3 rounded-2xl bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800">
                             {latestGrade ? `${latestGrade.subject_name || "Matière"} · ${formatGradeScore(latestGrade)}` : "Aucune note publiée"}
                           </div>
@@ -2480,7 +2509,7 @@ export default function ParentPage() {
 
           {selectedKid && !isHome && (
             <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
                 {tabs.map((tab) => {
                   const active = activeSection === tab.key;
                   return (
@@ -2489,19 +2518,19 @@ export default function ParentPage() {
                       type="button"
                       onClick={() => selectSection(tab.key)}
                       className={[
-                        "flex min-w-0 items-center justify-center gap-1.5 rounded-2xl px-2 py-3 text-center text-[12px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5 sm:min-h-[76px] sm:w-full sm:justify-start sm:gap-3 sm:rounded-[24px] sm:px-5 sm:py-4 sm:text-left sm:text-[14px]",
+                        "flex min-w-[132px] items-center justify-center gap-2 rounded-2xl px-4 py-3 text-center text-[14px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5 sm:min-h-[76px] sm:w-full sm:justify-start sm:gap-3 sm:rounded-[24px] sm:px-5 sm:py-4 sm:text-left",
                         active ? tab.activeClass : tab.idleClass,
                       ].join(" ")}
                     >
                       <span
                         className={[
-                          "grid h-8 w-8 shrink-0 place-items-center rounded-xl sm:h-12 sm:w-12 sm:rounded-2xl",
+                          "grid h-9 w-9 shrink-0 place-items-center rounded-xl sm:h-12 sm:w-12 sm:rounded-2xl",
                           active ? "bg-white/15 text-white" : "bg-white/70",
                         ].join(" ")}
                       >
                         {tab.icon}
                       </span>
-                      <span className="min-w-0 truncate leading-none sm:text-[17px]">{tab.label}</span>
+                      <span className="text-[14px] leading-none sm:text-[17px]">{tab.label}</span>
                     </button>
                   );
                 })}
@@ -2572,61 +2601,52 @@ export default function ParentPage() {
                 </div>
               </div>
 
-              {smsLoading || smsAnyPremiumEnabled || smsPrimaryContact?.phone_e164 ? (
-                <>
-                  <div className="mt-5">
-                    <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
-                      Numéro à rattacher
-                    </label>
-                    <Input
-                      value={smsPhone}
-                      onChange={(e) => setSmsPhone(e.target.value)}
-                      placeholder="Ex : +2250713023762"
-                      inputMode="tel"
-                      className="h-14 text-[16px]"
-                    />
-                  </div>
+              <div className="mt-5">
+                <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
+                  Numéro à rattacher
+                </label>
+                <Input
+                  value={smsPhone}
+                  onChange={(e) => setSmsPhone(e.target.value)}
+                  placeholder="Ex : +2250713023762"
+                  inputMode="tel"
+                  className="h-14 text-[16px]"
+                />
+              </div>
 
-                  <div className="mt-4">
-                    <Toggle
-                      checked={smsEnabled}
-                      onChange={setSmsEnabled}
-                      label={smsEnabled ? "SMS activés" : "SMS désactivés"}
-                      description="Activer ou couper les SMS sur ce numéro."
-                      disabled={!smsAnyPremiumEnabled && !smsPrimaryContact?.phone_e164}
-                    />
-                  </div>
+              <div className="mt-4">
+                <Toggle
+                  checked={smsEnabled}
+                  onChange={setSmsEnabled}
+                  label={smsEnabled ? "SMS activés" : "SMS désactivés"}
+                  description="Activer ou couper les SMS sur ce numéro."
+                />
+              </div>
 
-                  <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-                    <Button
-                      type="button"
-                      tone="emerald"
-                      onClick={saveSmsContact}
-                      disabled={smsSaving || smsLoading || !smsPhone.trim() || !smsAnyPremiumEnabled}
-                      iconLeft={<IconPhone />}
-                      className="sm:min-w-[220px]"
-                    >
-                      {smsSaving ? "Enregistrement…" : "Enregistrer"}
-                    </Button>
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                <Button
+                  type="button"
+                  tone="emerald"
+                  onClick={saveSmsContact}
+                  disabled={smsSaving || smsLoading || !smsPhone.trim()}
+                  iconLeft={<IconPhone />}
+                  className="sm:min-w-[220px]"
+                >
+                  {smsSaving ? "Enregistrement…" : "Enregistrer"}
+                </Button>
 
-                    {smsPrimaryContact?.id ? (
-                      <Button
-                        type="button"
-                        tone="white"
-                        onClick={removeSmsContact}
-                        disabled={smsSaving}
-                        className="sm:min-w-[190px]"
-                      >
-                        Supprimer
-                      </Button>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-[14px] font-semibold text-slate-600">
-                  SMS non activé par l’établissement. Les notifications push restent disponibles.
-                </div>
-              )}
+                {smsPrimaryContact?.id ? (
+                  <Button
+                    type="button"
+                    tone="white"
+                    onClick={removeSmsContact}
+                    disabled={smsSaving}
+                    className="sm:min-w-[190px]"
+                  >
+                    Supprimer
+                  </Button>
+                ) : null}
+              </div>
 
               {smsMsg && (
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
@@ -2644,27 +2664,35 @@ export default function ParentPage() {
                     <IconBell />
                     Notifications parent
                   </div>
-                  <h2 className="mt-3 text-xl font-black text-slate-900">Messages et rappels</h2>
+                  <h2 className="mt-3 text-xl font-black text-slate-900">Alertes, messages et rappels financiers</h2>
                   <p className="mt-1 max-w-2xl text-[14px] leading-6 text-slate-600">
-                    Les informations importantes de l’établissement apparaissent ici.
+                    Les rappels de solde scolarité et internat apparaissent ici chaque mois.
+                    Si l’établissement a activé le SMS premium pour les rappels financiers, le parent peut aussi recevoir le rappel par SMS.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" tone="outline" onClick={() => loadParentNotifications(false)} disabled={notificationsLoading}>
                     {notificationsLoading ? "Actualisation…" : "Actualiser"}
                   </Button>
-                  {unreadNotificationsCount > 0 ? (
-                    <Button type="button" tone="slate" onClick={() => markNotificationsRead()}>
-                      Tout marquer lu
-                    </Button>
-                  ) : null}
+                  <Button type="button" tone="slate" onClick={() => markNotificationsRead()} disabled={!unreadNotificationsCount}>
+                    Tout marquer lu
+                  </Button>
                 </div>
               </div>
 
-              <div className="mb-4 flex flex-wrap gap-2">
-                <Badge>Total : {notifications.length}</Badge>
-                {unreadNotificationsCount > 0 ? <Badge tone="amber">Non lues : {unreadNotificationsCount}</Badge> : null}
-                {financeReminderCount > 0 ? <Badge tone="emerald">Rappels financiers : {financeReminderCount}</Badge> : null}
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">Total</div>
+                  <div className="mt-1 text-2xl font-black text-slate-900">{notifications.length}</div>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-amber-700">Non lues</div>
+                  <div className="mt-1 text-2xl font-black text-amber-900">{unreadNotificationsCount}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-emerald-700">Rappels financiers</div>
+                  <div className="mt-1 text-2xl font-black text-emerald-900">{financeReminderCount}</div>
+                </div>
               </div>
 
               {notificationsMsg ? (
@@ -2758,7 +2786,7 @@ export default function ParentPage() {
                     <select
                       value={activeGradePeriod?.id || ""}
                       onChange={(e) => setSelectedPeriodId(e.target.value)}
-                      className="h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                      className="h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 sm:min-w-[190px]"
                     >
                       {selectedKidPeriods.map((period) => (
                         <option key={period.id} value={period.id}>
@@ -2772,7 +2800,7 @@ export default function ParentPage() {
                     </div>
                   )}
                   {conductFrom && conductTo ? (
-                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-bold text-slate-600">
+                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-center text-[12px] font-bold text-slate-600 sm:text-left">
                       {dateFr(conductFrom)} au {dateFr(conductTo)}
                     </span>
                   ) : null}
@@ -3307,17 +3335,14 @@ export default function ParentPage() {
                   <div className="text-[13px] font-extrabold uppercase tracking-wide text-emerald-700">
                     Cahier de notes
                   </div>
-                  <div className="text-[13px] text-slate-500">
-                    Choisissez une discipline pour afficher les notes.
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <div className="grid w-full gap-2 text-[13px] sm:w-auto sm:grid-flow-col sm:auto-cols-max sm:items-center">
                   {selectedKidPeriods.length ? (
                     <select
                       value={activeGradePeriod?.id || ""}
                       onChange={(e) => setSelectedPeriodId(e.target.value)}
-                      className="h-11 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                      className="h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 sm:min-w-[190px]"
                     >
                       {selectedKidPeriods.map((period) => (
                         <option key={period.id} value={period.id}>
@@ -3332,7 +3357,7 @@ export default function ParentPage() {
                   )}
 
                   {gradeFrom && gradeTo ? (
-                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-bold text-slate-600">
+                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-center text-[12px] font-bold text-slate-600 sm:text-left">
                       {dateFr(gradeFrom)} au {dateFr(gradeTo)}
                     </span>
                   ) : null}
@@ -3347,7 +3372,7 @@ export default function ParentPage() {
                         Bulletin trimestriel disponible
                       </div>
                       <div className="mt-1 text-[13px] text-emerald-800">
-                        Le document officiel est disponible avec QR code sécurisé.
+                        Le bulletin est le document officiel avec QR code sécurisé.
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -3388,43 +3413,59 @@ export default function ParentPage() {
                     const summaries = buildSubjectGradeSummaries(byDate);
                     const subjectList = summaries.map((item) => [item.key, item.label] as const);
                     const activeSubject = activeSubjectPerKid[k.id] || "";
-                    const selectedSummary = activeSubject
-                      ? summaries.find((item) => item.key === activeSubject) || null
-                      : null;
-                    const totalAverage = weightedAverageOn20(byDate);
+                    const visibleSummaries =
+                      activeSubject === "all"
+                        ? summaries
+                        : activeSubject
+                          ? summaries.filter((item) => item.key === activeSubject)
+                          : [];
+                    const bulletinForPeriod = findBulletinForPeriod(
+                      bulletinsByKid.get(k.id) || [],
+                      gradeFrom || undefined,
+                      gradeTo || undefined,
+                      activeGradePeriod?.short_label || activeGradePeriod?.label || null,
+                    );
+                    const officialAverage = averageFromBulletin(bulletinForPeriod);
+                    const totalAverage = officialAverage ?? weightedAverageOn20(byDate);
+                    const averageCaption = officialAverage !== null ? "Moyenne bulletin" : "Moyenne provisoire";
+                    const latestGrade = latestGradeOf(byDate);
                     const t = themeFor(idx);
-                    const detailKey = selectedSummary ? `${k.id}|${selectedSummary.key}` : "";
-                    const detailsOpen = detailKey ? !!expandedGradeSubjects[detailKey] : false;
 
                     return (
                       <div
                         key={k.id}
                         className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4"
                       >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div
-                            className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
-                          >
-                            {getInitials(k.full_name)}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-[17px] font-black text-slate-900">
-                              {k.full_name}
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div
+                              className={`grid h-11 w-11 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
+                            >
+                              {getInitials(k.full_name)}
                             </div>
-                            <div className="text-[13px] text-slate-600">
-                              {k.class_label || "—"}
+                            <div className="min-w-0">
+                              <div className="truncate text-[17px] font-black text-slate-900">
+                                {k.full_name}
+                              </div>
+                              <div className="text-[13px] text-slate-600">
+                                {k.class_label || "—"}
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
-                            <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Moyenne provisoire</div>
-                            <div className="mt-1 text-xl font-black text-slate-950">{formatAverage(totalAverage)}/20</div>
-                          </div>
-                          <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
-                            <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Notes publiées</div>
-                            <div className="mt-1 text-xl font-black text-slate-950">{byDate.length}</div>
+                          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">{averageCaption}</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{formatAverage(totalAverage)}/20</div>
+                            </div>
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Notes publiées</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{byDate.length}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dernière note</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{formatGradeScore(latestGrade)}</div>
+                            </div>
                           </div>
                         </div>
 
@@ -3435,26 +3476,21 @@ export default function ParentPage() {
                         )}
 
                         <div className="mt-4">
-                          <label className="mb-2 block text-[12px] font-black uppercase tracking-[0.16em] text-slate-500">
+                          <label className="mb-2 block text-[12px] font-black uppercase tracking-wide text-slate-500">
                             Discipline
                           </label>
                           <select
                             value={activeSubject}
-                            onChange={(e) => {
-                              const next = e.target.value;
+                            onChange={(e) =>
                               setActiveSubjectPerKid((m) => ({
                                 ...m,
-                                [k.id]: next || null,
-                              }));
-                              setExpandedGradeSubjects((m) => {
-                                const copy = { ...m };
-                                for (const item of summaries) delete copy[`${k.id}|${item.key}`];
-                                return copy;
-                              });
-                            }}
-                            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                                [k.id]: e.target.value,
+                              }))
+                            }
+                            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                           >
                             <option value="">Choisir une discipline</option>
+                            <option value="all">Toutes les disciplines</option>
                             {subjectList.map(([id, label]) => (
                               <option key={id} value={id}>
                                 {label}
@@ -3463,73 +3499,79 @@ export default function ParentPage() {
                           </select>
                         </div>
 
-                        {!summaries.length ? (
+                        {visibleSummaries.length === 0 ? (
                           <div className="mt-4 rounded-2xl bg-white px-4 py-4 text-[14px] text-slate-600 ring-1 ring-slate-200">
-                            Aucune note publiée pour cette période.
-                          </div>
-                        ) : !selectedSummary ? (
-                          <div className="mt-4 rounded-2xl bg-white px-4 py-4 text-[14px] text-slate-600 ring-1 ring-slate-200">
-                            Sélectionnez une discipline pour voir la moyenne, la dernière note et le détail des évaluations.
+                            {summaries.length
+                              ? "Choisissez une discipline pour afficher les notes."
+                              : "Aucune note publiée pour cette période."}
                           </div>
                         ) : (
-                          <article className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <h3 className="truncate text-[16px] font-black text-slate-950">{selectedSummary.label}</h3>
-                                <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                                  {selectedSummary.grades.length} note{selectedSummary.grades.length > 1 ? "s" : ""} publiée{selectedSummary.grades.length > 1 ? "s" : ""}
-                                </div>
-                              </div>
-                              <div className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-right ring-1 ring-emerald-100">
-                                <div className="text-lg font-black text-emerald-800">{formatAverage(selectedSummary.average)}/20</div>
-                                <div className="text-[11px] font-bold text-emerald-700">provisoire</div>
-                              </div>
-                            </div>
-
-                            {selectedSummary.latest ? (
-                              <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-[13px] text-slate-700">
-                                Dernière note : <b>{formatGradeScore(selectedSummary.latest)}</b> · {gradeKindLabel(selectedSummary.latest.eval_kind)}
-                                {selectedSummary.latest.title ? ` · ${selectedSummary.latest.title}` : ""}
-                              </div>
-                            ) : null}
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedGradeSubjects((m) => ({
-                                  ...m,
-                                  [detailKey]: !m[detailKey],
-                                }))
-                              }
-                              className="mt-3 rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-black text-[#003766] transition hover:bg-[#d9e8f7]"
-                            >
-                              {detailsOpen ? "Masquer le détail" : "Voir le détail"}
-                            </button>
-
-                            {detailsOpen ? (
-                              <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
-                                <div className="hidden bg-slate-50 px-3 py-2 text-[12px] font-black uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[120px_1fr_90px_90px] md:gap-3">
-                                  <span>Date</span>
-                                  <span>Évaluation</span>
-                                  <span>Coeff.</span>
-                                  <span className="text-right">Note</span>
-                                </div>
-                                <div className="divide-y divide-slate-100">
-                                  {selectedSummary.grades.map((g) => (
-                                    <div key={g.id} className="grid gap-2 px-3 py-3 text-[13px] md:grid-cols-[120px_1fr_90px_90px] md:gap-3 md:items-center">
-                                      <div className="font-semibold text-slate-600">{fmt(g.eval_date)}</div>
-                                      <div className="min-w-0">
-                                        <div className="font-bold text-slate-900">{gradeKindLabel(g.eval_kind)}</div>
-                                        {g.title ? <div className="truncate text-slate-500">{g.title}</div> : null}
+                          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                            {visibleSummaries.map((item) => {
+                              const detailKey = `${k.id}|${item.key}`;
+                              const isOpen = !!expandedGradeSubjects[detailKey] || (activeSubject !== "all" && activeSubject !== "");
+                              return (
+                                <article key={item.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <h3 className="truncate text-[16px] font-black text-slate-950">{item.label}</h3>
+                                      <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                                        {item.grades.length} note{item.grades.length > 1 ? "s" : ""} publiée{item.grades.length > 1 ? "s" : ""}
                                       </div>
-                                      <div className="text-slate-600">Coeff. {g.coeff || 1}</div>
-                                      <div className="text-right text-[15px] font-black text-slate-950">{formatGradeScore(g)}</div>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                          </article>
+                                    <div className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-right ring-1 ring-emerald-100">
+                                      <div className="text-lg font-black text-emerald-800">{formatAverage(item.average)}/20</div>
+                                      <div className="text-[11px] font-bold text-emerald-700">provisoire</div>
+                                    </div>
+                                  </div>
+
+                                  {item.latest ? (
+                                    <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-[13px] text-slate-700">
+                                      Dernière note : <b>{formatGradeScore(item.latest)}</b> · {gradeKindLabel(item.latest.eval_kind)}
+                                      {item.latest.title ? ` · ${item.latest.title}` : ""}
+                                    </div>
+                                  ) : null}
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedGradeSubjects((m) => ({
+                                        ...m,
+                                        [detailKey]: !m[detailKey],
+                                      }))
+                                    }
+                                    className="mt-3 rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-black text-[#003766] transition hover:bg-[#d9e8f7]"
+                                  >
+                                    {isOpen ? "Masquer le détail" : "Voir le détail"}
+                                  </button>
+
+                                  {isOpen ? (
+                                    <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                                      <div className="hidden bg-slate-50 px-3 py-2 text-[12px] font-black uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[120px_1fr_90px_90px] md:gap-3">
+                                        <span>Date</span>
+                                        <span>Évaluation</span>
+                                        <span>Coeff.</span>
+                                        <span className="text-right">Note</span>
+                                      </div>
+                                      <div className="divide-y divide-slate-100">
+                                        {item.grades.map((g) => (
+                                          <div key={g.id} className="grid gap-2 px-3 py-3 text-[13px] md:grid-cols-[120px_1fr_90px_90px] md:gap-3 md:items-center">
+                                            <div className="font-semibold text-slate-600">{fmt(g.eval_date)}</div>
+                                            <div className="min-w-0">
+                                              <div className="font-bold text-slate-900">{gradeKindLabel(g.eval_kind)}</div>
+                                              {g.title ? <div className="truncate text-slate-500">{g.title}</div> : null}
+                                            </div>
+                                            <div className="text-slate-600">Coeff. {g.coeff || 1}</div>
+                                            <div className="text-right text-[15px] font-black text-slate-950">{formatGradeScore(g)}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     );

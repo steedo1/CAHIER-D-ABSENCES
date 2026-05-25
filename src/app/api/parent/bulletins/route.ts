@@ -18,6 +18,12 @@ function isExpired(value: unknown) {
   return Number.isFinite(time) && time <= Date.now();
 }
 
+function cleanNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Number(n.toFixed(4)) : null;
+}
+
 export async function GET() {
   const srv = getSupabaseServiceClient();
 
@@ -71,6 +77,8 @@ export async function GET() {
           period_label: payload.periodShortLabel || payload.periodLabel || "Bulletin",
           period_from: toDateValue(payload.periodFrom || payload.from || payload.period_from),
           period_to: toDateValue(payload.periodTo || payload.to || payload.period_to),
+          general_avg: cleanNumber(payload?.s?.g ?? payload?.general_avg),
+          annual_avg: cleanNumber(payload?.s?.a ?? payload?.annual_avg),
           created_at: row.created_at || null,
         };
       })
