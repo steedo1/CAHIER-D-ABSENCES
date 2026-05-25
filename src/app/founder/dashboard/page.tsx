@@ -29,6 +29,10 @@ type QueryResult<T> = {
   error: { message?: string } | null;
 };
 
+type FounderDashboardSearchParams = {
+  date?: string | string[];
+};
+
 type StudentStats = {
   total: number;
   assigned: number;
@@ -51,6 +55,15 @@ function todayYmd() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+}
+
+function isYmd(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function formatYmdFr(value: string) {
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
 }
 
 function computeAcademicYear(d = new Date()) {
@@ -190,10 +203,21 @@ async function getFounderContext() {
   return { service, institutionIds, institutions };
 }
 
-export default async function FounderDashboardPage() {
+export default async function FounderDashboardPage({
+  searchParams,
+}: {
+  searchParams?: FounderDashboardSearchParams | Promise<FounderDashboardSearchParams>;
+}) {
   const { service, institutionIds, institutions } = await getFounderContext();
+  const resolvedSearchParams = await Promise.resolve(searchParams ?? {});
+  const rawDateParam = Array.isArray(resolvedSearchParams.date)
+    ? resolvedSearchParams.date[0]
+    : resolvedSearchParams.date;
+
   const today = todayYmd();
-  const { startIso, endIso } = dayBoundsIso(today);
+  const selectedDate = isYmd(rawDateParam) ? rawDateParam : today;
+  const selectedDateLabel = selectedDate === today ? "aujourd’hui" : `le ${formatYmdFr(selectedDate)}`;
+  const { startIso, endIso } = dayBoundsIso(selectedDate);
   const fallbackAcademicYear = computeAcademicYear();
 
   const academicYearRows = await safeData<any[]>(
@@ -309,7 +333,7 @@ export default async function FounderDashboardPage() {
         .select("id,school_id,amount,expense_status,expense_date")
         .in("school_id", institutionIds)
         .eq("expense_status", "posted")
-        .eq("expense_date", today),
+        .eq("expense_date", selectedDate),
       [],
     ),
     safeData<any[]>(
@@ -334,12 +358,31 @@ export default async function FounderDashboardPage() {
     ),
   ]);
 
-  const currentYearReceipts = (receipts ?? []).filter((row: any) => {
-    const schoolId = String(row.school_id || "");
-    return String(row.academic_year || "") === currentYearByInstitution.get(schoolId);
-  });
+  // Le fondateur encaisse par DATE : un paiement reçu à la date filtrée
+  // peut concerner 2025-2026, 2026-2027 ou une année prochaine.
+  // On ne filtre donc pas les encaissements de période par année scolaire.
+  const totalReceiptsToday = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+  const receiptsByAcademicYear = Array.from(
+    (receipts ?? []).reduce(
+      (
+        map: Map<string, { academicYear: string; count: number; total: number }>,
+        row: any,
+      ) => {
+        const academicYear = String(row.academic_year || "Année non renseignée");
+        const current = map.get(academicYear) ?? {
+          academicYear,
+          count: 0,
+          total: 0,
+        };
+        current.count += 1;
+        current.total += Number(row.total_amount || 0);
+        map.set(academicYear, current);
+        return map;
+      },
+      new Map<string, { academicYear: string; count: number; total: number }>(),
+    ).values(),
+  ).sort((a, b) => a.academicYear.localeCompare(b.academicYear, "fr", { numeric: true }));
 
-  const totalReceiptsToday = currentYearReceipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
   const totalCollectedCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
   const totalBilledCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.net_amount || 0), 0);
   const totalBalanceDueCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.balance_due || 0), 0);
@@ -354,7 +397,7 @@ export default async function FounderDashboardPage() {
 
   const rows = institutions.map((school) => {
     const schoolId = school.id;
-    const schoolReceipts = currentYearReceipts.filter((row: any) => row.school_id === schoolId);
+    const schoolReceipts = receipts.filter((row: any) => row.school_id === schoolId);
     const schoolExpenses = expenses.filter((row: any) => row.school_id === schoolId);
     const schoolSessions = sessions.filter((row: any) => row.institution_id === schoolId);
     const schoolEnrollments = enrollments.filter((row: any) => row.institution_id === schoolId);
@@ -384,14 +427,20 @@ export default async function FounderDashboardPage() {
     { label: "Écoles suivies", value: institutions.length, hint: "Établissements rattachés", Icon: School2 },
     { label: "Élèves", value: totalStudentStats.total, hint: "Inscrits actifs année courante", Icon: GraduationCap },
     {
-      label: "Encaissements",
+      label: "Encaissé année courante",
       value: money(totalCollectedCurrentYear),
-      hint: `Année courante · aujourd’hui ${money(totalReceiptsToday)}`,
+      hint: "Paiements liés aux dettes de l’année courante",
       Icon: Receipt,
     },
-    { label: "Dépenses", value: money(totalExpenses), hint: `${expenses.length} dépense(s) aujourd’hui`, Icon: Wallet },
-    { label: "Solde du jour", value: money(net), hint: "Encaissements moins dépenses", Icon: Activity },
-    { label: "Appels détectés", value: sessions.length, hint: "Séances ouvertes aujourd’hui", Icon: CalendarCheck2 },
+    {
+      label: "Encaissements période",
+      value: money(totalReceiptsToday),
+      hint: `${selectedDateLabel} · ${receipts.length} reçu(s), toutes années`,
+      Icon: ArrowUpRight,
+    },
+    { label: "Dépenses période", value: money(totalExpenses), hint: `${selectedDateLabel} · ${expenses.length} dépense(s)`, Icon: Wallet },
+    { label: "Solde période", value: money(net), hint: "Encaissements de la date moins dépenses", Icon: Activity },
+    { label: "Appels détectés", value: sessions.length, hint: `Séances ouvertes ${selectedDateLabel}`, Icon: CalendarCheck2 },
   ];
 
   const profileCards = [
@@ -442,8 +491,8 @@ export default async function FounderDashboardPage() {
     {
       href: "/admin/finance/receipts",
       label: "Reçus",
-      value: currentYearReceipts.length,
-      hint: "Consulter et imprimer les reçus",
+      value: receipts.length,
+      hint: "Reçus de la date filtrée",
       Icon: Receipt,
     },
     {
@@ -480,8 +529,40 @@ export default async function FounderDashboardPage() {
             Vue globale de vos écoles
           </h1>
           <p className="mt-3 text-sm leading-6 text-slate-200 sm:text-base">
-            Synthèse consolidée de la finance, des créneaux, de l’activité du jour et du profil des élèves pour les établissements rattachés.
+            Synthèse consolidée de la finance, des créneaux, de l’activité de la date sélectionnée et du profil des élèves pour les établissements rattachés.
           </p>
+
+          <form method="get" className="mt-5 flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur sm:flex-row sm:items-end">
+            <div className="min-w-0 flex-1">
+              <label htmlFor="date" className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100">
+                Filtrer l’activité financière par date
+              </label>
+              <input
+                id="date"
+                name="date"
+                type="date"
+                defaultValue={selectedDate}
+                className="mt-2 w-full rounded-2xl border border-white/20 bg-white px-4 py-2 text-sm font-bold text-slate-950 outline-none ring-0"
+              />
+              <p className="mt-2 text-xs text-emerald-100/90">
+                Les encaissements de cette date sont comptés toutes années scolaires confondues.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                className="rounded-2xl bg-emerald-400 px-4 py-2 text-sm font-black text-slate-950 shadow-sm transition hover:bg-emerald-300"
+              >
+                Appliquer
+              </button>
+              <Link
+                href="/founder/dashboard"
+                className="rounded-2xl border border-white/20 px-4 py-2 text-sm font-black text-white transition hover:bg-white/10"
+              >
+                Aujourd’hui
+              </Link>
+            </div>
+          </form>
         </div>
       </section>
 
@@ -500,6 +581,42 @@ export default async function FounderDashboardPage() {
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
+              <Receipt className="h-4 w-4" />
+              Encaissements de la date filtrée
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Lecture par date de paiement : un encaissement de la période peut concerner une année scolaire passée, courante ou prochaine.
+            </p>
+          </div>
+          <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
+            {formatYmdFr(selectedDate)}
+          </div>
+        </div>
+
+        {receiptsByAcademicYear.length === 0 ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+            Aucun encaissement enregistré sur cette date.
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {receiptsByAcademicYear.map((item) => (
+              <div key={item.academicYear} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
+                  Année scolaire
+                </div>
+                <div className="mt-1 text-xl font-black text-slate-950">{item.academicYear}</div>
+                <div className="mt-2 text-2xl font-black text-emerald-700">{money(item.total)}</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">{item.count} reçu(s)</div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
@@ -591,10 +708,10 @@ export default async function FounderDashboardPage() {
                 <Building2 className="h-4 w-4" />
                 Écoles rattachées
               </div>
-              <p className="mt-1 text-sm text-slate-500">Lecture consolidée : encaissements de l’année courante et activité du jour.</p>
+              <p className="mt-1 text-sm text-slate-500">Lecture consolidée : encaissements de l’année courante, solde de la date filtrée et activité.</p>
             </div>
             <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
-              {today}
+              {formatYmdFr(selectedDate)}
             </div>
           </div>
 
@@ -625,8 +742,8 @@ export default async function FounderDashboardPage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
-                    <span className="rounded-full bg-white px-3 py-1">Reçus jour : {money(receiptTotalToday)}</span>
-                    <span className="rounded-full bg-white px-3 py-1">Solde jour : {money(net)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Reçus période : {money(receiptTotalToday)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Solde période : {money(net)}</span>
                     <span className="rounded-full bg-white px-3 py-1">Élèves : {studentStats.total}</span>
                     <span className="rounded-full bg-white px-3 py-1">Affectés : {studentStats.assigned}</span>
                     <span className="rounded-full bg-white px-3 py-1">Non affectés : {studentStats.notAssigned}</span>
@@ -651,7 +768,7 @@ export default async function FounderDashboardPage() {
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
               <div className="text-xs font-black uppercase tracking-[0.15em] text-emerald-700">Finance nette</div>
               <div className="mt-2 text-2xl font-black text-emerald-900">{money(net)}</div>
-              <p className="mt-1 text-xs leading-5 text-emerald-800">Solde journalier consolidé sur toutes les écoles.</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-800">Solde consolidé de la date filtrée sur toutes les écoles.</p>
             </div>
             <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
               <div className="text-xs font-black uppercase tracking-[0.15em] text-sky-700">Élèves actifs</div>
