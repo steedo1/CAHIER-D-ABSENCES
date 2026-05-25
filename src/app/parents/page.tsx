@@ -336,6 +336,82 @@ type KidGradeRow = {
   subject_id?: string | null;
 };
 
+type SubjectGradeSummary = {
+  key: string;
+  label: string;
+  grades: KidGradeRow[];
+  average: number | null;
+  latest: KidGradeRow | null;
+};
+
+function formatMoney(value?: number | null) {
+  const n = Number(value || 0);
+  return `${Math.round(n).toLocaleString("fr-FR")} F`;
+}
+
+function scoreOn20(g: KidGradeRow) {
+  const score = Number(g.score);
+  const scale = Number(g.scale || 20);
+  if (!Number.isFinite(score) || !Number.isFinite(scale) || scale <= 0) return null;
+  return (score / scale) * 20;
+}
+
+function weightedAverageOn20(grades: KidGradeRow[]) {
+  let total = 0;
+  let coeffSum = 0;
+  for (const g of grades) {
+    const value = scoreOn20(g);
+    if (value == null) continue;
+    const coeff = Number(g.coeff || 1) > 0 ? Number(g.coeff || 1) : 1;
+    total += value * coeff;
+    coeffSum += coeff;
+  }
+  return coeffSum > 0 ? total / coeffSum : null;
+}
+
+function formatAverage(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(2).replace(".", ",");
+}
+
+function formatGradeScore(g?: KidGradeRow | null) {
+  if (!g || g.score == null) return "—";
+  return `${Number(g.score).toFixed(2).replace(".", ",")}/${g.scale || 20}`;
+}
+
+function subjectKeyOf(g: KidGradeRow) {
+  return g.subject_id || g.subject_name || "__unknown__";
+}
+
+function buildSubjectGradeSummaries(grades: KidGradeRow[]): SubjectGradeSummary[] {
+  const map = new Map<string, SubjectGradeSummary>();
+  for (const g of grades) {
+    const key = subjectKeyOf(g);
+    const label = g.subject_name || "Matière non précisée";
+    if (!map.has(key)) {
+      map.set(key, { key, label, grades: [], average: null, latest: null });
+    }
+    map.get(key)!.grades.push(g);
+  }
+
+  const list = Array.from(map.values()).map((item) => {
+    const ordered = [...item.grades].sort((a, b) => b.eval_date.localeCompare(a.eval_date));
+    return {
+      ...item,
+      grades: ordered,
+      latest: ordered[0] || null,
+      average: weightedAverageOn20(ordered),
+    };
+  });
+
+  list.sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  return list;
+}
+
+function latestGradeOf(grades: KidGradeRow[]) {
+  return [...grades].sort((a, b) => b.eval_date.localeCompare(a.eval_date))[0] || null;
+}
+
 type ParentPaymentProvider = {
   id: string;
   provider: string;
@@ -1081,10 +1157,11 @@ export default function ParentPage() {
   const [paymentItems, setPaymentItems] = useState<ParentPaymentChild[]>([]);
   const [bulletins, setBulletins] = useState<ParentBulletin[]>([]);
 
-  // Matière sélectionnée par enfant
+  // Matière sélectionnée par enfant + détails ouverts dans le cahier de notes
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
     Record<string, string | "all" | null>
   >({});
+  const [expandedGradeSubjects, setExpandedGradeSubjects] = useState<Record<string, boolean>>({});
 
   // Notifications parent
   const [granted, setGranted] = useState(false);
@@ -1092,7 +1169,7 @@ export default function ParentPage() {
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsMsg, setNotificationsMsg] = useState<string | null>(null);
 
-  // ðŸ“± iOS / standalone
+  // iOS / standalone
   const [isiOS, setIsiOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
@@ -2214,166 +2291,277 @@ export default function ParentPage() {
 
           {isHome && (
             <>
-              <section className="mb-6 grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6 xl:min-h-[240px]">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-start gap-4">
-                      <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white">
-                        <IconFamily />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">Espace parent</div>
-                        <h2 className="mt-1 text-2xl font-black">Bienvenue cher parent</h2>
-                        <p className="mt-2 text-sm text-white/90">Suivre votre enfant, c’est soutenir sa réussite.</p>
-                      </div>
-                    </div>
-                    <span className="inline-flex w-fit items-center rounded-full bg-white/12 px-3 py-1 text-[12px] font-bold text-white ring-1 ring-white/10">
-                      {kids.length} enfant{kids.length > 1 ? "s" : ""} rattaché{kids.length > 1 ? "s" : ""}
-                    </span>
-                  </div>
+              {(() => {
+                const k = selectedKid;
+                const periodLabel = activeGradePeriod?.short_label || activeGradePeriod?.label || "Période en cours";
+                const periodGrades = k
+                  ? (kidGrades[k.id] || []).filter((g) =>
+                      isInDateRange(g.eval_date, gradeFrom || undefined, gradeTo || undefined),
+                    )
+                  : [];
+                const subjectSummaries = buildSubjectGradeSummaries(periodGrades);
+                const overallAverage = weightedAverageOn20(periodGrades);
+                const latestGrade = latestGradeOf(periodGrades);
+                const periodEvents = k
+                  ? (feed[k.id] || []).filter((ev) =>
+                      isInDateRange(ev.when, conductFrom || undefined, conductTo || undefined),
+                    )
+                  : [];
+                const absencesCount = periodEvents.filter((ev) => ev.type === "absent").length;
+                const latesCount = periodEvents.filter((ev) => ev.type === "late").length;
+                const totalLateMinutes = periodEvents.reduce(
+                  (sum, ev) => sum + (ev.type === "late" ? Number(ev.minutes_late || 0) : 0),
+                  0,
+                );
+                const paymentForKid = k ? paymentItems.find((item) => item.student_id === k.id) : null;
+                const totalBalance = (paymentForKid?.charges || []).reduce(
+                  (sum, charge) => sum + Number(charge.balance_due || 0),
+                  0,
+                );
+                const latestBulletin = k ? (bulletinsByKid.get(k.id) || [])[0] || null : null;
+                const recentNotifications = notifications.slice(0, 4);
 
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    {selectedKid ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => openChildSection(selectedKid.id, "notes")}
-                          className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
-                        >
-                          Voir les notes
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openChildSection(selectedKid.id, "absences")}
-                          className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
-                        >
-                          Absences
-                        </button>
-                      </>
-                    ) : null}
-                    {hasOnlinePaymentProviders ? (
-                      <a
-                        href="/parents/payments"
-                        className="inline-flex items-center justify-center rounded-2xl bg-white/10 px-4 py-3 text-[14px] font-extrabold text-white ring-1 ring-white/15 transition hover:bg-white/15"
-                      >
-                        Frais scolaires
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
-                  <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Documents</div>
-                  <h3 className="mt-1 text-xl font-black text-slate-950">Bulletins disponibles</h3>
-                  <p className="mt-2 text-sm text-slate-600">
-                    Quand un bulletin trimestriel est publié avec son code QR, il apparaît ici pour le parent.
-                  </p>
-                  {selectedKidBulletins.length ? (
-                    <div className="mt-4 space-y-2">
-                      {selectedKidBulletins.slice(0, 3).map((b) => (
-                        <a
-                          key={b.code}
-                          href={b.url}
-                          className="block rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-extrabold text-emerald-800 transition hover:bg-emerald-100"
-                        >
-                          {b.period_label || "Bulletin"}
-                          {b.period_from && b.period_to ? ` · ${dateFr(b.period_from)} au ${dateFr(b.period_to)}` : ""}
-                        </a>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
-                      Aucun bulletin publié pour l’instant.
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Enfants rattachés</div>
-                    <h3 className="mt-1 text-xl font-black text-slate-950">Accès rapide à vos enfants</h3>
-                  </div>
-                  <Badge tone="slate">{kids.length} profil{kids.length > 1 ? "s" : ""}</Badge>
-                </div>
-
-                {loadingKids ? (
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    <Skeleton className="h-36 w-full" />
-                    <Skeleton className="h-36 w-full" />
-                    <Skeleton className="h-36 w-full" />
-                  </div>
-                ) : !hasKids ? (
-                  <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    Aucun enfant lié à votre compte pour l’instant.
-                  </div>
-                ) : (
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {kids.map((k) => {
-                      const active = activeChildId === k.id;
-                      const latestBulletin = (bulletinsByKid.get(k.id) || [])[0] || null;
-                      return (
-                        <div
-                          key={k.id}
-                          className={[
-                            "rounded-[28px] border p-4 shadow-sm transition",
-                            active ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white",
-                          ].join(" ")}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e7f0fa] text-[#003766]">
-                              <IconChild />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="truncate text-[16px] font-extrabold text-slate-950">{k.full_name}</div>
-                              <div className="mt-1 truncate text-sm text-slate-600">{k.class_label || "Classe non précisée"}</div>
-                            </div>
+                return (
+                  <>
+                    <section className="mb-5 rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6">
+                      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                        <div className="flex min-w-0 items-start gap-4">
+                          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white sm:h-16 sm:w-16">
+                            <IconFamily />
                           </div>
-
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openChildSection(k.id, "conduct")}
-                              className="rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-extrabold text-[#003766] transition hover:bg-[#d9e8f7]"
-                            >
-                              Conduite
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openChildSection(k.id, "absences")}
-                              className="rounded-2xl bg-[#fff3db] px-3 py-2 text-[13px] font-extrabold text-[#9a5d00] transition hover:bg-[#fde8ba]"
-                            >
-                              Absences
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openChildSection(k.id, "notes")}
-                              className="rounded-2xl bg-[#e8f8ef] px-3 py-2 text-[13px] font-extrabold text-[#166534] transition hover:bg-[#d7f1e2]"
-                            >
-                              Notes
-                            </button>
-                            {latestBulletin ? (
-                              <a
-                                href={latestBulletin.url}
-                                className="rounded-2xl bg-emerald-600 px-3 py-2 text-[13px] font-extrabold text-white transition hover:bg-emerald-700"
-                              >
-                                Bulletin
-                              </a>
-                            ) : null}
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">Espace parent</div>
+                            <h2 className="mt-1 text-2xl font-black">Tableau de bord simplifié</h2>
+                            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/90">
+                              Notes, absences, bulletins et rappels importants sont regroupés pour une lecture rapide.
+                            </p>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge tone="emerald">{kids.length} enfant{kids.length > 1 ? "s" : ""}</Badge>
+                          {periodLabel ? <span className="rounded-full bg-white/12 px-3 py-1 text-[12px] font-bold text-white ring-1 ring-white/10">{periodLabel}</span> : null}
+                        </div>
+                      </div>
+
+                      {k ? (
+                        <div className="mt-5 rounded-[28px] bg-white/10 p-4 ring-1 ring-white/10">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="truncate text-lg font-black">{k.full_name}</div>
+                              <div className="mt-1 text-sm text-white/80">{k.class_label || "Classe non précisée"}</div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openChildSection(k.id, "notes")}
+                                className="rounded-2xl bg-white px-4 py-2 text-[13px] font-black text-[#003766] transition hover:bg-white/90"
+                              >
+                                Notes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openChildSection(k.id, "absences")}
+                                className="rounded-2xl bg-white/10 px-4 py-2 text-[13px] font-black text-white ring-1 ring-white/15 transition hover:bg-white/15"
+                              >
+                                Absences
+                              </button>
+                              {latestBulletin ? (
+                                <a
+                                  href={latestBulletin.url}
+                                  className="rounded-2xl bg-amber-300 px-4 py-2 text-[13px] font-black text-[#003766] transition hover:bg-amber-200"
+                                >
+                                  Bulletin
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </section>
+
+                    {loadingKids ? (
+                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-32 w-full" />
+                        <Skeleton className="h-32 w-full" />
+                      </section>
+                    ) : !hasKids ? (
+                      <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 text-sm text-slate-600 shadow-sm">
+                        Aucun enfant lié à votre compte pour l’instant. Ajoutez un enfant avec son matricule depuis le menu.
+                      </section>
+                    ) : (
+                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <button
+                          type="button"
+                          onClick={() => k && openChildSection(k.id, "notes")}
+                          className="rounded-[28px] border border-emerald-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">Notes</div>
+                          <div className="mt-2 text-2xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">Moyenne provisoire</div>
+                          <div className="mt-3 rounded-2xl bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800">
+                            {latestGrade ? `${latestGrade.subject_name || "Matière"} · ${formatGradeScore(latestGrade)}` : "Aucune note publiée"}
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => k && openChildSection(k.id, "absences")}
+                          className="rounded-[28px] border border-amber-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-amber-700">Assiduité</div>
+                          <div className="mt-2 flex items-end gap-2">
+                            <span className="text-2xl font-black text-slate-950">{absencesCount}</span>
+                            <span className="pb-1 text-[13px] font-bold text-slate-500">absence{absencesCount > 1 ? "s" : ""}</span>
+                          </div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                            {latesCount} retard{latesCount > 1 ? "s" : ""}{totalLateMinutes ? ` · ${totalLateMinutes} min` : ""}
+                          </div>
+                          <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-[13px] font-bold text-amber-800">
+                            {periodEvents[0] ? `${dayLabel(periodEvents[0].when)} · ${periodEvents[0].type === "absent" ? "Absence" : "Retard"}` : "Aucun événement récent"}
+                          </div>
+                        </button>
+
+                        <a
+                          href={hasOnlinePaymentProviders ? "/parents/payments" : "#"}
+                          className={[
+                            "rounded-[28px] border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                            hasOnlinePaymentProviders ? "border-sky-200" : "pointer-events-none border-slate-200 opacity-80",
+                          ].join(" ")}
+                        >
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-sky-700">Frais scolaires</div>
+                          <div className="mt-2 text-2xl font-black text-slate-950">{formatMoney(totalBalance)}</div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">Reste à payer estimé</div>
+                          <div className="mt-3 rounded-2xl bg-sky-50 px-3 py-2 text-[13px] font-bold text-sky-800">
+                            {hasOnlinePaymentProviders ? "Voir les détails et reçus" : "Paiement en ligne non configuré"}
+                          </div>
+                        </a>
+
+                        <div className="rounded-[28px] border border-violet-200 bg-white p-4 text-left shadow-sm">
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-violet-700">Bulletin</div>
+                          <div className="mt-2 text-lg font-black text-slate-950">
+                            {latestBulletin ? "Disponible" : "Non disponible"}
+                          </div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                            {latestBulletin?.period_label || "Dernier document trimestriel"}
+                          </div>
+                          {latestBulletin ? (
+                            <a
+                              href={latestBulletin.url}
+                              className="mt-3 inline-flex rounded-2xl bg-violet-50 px-3 py-2 text-[13px] font-black text-violet-800 ring-1 ring-violet-200 transition hover:bg-violet-100"
+                            >
+                              Ouvrir le bulletin
+                            </a>
+                          ) : (
+                            <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-[13px] font-bold text-slate-600">
+                              Aucun bulletin publié
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    )}
+
+                    <section className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                      <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Résumé par matière</div>
+                            <h3 className="mt-1 text-xl font-black text-slate-950">Lecture rapide des notes</h3>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => k && openChildSection(k.id, "notes")}
+                            className="rounded-2xl bg-[#e8f8ef] px-4 py-2 text-[13px] font-black text-[#166534] transition hover:bg-[#d7f1e2]"
+                          >
+                            Ouvrir le cahier de notes
+                          </button>
+                        </div>
+
+                        {!k ? (
+                          <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">Sélectionnez un enfant.</div>
+                        ) : subjectSummaries.length ? (
+                          <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            {subjectSummaries.slice(0, 4).map((item) => (
+                              <div key={item.key} className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-[15px] font-black text-slate-950">{item.label}</div>
+                                    <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                                      {item.grades.length} note{item.grades.length > 1 ? "s" : ""} publiée{item.grades.length > 1 ? "s" : ""}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-slate-200">
+                                    <div className="text-[16px] font-black text-slate-950">{formatAverage(item.average)}/20</div>
+                                    <div className="text-[11px] font-bold text-slate-500">provisoire</div>
+                                  </div>
+                                </div>
+                                {item.latest ? (
+                                  <div className="mt-3 rounded-2xl bg-white px-3 py-2 text-[13px] text-slate-700 ring-1 ring-slate-200">
+                                    Dernière note : <b>{formatGradeScore(item.latest)}</b> · {gradeKindLabel(item.latest.eval_kind)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            Aucune note publiée pour cette période.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-500">Activité récente</div>
+                            <h3 className="mt-1 text-xl font-black text-slate-950">Alertes importantes</h3>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => selectSection("notifications")}
+                            className="relative rounded-2xl bg-amber-50 px-3 py-2 text-[13px] font-black text-amber-800 ring-1 ring-amber-200"
+                          >
+                            Cloche
+                            {unreadNotificationsCount > 0 ? (
+                              <span className="ml-2 rounded-full bg-amber-300 px-2 py-0.5 text-[11px] text-[#003766]">{unreadNotificationsCount}</span>
+                            ) : null}
+                          </button>
+                        </div>
+
+                        {recentNotifications.length ? (
+                          <div className="mt-4 space-y-2">
+                            {recentNotifications.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => selectSection("notifications")}
+                                className="block w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:bg-white"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="truncate text-[14px] font-black text-slate-900">{item.title || "Notification"}</span>
+                                  {!item.read_at ? <Badge tone="amber">Non lue</Badge> : null}
+                                </div>
+                                {item.body ? <div className="mt-1 text-[13px] text-slate-600">{item.body}</div> : null}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            Aucune notification récente.
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  </>
+                );
+              })()}
             </>
           )}
 
           {selectedKid && !isHome && (
             <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
                 {tabs.map((tab) => {
                   const active = activeSection === tab.key;
                   return (
@@ -2382,19 +2570,19 @@ export default function ParentPage() {
                       type="button"
                       onClick={() => selectSection(tab.key)}
                       className={[
-                        "flex min-h-[94px] w-full items-center gap-4 rounded-[28px] px-5 py-5 text-left text-[15px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5",
+                        "flex min-w-[132px] items-center justify-center gap-2 rounded-2xl px-4 py-3 text-center text-[14px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5 sm:min-h-[76px] sm:w-full sm:justify-start sm:gap-3 sm:rounded-[24px] sm:px-5 sm:py-4 sm:text-left",
                         active ? tab.activeClass : tab.idleClass,
                       ].join(" ")}
                     >
                       <span
                         className={[
-                          "grid h-14 w-14 shrink-0 place-items-center rounded-2xl",
+                          "grid h-9 w-9 shrink-0 place-items-center rounded-xl sm:h-12 sm:w-12 sm:rounded-2xl",
                           active ? "bg-white/15 text-white" : "bg-white/70",
                         ].join(" ")}
                       >
                         {tab.icon}
                       </span>
-                      <span className="text-[18px] leading-none">{tab.label}</span>
+                      <span className="text-[14px] leading-none sm:text-[17px]">{tab.label}</span>
                     </button>
                   );
                 })}
@@ -2408,7 +2596,7 @@ export default function ParentPage() {
             </div>
           )}
 
-          {isHome && (
+          {isNotifications && (
             <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
               <div className="flex items-center gap-4">
                 <div className="grid h-14 w-14 place-items-center rounded-3xl bg-[#e7f0fa] text-[#003766]">
@@ -2416,7 +2604,7 @@ export default function ParentPage() {
                 </div>
                 <div>
                   <h2 className="text-2xl font-extrabold text-slate-900">
-                    Numéro parent
+                    Préférences notifications
                   </h2>
                   <div className="mt-1 text-[14px] text-slate-500">
                     {smsPrimaryContact?.phone_e164
@@ -2859,7 +3047,7 @@ export default function ParentPage() {
           {showEventsSection && (
             <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               {(() => {
-                const title = "Cahier d’absences — absences/retards récents et sanctions";
+                const title = "Assiduité — absences et retards du trimestre";
 
                 return (
                   <div className="mb-4 flex items-center justify-between gap-3">
@@ -2888,7 +3076,17 @@ export default function ParentPage() {
               ) : (
                 <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
                   {filteredKids.map((k, i) => {
-                    const groups = groupByDay(feed[k.id] || []);
+                    const periodEvents = (feed[k.id] || []).filter((ev) =>
+                      isInDateRange(ev.when, conductFrom || undefined, conductTo || undefined),
+                    );
+                    const groups = groupByDay(periodEvents);
+                    const absencesCount = periodEvents.filter((ev) => ev.type === "absent").length;
+                    const latesCount = periodEvents.filter((ev) => ev.type === "late").length;
+                    const totalLateMinutes = periodEvents.reduce(
+                      (sum, ev) => sum + (ev.type === "late" ? Number(ev.minutes_late || 0) : 0),
+                      0,
+                    );
+                    const sanctionsCount = kidPenalties[k.id]?.length || 0;
                     const showAll = !!showAllDaysForKid[k.id];
                     const visibleGroups = showAll ? groups : groups.slice(0, 3);
                     const t = themeFor(i);
@@ -2939,6 +3137,25 @@ export default function ParentPage() {
                             )}
                           </div>
 
+                          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <div className="rounded-2xl bg-rose-50 px-3 py-3 ring-1 ring-rose-100">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-rose-700">Absences</div>
+                              <div className="mt-1 text-xl font-black text-rose-900">{absencesCount}</div>
+                            </div>
+                            <div className="rounded-2xl bg-amber-50 px-3 py-3 ring-1 ring-amber-100">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-amber-700">Retards</div>
+                              <div className="mt-1 text-xl font-black text-amber-900">{latesCount}</div>
+                            </div>
+                            <div className="rounded-2xl bg-slate-50 px-3 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Minutes</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{totalLateMinutes}</div>
+                            </div>
+                            <div className="rounded-2xl bg-violet-50 px-3 py-3 ring-1 ring-violet-100">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-violet-700">Sanctions</div>
+                              <div className="mt-1 text-xl font-black text-violet-900">{sanctionsCount}</div>
+                            </div>
+                          </div>
+
                           {showEventsBlock && (
                             <ul className="mt-4 space-y-3">
                               {visibleGroups.map((g) => {
@@ -2960,7 +3177,7 @@ export default function ParentPage() {
                                     }`,
                                   );
                                 const summary = parts.length
-                                  ? parts.join(" ¢ ")
+                                  ? parts.join(" · ")
                                   : "Aucun évènement";
 
                                 return (
@@ -3022,7 +3239,7 @@ export default function ParentPage() {
                                                   )}{" "}
                                                   {ev.type === "late" &&
                                                   ev.minutes_late
-                                                    ? `¢ ${ev.minutes_late} min`
+                                                    ? `· ${ev.minutes_late} min`
                                                     : ""}
                                                 </div>
                                               </div>
@@ -3101,7 +3318,7 @@ export default function ParentPage() {
 
                                       <div className="mt-1 text-[13px] text-slate-500">
                                         {fmt(p.when)}
-                                        {p.class_label ? ` ¢ ${p.class_label}` : ""}
+                                        {p.class_label ? ` · ${p.class_label}` : ""}
                                       </div>
                                     </li>
                                   ))}
@@ -3164,14 +3381,14 @@ export default function ParentPage() {
 
           {/* ————— CAHIER DE NOTES — onglet dédié ————— */}
           {showNotesSection && (
-            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-emerald-700">
                     Cahier de notes
                   </div>
                   <div className="text-[13px] text-slate-500">
-                    Notes publiées par les enseignants, filtrées par période.
+                    Vue parent lisible : résumé, matières, puis détails si nécessaire.
                   </div>
                 </div>
 
@@ -3204,19 +3421,26 @@ export default function ParentPage() {
 
               {selectedKidBulletins.length ? (
                 <div className="mb-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="text-[13px] font-black uppercase tracking-wide text-emerald-700">
-                    Bulletin trimestriel disponible
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedKidBulletins.slice(0, 3).map((b) => (
-                      <a
-                        key={b.code}
-                        href={b.url}
-                        className="rounded-2xl bg-white px-4 py-2 text-sm font-extrabold text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
-                      >
-                        {b.period_label || "Bulletin"}
-                      </a>
-                    ))}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-[13px] font-black uppercase tracking-wide text-emerald-700">
+                        Bulletin trimestriel disponible
+                      </div>
+                      <div className="mt-1 text-[13px] text-emerald-800">
+                        Le bulletin est le document officiel avec QR code sécurisé.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedKidBulletins.slice(0, 3).map((b) => (
+                        <a
+                          key={b.code}
+                          href={b.url}
+                          className="rounded-2xl bg-white px-4 py-2 text-sm font-extrabold text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                        >
+                          {b.period_label || "Bulletin"}
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -3241,45 +3465,34 @@ export default function ParentPage() {
                         gradeTo || undefined,
                       ),
                     );
-
-                    const subjectKey = (g: KidGradeRow) =>
-                      g.subject_id || g.subject_name || "";
-                    const subjectMap = new Map<string, string>();
-                    for (const g of byDate) {
-                      const key = subjectKey(g);
-                      if (!key) continue;
-                      if (!subjectMap.has(key))
-                        subjectMap.set(key, g.subject_name || "—");
-                    }
-                    const subjectList = Array.from(subjectMap.entries());
-
+                    const summaries = buildSubjectGradeSummaries(byDate);
+                    const subjectList = summaries.map((item) => [item.key, item.label] as const);
                     const activeSubject =
-                      activeSubjectPerKid[k.id] &&
-                      activeSubjectPerKid[k.id] !== "all"
+                      activeSubjectPerKid[k.id] && activeSubjectPerKid[k.id] !== "all"
                         ? activeSubjectPerKid[k.id]
                         : "all";
-
-                    const filtered =
+                    const visibleSummaries =
                       activeSubject === "all"
-                        ? byDate
-                        : byDate.filter((g) => subjectKey(g) === activeSubject);
-
+                        ? summaries
+                        : summaries.filter((item) => item.key === activeSubject);
+                    const totalAverage = weightedAverageOn20(byDate);
+                    const latestGrade = latestGradeOf(byDate);
                     const t = themeFor(idx);
 
                     return (
                       <div
                         key={k.id}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+                        className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4"
                       >
-                        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div className="flex min-w-0 items-center gap-3">
                             <div
-                              className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
+                              className={`grid h-11 w-11 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
                             >
                               {getInitials(k.full_name)}
                             </div>
                             <div className="min-w-0">
-                              <div className="truncate text-[16px] font-extrabold text-slate-900">
+                              <div className="truncate text-[17px] font-black text-slate-900">
                                 {k.full_name}
                               </div>
                               <div className="text-[13px] text-slate-600">
@@ -3288,153 +3501,145 @@ export default function ParentPage() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13px] font-semibold text-slate-500">
-                              Matières :
-                            </span>
-                            <div className="flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setActiveSubjectPerKid((m) => ({
-                                    ...m,
-                                    [k.id]: "all",
-                                  }))
-                                }
-                                className={[
-                                  "rounded-full px-3 py-2 text-[13px] font-bold",
-                                  activeSubject === "all"
-                                    ? "bg-slate-900 text-white"
-                                    : "bg-white text-slate-700 hover:bg-slate-200",
-                                ].join(" ")}
-                              >
-                                Toutes
-                              </button>
-
-                              {subjectList.map(([id, label]) => (
-                                <button
-                                  key={id}
-                                  type="button"
-                                  onClick={() =>
-                                    setActiveSubjectPerKid((m) => ({
-                                      ...m,
-                                      [k.id]: id,
-                                    }))
-                                  }
-                                  className={[
-                                    "max-w-[220px] truncate rounded-full px-3 py-2 text-[13px] font-bold",
-                                    activeSubject === id
-                                      ? "bg-[#003766] text-white"
-                                      : "bg-white text-slate-700 hover:bg-slate-200",
-                                  ].join(" ")}
-                                  title={label}
-                                >
-                                  {label}
-                                </button>
-                              ))}
+                          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Moyenne provisoire</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{formatAverage(totalAverage)}/20</div>
+                            </div>
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Notes publiées</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{byDate.length}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Matières</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{summaries.length}</div>
+                            </div>
+                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dernière note</div>
+                              <div className="mt-1 text-xl font-black text-slate-950">{formatGradeScore(latestGrade)}</div>
                             </div>
                           </div>
                         </div>
 
                         {kidGradesErr[k.id] && (
-                          <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">
+                          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">
                             <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
                           </div>
                         )}
 
-                        {filtered.length === 0 ? (
-                          <div className="rounded-2xl bg-white px-4 py-3 text-[14px] text-slate-600">
+                        <div className="mt-4 flex max-w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveSubjectPerKid((m) => ({
+                                ...m,
+                                [k.id]: "all",
+                              }))
+                            }
+                            className={[
+                              "rounded-full px-3 py-2 text-[13px] font-bold",
+                              activeSubject === "all"
+                                ? "bg-slate-900 text-white"
+                                : "bg-white text-slate-700 hover:bg-slate-200",
+                            ].join(" ")}
+                          >
+                            Toutes les matières
+                          </button>
+
+                          {subjectList.map(([id, label]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() =>
+                                setActiveSubjectPerKid((m) => ({
+                                  ...m,
+                                  [k.id]: id,
+                                }))
+                              }
+                              className={[
+                                "max-w-[220px] truncate rounded-full px-3 py-2 text-[13px] font-bold",
+                                activeSubject === id
+                                  ? "bg-[#003766] text-white"
+                                  : "bg-white text-slate-700 hover:bg-slate-200",
+                              ].join(" ")}
+                              title={label}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {visibleSummaries.length === 0 ? (
+                          <div className="mt-4 rounded-2xl bg-white px-4 py-4 text-[14px] text-slate-600 ring-1 ring-slate-200">
                             Aucune note publiée pour cette période.
                           </div>
                         ) : (
-                          <>
-                            <div className="space-y-3 md:hidden">
-                              {filtered.map((g) => (
-                                <div
-                                  key={g.id}
-                                  className="rounded-2xl border bg-white p-4"
-                                >
+                          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                            {visibleSummaries.map((item) => {
+                              const detailKey = `${k.id}|${item.key}`;
+                              const isOpen = !!expandedGradeSubjects[detailKey] || activeSubject !== "all";
+                              return (
+                                <article key={item.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                      <div className="text-[15px] font-extrabold text-slate-900 truncate">
-                                        {g.subject_name || "—"}
-                                      </div>
-                                      <div className="text-[13px] text-slate-600">
-                                        {gradeKindLabel(g.eval_kind)}{" "}
-                                        {g.title ? `¢ ${g.title}` : ""}
-                                      </div>
-                                      <div className="mt-1 text-[13px] text-slate-500">
-                                        {fmt(g.eval_date)}
+                                      <h3 className="truncate text-[16px] font-black text-slate-950">{item.label}</h3>
+                                      <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                                        {item.grades.length} note{item.grades.length > 1 ? "s" : ""} publiée{item.grades.length > 1 ? "s" : ""}
                                       </div>
                                     </div>
-                                    <div className="shrink-0 text-right">
-                                      {g.score == null ? (
-                                        <span className="text-[13px] text-slate-500">
-                                          —
-                                        </span>
-                                      ) : (
-                                        <span className="text-[16px] font-extrabold text-slate-900">
-                                          {g.score.toFixed(2).replace(".", ",")}/
-                                          {g.scale}
-                                        </span>
-                                      )}
+                                    <div className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-right ring-1 ring-emerald-100">
+                                      <div className="text-lg font-black text-emerald-800">{formatAverage(item.average)}/20</div>
+                                      <div className="text-[11px] font-bold text-emerald-700">provisoire</div>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
-                            </div>
 
-                            <div className="hidden overflow-x-auto rounded-2xl border bg-white md:block">
-                              <table className="min-w-full text-[14px]">
-                                <thead className="bg-slate-50">
-                                  <tr>
-                                    <th className="px-4 py-3 text-left">Date</th>
-                                    <th className="px-4 py-3 text-left">
-                                      Matière
-                                    </th>
-                                    <th className="px-4 py-3 text-left">Type</th>
-                                    <th className="px-4 py-3 text-left">
-                                      Titre
-                                    </th>
-                                    <th className="px-4 py-3 text-right">Note</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {filtered.map((g) => (
-                                    <tr
-                                      key={g.id}
-                                      className="border-t last:border-b-0"
-                                    >
-                                      <td className="px-4 py-3">
-                                        {fmt(g.eval_date)}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {g.subject_name || "—"}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {gradeKindLabel(g.eval_kind)}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {g.title || "—"}
-                                      </td>
-                                      <td className="px-4 py-3 text-right">
-                                        {g.score == null ? (
-                                          <span className="text-slate-500">
-                                            —
-                                          </span>
-                                        ) : (
-                                          <span className="font-extrabold text-slate-900">
-                                            {g.score.toFixed(2).replace(".", ",")}/
-                                            {g.scale}
-                                          </span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </>
+                                  {item.latest ? (
+                                    <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-[13px] text-slate-700">
+                                      Dernière note : <b>{formatGradeScore(item.latest)}</b> · {gradeKindLabel(item.latest.eval_kind)}
+                                      {item.latest.title ? ` · ${item.latest.title}` : ""}
+                                    </div>
+                                  ) : null}
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedGradeSubjects((m) => ({
+                                        ...m,
+                                        [detailKey]: !m[detailKey],
+                                      }))
+                                    }
+                                    className="mt-3 rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-black text-[#003766] transition hover:bg-[#d9e8f7]"
+                                  >
+                                    {isOpen ? "Masquer le détail" : "Voir le détail"}
+                                  </button>
+
+                                  {isOpen ? (
+                                    <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                                      <div className="hidden bg-slate-50 px-3 py-2 text-[12px] font-black uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[120px_1fr_90px_90px] md:gap-3">
+                                        <span>Date</span>
+                                        <span>Évaluation</span>
+                                        <span>Coeff.</span>
+                                        <span className="text-right">Note</span>
+                                      </div>
+                                      <div className="divide-y divide-slate-100">
+                                        {item.grades.map((g) => (
+                                          <div key={g.id} className="grid gap-2 px-3 py-3 text-[13px] md:grid-cols-[120px_1fr_90px_90px] md:gap-3 md:items-center">
+                                            <div className="font-semibold text-slate-600">{fmt(g.eval_date)}</div>
+                                            <div className="min-w-0">
+                                              <div className="font-bold text-slate-900">{gradeKindLabel(g.eval_kind)}</div>
+                                              {g.title ? <div className="truncate text-slate-500">{g.title}</div> : null}
+                                            </div>
+                                            <div className="text-slate-600">Coeff. {g.coeff || 1}</div>
+                                            <div className="text-right text-[15px] font-black text-slate-950">{formatGradeScore(g)}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     );
