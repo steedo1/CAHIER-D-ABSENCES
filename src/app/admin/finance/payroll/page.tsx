@@ -206,7 +206,9 @@ function formatSessions(value: number) {
   });
 }
 
-function payableLine(row: { employment_type?: EmploymentType | string | null }) {
+function payableLine(row: {
+  employment_type?: EmploymentType | string | null;
+}) {
   return row.employment_type === "vacataire";
 }
 
@@ -218,7 +220,9 @@ function numberValue(value: number | string | null | undefined) {
 function lostSessionsForLine(
   row: Pick<
     TeacherPayrollLineRow,
-    "expected_sessions" | "lost_minutes_after_tolerance" | "lost_sessions_equivalent"
+    | "expected_sessions"
+    | "lost_minutes_after_tolerance"
+    | "lost_sessions_equivalent"
   >,
   sessionReferenceMinutes: number,
 ) {
@@ -669,7 +673,7 @@ async function buildExpectedSlotsForTeacher(params: {
 async function generatePayrollDraftAction(formData: FormData) {
   "use server";
 
-  const access = await getFinanceAccessForCurrentUser();
+  const access = await getFinanceAccessForCurrentUser("payroll");
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
@@ -953,12 +957,14 @@ async function generatePayrollDraftAction(formData: FormData) {
       // comptabilisées dans les minutes perdues et le rapport, mais elles ne
       // gonflent pas le salaire de base.
       const theoreticalAmount = monetizeTeacher && isActuallyHeld ? rate : 0;
-      const lostAmount = monetizeTeacher && isActuallyHeld
-        ? roundMoney(rate * lostSessionsEquivalent)
-        : 0;
-      const adjustedAmount = monetizeTeacher && isActuallyHeld
-        ? Math.max(0, roundMoney(theoreticalAmount - lostAmount))
-        : 0;
+      const lostAmount =
+        monetizeTeacher && isActuallyHeld
+          ? roundMoney(rate * lostSessionsEquivalent)
+          : 0;
+      const adjustedAmount =
+        monetizeTeacher && isActuallyHeld
+          ? Math.max(0, roundMoney(theoreticalAmount - lostAmount))
+          : 0;
 
       return {
         class_id: slot.class_id,
@@ -1098,7 +1104,7 @@ async function generatePayrollDraftAction(formData: FormData) {
 async function validatePayrollRunAction(formData: FormData) {
   "use server";
 
-  const access = await getFinanceAccessForCurrentUser();
+  const access = await getFinanceAccessForCurrentUser("payroll");
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
@@ -1241,12 +1247,13 @@ export default async function FinancePayrollPage({
     message?: string;
   }>;
 }) {
-  const access = await getFinanceAccessForCurrentUser();
+  const access = await getFinanceAccessForCurrentUser("payroll");
 
   if (!access.ok) {
     redirect("/admin/finance/locked");
   }
 
+  const isPayrollOnlyAccess = access.scope === "payroll";
   const params = searchParams ? await searchParams : undefined;
 
   const month = normalizeMonth(params?.month);
@@ -2090,12 +2097,14 @@ export default async function FinancePayrollPage({
                     </span>
                   </button>
 
-                  <Link
-                    href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
-                    className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                  >
-                    Retour Finance
-                  </Link>
+                  {!isPayrollOnlyAccess ? (
+                    <Link
+                      href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
+                      className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Retour Finance
+                    </Link>
+                  ) : null}
                 </div>
               </form>
             </div>

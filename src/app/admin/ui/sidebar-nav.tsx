@@ -70,7 +70,7 @@ function getHrefPath(href: string): string {
 }
 
 function getHrefTab(href: string): string | null {
-  const query = href.includes("?") ? href.split("?")[1] ?? "" : "";
+  const query = href.includes("?") ? (href.split("?")[1] ?? "") : "";
   if (!query) return null;
   return new URLSearchParams(query).get("tab");
 }
@@ -78,7 +78,7 @@ function getHrefTab(href: string): string | null {
 function isPathActive(
   pathname: string | null,
   item: NavItem,
-  currentTab: string | null
+  currentTab: string | null,
 ): boolean {
   const hrefPath = getHrefPath(item.href);
   const pathActive =
@@ -95,7 +95,7 @@ function isPathActive(
 function groupHasActiveItem(
   pathname: string | null,
   items: NavItem[],
-  currentTab: string | null
+  currentTab: string | null,
 ): boolean {
   return items.some((item) => isPathActive(pathname, item, currentTab));
 }
@@ -273,7 +273,11 @@ const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
 const ORGANISATION_ITEMS: NavItem[] = [
   { href: "/admin/classes", label: "Créer vos classes", Icon: School },
   { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
-  { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle },
+  {
+    href: "/admin/affectations",
+    label: "Attribution des classes",
+    Icon: Puzzle,
+  },
   { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck },
   {
     href: "/admin/import",
@@ -308,6 +312,42 @@ const ADMIN_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
     badge: "PRO",
   },
+];
+
+const ADMIN_PAYROLL_ITEM: NavItem = {
+  href: "/admin/finance/payroll",
+  label: "Paie des enseignants",
+  Icon: FileSpreadsheet,
+  badge: "PAIE",
+};
+
+const FINANCE_FULL_ITEMS: NavItem[] = [
+  { href: "/admin/finance", label: "Tableau financier", Icon: LayoutDashboard },
+  {
+    href: "/admin/finance/payments",
+    label: "Encaissements",
+    Icon: FileSpreadsheet,
+  },
+  { href: "/admin/finance/receipts", label: "Reçus", Icon: FileText },
+  { href: "/admin/finance/arrears", label: "Impayés", Icon: BarChart3 },
+  {
+    href: "/admin/finance/charges",
+    label: "Charges élèves",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/finance/fees",
+    label: "Frais & catégories",
+    Icon: FileSpreadsheet,
+  },
+  { href: "/admin/finance/expenses", label: "Dépenses", Icon: FileText },
+  { href: "/admin/finance/reports", label: "Rapports", Icon: BarChart3 },
+  {
+    href: "/admin/finance/online-payments",
+    label: "Paiement en ligne",
+    Icon: FileSpreadsheet,
+  },
+  ADMIN_PAYROLL_ITEM,
 ];
 
 /* =========================
@@ -366,7 +406,11 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
     label: "Vue par créneau",
     Icon: BarChart3,
   },
-  { href: "/admin/statistiques", label: "Contrôle enseignants", Icon: BarChart3 },
+  {
+    href: "/admin/statistiques",
+    label: "Contrôle enseignants",
+    Icon: BarChart3,
+  },
 ];
 
 /* =========================
@@ -401,7 +445,11 @@ const NOTES_ITEMS: NavItem[] = [
     label: "Paramètres de publication",
     Icon: Settings,
   },
-  { href: "/admin/notes/evaluations", label: "Stats évaluations", Icon: NotebookPen },
+  {
+    href: "/admin/notes/evaluations",
+    label: "Stats évaluations",
+    Icon: NotebookPen,
+  },
 ];
 
 function NavLinkItem({
@@ -676,11 +724,13 @@ export default function SidebarNav() {
   const isResizingRef = React.useRef(false);
 
   const [role, setRole] = React.useState<AppRole | null>(null);
-  const [pendingAbsenceCount, setPendingAbsenceCount] = React.useState<number>(0);
+  const [pendingAbsenceCount, setPendingAbsenceCount] =
+    React.useState<number>(0);
   const [pendingGradePublicationCount, setPendingGradePublicationCount] =
     React.useState<number>(0);
-  const [sidebarWidth, setSidebarWidth] =
-    React.useState<number>(DEFAULT_SIDEBAR_WIDTH);
+  const [sidebarWidth, setSidebarWidth] = React.useState<number>(
+    DEFAULT_SIDEBAR_WIDTH,
+  );
 
   React.useEffect(() => {
     try {
@@ -712,7 +762,7 @@ export default function SidebarNav() {
       const nextWidth = clamp(
         event.clientX - left,
         MIN_SIDEBAR_WIDTH,
-        MAX_SIDEBAR_WIDTH
+        MAX_SIDEBAR_WIDTH,
       );
       setSidebarWidth(nextWidth);
     }
@@ -744,7 +794,7 @@ export default function SidebarNav() {
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
-    []
+    [],
   );
 
   const resetWidth = React.useCallback(() => {
@@ -788,9 +838,9 @@ export default function SidebarNav() {
           return;
         }
 
-        const json = (await res.json().catch(() => null)) as
-          | PendingAbsenceCountResponse
-          | null;
+        const json = (await res
+          .json()
+          .catch(() => null)) as PendingAbsenceCountResponse | null;
 
         if (!json || !json.ok) {
           if (!cancelled) setPendingAbsenceCount(0);
@@ -826,7 +876,7 @@ export default function SidebarNav() {
       try {
         const res = await fetch(
           "/api/admin/grades/publication-requests?status=submitted&limit=300",
-          { cache: "no-store" }
+          { cache: "no-store" },
         );
 
         if (!res.ok) {
@@ -834,9 +884,9 @@ export default function SidebarNav() {
           return;
         }
 
-        const json = (await res.json().catch(() => null)) as
-          | PendingGradePublicationCountResponse
-          | null;
+        const json = (await res
+          .json()
+          .catch(() => null)) as PendingGradePublicationCountResponse | null;
 
         if (!json || !json.ok) {
           if (!cancelled) setPendingGradePublicationCount(0);
@@ -871,116 +921,129 @@ export default function SidebarNav() {
   }, []);
 
   const isEducator = role === "educator";
+  const isAdmin = role === "admin";
   const isFinanceManager = role === "finance_manager";
+  const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
+  const isFounderFinance = role === "founder" && isFinancePath;
+  const isFinanceOnlyShell =
+    isFounderFinance || (role === null && isFinancePath);
 
   const topLevelItems = React.useMemo(
-    () => TOP_LEVEL_ITEMS,
-    []
+    () => (isFinanceOnlyShell ? [] : TOP_LEVEL_ITEMS),
+    [isFinanceOnlyShell],
   );
 
   const montageEdtItems = React.useMemo(
-    () => MONTAGE_EDT_ITEMS.filter(() => !isEducator && !isFinanceManager),
-    [isEducator, isFinanceManager]
+    () =>
+      MONTAGE_EDT_ITEMS.filter(
+        () => !isEducator && !isFinanceManager && !isFinanceOnlyShell,
+      ),
+    [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
-        if (isFinanceManager) return false;
+        if (isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager]
+    [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
   const nonClassesItems = React.useMemo(
     () =>
       NON_CLASSES_ITEMS.filter((item) => {
-        if (isFinanceManager) return false;
+        if (isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager]
+    [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
   const fileCorrespondenceItems = React.useMemo(
     () =>
       FILE_CORRESPONDENCE_ITEMS.filter(() => {
-        if (isFinanceManager) return false;
+        if (isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator) return false;
         return true;
       }),
-    [isEducator, isFinanceManager]
+    [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
   const conductManagementItems = React.useMemo(
-    () => (isFinanceManager ? [] : CONDUCT_MANAGEMENT_ITEMS),
-    [isFinanceManager]
+    () =>
+      isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
+    [isFinanceManager, isFinanceOnlyShell],
   );
 
-  const organisationItems = React.useMemo(
-    () =>
-      isFinanceManager
-        ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
-        : ORGANISATION_ITEMS,
-    [isFinanceManager]
-  );
+  const organisationItems = React.useMemo(() => {
+    if (isFinanceOnlyShell) return [];
+    return isFinanceManager
+      ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
+      : ORGANISATION_ITEMS;
+  }, [isFinanceManager, isFinanceOnlyShell]);
 
-  const adminItems = React.useMemo(
-    () =>
-      ADMIN_ITEMS.filter((item) => {
-        if (isFinanceManager) return item.href.startsWith("/admin/finance");
-        if (isEducator && item.href.startsWith("/admin/finance")) return false;
-        if (isEducator && item.href.startsWith("/admin/communication")) return false;
-        return true;
-      }),
-    [isEducator, isFinanceManager]
-  );
+  const adminItems = React.useMemo(() => {
+    if (isFinanceOnlyShell || isFinanceManager) return FINANCE_FULL_ITEMS;
+
+    return ADMIN_ITEMS.flatMap((item) => {
+      if (item.href.startsWith("/admin/finance")) {
+        if (isAdmin) return [ADMIN_PAYROLL_ITEM];
+        if (isEducator) return [];
+        return [item];
+      }
+      if (isEducator && item.href.startsWith("/admin/communication")) return [];
+      return [item];
+    });
+  }, [isAdmin, isEducator, isFinanceManager, isFinanceOnlyShell]);
 
   const callsControlItems = React.useMemo(
-    () => (isFinanceManager ? [] : CALLS_CONTROL_ITEMS),
-    [isFinanceManager]
+    () => (isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
+    [isFinanceManager, isFinanceOnlyShell],
   );
   const absItems = React.useMemo(
-    () => (isFinanceManager ? [] : ABS_ITEMS),
-    [isFinanceManager]
+    () => (isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
+    [isFinanceManager, isFinanceOnlyShell],
   );
 
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
-        if (isFinanceManager) return false;
+        if (isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager]
+    [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
   const settingsItems = React.useMemo(
-    () => (isFinanceManager ? [] : SETTINGS_ITEMS),
-    [isFinanceManager]
+    () => (isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
+    [isFinanceManager, isFinanceOnlyShell],
   );
 
   const fileCorrespondenceActive =
     !isEducator &&
     !isFinanceManager &&
+    !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
 
   const conductManagementActive = groupHasActiveItem(
     pathname,
     conductManagementItems,
-    currentTab
+    currentTab,
   );
 
   const organisationActive = groupHasActiveItem(
     pathname,
     organisationItems,
-    currentTab
+    currentTab,
   );
 
   const montageEdtActive =
     !isEducator &&
     !isFinanceManager &&
+    !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, montageEdtItems, currentTab);
 
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
@@ -988,7 +1051,7 @@ export default function SidebarNav() {
   const callsControlActive = groupHasActiveItem(
     pathname,
     callsControlItems,
-    currentTab
+    currentTab,
   );
 
   const absActive = groupHasActiveItem(pathname, absItems, currentTab);
@@ -996,9 +1059,14 @@ export default function SidebarNav() {
   const notesActive =
     !isEducator &&
     !isFinanceManager &&
+    !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, notesItems, currentTab);
 
-  const settingsActive = groupHasActiveItem(pathname, settingsItems, currentTab);
+  const settingsActive = groupHasActiveItem(
+    pathname,
+    settingsItems,
+    currentTab,
+  );
 
   const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
     React.useState<boolean>(fileCorrespondenceActive);
@@ -1125,18 +1193,20 @@ export default function SidebarNav() {
               />
             ))}
 
-            {!isEducator && fileCorrespondenceItems.length > 0 && (
-              <GroupSection
-                title="Correspondant fichier"
-                Icon={FileSpreadsheet}
-                items={fileCorrespondenceItems}
-                pathname={pathname}
-                currentTab={currentTab}
-                open={fileCorrespondenceOpen}
-                onToggle={() => setFileCorrespondenceOpen((v) => !v)}
-                accent="violet"
-              />
-            )}
+            {!isEducator &&
+              !isFinanceOnlyShell &&
+              fileCorrespondenceItems.length > 0 && (
+                <GroupSection
+                  title="Correspondant fichier"
+                  Icon={FileSpreadsheet}
+                  items={fileCorrespondenceItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={fileCorrespondenceOpen}
+                  onToggle={() => setFileCorrespondenceOpen((v) => !v)}
+                  accent="violet"
+                />
+              )}
 
             {!isFinanceManager && conductManagementItems.length > 0 && (
               <GroupSection
@@ -1153,99 +1223,127 @@ export default function SidebarNav() {
 
             {organisationItems.length > 0 && (
               <GroupSection
-              title="Organisation scolaire"
-              Icon={School}
-              items={organisationItems}
-              pathname={pathname}
-              currentTab={currentTab}
-              open={organisationOpen}
-              onToggle={() => setOrganisationOpen((v) => !v)}
-              accent="sky"
-            />
-            )}
-
-            {!isEducator && !isFinanceManager && montageEdtItems.length > 0 && (
-              <GroupSection
-                title="Montage emploi du temps"
-                Icon={CalendarDays}
-                items={montageEdtItems}
+                title="Organisation scolaire"
+                Icon={School}
+                items={organisationItems}
                 pathname={pathname}
                 currentTab={currentTab}
-                open={montageEdtOpen}
-                onToggle={() => setMontageEdtOpen((v) => !v)}
+                open={organisationOpen}
+                onToggle={() => setOrganisationOpen((v) => !v)}
                 accent="sky"
               />
             )}
 
-            <GroupSection
-              title="Administration & services"
-              Icon={Settings}
-              items={adminItems}
-              pathname={pathname}
-              currentTab={currentTab}
-              open={adminOpen}
-              onToggle={() => setAdminOpen((v) => !v)}
-              accent="amber"
-              badgeCount={isFinanceManager ? 0 : pendingAbsenceCount}
-              pendingAbsenceCount={isFinanceManager ? 0 : pendingAbsenceCount}
-              pendingGradePublicationCount={
-                isFinanceManager ? 0 : pendingGradePublicationCount
-              }
-            />
+            {!isEducator &&
+              !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              montageEdtItems.length > 0 && (
+                <GroupSection
+                  title="Montage emploi du temps"
+                  Icon={CalendarDays}
+                  items={montageEdtItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={montageEdtOpen}
+                  onToggle={() => setMontageEdtOpen((v) => !v)}
+                  accent="sky"
+                />
+              )}
 
-            {!isFinanceManager && callsControlItems.length > 0 && (
+            {adminItems.length > 0 && (
               <GroupSection
-              title="Contrôle des appels"
-              Icon={BarChart3}
-              items={callsControlItems}
-              pathname={pathname}
-              currentTab={currentTab}
-              open={callsControlOpen}
-              onToggle={() => setCallsControlOpen((v) => !v)}
-              accent="cyan"
-            />
-            )}
-
-            {!isFinanceManager && absItems.length > 0 && (
-              <GroupSection
-              title="Cahier des absences"
-              Icon={Ban}
-              items={absItems}
-              pathname={pathname}
-              currentTab={currentTab}
-              open={absOpen}
-              onToggle={() => setAbsOpen((v) => !v)}
-              accent="emerald"
-            />
-            )}
-
-            {!isEducator && !isFinanceManager && notesItems.length > 0 && (
-              <GroupSection
-                title="Cahier de notes"
-                Icon={NotebookPen}
-                items={notesItems}
+                title={
+                  isFinanceOnlyShell || isFinanceManager
+                    ? "Gestion financière"
+                    : "Administration & services"
+                }
+                Icon={Settings}
+                items={adminItems}
                 pathname={pathname}
                 currentTab={currentTab}
-                open={notesOpen}
-                onToggle={() => setNotesOpen((v) => !v)}
-                accent="violet"
-                badgeCount={pendingGradePublicationCount}
-                pendingGradePublicationCount={pendingGradePublicationCount}
+                open={adminOpen}
+                onToggle={() => setAdminOpen((v) => !v)}
+                accent="amber"
+                badgeCount={
+                  isFinanceManager || isFinanceOnlyShell
+                    ? 0
+                    : pendingAbsenceCount
+                }
+                pendingAbsenceCount={
+                  isFinanceManager || isFinanceOnlyShell
+                    ? 0
+                    : pendingAbsenceCount
+                }
+                pendingGradePublicationCount={
+                  isFinanceManager || isFinanceOnlyShell
+                    ? 0
+                    : pendingGradePublicationCount
+                }
               />
             )}
 
-            {!isFinanceManager && settingsItems.length > 0 && (
-              <GroupSection
-              title="Paramètres"
-              Icon={Settings}
-              items={settingsItems}
-              pathname={pathname}
-              currentTab={currentTab}
-              open={settingsOpen}
-              onToggle={() => setSettingsOpen((v) => !v)}
-              accent="amber"
-            />
-            )}
+            {!isFinanceManager &&
+              !isFinanceOnlyShell &&
+              callsControlItems.length > 0 && (
+                <GroupSection
+                  title="Contrôle des appels"
+                  Icon={BarChart3}
+                  items={callsControlItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={callsControlOpen}
+                  onToggle={() => setCallsControlOpen((v) => !v)}
+                  accent="cyan"
+                />
+              )}
+
+            {!isFinanceManager &&
+              !isFinanceOnlyShell &&
+              absItems.length > 0 && (
+                <GroupSection
+                  title="Cahier des absences"
+                  Icon={Ban}
+                  items={absItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={absOpen}
+                  onToggle={() => setAbsOpen((v) => !v)}
+                  accent="emerald"
+                />
+              )}
+
+            {!isEducator &&
+              !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              notesItems.length > 0 && (
+                <GroupSection
+                  title="Cahier de notes"
+                  Icon={NotebookPen}
+                  items={notesItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={notesOpen}
+                  onToggle={() => setNotesOpen((v) => !v)}
+                  accent="violet"
+                  badgeCount={pendingGradePublicationCount}
+                  pendingGradePublicationCount={pendingGradePublicationCount}
+                />
+              )}
+
+            {!isFinanceManager &&
+              !isFinanceOnlyShell &&
+              settingsItems.length > 0 && (
+                <GroupSection
+                  title="Paramètres"
+                  Icon={Settings}
+                  items={settingsItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={settingsOpen}
+                  onToggle={() => setSettingsOpen((v) => !v)}
+                  accent="amber"
+                />
+              )}
           </ul>
         </div>
 
@@ -1276,5 +1374,3 @@ export default function SidebarNav() {
     </div>
   );
 }
-
-

@@ -230,9 +230,13 @@ export default async function AdminFinancePage({
 }: {
   searchParams?: Promise<{ academic_year?: string }>;
 }) {
-  const access = await getFinanceAccessForCurrentUser();
+  const access = await getFinanceAccessForCurrentUser("full");
 
   if (!access.ok) {
+    const payrollAccess = await getFinanceAccessForCurrentUser("payroll");
+    if (payrollAccess.ok && payrollAccess.scope === "payroll") {
+      redirect("/admin/finance/payroll");
+    }
     redirect("/admin/finance/locked");
   }
 
@@ -635,7 +639,11 @@ export default async function AdminFinancePage({
           title="Paiement en ligne"
           description="Activer Orange Money, Wave ou MTN Money sur le compte marchand propre de l’établissement."
           badge="Mobile Money"
-          footer={<OperatorLogoStack providers={["orange_money", "wave", "mtn_momo"]} />}
+          footer={
+            <OperatorLogoStack
+              providers={["orange_money", "wave", "mtn_momo"]}
+            />
+          }
         />
         <QuickLinkCard
           href={financeYearHref(

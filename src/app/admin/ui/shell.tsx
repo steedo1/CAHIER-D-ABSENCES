@@ -1,9 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, Ban, NotebookPen, Settings, FileSpreadsheet, UserRoundCheck, Loader2 } from "lucide-react";
+import {
+  Menu,
+  X,
+  LayoutDashboard,
+  Ban,
+  NotebookPen,
+  Settings,
+  FileSpreadsheet,
+  UserRoundCheck,
+  Loader2,
+} from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
@@ -21,7 +38,9 @@ function LoadingOverlay({ label }: { label: string }) {
             <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-300">
               Chargement
             </div>
-            <div className="mt-1 truncate text-lg font-black text-white">{label}</div>
+            <div className="mt-1 truncate text-lg font-black text-white">
+              {label}
+            </div>
           </div>
         </div>
         <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -31,7 +50,6 @@ function LoadingOverlay({ label }: { label: string }) {
     </div>
   );
 }
-
 
 export default function AdminShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -60,7 +78,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-
   useEffect(() => {
     setRouteLoading(false);
   }, [pathname]);
@@ -71,6 +88,12 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [routeLoading]);
 
+  useEffect(() => {
+    if (role !== "founder") return;
+    if (!pathname || pathname.startsWith("/admin/finance")) return;
+    window.location.replace("/founder/dashboard");
+  }, [role, pathname]);
+
   function startLoading(label: string) {
     setRouteLabel(label || "Chargement…");
     setRouteLoading(true);
@@ -78,7 +101,14 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
   function handleShellClickCapture(event: MouseEvent<HTMLDivElement>) {
     if (event.defaultPrevented) return;
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
 
     const target = event.target as HTMLElement | null;
     const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -87,7 +117,14 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     if (anchor.hasAttribute("download")) return;
 
     const href = anchor.getAttribute("href") || "";
-    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) return;
+    if (
+      !href ||
+      href.startsWith("#") ||
+      href.startsWith("mailto:") ||
+      href.startsWith("tel:") ||
+      href.startsWith("javascript:")
+    )
+      return;
 
     let nextUrl: URL;
     try {
@@ -117,58 +154,63 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }
 
   const isFinanceManager = role === "finance_manager";
+  const isAdmin = role === "admin";
+  const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
+  const isFounderFinance = role === "founder" && isFinancePath;
 
-  const mobileItems = useMemo(
-    () =>
-      isFinanceManager
-        ? [
-            {
-              href: "/admin/dashboard",
-              label: "Accueil",
-              Icon: LayoutDashboard,
-            },
-            {
-              href: "/admin/parents",
-              label: "Listes",
-              Icon: UserRoundCheck,
-            },
-            {
-              href: "/admin/finance",
-              label: "Finance",
-              Icon: FileSpreadsheet,
-            },
-          ]
-        : [
-            {
-              href: "/admin/dashboard",
-              label: "Accueil",
-              Icon: LayoutDashboard,
-            },
-            {
-              href: "/admin/absences",
-              label: "Absences",
-              Icon: Ban,
-            },
-            {
-              href: "/admin/notes",
-              label: "Notes",
-              Icon: NotebookPen,
-            },
-            {
-              href: "/admin/parametres",
-              label: "Paramètres",
-              Icon: Settings,
-            },
-          ],
-    [isFinanceManager]
-  );
+  const mobileItems = useMemo(() => {
+    if (isFounderFinance) {
+      return [
+        { href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet },
+        {
+          href: "/admin/finance/payments",
+          label: "Paiements",
+          Icon: FileSpreadsheet,
+        },
+        {
+          href: "/admin/finance/reports",
+          label: "Rapports",
+          Icon: FileSpreadsheet,
+        },
+        { href: "/admin/finance/payroll", label: "Paie", Icon: UserRoundCheck },
+      ];
+    }
+
+    if (isFinanceManager) {
+      return [
+        { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+        { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
+        { href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet },
+      ];
+    }
+
+    if (isAdmin && isFinancePath) {
+      return [
+        { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+        { href: "/admin/finance/payroll", label: "Paie", Icon: UserRoundCheck },
+        { href: "/admin/absences", label: "Absences", Icon: Ban },
+        { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
+      ];
+    }
+
+    return [
+      { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+      { href: "/admin/absences", label: "Absences", Icon: Ban },
+      { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
+      { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
+    ];
+  }, [isAdmin, isFinanceManager, isFinancePath, isFounderFinance]);
 
   function isActive(href: string) {
     return pathname === href || (pathname ?? "").startsWith(href + "/");
   }
 
   return (
-    <div className="min-h-screen bg-slate-50" onClickCapture={handleShellClickCapture} onSubmitCapture={handleShellSubmitCapture}>
+    <div
+      className="min-h-screen bg-slate-50"
+      onClickCapture={handleShellClickCapture}
+      onSubmitCapture={handleShellSubmitCapture}
+    >
       {routeLoading ? <LoadingOverlay label={routeLabel} /> : null}
       {/* ─────────────────────────────
           Drawer mobile (sidebar complète)
@@ -176,7 +218,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       <div
         className={[
           "fixed inset-0 z-50 bg-black/40 transition-opacity md:hidden",
-          mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+          mobileOpen
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0",
         ].join(" ")}
       >
         <div
@@ -239,13 +283,19 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                   <Menu className="h-4 w-4" />
                 </button>
 
-                <span className="text-sm font-semibold tracking-tight">Mon Cahier</span>
+                <span className="text-sm font-semibold tracking-tight">
+                  Mon Cahier
+                </span>
 
                 {/* Tagline masquée sur très petit écran pour un rendu plus "app" */}
                 <span className="hidden rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20 sm:inline-flex">
-                  {isFinanceManager
-                    ? "Gestion financière · Établissement"
-                    : "Absences & notes · Admin établissement"}
+                  {isFounderFinance
+                    ? "Gestion financière · Fondateur"
+                    : isFinanceManager
+                      ? "Gestion financière · Établissement"
+                      : isAdmin && isFinancePath
+                        ? "Paie des enseignants"
+                        : "Absences & notes · Admin établissement"}
                 </span>
               </div>
 
@@ -260,7 +310,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           </header>
 
           {/* Contenu principal */}
-          <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">{children}</main>
+          <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">
+            {children}
+          </main>
 
           {/* ─────────────────────────────
               MENU MOBILE EN BAS (style app / Ecolemedia)

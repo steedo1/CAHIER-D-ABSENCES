@@ -1,29 +1,37 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AlertTriangle, Crown, Lock, School2 } from "lucide-react";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 
 export const dynamic = "force-dynamic";
 
 export default async function FinanceLockedPage() {
-  const access = await getFinanceAccessForCurrentUser();
+  const access = await getFinanceAccessForCurrentUser("full");
+
+  if (!access.ok) {
+    const payrollAccess = await getFinanceAccessForCurrentUser("payroll");
+    if (payrollAccess.ok && payrollAccess.scope === "payroll") {
+      redirect("/admin/finance/payroll");
+    }
+  }
 
   const title =
     access.reason === "subscription_expired"
       ? "Abonnement expiré"
       : access.reason === "finance_not_enabled"
-      ? "Module Finance non activé"
-      : access.reason === "no_institution"
-      ? "Aucun établissement associé"
-      : "Accès non disponible";
+        ? "Module Finance non activé"
+        : access.reason === "no_institution"
+          ? "Aucun établissement associé"
+          : "Accès non disponible";
 
   const message =
     access.reason === "subscription_expired"
       ? "L’abonnement de votre établissement a expiré. Le module Gestion financière est momentanément indisponible."
       : access.reason === "finance_not_enabled"
-      ? "Le module Gestion financière Premium n’a pas encore été accordé à votre établissement par le super administrateur."
-      : access.reason === "no_institution"
-      ? "Votre compte n’est rattaché à aucun établissement. Merci de contacter l’administrateur."
-      : "Vous devez être connecté avec un compte valide pour accéder à cette section.";
+        ? "Le module Gestion financière Premium n’a pas encore été accordé à votre établissement par le super administrateur."
+        : access.reason === "no_institution"
+          ? "Votre compte n’est rattaché à aucun établissement. Merci de contacter l’administrateur."
+          : "Vous devez être connecté avec un compte valide pour accéder à cette section.";
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
