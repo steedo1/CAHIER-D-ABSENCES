@@ -294,7 +294,7 @@ export default async function FounderDashboardPage() {
       service
         .schema("finance")
         .from("receipts")
-        .select("id,school_id,total_amount,receipt_status,payment_date")
+        .select("id,school_id,total_amount,receipt_status,payment_date,academic_year")
         .in("school_id", institutionIds)
         .eq("receipt_status", "posted")
         .gte("payment_date", startIso)
@@ -334,7 +334,12 @@ export default async function FounderDashboardPage() {
     ),
   ]);
 
-  const totalReceiptsToday = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
+  const currentYearReceipts = (receipts ?? []).filter((row: any) => {
+    const schoolId = String(row.school_id || "");
+    return String(row.academic_year || "") === currentYearByInstitution.get(schoolId);
+  });
+
+  const totalReceiptsToday = currentYearReceipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
   const totalCollectedCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
   const totalBilledCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.net_amount || 0), 0);
   const totalBalanceDueCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.balance_due || 0), 0);
@@ -349,7 +354,7 @@ export default async function FounderDashboardPage() {
 
   const rows = institutions.map((school) => {
     const schoolId = school.id;
-    const schoolReceipts = receipts.filter((row: any) => row.school_id === schoolId);
+    const schoolReceipts = currentYearReceipts.filter((row: any) => row.school_id === schoolId);
     const schoolExpenses = expenses.filter((row: any) => row.school_id === schoolId);
     const schoolSessions = sessions.filter((row: any) => row.institution_id === schoolId);
     const schoolEnrollments = enrollments.filter((row: any) => row.institution_id === schoolId);
@@ -437,7 +442,7 @@ export default async function FounderDashboardPage() {
     {
       href: "/admin/finance/receipts",
       label: "Reçus",
-      value: receipts.length,
+      value: currentYearReceipts.length,
       hint: "Consulter et imprimer les reçus",
       Icon: Receipt,
     },

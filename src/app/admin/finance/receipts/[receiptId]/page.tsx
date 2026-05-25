@@ -497,22 +497,17 @@ export default async function FinanceReceiptPrintPage({
 
   let scolariteReferenceCharges: ChargeRow[] = [];
   if (allLinesAreScolarite) {
-    const categoryIds = Array.from(
-      new Set(
-        rawLines
-          .map((line) => line.charge?.fee_category_id)
-          .filter((id): id is string => Boolean(id)),
-      ),
-    );
-
     const referenceClassId = rawLines[0]?.charge?.class_id ?? null;
+    const academicYear = String(typedReceipt.academic_year || "").trim();
 
-    if (categoryIds.length > 0 && referenceClassId) {
-      // IMPORTANT : pour le reçu de scolarité, on ne doit pas calculer le
-      // total attendu depuis v_charge_balances. Cette vue peut inclure des
-      // lignes annulées ou des lignes parasites selon l'évolution de la base.
-      // On reconstruit donc le total depuis finance.student_charges en filtrant
-      // explicitement : année du reçu + élève + classe + catégorie + non annulé.
+    if (referenceClassId && academicYear) {
+      // IMPORTANT :
+      // Le reçu de scolarité doit reprendre TOUTES les dettes de scolarité
+      // actives de l'élève pour la même année et la même classe.
+      // On ne filtre plus par fee_category_id, car d'anciens tests/patchs ont
+      // pu créer plusieurs catégories "scolarité" et laisser seulement une
+      // partie des rubriques dans la catégorie du reçu. C'est ce qui produisait
+      // des totaux faux du type 116 500 F en 1re/Tle.
       const { data: directChargesData, error: directChargesErr } = await supabase
         .schema("finance")
         .from("student_charges")
@@ -521,13 +516,14 @@ export default async function FinanceReceiptPrintPage({
         )
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
-        .eq("academic_year", typedReceipt.academic_year)
+        .eq("academic_year", academicYear)
         .eq("class_id", referenceClassId)
-        .in("fee_category_id", categoryIds)
         .neq("status", "cancelled");
 
       if (!directChargesErr) {
-        const directCharges = (directChargesData ?? []) as StudentChargeDirectRow[];
+        const directCharges = ((directChargesData ?? []) as StudentChargeDirectRow[]).filter(
+          (charge) => isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
+        );
         const directChargeIds = directCharges.map((charge) => charge.id);
         let allocationsForCharges: AllocationLiteRow[] = [];
         let receiptStatuses: ReceiptStatusLiteRow[] = [];
