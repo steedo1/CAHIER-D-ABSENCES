@@ -206,7 +206,7 @@ async function getFounderContext() {
 export default async function FounderDashboardPage({
   searchParams,
 }: {
-  searchParams?: FounderDashboardSearchParams | Promise<FounderDashboardSearchParams>;
+  searchParams?: Promise<FounderDashboardSearchParams>;
 }) {
   const { service, institutionIds, institutions } = await getFounderContext();
   const resolvedSearchParams = await Promise.resolve(searchParams ?? {});
