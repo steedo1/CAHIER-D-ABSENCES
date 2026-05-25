@@ -1,16 +1,19 @@
 // src/app/admin/finance/fees/page.tsx
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   BadgeCheck,
+  CalendarClock,
   CircleOff,
   FolderPlus,
+  Layers3,
   Pencil,
+  School2,
   ShieldCheck,
   Trash2,
   Wallet,
 } from "lucide-react";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
@@ -31,17 +34,34 @@ type FeeCategoryRow = {
   updated_at: string;
 };
 
+type FeeScheduleSummaryRow = {
+  id: string;
+  fee_category_id: string;
+  label: string;
+  amount: number | string;
+  is_active: boolean;
+  academic_year: string | null;
+};
+
 const DEFAULT_FEE_CATEGORIES = [
-  { code: "frais_inscription", name: "Frais d’inscription", is_mandatory: true },
-  { code: "scolarite", name: "Scolarité", is_mandatory: true },
-  { code: "tenue_uniforme", name: "Tenue / uniforme", is_mandatory: false },
-  { code: "transport", name: "Transport", is_mandatory: false },
-  { code: "cantine", name: "Cantine", is_mandatory: false },
-  { code: "frais_examen", name: "Frais d’examen", is_mandatory: false },
-  { code: "assurance", name: "Assurance", is_mandatory: false },
-  { code: "carnet_badge", name: "Carnet / badge", is_mandatory: false },
-  { code: "frais_dossier", name: "Frais de dossier", is_mandatory: false },
-  { code: "autres_frais", name: "Autres frais", is_mandatory: false },
+  {
+    code: "scolarite",
+    name: "Scolarité",
+    description: "Frais liés à la scolarité : inscription, frais généraux, frais annexes scolarité, écolage affecté ou non affecté.",
+    is_mandatory: true,
+  },
+  {
+    code: "internat",
+    name: "Internat",
+    description: "Vie à l’internat : pension fixe et frais annexes variables selon les éléments confirmés.",
+    is_mandatory: false,
+  },
+  {
+    code: "cours_renforcement",
+    name: "Cours de renforcement",
+    description: "Frais spécifiques aux cours de renforcement, uniquement pour les élèves concernés.",
+    is_mandatory: false,
+  },
 ];
 
 function slugifyCode(input: string) {
@@ -88,7 +108,7 @@ async function ensureDefaultFeeCategories(institutionId: string) {
         school_id: institutionId,
         code: item.code,
         name: item.name,
-        description: null,
+        description: item.description,
         is_mandatory: item.is_mandatory,
         is_active: true,
         created_at: now,
@@ -291,21 +311,49 @@ export default async function FinanceFeesPage() {
   const institutionId = await getCurrentInstitutionIdOrThrow();
   await ensureDefaultFeeCategories(institutionId);
 
-  const supabase = await getSupabaseServerClient();
-  const { data: categories, error } = await supabase
-    .schema("finance")
-    .from("fee_categories")
-    .select(
-      "id,school_id,code,name,description,is_mandatory,is_active,created_at,updated_at",
-    )
-    .eq("school_id", institutionId)
-    .order("name", { ascending: true });
+  const admin = getSupabaseServiceClient();
+
+  const [{ data: categories, error }, { data: schedules, error: schedulesError }] =
+    await Promise.all([
+      admin
+        .schema("finance")
+        .from("fee_categories")
+        .select(
+          "id,school_id,code,name,description,is_mandatory,is_active,created_at,updated_at",
+        )
+        .eq("school_id", institutionId)
+        .order("name", { ascending: true }),
+      admin
+        .schema("finance")
+        .from("fee_schedules")
+        .select("id,fee_category_id,label,amount,is_active,academic_year")
+        .eq("school_id", institutionId)
+        .order("academic_year", { ascending: false }),
+    ]);
 
   if (error) throw new Error(error.message);
+  if (schedulesError) throw new Error(schedulesError.message);
 
   const rows = (categories ?? []) as FeeCategoryRow[];
+  const scheduleRows = (schedules ?? []) as FeeScheduleSummaryRow[];
+
   const activeCount = rows.filter((r) => r.is_active).length;
   const mandatoryCount = rows.filter((r) => r.is_mandatory).length;
+  const activeSchedules = scheduleRows.filter((row) => row.is_active);
+  const activeScheduleCount = activeSchedules.length;
+  const activeScheduleTotal = activeSchedules.reduce(
+    (sum, row) => sum + Number(row.amount || 0),
+    0,
+  );
+  const schedulesByCategory = activeSchedules.reduce((map, row) => {
+    map.set(row.fee_category_id, (map.get(row.fee_category_id) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>());
+
+  const defaultCategoryCards = DEFAULT_FEE_CATEGORIES.map((item) => {
+    const row = rows.find((category) => category.code === item.code);
+    return { ...item, row, schedulesCount: row ? schedulesByCategory.get(row.id) ?? 0 : 0 };
+  });
 
   return (
     <div className="space-y-6">
@@ -320,13 +368,12 @@ export default async function FinanceFeesPage() {
               Catégories de frais
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Les catégories par défaut sont créées automatiquement. L’admin peut
-              ajouter, modifier, supprimer si la catégorie est inutilisée ou la
-              désactiver si elle a déjà servi.
+              Les catégories par défaut, les catégories disponibles et les barèmes restent visibles au même endroit.
+              Les catégories organisent les familles de frais ; les barèmes portent les montants par classe et par année.
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
               <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
                 Actives
@@ -339,6 +386,93 @@ export default async function FinanceFeesPage() {
               </div>
               <div className="mt-2 text-2xl font-black text-white">{mandatoryCount}</div>
             </div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+              <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
+                Barèmes
+              </div>
+              <div className="mt-2 text-2xl font-black text-white">{activeScheduleCount}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        {defaultCategoryCards.map((item) => (
+          <article
+            key={item.code}
+            className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                  Catégorie par défaut
+                </div>
+                <h2 className="mt-2 text-xl font-black text-slate-950">{item.name}</h2>
+              </div>
+              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700 ring-1 ring-emerald-100">
+                <School2 className="h-5 w-5" />
+              </div>
+            </div>
+
+            <p className="mt-3 text-sm leading-6 text-slate-500">{item.description}</p>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {item.row ? (
+                <>
+                  <StatusPill active={item.row.is_active} />
+                  <MandatoryPill mandatory={item.row.is_mandatory} />
+                  <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
+                    {item.schedulesCount} barème(s)
+                  </span>
+                </>
+              ) : (
+                <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-200">
+                  À créer
+                </span>
+              )}
+            </div>
+          </article>
+        ))}
+      </section>
+
+      <section className="rounded-[28px] border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-emerald-800">
+              <CalendarClock className="h-4 w-4" />
+              Barèmes & échéanciers
+            </div>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Montants par classe, année scolaire et catégorie
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Les catégories ne remplacent pas les barèmes. Les barèmes définissent les montants réels
+              à appliquer aux classes et servent ensuite à générer les dettes élèves.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[360px]">
+            <div className="rounded-3xl border border-emerald-200 bg-white p-4">
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
+                Barèmes actifs
+              </div>
+              <div className="mt-2 text-2xl font-black text-slate-950">{activeScheduleCount}</div>
+            </div>
+            <div className="rounded-3xl border border-emerald-200 bg-white p-4">
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
+                Total barèmes
+              </div>
+              <div className="mt-2 text-2xl font-black text-slate-950">
+                {activeScheduleTotal.toLocaleString("fr-FR")} F
+              </div>
+            </div>
+            <Link
+              href="/admin/finance/fees/schedules"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 sm:col-span-2"
+            >
+              <Layers3 className="h-4 w-4" />
+              Ouvrir les barèmes & échéanciers
+            </Link>
           </div>
         </div>
       </section>
@@ -415,6 +549,12 @@ export default async function FinanceFeesPage() {
           </div>
 
           <div className="mt-5 space-y-4">
+            {rows.length === 0 ? (
+              <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+                Aucune catégorie visible pour cet établissement. Lancez le script de réparation fourni si cette situation persiste.
+              </div>
+            ) : null}
+
             {rows.map((row) => (
               <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
                 <div className="mb-4 flex flex-wrap items-center gap-2">
