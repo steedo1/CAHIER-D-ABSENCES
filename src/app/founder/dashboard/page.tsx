@@ -457,32 +457,32 @@ export default async function FounderDashboardPage({
   });
 
   const statCards = [
-    { label: "Écoles suivies", value: institutions.length, hint: "Établissements rattachés", Icon: School2 },
-    { label: "Élèves", value: totalStudentStats.total, hint: "Inscrits actifs année courante", Icon: GraduationCap },
+    { label: "Écoles", value: institutions.length, hint: "Rattachées", Icon: School2 },
+    { label: "Élèves", value: totalStudentStats.total, hint: "Année courante", Icon: GraduationCap },
     {
-      label: "Encaissé année courante",
+      label: "Encaissé année",
       value: money(totalCollectedCurrentYear),
-      hint: "Paiements liés aux dettes de l’année courante",
+      hint: "Cumul payé",
       Icon: Receipt,
     },
     {
-      label: "Encaissements période",
+      label: "Reçus période",
       value: money(totalReceiptsToday),
-      hint: `${selectedDateLabel} · ${receipts.length} reçu(s), toutes années`,
+      hint: `${receipts.length} reçu(s)`,
       Icon: ArrowUpRight,
     },
-    { label: "Dépenses période", value: money(totalExpenses), hint: `${selectedDateLabel} · ${expenses.length} dépense(s)`, Icon: Wallet },
-    { label: "Solde période", value: money(net), hint: "Encaissements de la date moins dépenses", Icon: Activity },
-    { label: "Appels détectés", value: sessions.length, hint: `Séances ouvertes ${selectedDateLabel}`, Icon: CalendarCheck2 },
+    { label: "Dépenses", value: money(totalExpenses), hint: `${expenses.length} dépense(s)`, Icon: Wallet },
+    { label: "Solde", value: money(net), hint: "Période", Icon: Activity },
+    { label: "Appels", value: sessions.length, hint: "Période", Icon: CalendarCheck2 },
   ];
 
   const profileCards = [
-    { label: "Affectés", value: totalStudentStats.assigned, hint: "Scolarité affectée", Icon: UsersRound },
-    { label: "Non affectés", value: totalStudentStats.notAssigned, hint: "Scolarité non affectée", Icon: UsersRound },
-    { label: "Internes", value: totalStudentStats.boarders, hint: "Internat oui", Icon: School2 },
-    { label: "Non internes", value: totalStudentStats.notBoarders, hint: "Internat non", Icon: School2 },
-    { label: "Garçons", value: totalStudentStats.boys, hint: "Sexe masculin", Icon: GraduationCap },
-    { label: "Filles", value: totalStudentStats.girls, hint: "Sexe féminin", Icon: GraduationCap },
+    { label: "Affectés", value: totalStudentStats.assigned, hint: "Scolarité", Icon: UsersRound },
+    { label: "Non affectés", value: totalStudentStats.notAssigned, hint: "Scolarité", Icon: UsersRound },
+    { label: "Internes", value: totalStudentStats.boarders, hint: "Internat", Icon: School2 },
+    { label: "Non internes", value: totalStudentStats.notBoarders, hint: "Internat", Icon: School2 },
+    { label: "Garçons", value: totalStudentStats.boys, hint: "Effectif", Icon: GraduationCap },
+    { label: "Filles", value: totalStudentStats.girls, hint: "Effectif", Icon: GraduationCap },
   ];
 
   const financeActionCards = [
@@ -490,63 +490,63 @@ export default async function FounderDashboardPage({
       href: "/admin/finance",
       label: "Tableau financier",
       value: money(totalBilledCurrentYear),
-      hint: "Même tableau complet que l’admin",
+      hint: "Vue complète",
       Icon: Wallet,
     },
     {
       href: "/admin/finance/fees",
       label: "Catégories de frais",
       value: activeFeeCategories,
-      hint: "Créer et gérer les catégories",
+      hint: "Paramètres",
       Icon: School2,
     },
     {
       href: "/admin/finance/fees/schedules",
       label: "Barèmes & échéanciers",
       value: activeFeeSchedules,
-      hint: "Définir les montants par classe",
+      hint: "Montants",
       Icon: CalendarCheck2,
     },
     {
       href: "/admin/finance/charges",
       label: "Dettes élèves",
       value: balanceRows.length,
-      hint: "Contrôler les situations ouvertes",
+      hint: "Suivi",
       Icon: Receipt,
     },
     {
       href: "/admin/finance/payments",
       label: "Encaissements",
       value: money(totalCollectedCurrentYear),
-      hint: "Enregistrer les paiements",
+      hint: "Paiements",
       Icon: ArrowUpRight,
     },
     {
       href: "/admin/finance/receipts",
       label: "Reçus",
       value: receipts.length,
-      hint: "Reçus de la période filtrée",
+      hint: "Période",
       Icon: Receipt,
     },
     {
       href: "/admin/finance/arrears",
       label: "Impayés",
       value: money(totalBalanceDueCurrentYear),
-      hint: "Suivre les restes à payer",
+      hint: "Restes",
       Icon: ArrowDownRight,
     },
     {
       href: "/admin/finance/expenses",
       label: "Dépenses",
       value: money(totalExpenses),
-      hint: "Saisir les dépenses",
+      hint: "Sorties",
       Icon: Wallet,
     },
     {
       href: "/admin/finance/reports",
       label: "Rapports",
       value: "Stats",
-      hint: "Synthèses et exports",
+      hint: "Exports",
       Icon: Activity,
     },
   ];
@@ -562,7 +562,7 @@ export default async function FounderDashboardPage({
             Vue globale de vos écoles
           </h1>
           <p className="mt-3 text-sm leading-6 text-slate-200 sm:text-base">
-            Synthèse consolidée de la finance, des créneaux, de l’activité de la période sélectionnée et du profil des élèves pour les établissements rattachés.
+            Finance, créneaux et élèves — en un coup d’œil.
           </p>
 
           <form method="get" className="mt-5 rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
@@ -611,8 +611,8 @@ export default async function FounderDashboardPage({
                 </Link>
               </div>
             </div>
-            <p className="mt-3 text-xs text-emerald-100/90">
-              Le filtre agit sur les encaissements, dépenses et appels de la période. Les montants à recouvrer restent liés à l’année scolaire courante.
+            <p className="mt-3 text-xs font-semibold text-emerald-100/90">
+              Période : {selectedDateLabel}
             </p>
           </form>
         </div>
@@ -642,9 +642,6 @@ export default async function FounderDashboardPage({
               <Receipt className="h-4 w-4" />
               Encaissements de la période filtrée
             </div>
-            <p className="mt-1 text-sm text-slate-500">
-              Lecture par date de paiement : un encaissement de la période peut concerner une année scolaire passée, courante ou prochaine.
-            </p>
           </div>
           <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
             {periodStart === periodEnd ? formatYmdFr(periodStart) : `${formatYmdFr(periodStart)} → ${formatYmdFr(periodEnd)}`}
@@ -678,9 +675,6 @@ export default async function FounderDashboardPage({
               <GraduationCap className="h-4 w-4" />
               Profil des élèves
             </div>
-            <p className="mt-1 text-sm text-slate-500">
-              Lecture consolidée : affectation, internat et répartition filles/garçons.
-            </p>
           </div>
           <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
             Année courante
@@ -718,15 +712,12 @@ export default async function FounderDashboardPage({
               <Wallet className="h-4 w-4" />
               Accès finance complet
             </div>
-            <p className="mt-1 text-sm text-slate-500">
-              Le fondateur utilise les mêmes écrans d’action que l’administrateur : catégories, barèmes, dettes, encaissements, reçus, impayés, dépenses et rapports.
-            </p>
           </div>
           <Link
             href="/admin/finance"
             className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-slate-800"
           >
-            Ouvrir le module admin complet
+            Ouvrir la finance
           </Link>
         </div>
 
@@ -760,7 +751,6 @@ export default async function FounderDashboardPage({
                 <Building2 className="h-4 w-4" />
                 Écoles rattachées
               </div>
-              <p className="mt-1 text-sm text-slate-500">Lecture consolidée : encaissements de l’année courante, solde de la période filtrée et activité.</p>
             </div>
             <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
               {periodStart === periodEnd ? formatYmdFr(periodStart) : `${formatYmdFr(periodStart)} → ${formatYmdFr(periodEnd)}`}
@@ -820,18 +810,14 @@ export default async function FounderDashboardPage({
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
               <div className="text-xs font-black uppercase tracking-[0.15em] text-emerald-700">Finance nette</div>
               <div className="mt-2 text-2xl font-black text-emerald-900">{money(net)}</div>
-              <p className="mt-1 text-xs leading-5 text-emerald-800">Solde consolidé de la période filtrée sur toutes les écoles.</p>
             </div>
             <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
               <div className="text-xs font-black uppercase tracking-[0.15em] text-sky-700">Élèves actifs</div>
               <div className="mt-2 text-2xl font-black text-sky-900">{totalStudentStats.total}</div>
-              <p className="mt-1 text-xs leading-5 text-sky-800">Total des élèves inscrits dans les classes de l’année courante.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-black uppercase tracking-[0.15em] text-slate-500">Notifications</div>
-              <p className="mt-2 text-xs leading-5 text-slate-600">
-                Les notifications du fondateur restent concentrées sur les événements financiers importants et les bilans.
-              </p>
+              <div className="mt-2 text-xl font-black text-slate-900">Finance & bilans</div>
             </div>
           </div>
         </div>

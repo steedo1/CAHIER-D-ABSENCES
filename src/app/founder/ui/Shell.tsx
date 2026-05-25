@@ -9,10 +9,11 @@ import {
   Building2,
   CalendarDays,
   ChevronRight,
-  LayoutDashboard,
+  Loader2,
+  Menu,
   ShieldCheck,
   Wallet,
-  Loader2,
+  X,
 } from "lucide-react";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import TrueLogoutButton from "@/components/auth/TrueLogoutButton";
@@ -41,27 +42,23 @@ function LoadingOverlay({ label }: { label: string }) {
   );
 }
 
-
 const NAV = [
   {
     href: "/founder/dashboard",
     label: "Vue globale",
-    shortLabel: "Global",
-    description: "Synthèse multi-écoles",
+    description: "Synthèse",
     Icon: BarChart3,
   },
   {
     href: "/founder/attendance-slots",
-    label: "Vue créneau",
-    shortLabel: "Créneaux",
-    description: "Appels et créneaux",
+    label: "Créneaux",
+    description: "Présence",
     Icon: CalendarDays,
   },
   {
     href: "/admin/finance",
-    label: "Gestion financière",
-    shortLabel: "Finance",
-    description: "Module complet admin",
+    label: "Finance",
+    description: "Gestion",
     Icon: Wallet,
   },
 ];
@@ -74,9 +71,11 @@ export default function FounderShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "/founder/dashboard";
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeLabel, setRouteLabel] = useState("Chargement…");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     setRouteLoading(false);
+    setMobileNavOpen(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -133,152 +132,204 @@ export default function FounderShell({ children }: { children: ReactNode }) {
   const activeItem = NAV.find((item) => isActivePath(pathname, item.href)) ?? NAV[0];
   const ActiveIcon = activeItem.Icon;
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-950" onClickCapture={handleShellClickCapture} onSubmitCapture={handleShellSubmitCapture}>
-      {routeLoading ? <LoadingOverlay label={routeLabel} /> : null}
-      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white shadow-sm sm:h-12 sm:w-12">
-              <Building2 className="h-5 w-5" />
+  const navigation = (
+    <>
+      <div className="border-b border-white/15 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/20 text-white">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 leading-tight">
+            <div className="text-[12px] text-white/80">Espace fondateur</div>
+            <div className="truncate text-[15px] font-extrabold">Mon Cahier</div>
+            <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              <span>Connecté</span>
             </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-black text-slate-950 sm:text-base">
-                Mon Cahier
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-white/15 px-4 py-3">
+        <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
+          Navigation
+        </div>
+        <nav className="space-y-2" aria-label="Navigation fondateur">
+          {NAV.map(({ href, label, Icon }) => {
+            const active = isActivePath(pathname, href);
+
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={[
+                  "group flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                  active
+                    ? "bg-white text-[#003766]"
+                    : "bg-white/10 text-white hover:bg-white/15",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "grid h-10 w-10 shrink-0 place-items-center rounded-2xl transition",
+                    active ? "bg-[#e7f0fa] text-[#003766]" : "bg-white/15 text-white",
+                  ].join(" ")}
+                >
+                  <Icon className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                <ChevronRight
+                  className={[
+                    "h-4 w-4 shrink-0 transition",
+                    active ? "text-[#003766]" : "text-white/45 group-hover:text-white/80",
+                  ].join(" ")}
+                />
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      <div className="border-b border-white/15 px-4 py-3">
+        <details className="rounded-2xl bg-white/10 px-3 py-3">
+          <summary className="cursor-pointer list-none text-[13px] font-extrabold text-white">
+            Notifications appareil
+          </summary>
+          <div className="mt-3 [&>div]:border-white/20 [&>div]:shadow-none">
+            <InstallAndPushCTA />
+          </div>
+        </details>
+      </div>
+
+      <div className="flex-1" />
+
+      <div className="border-t border-white/15 px-4 py-4">
+        <TrueLogoutButton
+          label="Se déconnecter"
+          className="inline-flex w-full items-center justify-start gap-2 rounded-2xl bg-white px-4 py-3 text-[14px] font-extrabold text-[#003766] transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
+        />
+        <div className="mt-4 leading-tight text-white/80">
+          <div className="text-[12px] opacity-80">Développé par</div>
+          <div className="text-[15px] font-extrabold text-amber-300">
+            Nexa Digital SARL
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div
+      className="min-h-screen bg-slate-50 text-slate-950"
+      onClickCapture={handleShellClickCapture}
+      onSubmitCapture={handleShellSubmitCapture}
+    >
+      {routeLoading ? <LoadingOverlay label={routeLabel} /> : null}
+
+      {mobileNavOpen ? (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <aside className="flex h-full w-[86vw] max-w-[330px] flex-col overflow-y-auto bg-[#003766] text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/15 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white/15">
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div className="leading-tight">
+                  <div className="text-[13px] font-extrabold uppercase tracking-wide">Mon Cahier</div>
+                  <div className="text-[12px] text-white/80">Fondateur</div>
+                </div>
               </div>
-              <div className="truncate text-xs font-semibold text-slate-500 sm:text-sm">
-                Espace Fondateur
-                <span className="hidden sm:inline"> · Multi-écoles</span>
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-white"
+                aria-label="Fermer le menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {navigation}
+          </aside>
+          <button
+            type="button"
+            aria-label="Fermer le menu"
+            className="flex-1 bg-black/30"
+            onClick={() => setMobileNavOpen(false)}
+          />
+        </div>
+      ) : null}
+
+      <header className="sticky top-0 z-40 bg-[#003766] text-white shadow">
+        <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between px-3 py-3 sm:px-4 lg:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#006633] text-white lg:hidden"
+              aria-label="Ouvrir le menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-white">
+                <Building2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 leading-tight">
+                <div className="text-[13px] font-extrabold uppercase tracking-wide">
+                  Mon Cahier
+                </div>
+                <div className="truncate text-[12px] opacity-80">
+                  Espace fondateur
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="shrink-0">
-            <TrueLogoutButton label="Se déconnecter" />
+          <div className="flex items-center gap-2 text-right leading-tight">
+            <div>
+              <div className="text-[12px] font-extrabold uppercase tracking-[0.25em] text-amber-300">
+                FOUNDER
+              </div>
+              <div className="text-[13px] font-bold">Pilotage</div>
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-7xl px-2 py-3 sm:px-4 lg:px-6 lg:py-7">
-        <div className="lg:grid lg:min-h-[calc(100vh-116px)] lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-7">
-          <aside className="fixed left-2 top-[82px] z-40 h-[calc(100dvh-98px)] w-[86px] overflow-hidden rounded-[26px] border border-slate-200 bg-white p-2 shadow-sm sm:left-4 sm:w-[104px] lg:sticky lg:left-auto lg:top-24 lg:z-auto lg:h-[calc(100vh-116px)] lg:w-auto lg:self-start lg:rounded-[30px] lg:p-3">
-            <div className="mb-3 hidden items-center justify-between rounded-[22px] bg-slate-950 px-4 py-4 text-white lg:flex">
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.2em] text-white/55">
-                  Fondateur
-                </div>
-                <div className="mt-1 text-sm font-black">Pilotage consolidé</div>
-              </div>
-              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-emerald-200">
-                <ShieldCheck className="h-5 w-5" />
-              </div>
+      <div className="mx-auto grid w-full max-w-[1440px] min-w-0 grid-cols-1 gap-0 px-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-6 lg:px-6">
+        <aside className="hidden w-full shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain lg:rounded-b-[28px] lg:shadow-xl lg:shadow-slate-900/10">
+          {navigation}
+        </aside>
+
+        <main className="min-w-0 px-3 py-5 pb-8 sm:px-4 lg:px-0 lg:py-6">
+          <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:px-5">
+            <div className="text-[12px] text-slate-500">
+              Vous êtes ici : <span className="mx-1">›</span> {activeItem.label}
             </div>
-
-            <div className="mb-3 grid place-items-center rounded-[22px] bg-slate-950 px-2 py-3 text-white lg:hidden">
-              <ShieldCheck className="h-5 w-5" />
-              <span className="mt-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/70">
-                Founder
-              </span>
-            </div>
-
-            <nav className="space-y-2" aria-label="Navigation fondateur">
-              {NAV.map(({ href, label, shortLabel, description, Icon }) => {
-                const active = isActivePath(pathname, href);
-
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    aria-current={active ? "page" : undefined}
-                    className={[
-                      "group flex flex-col items-center justify-center rounded-[20px] px-2 py-3 text-center text-xs font-black transition lg:flex-row lg:justify-start lg:gap-3 lg:px-3 lg:py-3 lg:text-left lg:text-sm",
-                      active
-                        ? "bg-slate-950 text-white shadow-sm"
-                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-950",
-                    ].join(" ")}
-                  >
-                    <span
-                      className={[
-                        "grid h-10 w-10 shrink-0 place-items-center rounded-2xl transition lg:h-11 lg:w-11",
-                        active
-                          ? "bg-white/10 text-white"
-                          : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-900",
-                      ].join(" ")}
-                    >
-                      <Icon className="h-5 w-5" />
-                    </span>
-
-                    <span className="mt-1 block max-w-full truncate text-[10px] leading-3 sm:text-[11px] lg:hidden">
-                      {shortLabel}
-                    </span>
-
-                    <span className="hidden min-w-0 flex-1 lg:block">
-                      <span className="block truncate">{label}</span>
-                      <span
-                        className={[
-                          "mt-0.5 block truncate text-xs font-semibold",
-                          active ? "text-slate-200" : "text-slate-400",
-                        ].join(" ")}
-                      >
-                        {description}
-                      </span>
-                    </span>
-
-                    <ChevronRight
-                      className={[
-                        "hidden h-4 w-4 shrink-0 transition lg:block",
-                        active ? "text-white" : "text-slate-300 group-hover:text-slate-500",
-                      ].join(" ")}
-                    />
-                  </Link>
-                );
-              })}
-            </nav>
-
-            <div className="mt-4 hidden lg:block">
-              <InstallAndPushCTA />
-            </div>
-
-            <div className="mt-4 hidden rounded-[26px] border border-slate-200 bg-slate-50 p-4 lg:block">
-              <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                Rôle
-              </div>
-              <div className="mt-2 text-sm font-black text-slate-950">
-                Fondateur multi-écoles
-              </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500">
-                Vue consolidée des établissements rattachés, des créneaux et des mouvements financiers.
-              </p>
-            </div>
-          </aside>
-
-          <main className="min-w-0 pb-8 pl-[96px] sm:pl-[116px] lg:pl-0 lg:pb-10">
-            <div className="mb-3 rounded-[22px] border border-slate-200 bg-white p-3 shadow-sm lg:hidden">
-              <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#003766] text-white">
                   <ActiveIcon className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
-                    <LayoutDashboard className="h-3.5 w-3.5" /> Onglet actif
-                  </div>
-                  <div className="mt-1 truncate text-base font-black text-slate-950">
+                  <div className="truncate text-xl font-extrabold text-slate-900">
                     {activeItem.label}
                   </div>
-                  <div className="truncate text-xs font-semibold text-slate-500">
+                  <div className="truncate text-[13px] font-semibold text-slate-500">
                     {activeItem.description}
                   </div>
                 </div>
               </div>
+              <div className="hidden rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-black text-slate-700 sm:block">
+                Fondateur
+              </div>
             </div>
+          </div>
 
-            <div className="mb-3 lg:hidden">
-              <InstallAndPushCTA />
-            </div>
-
-            {children}
-          </main>
-        </div>
+          {children}
+        </main>
       </div>
     </div>
   );
