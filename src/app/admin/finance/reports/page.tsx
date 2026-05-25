@@ -249,18 +249,18 @@ function affectationLabelForStudent(student: { is_affecte?: boolean | null; regi
   if (regime.includes("reaf") || regime.includes("reaff") || regime.includes("affect")) {
     return "Affecté / réaffecté";
   }
-  return "Statut affectation non renseigné";
+  return "Profil à compléter";
 }
 
 function boardingLabelForStudent(student: { is_boarder?: boolean | null } | null | undefined) {
   if (student?.is_boarder === true) return "Interne";
   if (student?.is_boarder === false) return "Non interne";
-  return "Internat non renseigné";
+  return "Profil à compléter";
 }
 
 function cycleLabelFromLevel(level: string | null | undefined) {
   const text = normalizeTextForReport(level);
-  if (!text) return "Cycle non renseigné";
+  if (!text) return "Cycle à compléter";
   if (/6|5|4|3/.test(text) || text.includes("sixi") || text.includes("cinqui") || text.includes("quatri") || text.includes("troisi")) {
     return "Premier cycle";
   }
@@ -353,22 +353,23 @@ function balanceStatusLabel(status: ChargeBalanceRow["computed_status"]) {
 async function fetchAllChargeBalancesForReports({
   institutionId,
   classIds,
-  startDate,
-  endDate,
+  academicYearId,
+  academicYearStart,
+  academicYearEnd,
 }: {
   institutionId: string;
   classIds: string[];
-  startDate?: string;
-  endDate?: string;
+  academicYearId?: string | null;
+  academicYearStart?: string | null;
+  academicYearEnd?: string | null;
 }): Promise<ChargeBalanceRow[]> {
   const uniqueClassIds = Array.from(new Set(classIds.filter(Boolean)));
-  if (uniqueClassIds.length === 0) return [];
-
   const admin = getSupabaseServiceClient();
   const pageSize = 1000;
-  const rows: ChargeBalanceRow[] = [];
 
-  for (const ids of chunkArray(uniqueClassIds, 50)) {
+  const fetchPages = async (mutate: (query: any) => any) => {
+    const rows: ChargeBalanceRow[] = [];
+
     for (let from = 0; ; from += pageSize) {
       const to = from + pageSize - 1;
       let query = admin
@@ -378,15 +379,9 @@ async function fetchAllChargeBalancesForReports({
           "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
         )
         .eq("school_id", institutionId)
-        .in("class_id", ids)
         .neq("computed_status", "cancelled");
 
-      if (startDate) {
-        query = query.gte("charge_date", startDate);
-      }
-      if (endDate) {
-        query = query.lte("charge_date", endDate);
-      }
+      query = mutate(query);
 
       const { data, error } = await query
         .order("due_date", { ascending: true, nullsFirst: false })
@@ -401,9 +396,41 @@ async function fetchAllChargeBalancesForReports({
 
       if (pageRows.length < pageSize) break;
     }
+
+    return rows;
+  };
+
+  const yearId = String(academicYearId || "").trim();
+  if (yearId) {
+    const rows = await fetchPages((query) => query.eq("academic_year_id", yearId));
+    if (rows.length > 0) return rows;
   }
 
-  return rows;
+  if (uniqueClassIds.length > 0) {
+    const rows: ChargeBalanceRow[] = [];
+    for (const ids of chunkArray(uniqueClassIds, 50)) {
+      rows.push(
+        ...(await fetchPages((query) => {
+          let q = query.in("class_id", ids);
+          if (academicYearStart) q = q.gte("charge_date", academicYearStart);
+          if (academicYearEnd) q = q.lte("charge_date", academicYearEnd);
+          return q;
+        })),
+      );
+    }
+    return rows;
+  }
+
+  if (academicYearStart || academicYearEnd) {
+    return fetchPages((query) => {
+      let q = query;
+      if (academicYearStart) q = q.gte("charge_date", academicYearStart);
+      if (academicYearEnd) q = q.lte("charge_date", academicYearEnd);
+      return q;
+    });
+  }
+
+  return [];
 }
 
 async function fetchChargeBalancesByIdsForReports({
@@ -500,6 +527,87 @@ async function fetchReceiptAllocationComponentsForReports({
   }
 
   return rows.filter((row) => row.receipt_status !== "cancelled");
+}
+
+async function fetchClassesByIdsForReports({
+  institutionId,
+  classIds,
+}: {
+  institutionId: string;
+  classIds: string[];
+}): Promise<ClassRow[]> {
+  const uniqueClassIds = Array.from(new Set(classIds.filter(Boolean)));
+  if (uniqueClassIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const rows: ClassRow[] = [];
+
+  for (const ids of chunkArray(uniqueClassIds, 100)) {
+    const { data, error } = await admin
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .in("id", ids);
+
+    if (error) {
+      throw new Error(`Lecture des classes liées aux rapports impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as ClassRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchStudentsByIdsForReports({
+  institutionId,
+  studentIds,
+}: {
+  institutionId: string;
+  studentIds: string[];
+}): Promise<AdminStudentRow[]> {
+  const uniqueStudentIds = Array.from(new Set(studentIds.filter(Boolean)));
+  if (uniqueStudentIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const rows: AdminStudentRow[] = [];
+
+  for (const ids of chunkArray(uniqueStudentIds, 100)) {
+    const { data, error } = await admin
+      .from("students")
+      .select("id,first_name,last_name,full_name,matricule,gender,regime,is_affecte,is_boarder,institution_id")
+      .eq("institution_id", institutionId)
+      .in("id", ids);
+
+    if (error) {
+      throw new Error(`Lecture des élèves liés aux rapports impossible : ${error.message}`);
+    }
+
+    for (const raw of data ?? []) {
+      const row = raw as any;
+      const fullName =
+        String(row.full_name || "").trim() ||
+        `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+        "Élève sans nom";
+
+      rows.push({
+        id: String(row.id),
+        full_name: fullName,
+        class_id: null,
+        class_label: null,
+        matricule: row.matricule ? String(row.matricule) : null,
+        level: null,
+        class_level: null,
+        academic_year: null,
+        gender: row.gender ? String(row.gender) : null,
+        is_affecte: typeof row.is_affecte === "boolean" ? row.is_affecte : null,
+        is_boarder: typeof row.is_boarder === "boolean" ? row.is_boarder : null,
+        regime: row.regime ? String(row.regime) : null,
+      });
+    }
+  }
+
+  return rows;
 }
 
 function StatCard({
@@ -904,6 +1012,7 @@ export default async function FinanceReportsPage({
   );
   const {
     academicYears,
+    selectedAcademicYearId,
     selectedAcademicYearCode,
     selectedAcademicYearLabel,
     selectedAcademicYearStart,
@@ -989,18 +1098,11 @@ export default async function FinanceReportsPage({
         .order("created_at", { ascending: false });
     })(),
 
-    (() => {
-      let query = supabase
-        .from("classes")
-        .select("id,label,level,academic_year")
-        .eq("institution_id", institutionId);
-
-      if (selectedAcademicYearCode) {
-        query = query.eq("academic_year", selectedAcademicYearCode);
-      }
-
-      return query.order("label", { ascending: true });
-    })(),
+    supabase
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .order("label", { ascending: true }),
 
     (() => {
       let query = supabase
@@ -1026,7 +1128,7 @@ export default async function FinanceReportsPage({
         .order("created_at", { ascending: false });
     })(),
 
-    getAdminStudentsServer(selectedAcademicYearCode),
+    getAdminStudentsServer("all"),
   ]);
 
   if (institutionErr) throw new Error(institutionErr.message);
@@ -1045,18 +1147,12 @@ export default async function FinanceReportsPage({
   const classRows = (classes ?? []) as ClassRow[];
   const receiptRows = (receipts ?? []) as ReceiptRow[];
 
-  const classIds = classRows.map((row) => row.id);
-  const classIdSet = new Set(classIds);
-  const classMap = new Map(classRows.map((c) => [c.id, c]));
+  let reportClassRows = [...classRows];
+  let classIds = reportClassRows.map((row) => row.id);
+  let classIdSet = new Set(classIds);
+  let classMap = new Map(reportClassRows.map((c) => [c.id, c]));
   const feeCategoryMap = new Map(feeCategoryRows.map((c) => [c.id, c]));
   const expenseCategoryMap = new Map(expenseCategoryRows.map((c) => [c.id, c]));
-
-  const studentRows = adminStudents.filter((student) =>
-    student.class_id ? classIdSet.has(student.class_id) : false,
-  );
-  const studentMap = new Map<string, AdminStudentRow>(
-    studentRows.map((student) => [student.id, student]),
-  );
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
   const activeSchedules = feeScheduleRows.filter((r) => r.is_active);
@@ -1067,9 +1163,12 @@ export default async function FinanceReportsPage({
     (r) => r.receipt_status === "posted",
   );
 
-  const balanceRows = await fetchAllChargeBalancesForReports({
+  let balanceRows = await fetchAllChargeBalancesForReports({
     institutionId,
     classIds,
+    academicYearId: selectedAcademicYearId,
+    academicYearStart: selectedAcademicYearStart,
+    academicYearEnd: selectedAcademicYearEnd,
   });
 
   const receiptIds = postedReceipts.map((row) => row.id);
@@ -1085,10 +1184,76 @@ export default async function FinanceReportsPage({
     allocationIds: receiptAllocations.map((row) => row.id),
   });
 
+  if (balanceRows.length === 0 && allocatedChargeRows.length > 0) {
+    balanceRows = allocatedChargeRows;
+  }
+
   const chargeMap = new Map<string, ChargeBalanceRow>();
   for (const row of [...balanceRows, ...allocatedChargeRows]) {
     chargeMap.set(row.id, row);
   }
+
+  const financeClassIds = Array.from(
+    new Set(
+      [...balanceRows, ...allocatedChargeRows]
+        .map((row) => row.class_id)
+        .filter(Boolean) as string[],
+    ),
+  );
+  const missingClassIds = financeClassIds.filter((id) => !classMap.has(id));
+  if (missingClassIds.length > 0) {
+    const missingClasses = await fetchClassesByIdsForReports({
+      institutionId,
+      classIds: missingClassIds,
+    });
+    reportClassRows = [...reportClassRows, ...missingClasses];
+    classIds = reportClassRows.map((row) => row.id);
+    classIdSet = new Set(classIds);
+    classMap = new Map(reportClassRows.map((c) => [c.id, c]));
+  }
+
+  const studentIdsFromFinance = Array.from(
+    new Set(
+      [
+        ...postedReceipts.map((row) => row.student_id),
+        ...balanceRows.map((row) => row.student_id),
+        ...allocatedChargeRows.map((row) => row.student_id),
+      ].filter(Boolean),
+    ),
+  );
+  const adminStudentsById = new Map(adminStudents.map((student) => [student.id, student]));
+  const missingStudentIds = studentIdsFromFinance.filter((id) => !adminStudentsById.has(id));
+  const directStudentRows = await fetchStudentsByIdsForReports({
+    institutionId,
+    studentIds: missingStudentIds,
+  });
+
+  const studentClassById = new Map<string, string>();
+  for (const row of [...balanceRows, ...allocatedChargeRows]) {
+    if (row.student_id && row.class_id && !studentClassById.has(row.student_id)) {
+      studentClassById.set(row.student_id, row.class_id);
+    }
+  }
+
+  const combinedStudentRows = [...adminStudents, ...directStudentRows];
+  const studentMap = new Map<string, AdminStudentRow>();
+  for (const student of combinedStudentRows) {
+    const classId = student.class_id || studentClassById.get(student.id) || null;
+    const cls = classId ? classMap.get(classId) : null;
+    studentMap.set(student.id, {
+      ...student,
+      class_id: classId,
+      class_label: student.class_label || cls?.label || null,
+      class_level: student.class_level || cls?.level || null,
+      level: student.level || cls?.level || null,
+      academic_year: student.academic_year || cls?.academic_year || selectedAcademicYearCode || null,
+    });
+  }
+
+  const studentRows = Array.from(studentMap.values()).filter((student) => {
+    if (studentIdsFromFinance.includes(student.id)) return true;
+    return student.class_id ? classIdSet.has(student.class_id) : false;
+  });
 
   const allocationsByReceipt = new Map<string, ReceiptAllocationRow[]>();
   for (const row of receiptAllocations) {
@@ -1123,7 +1288,7 @@ export default async function FinanceReportsPage({
     if (allocations.length === 0) {
       const student = studentMap.get(receipt.student_id);
       const cls = student?.class_id ? classMap.get(student.class_id) : null;
-      const level = student?.class_level || student?.level || cls?.level || "Niveau non renseigné";
+      const level = student?.class_level || student?.level || cls?.level || "Niveau à compléter";
       paymentRecords.push({
         receiptId: receipt.id,
         allocationId: null,
@@ -1131,7 +1296,7 @@ export default async function FinanceReportsPage({
         studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
         matricule: student?.matricule || "—",
         classId: student?.class_id || null,
-        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        classLabel: student?.class_label || cls?.label || "Classe à compléter",
         level,
         cycle: cycleLabelFromLevel(level),
         affectationLabel: affectationLabelForStudent(student),
@@ -1151,7 +1316,7 @@ export default async function FinanceReportsPage({
         : student?.class_id
           ? classMap.get(student.class_id)
           : null;
-      const level = student?.class_level || student?.level || cls?.level || "Niveau non renseigné";
+      const level = student?.class_level || student?.level || cls?.level || "Niveau à compléter";
       const category = charge?.fee_category_id
         ? feeCategoryMap.get(charge.fee_category_id)
         : null;
@@ -1165,7 +1330,7 @@ export default async function FinanceReportsPage({
         studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
         matricule: student?.matricule || "—",
         classId: charge?.class_id || student?.class_id || null,
-        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        classLabel: student?.class_label || cls?.label || "Classe à compléter",
         level,
         cycle: cycleLabelFromLevel(level),
         affectationLabel: affectationLabelForStudent(student),
@@ -1177,14 +1342,14 @@ export default async function FinanceReportsPage({
         for (const component of components) {
           paymentRecords.push({
             ...baseRecord,
-            subRubric: component.label || charge?.label || "Sous-rubrique non renseignée",
+            subRubric: component.label || charge?.label || "Sous-rubrique à compléter",
             amount: toNumber(component.amount),
           });
         }
       } else {
         paymentRecords.push({
           ...baseRecord,
-          subRubric: charge?.label || "Sous-rubrique non renseignée",
+          subRubric: charge?.label || "Sous-rubrique à compléter",
           amount: toNumber(allocation.amount),
         });
       }
@@ -1343,7 +1508,7 @@ export default async function FinanceReportsPage({
     .filter((x) => x.count > 0)
     .sort((a, b) => b.total - a.total);
 
-  const classSummary = classRows
+  const classSummary = reportClassRows
     .map((cls) => {
       const items = balanceRows.filter((row) => row.class_id === cls.id);
       const expected = items.reduce((sum, row) => sum + toNumber(row.net_amount), 0);
@@ -1378,7 +1543,7 @@ export default async function FinanceReportsPage({
   );
   const paymentByLevel = groupPaymentRecords(
     paymentRecords,
-    (record) => record.level || "Niveau non renseigné",
+    (record) => record.level || "Niveau à compléter",
   );
 
   const paymentByCategorySubRubric = groupPaymentRecords(
@@ -1390,7 +1555,7 @@ export default async function FinanceReportsPage({
     return {
       ...row,
       category: category || "Sans catégorie",
-      subRubric: subRubric || "Sous-rubrique non renseignée",
+      subRubric: subRubric || "Sous-rubrique à compléter",
     };
   }) as PaymentCategorySubSummary[];
 
@@ -1402,8 +1567,8 @@ export default async function FinanceReportsPage({
     const [cycle, classLabel] = row.key.split("|||");
     return {
       ...row,
-      cycle: cycle || "Cycle non renseigné",
-      classLabel: classLabel || "Classe non renseignée",
+      cycle: cycle || "Cycle à compléter",
+      classLabel: classLabel || "Classe à compléter",
     };
   }) as PaymentCycleClassSummary[];
 
@@ -1431,10 +1596,10 @@ export default async function FinanceReportsPage({
       return {
         matricule: student?.matricule || "—",
         fullName: student?.full_name || "Élève sans nom",
-        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        classLabel: student?.class_label || cls?.label || "Classe à compléter",
         level,
         category: category?.name || "Sans catégorie",
-        subRubric: row.label || "Sous-rubrique non renseignée",
+        subRubric: row.label || "Sous-rubrique à compléter",
         expected: toNumber(row.net_amount),
         paid: toNumber(row.paid_amount),
         due: Math.max(0, toNumber(row.balance_due)),
