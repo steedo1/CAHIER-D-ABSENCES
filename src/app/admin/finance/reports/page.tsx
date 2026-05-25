@@ -20,7 +20,10 @@ import {
   getFinanceAccessForCurrentUser,
   getFinanceInstitutionIdForCurrentUser,
 } from "@/lib/finance-access";
-import { getAdminStudentsServer } from "@/lib/admin-students-server";
+import {
+  getAdminStudentsServer,
+  type AdminStudentRow,
+} from "@/lib/admin-students-server";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -111,6 +114,72 @@ type ReceiptRow = {
   created_at: string;
 };
 
+type ReceiptAllocationRow = {
+  id: string;
+  receipt_id: string;
+  student_charge_id: string;
+  amount: number | string;
+};
+
+type ReceiptAllocationComponentRow = {
+  id: string;
+  receipt_allocation_id: string;
+  receipt_id: string;
+  student_charge_id: string;
+  label: string;
+  amount: number | string;
+  receipt_status: string;
+};
+
+type PaymentRecord = {
+  receiptId: string;
+  allocationId: string | null;
+  studentId: string;
+  studentName: string;
+  matricule: string;
+  classId: string | null;
+  classLabel: string;
+  level: string;
+  cycle: string;
+  affectationLabel: string;
+  boardingLabel: string;
+  categoryName: string;
+  subRubric: string;
+  amount: number;
+};
+
+type PaymentGroupSummary = {
+  key: string;
+  label: string;
+  amount: number;
+  count: number;
+  studentCount: number;
+};
+
+type PaymentCategorySubSummary = PaymentGroupSummary & {
+  category: string;
+  subRubric: string;
+};
+
+type PaymentCycleClassSummary = PaymentGroupSummary & {
+  cycle: string;
+  classLabel: string;
+};
+
+type DebtDetailSummary = {
+  matricule: string;
+  fullName: string;
+  classLabel: string;
+  level: string;
+  category: string;
+  subRubric: string;
+  expected: number;
+  paid: number;
+  due: number;
+  status: string;
+  dueDate: string;
+};
+
 type InstitutionRow = {
   id: string;
   name: string | null;
@@ -162,6 +231,73 @@ function chunkArray<T>(items: T[], size: number) {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
+}
+
+function normalizeTextForReport(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function affectationLabelForStudent(student: { is_affecte?: boolean | null; regime?: string | null } | null | undefined) {
+  if (student?.is_affecte === true) return "Affecté / réaffecté";
+  if (student?.is_affecte === false) return "Non affecté";
+
+  const regime = normalizeTextForReport(student?.regime);
+  if (regime.includes("non") && regime.includes("aff")) return "Non affecté";
+  if (regime.includes("reaf") || regime.includes("reaff") || regime.includes("affect")) {
+    return "Affecté / réaffecté";
+  }
+  return "Statut affectation non renseigné";
+}
+
+function boardingLabelForStudent(student: { is_boarder?: boolean | null } | null | undefined) {
+  if (student?.is_boarder === true) return "Interne";
+  if (student?.is_boarder === false) return "Non interne";
+  return "Internat non renseigné";
+}
+
+function cycleLabelFromLevel(level: string | null | undefined) {
+  const text = normalizeTextForReport(level);
+  if (!text) return "Cycle non renseigné";
+  if (/6|5|4|3/.test(text) || text.includes("sixi") || text.includes("cinqui") || text.includes("quatri") || text.includes("troisi")) {
+    return "Premier cycle";
+  }
+  if (text.includes("2de") || text.includes("2nde") || text.includes("seconde") || text.includes("1re") || text.includes("1ere") || text.includes("premiere") || text.includes("tle") || text.includes("term")) {
+    return "Second cycle";
+  }
+  return "Autre cycle";
+}
+
+function groupPaymentRecords(
+  records: PaymentRecord[],
+  getKey: (record: PaymentRecord) => string,
+  getLabel: (record: PaymentRecord) => string = getKey,
+): PaymentGroupSummary[] {
+  const map = new Map<string, { label: string; amount: number; count: number; students: Set<string> }>();
+
+  for (const record of records) {
+    if (record.amount <= 0) continue;
+    const key = getKey(record) || "Non renseigné";
+    if (!map.has(key)) {
+      map.set(key, { label: getLabel(record) || key, amount: 0, count: 0, students: new Set<string>() });
+    }
+    const item = map.get(key)!;
+    item.amount += record.amount;
+    item.count += 1;
+    if (record.studentId) item.students.add(record.studentId);
+  }
+
+  return Array.from(map.entries())
+    .map(([key, value]) => ({
+      key,
+      label: value.label,
+      amount: value.amount,
+      count: value.count,
+      studentCount: value.students.size,
+    }))
+    .sort((a, b) => b.amount - a.amount || a.label.localeCompare(b.label, "fr"));
 }
 
 function monthKey(dateValue: string) {
@@ -270,6 +406,102 @@ async function fetchAllChargeBalancesForReports({
   return rows;
 }
 
+async function fetchChargeBalancesByIdsForReports({
+  institutionId,
+  chargeIds,
+}: {
+  institutionId: string;
+  chargeIds: string[];
+}): Promise<ChargeBalanceRow[]> {
+  const uniqueChargeIds = Array.from(new Set(chargeIds.filter(Boolean)));
+  if (uniqueChargeIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const rows: ChargeBalanceRow[] = [];
+
+  for (const ids of chunkArray(uniqueChargeIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("v_charge_balances")
+      .select(
+        "id,school_id,academic_year_id,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,net_amount,paid_amount,balance_due,due_date,charge_date,computed_status,created_at,updated_at",
+      )
+      .eq("school_id", institutionId)
+      .in("id", ids);
+
+    if (error) {
+      throw new Error(`Lecture des frais liés aux encaissements impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as ChargeBalanceRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchReceiptAllocationsForReports({
+  receiptIds,
+}: {
+  receiptIds: string[];
+}): Promise<ReceiptAllocationRow[]> {
+  const uniqueReceiptIds = Array.from(new Set(receiptIds.filter(Boolean)));
+  if (uniqueReceiptIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const rows: ReceiptAllocationRow[] = [];
+
+  for (const ids of chunkArray(uniqueReceiptIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("receipt_allocations")
+      .select("id,receipt_id,student_charge_id,amount")
+      .in("receipt_id", ids);
+
+    if (error) {
+      throw new Error(`Lecture des ventilations de reçus impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as ReceiptAllocationRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchReceiptAllocationComponentsForReports({
+  institutionId,
+  allocationIds,
+}: {
+  institutionId: string;
+  allocationIds: string[];
+}): Promise<ReceiptAllocationComponentRow[]> {
+  const uniqueAllocationIds = Array.from(new Set(allocationIds.filter(Boolean)));
+  if (uniqueAllocationIds.length === 0) return [];
+
+  const admin = getSupabaseServiceClient();
+  const rows: ReceiptAllocationComponentRow[] = [];
+
+  for (const ids of chunkArray(uniqueAllocationIds, 100)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("v_receipt_allocation_components")
+      .select("id,receipt_allocation_id,receipt_id,student_charge_id,label,amount,receipt_status")
+      .eq("school_id", institutionId)
+      .in("receipt_allocation_id", ids);
+
+    if (error) {
+      const msg = String(error.message || "").toLowerCase();
+      if (msg.includes("does not exist") || msg.includes("introuvable")) {
+        return [];
+      }
+      throw new Error(`Lecture des sous-rubriques encaissées impossible : ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as ReceiptAllocationComponentRow[]));
+  }
+
+  return rows.filter((row) => row.receipt_status !== "cancelled");
+}
+
 function StatCard({
   icon,
   label,
@@ -348,6 +580,237 @@ function ProgressLine({ rate }: { rate: number }) {
   );
 }
 
+function MoneyGroupTable({
+  title,
+  icon,
+  rows,
+  emptyLabel,
+}: {
+  title: string;
+  icon?: ReactNode;
+  rows: PaymentGroupSummary[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        {icon}
+        {title}
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+          {emptyLabel}
+        </div>
+      ) : (
+        <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+          <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr] bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-600 sm:grid-cols-[1.7fr_0.7fr_0.7fr_0.8fr]">
+            <div>Libellé</div>
+            <div className="text-right">Montant</div>
+            <div className="hidden text-right sm:block">Élèves</div>
+            <div className="text-right">Lignes</div>
+          </div>
+          <div className="divide-y divide-slate-200">
+            {rows.map((row) => (
+              <div
+                key={row.key}
+                className="grid grid-cols-[1.4fr_0.8fr_0.8fr] items-center px-4 py-3 text-sm sm:grid-cols-[1.7fr_0.7fr_0.7fr_0.8fr]"
+              >
+                <div className="font-bold text-slate-800">{row.label}</div>
+                <div className="text-right font-black text-emerald-700">
+                  {formatMoney(row.amount)}
+                </div>
+                <div className="hidden text-right font-bold text-slate-700 sm:block">
+                  {row.studentCount}
+                </div>
+                <div className="text-right font-bold text-slate-700">{row.count}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategorySubRubricTable({ rows }: { rows: PaymentCategorySubSummary[] }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        <Layers3 className="h-4 w-4 text-emerald-600" />
+        Encaissé par catégorie et sous-rubrique
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+          Aucun encaissement ventilé sur la période.
+        </div>
+      ) : (
+        <div className="mt-5 max-h-[560px] overflow-auto rounded-3xl border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="sticky top-0 bg-slate-100 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+              <tr>
+                <th className="px-4 py-3 text-left">Catégorie</th>
+                <th className="px-4 py-3 text-left">Sous-rubrique</th>
+                <th className="px-4 py-3 text-right">Montant encaissé</th>
+                <th className="px-4 py-3 text-right">Élèves</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {rows.map((row) => (
+                <tr key={row.key} className="bg-white">
+                  <td className="px-4 py-3 font-bold text-slate-800">{row.category}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.subRubric}</td>
+                  <td className="px-4 py-3 text-right font-black text-emerald-700">
+                    {formatMoney(row.amount)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-slate-700">
+                    {row.studentCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CycleClassPaymentTable({ rows }: { rows: PaymentCycleClassSummary[] }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        <Users className="h-4 w-4 text-sky-600" />
+        Encaissé par classe et par cycle
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+          Aucun encaissement de classe sur la période.
+        </div>
+      ) : (
+        <div className="mt-5 max-h-[560px] overflow-auto rounded-3xl border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="sticky top-0 bg-slate-100 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+              <tr>
+                <th className="px-4 py-3 text-left">Cycle</th>
+                <th className="px-4 py-3 text-left">Classe</th>
+                <th className="px-4 py-3 text-right">Montant encaissé</th>
+                <th className="px-4 py-3 text-right">Élèves</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {rows.map((row) => (
+                <tr key={row.key} className="bg-white">
+                  <td className="px-4 py-3 font-bold text-slate-800">{row.cycle}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.classLabel}</td>
+                  <td className="px-4 py-3 text-right font-black text-emerald-700">
+                    {formatMoney(row.amount)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-slate-700">
+                    {row.studentCount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudentDebtTable({ rows }: { rows: Array<{ matricule: string; fullName: string; classLabel: string; expected: number; paid: number; due: number; status: string }> }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        <ArrowDownRight className="h-4 w-4 text-amber-600" />
+        Liste des élèves et leurs dettes par classe
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+          Aucun élève débiteur sur l’année sélectionnée.
+        </div>
+      ) : (
+        <div className="mt-5 max-h-[620px] overflow-auto rounded-3xl border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="sticky top-0 bg-slate-100 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+              <tr>
+                <th className="px-4 py-3 text-left">Classe</th>
+                <th className="px-4 py-3 text-left">Élève</th>
+                <th className="px-4 py-3 text-right">Attendu</th>
+                <th className="px-4 py-3 text-right">Payé</th>
+                <th className="px-4 py-3 text-right">Dette</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {rows.map((row, index) => (
+                <tr key={`${row.classLabel}-${row.matricule}-${row.fullName}-${index}`} className="bg-white">
+                  <td className="px-4 py-3 font-bold text-slate-800">{row.classLabel}</td>
+                  <td className="px-4 py-3 text-slate-700">
+                    <span className="font-bold">{row.fullName}</span>
+                    <span className="block text-xs text-slate-500">Matricule : {row.matricule}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-bold text-slate-700">{formatMoney(row.expected)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-emerald-700">{formatMoney(row.paid)}</td>
+                  <td className="px-4 py-3 text-right font-black text-amber-700">{formatMoney(row.due)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DebtDetailTable({ rows }: { rows: DebtDetailSummary[] }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        <Receipt className="h-4 w-4 text-amber-600" />
+        Détail des dettes par élève, catégorie et classe
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+          Aucune dette détaillée à afficher.
+        </div>
+      ) : (
+        <div className="mt-5 max-h-[680px] overflow-auto rounded-3xl border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="sticky top-0 bg-slate-100 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+              <tr>
+                <th className="px-4 py-3 text-left">Classe</th>
+                <th className="px-4 py-3 text-left">Élève</th>
+                <th className="px-4 py-3 text-left">Catégorie</th>
+                <th className="px-4 py-3 text-left">Sous-rubrique</th>
+                <th className="px-4 py-3 text-right">Dette</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {rows.map((row, index) => (
+                <tr key={`${row.classLabel}-${row.matricule}-${row.category}-${row.subRubric}-${index}`} className="bg-white">
+                  <td className="px-4 py-3 font-bold text-slate-800">{row.classLabel}</td>
+                  <td className="px-4 py-3 text-slate-700">
+                    <span className="font-bold">{row.fullName}</span>
+                    <span className="block text-xs text-slate-500">{row.matricule}</span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-700">{row.category}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.subRubric}</td>
+                  <td className="px-4 py-3 text-right font-black text-amber-700">{formatMoney(row.due)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DateRangeSelector({
   academicYear,
   startDate,
@@ -375,7 +838,7 @@ function DateRangeSelector({
               Période du rapport
             </div>
             <div className="mt-1 text-sm leading-6 text-slate-600">
-              Les encaissements, dépenses et créances analysés suivent cette période : <strong>{periodLabel}</strong>.
+              Les encaissements et dépenses suivent cette période : <strong>{periodLabel}</strong>. Les dettes restent rattachées à l’année scolaire choisie.
             </div>
           </div>
         </div>
@@ -552,10 +1015,10 @@ export default async function FinanceReportsPage({
         query = query.eq("academic_year", selectedAcademicYearCode);
       }
       if (selectedStartDate) {
-        query = query.gte("payment_date", selectedStartDate);
+        query = query.gte("payment_date", `${selectedStartDate}T00:00:00`);
       }
       if (selectedEndDate) {
-        query = query.lte("payment_date", selectedEndDate);
+        query = query.lte("payment_date", `${selectedEndDate}T23:59:59.999`);
       }
 
       return query
@@ -584,20 +1047,65 @@ export default async function FinanceReportsPage({
 
   const classIds = classRows.map((row) => row.id);
   const classIdSet = new Set(classIds);
+  const classMap = new Map(classRows.map((c) => [c.id, c]));
+  const feeCategoryMap = new Map(feeCategoryRows.map((c) => [c.id, c]));
+  const expenseCategoryMap = new Map(expenseCategoryRows.map((c) => [c.id, c]));
+
   const studentRows = adminStudents.filter((student) =>
     student.class_id ? classIdSet.has(student.class_id) : false,
+  );
+  const studentMap = new Map<string, AdminStudentRow>(
+    studentRows.map((student) => [student.id, student]),
+  );
+
+  const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
+  const activeSchedules = feeScheduleRows.filter((r) => r.is_active);
+  const postedExpenses = expenseRows.filter(
+    (r) => r.expense_status === "posted",
+  );
+  const postedReceipts = receiptRows.filter(
+    (r) => r.receipt_status === "posted",
   );
 
   const balanceRows = await fetchAllChargeBalancesForReports({
     institutionId,
     classIds,
-    startDate: selectedStartDate,
-    endDate: selectedEndDate,
   });
 
-  const classMap = new Map(classRows.map((c) => [c.id, c]));
-  const feeCategoryMap = new Map(feeCategoryRows.map((c) => [c.id, c]));
-  const expenseCategoryMap = new Map(expenseCategoryRows.map((c) => [c.id, c]));
+  const receiptIds = postedReceipts.map((row) => row.id);
+  const receiptAllocations = await fetchReceiptAllocationsForReports({
+    receiptIds,
+  });
+  const allocatedChargeRows = await fetchChargeBalancesByIdsForReports({
+    institutionId,
+    chargeIds: receiptAllocations.map((row) => row.student_charge_id),
+  });
+  const allocationComponents = await fetchReceiptAllocationComponentsForReports({
+    institutionId,
+    allocationIds: receiptAllocations.map((row) => row.id),
+  });
+
+  const chargeMap = new Map<string, ChargeBalanceRow>();
+  for (const row of [...balanceRows, ...allocatedChargeRows]) {
+    chargeMap.set(row.id, row);
+  }
+
+  const allocationsByReceipt = new Map<string, ReceiptAllocationRow[]>();
+  for (const row of receiptAllocations) {
+    if (!allocationsByReceipt.has(row.receipt_id)) {
+      allocationsByReceipt.set(row.receipt_id, []);
+    }
+    allocationsByReceipt.get(row.receipt_id)!.push(row);
+  }
+
+  const componentsByAllocation = new Map<string, ReceiptAllocationComponentRow[]>();
+  for (const row of allocationComponents) {
+    if (!componentsByAllocation.has(row.receipt_allocation_id)) {
+      componentsByAllocation.set(row.receipt_allocation_id, []);
+    }
+    componentsByAllocation.get(row.receipt_allocation_id)!.push(row);
+  }
+
   const studentsByClass = new Map<string, number>();
 
   for (const student of studentRows) {
@@ -608,14 +1116,80 @@ export default async function FinanceReportsPage({
     );
   }
 
-  const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
-  const activeSchedules = feeScheduleRows.filter((r) => r.is_active);
-  const postedExpenses = expenseRows.filter(
-    (r) => r.expense_status === "posted",
-  );
-  const postedReceipts = receiptRows.filter(
-    (r) => r.receipt_status === "posted",
-  );
+  const paymentRecords: PaymentRecord[] = [];
+  for (const receipt of postedReceipts) {
+    const allocations = allocationsByReceipt.get(receipt.id) ?? [];
+
+    if (allocations.length === 0) {
+      const student = studentMap.get(receipt.student_id);
+      const cls = student?.class_id ? classMap.get(student.class_id) : null;
+      const level = student?.class_level || student?.level || cls?.level || "Niveau non renseigné";
+      paymentRecords.push({
+        receiptId: receipt.id,
+        allocationId: null,
+        studentId: receipt.student_id,
+        studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
+        matricule: student?.matricule || "—",
+        classId: student?.class_id || null,
+        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        level,
+        cycle: cycleLabelFromLevel(level),
+        affectationLabel: affectationLabelForStudent(student),
+        boardingLabel: boardingLabelForStudent(student),
+        categoryName: "Non ventilé",
+        subRubric: receipt.reference_no || "Reçu global",
+        amount: toNumber(receipt.total_amount),
+      });
+      continue;
+    }
+
+    for (const allocation of allocations) {
+      const charge = chargeMap.get(allocation.student_charge_id);
+      const student = studentMap.get(charge?.student_id || receipt.student_id);
+      const cls = charge?.class_id
+        ? classMap.get(charge.class_id)
+        : student?.class_id
+          ? classMap.get(student.class_id)
+          : null;
+      const level = student?.class_level || student?.level || cls?.level || "Niveau non renseigné";
+      const category = charge?.fee_category_id
+        ? feeCategoryMap.get(charge.fee_category_id)
+        : null;
+      const components = (componentsByAllocation.get(allocation.id) ?? []).filter(
+        (component) => toNumber(component.amount) > 0,
+      );
+      const baseRecord = {
+        receiptId: receipt.id,
+        allocationId: allocation.id,
+        studentId: student?.id || receipt.student_id,
+        studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
+        matricule: student?.matricule || "—",
+        classId: charge?.class_id || student?.class_id || null,
+        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        level,
+        cycle: cycleLabelFromLevel(level),
+        affectationLabel: affectationLabelForStudent(student),
+        boardingLabel: boardingLabelForStudent(student),
+        categoryName: category?.name || "Sans catégorie",
+      };
+
+      if (components.length > 0) {
+        for (const component of components) {
+          paymentRecords.push({
+            ...baseRecord,
+            subRubric: component.label || charge?.label || "Sous-rubrique non renseignée",
+            amount: toNumber(component.amount),
+          });
+        }
+      } else {
+        paymentRecords.push({
+          ...baseRecord,
+          subRubric: charge?.label || "Sous-rubrique non renseignée",
+          amount: toNumber(allocation.amount),
+        });
+      }
+    }
+  }
 
   const totalScheduledAmount = activeSchedules.reduce(
     (sum, row) => sum + toNumber(row.amount),
@@ -692,6 +1266,7 @@ export default async function FinanceReportsPage({
         matricule: student.matricule || "—",
         fullName: student.full_name || "Élève sans nom",
         classLabel: student.class_label || classMap.get(String(student.class_id || ""))?.label || "—",
+        level: student.class_level || student.level || classMap.get(String(student.class_id || ""))?.level || "—",
         expected,
         paid,
         due,
@@ -793,6 +1368,87 @@ export default async function FinanceReportsPage({
     .filter((row) => row.students > 0 || row.expected > 0)
     .sort((a, b) => b.due - a.due || b.expected - a.expected);
 
+  const paymentByAffectation = groupPaymentRecords(
+    paymentRecords,
+    (record) => record.affectationLabel,
+  );
+  const paymentByBoarding = groupPaymentRecords(
+    paymentRecords,
+    (record) => record.boardingLabel,
+  );
+  const paymentByLevel = groupPaymentRecords(
+    paymentRecords,
+    (record) => record.level || "Niveau non renseigné",
+  );
+
+  const paymentByCategorySubRubric = groupPaymentRecords(
+    paymentRecords,
+    (record) => `${record.categoryName}|||${record.subRubric}`,
+    (record) => `${record.categoryName} — ${record.subRubric}`,
+  ).map((row) => {
+    const [category, subRubric] = row.key.split("|||");
+    return {
+      ...row,
+      category: category || "Sans catégorie",
+      subRubric: subRubric || "Sous-rubrique non renseignée",
+    };
+  }) as PaymentCategorySubSummary[];
+
+  const paymentByCycleClass = groupPaymentRecords(
+    paymentRecords,
+    (record) => `${record.cycle}|||${record.classLabel}`,
+    (record) => `${record.cycle} — ${record.classLabel}`,
+  ).map((row) => {
+    const [cycle, classLabel] = row.key.split("|||");
+    return {
+      ...row,
+      cycle: cycle || "Cycle non renseigné",
+      classLabel: classLabel || "Classe non renseignée",
+    };
+  }) as PaymentCycleClassSummary[];
+
+  const hasInternatData =
+    studentRows.some((student) => student.is_boarder === true) ||
+    feeCategoryRows.some((category) => normalizeTextForReport(category.name).includes("internat")) ||
+    balanceRows.some((row) => normalizeTextForReport(row.label).includes("internat"));
+
+  const studentDebtByClass = studentFinancialSummary
+    .filter((row) => row.due > 0)
+    .sort(
+      (a, b) =>
+        a.classLabel.localeCompare(b.classLabel, "fr", { numeric: true }) ||
+        a.fullName.localeCompare(b.fullName, "fr"),
+    );
+
+  const debtDetailsByStudentCategory = balanceRows
+    .filter((row) => Math.max(0, toNumber(row.balance_due)) > 0)
+    .map((row): DebtDetailSummary => {
+      const student = studentMap.get(row.student_id);
+      const cls = row.class_id ? classMap.get(row.class_id) : null;
+      const category = feeCategoryMap.get(row.fee_category_id);
+      const level = student?.class_level || student?.level || cls?.level || "—";
+
+      return {
+        matricule: student?.matricule || "—",
+        fullName: student?.full_name || "Élève sans nom",
+        classLabel: student?.class_label || cls?.label || "Classe non renseignée",
+        level,
+        category: category?.name || "Sans catégorie",
+        subRubric: row.label || "Sous-rubrique non renseignée",
+        expected: toNumber(row.net_amount),
+        paid: toNumber(row.paid_amount),
+        due: Math.max(0, toNumber(row.balance_due)),
+        status: balanceStatusLabel(row.computed_status),
+        dueDate: row.due_date ? formatDate(row.due_date) : "—",
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.classLabel.localeCompare(b.classLabel, "fr", { numeric: true }) ||
+        a.fullName.localeCompare(b.fullName, "fr") ||
+        a.category.localeCompare(b.category, "fr"),
+    );
+
   const monthlyMap = new Map<
     string,
     { month: string; receipts: number; expenses: number; balance: number }
@@ -822,11 +1478,6 @@ export default async function FinanceReportsPage({
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, value]) => value);
 
-  const largestCategoryDue = feePerformanceByCategory[0];
-  const bestClassRecovery = [...classSummary]
-    .filter((row) => row.expected > 0)
-    .sort((a, b) => b.rate - a.rate)[0];
-  const highestClassDebt = classSummary[0];
 
   const schedulesForExport = activeSchedules
     .map((row) => {
@@ -927,6 +1578,60 @@ export default async function FinanceReportsPage({
       rate: row.rate,
       status: row.status,
     })),
+    paymentByAffectation: paymentByAffectation.map((row) => ({
+      label: row.label,
+      amount: row.amount,
+      count: row.count,
+      studentCount: row.studentCount,
+    })),
+    paymentByBoarding: paymentByBoarding.map((row) => ({
+      label: row.label,
+      amount: row.amount,
+      count: row.count,
+      studentCount: row.studentCount,
+    })),
+    paymentByCategorySubRubric: paymentByCategorySubRubric.map((row) => ({
+      category: row.category,
+      subRubric: row.subRubric,
+      amount: row.amount,
+      count: row.count,
+      studentCount: row.studentCount,
+    })),
+    paymentByLevel: paymentByLevel.map((row) => ({
+      label: row.label,
+      amount: row.amount,
+      count: row.count,
+      studentCount: row.studentCount,
+    })),
+    paymentByCycleClass: paymentByCycleClass.map((row) => ({
+      cycle: row.cycle,
+      classLabel: row.classLabel,
+      amount: row.amount,
+      count: row.count,
+      studentCount: row.studentCount,
+    })),
+    studentDebtsByClass: studentDebtByClass.map((row) => ({
+      matricule: row.matricule,
+      fullName: row.fullName,
+      classLabel: row.classLabel,
+      expected: row.expected,
+      paid: row.paid,
+      due: row.due,
+      status: row.status,
+    })),
+    debtDetails: debtDetailsByStudentCategory.map((row) => ({
+      matricule: row.matricule,
+      fullName: row.fullName,
+      classLabel: row.classLabel,
+      level: row.level,
+      category: row.category,
+      subRubric: row.subRubric,
+      expected: row.expected,
+      paid: row.paid,
+      due: row.due,
+      status: row.status,
+      dueDate: row.dueDate,
+    })),
     schedules: schedulesForExport,
     months: monthlySummary,
     receipts: postedReceipts.map((row) => ({
@@ -961,21 +1666,20 @@ export default async function FinanceReportsPage({
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Analyse enrichie des frais attendus, des encaissements, des
-              restes à recouvrer, des dépenses et du solde net de
-              l’établissement.
+              Rapport centré sur les vrais indicateurs : encaissements par statut,
+              internat, catégorie, sous-rubrique, niveau, classe et dettes détaillées.
             </p>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-              Statut
+              Période
             </div>
             <div className="mt-2 text-lg font-black text-white">
-              Premium actif
+              {selectedPeriodLabel}
             </div>
             <div className="mt-1 text-sm text-slate-200">
-              Expiration : {access.expiresAt || "—"}
+              Année : {selectedAcademicYearLabel || selectedAcademicYearCode || "—"}
             </div>
           </div>
         </div>
@@ -1059,41 +1763,39 @@ export default async function FinanceReportsPage({
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-            Catégorie la plus sensible
-          </div>
-          <div className="mt-2 text-xl font-black text-slate-900">
-            {largestCategoryDue?.name || "—"}
-          </div>
-          <div className="mt-2 text-sm text-slate-600">
-            Reste à recouvrer : {formatMoney(largestCategoryDue?.due || 0)}
-          </div>
-        </div>
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-            Meilleur recouvrement
-          </div>
-          <div className="mt-2 text-xl font-black text-slate-900">
-            {bestClassRecovery?.classLabel || "—"}
-          </div>
-          <div className="mt-2 text-sm text-slate-600">
-            Taux : {formatPercent(bestClassRecovery?.rate || 0)}
-          </div>
-        </div>
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-            Classe à suivre
-          </div>
-          <div className="mt-2 text-xl font-black text-slate-900">
-            {highestClassDebt?.classLabel || "—"}
-          </div>
-          <div className="mt-2 text-sm text-slate-600">
-            Reste : {formatMoney(highestClassDebt?.due || 0)}
-          </div>
-        </div>
+      <section className={`grid gap-6 ${hasInternatData ? "xl:grid-cols-2" : ""}`}>
+        <MoneyGroupTable
+          title="Encaissé : affectés / non affectés"
+          icon={<Users className="h-4 w-4 text-sky-600" />}
+          rows={paymentByAffectation}
+          emptyLabel="Aucun encaissement par statut d’affectation sur la période."
+        />
+        {hasInternatData ? (
+          <MoneyGroupTable
+            title="Encaissé : internes / non internes"
+            icon={<Wallet className="h-4 w-4 text-emerald-600" />}
+            rows={paymentByBoarding}
+            emptyLabel="Aucun encaissement lié au statut d’internat sur la période."
+          />
+        ) : null}
       </section>
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        <CategorySubRubricTable rows={paymentByCategorySubRubric} />
+        <MoneyGroupTable
+          title="Encaissé par niveau"
+          icon={<BarChart3 className="h-4 w-4 text-emerald-600" />}
+          rows={paymentByLevel}
+          emptyLabel="Aucun encaissement par niveau sur la période."
+        />
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        <CycleClassPaymentTable rows={paymentByCycleClass} />
+        <StudentDebtTable rows={studentDebtByClass} />
+      </section>
+
+      <DebtDetailTable rows={debtDetailsByStudentCategory} />
 
       <section className="grid gap-6 xl:grid-cols-2">
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">

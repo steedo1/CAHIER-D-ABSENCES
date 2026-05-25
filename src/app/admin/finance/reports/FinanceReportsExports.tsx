@@ -51,6 +51,53 @@ export type FinanceReportStatusItem = {
   amount: number;
 };
 
+export type FinanceReportPaymentGroupItem = {
+  label: string;
+  amount: number;
+  count: number;
+  studentCount: number;
+};
+
+export type FinanceReportCategorySubRubricItem = {
+  category: string;
+  subRubric: string;
+  amount: number;
+  count: number;
+  studentCount: number;
+};
+
+export type FinanceReportCycleClassPaymentItem = {
+  cycle: string;
+  classLabel: string;
+  amount: number;
+  count: number;
+  studentCount: number;
+};
+
+export type FinanceReportStudentDebtItem = {
+  matricule: string;
+  fullName: string;
+  classLabel: string;
+  expected: number;
+  paid: number;
+  due: number;
+  status: string;
+};
+
+export type FinanceReportDebtDetailItem = {
+  matricule: string;
+  fullName: string;
+  classLabel: string;
+  level: string;
+  category: string;
+  subRubric: string;
+  expected: number;
+  paid: number;
+  due: number;
+  status: string;
+  dueDate: string;
+};
+
 export type FinanceReportScheduleItem = {
   label: string;
   category: string;
@@ -88,6 +135,13 @@ export type FinanceReportExportPayload = {
   classes: FinanceReportClassItem[];
   statuses: FinanceReportStatusItem[];
   students: FinanceReportStudentItem[];
+  paymentByAffectation: FinanceReportPaymentGroupItem[];
+  paymentByBoarding: FinanceReportPaymentGroupItem[];
+  paymentByCategorySubRubric: FinanceReportCategorySubRubricItem[];
+  paymentByLevel: FinanceReportPaymentGroupItem[];
+  paymentByCycleClass: FinanceReportCycleClassPaymentItem[];
+  studentDebtsByClass: FinanceReportStudentDebtItem[];
+  debtDetails: FinanceReportDebtDetailItem[];
   schedules: FinanceReportScheduleItem[];
   months: FinanceReportMonthItem[];
   receipts: FinanceReportMovementItem[];
@@ -218,6 +272,41 @@ function buildReportHtml(
 
   const globalSections = `
     ${buildTable(
+      "Montant encaissé : affectés / non affectés",
+      ["Statut", "Montant encaissé", "Lignes", "Élèves"],
+      payload.paymentByAffectation,
+      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+    )}
+
+    ${buildTable(
+      "Montant encaissé : internes / non internes",
+      ["Statut", "Montant encaissé", "Lignes", "Élèves"],
+      payload.paymentByBoarding,
+      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+    )}
+
+    ${buildTable(
+      "Montant encaissé par catégorie et sous-rubrique",
+      ["Catégorie", "Sous-rubrique", "Montant encaissé", "Lignes", "Élèves"],
+      payload.paymentByCategorySubRubric,
+      (row) => [row.category, row.subRubric, formatMoney(row.amount), row.count, row.studentCount],
+    )}
+
+    ${buildTable(
+      "Montant encaissé par niveau",
+      ["Niveau", "Montant encaissé", "Lignes", "Élèves"],
+      payload.paymentByLevel,
+      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+    )}
+
+    ${buildTable(
+      "Montant encaissé par classe et par cycle",
+      ["Cycle", "Classe", "Montant encaissé", "Lignes", "Élèves"],
+      payload.paymentByCycleClass,
+      (row) => [row.cycle, row.classLabel, formatMoney(row.amount), row.count, row.studentCount],
+    )}
+
+    ${buildTable(
       "Recouvrement par catégorie de frais",
       ["Catégorie", "Écritures", "Attendu", "Encaissé", "Reste", "Taux"],
       payload.categories,
@@ -271,7 +360,40 @@ function buildReportHtml(
     )}
 
     ${buildTable(
-      "Détail par élève",
+      "Liste des élèves et leurs dettes par classe",
+      ["Matricule", "Élève", "Classe", "Attendu", "Encaissé", "Dette", "Statut"],
+      payload.studentDebtsByClass,
+      (row) => [
+        row.matricule,
+        row.fullName,
+        row.classLabel,
+        formatMoney(row.expected),
+        formatMoney(row.paid),
+        formatMoney(row.due),
+        row.status,
+      ],
+    )}
+
+    ${buildTable(
+      "Liste des dettes par élève, catégorie et classe",
+      ["Classe", "Matricule", "Élève", "Catégorie", "Sous-rubrique", "Attendu", "Encaissé", "Dette", "Échéance", "Statut"],
+      payload.debtDetails,
+      (row) => [
+        row.classLabel,
+        row.matricule,
+        row.fullName,
+        row.category,
+        row.subRubric,
+        formatMoney(row.expected),
+        formatMoney(row.paid),
+        formatMoney(row.due),
+        row.dueDate,
+        row.status,
+      ],
+    )}
+
+    ${buildTable(
+      "Détail global par élève",
       ["Matricule", "Élève", "Classe", "Attendu", "Encaissé", "Reste", "Taux", "Statut"],
       payload.students,
       (row) => [
@@ -410,8 +532,8 @@ export default function FinanceReportsExports({
             Exports du rapport
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-emerald-900/80">
-            Choisissez un export global pour la direction, ou un export détaillé pour l’analyse complète
-            des classes, élèves, encaissements, dépenses et barèmes.
+            Choisissez un export global pour la direction, ou un export détaillé avec encaissements
+            par statut, internat, catégorie, niveau, classe et dettes par élève.
           </p>
         </div>
 
