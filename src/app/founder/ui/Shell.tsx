@@ -80,7 +80,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!routeLoading) return;
-    const timer = window.setTimeout(() => setRouteLoading(false), 25000);
+    const timer = window.setTimeout(() => setRouteLoading(false), 10000);
     return () => window.clearTimeout(timer);
   }, [routeLoading]);
 
@@ -128,9 +128,6 @@ export default function FounderShell({ children }: { children: ReactNode }) {
     if (form.target && form.target !== "_self") return;
     startLoading("Traitement en cours…");
   }
-
-  const activeItem = NAV.find((item) => isActivePath(pathname, item.href)) ?? NAV[0];
-  const ActiveIcon = activeItem.Icon;
 
   const navigation = (
     <>
@@ -206,8 +203,8 @@ export default function FounderShell({ children }: { children: ReactNode }) {
 
       <div className="border-t border-white/15 px-4 py-4">
         <TrueLogoutButton
-          label="Se déconnecter"
-          className="inline-flex w-full items-center justify-start gap-2 rounded-2xl bg-white px-4 py-3 text-[14px] font-extrabold text-[#003766] transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
+          label="Déconnexion"
+          className="inline-flex w-full items-center justify-start gap-2 rounded-2xl bg-red-600 px-4 py-3 text-[14px] font-extrabold text-white shadow-sm shadow-red-950/20 transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-70"
         />
         <div className="mt-4 leading-tight text-white/80">
           <div className="text-[12px] opacity-80">Développé par</div>
@@ -303,31 +300,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
           {navigation}
         </aside>
 
-        <main className="min-w-0 px-3 py-5 pb-8 sm:px-4 lg:px-0 lg:py-6">
-          <div className="mb-5 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm lg:px-5">
-            <div className="text-[12px] text-slate-500">
-              Vous êtes ici : <span className="mx-1">›</span> {activeItem.label}
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#003766] text-white">
-                  <ActiveIcon className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-xl font-extrabold text-slate-900">
-                    {activeItem.label}
-                  </div>
-                  <div className="truncate text-[13px] font-semibold text-slate-500">
-                    {activeItem.description}
-                  </div>
-                </div>
-              </div>
-              <div className="hidden rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-black text-slate-700 sm:block">
-                Fondateur
-              </div>
-            </div>
-          </div>
-
+        <main className="min-w-0 px-3 py-4 pb-8 sm:px-4 lg:px-0 lg:py-5">
           {children}
         </main>
       </div>

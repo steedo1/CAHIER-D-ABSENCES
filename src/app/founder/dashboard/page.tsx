@@ -108,6 +108,54 @@ function money(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
+
+type DashboardTone = "emerald" | "amber" | "sky" | "violet" | "rose" | "teal" | "slate";
+
+const TONE_CLASSES: Record<DashboardTone, { card: string; icon: string; value: string }> = {
+  emerald: {
+    card: "border-emerald-200 bg-emerald-50/50",
+    icon: "bg-emerald-100 text-emerald-700",
+    value: "text-emerald-800",
+  },
+  amber: {
+    card: "border-amber-200 bg-amber-50/60",
+    icon: "bg-amber-100 text-amber-700",
+    value: "text-amber-800",
+  },
+  sky: {
+    card: "border-sky-200 bg-sky-50/60",
+    icon: "bg-sky-100 text-sky-700",
+    value: "text-sky-800",
+  },
+  violet: {
+    card: "border-violet-200 bg-violet-50/60",
+    icon: "bg-violet-100 text-violet-700",
+    value: "text-violet-800",
+  },
+  rose: {
+    card: "border-rose-200 bg-rose-50/60",
+    icon: "bg-rose-100 text-rose-700",
+    value: "text-rose-800",
+  },
+  teal: {
+    card: "border-teal-200 bg-teal-50/60",
+    icon: "bg-teal-100 text-teal-700",
+    value: "text-teal-800",
+  },
+  slate: {
+    card: "border-slate-200 bg-white",
+    icon: "bg-slate-100 text-slate-700",
+    value: "text-slate-950",
+  },
+};
+
+const CATEGORY_TONES: DashboardTone[] = ["emerald", "sky", "amber", "violet", "teal", "rose", "slate"];
+
+function percentage(value: number, total: number) {
+  if (!total) return "0%";
+  return `${((value / total) * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}%`;
+}
+
 function chunks<T>(items: T[], size = 500): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -325,17 +373,7 @@ export default async function FounderDashboardPage({
     }
   }
 
-  const [sessions, periods, receipts, expenses, feeCategories, feeSchedules] = await Promise.all([
-    safeData<any[]>(
-      "teacher_sessions",
-      service
-        .from("teacher_sessions")
-        .select("id,institution_id,started_at,ended_at", { count: "exact", head: false })
-        .in("institution_id", institutionIds)
-        .gte("started_at", startIso)
-        .lt("started_at", endIso),
-      [],
-    ),
+  const [periods, receipts, expenses, feeSchedules] = await Promise.all([
     safeData<any[]>(
       "institution_periods",
       service
@@ -370,16 +408,6 @@ export default async function FounderDashboardPage({
       [],
     ),
     safeData<any[]>(
-      "finance.fee_categories",
-      service
-        .schema("finance")
-        .from("fee_categories")
-        .select("id,school_id,is_active")
-        .in("school_id", institutionIds)
-        .eq("is_active", true),
-      [],
-    ),
-    safeData<any[]>(
       "finance.fee_schedules",
       service
         .schema("finance")
@@ -391,89 +419,195 @@ export default async function FounderDashboardPage({
     ),
   ]);
 
+  const receiptIds = Array.from(
+    new Set((receipts ?? []).map((row: any) => String(row.id || "")).filter(Boolean)),
+  );
+
+  const receiptAllocations = await safeData<any[]>(
+    "finance.receipt_allocations",
+    receiptIds.length
+      ? service
+          .schema("finance")
+          .from("receipt_allocations")
+          .select("id,receipt_id,student_charge_id,amount")
+          .in("receipt_id", receiptIds)
+      : Promise.resolve({ data: [], error: null }),
+    [],
+  );
+
+  const allocatedChargeIds = Array.from(
+    new Set(
+      (receiptAllocations ?? [])
+        .map((row: any) => String(row.student_charge_id || ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const allocatedCharges = await safeData<any[]>(
+    "finance.v_charge_balances.allocations",
+    allocatedChargeIds.length
+      ? service
+          .schema("finance")
+          .from("v_charge_balances")
+          .select("id,fee_category_id,label")
+          .in("id", allocatedChargeIds)
+      : Promise.resolve({ data: [], error: null }),
+    [],
+  );
+
+  const allocatedCategoryIds = Array.from(
+    new Set(
+      (allocatedCharges ?? [])
+        .map((row: any) => String(row.fee_category_id || ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const allocatedCategories = await safeData<any[]>(
+    "finance.fee_categories.allocations",
+    allocatedCategoryIds.length
+      ? service
+          .schema("finance")
+          .from("fee_categories")
+          .select("id,code,name")
+          .in("id", allocatedCategoryIds)
+      : Promise.resolve({ data: [], error: null }),
+    [],
+  );
+
   // Le fondateur encaisse par DATE : un paiement reçu à la date filtrée
   // peut concerner 2025-2026, 2026-2027 ou une année prochaine.
   // On ne filtre donc pas les encaissements de période par année scolaire.
   const totalReceiptsToday = receipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
-  const receiptsByAcademicYear = Array.from(
-    (receipts ?? []).reduce(
-      (
-        map: Map<string, { academicYear: string; count: number; total: number }>,
-        row: any,
-      ) => {
-        const academicYear = String(row.academic_year || "Année non renseignée");
-        const current = map.get(academicYear) ?? {
-          academicYear,
-          count: 0,
-          total: 0,
-        };
-        current.count += 1;
-        current.total += Number(row.total_amount || 0);
-        map.set(academicYear, current);
-        return map;
-      },
-      new Map<string, { academicYear: string; count: number; total: number }>(),
-    ).values(),
-  ).sort((a, b) => a.academicYear.localeCompare(b.academicYear, "fr", { numeric: true }));
-
   const totalCollectedCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
   const totalBilledCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.net_amount || 0), 0);
   const totalBalanceDueCurrentYear = balanceRows.reduce((sum: number, row: any) => sum + Number(row.balance_due || 0), 0);
   const totalExpenses = expenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
   const net = totalReceiptsToday - totalExpenses;
   const totalStudentStats = buildStudentStats(enrollments);
-  const activeFeeCategories = (feeCategories ?? []).length;
   const activeFeeSchedules = (feeSchedules ?? []).filter((row: any) => {
     const schoolId = String(row.school_id || "");
     return String(row.academic_year || "") === currentYearByInstitution.get(schoolId);
   }).length;
 
+  const allocationChargeMap = new Map(
+    (allocatedCharges ?? []).map((row: any) => [String(row.id), row]),
+  );
+  const allocationCategoryMap = new Map(
+    (allocatedCategories ?? []).map((row: any) => [String(row.id), row]),
+  );
+  const categoryTotals = new Map<string, { label: string; total: number; count: number }>();
+
+  for (const allocation of receiptAllocations ?? []) {
+    const amount = Number(allocation.amount || 0);
+    if (!amount) continue;
+    const charge = allocationChargeMap.get(String(allocation.student_charge_id || ""));
+    const category = charge?.fee_category_id
+      ? allocationCategoryMap.get(String(charge.fee_category_id))
+      : null;
+    const label = String(category?.name || charge?.label || "Encaissements non ventilés").trim();
+    const key = String(category?.id || charge?.fee_category_id || label).trim() || "non-ventile";
+    const current = categoryTotals.get(key) ?? { label, total: 0, count: 0 };
+    current.total += amount;
+    current.count += 1;
+    categoryTotals.set(key, current);
+  }
+
+  if (categoryTotals.size === 0 && totalReceiptsToday > 0) {
+    categoryTotals.set("non-ventile", {
+      label: "Encaissements non ventilés",
+      total: totalReceiptsToday,
+      count: receipts.length,
+    });
+  }
+
+  const categoryGrandTotal = Array.from(categoryTotals.values()).reduce((sum, item) => sum + item.total, 0);
+  const categorySummary = Array.from(categoryTotals.values())
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8)
+    .map((item, index) => ({
+      ...item,
+      tone: CATEGORY_TONES[index % CATEGORY_TONES.length],
+    }));
+  const coverageRate = totalBilledCurrentYear > 0 ? Math.round((totalCollectedCurrentYear / totalBilledCurrentYear) * 100) : 0;
+
   const rows = institutions.map((school) => {
     const schoolId = school.id;
     const schoolReceipts = receipts.filter((row: any) => row.school_id === schoolId);
     const schoolExpenses = expenses.filter((row: any) => row.school_id === schoolId);
-    const schoolSessions = sessions.filter((row: any) => row.institution_id === schoolId);
     const schoolEnrollments = enrollments.filter((row: any) => row.institution_id === schoolId);
     const schoolPeriods = periods.filter((row: any) => row.institution_id === schoolId);
     const schoolBalances = balanceRows.filter((row: any) => row.school_id === schoolId);
     const receiptTotalToday = schoolReceipts.reduce((sum: number, row: any) => sum + Number(row.total_amount || 0), 0);
     const collectedCurrentYear = schoolBalances.reduce((sum: number, row: any) => sum + Number(row.paid_amount || 0), 0);
+    const billedCurrentYear = schoolBalances.reduce((sum: number, row: any) => sum + Number(row.net_amount || 0), 0);
+    const balanceDueCurrentYear = schoolBalances.reduce((sum: number, row: any) => sum + Number(row.balance_due || 0), 0);
     const expenseTotal = schoolExpenses.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0);
     const studentStats = buildStudentStats(schoolEnrollments);
 
     return {
       school,
       collectedCurrentYear,
+      billedCurrentYear,
+      balanceDueCurrentYear,
       receiptTotalToday,
       expenseTotal,
       net: receiptTotalToday - expenseTotal,
-      receiptsCount: schoolReceipts.length,
-      expensesCount: schoolExpenses.length,
-      sessionsCount: schoolSessions.length,
-      enrollmentsCount: studentStats.total,
       periodsCount: schoolPeriods.length,
       studentStats,
     };
   });
 
   const statCards = [
-    { label: "Écoles", value: institutions.length, hint: "Rattachées", Icon: School2 },
-    { label: "Élèves", value: totalStudentStats.total, hint: "Année courante", Icon: GraduationCap },
     {
-      label: "Encaissé année",
-      value: money(totalCollectedCurrentYear),
-      hint: "Cumul payé",
-      Icon: Receipt,
-    },
-    {
-      label: "Reçus période",
+      label: "Encaissement",
       value: money(totalReceiptsToday),
-      hint: `${receipts.length} reçu(s)`,
+      hint: `${receipts.length} paiement(s) sur la période`,
       Icon: ArrowUpRight,
+      tone: "emerald" as DashboardTone,
     },
-    { label: "Dépenses", value: money(totalExpenses), hint: `${expenses.length} dépense(s)`, Icon: Wallet },
-    { label: "Solde", value: money(net), hint: "Période", Icon: Activity },
-    { label: "Appels", value: sessions.length, hint: "Période", Icon: CalendarCheck2 },
+    {
+      label: "Impayés",
+      value: money(totalBalanceDueCurrentYear),
+      hint: "Total à recouvrer",
+      Icon: ArrowDownRight,
+      tone: "amber" as DashboardTone,
+    },
+    {
+      label: "Dépenses",
+      value: money(totalExpenses),
+      hint: `${expenses.length} dépense(s) validée(s)`,
+      Icon: Wallet,
+      tone: "sky" as DashboardTone,
+    },
+    {
+      label: "Total exigible",
+      value: money(totalBilledCurrentYear),
+      hint: "Frais attendus année courante",
+      Icon: Receipt,
+      tone: "violet" as DashboardTone,
+    },
+    {
+      label: "Écoles",
+      value: institutions.length,
+      hint: "Rattachées",
+      Icon: School2,
+      tone: "teal" as DashboardTone,
+    },
+    {
+      label: "Élèves",
+      value: totalStudentStats.total,
+      hint: "Année courante",
+      Icon: GraduationCap,
+      tone: "slate" as DashboardTone,
+    },
+    {
+      label: "Rapports",
+      value: "Stats",
+      hint: "Exports financiers",
+      Icon: Activity,
+      tone: "rose" as DashboardTone,
+    },
   ];
 
   const profileCards = [
@@ -485,69 +619,54 @@ export default async function FounderDashboardPage({
     { label: "Filles", value: totalStudentStats.girls, hint: "Effectif", Icon: GraduationCap },
   ];
 
-  const financeActionCards = [
-    {
-      href: "/admin/finance",
-      label: "Tableau financier",
-      value: money(totalBilledCurrentYear),
-      hint: "Vue complète",
-      Icon: Wallet,
-    },
-    {
-      href: "/admin/finance/fees",
-      label: "Catégories de frais",
-      value: activeFeeCategories,
-      hint: "Paramètres",
-      Icon: School2,
-    },
-    {
-      href: "/admin/finance/fees/schedules",
-      label: "Barèmes & échéanciers",
-      value: activeFeeSchedules,
-      hint: "Montants",
-      Icon: CalendarCheck2,
-    },
-    {
-      href: "/admin/finance/charges",
-      label: "Dettes élèves",
-      value: balanceRows.length,
-      hint: "Suivi",
-      Icon: Receipt,
-    },
+  const financeIndicatorCards = [
     {
       href: "/admin/finance/payments",
-      label: "Encaissements",
-      value: money(totalCollectedCurrentYear),
-      hint: "Paiements",
+      label: "Encaissement",
+      value: money(totalReceiptsToday),
+      hint: "Période filtrée",
       Icon: ArrowUpRight,
-    },
-    {
-      href: "/admin/finance/receipts",
-      label: "Reçus",
-      value: receipts.length,
-      hint: "Période",
-      Icon: Receipt,
+      tone: "emerald" as DashboardTone,
     },
     {
       href: "/admin/finance/arrears",
       label: "Impayés",
       value: money(totalBalanceDueCurrentYear),
-      hint: "Restes",
+      hint: "Restes à recouvrer",
       Icon: ArrowDownRight,
+      tone: "amber" as DashboardTone,
     },
     {
       href: "/admin/finance/expenses",
       label: "Dépenses",
       value: money(totalExpenses),
-      hint: "Sorties",
+      hint: "Sorties validées",
       Icon: Wallet,
+      tone: "sky" as DashboardTone,
+    },
+    {
+      href: "/admin/finance/charges",
+      label: "Total exigible",
+      value: money(totalBilledCurrentYear),
+      hint: "Frais attendus",
+      Icon: Receipt,
+      tone: "violet" as DashboardTone,
     },
     {
       href: "/admin/finance/reports",
       label: "Rapports",
-      value: "Stats",
-      hint: "Exports",
+      value: `${coverageRate}%`,
+      hint: "Taux de recouvrement",
       Icon: Activity,
+      tone: "teal" as DashboardTone,
+    },
+    {
+      href: "/admin/finance/fees/schedules",
+      label: "Barèmes actifs",
+      value: activeFeeSchedules,
+      hint: "Échéanciers configurés",
+      Icon: CalendarCheck2,
+      tone: "slate" as DashboardTone,
     },
   ];
 
@@ -618,55 +737,26 @@ export default async function FounderDashboardPage({
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        {statCards.map(({ label, value, hint, Icon }) => (
-          <div key={label} className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</div>
-                <div className="mt-2 truncate text-2xl font-black text-slate-950">{value}</div>
-                <div className="mt-1 text-xs font-medium leading-5 text-slate-500">{hint}</div>
-              </div>
-              <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-100 text-slate-700">
-                <Icon className="h-5 w-5" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </section>
-
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
-              <Receipt className="h-4 w-4" />
-              Encaissements de la période filtrée
-            </div>
-          </div>
-          <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
-            {periodStart === periodEnd ? formatYmdFr(periodStart) : `${formatYmdFr(periodStart)} → ${formatYmdFr(periodEnd)}`}
-          </div>
-        </div>
-
-        {receiptsByAcademicYear.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
-            Aucun encaissement enregistré sur cette période.
-          </div>
-        ) : (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {receiptsByAcademicYear.map((item) => (
-              <div key={item.academicYear} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
-                  Année scolaire
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {statCards.map(({ label, value, hint, Icon, tone }) => {
+          const t = TONE_CLASSES[tone];
+          return (
+            <div key={label} className={`rounded-[28px] border p-5 shadow-sm ${t.card}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</div>
+                  <div className={`mt-2 truncate text-2xl font-black ${t.value}`}>{value}</div>
+                  <div className="mt-1 text-xs font-medium leading-5 text-slate-500">{hint}</div>
                 </div>
-                <div className="mt-1 text-xl font-black text-slate-950">{item.academicYear}</div>
-                <div className="mt-2 text-2xl font-black text-emerald-700">{money(item.total)}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500">{item.count} reçu(s)</div>
+                <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl ${t.icon}`}>
+                  <Icon className="h-5 w-5" />
+                </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })}
       </section>
+
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -705,41 +795,94 @@ export default async function FounderDashboardPage({
         )}
       </section>
 
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
-              <Wallet className="h-4 w-4" />
-              Accès finance complet
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
+                <Receipt className="h-4 w-4" />
+                Montants encaissés par catégorie
+              </div>
+              <p className="mt-1 text-xs font-semibold text-slate-500">
+                Lecture basée sur les paiements ventilés de la période filtrée.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
+              {periodStart === periodEnd ? formatYmdFr(periodStart) : `${formatYmdFr(periodStart)} → ${formatYmdFr(periodEnd)}`}
             </div>
           </div>
-          <Link
-            href="/admin/finance"
-            className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Ouvrir la finance
-          </Link>
+
+          {categorySummary.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+              Aucun encaissement ventilé par catégorie sur cette période.
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+              {categorySummary.map(({ label, total, count, tone }) => {
+                const t = TONE_CLASSES[tone];
+                return (
+                  <div key={label} className={`rounded-2xl border p-4 ${t.card}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl ${t.icon}`}>
+                        <Receipt className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-black text-slate-800">{label}</div>
+                        <div className={`mt-1 truncate text-2xl font-black ${t.value}`}>{money(total)}</div>
+                        <div className="mt-1 text-xs font-semibold text-slate-500">
+                          {percentage(total, categoryGrandTotal)} du total • {count} ligne(s)
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-4 rounded-3xl border border-emerald-100 bg-emerald-50 px-4 py-4 text-center">
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Total encaissé catégorisé</div>
+            <div className="mt-1 text-3xl font-black text-emerald-900">{money(categoryGrandTotal)}</div>
+          </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-          {financeActionCards.map(({ href, label, value, hint, Icon }) => (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.18em] text-slate-500">
+              <Wallet className="h-4 w-4" />
+              Indicateurs finance
+            </div>
             <Link
-              key={href}
-              href={href}
-              className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50/50 hover:shadow-sm"
+              href="/admin/finance"
+              className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">{label}</div>
-                  <div className="mt-1 truncate text-xl font-black text-slate-950">{value}</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
-                </div>
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-emerald-700 ring-1 ring-slate-200 transition group-hover:ring-emerald-200">
-                  <Icon className="h-5 w-5" />
-                </div>
-              </div>
+              Ouvrir
             </Link>
-          ))}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            {financeIndicatorCards.map(({ href, label, value, hint, Icon, tone }) => {
+              const t = TONE_CLASSES[tone];
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`group rounded-2xl border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${t.card}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">{label}</div>
+                      <div className={`mt-1 truncate text-xl font-black ${t.value}`}>{value}</div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
+                    </div>
+                    <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${t.icon}`}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         </div>
       </section>
 
@@ -763,29 +906,35 @@ export default async function FounderDashboardPage({
                 Aucune école trouvée pour ce compte fondateur.
               </div>
             ) : (
-              rows.map(({ school, collectedCurrentYear, receiptTotalToday, expenseTotal, net, sessionsCount, periodsCount, studentStats }) => (
+              rows.map(({ school, collectedCurrentYear, billedCurrentYear, balanceDueCurrentYear, expenseTotal, net, periodsCount, studentStats }) => (
                 <div key={school.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="font-black text-slate-950">{school.name || "Établissement"}</div>
                   <div className="mt-1 truncate text-xs text-slate-500">{school.id}</div>
 
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
                     <div className="rounded-2xl bg-white p-3">
                       <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-emerald-700">
-                        <ArrowUpRight className="h-4 w-4" /> Encaissé année
+                        <ArrowUpRight className="h-4 w-4" /> Encaissé
                       </div>
                       <div className="mt-1 text-lg font-black text-slate-950">{money(collectedCurrentYear)}</div>
                     </div>
                     <div className="rounded-2xl bg-white p-3">
                       <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-amber-700">
-                        <ArrowDownRight className="h-4 w-4" /> Dépensé
+                        <ArrowDownRight className="h-4 w-4" /> Impayés
+                      </div>
+                      <div className="mt-1 text-lg font-black text-slate-950">{money(balanceDueCurrentYear)}</div>
+                    </div>
+                    <div className="rounded-2xl bg-white p-3">
+                      <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-sky-700">
+                        <Wallet className="h-4 w-4" /> Dépenses
                       </div>
                       <div className="mt-1 text-lg font-black text-slate-950">{money(expenseTotal)}</div>
                     </div>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-slate-600">
-                    <span className="rounded-full bg-white px-3 py-1">Reçus période : {money(receiptTotalToday)}</span>
-                    <span className="rounded-full bg-white px-3 py-1">Solde période : {money(net)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Exigible : {money(billedCurrentYear)}</span>
+                    <span className="rounded-full bg-white px-3 py-1">Solde : {money(net)}</span>
                     <span className="rounded-full bg-white px-3 py-1">Élèves : {studentStats.total}</span>
                     <span className="rounded-full bg-white px-3 py-1">Affectés : {studentStats.assigned}</span>
                     <span className="rounded-full bg-white px-3 py-1">Non affectés : {studentStats.notAssigned}</span>
@@ -793,7 +942,6 @@ export default async function FounderDashboardPage({
                     <span className="rounded-full bg-white px-3 py-1">Non internes : {studentStats.notBoarders}</span>
                     <span className="rounded-full bg-white px-3 py-1">G : {studentStats.boys}</span>
                     <span className="rounded-full bg-white px-3 py-1">F : {studentStats.girls}</span>
-                    <span className="rounded-full bg-white px-3 py-1">Appels : {sessionsCount}</span>
                     <span className="rounded-full bg-white px-3 py-1">Créneaux : {periodsCount}</span>
                   </div>
                 </div>
