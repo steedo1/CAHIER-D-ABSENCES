@@ -47,3 +47,6 @@ Thumbs.db
 # ➜ IDE/OS
 .vscode/
 .idea/
+
+# Archives locales de patch
+*.zip
