@@ -6,7 +6,8 @@ export type SmsEventKind =
   | "absent"
   | "late"
   | "notes_digest"
-  | "communication";
+  | "communication"
+  | "finance_reminder";
 
 export type InstitutionSmsPolicy = {
   institutionId: string;
@@ -19,6 +20,8 @@ export type InstitutionSmsPolicy = {
   smsAbsenceEnabled: boolean;
   smsLateEnabled: boolean;
   smsNotesDigestEnabled: boolean;
+  smsCommunicationEnabled: boolean;
+  smsFinanceRemindersEnabled: boolean;
 
   whatsappPremiumEnabled: boolean;
 
@@ -78,6 +81,10 @@ export function normalizeSmsEventKind(value: unknown): SmsEventKind | null {
     return "communication";
   }
 
+  if (["finance_reminder", "finance", "payment_reminder", "rappel_solde", "balance_reminder"].includes(x)) {
+    return "finance_reminder";
+  }
+
   return null;
 }
 
@@ -95,6 +102,8 @@ export function makeDefaultInstitutionSmsPolicy(
     smsAbsenceEnabled: false,
     smsLateEnabled: false,
     smsNotesDigestEnabled: false,
+    smsCommunicationEnabled: true,
+    smsFinanceRemindersEnabled: false,
 
     whatsappPremiumEnabled: false,
 
@@ -132,6 +141,14 @@ function mapRowToInstitutionSmsPolicy(
       row?.sms_notes_digest_enabled,
       fallback.smsNotesDigestEnabled
     ),
+    smsCommunicationEnabled: toBool(
+      row?.sms_communication_enabled,
+      fallback.smsCommunicationEnabled
+    ),
+    smsFinanceRemindersEnabled: toBool(
+      row?.sms_finance_reminders_enabled,
+      fallback.smsFinanceRemindersEnabled
+    ),
 
     whatsappPremiumEnabled: toBool(
       row?.whatsapp_premium_enabled,
@@ -167,6 +184,8 @@ export async function getInstitutionSmsPolicy(
       sms_absence_enabled,
       sms_late_enabled,
       sms_notes_digest_enabled,
+      sms_communication_enabled,
+      sms_finance_reminders_enabled,
       whatsapp_premium_enabled
       `
     )
@@ -208,10 +227,11 @@ export function isSmsEventEnabled(
   if (event === "late") return !!policy.smsLateEnabled;
   if (event === "notes_digest") return !!policy.smsNotesDigestEnabled;
 
-  // Les campagnes de communication admin sont autorisées dès que le SMS premium
-  // est activé pour l’établissement. On évite de les bloquer derrière les
-  // options absences/retards/notes, qui sont des usages scolaires spécifiques.
-  if (event === "communication") return true;
+  // Les campagnes de communication et les rappels financiers sont indépendants
+  // du digest SMS des notes. Une école peut donc payer les SMS de communication
+  // ou de solde sans activer les SMS des notes.
+  if (event === "communication") return policy.smsCommunicationEnabled !== false;
+  if (event === "finance_reminder") return !!policy.smsFinanceRemindersEnabled;
 
   return false;
 }

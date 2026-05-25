@@ -40,6 +40,8 @@ type ChannelSettingRow = {
   sms_absence_enabled: boolean;
   sms_late_enabled: boolean;
   sms_notes_digest_enabled: boolean;
+  sms_communication_enabled: boolean;
+  sms_finance_reminders_enabled: boolean;
   sms_notes_digest_weekday: number | null;
   sms_notes_digest_hour: number | null;
   whatsapp_premium_enabled: boolean;
@@ -331,7 +333,7 @@ async function fetchInstitutionSettings(
     const { data, error } = await srv
       .from("institution_notification_channel_settings")
       .select(
-        "institution_id,push_enabled,sms_premium_enabled,sms_provider,sms_sender_name,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled,sms_notes_digest_weekday,sms_notes_digest_hour,whatsapp_premium_enabled",
+        "institution_id,push_enabled,sms_premium_enabled,sms_provider,sms_sender_name,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled,sms_communication_enabled,sms_finance_reminders_enabled,sms_notes_digest_weekday,sms_notes_digest_hour,whatsapp_premium_enabled",
       )
       .in("institution_id", institutionIds);
 

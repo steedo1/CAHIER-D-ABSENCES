@@ -144,6 +144,38 @@ function formatPhoneForDisplay(phone?: string | null) {
   return s;
 }
 
+function notificationKindLabel(payload: any) {
+  const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
+  if (kind === "finance_reminder") return "Rappel financier";
+  if (kind === "communication") return "Communication";
+  if (kind === "attendance" || kind === "absent" || kind === "late") return "Absence / retard";
+  if (kind === "penalty" || kind === "conduct_penalty") return "Conduite";
+  return "Notification";
+}
+
+function notificationTone(payload: any, severity?: string | null) {
+  const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
+  if (kind === "finance_reminder") return "amber" as const;
+  if (kind === "communication") return "emerald" as const;
+  if (severity === "error" || severity === "warning") return "rose" as const;
+  return "slate" as const;
+}
+
+function formatNotificationDate(value?: string | null) {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
 /* ————————— thèmes (couleurs différentes par enfant / matière) ————————— */
 const THEMES = [
   {
@@ -342,7 +374,18 @@ type ParentBulletin = {
   created_at: string | null;
 };
 
-type NavSection = "home" | "conduct" | "absences" | "notes";
+type NavSection = "home" | "conduct" | "absences" | "notes" | "notifications";
+
+type ParentNotification = {
+  id: string;
+  title: string | null;
+  body: string | null;
+  severity: string | null;
+  created_at: string;
+  read_at: string | null;
+  status?: string | null;
+  payload?: any;
+};
 
 type ParentNotificationContact = {
   id: string;
@@ -367,6 +410,8 @@ type InstitutionNotificationSetting = {
   sms_absence_enabled: boolean;
   sms_late_enabled: boolean;
   sms_notes_digest_enabled: boolean;
+  sms_communication_enabled: boolean;
+  sms_finance_reminders_enabled: boolean;
   sms_notes_digest_weekday: number | null;
   sms_notes_digest_hour: number | null;
   whatsapp_premium_enabled: boolean;
@@ -1041,8 +1086,11 @@ export default function ParentPage() {
     Record<string, string | "all" | null>
   >({});
 
-  // ðŸ”” notifications
+  // Notifications parent
   const [granted, setGranted] = useState(false);
+  const [notifications, setNotifications] = useState<ParentNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsMsg, setNotificationsMsg] = useState<string | null>(null);
 
   // ðŸ“± iOS / standalone
   const [isiOS, setIsiOS] = useState(false);
@@ -1096,6 +1144,20 @@ export default function ParentPage() {
     [paymentItems],
   );
 
+  const unreadNotificationsCount = useMemo(
+    () => notifications.filter((item) => !item.read_at).length,
+    [notifications],
+  );
+
+  const financeReminderCount = useMemo(
+    () =>
+      notifications.filter((item) => {
+        const kind = String(item.payload?.kind || item.payload?.event || item.payload?.type || "").toLowerCase();
+        return kind === "finance_reminder";
+      }).length,
+    [notifications],
+  );
+
   const bulletinsByKid = useMemo(() => {
     const map = new Map<string, ParentBulletin[]>();
     for (const item of bulletins) {
@@ -1123,6 +1185,7 @@ export default function ParentPage() {
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
+  const isNotifications = activeSection === "notifications";
 
   const showConductSection = isConduct;
   const showEventsSection = isAbsences;
@@ -1133,6 +1196,7 @@ export default function ParentPage() {
     conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
     absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
     notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
+    notifications: { breadcrumb: "Notifications", title: "Centre de notifications", tab: "Notifications" },
   };
 
   const tabs: Array<{
@@ -1346,6 +1410,44 @@ export default function ParentPage() {
     }
   }
 
+
+  async function loadParentNotifications(silent = false) {
+    if (!silent) setNotificationsLoading(true);
+    setNotificationsMsg(null);
+    try {
+      const res = await fetch("/api/parent/notifications?limit=80", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Impossible de charger les notifications.");
+      setNotifications(Array.isArray(j?.items) ? j.items : []);
+    } catch (e: any) {
+      setNotificationsMsg(e?.message || "Notifications indisponibles.");
+    } finally {
+      if (!silent) setNotificationsLoading(false);
+    }
+  }
+
+  async function markNotificationsRead(ids?: string[]) {
+    const targetIds = (ids?.length ? ids : notifications.filter((item) => !item.read_at).map((item) => item.id)).filter(Boolean);
+    if (!targetIds.length) return;
+    const readAt = new Date().toISOString();
+    setNotifications((prev) =>
+      prev.map((item) =>
+        targetIds.includes(item.id) ? { ...item, read_at: item.read_at || readAt } : item,
+      ),
+    );
+    try {
+      await fetch("/api/parent/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids: targetIds }),
+      });
+    } catch {}
+  }
+
   async function saveSmsContact() {
     setSmsSaving(true);
     setSmsMsg(null);
@@ -1557,6 +1659,7 @@ export default function ParentPage() {
     loadPaymentOptions();
     loadGradePeriods();
     loadBulletins();
+    loadParentNotifications(true);
     ensurePushSubscription().then((r) => {
       if (r.ok) setGranted(true);
     });
@@ -1651,6 +1754,7 @@ export default function ParentPage() {
 
   function selectSection(section: NavSection) {
     setActiveSection(section);
+    if (section === "notifications") loadParentNotifications(true);
     setMobileNavOpen(false);
     if (typeof window !== "undefined")
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1728,6 +1832,29 @@ export default function ParentPage() {
                   <IconHome />
                 </span>
                 <span>Accueil</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => selectSection("notifications")}
+                className={[
+                  "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                  isNotifications ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
+                    isNotifications ? "bg-[#fff3db] text-[#9a5d00]" : "bg-white/15 text-white",
+                  ].join(" ")}
+                >
+                  <IconBell />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Notifications</span>
+                {unreadNotificationsCount > 0 ? (
+                  <span className="grid min-h-6 min-w-6 place-items-center rounded-full bg-amber-300 px-2 text-[12px] font-black text-[#003766]">
+                    {unreadNotificationsCount > 99 ? "99+" : unreadNotificationsCount}
+                  </span>
+                ) : null}
               </button>
               {hasOnlinePaymentProviders ? (
                 <a
@@ -1866,11 +1993,26 @@ export default function ParentPage() {
             </div>
           </div>
 
-          <div className="text-right leading-tight">
-            <div className="font-extrabold uppercase tracking-[0.25em] text-amber-300 text-[12px]">
-              PARENT
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => selectSection("notifications")}
+              className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 text-white transition hover:bg-white/15"
+              aria-label="Ouvrir les notifications"
+            >
+              <IconBell />
+              {unreadNotificationsCount > 0 ? (
+                <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-amber-300 px-1 text-[11px] font-black text-[#003766] ring-2 ring-[#003766]">
+                  {unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}
+                </span>
+              ) : null}
+            </button>
+            <div className="text-right leading-tight">
+              <div className="font-extrabold uppercase tracking-[0.25em] text-amber-300 text-[12px]">
+                PARENT
+              </div>
+              <div className="text-[13px] font-bold">2025-2026</div>
             </div>
-            <div className="text-[13px] font-bold">2025-2026</div>
           </div>
         </div>
       </header>
@@ -1922,6 +2064,29 @@ export default function ParentPage() {
               </span>
               <span>Accueil</span>
             </button>
+              <button
+                type="button"
+                onClick={() => selectSection("notifications")}
+                className={[
+                  "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                  isNotifications ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
+                    isNotifications ? "bg-[#fff3db] text-[#9a5d00]" : "bg-white/15 text-white",
+                  ].join(" ")}
+                >
+                  <IconBell />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Notifications</span>
+                {unreadNotificationsCount > 0 ? (
+                  <span className="grid min-h-6 min-w-6 place-items-center rounded-full bg-amber-300 px-2 text-[12px] font-black text-[#003766]">
+                    {unreadNotificationsCount > 99 ? "99+" : unreadNotificationsCount}
+                  </span>
+                ) : null}
+              </button>
               {hasOnlinePaymentProviders ? (
                 <a
                   href="/parents/payments"
@@ -2350,6 +2515,117 @@ export default function ParentPage() {
               {smsMsg && (
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
                   {smsMsg}
+                </div>
+              )}
+            </section>
+          )}
+
+          {isNotifications && (
+            <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-[12px] font-black uppercase tracking-[0.16em] text-amber-800 ring-1 ring-amber-200">
+                    <IconBell />
+                    Notifications parent
+                  </div>
+                  <h2 className="mt-3 text-xl font-black text-slate-900">Alertes, messages et rappels financiers</h2>
+                  <p className="mt-1 max-w-2xl text-[14px] leading-6 text-slate-600">
+                    Les rappels de solde scolarité et internat apparaissent ici chaque mois.
+                    Si l’établissement a activé le SMS premium pour les rappels financiers, le parent peut aussi recevoir le rappel par SMS.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" tone="outline" onClick={() => loadParentNotifications(false)} disabled={notificationsLoading}>
+                    {notificationsLoading ? "Actualisation…" : "Actualiser"}
+                  </Button>
+                  <Button type="button" tone="slate" onClick={() => markNotificationsRead()} disabled={!unreadNotificationsCount}>
+                    Tout marquer lu
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">Total</div>
+                  <div className="mt-1 text-2xl font-black text-slate-900">{notifications.length}</div>
+                </div>
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-amber-700">Non lues</div>
+                  <div className="mt-1 text-2xl font-black text-amber-900">{unreadNotificationsCount}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="text-[12px] font-bold uppercase tracking-wide text-emerald-700">Rappels financiers</div>
+                  <div className="mt-1 text-2xl font-black text-emerald-900">{financeReminderCount}</div>
+                </div>
+              </div>
+
+              {notificationsMsg ? (
+                <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[14px] text-rose-800">
+                  {notificationsMsg}
+                </div>
+              ) : null}
+
+              {notificationsLoading && !notifications.length ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
+              ) : !notifications.length ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-[14px] text-slate-600">
+                  Aucune notification pour le moment.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {notifications.map((item) => {
+                    const tone = notificationTone(item.payload, item.severity);
+                    const isUnread = !item.read_at;
+                    return (
+                      <article
+                        key={item.id}
+                        className={[
+                          "rounded-2xl border px-4 py-4 transition",
+                          isUnread ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white",
+                        ].join(" ")}
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                              <Badge tone={tone}>{notificationKindLabel(item.payload)}</Badge>
+                              {isUnread ? <Badge tone="amber">Non lue</Badge> : <Badge>Déjà lue</Badge>}
+                              <span className="text-[12px] font-semibold text-slate-500">
+                                {formatNotificationDate(item.created_at)}
+                              </span>
+                            </div>
+                            <h3 className="text-[16px] font-black text-slate-900">
+                              {item.title || "Notification"}
+                            </h3>
+                            {item.body ? (
+                              <p className="mt-1 text-[14px] leading-6 text-slate-700">{item.body}</p>
+                            ) : null}
+                            {item.payload?.url ? (
+                              <a
+                                href={String(item.payload.url)}
+                                className="mt-3 inline-flex text-[13px] font-black text-[#003766] underline-offset-4 hover:underline"
+                              >
+                                Ouvrir le détail
+                              </a>
+                            ) : null}
+                          </div>
+                          {isUnread ? (
+                            <Button
+                              type="button"
+                              tone="white"
+                              className="shrink-0 rounded-2xl px-3 py-2 text-[13px]"
+                              onClick={() => markNotificationsRead([item.id])}
+                            >
+                              Marquer lu
+                            </Button>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </section>

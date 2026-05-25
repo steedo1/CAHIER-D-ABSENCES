@@ -64,6 +64,44 @@ export type CommunicationSmsPayload = {
   } | null;
 };
 
+export type FinanceReminderSmsPayload = {
+  kind?: string | null;
+  event?: string | null;
+  type?: string | null;
+  title?: string | null;
+  body?: string | null;
+  month_key?: string | null;
+
+  student?: {
+    id?: string | null;
+    name?: string | null;
+    full_name?: string | null;
+    display_name?: string | null;
+    matricule?: string | null;
+  } | null;
+
+  class?: {
+    id?: string | null;
+    label?: string | null;
+    name?: string | null;
+  } | null;
+
+  institution?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+
+  balances?: {
+    scolarite?: number | string | null;
+    internat?: number | string | null;
+    total?: number | string | null;
+  } | null;
+
+  balance_scolarite?: number | string | null;
+  balance_internat?: number | string | null;
+  balance_total?: number | string | null;
+};
+
 export type NotesDigestSmsPayload = {
   kind?: string | null;
   event?: string | null;
@@ -214,7 +252,7 @@ function normalizeStudentDisplayName(...values: Array<Maybe<unknown>>): string {
 }
 
 function studentNameFromPayload(
-  payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
+  payload: AttendanceSmsPayload | NotesDigestSmsPayload | FinanceReminderSmsPayload | null | undefined
 ): string {
   return normalizeStudentDisplayName(
     payload?.student?.name,
@@ -225,7 +263,7 @@ function studentNameFromPayload(
 }
 
 function classLabelFromPayload(
-  payload: AttendanceSmsPayload | NotesDigestSmsPayload | null | undefined
+  payload: AttendanceSmsPayload | NotesDigestSmsPayload | FinanceReminderSmsPayload | null | undefined
 ): string {
   return firstNonEmpty(payload?.class?.label, payload?.class?.name);
 }
@@ -294,6 +332,17 @@ function isCommunicationPayload(payload: unknown): payload is CommunicationSmsPa
   return kind === "communication" || event === "communication";
 }
 
+function isFinanceReminderPayload(payload: unknown): payload is FinanceReminderSmsPayload {
+  if (!payload || typeof payload !== "object") return false;
+
+  const obj = payload as Record<string, unknown>;
+  const kind = s(obj.kind).toLowerCase();
+  const event = s(obj.event).toLowerCase();
+  const type = s(obj.type).toLowerCase();
+
+  return kind === "finance_reminder" || event === "finance_reminder" || type === "finance_reminder";
+}
+
 function isNotesDigestPayload(payload: unknown): payload is NotesDigestSmsPayload {
   if (!payload || typeof payload !== "object") return false;
 
@@ -343,6 +392,22 @@ function hasConcreteGradeSubjects(items: GradeDigestSmsItem[]): boolean {
     const score = sanitizeSmsText(s(it.score));
     return !!score && !!subject && !isGenericSubjectLabel(subject);
   });
+}
+
+function formatMoneyForSms(value: unknown): string {
+  const n = toSafeNumber(value);
+  if (n === null) return "";
+  const rounded = Math.max(0, Math.round(n));
+  return `${rounded.toLocaleString("fr-FR")} F`;
+}
+
+function balanceFromPayload(
+  payload: FinanceReminderSmsPayload,
+  key: "scolarite" | "internat" | "total"
+): string {
+  if (key === "scolarite") return formatMoneyForSms(payload.balances?.scolarite ?? payload.balance_scolarite);
+  if (key === "internat") return formatMoneyForSms(payload.balances?.internat ?? payload.balance_internat);
+  return formatMoneyForSms(payload.balances?.total ?? payload.balance_total);
 }
 
 export function buildAttendanceSmsMessage(
@@ -416,6 +481,37 @@ export function buildGradesDigestSmsMessage(
   return limitSmsText(`${full}.`, maxLength);
 }
 
+export function buildFinanceReminderSmsMessage(
+  payload: FinanceReminderSmsPayload,
+  options: BuildSmsOptions = {}
+): string {
+  const appName = normalizeAppName(options.appName);
+  const maxLength = clampSmsMaxLength(options.maxLength);
+  const studentName = studentNameFromPayload(payload);
+  const classLabel = sanitizeSmsText(classLabelFromPayload(payload));
+  const institutionName = sanitizeSmsText(firstNonEmpty(payload.institution?.name, options.institutionName));
+  const scolarite = balanceFromPayload(payload, "scolarite");
+  const internat = balanceFromPayload(payload, "internat");
+  const total = balanceFromPayload(payload, "total");
+
+  const balances = joinParts(
+    [
+      scolarite ? `Scolarite ${scolarite}` : "",
+      internat ? `Internat ${internat}` : "",
+      total ? `Total ${total}` : "",
+    ],
+    "; "
+  );
+
+  const meta = joinParts(
+    [classLabel ? `Classe ${classLabel}` : "", institutionName ? institutionName : ""],
+    " - "
+  );
+
+  const main = `${appName}: Rappel solde ${studentName}`;
+  return limitSmsText(joinParts([main, balances || s(payload.body), meta], ". ") + ".", maxLength);
+}
+
 export function buildCommunicationSmsMessage(
   input: {
     title?: string | null;
@@ -464,6 +560,15 @@ export function buildSmsMessageFromQueue(input: NotificationQueueSmsInput): stri
     return buildAttendanceSmsMessage(payload, {
       appName: input.appName,
       institutionName: input.institutionName,
+      maxLength: input.maxLength,
+    });
+  }
+
+  if (isFinanceReminderPayload(payload)) {
+    const p = payload as FinanceReminderSmsPayload;
+    return buildFinanceReminderSmsMessage(p, {
+      appName: input.appName,
+      institutionName: p.institution?.name || input.institutionName,
       maxLength: input.maxLength,
     });
   }

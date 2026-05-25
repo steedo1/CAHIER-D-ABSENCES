@@ -153,7 +153,7 @@ export async function getCommunicationChannelState(
 
   return {
     push_enabled: isPushEnabled(policy),
-    sms_enabled: isSmsPremiumEnabled(policy) && smsProvider === "orange_ci",
+    sms_enabled: isSmsPremiumEnabled(policy) && smsProvider === "orange_ci" && policy.smsCommunicationEnabled !== false,
     sms_premium_enabled: isSmsPremiumEnabled(policy),
     sms_provider: smsProvider,
     sms_sender_name: policy.smsSenderName,

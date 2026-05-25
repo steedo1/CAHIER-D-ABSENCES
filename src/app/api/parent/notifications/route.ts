@@ -16,7 +16,16 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
-  const kindOr = "payload->>kind.eq.attendance,payload->>kind.eq.penalty,payload->>kind.eq.communication,payload->>event.eq.communication";
+  const kindOr = [
+    "payload->>kind.eq.attendance",
+    "payload->>kind.eq.penalty",
+    "payload->>kind.eq.conduct_penalty",
+    "payload->>kind.eq.communication",
+    "payload->>kind.eq.finance_reminder",
+    "payload->>type.eq.finance_reminder",
+    "payload->>event.eq.communication",
+    "payload->>event.eq.finance_reminder",
+  ].join(",");
 
   if (user) {
     // ── Mode A: profil parent Supabase (inchangé)

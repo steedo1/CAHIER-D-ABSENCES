@@ -35,6 +35,8 @@ type ChannelSettings = {
   sms_absence_enabled: boolean;
   sms_late_enabled: boolean;
   sms_notes_digest_enabled: boolean;
+  sms_communication_enabled: boolean;
+  sms_finance_reminders_enabled: boolean;
   updated_at?: string | null;
 };
 
@@ -180,6 +182,10 @@ async function saveChannelsAction(formData: FormData) {
     smsPremiumEnabled && formData.get("sms_late_enabled") === "on";
   const smsNotesDigestEnabled =
     smsPremiumEnabled && formData.get("sms_notes_digest_enabled") === "on";
+  const smsCommunicationEnabled =
+    smsPremiumEnabled && formData.get("sms_communication_enabled") === "on";
+  const smsFinanceRemindersEnabled =
+    smsPremiumEnabled && formData.get("sms_finance_reminders_enabled") === "on";
 
   const admin = getSupabaseServiceClient();
 
@@ -192,6 +198,8 @@ async function saveChannelsAction(formData: FormData) {
     sms_absence_enabled: smsAbsenceEnabled,
     sms_late_enabled: smsLateEnabled,
     sms_notes_digest_enabled: smsNotesDigestEnabled,
+    sms_communication_enabled: smsCommunicationEnabled,
+    sms_finance_reminders_enabled: smsFinanceRemindersEnabled,
   };
 
   const { error } = await admin
@@ -351,7 +359,7 @@ export default async function AbonnementsPage({
     ? await admin
         .from("institution_notification_channel_settings")
         .select(
-          "institution_id,push_enabled,sms_premium_enabled,sms_provider,sms_sender_name,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled,updated_at"
+          "institution_id,push_enabled,sms_premium_enabled,sms_provider,sms_sender_name,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled,sms_communication_enabled,sms_finance_reminders_enabled,updated_at"
         )
         .in("institution_id", institutionIds)
     : { data: [], error: null as any };
@@ -389,6 +397,8 @@ export default async function AbonnementsPage({
         sms_absence_enabled: false,
         sms_late_enabled: false,
         sms_notes_digest_enabled: false,
+        sms_communication_enabled: true,
+        sms_finance_reminders_enabled: false,
         updated_at: null,
       },
       finance: financeMap.get(inst.id) ?? {
@@ -902,6 +912,46 @@ export default async function AbonnementsPage({
                                   <span className="block text-sm text-slate-600">
                                     Envoi SMS individuel quand un retard est
                                     enregistré.
+                                  </span>
+                                </span>
+                              </label>
+
+                              <label className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  name="sms_communication_enabled"
+                                  defaultChecked={
+                                    row.channels.sms_communication_enabled !== false
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                />
+                                <span>
+                                  <span className="block text-sm font-bold text-slate-900">
+                                    SMS pour les communications
+                                  </span>
+                                  <span className="block text-sm text-slate-600">
+                                    Envoi SMS des annonces administratives sans
+                                    dépendre du digest des notes.
+                                  </span>
+                                </span>
+                              </label>
+
+                              <label className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  name="sms_finance_reminders_enabled"
+                                  defaultChecked={
+                                    row.channels.sms_finance_reminders_enabled
+                                  }
+                                  className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                                />
+                                <span>
+                                  <span className="block text-sm font-bold text-slate-900">
+                                    SMS pour les rappels de solde
+                                  </span>
+                                  <span className="block text-sm text-slate-600">
+                                    Rappel mensuel de scolarité et d’internat
+                                    uniquement quand un reste à payer existe.
                                   </span>
                                 </span>
                               </label>

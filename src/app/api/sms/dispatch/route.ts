@@ -291,6 +291,10 @@ function resolveSmsEventFromPayload(payload: any): SmsEventKind | null {
     return "communication";
   }
 
+  if (kind === "finance_reminder" || event === "finance_reminder" || s(payload?.type).toLowerCase() === "finance_reminder") {
+    return "finance_reminder";
+  }
+
   return null;
 }
 
@@ -672,6 +676,8 @@ async function run(req: Request) {
           smsAbsenceEnabled: policy.smsAbsenceEnabled,
           smsLateEnabled: policy.smsLateEnabled,
           smsNotesDigestEnabled: policy.smsNotesDigestEnabled,
+          smsCommunicationEnabled: policy.smsCommunicationEnabled,
+          smsFinanceRemindersEnabled: policy.smsFinanceRemindersEnabled,
           smsSenderName: senderName,
         });
 
