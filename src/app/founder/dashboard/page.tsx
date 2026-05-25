@@ -458,63 +458,63 @@ export default async function FounderDashboardPage({
     {
       href: "/admin/finance",
       label: "Tableau financier",
-      value: money(totalBilledCurrentYear),
-      hint: "Même tableau complet que l’admin",
+      value: "Ouvrir",
+      hint: `Tableau complet · exigible actuel ${money(totalBilledCurrentYear)}`,
       Icon: Wallet,
     },
     {
       href: "/admin/finance/fees",
       label: "Catégories de frais",
-      value: activeFeeCategories,
-      hint: "Créer et gérer les catégories",
+      value: "Gérer",
+      hint: `${activeFeeCategories} catégorie(s) active(s)`,
       Icon: School2,
     },
     {
       href: "/admin/finance/fees/schedules",
       label: "Barèmes & échéanciers",
-      value: activeFeeSchedules,
-      hint: "Définir les montants par classe",
+      value: "Définir",
+      hint: `${activeFeeSchedules} barème(s) actif(s)`,
       Icon: CalendarCheck2,
     },
     {
       href: "/admin/finance/charges",
       label: "Dettes élèves",
-      value: balanceRows.length,
-      hint: "Contrôler les situations ouvertes",
+      value: "Contrôler",
+      hint: `${balanceRows.length} dette(s) ouverte(s)`,
       Icon: Receipt,
     },
     {
       href: "/admin/finance/payments",
       label: "Encaissements",
-      value: money(totalCollectedCurrentYear),
-      hint: "Enregistrer les paiements",
+      value: "Encaisser",
+      hint: `Encaissé année courante : ${money(totalCollectedCurrentYear)}`,
       Icon: ArrowUpRight,
     },
     {
       href: "/admin/finance/receipts",
       label: "Reçus",
-      value: receipts.length,
-      hint: "Reçus de la date filtrée",
+      value: "Consulter",
+      hint: `${receipts.length} reçu(s) sur la date filtrée`,
       Icon: Receipt,
     },
     {
       href: "/admin/finance/arrears",
       label: "Impayés",
-      value: money(totalBalanceDueCurrentYear),
-      hint: "Suivre les restes à payer",
+      value: "Suivre",
+      hint: `Reste exigible : ${money(totalBalanceDueCurrentYear)}`,
       Icon: ArrowDownRight,
     },
     {
       href: "/admin/finance/expenses",
       label: "Dépenses",
-      value: money(totalExpenses),
-      hint: "Saisir les dépenses",
+      value: "Saisir",
+      hint: `Dépenses période : ${money(totalExpenses)}`,
       Icon: Wallet,
     },
     {
       href: "/admin/finance/reports",
       label: "Rapports",
-      value: "Stats",
+      value: "Exporter",
       hint: "Synthèses et exports",
       Icon: Activity,
     },
@@ -690,7 +690,7 @@ export default async function FounderDashboardPage({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">{label}</div>
-                  <div className="mt-1 truncate text-xl font-black text-slate-950">{value}</div>
+                  <div className="mt-1 truncate text-lg font-black text-slate-950">{value}</div>
                   <div className="mt-1 text-xs leading-5 text-slate-500">{hint}</div>
                 </div>
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-emerald-700 ring-1 ring-slate-200 transition group-hover:ring-emerald-200">

@@ -527,13 +527,13 @@ export default async function AdminFinancePage({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
               <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-                Total facturé
+                Total exigible actuel
               </div>
               <div className="mt-2 text-3xl font-black text-white">
                 {formatMoney(totalBilled)}
               </div>
               <div className="mt-1 text-sm text-slate-200">
-                Toutes dettes générées
+                Dettes actives réellement exigibles
               </div>
             </div>
 

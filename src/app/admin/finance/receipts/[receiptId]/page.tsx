@@ -162,8 +162,6 @@ function institutionDisplayName(cfg: InstitutionSettings) {
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 }
 
@@ -172,9 +170,8 @@ function isScolariteCharge(label: string | null | undefined) {
   return (
     text.includes("scolar") ||
     text.includes("ecolage") ||
-    text.includes("inscription") ||
-    text.includes("frais generaux") ||
-    text.includes("frais annexes")
+    text.includes("écolage") ||
+    text.includes("inscription")
   );
 }
 
@@ -376,6 +373,7 @@ export default async function FinanceReceiptPrintPage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
+  const admin = getSupabaseServiceClient();
 
   const [{ data: receipt, error: recErr }, adminStudents, institutionSettings] =
     await Promise.all([
@@ -500,19 +498,21 @@ export default async function FinanceReceiptPrintPage({
 
   let scolariteReferenceCharges: ChargeRow[] = [];
   if (allLinesAreScolarite) {
-    const referenceClassId =
-      rawLines[0]?.charge?.class_id ?? currentClass?.id ?? null;
+    const referenceClassId = rawLines[0]?.charge?.class_id ?? null;
     const academicYear = String(typedReceipt.academic_year || "").trim();
 
-    if (referenceClassId && academicYear) {
+    if (academicYear) {
       // IMPORTANT :
       // Le reçu de scolarité doit reprendre TOUTES les dettes de scolarité
-      // actives de l'élève pour la même année et la même classe.
-      // On ne filtre plus par fee_category_id, car d'anciens tests/patchs ont
-      // pu créer plusieurs catégories "scolarité" et laisser seulement une
-      // partie des rubriques dans la catégorie du reçu. C'est ce qui produisait
-      // des totaux faux du type 116 500 F en 1re/Tle.
-      const { data: directChargesData, error: directChargesErr } = await supabase
+      // actives de l'élève pour la même année scolaire.
+      // On ne filtre ni par fee_category_id ni par class_id :
+      // - d'anciens imports/patchs peuvent avoir réparti les rubriques dans
+      //   plusieurs catégories ;
+      // - un changement de classe ne doit pas faire disparaître une ligne
+      //   de scolarité du reçu.
+      // On utilise le client service afin de ne pas retomber sur une lecture
+      // partielle qui produisait des totaux faux comme 116 500 F.
+      const { data: directChargesData, error: directChargesErr } = await admin
         .schema("finance")
         .from("student_charges")
         .select(
@@ -521,20 +521,18 @@ export default async function FinanceReceiptPrintPage({
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
         .eq("academic_year", academicYear)
-        .eq("class_id", referenceClassId)
         .neq("status", "cancelled");
 
       if (!directChargesErr) {
         const directCharges = ((directChargesData ?? []) as StudentChargeDirectRow[]).filter(
-          (charge) =>
-            isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
+          (charge) => isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
         );
         const directChargeIds = directCharges.map((charge) => charge.id);
         let allocationsForCharges: AllocationLiteRow[] = [];
         let receiptStatuses: ReceiptStatusLiteRow[] = [];
 
         if (directChargeIds.length > 0) {
-          const { data: allocationData, error: allocationErr } = await supabase
+          const { data: allocationData, error: allocationErr } = await admin
             .schema("finance")
             .from("receipt_allocations")
             .select("student_charge_id,receipt_id,amount")
@@ -548,7 +546,7 @@ export default async function FinanceReceiptPrintPage({
 
             if (receiptIds.length > 0) {
               const { data: receiptStatusData, error: receiptStatusErr } =
-                await supabase
+                await admin
                   .schema("finance")
                   .from("receipts")
                   .select("id,receipt_status")
