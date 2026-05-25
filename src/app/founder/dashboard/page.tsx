@@ -151,10 +151,16 @@ const TONE_CLASSES: Record<DashboardTone, { card: string; icon: string; value: s
 
 const CATEGORY_TONES: DashboardTone[] = ["emerald", "sky", "amber", "violet", "teal", "rose", "slate"];
 
-function percentage(value: number, total: number) {
-  if (!total) return "0%";
-  return `${((value / total) * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}%`;
+function normalizeCategoryKey(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
+
 
 function chunks<T>(items: T[], size = 500): T[][] {
   const out: T[][] = [];
@@ -373,7 +379,7 @@ export default async function FounderDashboardPage({
     }
   }
 
-  const [periods, receipts, expenses, feeSchedules] = await Promise.all([
+  const [periods, receipts, expenses, feeCategories, feeSchedules] = await Promise.all([
     safeData<any[]>(
       "institution_periods",
       service
@@ -405,6 +411,17 @@ export default async function FounderDashboardPage({
         .eq("expense_status", "posted")
         .gte("expense_date", periodStart)
         .lte("expense_date", periodEnd),
+      [],
+    ),
+    safeData<any[]>(
+      "finance.fee_categories",
+      service
+        .schema("finance")
+        .from("fee_categories")
+        .select("id,school_id,code,name,is_active")
+        .in("school_id", institutionIds)
+        .eq("is_active", true)
+        .order("name", { ascending: true }),
       [],
     ),
     safeData<any[]>(
@@ -496,7 +513,17 @@ export default async function FounderDashboardPage({
   const allocationCategoryMap = new Map(
     (allocatedCategories ?? []).map((row: any) => [String(row.id), row]),
   );
-  const categoryTotals = new Map<string, { label: string; total: number; count: number }>();
+  const categoryTotals = new Map<string, { label: string; total: number; count: number; order: number }>();
+  let categoryOrder = 0;
+
+  for (const category of feeCategories ?? []) {
+    const label = String(category?.name || category?.code || "Catégorie sans nom").trim();
+    const key = normalizeCategoryKey(category?.code || label) || String(category?.id || label);
+    if (!categoryTotals.has(key)) {
+      categoryTotals.set(key, { label, total: 0, count: 0, order: categoryOrder });
+      categoryOrder += 1;
+    }
+  }
 
   for (const allocation of receiptAllocations ?? []) {
     const amount = Number(allocation.amount || 0);
@@ -506,11 +533,19 @@ export default async function FounderDashboardPage({
       ? allocationCategoryMap.get(String(charge.fee_category_id))
       : null;
     const label = String(category?.name || charge?.label || "Encaissements non ventilés").trim();
-    const key = String(category?.id || charge?.fee_category_id || label).trim() || "non-ventile";
-    const current = categoryTotals.get(key) ?? { label, total: 0, count: 0 };
+    const key = category
+      ? normalizeCategoryKey(category.code || category.name || label)
+      : normalizeCategoryKey(label) || "non-ventile";
+    const current = categoryTotals.get(key) ?? {
+      label,
+      total: 0,
+      count: 0,
+      order: categoryOrder,
+    };
     current.total += amount;
     current.count += 1;
     categoryTotals.set(key, current);
+    if (current.order === categoryOrder) categoryOrder += 1;
   }
 
   if (categoryTotals.size === 0 && totalReceiptsToday > 0) {
@@ -518,13 +553,16 @@ export default async function FounderDashboardPage({
       label: "Encaissements non ventilés",
       total: totalReceiptsToday,
       count: receipts.length,
+      order: categoryOrder,
     });
   }
 
   const categoryGrandTotal = Array.from(categoryTotals.values()).reduce((sum, item) => sum + item.total, 0);
   const categorySummary = Array.from(categoryTotals.values())
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 8)
+    .sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.order - b.order;
+    })
     .map((item, index) => ({
       ...item,
       tone: CATEGORY_TONES[index % CATEGORY_TONES.length],
@@ -804,7 +842,7 @@ export default async function FounderDashboardPage({
                 Montants encaissés par catégorie
               </div>
               <p className="mt-1 text-xs font-semibold text-slate-500">
-                Lecture basée sur les paiements ventilés de la période filtrée.
+                Toutes les catégories actives de l’établissement sont affichées, même à 0 F.
               </p>
             </div>
             <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700">
@@ -814,11 +852,11 @@ export default async function FounderDashboardPage({
 
           {categorySummary.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
-              Aucun encaissement ventilé par catégorie sur cette période.
+              Aucune catégorie active trouvée pour les écoles rattachées.
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-              {categorySummary.map(({ label, total, count, tone }) => {
+              {categorySummary.map(({ label, total, tone }) => {
                 const t = TONE_CLASSES[tone];
                 return (
                   <div key={label} className={`rounded-2xl border p-4 ${t.card}`}>
@@ -830,7 +868,7 @@ export default async function FounderDashboardPage({
                         <div className="truncate text-sm font-black text-slate-800">{label}</div>
                         <div className={`mt-1 truncate text-2xl font-black ${t.value}`}>{money(total)}</div>
                         <div className="mt-1 text-xs font-semibold text-slate-500">
-                          {percentage(total, categoryGrandTotal)} du total • {count} ligne(s)
+                          Montant encaissé
                         </div>
                       </div>
                     </div>
