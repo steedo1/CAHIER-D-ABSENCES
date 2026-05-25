@@ -1,7 +1,6 @@
 // src/app/admin/finance/receipts/[receiptId]/page.tsx
 import { Fragment } from "react";
 import Link from "next/link";
-import { cookies, headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import {
@@ -21,10 +20,7 @@ import {
   getFinanceAccessForCurrentUser,
   getFinanceInstitutionIdForCurrentUser,
 } from "@/lib/finance-access";
-import {
-  getAdminStudentsServer,
-  type AdminStudentRow,
-} from "@/lib/admin-students-server";
+import { type AdminStudentRow } from "@/lib/admin-students-server";
 
 export const dynamic = "force-dynamic";
 
@@ -298,53 +294,179 @@ async function cancelReceiptForCorrectionAction(formData: FormData) {
   redirect(`/admin/finance/payments${qs ? `?${qs}` : ""}`);
 }
 
-function buildOriginFromHeaders(h: Headers) {
-  const proto =
-    h.get("x-forwarded-proto") ||
-    (process.env.NODE_ENV === "development" ? "http" : "https");
-  const host = h.get("x-forwarded-host") || h.get("host");
+type ServiceClient = ReturnType<typeof getSupabaseServiceClient>;
 
-  if (!host) {
-    throw new Error("Impossible de déterminer l’hôte courant.");
+function pickInstitutionName(row: any): string {
+  const direct = String(row?.name || "").trim();
+  if (direct) return direct;
+
+  const settings = row?.settings_json;
+  if (settings && typeof settings === "object") {
+    const fallback =
+      settings.institution_name ||
+      settings.school_name ||
+      settings.header_title ||
+      settings.name ||
+      settings.label;
+    return String(fallback || "").trim();
   }
 
-  return `${proto}://${host}`;
+  return "";
 }
 
-async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
+async function fetchInstitutionSettingsServer(
+  admin: ServiceClient,
+  institutionId: string,
+): Promise<InstitutionSettings> {
   try {
-    const h = await headers();
-    const c = await cookies();
-    const origin = buildOriginFromHeaders(h);
+    const { data, error } = await admin
+      .from("institutions")
+      .select(
+        [
+          "name",
+          "logo_url",
+          "phone",
+          "email",
+          "regional_direction",
+          "postal_address",
+          "status",
+          "head_name",
+          "head_title",
+          "code",
+          "settings_json",
+        ].join(","),
+      )
+      .eq("id", institutionId)
+      .maybeSingle();
 
-    const res = await fetch(`${origin}/api/admin/institution/settings`, {
-      method: "GET",
-      headers: {
-        cookie: c.toString(),
-        accept: "application/json",
-      },
-      cache: "no-store",
-    });
+    if (error || !data) return {};
 
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) return {};
+    const institutionName = pickInstitutionName(data);
 
     return {
-      institution_name: json?.institution_name ?? "",
-      institution_label: json?.institution_label ?? "",
-      name: json?.name ?? "",
-      institution_logo_url: json?.institution_logo_url ?? "",
-      institution_phone: json?.institution_phone ?? "",
-      institution_email: json?.institution_email ?? "",
-      institution_region: json?.institution_region ?? "",
-      institution_postal_address: json?.institution_postal_address ?? "",
-      institution_status: json?.institution_status ?? "",
-      institution_head_name: json?.institution_head_name ?? "",
-      institution_head_title: json?.institution_head_title ?? "",
-      institution_code: json?.institution_code ?? "",
+      institution_name: institutionName,
+      institution_label: institutionName,
+      name: institutionName,
+      institution_logo_url: (data as any)?.logo_url ?? "",
+      institution_phone: (data as any)?.phone ?? "",
+      institution_email: (data as any)?.email ?? "",
+      institution_region: (data as any)?.regional_direction ?? "",
+      institution_postal_address: (data as any)?.postal_address ?? "",
+      institution_status: (data as any)?.status ?? "",
+      institution_head_name: (data as any)?.head_name ?? "",
+      institution_head_title: (data as any)?.head_title ?? "",
+      institution_code: (data as any)?.code ?? "",
     };
   } catch {
     return {};
+  }
+}
+
+async function fetchReceiptStudentServer(
+  admin: ServiceClient,
+  institutionId: string,
+  studentId: string,
+  academicYear?: string | null,
+): Promise<AdminStudentRow | null> {
+  const cleanStudentId = String(studentId || "").trim();
+  if (!cleanStudentId) return null;
+
+  const year = String(academicYear || "").trim();
+
+  try {
+    let enrollmentQuery = admin
+      .from("class_enrollments")
+      .select(
+        `
+        student_id,
+        class_id,
+        students:student_id ( id, first_name, last_name, full_name, matricule, gender, regime, is_affecte, is_boarder ),
+        classes:class_id!inner ( id, label, level, academic_year )
+      `,
+      )
+      .eq("institution_id", institutionId)
+      .eq("student_id", cleanStudentId)
+      .is("end_date", null)
+      .limit(1);
+
+    if (year) {
+      enrollmentQuery = enrollmentQuery.eq("classes.academic_year", year);
+    }
+
+    const { data: enrollmentRows, error: enrollmentErr } =
+      await enrollmentQuery;
+    const enrollment =
+      !enrollmentErr && Array.isArray(enrollmentRows)
+        ? enrollmentRows[0]
+        : null;
+
+    if (enrollment) {
+      const s = (enrollment as any).students ?? {};
+      const c = (enrollment as any).classes ?? {};
+      const full =
+        String(s.full_name || "").trim() ||
+        `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() ||
+        "—";
+
+      return {
+        id: cleanStudentId,
+        full_name: full,
+        class_id: (enrollment as any).class_id
+          ? String((enrollment as any).class_id)
+          : null,
+        class_label: c?.label ? String(c.label) : null,
+        matricule: s?.matricule ? String(s.matricule) : null,
+        level: c?.level ? String(c.level) : null,
+        class_level: c?.level ? String(c.level) : null,
+        academic_year: c?.academic_year ? String(c.academic_year) : null,
+        gender: s?.gender ? String(s.gender) : null,
+        is_affecte:
+          typeof s?.is_affecte === "boolean" ? Boolean(s.is_affecte) : null,
+        is_boarder:
+          typeof s?.is_boarder === "boolean" ? Boolean(s.is_boarder) : null,
+        regime: s?.regime ? String(s.regime) : null,
+      };
+    }
+  } catch {
+    // Fallback direct ci-dessous si la jointure d'inscription échoue.
+  }
+
+  try {
+    const { data: studentData, error: studentErr } = await admin
+      .from("students")
+      .select(
+        "id,first_name,last_name,full_name,matricule,gender,regime,is_affecte,is_boarder",
+      )
+      .eq("institution_id", institutionId)
+      .eq("id", cleanStudentId)
+      .maybeSingle();
+
+    if (studentErr || !studentData) return null;
+
+    const s = studentData as any;
+    const full =
+      String(s.full_name || "").trim() ||
+      `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() ||
+      "Élève sans nom";
+
+    return {
+      id: cleanStudentId,
+      full_name: full,
+      class_id: null,
+      class_label: null,
+      matricule: s?.matricule ? String(s.matricule) : null,
+      level: null,
+      class_level: null,
+      academic_year: year || null,
+      gender: s?.gender ? String(s.gender) : null,
+      is_affecte:
+        typeof s?.is_affecte === "boolean" ? Boolean(s.is_affecte) : null,
+      is_boarder:
+        typeof s?.is_boarder === "boolean" ? Boolean(s.is_boarder) : null,
+      regime: s?.regime ? String(s.regime) : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -375,50 +497,41 @@ export default async function FinanceReceiptPrintPage({
   const supabase = await getSupabaseServerClient();
   const admin = getSupabaseServiceClient();
 
-  const [{ data: receipt, error: recErr }, adminStudents, institutionSettings] =
-    await Promise.all([
-      supabase
-        .schema("finance")
-        .from("receipts")
-        .select(
-          "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at",
-        )
-        .eq("school_id", institutionId)
-        .eq("id", receiptId)
-        .maybeSingle(),
-      getAdminStudentsServer(),
-      fetchInstitutionSettingsServer(),
-    ]);
+  const { data: receipt, error: recErr } = await supabase
+    .schema("finance")
+    .from("receipts")
+    .select(
+      "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at",
+    )
+    .eq("school_id", institutionId)
+    .eq("id", receiptId)
+    .maybeSingle();
 
   if (recErr) throw new Error(recErr.message);
   if (!receipt) notFound();
 
   const typedReceipt = receipt as ReceiptRow;
 
-  const [
-    { data: allocations, error: allocErr },
-    { data: classes, error: clsErr },
-  ] = await Promise.all([
-    supabase
-      .schema("finance")
-      .from("receipt_allocations")
-      .select("id,receipt_id,student_charge_id,amount,created_at")
-      .eq("receipt_id", typedReceipt.id)
-      .order("created_at", { ascending: true }),
-
-    supabase
-      .from("classes")
-      .select("id,label,level,academic_year")
-      .eq("institution_id", institutionId)
-      .order("label", { ascending: true }),
-  ]);
+  const [{ data: allocations, error: allocErr }, student, institutionSettings] =
+    await Promise.all([
+      supabase
+        .schema("finance")
+        .from("receipt_allocations")
+        .select("id,receipt_id,student_charge_id,amount,created_at")
+        .eq("receipt_id", typedReceipt.id)
+        .order("created_at", { ascending: true }),
+      fetchReceiptStudentServer(
+        admin,
+        institutionId,
+        typedReceipt.student_id,
+        typedReceipt.academic_year,
+      ),
+      fetchInstitutionSettingsServer(admin, institutionId),
+    ]);
 
   if (allocErr) throw new Error(allocErr.message);
-  if (clsErr) throw new Error(clsErr.message);
 
   const allocationRows = (allocations ?? []) as ReceiptAllocationRow[];
-  const classRows = (classes ?? []) as ClassRow[];
-  const classMap = new Map(classRows.map((c) => [c.id, c]));
 
   const chargeIds = Array.from(
     new Set(allocationRows.map((a) => a.student_charge_id)),
@@ -477,16 +590,44 @@ export default async function FinanceReceiptPrintPage({
       .push(component);
   }
 
-  const student = adminStudents.find((s) => s.id === typedReceipt.student_id);
-  const currentClass = student?.class_id
-    ? classMap.get(student.class_id)
-    : undefined;
-
   const rawLines = allocationRows.map((alloc) => ({
     alloc,
     charge: chargeMap.get(alloc.student_charge_id),
     components: componentsByAllocation.get(alloc.id) ?? [],
   }));
+
+  const firstChargeClassId =
+    rawLines.find((line) => line.charge?.class_id)?.charge?.class_id ?? null;
+
+  let currentClass: ClassRow | undefined = student?.class_id
+    ? {
+        id: student.class_id,
+        label: student.class_label || "",
+        level: student.class_level || student.level || null,
+        academic_year:
+          student.academic_year || typedReceipt.academic_year || null,
+      }
+    : undefined;
+
+  if ((!currentClass || !currentClass.label) && firstChargeClassId) {
+    const { data: classData } = await admin
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .eq("id", firstChargeClassId)
+      .maybeSingle();
+
+    if (classData) {
+      currentClass = classData as ClassRow;
+    } else if (!currentClass) {
+      currentClass = {
+        id: firstChargeClassId,
+        label: "",
+        level: null,
+        academic_year: typedReceipt.academic_year || null,
+      };
+    }
+  }
 
   const allLinesAreScolarite =
     rawLines.length > 0 &&
@@ -498,7 +639,6 @@ export default async function FinanceReceiptPrintPage({
 
   let scolariteReferenceCharges: ChargeRow[] = [];
   if (allLinesAreScolarite) {
-    const referenceClassId = rawLines[0]?.charge?.class_id ?? null;
     const academicYear = String(typedReceipt.academic_year || "").trim();
 
     if (academicYear) {
@@ -524,8 +664,11 @@ export default async function FinanceReceiptPrintPage({
         .neq("status", "cancelled");
 
       if (!directChargesErr) {
-        const directCharges = ((directChargesData ?? []) as StudentChargeDirectRow[]).filter(
-          (charge) => isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
+        const directCharges = (
+          (directChargesData ?? []) as StudentChargeDirectRow[]
+        ).filter(
+          (charge) =>
+            isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
         );
         const directChargeIds = directCharges.map((charge) => charge.id);
         let allocationsForCharges: AllocationLiteRow[] = [];
@@ -539,7 +682,8 @@ export default async function FinanceReceiptPrintPage({
             .in("student_charge_id", directChargeIds);
 
           if (!allocationErr) {
-            allocationsForCharges = (allocationData ?? []) as AllocationLiteRow[];
+            allocationsForCharges = (allocationData ??
+              []) as AllocationLiteRow[];
             const receiptIds = Array.from(
               new Set(allocationsForCharges.map((row) => row.receipt_id)),
             );
@@ -553,7 +697,8 @@ export default async function FinanceReceiptPrintPage({
                   .in("id", receiptIds);
 
               if (!receiptStatusErr) {
-                receiptStatuses = (receiptStatusData ?? []) as ReceiptStatusLiteRow[];
+                receiptStatuses = (receiptStatusData ??
+                  []) as ReceiptStatusLiteRow[];
               }
             }
           }
@@ -962,13 +1107,28 @@ export default async function FinanceReceiptPrintPage({
         <script
           dangerouslySetInnerHTML={{
             __html: `
-              window.addEventListener('load', function () {
-                setTimeout(function () {
-                  try {
-                    window.print();
-                  } catch (e) {}
-                }, 350);
-              });
+              (function () {
+                var printed = false;
+                function launchPrint() {
+                  if (printed) return;
+                  printed = true;
+                  setTimeout(function () {
+                    try {
+                      window.focus();
+                      window.print();
+                    } catch (e) {}
+                  }, 450);
+                }
+
+                if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                  launchPrint();
+                } else {
+                  document.addEventListener('DOMContentLoaded', launchPrint, { once: true });
+                }
+
+                window.addEventListener('load', launchPrint, { once: true });
+                setTimeout(launchPrint, 1200);
+              })();
             `,
           }}
         />
@@ -1028,11 +1188,16 @@ export default async function FinanceReceiptPrintPage({
           </summary>
           <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
             <div className="leading-6">
-              Si le montant, l’élève, la catégorie ou la date est faux, on ne modifie pas silencieusement le reçu.
-              Le reçu sera marqué <strong>annulé pour correction</strong>, puis le solde sera rouvert pour permettre une nouvelle saisie propre.
-              Cela fonctionne avant comme après impression.
+              Si le montant, l’élève, la catégorie ou la date est faux, on ne
+              modifie pas silencieusement le reçu. Le reçu sera marqué{" "}
+              <strong>annulé pour correction</strong>, puis le solde sera
+              rouvert pour permettre une nouvelle saisie propre. Cela fonctionne
+              avant comme après impression.
             </div>
-            <form action={cancelReceiptForCorrectionAction} className="space-y-3 rounded-3xl border border-amber-200 bg-white p-4">
+            <form
+              action={cancelReceiptForCorrectionAction}
+              className="space-y-3 rounded-3xl border border-amber-200 bg-white p-4"
+            >
               <input type="hidden" name="receipt_id" value={typedReceipt.id} />
               <label className="block text-xs font-black uppercase tracking-[0.14em] text-amber-800">
                 Motif de correction
@@ -1267,7 +1432,9 @@ export default async function FinanceReceiptPrintPage({
                           <Fragment key={line.key}>
                             <tr className="border-t border-slate-200 align-top">
                               <td className="px-5 py-4 text-slate-900">
-                                <div className="font-semibold">{line.label}</div>
+                                <div className="font-semibold">
+                                  {line.label}
+                                </div>
                               </td>
                               <td className="px-5 py-4 text-slate-600">
                                 {formatDate(line.dueDate)}
@@ -1461,7 +1628,8 @@ export default async function FinanceReceiptPrintPage({
         <div className="receipt-footer relative z-10 border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              Document généré le {formatDateTime(new Date().toISOString())} — {schoolName}
+              Document généré le {formatDateTime(new Date().toISOString())} —{" "}
+              {schoolName}
             </span>
             <span className="font-bold text-slate-700">
               www.mon-cahier.com · Reçu généré par Mon Cahier
