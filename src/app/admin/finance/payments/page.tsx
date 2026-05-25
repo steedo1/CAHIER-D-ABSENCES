@@ -689,9 +689,13 @@ async function resolveChargeForPayment({
     return selected;
   }
 
-  const openCharges = await ensureChargesForStudent(
+  // IMPORTANT :
+  // L'écran Encaissements ne doit pas générer automatiquement les dettes
+  // depuis les barèmes. Les dettes fixes viennent du module Dettes/Barèmes.
+  // Les frais annexes internat, eux, sont variables et se régularisent
+  // uniquement selon les sous-rubriques réellement cochées.
+  const openCharges = await fetchOpenChargesForStudent(
     institutionId,
-    userId,
     studentId,
     classId,
   );
@@ -812,6 +816,119 @@ async function fetchPaidComponentsForCharges(
   }
 
   return rows;
+}
+
+
+function isInternatAnnexesCharge(label: string | null | undefined) {
+  const text = normalize(label)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return (
+    text.includes("internat") &&
+    text.includes("frais") &&
+    text.includes("annexe")
+  );
+}
+
+async function syncVariableAnnexChargeAmounts({
+  institutionId,
+  allocations,
+}: {
+  institutionId: string;
+  allocations: ResolvedPaymentAllocation[];
+}) {
+  const variableItems = allocations.filter(
+    (item) =>
+      isInternatAnnexesCharge(item.charge.label) &&
+      (item.selectedComponents.length > 0 || item.skippedComponents.length > 0),
+  );
+
+  if (variableItems.length === 0) return;
+
+  const admin = getSupabaseServiceClient();
+
+  for (const item of variableItems) {
+    const { data: allocationRows, error: allocationErr } = await admin
+      .schema("finance")
+      .from("receipt_allocations")
+      .select("id,receipt_id,amount")
+      .eq("student_charge_id", item.charge.id);
+
+    if (allocationErr) throw new Error(allocationErr.message);
+
+    const receiptIds = Array.from(
+      new Set(((allocationRows ?? []) as any[]).map((row) => row.receipt_id).filter(Boolean)),
+    );
+    let cancelledReceiptIds = new Set<string>();
+
+    if (receiptIds.length > 0) {
+      const { data: receiptRows, error: receiptErr } = await admin
+        .schema("finance")
+        .from("receipts")
+        .select("id,receipt_status")
+        .in("id", receiptIds);
+
+      if (receiptErr) throw new Error(receiptErr.message);
+
+      cancelledReceiptIds = new Set(
+        ((receiptRows ?? []) as Array<{ id: string; receipt_status: string }>)
+          .filter((row) => row.receipt_status === "cancelled")
+          .map((row) => row.id),
+      );
+    }
+
+    const activeAllocationRows = ((allocationRows ?? []) as any[]).filter(
+      (row) => !cancelledReceiptIds.has(row.receipt_id),
+    );
+    const activeAllocationIds = activeAllocationRows.map((row) => row.id);
+    const allocationTotal = activeAllocationRows.reduce(
+      (sum, row) => sum + Number(row.amount || 0),
+      0,
+    );
+
+    let componentTotal = 0;
+
+    if (activeAllocationIds.length > 0) {
+      const { data: componentRows, error: componentErr } = await admin
+        .schema("finance")
+        .from("receipt_allocation_components")
+        .select("amount")
+        .in("receipt_allocation_id", activeAllocationIds);
+
+      if (componentErr) throw new Error(componentErr.message);
+
+      componentTotal = ((componentRows ?? []) as Array<{ amount: number | string }>).reduce(
+        (sum, row) => sum + Number(row.amount || 0),
+        0,
+      );
+    }
+
+    const confirmedAmount = Math.max(componentTotal, allocationTotal);
+    const nextStatus =
+      confirmedAmount <= 0
+        ? "cancelled"
+        : allocationTotal >= confirmedAmount - 0.01
+          ? "paid"
+          : "partial";
+
+    const { error: updateErr } = await admin
+      .schema("finance")
+      .from("student_charges")
+      .update({
+        base_amount: confirmedAmount,
+        status: nextStatus,
+        notes: item.skippedComponents.length > 0
+          ? "Frais annexes internat ajustés selon les sous-rubriques confirmées au reçu."
+          : "Frais annexes internat ajustés selon les sous-rubriques réglées.",
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq("id", item.charge.id)
+      .eq("school_id", institutionId);
+
+    if (updateErr) throw new Error(updateErr.message);
+  }
 }
 
 async function resolveSelectedComponentsForPayment({
@@ -1350,6 +1467,11 @@ async function createPaymentAction(formData: FormData) {
       throw new Error(compAllocErr.message);
     }
   }
+
+  await syncVariableAnnexChargeAmounts({
+    institutionId,
+    allocations: allocationDrafts,
+  });
 
   const remainingDueAfterPayment = allocationDrafts.reduce((sum, item) => {
     // Internat : quand des frais annexes ne sont pas cochés, ils sont fermés

@@ -162,6 +162,8 @@ function institutionDisplayName(cfg: InstitutionSettings) {
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 }
 
@@ -170,8 +172,9 @@ function isScolariteCharge(label: string | null | undefined) {
   return (
     text.includes("scolar") ||
     text.includes("ecolage") ||
-    text.includes("écolage") ||
-    text.includes("inscription")
+    text.includes("inscription") ||
+    text.includes("frais generaux") ||
+    text.includes("frais annexes")
   );
 }
 
@@ -497,7 +500,8 @@ export default async function FinanceReceiptPrintPage({
 
   let scolariteReferenceCharges: ChargeRow[] = [];
   if (allLinesAreScolarite) {
-    const referenceClassId = rawLines[0]?.charge?.class_id ?? null;
+    const referenceClassId =
+      rawLines[0]?.charge?.class_id ?? currentClass?.id ?? null;
     const academicYear = String(typedReceipt.academic_year || "").trim();
 
     if (referenceClassId && academicYear) {
@@ -522,7 +526,8 @@ export default async function FinanceReceiptPrintPage({
 
       if (!directChargesErr) {
         const directCharges = ((directChargesData ?? []) as StudentChargeDirectRow[]).filter(
-          (charge) => isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
+          (charge) =>
+            isScolariteCharge(charge.label) && !isInternatCharge(charge.label),
         );
         const directChargeIds = directCharges.map((charge) => charge.id);
         let allocationsForCharges: AllocationLiteRow[] = [];
