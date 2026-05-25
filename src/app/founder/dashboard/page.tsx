@@ -284,6 +284,9 @@ export default async function FounderDashboardPage({
   searchParams?: Promise<FounderDashboardSearchParams>;
 }) {
   const { service, institutionIds, institutions } = await getFounderContext();
+  const watermarkLabel = institutions.length === 1
+    ? String(institutions[0]?.name || "www.mon-cahier.com").trim()
+    : "www.mon-cahier.com";
   const resolvedSearchParams: FounderDashboardSearchParams = searchParams
     ? await searchParams
     : {};
@@ -709,7 +712,16 @@ export default async function FounderDashboardPage({
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="relative isolate space-y-6 overflow-hidden">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-24 -z-10 flex justify-center overflow-hidden opacity-[0.045]"
+      >
+        <div className="select-none whitespace-nowrap text-center text-[clamp(3rem,10vw,9rem)] font-black uppercase tracking-[0.18em] text-slate-950 rotate-[-10deg]">
+          {watermarkLabel}
+        </div>
+      </div>
+
       <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-xl sm:p-7">
         <div className="max-w-3xl">
           <p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-200">
