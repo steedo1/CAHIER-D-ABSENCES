@@ -1,0 +1,7 @@
+-- Patch applicatif : reçu unique professionnel
+-- Aucun SQL à exécuter.
+-- Changements :
+-- 1) Paiement : toutes les catégories ouvertes de l'élève peuvent être ventilées dans une seule opération.
+-- 2) Les textes explicatifs "Reçu unique / Scolarité en haut, internat en bas / Reçu Unique" sont retirés de l'interface.
+-- 3) Cours de renforcement et autres catégories apparaissent dans le même reçu s'ils sont payés.
+-- 4) Shell fondateur : notifications visibles par défaut et bouton Déconnexion en jaune/or.

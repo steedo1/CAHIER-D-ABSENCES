@@ -357,6 +357,14 @@ export default function PaymentsComposer({
     );
   }, [categoryById, selectedStudent]);
 
+  const otherCharges = useMemo(() => {
+    if (!selectedStudent) return [];
+    return selectedStudent.open_charges.filter((charge) => {
+      const category = categoryById.get(charge.fee_category_id);
+      return !isScolariteCategory(category) && !isInternatCategory(category);
+    });
+  }, [categoryById, selectedStudent]);
+
   function applyCharge(
     charge: PaymentStudentRow["open_charges"][number] | null,
   ) {
@@ -508,10 +516,27 @@ export default function PaymentsComposer({
       };
     });
 
-    return [...scolariteItems, ...internatItems].filter(
+    const otherItems = otherCharges.map((charge) => {
+      const typed = Number(internatAmounts[charge.charge_id] || 0);
+      const amountForCharge = Number.isFinite(typed)
+        ? Math.min(Math.max(typed, 0), Number(charge.balance_due || 0))
+        : 0;
+
+      return {
+        chargeId: charge.charge_id,
+        amount: amountForCharge,
+        componentIds: [] as string[],
+        componentAmounts: [] as ComponentPaymentInput[],
+        componentMode: "detail",
+        closeUnselectedComponents: false,
+        includeOnReceipt: amountForCharge > 0,
+      };
+    });
+
+    return [...scolariteItems, ...internatItems, ...otherItems].filter(
       (item) => item.amount > 0 || item.includeOnReceipt,
     );
-  }, [internatAmounts, internatCharges, scolariteCharges, selectedStudent]);
+  }, [internatAmounts, internatCharges, otherCharges, scolariteCharges, selectedStudent]);
 
   const unifiedPaymentTotal = useMemo(
     () =>
@@ -531,12 +556,17 @@ export default function PaymentsComposer({
       (sum, charge) => sum + Number(charge.net_amount || 0),
       0,
     );
-    return scolariteTotal + internatTotal;
-  }, [internatCharges, scolariteCharges]);
+    const otherTotal = otherCharges.reduce(
+      (sum, charge) => sum + Number(charge.net_amount || 0),
+      0,
+    );
+    return scolariteTotal + internatTotal + otherTotal;
+  }, [internatCharges, otherCharges, scolariteCharges]);
 
   const unifiedRemainingAfterPayment = Math.max(
     scolariteCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) +
-      internatCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) -
+      internatCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) +
+      otherCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) -
       unifiedPaymentTotal,
     0,
   );
@@ -917,20 +947,7 @@ export default function PaymentsComposer({
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                  Reçu unique
-                </div>
-                <div className="mt-1 text-lg font-black text-slate-950">
-                  Scolarité en haut, internat en bas
-                </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Une seule opération génère un seul reçu. Pour un interne, la
-                  scolarité et l’internat sont ventilés dans le même reçu.
-                </p>
-              </div>
-
-              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-3">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
                     Total attendu
@@ -953,14 +970,6 @@ export default function PaymentsComposer({
                   </div>
                   <div className="mt-1 text-sm font-black text-rose-700">
                     {formatMoney(unifiedRemainingAfterPayment)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    Reçu
-                  </div>
-                  <div className="mt-1 text-sm font-black text-slate-900">
-                    Unique
                   </div>
                 </div>
               </div>
@@ -992,6 +1001,19 @@ export default function PaymentsComposer({
                     setInternatComponentIdsByCharge((prev) => ({
                       ...prev,
                       [chargeId]: componentIds,
+                    }))
+                  }
+                />
+              ) : null}
+
+              {otherCharges.length > 0 ? (
+                <OtherFeesPaymentPlanner
+                  charges={otherCharges}
+                  amounts={internatAmounts}
+                  onAmountChange={(chargeId, value) =>
+                    setInternatAmounts((prev) => ({
+                      ...prev,
+                      [chargeId]: value,
                     }))
                   }
                 />
@@ -1557,6 +1579,98 @@ function ChargeComponentChecklist({
           Base initiale : {formatMoney(remainingAmount)} · Montant saisi :{" "}
           {formatMoney(selectedTotal)}
         </span>
+      </div>
+    </div>
+  );
+}
+
+
+function OtherFeesPaymentPlanner({
+  charges,
+  amounts,
+  onAmountChange,
+}: {
+  charges: PaymentStudentRow["open_charges"];
+  amounts: Record<string, string>;
+  onAmountChange: (chargeId: string, value: string) => void;
+}) {
+  if (charges.length === 0) return null;
+
+  const total = charges.reduce(
+    (sum, charge) => sum + Number(amounts[charge.charge_id] || 0),
+    0,
+  );
+
+  return (
+    <div className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">
+            Autres catégories
+          </div>
+          <p className="mt-1 text-sm text-amber-900/80">
+            Les frais complémentaires, dont le cours de renforcement, sont
+            ventilés dans le même reçu lorsque le parent les règle.
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-amber-200">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Total encaissé
+          </div>
+          <div className="mt-1 text-lg font-black text-amber-700">
+            {formatMoney(total)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {charges.map((charge) => {
+          const value = amounts[charge.charge_id] ?? "";
+          const amountForCharge = Number(value || 0);
+
+          return (
+            <div
+              key={charge.charge_id}
+              className="rounded-3xl border border-amber-100 bg-white p-4 shadow-sm"
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-slate-900">
+                    {charge.label}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-slate-500">
+                    Attendu : {formatMoney(charge.net_amount)} · Déjà payé :{" "}
+                    {formatMoney(charge.paid_amount)} · Reste :{" "}
+                    {formatMoney(charge.balance_due)}
+                  </div>
+                </div>
+                <div className="w-full sm:w-44">
+                  <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                    Montant payé
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={charge.balance_due}
+                    step="1"
+                    value={value}
+                    onChange={(e) =>
+                      onAmountChange(charge.charge_id, e.target.value)
+                    }
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              {amountForCharge > Number(charge.balance_due || 0) ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                  Le montant dépasse le reste dû pour cette ligne.
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

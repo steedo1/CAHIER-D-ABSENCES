@@ -189,9 +189,12 @@ export default function FounderShell({ children }: { children: ReactNode }) {
       </div>
 
       <div className="border-b border-white/15 px-4 py-3">
-        <details className="rounded-2xl bg-white/10 px-3 py-3">
+        <details open className="rounded-2xl bg-white/10 px-3 py-3">
           <summary className="cursor-pointer list-none text-[13px] font-extrabold text-white">
-            Notifications appareil
+            Notifications fondateur
+            <span className="ml-2 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] font-black text-emerald-200">
+              statut visible
+            </span>
           </summary>
           <div className="mt-3 [&>div]:border-white/20 [&>div]:shadow-none">
             <InstallAndPushCTA />
@@ -204,7 +207,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
       <div className="border-t border-white/15 px-4 py-4">
         <TrueLogoutButton
           label="Déconnexion"
-          className="inline-flex w-full items-center justify-start gap-2 rounded-2xl bg-red-600 px-4 py-3 text-[14px] font-extrabold text-white shadow-sm shadow-red-950/20 transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-70"
+          className="inline-flex w-full items-center justify-start gap-2 rounded-2xl bg-amber-400 px-4 py-3 text-[14px] font-extrabold text-slate-950 shadow-sm shadow-amber-950/20 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-70"
         />
         <div className="mt-4 leading-tight text-white/80">
           <div className="text-[12px] opacity-80">Développé par</div>
