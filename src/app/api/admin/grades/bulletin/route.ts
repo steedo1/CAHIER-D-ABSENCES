@@ -605,29 +605,34 @@ function signBulletinQRToken(payload: Omit<BulletinQRPayload, "v" | "iat">): str
   return `${payloadB64}.${sig}`;
 }
 
-/** ✅ Origin PUBLIC (anti localhost)
- *
- * Point critique QR : en preview Vercel, il ne faut pas forcer le QR vers
- * NEXT_PUBLIC_APP_URL (= domaine production), sinon le code court peut être
- * créé depuis une preview mais vérifié par la production. On privilégie donc
- * l'origine réelle de la requête, sauf en local ou si BULLETIN_QR_PUBLIC_ORIGIN
- * force explicitement un domaine.
- */
+/** ✅ Origin PUBLIC (anti localhost / anti preview Vercel protégée) */
 function pickPublicOrigin(fallbackOrigin: string) {
-  const forced = process.env.BULLETIN_QR_PUBLIC_ORIGIN;
-  if (forced) return String(forced).replace(/\/+$/, "");
+  const forced =
+    process.env.BULLETIN_PUBLIC_VERIFY_ORIGIN ||
+    process.env.NEXT_PUBLIC_BULLETIN_VERIFY_ORIGIN ||
+    null;
 
-  const reqOrigin = String(fallbackOrigin || "").replace(/\/+$/, "");
-  const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(reqOrigin);
-  if (reqOrigin && !isLocal) return reqOrigin;
-
-  const raw =
+  const appOrigin =
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.PUBLIC_APP_URL ||
     process.env.APP_URL ||
-    reqOrigin;
+    null;
 
-  return String(raw || "").replace(/\/+$/, "");
+  let raw = forced || appOrigin || fallbackOrigin || "";
+  raw = String(raw).trim().replace(/\/+$/, "");
+
+  // Un QR public ne doit jamais pointer vers une preview Vercel protégée,
+  // sinon le parent tombe sur /login de Vercel au lieu de la page de vérification.
+  if (!forced && !appOrigin) {
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host.endsWith(".vercel.app")) return "https://mon-cahier.com";
+    } catch {
+      // On garde le raw en dessous.
+    }
+  }
+
+  return raw;
 }
 
 /** ✅ QR PNG server-side (qualité print + quiet zone) */

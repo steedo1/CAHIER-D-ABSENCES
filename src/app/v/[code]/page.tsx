@@ -162,7 +162,6 @@ export default async function VerifyByCodePage(props: any) {
     // Vérification courte : le QR est validé depuis bulletin_qr_codes
     // et affiche le snapshot officiel du bulletin, sans dépendre du recalcul lourd.
     url.searchParams.set("lite", "1");
-    if (debugEnabled) url.searchParams.set("debug", "1");
 
     res = await fetch(url.toString(), { cache: "no-store" });
     data = await res.json().catch(() => null);
@@ -433,10 +432,7 @@ export default async function VerifyByCodePage(props: any) {
         api: {
           ok: !!res?.ok,
           status: res?.status ?? null,
-          error: data?.error ?? null,
-          details: data?.details ?? null,
-          mode: data?.mode ?? null,
-          received: data?.received ?? null,
+          response: data ?? null,
         },
         class_level: cls?.bulletin_level ?? cls?.level ?? null,
         period,
@@ -554,17 +550,20 @@ export default async function VerifyByCodePage(props: any) {
             Impossible de joindre le serveur de vérification pour le moment.
           </p>
         ) : !ok ? (
-          <div className="mt-6 space-y-3 text-slate-700">
-            <p>Ce QR code est invalide, expiré ou a été révoqué.</p>
+          <>
+            <p className="mt-6 text-slate-700">
+              Ce QR code est invalide, expiré ou a été révoqué.
+            </p>
+
             {debugEnabled && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
-                <div className="text-xs font-semibold text-rose-800">DEBUG QR</div>
+              <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3">
+                <div className="text-xs font-semibold text-rose-800">DEBUG VÉRIFICATION QR</div>
                 <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-rose-900">
                   {JSON.stringify(debugPayload, null, 2)}
                 </pre>
               </div>
             )}
-          </div>
+          </>
         ) : (
           <>
             <div className="mt-6 grid gap-3 md:grid-cols-3">

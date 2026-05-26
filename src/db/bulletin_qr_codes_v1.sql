@@ -1,6 +1,6 @@
 -- Thème : Vérification publique des bulletins par QR code
 -- Table : public.bulletin_qr_codes
--- Objectif : garantir que les QR courts /v/[code] ont toujours un mapping valide.
+-- À exécuter dans Supabase SQL Editor AVANT de régénérer les bulletins avec QR.
 
 create extension if not exists pgcrypto;
 
@@ -8,7 +8,7 @@ create table if not exists public.bulletin_qr_codes (
   id uuid primary key default gen_random_uuid(),
   code text not null,
   bulletin_key text,
-  payload jsonb,
+  payload jsonb not null default '{}'::jsonb,
   expires_at timestamptz,
   revoked boolean not null default false,
   scan_count integer not null default 0,
@@ -18,10 +18,9 @@ create table if not exists public.bulletin_qr_codes (
 );
 
 alter table public.bulletin_qr_codes
-  add column if not exists id uuid default gen_random_uuid(),
   add column if not exists code text,
   add column if not exists bulletin_key text,
-  add column if not exists payload jsonb,
+  add column if not exists payload jsonb not null default '{}'::jsonb,
   add column if not exists expires_at timestamptz,
   add column if not exists revoked boolean not null default false,
   add column if not exists scan_count integer not null default 0,
@@ -32,13 +31,6 @@ alter table public.bulletin_qr_codes
 update public.bulletin_qr_codes
 set payload = '{}'::jsonb
 where payload is null;
-
-alter table public.bulletin_qr_codes
-  alter column payload set default '{}'::jsonb,
-  alter column revoked set default false,
-  alter column scan_count set default 0,
-  alter column created_at set default now(),
-  alter column updated_at set default now();
 
 create unique index if not exists bulletin_qr_codes_code_uidx
   on public.bulletin_qr_codes (upper(trim(code)))
@@ -68,7 +60,6 @@ before update on public.bulletin_qr_codes
 for each row
 execute function public.set_bulletin_qr_codes_updated_at();
 
--- Sanity check utile après exécution.
 select
   count(*) as total_qr_codes,
   count(*) filter (where code is null or trim(code) = '') as codes_vides,

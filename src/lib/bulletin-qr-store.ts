@@ -11,13 +11,6 @@ export function makeShortCode(len = 12) {
   return out;
 }
 
-export function normalizeBulletinShortCode(code: string) {
-  return String(code || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "");
-}
-
 export async function getOrCreateBulletinShortCode(
   srv: SupabaseClient,
   opts: {
@@ -28,39 +21,36 @@ export async function getOrCreateBulletinShortCode(
 ) {
   const nowIso = new Date().toISOString();
 
-  // 1) Réutilise un code existant (non révoqué, non expiré), mais seulement
-  // si son payload peut être rafraîchi. Sinon on risque d'imprimer un QR qui
-  // existe en table mais que la vérification publique rejettera ensuite.
-  const { data: existing, error: existingErr } = await srv
+  // 1) Réutilise un code existant (non révoqué, non expiré)
+  const { data: existing } = await srv
     .from("bulletin_qr_codes")
-    .select("code, payload, expires_at, revoked")
+    .select("code, expires_at, revoked")
     .eq("bulletin_key", opts.bulletinKey)
     .eq("revoked", false)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (existingErr) throw existingErr;
-
   if (existing?.code) {
     const exp = existing.expires_at ? new Date(existing.expires_at) : null;
     if (!exp || exp.getTime() > Date.now()) {
-      const { error: updateErr } = await srv
-        .from("bulletin_qr_codes")
-        .update({
-          payload: opts.payload,
-          expires_at: opts.expiresAt ?? null,
-        })
-        .eq("code", existing.code);
+      // Important : on garde le même code court, mais on rafraîchit
+      // toujours son payload. Sinon un QR déjà généré peut conserver une
+      // ancienne moyenne alors que le bulletin vient d'être recalculé.
+      // L'échec de cette mise à jour ne doit pas bloquer le bulletin.
+      try {
+        await srv
+          .from("bulletin_qr_codes")
+          .update({
+            payload: opts.payload,
+            expires_at: opts.expiresAt ?? null,
+          })
+          .eq("code", existing.code);
+      } catch {
+        // non bloquant : la vérification publique recalcule aussi les moyennes
+      }
 
-      if (!updateErr) return existing.code;
-
-      // Important : ne pas réutiliser un ancien code si le payload n'a pas pu
-      // être mis à jour. On laisse la création/fallback gérer proprement le cas.
-      console.warn("[bulletin_qr_store] payload non rafraîchi", {
-        code: existing.code,
-        message: updateErr.message,
-      });
+      return existing.code;
     }
   }
 
@@ -89,15 +79,11 @@ export async function getOrCreateBulletinShortCode(
 }
 
 export async function resolveBulletinByCode(srv: SupabaseClient, code: string) {
-  const normalizedCode = normalizeBulletinShortCode(code);
-
-  if (!normalizedCode) {
-    return { ok: false as const, error: "missing_code" as const };
-  }
+  const normalizedCode = String(code || "").trim().toUpperCase();
 
   const { data, error } = await srv
     .from("bulletin_qr_codes")
-    .select("code, payload, revoked, expires_at, scan_count")
+    .select("payload, revoked, expires_at, scan_count")
     .eq("code", normalizedCode)
     .maybeSingle();
 
@@ -108,17 +94,11 @@ export async function resolveBulletinByCode(srv: SupabaseClient, code: string) {
 
   if (data.expires_at) {
     const exp = new Date(data.expires_at);
-    if (exp.getTime() <= Date.now()) {
+    if (exp.getTime() <= Date.now())
       return { ok: false as const, error: "expired" as const };
-    }
   }
 
-  if (!data.payload || typeof data.payload !== "object") {
-    return { ok: false as const, error: "invalid_payload" as const };
-  }
-
-  // petit tracking (optionnel). On ignore l'erreur pour ne jamais bloquer une
-  // vérification valide si une colonne de tracking manque encore en production.
+  // petit tracking (optionnel)
   await srv
     .from("bulletin_qr_codes")
     .update({
@@ -127,5 +107,5 @@ export async function resolveBulletinByCode(srv: SupabaseClient, code: string) {
     })
     .eq("code", normalizedCode);
 
-  return { ok: true as const, payload: data.payload, code: normalizedCode };
+  return { ok: true as const, payload: data.payload };
 }
