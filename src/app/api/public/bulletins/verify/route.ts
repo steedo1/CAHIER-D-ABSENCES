@@ -1580,37 +1580,66 @@ export async function GET(req: NextRequest) {
     { data: cls, error: clsErr },
     { data: stu, error: stuErr },
   ] = await Promise.all([
-    srv.from("institutions").select("id, name, code, code_unique, acronym, logo_url, settings_json").eq("id", instIdStr).maybeSingle(),
+    srv.from("institutions").select("*").eq("id", instIdStr).maybeSingle(),
     srv
       .from("classes")
-      .select("id, label, code, institution_id, academic_year, head_teacher_id, level, official_track_code")
+      .select("*")
       .eq("id", classIdStr)
       .maybeSingle(),
     srv
       .from("students")
-      .select(
-        "id, full_name, last_name, first_name, matricule, gender, birthdate, birth_place, nationality, regime, is_repeater, is_boarder, is_affecte, photo_url"
-      )
+      .select("*")
       .eq("id", studentIdStr)
       .maybeSingle(),
   ]);
 
   if (instErr || !inst) {
-    return NextResponse.json({ ok: false, error: "INSTITUTION_NOT_FOUND" }, { status: 404 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: instErr ? "INSTITUTION_QUERY_ERROR" : "INSTITUTION_NOT_FOUND",
+        detail: instErr?.message ?? null,
+        hint: instErr ? "Vérifie les colonnes de la table institutions ou les variables Supabase de cet environnement." : null,
+      },
+      { status: instErr ? 500 : 404 }
+    );
   }
 
   if (clsErr || !cls) {
-    return NextResponse.json({ ok: false, error: "CLASS_NOT_FOUND" }, { status: 404 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: clsErr ? "CLASS_QUERY_ERROR" : "CLASS_NOT_FOUND",
+        detail: clsErr?.message ?? null,
+        hint: clsErr ? "Vérifie les colonnes de la table classes ou les variables Supabase de cet environnement." : null,
+      },
+      { status: clsErr ? 500 : 404 }
+    );
   }
 
   const classRow = cls as ClassRow;
 
   if (!classRow.institution_id || classRow.institution_id !== instIdStr) {
-    return NextResponse.json({ ok: false, error: "CLASS_FORBIDDEN" }, { status: 403 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "CLASS_FORBIDDEN",
+        detail: `class.institution_id=${classRow.institution_id ?? "null"} payload.instId=${instIdStr}`,
+      },
+      { status: 403 }
+    );
   }
 
   if (stuErr || !stu) {
-    return NextResponse.json({ ok: false, error: "STUDENT_NOT_FOUND" }, { status: 404 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: stuErr ? "STUDENT_QUERY_ERROR" : "STUDENT_NOT_FOUND",
+        detail: stuErr?.message ?? null,
+        hint: stuErr ? "Vérifie les colonnes de la table students. La route publique utilise maintenant select('*') pour éviter les colonnes optionnelles absentes." : null,
+      },
+      { status: stuErr ? 500 : 404 }
+    );
   }
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);

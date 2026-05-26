@@ -552,7 +552,11 @@ export default async function VerifyByCodePage(props: any) {
         ) : !ok ? (
           <>
             <p className="mt-6 text-slate-700">
-              Ce QR code est invalide, expiré ou a été révoqué.
+              Ce QR code ne peut pas être affiché pour le moment.
+            </p>
+            <p className="mt-2 text-xs text-slate-500">
+              Code technique : {String(data?.error ?? res?.status ?? "verification_failed")}
+              {data?.detail ? ` — ${String(data.detail)}` : ""}
             </p>
 
             {debugEnabled && (
