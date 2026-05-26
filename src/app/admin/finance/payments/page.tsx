@@ -76,6 +76,7 @@ type PaidComponentRow = {
   student_charge_id: string;
   fee_schedule_component_id: string;
   receipt_status: string | null;
+  amount?: number | string | null;
 };
 
 type PaymentAllocationPlanItem = {
@@ -798,7 +799,7 @@ async function fetchPaidComponentsForCharges(
     const { data, error } = await admin
       .schema("finance")
       .from("v_receipt_allocation_components")
-      .select("student_charge_id,fee_schedule_component_id,receipt_status")
+      .select("student_charge_id,fee_schedule_component_id,receipt_status,amount")
       .eq("school_id", institutionId)
       .in("student_charge_id", ids);
 
@@ -974,7 +975,7 @@ async function resolveSelectedComponentsForPayment({
   const { data: alreadyPaid, error: paidErr } = await admin
     .schema("finance")
     .from("v_receipt_allocation_components")
-    .select("student_charge_id,fee_schedule_component_id,receipt_status")
+    .select("student_charge_id,fee_schedule_component_id,receipt_status,amount")
     .eq("school_id", institutionId)
     .eq("student_charge_id", charge.id)
     .in("fee_schedule_component_id", ids);
@@ -982,7 +983,7 @@ async function resolveSelectedComponentsForPayment({
   if (paidErr) throw new Error(paidErr.message);
 
   const paidRows = ((alreadyPaid ?? []) as PaidComponentRow[]).filter(
-    (row) => row.receipt_status !== "cancelled",
+    (row) => row.receipt_status !== "cancelled" && Number(row.amount || 0) > 0,
   );
   if (paidRows.length > 0) {
     throw new Error(
@@ -1107,11 +1108,20 @@ async function resolveAllocationPlanForPayment({
     }
 
     const balanceDue = Number(charge.balance_due || 0);
-    if (balanceDue <= 0) throw new Error(`${charge.label} est déjà soldé.`);
-    if (item.amount > balanceDue) {
-      throw new Error(
-        `Le montant saisi pour ${charge.label} dépasse le reste dû (${formatMoney(balanceDue)}).`,
-      );
+    const isVariableAnnexCharge =
+      isInternatAnnexesCharge(charge.label) && item.componentIds.length > 0;
+
+    // Les frais annexes internat sont variables : la dette technique peut avoir
+    // un solde comptable à 0 F tant qu'aucun composant n'est confirmé. Dans ce
+    // cas, on valide le paiement par les sous-rubriques cochées, pas par
+    // balance_due. Les autres frais gardent le contrôle classique du solde.
+    if (!isVariableAnnexCharge) {
+      if (balanceDue <= 0) throw new Error(`${charge.label} est déjà soldé.`);
+      if (item.amount > balanceDue) {
+        throw new Error(
+          `Le montant saisi pour ${charge.label} dépasse le reste dû (${formatMoney(balanceDue)}).`,
+        );
+      }
     }
 
     let selectedComponents: FeeScheduleComponentRow[] = [];
@@ -1135,7 +1145,7 @@ async function resolveAllocationPlanForPayment({
         const selectedIds = new Set(selectedComponents.map((c) => c.id));
         const alreadyPaidIds = new Set(
           alreadyPaidComponents
-            .filter((row) => row.receipt_status !== "cancelled")
+            .filter((row) => row.receipt_status !== "cancelled" && Number(row.amount || 0) > 0)
             .map((row) => row.fee_schedule_component_id),
         );
         skippedComponents = activeComponents.filter(
@@ -1150,7 +1160,7 @@ async function resolveAllocationPlanForPayment({
       ]);
       const alreadyPaidIds = new Set(
         alreadyPaidComponents
-          .filter((row) => row.receipt_status !== "cancelled")
+          .filter((row) => row.receipt_status !== "cancelled" && Number(row.amount || 0) > 0)
           .map((row) => row.fee_schedule_component_id),
       );
       skippedComponents = activeComponents.filter(
@@ -1813,7 +1823,7 @@ export default async function FinancePaymentsPage({
               0,
             );
             const effectiveBalanceDue = componentDrivenBalance
-              ? Math.min(rawBalanceDue, remainingComponentTotal)
+              ? remainingComponentTotal
               : rawBalanceDue;
 
             if (effectiveBalanceDue <= 0) return null;
@@ -1828,7 +1838,7 @@ export default async function FinancePaymentsPage({
               // On ne le réduit jamais selon des composants internes.
               // Internat : seuls les frais annexes cochés restent dus.
               net_amount: componentDrivenBalance
-                ? Math.min(Number(row.net_amount || 0), remainingComponentTotal)
+                ? remainingComponentTotal
                 : Number(row.net_amount || 0),
               paid_amount: Number(row.paid_amount || 0),
               balance_due: effectiveBalanceDue,

@@ -374,10 +374,10 @@ export default function PaymentsComposer({
         // Scolarité : les libellés servent aux statistiques et à la ventilation
         // interne, mais ils ne doivent pas ressortir sur le reçu.
         componentMode: selectedCategoryIsScolarite ? "hidden" : "detail",
-        // Internat : les frais annexes non cochés sont considérés comme non dus
-        // pour ce reçu. Exemple : Bible décochée => total internat réduit.
-        closeUnselectedComponents:
-          selectedCategoryIsInternat && charge.components.length > 0,
+        // Internat : les frais annexes non cochés restent disponibles pour un
+        // prochain encaissement. On ne les ferme plus automatiquement, sinon
+        // le comptable ne peut plus les sélectionner plus tard.
+        closeUnselectedComponents: false,
         includeOnReceipt:
           selectedCategoryIsInternat && isPensionCharge(charge.label),
       };
@@ -1397,8 +1397,8 @@ function ChargeComponentChecklist({
             Détail des frais annexes
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Cochez les sous-rubriques réellement réglées. Le montant encaissé se
-            calcule automatiquement.
+            Cochez les sous-rubriques réellement réglées maintenant. Les éléments
+            non cochés resteront disponibles pour un prochain paiement.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
