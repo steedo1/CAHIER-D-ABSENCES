@@ -39,6 +39,11 @@ type FeeComponentOption = {
   order_index: number;
 };
 
+type ComponentPaymentInput = {
+  componentId: string;
+  amount: number;
+};
+
 function normalize(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
@@ -47,6 +52,34 @@ function normalize(value: string | null | undefined) {
 
 function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+}
+
+function componentAmountKey(chargeId: string, componentId: string) {
+  return `${chargeId}::${componentId}`;
+}
+
+function getComponentAmount(
+  amounts: Record<string, string>,
+  chargeId: string,
+  componentId: string,
+) {
+  const raw = Number(amounts[componentAmountKey(chargeId, componentId)] || 0);
+  return Number.isFinite(raw) ? Math.max(raw, 0) : 0;
+}
+
+function getComponentPaymentInputs(
+  charge: PaymentStudentRow["open_charges"][number],
+  amounts: Record<string, string>,
+): ComponentPaymentInput[] {
+  return charge.components
+    .map((component) => ({
+      componentId: component.id,
+      amount: Math.min(
+        getComponentAmount(amounts, charge.charge_id, component.id),
+        Number(component.amount || 0),
+      ),
+    }))
+    .filter((item) => item.amount > 0);
 }
 
 function isInternatCategory(category: FeeCategoryRow | null | undefined) {
@@ -304,6 +337,26 @@ export default function PaymentsComposer({
   const selectedCategoryUsesGroupedPlan =
     selectedCategoryIsInternat || selectedCategoryIsScolarite;
 
+  const categoryById = useMemo(() => {
+    const map = new Map<string, FeeCategoryRow>();
+    for (const category of feeCategories) map.set(category.id, category);
+    return map;
+  }, [feeCategories]);
+
+  const scolariteCharges = useMemo(() => {
+    if (!selectedStudent) return [];
+    return selectedStudent.open_charges.filter((charge) =>
+      isScolariteCategory(categoryById.get(charge.fee_category_id)),
+    );
+  }, [categoryById, selectedStudent]);
+
+  const internatCharges = useMemo(() => {
+    if (!selectedStudent) return [];
+    return selectedStudent.open_charges.filter((charge) =>
+      isInternatCategory(categoryById.get(charge.fee_category_id)),
+    );
+  }, [categoryById, selectedStudent]);
+
   function applyCharge(
     charge: PaymentStudentRow["open_charges"][number] | null,
   ) {
@@ -371,6 +424,7 @@ export default function PaymentsComposer({
           ? Math.max(amountForCharge, 0)
           : 0,
         componentIds,
+        componentAmounts: [] as ComponentPaymentInput[],
         // Scolarité : les libellés servent aux statistiques et à la ventilation
         // interne, mais ils ne doivent pas ressortir sur le reçu.
         componentMode: selectedCategoryIsScolarite ? "hidden" : "detail",
@@ -398,6 +452,93 @@ export default function PaymentsComposer({
         0,
       ),
     [groupedPaymentPlan],
+  );
+
+  const unifiedPaymentPlan = useMemo(() => {
+    if (!selectedStudent) return [];
+
+    const scolariteItems = scolariteCharges.map((charge) => {
+      const typed = Number(internatAmounts[charge.charge_id] || 0);
+      const amountForCharge = Number.isFinite(typed)
+        ? Math.min(Math.max(typed, 0), Number(charge.balance_due || 0))
+        : 0;
+
+      return {
+        chargeId: charge.charge_id,
+        amount: amountForCharge,
+        componentIds: [] as string[],
+        componentAmounts: [] as ComponentPaymentInput[],
+        componentMode: "hidden",
+        closeUnselectedComponents: false,
+        includeOnReceipt: amountForCharge > 0,
+      };
+    });
+
+    const internatItems = internatCharges.map((charge) => {
+      if (charge.components.length > 0) {
+        const componentAmounts = getComponentPaymentInputs(charge, internatAmounts);
+        const amountForCharge = componentAmounts.reduce(
+          (sum, component) => sum + component.amount,
+          0,
+        );
+        return {
+          chargeId: charge.charge_id,
+          amount: amountForCharge,
+          componentIds: componentAmounts.map((component) => component.componentId),
+          componentAmounts,
+          componentMode: "detail",
+          closeUnselectedComponents: false,
+          includeOnReceipt: amountForCharge > 0,
+        };
+      }
+
+      const typed = Number(internatAmounts[charge.charge_id] || 0);
+      const amountForCharge = Number.isFinite(typed)
+        ? Math.min(Math.max(typed, 0), Number(charge.balance_due || 0))
+        : 0;
+
+      return {
+        chargeId: charge.charge_id,
+        amount: amountForCharge,
+        componentIds: [] as string[],
+        componentAmounts: [] as ComponentPaymentInput[],
+        componentMode: "detail",
+        closeUnselectedComponents: false,
+        includeOnReceipt: isPensionCharge(charge.label) || amountForCharge > 0,
+      };
+    });
+
+    return [...scolariteItems, ...internatItems].filter(
+      (item) => item.amount > 0 || item.includeOnReceipt,
+    );
+  }, [internatAmounts, internatCharges, scolariteCharges, selectedStudent]);
+
+  const unifiedPaymentTotal = useMemo(
+    () =>
+      unifiedPaymentPlan.reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0,
+      ),
+    [unifiedPaymentPlan],
+  );
+
+  const unifiedExpectedTotal = useMemo(() => {
+    const scolariteTotal = scolariteCharges.reduce(
+      (sum, charge) => sum + Number(charge.net_amount || 0),
+      0,
+    );
+    const internatTotal = internatCharges.reduce(
+      (sum, charge) => sum + Number(charge.net_amount || 0),
+      0,
+    );
+    return scolariteTotal + internatTotal;
+  }, [internatCharges, scolariteCharges]);
+
+  const unifiedRemainingAfterPayment = Math.max(
+    scolariteCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) +
+      internatCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) -
+      unifiedPaymentTotal,
+    0,
   );
 
   const categoryBalanceTotal = useMemo(
@@ -463,14 +604,16 @@ export default function PaymentsComposer({
     selectedCategoryUsesGroupedPlan,
   ]);
 
+  useEffect(() => {
+    if (selectedStudent) {
+      setExpectedAmount(unifiedExpectedTotal > 0 ? String(unifiedExpectedTotal) : "");
+      setAmount(unifiedPaymentTotal > 0 ? String(unifiedPaymentTotal) : "");
+    }
+  }, [selectedStudent, unifiedExpectedTotal, unifiedPaymentTotal]);
+
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
-    selectedStudent &&
-    selectedClassId &&
-    selectedCategoryId &&
-    (selectedCategoryUsesGroupedPlan
-      ? groupedPaymentTotal > 0
-      : Number(amount) > 0),
+    selectedStudent && selectedClassId && unifiedPaymentTotal > 0,
   );
 
   if (activeWorkflow === "menu") {
@@ -639,6 +782,22 @@ export default function PaymentsComposer({
             <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
               Choisissez un niveau puis une classe.
             </div>
+          ) : selectedStudent ? (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold text-emerald-900">
+              Élève sélectionné : {selectedStudent.student_name}.
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedStudentId("");
+                  setSelectedChargeId("");
+                  setInternatAmounts({});
+                  setInternatComponentIdsByCharge({});
+                }}
+                className="ml-3 rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+              >
+                Changer d’élève
+              </button>
+            </div>
           ) : query.length < 2 ? (
             <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
               Saisissez au moins 2 caractères pour rechercher un élève.
@@ -710,18 +869,13 @@ export default function PaymentsComposer({
             value={selectedStudent?.student_id ?? ""}
           />
           <input type="hidden" name="class_id" value={selectedClassId} />
+          <input type="hidden" name="fee_category_id" value="__mixed__" />
+          <input type="hidden" name="student_charge_id" value="" />
           <input
             type="hidden"
-            name="student_charge_id"
-            value={selectedCategoryUsesGroupedPlan ? "" : selectedChargeId}
+            name="allocation_plan"
+            value={JSON.stringify(unifiedPaymentPlan)}
           />
-          {selectedCategoryUsesGroupedPlan ? (
-            <input
-              type="hidden"
-              name="allocation_plan"
-              value={JSON.stringify(groupedPaymentPlan)}
-            />
-          ) : null}
           {selectedComponentIds.map((componentId) => (
             <input
               key={componentId}
@@ -763,105 +917,26 @@ export default function PaymentsComposer({
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <FeeCategorySelect
-                  feeCategories={feeCategories}
-                  selectedCategoryId={selectedCategoryId}
-                  onChange={(nextCategoryId) => {
-                    setSelectedCategoryId(nextCategoryId);
-                    const nextCharge =
-                      selectedStudent.open_charges.find(
-                        (charge) => charge.fee_category_id === nextCategoryId,
-                      ) ?? null;
-                    applyCharge(nextCharge);
-                  }}
-                />
-
-                {selectedStudent.open_charges.length > 0 &&
-                selectedCategoryUsesGroupedPlan ? (
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm font-semibold text-emerald-900 md:col-span-2">
-                    {selectedCategoryIsInternat ? (
-                      <>
-                        L’internat peut être encaissé en une seule opération :
-                        pension + frais annexes. La ligne pension restera
-                        visible sur le reçu, même si aucun montant n’est versé
-                        dessus.
-                      </>
-                    ) : (
-                      <>
-                        La scolarité peut être encaissée en une seule opération,
-                        même si le paiement concerne plusieurs lignes comme
-                        l’inscription ou l’écolage. Sur le reçu, ces
-                        sous-rubriques ne seront pas détaillées.
-                      </>
-                    )}
-                  </div>
-                ) : selectedStudent.open_charges.length > 0 ? (
-                  <div>
-                    <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                      Frais ouvert à régler
-                    </label>
-                    <select
-                      value={selectedChargeId}
-                      onChange={(e) => {
-                        const nextCharge =
-                          selectedStudent.open_charges.find(
-                            (charge) => charge.charge_id === e.target.value,
-                          ) ?? null;
-                        applyCharge(nextCharge);
-                      }}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                    >
-                      {categoryChargeOptions.length === 0 ? (
-                        <option value="">
-                          Aucun frais ouvert dans cette catégorie
-                        </option>
-                      ) : null}
-                      {categoryChargeOptions.map((charge) => (
-                        <option key={charge.charge_id} value={charge.charge_id}>
-                          {charge.label} — attendu{" "}
-                          {formatMoney(charge.net_amount)} · reste{" "}
-                          {formatMoney(charge.balance_due)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 md:col-span-2">
-                    Aucune situation ouverte n’est encore créée pour cet élève.
-                    Le système la créera automatiquement si un barème existe, ou
-                    créera une ligne manuelle à partir du montant attendu.
-                  </div>
-                )}
+              <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                  Reçu unique
+                </div>
+                <div className="mt-1 text-lg font-black text-slate-950">
+                  Scolarité en haut, internat en bas
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Une seule opération génère un seul reçu. Pour un interne, la
+                  scolarité et l’internat sont ventilés dans le même reçu.
+                </p>
               </div>
 
               <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    Catégorie sélectionnée
+                    Total attendu
                   </div>
                   <div className="mt-1 text-sm font-black text-slate-900">
-                    {selectedCategory?.name || "Non définie"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                    {selectedCategoryIsScolarite
-                      ? "Scolarité officielle"
-                      : selectedCategoryIsInternat
-                        ? "Internat retenu"
-                        : "Montant attendu"}
-                  </div>
-                  <div className="mt-1 text-sm font-black text-slate-900">
-                    {selectedCategoryIsScolarite
-                      ? formatMoney(categoryExpectedTotal)
-                      : selectedCategoryIsInternat
-                        ? internatRecoverableTotal > 0
-                          ? formatMoney(internatRecoverableTotal)
-                          : "À sélectionner"
-                        : selectedCharge
-                          ? formatMoney(selectedCharge.net_amount)
-                          : "À saisir"}
+                    {formatMoney(unifiedExpectedTotal)}
                   </div>
                 </div>
                 <div>
@@ -869,9 +944,7 @@ export default function PaymentsComposer({
                     Montant encaissé
                   </div>
                   <div className="mt-1 text-sm font-black text-emerald-700">
-                    {selectedCategoryUsesGroupedPlan
-                      ? formatMoney(groupedPaymentTotal)
-                      : formatMoney(Number(amount || 0))}
+                    {formatMoney(unifiedPaymentTotal)}
                   </div>
                 </div>
                 <div>
@@ -879,27 +952,36 @@ export default function PaymentsComposer({
                     Reste après paiement
                   </div>
                   <div className="mt-1 text-sm font-black text-rose-700">
-                    {selectedCategoryUsesGroupedPlan
-                      ? formatMoney(remainingAfterCurrentPayment)
-                      : selectedCharge
-                        ? formatMoney(
-                            Math.max(
-                              Number(selectedCharge.balance_due || 0) -
-                                Number(amount || 0),
-                              0,
-                            ),
-                          )
-                        : formatMoney(0)}
+                    {formatMoney(unifiedRemainingAfterPayment)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Reçu
+                  </div>
+                  <div className="mt-1 text-sm font-black text-slate-900">
+                    Unique
                   </div>
                 </div>
               </div>
 
-              {selectedCategoryIsInternat ? (
+              <ScolaritePaymentPlanner
+                charges={scolariteCharges}
+                amounts={internatAmounts}
+                onAmountChange={(chargeId, value) =>
+                  setInternatAmounts((prev) => ({
+                    ...prev,
+                    [chargeId]: value,
+                  }))
+                }
+              />
+
+              {internatCharges.length > 0 ? (
                 <InternatPaymentPlanner
-                  charges={categoryChargeOptions}
+                  charges={internatCharges}
                   amounts={internatAmounts}
                   componentIdsByCharge={internatComponentIdsByCharge}
-                  recoverableTotal={internatRecoverableTotal}
+                  recoverableTotal={internatCharges.reduce((sum, charge) => sum + Number(charge.net_amount || 0), 0)}
                   onAmountChange={(chargeId, value) =>
                     setInternatAmounts((prev) => ({
                       ...prev,
@@ -913,17 +995,6 @@ export default function PaymentsComposer({
                     }))
                   }
                 />
-              ) : selectedCategoryIsScolarite ? (
-                <ScolaritePaymentPlanner
-                  charges={categoryChargeOptions}
-                  amounts={internatAmounts}
-                  onAmountChange={(chargeId, value) =>
-                    setInternatAmounts((prev) => ({
-                      ...prev,
-                      [chargeId]: value,
-                    }))
-                  }
-                />
               ) : null}
 
               <PaymentFields
@@ -934,10 +1005,8 @@ export default function PaymentsComposer({
                 amount={amount}
                 setAmount={setAmount}
                 today={today}
-                expectedAmountLocked={
-                  Boolean(selectedCharge) || selectedCategoryUsesGroupedPlan
-                }
-                amountLocked={selectedCategoryUsesGroupedPlan}
+                expectedAmountLocked={true}
+                amountLocked={true}
               />
 
               <PendingButton
@@ -1236,15 +1305,13 @@ function InternatPaymentPlanner({
 
   const total = charges.reduce((sum, charge) => {
     if (charge.components.length > 0) {
-      const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
       return (
         sum +
-        charge.components
-          .filter((component) => selected.has(component.id))
-          .reduce(
-            (inner, component) => inner + Number(component.amount || 0),
-            0,
-          )
+        charge.components.reduce(
+          (inner, component) =>
+            inner + getComponentAmount(amounts, charge.charge_id, component.id),
+          0,
+        )
       );
     }
     return sum + Number(amounts[charge.charge_id] || 0);
@@ -1285,10 +1352,11 @@ function InternatPaymentPlanner({
       <div className="mt-4 space-y-3">
         {charges.map((charge) => {
           const selectedIds = componentIdsByCharge[charge.charge_id] ?? [];
-          const selectedSet = new Set(selectedIds);
-          const componentTotal = charge.components
-            .filter((component) => selectedSet.has(component.id))
-            .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+          const componentTotal = charge.components.reduce(
+            (sum, component) =>
+              sum + getComponentAmount(amounts, charge.charge_id, component.id),
+            0,
+          );
           const chargeAmount =
             charge.components.length > 0
               ? componentTotal
@@ -1342,7 +1410,10 @@ function InternatPaymentPlanner({
 
               {charge.components.length > 0 ? (
                 <ChargeComponentChecklist
+                  chargeId={charge.charge_id}
                   components={charge.components}
+                  amounts={amounts}
+                  onAmountChange={onAmountChange}
                   selectedComponentIds={selectedIds}
                   onChange={(nextIds) =>
                     onComponentChange(charge.charge_id, nextIds)
@@ -1365,28 +1436,37 @@ function InternatPaymentPlanner({
 }
 
 function ChargeComponentChecklist({
+  chargeId,
   components,
+  amounts,
+  onAmountChange,
   selectedComponentIds,
   onChange,
   remainingAmount,
 }: {
+  chargeId: string;
   components: FeeComponentOption[];
+  amounts: Record<string, string>;
+  onAmountChange: (key: string, value: string) => void;
   selectedComponentIds: string[];
   onChange: (value: string[]) => void;
   remainingAmount: number;
 }) {
   if (components.length === 0) return null;
 
-  const selected = new Set(selectedComponentIds);
-  const selectedTotal = components
-    .filter((component) => selected.has(component.id))
-    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+  const selectedTotal = components.reduce(
+    (sum, component) =>
+      sum + getComponentAmount(amounts, chargeId, component.id),
+    0,
+  );
 
-  function toggle(componentId: string) {
-    const next = new Set(selectedComponentIds);
-    if (next.has(componentId)) next.delete(componentId);
-    else next.add(componentId);
-    onChange(Array.from(next));
+  function updateComponent(componentId: string, value: string) {
+    const numeric = Number(value || 0);
+    const nextIds = new Set(selectedComponentIds);
+    if (Number.isFinite(numeric) && numeric > 0) nextIds.add(componentId);
+    else nextIds.delete(componentId);
+    onChange(Array.from(nextIds));
+    onAmountChange(componentAmountKey(chargeId, componentId), value);
   }
 
   return (
@@ -1397,13 +1477,13 @@ function ChargeComponentChecklist({
             Détail des frais annexes
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Cochez les sous-rubriques réellement réglées maintenant. Les éléments
-            non cochés resteront disponibles pour un prochain paiement.
+            Saisissez le montant payé maintenant pour chaque sous-rubrique. Le
+            paiement partiel est autorisé.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-            Total coché
+            Total saisi
           </div>
           <div className="mt-1 text-lg font-black text-emerald-700">
             {formatMoney(selectedTotal)}
@@ -1411,33 +1491,36 @@ function ChargeComponentChecklist({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-4 overflow-hidden rounded-2xl border border-emerald-100 bg-white">
+        <div className="grid grid-cols-[1fr_110px_140px] gap-2 bg-emerald-50 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-800">
+          <div>Sous-rubrique</div>
+          <div className="text-right">Attendu</div>
+          <div className="text-right">Payé maintenant</div>
+        </div>
         {components.map((component) => {
-          const checked = selected.has(component.id);
+          const value = amounts[componentAmountKey(chargeId, component.id)] ?? "";
           return (
-            <label
+            <div
               key={component.id}
-              className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-sm transition ${
-                checked
-                  ? "border-emerald-300 bg-white shadow-sm"
-                  : "border-emerald-100 bg-white/70 hover:bg-white"
-              }`}
+              className="grid grid-cols-[1fr_110px_140px] items-center gap-2 border-t border-emerald-50 px-3 py-2 text-sm"
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(component.id)}
-                  className="h-4 w-4 rounded border-emerald-300 text-emerald-600"
-                />
-                <span className="truncate font-semibold text-slate-800">
-                  {component.label}
-                </span>
-              </span>
-              <span className="shrink-0 font-black text-slate-900">
+              <div className="min-w-0 font-semibold text-slate-800">
+                {component.label}
+              </div>
+              <div className="text-right font-black text-slate-900">
                 {formatMoney(component.amount)}
-              </span>
-            </label>
+              </div>
+              <input
+                type="number"
+                min="0"
+                max={component.amount}
+                step="1"
+                value={value}
+                onChange={(e) => updateComponent(component.id, e.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-slate-200 px-2 py-1.5 text-right text-sm font-bold text-slate-900 outline-none focus:border-emerald-300"
+              />
+            </div>
           );
         })}
       </div>
@@ -1445,20 +1528,33 @@ function ChargeComponentChecklist({
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-slate-600">
         <button
           type="button"
-          onClick={() => onChange(components.map((component) => component.id))}
+          onClick={() => {
+            onChange(components.map((component) => component.id));
+            for (const component of components) {
+              onAmountChange(
+                componentAmountKey(chargeId, component.id),
+                String(component.amount),
+              );
+            }
+          }}
           className="rounded-full bg-white px-3 py-1.5 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
         >
-          Tout cocher
+          Tout mettre au maximum
         </button>
         <button
           type="button"
-          onClick={() => onChange([])}
+          onClick={() => {
+            onChange([]);
+            for (const component of components) {
+              onAmountChange(componentAmountKey(chargeId, component.id), "");
+            }
+          }}
           className="rounded-full bg-white px-3 py-1.5 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
         >
-          Tout décocher
+          Vider les montants
         </button>
         <span>
-          Base initiale : {formatMoney(remainingAmount)} · Base retenue :{" "}
+          Base initiale : {formatMoney(remainingAmount)} · Montant saisi :{" "}
           {formatMoney(selectedTotal)}
         </span>
       </div>

@@ -629,16 +629,14 @@ export default async function FinanceReceiptPrintPage({
     }
   }
 
-  const allLinesAreScolarite =
-    rawLines.length > 0 &&
-    rawLines.every(
-      (line) =>
-        isScolariteCharge(line.charge?.label) &&
-        !isInternatCharge(line.charge?.label),
-    );
+  const hasScolariteLines = rawLines.some(
+    (line) =>
+      isScolariteCharge(line.charge?.label) &&
+      !isInternatCharge(line.charge?.label),
+  );
 
   let scolariteReferenceCharges: ChargeRow[] = [];
-  if (allLinesAreScolarite) {
+  if (hasScolariteLines) {
     const academicYear = String(typedReceipt.academic_year || "").trim();
 
     if (academicYear) {
@@ -748,59 +746,69 @@ export default async function FinanceReceiptPrintPage({
           .map((line) => line.charge)
           .filter((c): c is ChargeRow => Boolean(c));
 
-  const displayLines = allLinesAreScolarite
-    ? [
-        {
-          key: "scolarite",
-          label: "Scolarité",
-          dueDate: null as string | null,
-          expected: scolariteLinesForTotals.reduce(
-            (sum, charge) => sum + safeNumber(charge.net_amount),
-            0,
-          ),
-          paid: scolariteLinesForTotals.reduce(
-            (sum, charge) => sum + safeNumber(charge.paid_amount),
-            0,
-          ),
-          remaining: scolariteLinesForTotals.reduce(
-            (sum, charge) => sum + safeNumber(charge.balance_due),
-            0,
-          ),
-          amount: rawLines.reduce(
-            (sum, line) => sum + safeNumber(line.alloc.amount),
-            0,
-          ),
-          components: [] as ReceiptAllocationComponentRow[],
-        },
-      ]
-    : rawLines.map((line) => {
-        const visibleComponents = line.components.filter(
-          (component) => safeNumber(component.amount) > 0,
-        );
-        const hasClosedOptionalComponents = line.components.some(
-          (component) => safeNumber(component.amount) === 0,
-        );
-        const componentExpected = visibleComponents.reduce(
-          (sum, component) => sum + safeNumber(component.amount),
-          0,
-        );
+  const scolariteReceiptAmount = rawLines.reduce(
+    (sum, line) =>
+      isScolariteCharge(line.charge?.label) && !isInternatCharge(line.charge?.label)
+        ? sum + safeNumber(line.alloc.amount)
+        : sum,
+    0,
+  );
 
-        return {
-          key: line.alloc.id,
-          label: line.charge?.label || "Dette introuvable",
-          dueDate: line.charge?.due_date ?? null,
-          expected:
-            componentExpected > 0
-              ? componentExpected
-              : safeNumber(line.charge?.net_amount),
-          paid: safeNumber(line.charge?.paid_amount),
-          remaining: hasClosedOptionalComponents
-            ? 0
-            : safeNumber(line.charge?.balance_due),
-          amount: safeNumber(line.alloc.amount),
-          components: visibleComponents,
-        };
-      });
+  const scolariteDisplayLine = hasScolariteLines
+    ? {
+        key: "scolarite",
+        label: "Scolarité",
+        dueDate: null as string | null,
+        expected: scolariteLinesForTotals.reduce(
+          (sum, charge) => sum + safeNumber(charge.net_amount),
+          0,
+        ),
+        paid: scolariteLinesForTotals.reduce(
+          (sum, charge) => sum + safeNumber(charge.paid_amount),
+          0,
+        ),
+        remaining: scolariteLinesForTotals.reduce(
+          (sum, charge) => sum + safeNumber(charge.balance_due),
+          0,
+        ),
+        amount: scolariteReceiptAmount,
+        components: [] as ReceiptAllocationComponentRow[],
+      }
+    : null;
+
+  const nonScolariteDisplayLines = rawLines
+    .filter(
+      (line) =>
+        !isScolariteCharge(line.charge?.label) || isInternatCharge(line.charge?.label),
+    )
+    .map((line) => {
+      const visibleComponents = line.components.filter(
+        (component) => safeNumber(component.amount) > 0,
+      );
+      const componentExpected = visibleComponents.reduce(
+        (sum, component) => sum + safeNumber(component.amount),
+        0,
+      );
+
+      return {
+        key: line.alloc.id,
+        label: line.charge?.label || "Dette introuvable",
+        dueDate: line.charge?.due_date ?? null,
+        expected:
+          componentExpected > 0
+            ? componentExpected
+            : safeNumber(line.charge?.net_amount),
+        paid: safeNumber(line.charge?.paid_amount),
+        remaining: safeNumber(line.charge?.balance_due),
+        amount: safeNumber(line.alloc.amount),
+        components: visibleComponents,
+      };
+    });
+
+  const displayLines = [
+    ...(scolariteDisplayLine ? [scolariteDisplayLine] : []),
+    ...nonScolariteDisplayLines,
+  ];
 
   const totalAllocated = displayLines.reduce(
     (sum, line) => sum + safeNumber(line.amount),
@@ -823,15 +831,18 @@ export default async function FinanceReceiptPrintPage({
     0,
   );
 
+  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
   const allLinesAreInternat =
     rawLines.length > 0 &&
     rawLines.every((line) => isInternatCharge(line.charge?.label));
 
-  const receiptKindLabel = allLinesAreScolarite
-    ? "Reçu de scolarité"
-    : allLinesAreInternat
-      ? "Reçu d’internat"
-      : "Reçu de paiement";
+  const receiptKindLabel = hasScolariteLines && hasInternatLines
+    ? "Reçu scolarité & internat"
+    : hasScolariteLines
+      ? "Reçu de scolarité"
+      : allLinesAreInternat
+        ? "Reçu d’internat"
+        : "Reçu de paiement";
 
   const schoolName = institutionDisplayName(institutionSettings);
   const printHref = `/admin/finance/receipts/${encodeURIComponent(

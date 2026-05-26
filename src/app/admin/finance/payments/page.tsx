@@ -70,6 +70,12 @@ type FeeScheduleComponentRow = {
   amount: number | string;
   order_index: number | null;
   is_active: boolean;
+  paid_amount?: number;
+};
+
+type ComponentPaymentInput = {
+  componentId: string;
+  amount: number;
 };
 
 type PaidComponentRow = {
@@ -83,6 +89,7 @@ type PaymentAllocationPlanItem = {
   chargeId: string;
   amount: number;
   componentIds: string[];
+  componentAmounts: ComponentPaymentInput[];
   componentMode: "detail" | "hidden";
   closeUnselectedComponents: boolean;
   includeOnReceipt: boolean;
@@ -889,30 +896,52 @@ async function syncVariableAnnexChargeAmounts({
       0,
     );
 
-    let componentTotal = 0;
+    let componentPaidTotal = 0;
+    let componentExpectedTotal = 0;
 
     if (activeAllocationIds.length > 0) {
       const { data: componentRows, error: componentErr } = await admin
         .schema("finance")
         .from("receipt_allocation_components")
-        .select("amount")
+        .select("fee_schedule_component_id,amount")
         .in("receipt_allocation_id", activeAllocationIds);
 
       if (componentErr) throw new Error(componentErr.message);
 
-      componentTotal = ((componentRows ?? []) as Array<{ amount: number | string }>).reduce(
+      const componentIds = Array.from(
+        new Set(
+          ((componentRows ?? []) as Array<{ fee_schedule_component_id: string; amount: number | string }>)
+            .filter((row) => Number(row.amount || 0) > 0)
+            .map((row) => row.fee_schedule_component_id),
+        ),
+      );
+
+      componentPaidTotal = ((componentRows ?? []) as Array<{ amount: number | string }>).reduce(
         (sum, row) => sum + Number(row.amount || 0),
         0,
       );
+
+      if (componentIds.length > 0) {
+        const { data: expectedRows, error: expectedErr } = await admin
+          .schema("finance")
+          .from("fee_schedule_components")
+          .select("id,amount")
+          .in("id", componentIds)
+          .eq("school_id", institutionId);
+
+        if (expectedErr) throw new Error(expectedErr.message);
+
+        componentExpectedTotal = ((expectedRows ?? []) as Array<{ amount: number | string }>).reduce(
+          (sum, row) => sum + Number(row.amount || 0),
+          0,
+        );
+      }
     }
 
-    const confirmedAmount = Math.max(componentTotal, allocationTotal);
+    const confirmedAmount =
+      componentExpectedTotal > 0 ? componentExpectedTotal : 230000;
     const nextStatus =
-      confirmedAmount <= 0
-        ? "cancelled"
-        : allocationTotal >= confirmedAmount - 0.01
-          ? "paid"
-          : "partial";
+      allocationTotal >= confirmedAmount - 0.01 ? "paid" : "partial";
 
     const { error: updateErr } = await admin
       .schema("finance")
@@ -936,11 +965,13 @@ async function resolveSelectedComponentsForPayment({
   institutionId,
   charge,
   componentIds,
+  componentAmounts,
   amount,
 }: {
   institutionId: string;
   charge: ChargeBalanceRow;
   componentIds: string[];
+  componentAmounts: ComponentPaymentInput[];
   amount: number;
 }): Promise<FeeScheduleComponentRow[]> {
   const ids = Array.from(new Set(componentIds.filter(Boolean)));
@@ -985,19 +1016,43 @@ async function resolveSelectedComponentsForPayment({
   const paidRows = ((alreadyPaid ?? []) as PaidComponentRow[]).filter(
     (row) => row.receipt_status !== "cancelled" && Number(row.amount || 0) > 0,
   );
-  if (paidRows.length > 0) {
-    throw new Error(
-      "Une sous-rubrique sélectionnée a déjà été encaissée sur ce frais.",
+  const paidByComponent = new Map<string, number>();
+  for (const row of paidRows) {
+    paidByComponent.set(
+      row.fee_schedule_component_id,
+      (paidByComponent.get(row.fee_schedule_component_id) ?? 0) +
+        Number(row.amount || 0),
     );
   }
 
-  const selectedTotal = rows.reduce(
-    (sum, row) => sum + Number(row.amount || 0),
-    0,
+  const amountByComponent = new Map(
+    componentAmounts.map((component) => [component.componentId, component.amount]),
   );
+
+  const selectedTotal = rows.reduce((sum, row) => {
+    const paidNow = amountByComponent.get(row.id) ?? Number(row.amount || 0);
+    const alreadyPaidForComponent = paidByComponent.get(row.id) ?? 0;
+    const remainingForComponent = Math.max(
+      Number(row.amount || 0) - alreadyPaidForComponent,
+      0,
+    );
+
+    if (paidNow <= 0) {
+      throw new Error(`Veuillez saisir un montant pour ${row.label}.`);
+    }
+    if (paidNow > remainingForComponent + 0.01) {
+      throw new Error(
+        `Le montant saisi pour ${row.label} dépasse le reste de cette sous-rubrique (${formatMoney(remainingForComponent)}).`,
+      );
+    }
+
+    row.paid_amount = paidNow;
+    return sum + paidNow;
+  }, 0);
+
   if (Math.abs(selectedTotal - amount) > 0.01) {
     throw new Error(
-      `Le montant encaissé (${formatMoney(amount)}) doit correspondre au total des sous-rubriques cochées (${formatMoney(selectedTotal)}).`,
+      `Le montant encaissé (${formatMoney(amount)}) doit correspondre au total des sous-rubriques saisies (${formatMoney(selectedTotal)}).`,
     );
   }
 
@@ -1035,6 +1090,20 @@ function parsePaymentAllocationPlan(
           .map((value: unknown) => normalize(value))
           .filter(Boolean)
       : [];
+    const componentAmounts: ComponentPaymentInput[] = Array.isArray(
+      (item as any).componentAmounts,
+    )
+      ? (item as any).componentAmounts
+          .map((value: unknown) => {
+            const componentId = normalize((value as any)?.componentId);
+            const raw = Number((value as any)?.amount || 0);
+            const amountValue = Number.isFinite(raw) ? Math.max(raw, 0) : 0;
+            return componentId && amountValue > 0
+              ? { componentId, amount: amountValue }
+              : null;
+          })
+          .filter(Boolean) as ComponentPaymentInput[]
+      : [];
     const componentMode =
       (item as any).componentMode === "hidden" ? "hidden" : "detail";
     const closeUnselectedComponents = Boolean(
@@ -1048,6 +1117,22 @@ function parsePaymentAllocationPlan(
       existing.componentIds = Array.from(
         new Set([...existing.componentIds, ...componentIds]),
       );
+      const amountByComponent = new Map<string, number>();
+      for (const component of existing.componentAmounts) {
+        amountByComponent.set(
+          component.componentId,
+          (amountByComponent.get(component.componentId) ?? 0) + component.amount,
+        );
+      }
+      for (const component of componentAmounts) {
+        amountByComponent.set(
+          component.componentId,
+          (amountByComponent.get(component.componentId) ?? 0) + component.amount,
+        );
+      }
+      existing.componentAmounts = Array.from(amountByComponent.entries()).map(
+        ([componentId, amountValue]) => ({ componentId, amount: amountValue }),
+      );
       existing.closeUnselectedComponents =
         existing.closeUnselectedComponents || closeUnselectedComponents;
       existing.includeOnReceipt = existing.includeOnReceipt || includeOnReceipt;
@@ -1060,6 +1145,7 @@ function parsePaymentAllocationPlan(
         chargeId,
         amount,
         componentIds: Array.from(new Set(componentIds)),
+        componentAmounts,
         componentMode,
         closeUnselectedComponents,
         includeOnReceipt,
@@ -1132,6 +1218,7 @@ async function resolveAllocationPlanForPayment({
         institutionId,
         charge,
         componentIds: item.componentIds,
+        componentAmounts: item.componentAmounts,
         amount: item.amount,
       });
 
@@ -1205,7 +1292,9 @@ async function createPaymentAction(formData: FormData) {
   const selectedChargeId = normalize(formData.get("student_charge_id")) || null;
   const selectedStudentId = normalize(formData.get("student_id"));
   const classId = normalize(formData.get("class_id"));
-  const feeCategoryId = normalize(formData.get("fee_category_id"));
+  const feeCategoryIdRaw = normalize(formData.get("fee_category_id"));
+  const feeCategoryId = feeCategoryIdRaw === "__mixed__" ? "" : feeCategoryIdRaw;
+  const mixedReceipt = feeCategoryIdRaw === "__mixed__";
   const paymentType = normalize(formData.get("payment_type")) || "cash";
   const amountRaw = normalize(formData.get("amount"));
   const expectedAmountRaw = normalize(formData.get("expected_amount"));
@@ -1223,7 +1312,7 @@ async function createPaymentAction(formData: FormData) {
   const parentPhone = normalize(formData.get("parent_phone"));
 
   if (!classId) throw new Error("Veuillez choisir une classe.");
-  if (!feeCategoryId)
+  if (!feeCategoryId && !mixedReceipt)
     throw new Error("Veuillez choisir une catégorie de frais.");
 
   let amount = Number(amountRaw);
@@ -1242,16 +1331,20 @@ async function createPaymentAction(formData: FormData) {
     );
   }
 
-  const { data: feeCategory, error: catErr } = await admin
-    .schema("finance")
-    .from("fee_categories")
-    .select("id,name,school_id,is_active")
-    .eq("id", feeCategoryId)
-    .eq("school_id", institutionId)
-    .maybeSingle();
+  let feeCategory: { id?: string; name?: string; school_id?: string; is_active?: boolean } | null = null;
+  if (feeCategoryId) {
+    const { data: feeCategoryData, error: catErr } = await admin
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,name,school_id,is_active")
+      .eq("id", feeCategoryId)
+      .eq("school_id", institutionId)
+      .maybeSingle();
 
-  if (catErr) throw new Error(catErr.message);
-  if (!feeCategory) throw new Error("Catégorie de frais introuvable.");
+    if (catErr) throw new Error(catErr.message);
+    if (!feeCategoryData) throw new Error("Catégorie de frais introuvable.");
+    feeCategory = feeCategoryData as any;
+  }
 
   let studentId = selectedStudentId;
   const extraNotes: string[] = [
@@ -1335,6 +1428,7 @@ async function createPaymentAction(formData: FormData) {
       institutionId,
       charge,
       componentIds,
+      componentAmounts: [],
       amount,
     });
 
@@ -1445,7 +1539,7 @@ async function createPaymentAction(formData: FormData) {
       receipt_allocation_id: allocationId,
       fee_schedule_component_id: component.id,
       label: component.label,
-      amount: Number(component.amount || 0),
+      amount: Number(component.paid_amount ?? component.amount ?? 0),
       order_index: Number(component.order_index || 0),
       created_at: nowAllocationIso,
     }));
@@ -1484,10 +1578,6 @@ async function createPaymentAction(formData: FormData) {
   });
 
   const remainingDueAfterPayment = allocationDrafts.reduce((sum, item) => {
-    // Internat : quand des frais annexes ne sont pas cochés, ils sont fermés
-    // avec un montant à 0. Ils ne doivent donc plus compter dans le reste dû.
-    if (item.skippedComponents.length > 0) return sum;
-
     return (
       sum +
       Math.max(
