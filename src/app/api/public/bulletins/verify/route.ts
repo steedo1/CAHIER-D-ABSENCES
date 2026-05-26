@@ -1468,8 +1468,18 @@ export async function GET(req: NextRequest) {
   const srv = getSupabaseServiceClient() as unknown as SupabaseClient;
 
   const url = new URL(req.url);
-  const shortCode = url.searchParams.get("c") || url.searchParams.get("code");
-  const token = url.searchParams.get("t");
+  const rawShortCode =
+    url.searchParams.get("c") ||
+    url.searchParams.get("code") ||
+    url.searchParams.get("qr_id") ||
+    url.searchParams.get("scanned_code");
+  const rawToken = url.searchParams.get("t") || url.searchParams.get("token");
+  const tokenLooksSigned = rawToken ? String(rawToken).includes(".") : false;
+  const shortCode = rawShortCode || (rawToken && !tokenLooksSigned ? rawToken : null);
+  const token = tokenLooksSigned ? rawToken : null;
+  const debugMode = ["1", "true", "yes"].includes(
+    String(url.searchParams.get("debug") || "").trim().toLowerCase()
+  );
   const liteMode = ["1", "true", "yes"].includes(
     String(url.searchParams.get("lite") || url.searchParams.get("mode") || "")
       .trim()
@@ -1481,10 +1491,46 @@ export async function GET(req: NextRequest) {
 
   if (shortCode) {
     mode = "short";
-    const rec: any = await resolveBulletinByCode(srv, shortCode);
-    if (!rec || !rec.payload) {
-      return NextResponse.json({ ok: false, error: "invalid_code" }, { status: 400 });
+
+    let rec: any = null;
+    try {
+      rec = await resolveBulletinByCode(srv, shortCode);
+    } catch (error: any) {
+      console.error("[public/bulletins/verify] QR store error", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "qr_store_error",
+          ...(debugMode ? { details: error?.message ?? String(error) } : {}),
+        },
+        { status: 500 }
+      );
     }
+
+    if (!rec?.ok) {
+      const reason = rec?.error || "invalid_code";
+      const status = reason === "expired" || reason === "revoked" ? 410 : 400;
+      return NextResponse.json(
+        {
+          ok: false,
+          error: reason,
+          ...(debugMode
+            ? {
+                mode,
+                received: {
+                  c: url.searchParams.get("c"),
+                  code: url.searchParams.get("code"),
+                  qr_id: url.searchParams.get("qr_id"),
+                  scanned_code: url.searchParams.get("scanned_code"),
+                  t: url.searchParams.get("t"),
+                },
+              }
+            : {}),
+        },
+        { status }
+      );
+    }
+
     payload = rec.payload;
   } else if (token) {
     mode = "token";

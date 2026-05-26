@@ -605,13 +605,27 @@ function signBulletinQRToken(payload: Omit<BulletinQRPayload, "v" | "iat">): str
   return `${payloadB64}.${sig}`;
 }
 
-/** ✅ Origin PUBLIC (anti localhost) */
+/** ✅ Origin PUBLIC (anti localhost)
+ *
+ * Point critique QR : en preview Vercel, il ne faut pas forcer le QR vers
+ * NEXT_PUBLIC_APP_URL (= domaine production), sinon le code court peut être
+ * créé depuis une preview mais vérifié par la production. On privilégie donc
+ * l'origine réelle de la requête, sauf en local ou si BULLETIN_QR_PUBLIC_ORIGIN
+ * force explicitement un domaine.
+ */
 function pickPublicOrigin(fallbackOrigin: string) {
+  const forced = process.env.BULLETIN_QR_PUBLIC_ORIGIN;
+  if (forced) return String(forced).replace(/\/+$/, "");
+
+  const reqOrigin = String(fallbackOrigin || "").replace(/\/+$/, "");
+  const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(reqOrigin);
+  if (reqOrigin && !isLocal) return reqOrigin;
+
   const raw =
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.PUBLIC_APP_URL ||
     process.env.APP_URL ||
-    fallbackOrigin;
+    reqOrigin;
 
   return String(raw || "").replace(/\/+$/, "");
 }

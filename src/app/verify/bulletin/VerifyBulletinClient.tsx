@@ -79,7 +79,16 @@ function buildSubjectRows(data: any): SubjectRow[] {
 
 export default function VerifyBulletinClient() {
   const sp = useSearchParams();
-  const token = useMemo(() => sp.get("t") ?? "", [sp]);
+  const token = useMemo(() => sp.get("t") ?? sp.get("token") ?? "", [sp]);
+  const shortCode = useMemo(
+    () =>
+      sp.get("c") ??
+      sp.get("code") ??
+      sp.get("qr_id") ??
+      sp.get("scanned_code") ??
+      "",
+    [sp]
+  );
 
   const [state, setState] = useState<VerifyState>({ status: "idle" });
 
@@ -87,10 +96,10 @@ export default function VerifyBulletinClient() {
     let cancelled = false;
 
     async function run() {
-      if (!token) {
+      if (!token && !shortCode) {
         setState({
           status: "error",
-          error: "Paramètre 't' manquant dans l'URL.",
+          error: "Paramètre de vérification manquant dans l'URL.",
         });
         return;
       }
@@ -98,10 +107,11 @@ export default function VerifyBulletinClient() {
       setState({ status: "loading" });
 
       try {
-        const res = await fetch(
-          `/api/public/bulletins/verify?t=${encodeURIComponent(token)}`,
-          { cache: "no-store" }
-        );
+        const apiUrl = shortCode
+          ? `/api/public/bulletins/verify?c=${encodeURIComponent(shortCode)}`
+          : `/api/public/bulletins/verify?t=${encodeURIComponent(token)}`;
+
+        const res = await fetch(apiUrl, { cache: "no-store" });
 
         const json = await res.json();
 
@@ -125,7 +135,7 @@ export default function VerifyBulletinClient() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, shortCode]);
 
   if (state.status === "idle" || state.status === "loading") {
     return (
