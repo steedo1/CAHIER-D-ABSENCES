@@ -1065,9 +1065,6 @@ async function attachTeachersToSubjects(
 
   // ✅ subject -> teacher_id
   const teacherIdBySubject = new Map<string, string>();
-  // ✅ affectation officielle de la classe : utilisée comme secours pour la signature
-  // quand teacher_id vient d'un compte-classe/admin ou d'une ancienne évaluation.
-  const assignmentTeacherIdBySubject = new Map<string, string>();
   const lastEvalDateBySubject = new Map<string, string>();
 
   /* ── A. Priorité : grade_evaluations.teacher_id (dernière date) ── */
@@ -1086,80 +1083,63 @@ async function attachTeachersToSubjects(
     }
   }
 
-  /* ── B. Fallback : class_teachers ──
-   * Important : selon les anciennes pages / imports, class_teachers.subject_id peut contenir
-   * soit subjects.id, soit institution_subjects.id. On accepte donc les deux formats pour
-   * ne pas perdre le professeur — et donc sa signature — sur le bulletin.
-   */
-  const fallbackSubjectIds = subjectIds.filter((sid) => !!sid && isUuid(sid));
-  const fallbackSubjectIdSet = new Set(fallbackSubjectIds);
+  /* ── B. Fallback : institution_subjects + class_teachers ── */
+  const missingSubjectIds = subjectIds.filter((sid) => !teacherIdBySubject.has(sid));
 
-  if (fallbackSubjectIds.length) {
-    let ctQuery = srv
-      .from("class_teachers")
-      .select("subject_id, teacher_id, start_date, end_date")
+  if (missingSubjectIds.length) {
+    const { data: instSubs, error: instErr } = await srv
+      .from("institution_subjects")
+      .select("id, subject_id")
       .eq("institution_id", institutionId)
-      .eq("class_id", classId);
+      .in("subject_id", missingSubjectIds);
 
-    const pivot = dateTo || dateFrom || null;
-    if (pivot) {
-      ctQuery = ctQuery
-        .or(`end_date.is.null,end_date.gte.${pivot}`)
-        .or(`start_date.is.null,start_date.lte.${pivot}`);
-    } else {
-      ctQuery = ctQuery.is("end_date", null);
-    }
+    if (!instErr && instSubs?.length) {
+      const instIds: string[] = [];
+      const subjectIdByInstId = new Map<string, string>();
 
-    const { data: ctData, error: ctErr } = await ctQuery;
-
-    if (!ctErr && ctData?.length) {
-      const ctSubjectIds = Array.from(
-        new Set(
-          (ctData as any[])
-            .map((row) => String(row.subject_id || ""))
-            .filter((id) => !!id && isUuid(id))
-        )
-      );
-
-      const canonicalSubjectIdByInstitutionSubjectId = new Map<string, string>();
-      if (ctSubjectIds.length) {
-        const { data: instSubRows, error: instSubErr } = await srv
-          .from("institution_subjects")
-          .select("id, subject_id")
-          .eq("institution_id", institutionId)
-          .in("id", ctSubjectIds);
-
-        if (!instSubErr && instSubRows?.length) {
-          (instSubRows as any[]).forEach((row) => {
-            const instId = String(row.id || "");
-            const sid = String(row.subject_id || "");
-            if (instId && sid && isUuid(sid)) {
-              canonicalSubjectIdByInstitutionSubjectId.set(instId, sid);
-            }
-          });
-        }
-      }
-
-      // on trie pour privilégier l'affectation la plus récente
-      const rows = (ctData as any[]).slice().sort((a, b) => {
-        const asd = String(a.start_date || "");
-        const bsd = String(b.start_date || "");
-        return bsd.localeCompare(asd);
+      (instSubs as any[]).forEach((row) => {
+        const sid = String(row.subject_id || "");
+        const instId = String(row.id || "");
+        if (!sid || !instId) return;
+        instIds.push(instId);
+        subjectIdByInstId.set(instId, sid);
       });
 
-      for (const row of rows) {
-        const rawSubjectId = String(row.subject_id || "");
-        const sid = fallbackSubjectIdSet.has(rawSubjectId)
-          ? rawSubjectId
-          : canonicalSubjectIdByInstitutionSubjectId.get(rawSubjectId) ?? null;
-        const tid = row.teacher_id ? String(row.teacher_id) : "";
+      if (instIds.length) {
+        let ctQuery = srv
+          .from("class_teachers")
+          .select("subject_id, teacher_id, start_date, end_date")
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .in("subject_id", instIds);
 
-        if (!sid || !tid || !fallbackSubjectIdSet.has(sid)) continue;
-        if (!assignmentTeacherIdBySubject.has(sid)) {
-          assignmentTeacherIdBySubject.set(sid, tid);
+        const pivot = dateTo || dateFrom || null;
+        if (pivot) {
+          ctQuery = ctQuery
+            .or(`end_date.is.null,end_date.gte.${pivot}`)
+            .or(`start_date.is.null,start_date.lte.${pivot}`);
+        } else {
+          ctQuery = ctQuery.is("end_date", null);
         }
-        if (!teacherIdBySubject.has(sid)) {
-          teacherIdBySubject.set(sid, tid);
+
+        const { data: ctData, error: ctErr } = await ctQuery;
+
+        if (!ctErr && ctData?.length) {
+          // on trie pour privilégier l'affectation la plus récente
+          const rows = (ctData as any[]).slice().sort((a, b) => {
+            const asd = String(a.start_date || "");
+            const bsd = String(b.start_date || "");
+            return bsd.localeCompare(asd);
+          });
+
+          for (const row of rows) {
+            const instSubId = String(row.subject_id || "");
+            const sid = subjectIdByInstId.get(instSubId);
+            const tid = row.teacher_id ? String(row.teacher_id) : "";
+            if (!sid || !tid) continue;
+            if (teacherIdBySubject.has(sid)) continue;
+            teacherIdBySubject.set(sid, tid);
+          }
         }
       }
     }
@@ -1194,11 +1174,9 @@ async function attachTeachersToSubjects(
       if (!sid) return;
 
       const tid = teacherIdBySubject.get(sid) ?? null;
-      const assignmentTid = assignmentTeacherIdBySubject.get(sid) ?? null;
       const tname = tid ? nameById.get(tid) ?? null : null;
 
       (ps as any).teacher_id = tid;
-      (ps as any).teacher_assignment_id = assignmentTid;
       (ps as any).teacher_name = tname;
     });
   }

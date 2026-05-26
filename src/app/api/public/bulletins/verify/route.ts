@@ -1470,6 +1470,11 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const shortCode = url.searchParams.get("c") || url.searchParams.get("code");
   const token = url.searchParams.get("t");
+  const liteMode = ["1", "true", "yes"].includes(
+    String(url.searchParams.get("lite") || url.searchParams.get("mode") || "")
+      .trim()
+      .toLowerCase()
+  );
 
   let mode: "short" | "token" = "token";
   let payload: any = null;
@@ -1750,6 +1755,86 @@ export async function GET(req: NextRequest) {
       .eq("id", classRow.head_teacher_id)
       .maybeSingle();
     if (!htErr && ht) headTeacher = ht as HeadTeacherRow;
+  }
+
+  if (mode === "short" && liteMode) {
+    const snap = (payload as any)?.s ?? null;
+    const snapGeneral = snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
+    const snapAnnual = snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
+
+    const safePeriod = {
+      ...periodMeta,
+      label: periodMeta.label ?? periodLabelToken ?? null,
+      short_label: periodMeta.short_label ?? periodLabelToken ?? null,
+      academic_year: periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+    };
+
+    return NextResponse.json({
+      ok: true,
+      mode: "short_lite",
+      source: "bulletin_qr_codes_snapshot",
+      institution: {
+        id: institutionMeta.id,
+        name: institutionMeta.name ?? null,
+        code: institutionMeta.code ?? null,
+        code_unique: institutionMeta.code_unique ?? null,
+        acronym: institutionMeta.acronym ?? null,
+        logo_url: institutionMeta.logo_url ?? null,
+        institution_logo_url: institutionMeta.logo_url ?? null,
+      },
+      class: {
+        id: classRow.id,
+        label: classRow.label || classRow.code || "Classe",
+        code: classRow.code || null,
+        academic_year: classRow.academic_year || safePeriod.academic_year || null,
+        level: classRow.level || null,
+        official_track_code: classRow.official_track_code || null,
+        head_teacher: headTeacher
+          ? {
+              id: headTeacher.id,
+              display_name: headTeacher.display_name || null,
+              phone: headTeacher.phone || null,
+              email: headTeacher.email || null,
+            }
+          : null,
+      },
+      student: {
+        id: (stu as any).id,
+        full_name:
+          (stu as any).full_name ||
+          [(stu as any).last_name, (stu as any).first_name].filter(Boolean).join(" ") ||
+          null,
+        last_name: (stu as any).last_name || null,
+        first_name: (stu as any).first_name || null,
+        matricule: (stu as any).matricule || null,
+        gender: (stu as any).gender || null,
+        birth_date: (stu as any).birthdate || null,
+        birth_place: (stu as any).birth_place || null,
+        nationality: (stu as any).nationality || null,
+        regime: (stu as any).regime || null,
+        is_repeater: (stu as any).is_repeater ?? null,
+        is_boarder: (stu as any).is_boarder ?? null,
+        is_affecte: (stu as any).is_affecte ?? null,
+        photo_url: (stu as any).photo_url || null,
+      },
+      period: safePeriod,
+      subjects: [],
+      subject_groups: [],
+      subject_components: [],
+      conduct: null,
+      bulletin: {
+        student_id: studentIdStr,
+        general_avg: snapGeneral,
+        annual_avg: snapAnnual,
+        qr_snapshot_general_avg: snapGeneral,
+        qr_snapshot_annual_avg: snapAnnual,
+        general_avg_source: "qr_snapshot",
+        annual_avg_source: "qr_snapshot",
+        per_subject: [],
+        per_group: [],
+        per_subject_components: [],
+      },
+    });
   }
 
   let periodLooksAnnual = false;

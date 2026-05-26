@@ -141,10 +141,14 @@ function isAutresGroup(group: any) {
 }
 
 export default async function VerifyByCodePage(props: any) {
-  const code = String(props?.params?.code ?? "").trim().toUpperCase();
+  // Next.js 15 peut fournir params/searchParams sous forme de Promise.
+  // On les résout sans type custom pour éviter les erreurs de build Vercel.
+  const params = ((await Promise.resolve(props?.params)) ?? {}) as any;
+  const searchParams = ((await Promise.resolve(props?.searchParams)) ?? {}) as any;
+
+  const code = String(params?.code ?? "").trim().toUpperCase();
   const origin = await getOriginFromHeaders();
 
-  const searchParams = (props as any)?.searchParams ?? {};
   const debugEnabled = ["1", "true", "yes"].includes(
     String(searchParams?.debug ?? "").toLowerCase()
   );
@@ -155,6 +159,9 @@ export default async function VerifyByCodePage(props: any) {
   try {
     const url = new URL("/api/public/bulletins/verify", origin);
     url.searchParams.set("c", code);
+    // Vérification courte : le QR est validé depuis bulletin_qr_codes
+    // et affiche le snapshot officiel du bulletin, sans dépendre du recalcul lourd.
+    url.searchParams.set("lite", "1");
 
     res = await fetch(url.toString(), { cache: "no-store" });
     data = await res.json().catch(() => null);
