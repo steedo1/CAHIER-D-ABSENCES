@@ -1902,15 +1902,21 @@ export default async function FinancePaymentsPage({
     componentsBySchedule.get(component.fee_schedule_id)!.push(component);
   }
 
-  const paidComponentsByCharge = new Map<string, Set<string>>();
+  const paidComponentsByCharge = new Map<string, Map<string, number>>();
   for (const paid of paidComponentRows) {
     if (paid.receipt_status === "cancelled") continue;
+    const paidAmount = Number(paid.amount || 0);
+    if (!Number.isFinite(paidAmount) || paidAmount <= 0) continue;
+
     if (!paidComponentsByCharge.has(paid.student_charge_id)) {
-      paidComponentsByCharge.set(paid.student_charge_id, new Set<string>());
+      paidComponentsByCharge.set(paid.student_charge_id, new Map<string, number>());
     }
-    paidComponentsByCharge
-      .get(paid.student_charge_id)!
-      .add(paid.fee_schedule_component_id);
+
+    const componentMap = paidComponentsByCharge.get(paid.student_charge_id)!;
+    componentMap.set(
+      paid.fee_schedule_component_id,
+      (componentMap.get(paid.fee_schedule_component_id) ?? 0) + paidAmount,
+    );
   }
 
   const balancesByStudent = new Map<string, ChargeBalanceRow[]>();
@@ -1931,8 +1937,8 @@ export default async function FinancePaymentsPage({
         const openCharges = studentBalances
           .filter((row) => row.class_id === student.class_id)
           .map((row) => {
-            const paidIds =
-              paidComponentsByCharge.get(row.id) ?? new Set<string>();
+            const paidAmountsByComponent =
+              paidComponentsByCharge.get(row.id) ?? new Map<string, number>();
             const allComponents = row.fee_schedule_id
               ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
               : [];
@@ -1943,13 +1949,23 @@ export default async function FinancePaymentsPage({
               isInternatCategory && allComponents.length > 0;
             const components = componentDrivenBalance
               ? allComponents
-                  .filter((component) => !paidIds.has(component.id))
-                  .map((component) => ({
-                    id: component.id,
-                    label: component.label,
-                    amount: Number(component.amount || 0),
-                    order_index: Number(component.order_index || 0),
-                  }))
+                  .map((component) => {
+                    const expectedAmount = Number(component.amount || 0);
+                    const alreadyPaidAmount =
+                      paidAmountsByComponent.get(component.id) ?? 0;
+                    const remainingComponentAmount = Math.max(
+                      expectedAmount - alreadyPaidAmount,
+                      0,
+                    );
+
+                    return {
+                      id: component.id,
+                      label: component.label,
+                      amount: remainingComponentAmount,
+                      order_index: Number(component.order_index || 0),
+                    };
+                  })
+                  .filter((component) => component.amount > 0)
               : [];
             const rawBalanceDue = Number(row.balance_due || 0);
 

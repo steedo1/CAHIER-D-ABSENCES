@@ -95,6 +95,34 @@ function getComponentPaymentInputs(
     .filter((item) => item.amount > 0);
 }
 
+function getOptionalBibleBreviaireEnteredTotal(
+  charge: PaymentStudentRow["open_charges"][number],
+  amounts: Record<string, string>,
+) {
+  return charge.components
+    .filter((component) => isBibleOrBreviaireComponent(component.label))
+    .reduce(
+      (sum, component) =>
+        sum + getComponentAmount(amounts, charge.charge_id, component.id),
+      0,
+    );
+}
+
+function getComponentDrivenChargeLimit(
+  charge: PaymentStudentRow["open_charges"][number],
+  amounts: Record<string, string>,
+) {
+  if (charge.components.length === 0) return Number(charge.balance_due || 0);
+
+  // Règle CSCA : le solde officiel des frais annexes internat exclut Bible
+  // et Bréviaire tant qu'ils sont à 0 F. Dès qu'un montant est saisi dessus,
+  // ils deviennent facturés pour ce reçu et augmentent donc le plafond autorisé.
+  return (
+    Number(charge.balance_due || 0) +
+    getOptionalBibleBreviaireEnteredTotal(charge, amounts)
+  );
+}
+
 function isInternatCategory(category: FeeCategoryRow | null | undefined) {
   const text = normalize(`${category?.code || ""} ${category?.name || ""}`);
   return text.includes("internat");
@@ -994,7 +1022,13 @@ export default function PaymentsComposer({
                   charges={internatCharges}
                   amounts={internatAmounts}
                   componentIdsByCharge={internatComponentIdsByCharge}
-                  recoverableTotal={internatCharges.reduce((sum, charge) => sum + Number(charge.net_amount || 0), 0)}
+                  recoverableTotal={internatCharges.reduce(
+                    (sum, charge) =>
+                      sum +
+                      Number(charge.net_amount || 0) +
+                      getOptionalBibleBreviaireEnteredTotal(charge, internatAmounts),
+                    0,
+                  )}
                   onAmountChange={(chargeId, value) =>
                     setInternatAmounts((prev) => ({
                       ...prev,
@@ -1388,6 +1422,7 @@ function InternatPaymentPlanner({
             charge.components.length > 0
               ? componentTotal
               : Number(amounts[charge.charge_id] || 0);
+          const chargeLimit = getComponentDrivenChargeLimit(charge, amounts);
           const isPension = isPensionCharge(charge.label);
 
           return (
@@ -1419,7 +1454,7 @@ function InternatPaymentPlanner({
                   <input
                     type="number"
                     min="0"
-                    max={charge.balance_due}
+                    max={chargeLimit}
                     step="1"
                     value={
                       charge.components.length > 0
@@ -1445,11 +1480,11 @@ function InternatPaymentPlanner({
                   onChange={(nextIds) =>
                     onComponentChange(charge.charge_id, nextIds)
                   }
-                  remainingAmount={charge.balance_due}
+                  remainingAmount={chargeLimit}
                 />
               ) : null}
 
-              {chargeAmount > Number(charge.balance_due || 0) ? (
+              {chargeAmount > chargeLimit ? (
                 <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
                   Le montant dépasse le reste dû pour cette ligne.
                 </div>
