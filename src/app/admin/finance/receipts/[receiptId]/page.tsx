@@ -776,6 +776,108 @@ export default async function FinanceReceiptPrintPage({
       }
     : null;
 
+  const allocatedChargeIds = new Set(
+    rawLines.map((line) => line.alloc.student_charge_id),
+  );
+
+  let internatReferenceCharges: ChargeRow[] = [];
+  if (hasInternatLines) {
+    const academicYear = String(typedReceipt.academic_year || "").trim();
+
+    if (academicYear) {
+      // Règle métier CSCA :
+      // Pour un interne, si aucune sous-rubrique de frais annexes internat
+      // n'est cochée/réglée sur le reçu, la dette de frais annexes reste due.
+      // Le reçu doit donc afficher la ligne active "Internat - Frais annexes
+      // internat" même si aucun montant n'a été ventilé dessus dans CE reçu.
+      const { data: directInternatData, error: directInternatErr } = await admin
+        .schema("finance")
+        .from("student_charges")
+        .select(
+          "id,school_id,academic_year,student_id,class_id,fee_category_id,label,due_date,base_amount,status",
+        )
+        .eq("school_id", institutionId)
+        .eq("student_id", typedReceipt.student_id)
+        .eq("academic_year", academicYear)
+        .neq("status", "cancelled");
+
+      if (!directInternatErr) {
+        const directInternatCharges = (
+          (directInternatData ?? []) as StudentChargeDirectRow[]
+        ).filter((charge) => isInternatCharge(charge.label));
+
+        const directInternatIds = directInternatCharges.map((charge) => charge.id);
+        let allocationsForInternat: AllocationLiteRow[] = [];
+        let receiptStatusesForInternat: ReceiptStatusLiteRow[] = [];
+
+        if (directInternatIds.length > 0) {
+          const { data: allocationData, error: allocationErr } = await admin
+            .schema("finance")
+            .from("receipt_allocations")
+            .select("student_charge_id,receipt_id,amount")
+            .in("student_charge_id", directInternatIds);
+
+          if (!allocationErr) {
+            allocationsForInternat = (allocationData ?? []) as AllocationLiteRow[];
+
+            const receiptIds = Array.from(
+              new Set(allocationsForInternat.map((row) => row.receipt_id)),
+            );
+
+            if (receiptIds.length > 0) {
+              const { data: receiptStatusData, error: receiptStatusErr } =
+                await admin
+                  .schema("finance")
+                  .from("receipts")
+                  .select("id,receipt_status")
+                  .in("id", receiptIds);
+
+              if (!receiptStatusErr) {
+                receiptStatusesForInternat = (receiptStatusData ??
+                  []) as ReceiptStatusLiteRow[];
+              }
+            }
+          }
+        }
+
+        const receiptStatusMap = new Map(
+          receiptStatusesForInternat.map((row) => [row.id, row.receipt_status]),
+        );
+        const paidByInternatCharge = new Map<string, number>();
+
+        for (const allocation of allocationsForInternat) {
+          if (receiptStatusMap.get(allocation.receipt_id) === "cancelled") {
+            continue;
+          }
+
+          paidByInternatCharge.set(
+            allocation.student_charge_id,
+            (paidByInternatCharge.get(allocation.student_charge_id) ?? 0) +
+              safeNumber(allocation.amount),
+          );
+        }
+
+        internatReferenceCharges = directInternatCharges.map((charge) => {
+          const expected = safeNumber(charge.base_amount);
+          const paid = paidByInternatCharge.get(charge.id) ?? 0;
+
+          return {
+            id: charge.id,
+            school_id: charge.school_id,
+            student_id: charge.student_id,
+            class_id: charge.class_id,
+            fee_category_id: charge.fee_category_id,
+            label: charge.label,
+            due_date: charge.due_date,
+            net_amount: expected,
+            paid_amount: paid,
+            balance_due: Math.max(expected - paid, 0),
+          } satisfies ChargeRow;
+        });
+      }
+    }
+  }
+
   const nonScolariteDisplayLines = rawLines
     .filter(
       (line) =>
@@ -785,19 +887,15 @@ export default async function FinanceReceiptPrintPage({
       const visibleComponents = line.components.filter(
         (component) => safeNumber(component.amount) > 0,
       );
-      const componentExpected = visibleComponents.reduce(
-        (sum, component) => sum + safeNumber(component.amount),
-        0,
-      );
 
       return {
         key: line.alloc.id,
         label: line.charge?.label || "Dette introuvable",
         dueDate: line.charge?.due_date ?? null,
-        expected:
-          componentExpected > 0
-            ? componentExpected
-            : safeNumber(line.charge?.net_amount),
+        // Ne pas utiliser le total des composants payés comme total attendu :
+        // en paiement partiel, 30 000 F réglés sur une sous-rubrique de
+        // 40 000 F doivent laisser 10 000 F de reste.
+        expected: safeNumber(line.charge?.net_amount),
         paid: safeNumber(line.charge?.paid_amount),
         remaining: safeNumber(line.charge?.balance_due),
         amount: safeNumber(line.alloc.amount),
@@ -805,9 +903,23 @@ export default async function FinanceReceiptPrintPage({
       };
     });
 
+  const missingInternatDisplayLines = internatReferenceCharges
+    .filter((charge) => !allocatedChargeIds.has(charge.id))
+    .map((charge) => ({
+      key: `missing-internat-${charge.id}`,
+      label: charge.label,
+      dueDate: charge.due_date ?? null,
+      expected: safeNumber(charge.net_amount),
+      paid: safeNumber(charge.paid_amount),
+      remaining: safeNumber(charge.balance_due),
+      amount: 0,
+      components: [] as ReceiptAllocationComponentRow[],
+    }));
+
   const displayLines = [
     ...(scolariteDisplayLine ? [scolariteDisplayLine] : []),
     ...nonScolariteDisplayLines,
+    ...missingInternatDisplayLines,
   ];
 
   const totalAllocated = displayLines.reduce(

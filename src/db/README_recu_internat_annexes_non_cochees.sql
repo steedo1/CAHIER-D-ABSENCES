@@ -1,0 +1,7 @@
+-- Aucun SQL à exécuter.
+-- Patch applicatif :
+-- Le reçu affiche désormais la dette "Internat - Frais annexes internat"
+-- même si aucune sous-rubrique n'a été cochée/réglée sur CE reçu,
+-- afin de respecter la règle métier :
+-- interne = pension 700 000 F + frais annexes internat dus 230 000 F
+-- lorsque rien n'est engagé dans les sous-rubriques.
