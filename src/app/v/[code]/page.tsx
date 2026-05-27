@@ -51,11 +51,16 @@ function looksAnnualPeriod(period: any): boolean {
 
   if (shortUp.startsWith("T") || shortUp.startsWith("S")) return false;
   if (codeUp.startsWith("T") || codeUp.startsWith("S")) return false;
-  if (labelLow.includes("trimestre") || labelLow.includes("semestre")) return false;
+  if (labelLow.includes("trimestre") || labelLow.includes("semestre"))
+    return false;
 
   const txt = `${codeRaw} ${shortRaw} ${labelRaw}`.toLowerCase();
 
-  if (txt.includes("annuel") || txt.includes("annuelle") || txt.includes("annual")) {
+  if (
+    txt.includes("annuel") ||
+    txt.includes("annuelle") ||
+    txt.includes("annual")
+  ) {
     return true;
   }
 
@@ -77,15 +82,29 @@ function looksAnnualPeriod(period: any): boolean {
 function mainAvgLabel(period: any): string {
   if (!period) return "Moyenne de la période";
 
-  const shortUp = String(period?.short_label ?? "").trim().toUpperCase();
-  const label = String(period?.label ?? "").trim().toLowerCase();
-  const code = String(period?.code ?? "").trim().toUpperCase();
+  const shortUp = String(period?.short_label ?? "")
+    .trim()
+    .toUpperCase();
+  const label = String(period?.label ?? "")
+    .trim()
+    .toLowerCase();
+  const code = String(period?.code ?? "")
+    .trim()
+    .toUpperCase();
 
   if (looksAnnualPeriod(period)) return "Moyenne annuelle";
-  if (shortUp.startsWith("T") || label.includes("trimestre") || code.startsWith("T")) {
+  if (
+    shortUp.startsWith("T") ||
+    label.includes("trimestre") ||
+    code.startsWith("T")
+  ) {
     return "Moyenne du trimestre";
   }
-  if (shortUp.startsWith("S") || label.includes("semestre") || code.startsWith("S")) {
+  if (
+    shortUp.startsWith("S") ||
+    label.includes("semestre") ||
+    code.startsWith("S")
+  ) {
     return "Moyenne du semestre";
   }
   return "Moyenne de la période";
@@ -115,11 +134,15 @@ function normalizeGroupKey(value?: string | null) {
 }
 
 function normText(value?: string | null) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function isConductSubject(subject: any) {
-  const name = normText(subject?.subject_name ?? subject?.name ?? subject?.label);
+  const name = normText(
+    subject?.subject_name ?? subject?.name ?? subject?.label,
+  );
   const code = normText(subject?.code);
   return (
     /(conduite|conduct|vie\s*scolaire)/.test(name) ||
@@ -144,30 +167,57 @@ export default async function VerifyByCodePage(props: any) {
   // Next.js 15 peut fournir params/searchParams sous forme de Promise.
   // On les résout sans type custom pour éviter les erreurs de build Vercel.
   const params = ((await Promise.resolve(props?.params)) ?? {}) as any;
-  const searchParams = ((await Promise.resolve(props?.searchParams)) ?? {}) as any;
+  const searchParams = ((await Promise.resolve(props?.searchParams)) ??
+    {}) as any;
 
-  const code = String(params?.code ?? "").trim().toUpperCase();
+  const code = String(params?.code ?? "")
+    .trim()
+    .toUpperCase();
   const origin = await getOriginFromHeaders();
 
   const debugEnabled = ["1", "true", "yes"].includes(
-    String(searchParams?.debug ?? "").toLowerCase()
+    String(searchParams?.debug ?? "").toLowerCase(),
   );
 
   let res: Response | null = null;
   let data: any = null;
+  let usedLiteFallback = false;
 
-  try {
+  async function fetchVerification(lite = false) {
     const url = new URL("/api/public/bulletins/verify", origin);
     url.searchParams.set("c", code);
-    // Vérification courte : le QR est validé depuis bulletin_qr_codes
-    // et affiche le snapshot officiel du bulletin, sans dépendre du recalcul lourd.
-    url.searchParams.set("lite", "1");
+    if (lite) url.searchParams.set("lite", "1");
 
-    res = await fetch(url.toString(), { cache: "no-store" });
-    data = await res.json().catch(() => null);
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const json = await response.json().catch(() => null);
+    return { response, json };
+  }
+
+  try {
+    // Source de vérité : recalcul public complet depuis les données officielles.
+    // Le mode lite ne sert plus qu'en secours pour éviter une page totalement vide.
+    const full = await fetchVerification(false);
+    res = full.response;
+    data = full.json;
+
+    if (!(res?.ok && data?.ok)) {
+      const lite = await fetchVerification(true).catch(() => null);
+      if (lite?.response?.ok && lite?.json?.ok) {
+        res = lite.response;
+        data = lite.json;
+        usedLiteFallback = true;
+      }
+    }
   } catch {
-    res = null;
-    data = null;
+    try {
+      const lite = await fetchVerification(true);
+      res = lite.response;
+      data = lite.json;
+      usedLiteFallback = !!(res?.ok && data?.ok);
+    } catch {
+      res = null;
+      data = null;
+    }
   }
 
   const ok = !!(res?.ok && data?.ok);
@@ -177,6 +227,7 @@ export default async function VerifyByCodePage(props: any) {
   const stu = data?.student ?? null;
   const bulletin = data?.bulletin ?? null;
   const period = data?.period ?? null;
+  const isCsca = Boolean(data?.is_csca || data?.calculation_profile === "csca");
   const subjects: any[] = Array.isArray(data?.subjects) ? data.subjects : [];
   const subjectGroups: any[] = Array.isArray(data?.subject_groups)
     ? data.subject_groups.filter((g: any) => g?.is_active !== false)
@@ -186,26 +237,33 @@ export default async function VerifyByCodePage(props: any) {
     : [];
 
   const institutionLogoUrl = String(
-    inst?.institution_logo_url || inst?.logo_url || inst?.settings_json?.institution_logo_url || ""
+    inst?.institution_logo_url ||
+      inst?.logo_url ||
+      inst?.settings_json?.institution_logo_url ||
+      "",
   ).trim();
 
   const perSubjectWithAvg =
     bulletin && Array.isArray(bulletin.per_subject)
       ? bulletin.per_subject.filter(
-          (ps: any) => typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
+          (ps: any) =>
+            typeof ps.avg20 === "number" && Number.isFinite(ps.avg20),
         )
       : [];
 
   const perSubjectMap = new Map<string, any>(
-    perSubjectWithAvg.map((ps: any) => [String(ps.subject_id), ps])
+    perSubjectWithAvg.map((ps: any) => [String(ps.subject_id), ps]),
   );
 
   const perSubjectComponentMap = new Map<string, any>(
     Array.isArray(bulletin?.per_subject_components)
       ? bulletin.per_subject_components
-          .filter((psc: any) => typeof psc?.avg20 === "number" && Number.isFinite(psc.avg20))
+          .filter(
+            (psc: any) =>
+              typeof psc?.avg20 === "number" && Number.isFinite(psc.avg20),
+          )
           .map((psc: any) => [`${psc.subject_id}__${psc.component_id}`, psc])
-      : []
+      : [],
   );
 
   const subjectComponentsBySubject = new Map<string, any[]>();
@@ -217,12 +275,16 @@ export default async function VerifyByCodePage(props: any) {
     subjectComponentsBySubject.set(sid, arr);
   }
   for (const arr of subjectComponentsBySubject.values()) {
-    arr.sort((a, b) => Number(a?.order_index ?? 0) - Number(b?.order_index ?? 0));
+    arr.sort(
+      (a, b) => Number(a?.order_index ?? 0) - Number(b?.order_index ?? 0),
+    );
   }
 
-  const subjectsWithAvg = subjects.filter((s: any) => perSubjectMap.has(String(s.subject_id)));
+  const subjectsWithAvg = subjects.filter((s: any) =>
+    perSubjectMap.has(String(s.subject_id)),
+  );
   const subjectById = new Map<string, any>(
-    subjectsWithAvg.map((s: any) => [String(s.subject_id), s])
+    subjectsWithAvg.map((s: any) => [String(s.subject_id), s]),
   );
 
   const effectiveCoeffBySubjectId = new Map<string, number>();
@@ -251,55 +313,78 @@ export default async function VerifyByCodePage(props: any) {
     const sid = String(subj.subject_id);
     if (effectiveCoeffBySubjectId.has(sid)) continue;
     const coeff = Number(subj?.coeff_bulletin ?? 0);
-    if (Number.isFinite(coeff) && coeff > 0) effectiveCoeffBySubjectId.set(sid, coeff);
+    if (Number.isFinite(coeff) && coeff > 0)
+      effectiveCoeffBySubjectId.set(sid, coeff);
   }
 
-  const coeffTotal = Array.from(effectiveCoeffBySubjectId.values()).reduce(
-    (acc, coeff) => acc + coeff,
-    0
-  );
+  const subjectCountsInGeneralAverage = (subj: any) =>
+    subj?.include_in_average !== false;
+
+  const includedCoeffTotal = subjectsWithAvg.reduce((acc, subj: any) => {
+    if (!subjectCountsInGeneralAverage(subj)) return acc;
+    const sid = String(subj?.subject_id ?? "");
+    const coeff =
+      effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
+    return Number.isFinite(coeff) && coeff > 0 ? acc + coeff : acc;
+  }, 0);
 
   const displayedWeightedTotal = subjectsWithAvg.reduce((acc, subj: any) => {
+    if (!subjectCountsInGeneralAverage(subj)) return acc;
+
     const sid = String(subj?.subject_id ?? "");
     const ps = perSubjectMap.get(sid);
     const avg = typeof ps?.avg20 === "number" ? Number(ps.avg20) : null;
-    const coeff = effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
+    const coeff =
+      effectiveCoeffBySubjectId.get(sid) ?? Number(subj?.coeff_bulletin ?? 0);
 
-    if (avg === null || !Number.isFinite(avg) || !Number.isFinite(coeff) || coeff <= 0) {
+    if (
+      avg === null ||
+      !Number.isFinite(avg) ||
+      !Number.isFinite(coeff) ||
+      coeff <= 0
+    ) {
       return acc;
     }
     return acc + avg * coeff;
   }, 0);
 
   const conductSubject = subjects.find((s: any) => isConductSubject(s)) ?? null;
-  const conductSubjectId = conductSubject ? String(conductSubject.subject_id ?? "") : null;
+  const conductSubjectId = conductSubject
+    ? String(conductSubject.subject_id ?? "")
+    : null;
   const conductAlreadyVisible =
     !!conductSubjectId && perSubjectMap.has(conductSubjectId);
 
   const canDeriveConduct =
+    !isCsca &&
     !conductAlreadyVisible &&
     typeof bulletin?.general_avg === "number" &&
     Number.isFinite(bulletin.general_avg) &&
-    coeffTotal > 0 &&
+    includedCoeffTotal > 0 &&
     subjectsWithAvg.length > 0;
 
   const apiConductRaw = Number(data?.conduct?.avg20 ?? data?.conduct?.total);
-  const apiConductAvg = Number.isFinite(apiConductRaw) ? round2(apiConductRaw) : null;
+  const apiConductAvg = Number.isFinite(apiConductRaw)
+    ? round2(apiConductRaw)
+    : null;
 
   let derivedConductAvg: number | null = apiConductAvg;
   if (derivedConductAvg === null && canDeriveConduct) {
-    const raw = Number(bulletin.general_avg) * (coeffTotal + 1) - displayedWeightedTotal;
+    const raw =
+      Number(bulletin.general_avg) * (includedCoeffTotal + 1) -
+      displayedWeightedTotal;
     if (Number.isFinite(raw) && raw >= 0 && raw <= 20) {
       derivedConductAvg = round2(raw);
     }
   }
 
-  const showSyntheticConductRow = !conductAlreadyVisible && derivedConductAvg !== null;
+  const showSyntheticConductRow =
+    !conductAlreadyVisible && derivedConductAvg !== null;
 
   const syntheticConductSubject = showSyntheticConductRow
     ? {
         subject_id: "__CONDUCT__",
-        subject_name: "Conduite",
+        subject_name: isCsca ? "Discipline / Conduite" : "Conduite",
         coeff_bulletin: 1,
         include_in_average: true,
       }
@@ -344,7 +429,14 @@ export default async function VerifyByCodePage(props: any) {
   }
 
   const displayCoeffTotal =
-    coeffTotal + (showSyntheticConductRow ? 1 : 0);
+    includedCoeffTotal + (showSyntheticConductRow ? 1 : 0);
+
+  const displayedGrandTotal = round2(
+    displayedWeightedTotal +
+      (showSyntheticConductRow && derivedConductAvg !== null
+        ? derivedConductAvg
+        : 0),
+  );
 
   function computeDisplayedGroupStats(groupSubjects: any[]) {
     let sum = 0;
@@ -399,19 +491,19 @@ export default async function VerifyByCodePage(props: any) {
         includesSyntheticConduct:
           !!syntheticConductSubject &&
           groupSubjects.some(
-            (s: any) => String(s?.subject_id ?? "") === "__CONDUCT__"
+            (s: any) => String(s?.subject_id ?? "") === "__CONDUCT__",
           ),
       };
     })
     .filter(Boolean) as any[];
 
   const syntheticConductGrouped = renderedGroups.some(
-    (entry: any) => entry.includesSyntheticConduct
+    (entry: any) => entry.includesSyntheticConduct,
   );
 
   const ungroupedSubjects = [
     ...subjectsWithAvg.filter(
-      (s: any) => !groupedSubjectIds.has(String(s.subject_id))
+      (s: any) => !groupedSubjectIds.has(String(s.subject_id)),
     ),
     ...(syntheticConductSubject && !syntheticConductGrouped
       ? [syntheticConductSubject]
@@ -450,11 +542,18 @@ export default async function VerifyByCodePage(props: any) {
           subject_groups: subjectGroups.length,
           subject_components: subjectComponents.length,
         },
+        source: {
+          mode: data?.mode ?? null,
+          usedLiteFallback,
+          calculation_profile: data?.calculation_profile ?? null,
+          is_csca: isCsca,
+        },
         coeffs: subjectsWithAvg.map((s: any) => ({
           subject_id: s.subject_id,
           subject_name: s.subject_name,
           coeff_bulletin: s.coeff_bulletin,
-          effective_coeff: effectiveCoeffBySubjectId.get(String(s.subject_id)) ?? null,
+          effective_coeff:
+            effectiveCoeffBySubjectId.get(String(s.subject_id)) ?? null,
         })),
       }
     : null;
@@ -474,7 +573,14 @@ export default async function VerifyByCodePage(props: any) {
           }
         >
           <td className="px-3 py-2 font-medium text-slate-900">
-            {subj.subject_name}
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{subj.subject_name}</span>
+              {subj?.include_in_average === false ? (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  {isCsca ? "détail CSCA" : "hors moyenne"}
+                </span>
+              ) : null}
+            </div>
           </td>
           <td className="px-3 py-2 text-center">{formatNumber(avg)}</td>
           <td className="px-3 py-2 text-center">{formatNumber(coeff, 0)}</td>
@@ -496,10 +602,16 @@ export default async function VerifyByCodePage(props: any) {
                 key={`comp-${key}`}
                 className="border-t border-slate-100 bg-slate-50/70 text-[12px] text-slate-600"
               >
-                <td className="px-3 py-1 pl-8">{comp.short_label || comp.label}</td>
+                <td className="px-3 py-1 pl-8">
+                  {comp.short_label || comp.label}
+                </td>
                 <td className="px-3 py-1 text-center">{formatNumber(cAvg)}</td>
-                <td className="px-3 py-1 text-center">{formatNumber(cCoeff, 0)}</td>
-                <td className="px-3 py-1 text-center">{formatNumber(cTotal)}</td>
+                <td className="px-3 py-1 text-center">
+                  {formatNumber(cCoeff, 0)}
+                </td>
+                <td className="px-3 py-1 text-center">
+                  {formatNumber(cTotal)}
+                </td>
               </tr>
             );
           })}
@@ -529,16 +641,21 @@ export default async function VerifyByCodePage(props: any) {
               />
             ) : null}
             <div>
-              <h1 className="text-xl font-extrabold text-slate-900">Vérification du bulletin</h1>
+              <h1 className="text-xl font-extrabold text-slate-900">
+                Vérification du bulletin
+              </h1>
               <p className="mt-1 text-sm text-slate-500">
-                Contrôle public d’authenticité et affichage des notes officielles.
+                Contrôle public d’authenticité et affichage des notes
+                officielles.
               </p>
             </div>
           </div>
           <span
             className={
               "inline-flex w-fit rounded-full px-3 py-1 text-sm font-semibold " +
-              (ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800")
+              (ok
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-rose-100 text-rose-800")
             }
           >
             {ok ? "VALIDE" : "INVALIDE"}
@@ -555,13 +672,16 @@ export default async function VerifyByCodePage(props: any) {
               Ce QR code ne peut pas être affiché pour le moment.
             </p>
             <p className="mt-2 text-xs text-slate-500">
-              Code technique : {String(data?.error ?? res?.status ?? "verification_failed")}
+              Code technique :{" "}
+              {String(data?.error ?? res?.status ?? "verification_failed")}
               {data?.detail ? ` — ${String(data.detail)}` : ""}
             </p>
 
             {debugEnabled && (
               <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3">
-                <div className="text-xs font-semibold text-rose-800">DEBUG VÉRIFICATION QR</div>
+                <div className="text-xs font-semibold text-rose-800">
+                  DEBUG VÉRIFICATION QR
+                </div>
                 <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-rose-900">
                   {JSON.stringify(debugPayload, null, 2)}
                 </pre>
@@ -572,24 +692,40 @@ export default async function VerifyByCodePage(props: any) {
           <>
             <div className="mt-6 grid gap-3 md:grid-cols-3">
               <div className="rounded-xl bg-slate-50 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Établissement</div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  Établissement
+                </div>
                 <div className="mt-1 font-semibold text-slate-900">
                   {inst?.name ?? inst?.institution_name ?? "—"}
                 </div>
-                {inst?.code ? <div className="mt-1 text-sm text-slate-600">Code : {inst.code}</div> : null}
-              </div>
-
-              <div className="rounded-xl bg-slate-50 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Élève</div>
-                <div className="mt-1 font-semibold text-slate-900">{stu?.full_name ?? "—"}</div>
-                {stu?.matricule ? (
-                  <div className="mt-1 text-sm text-slate-600">Matricule : {stu.matricule}</div>
+                {inst?.code ? (
+                  <div className="mt-1 text-sm text-slate-600">
+                    Code : {inst.code}
+                  </div>
                 ) : null}
               </div>
 
               <div className="rounded-xl bg-slate-50 p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">Classe</div>
-                <div className="mt-1 font-semibold text-slate-900">{cls?.label ?? cls?.name ?? "—"}</div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  Élève
+                </div>
+                <div className="mt-1 font-semibold text-slate-900">
+                  {stu?.full_name ?? "—"}
+                </div>
+                {stu?.matricule ? (
+                  <div className="mt-1 text-sm text-slate-600">
+                    Matricule : {stu.matricule}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-xl bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  Classe
+                </div>
+                <div className="mt-1 font-semibold text-slate-900">
+                  {cls?.label ?? cls?.name ?? "—"}
+                </div>
                 {(cls?.academic_year || period?.academic_year) && (
                   <div className="mt-1 text-sm text-slate-600">
                     Année : {cls?.academic_year ?? period?.academic_year}
@@ -607,9 +743,12 @@ export default async function VerifyByCodePage(props: any) {
               <div className="mt-6 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/50 p-4 sm:p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h2 className="text-sm font-semibold text-slate-700">Récapitulatif officiel des notes</h2>
+                    <h2 className="text-sm font-semibold text-slate-700">
+                      Récapitulatif officiel des notes
+                    </h2>
                     <p className="mt-1 text-xs text-slate-500">
-                      Calculé à partir des données officielles enregistrées dans Mon Cahier.
+                      Calculé à partir des données officielles enregistrées dans
+                      Mon Cahier.
                     </p>
                   </div>
                   {(period?.from || period?.to) && (
@@ -643,14 +782,23 @@ export default async function VerifyByCodePage(props: any) {
                   </div>
                 </div>
 
-                {subjectsWithAvg.length > 0 && (
+                {usedLiteFallback ? (
+                  <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    Le QR est authentique, mais la page a dû afficher le mode de
+                    secours. Les détails par matière ne sont pas disponibles
+                    dans ce mode.
+                  </div>
+                ) : null}
+
+                {subjectsWithAvg.length > 0 ? (
                   <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
                       <div className="text-sm font-semibold text-slate-800">
                         Notes par matière
                       </div>
                       <div className="text-xs text-slate-500">
-                        Coefficients officiels utilisés pour le calcul du bulletin.
+                        Coefficients officiels utilisés pour le calcul du
+                        bulletin.
                       </div>
                     </div>
 
@@ -666,39 +814,72 @@ export default async function VerifyByCodePage(props: any) {
                         </thead>
                         <tbody>
                           {renderedGroups.map((entry: any) => (
-                            <Fragment key={`group-${String(entry.group?.id ?? entry.group?.code ?? entry.group?.label ?? "x")}`}>
-                              {entry.subjects.map((subj: any) => renderSubjectRow(subj))}
+                            <Fragment
+                              key={`group-${String(entry.group?.id ?? entry.group?.code ?? entry.group?.label ?? "x")}`}
+                            >
+                              {entry.subjects.map((subj: any) =>
+                                renderSubjectRow(subj),
+                              )}
                               <tr className="border-t border-slate-200 bg-slate-50 font-semibold text-slate-800">
-                                <td className="px-3 py-2">{String(entry.group?.label ?? entry.group?.code ?? "BILAN")}</td>
-                                <td className="px-3 py-2 text-center">{formatNumber(entry.stats.groupAvg)}</td>
-                                <td className="px-3 py-2 text-center">{formatNumber(entry.stats.groupCoeff, 0)}</td>
-                                <td className="px-3 py-2 text-center">{formatNumber(entry.stats.groupTotal)}</td>
+                                <td className="px-3 py-2">
+                                  {String(
+                                    entry.group?.label ??
+                                      entry.group?.code ??
+                                      "BILAN",
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  {formatNumber(entry.stats.groupAvg)}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  {formatNumber(entry.stats.groupCoeff, 0)}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  {formatNumber(entry.stats.groupTotal)}
+                                </td>
                               </tr>
                             </Fragment>
                           ))}
 
-                          {ungroupedSubjects.map((subj: any) => renderSubjectRow(subj))}
+                          {ungroupedSubjects.map((subj: any) =>
+                            renderSubjectRow(subj),
+                          )}
 
                           <tr className="border-t border-slate-300 bg-slate-100 font-bold text-slate-900">
-                            <td className="px-3 py-2 text-right">TOTAUX :</td>
+                            <td className="px-3 py-2 text-right">
+                              TOTAUX COMPTÉS :
+                            </td>
                             <td className="px-3 py-2" />
-                            <td className="px-3 py-2 text-center">{formatNumber(displayCoeffTotal, 0)}</td>
-                            <td className="px-3 py-2" />
+                            <td className="px-3 py-2 text-center">
+                              {formatNumber(displayCoeffTotal, 0)}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {formatNumber(displayedGrandTotal)}
+                            </td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                   </div>
-                )}
+                ) : !usedLiteFallback ? (
+                  <div className="mt-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                    Aucune moyenne par matière n’a été retrouvée pour cette
+                    période. La moyenne générale reste vérifiée, mais le tableau
+                    détaillé est vide.
+                  </div>
+                ) : null}
 
                 <p className="mt-4 text-[11px] leading-snug text-slate-500">
-                  Les informations affichées ici proviennent directement de la base Mon Cahier.
-                  En cas d’écart avec un document papier, cette page de vérification fait foi.
+                  Les informations affichées ici proviennent directement de la
+                  base Mon Cahier. En cas d’écart avec un document papier, cette
+                  page de vérification fait foi.
                 </p>
 
                 {debugEnabled && (
                   <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
-                    <div className="text-xs font-semibold text-slate-700">DEBUG</div>
+                    <div className="text-xs font-semibold text-slate-700">
+                      DEBUG
+                    </div>
                     <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-700">
                       {JSON.stringify(debugPayload, null, 2)}
                     </pre>
@@ -708,7 +889,8 @@ export default async function VerifyByCodePage(props: any) {
             )}
 
             <p className="mt-6 text-xs text-slate-500">
-              Cette page confirme l’authenticité du bulletin et affiche les notes officielles enregistrées dans le système.
+              Cette page confirme l’authenticité du bulletin et affiche les
+              notes officielles enregistrées dans le système.
             </p>
           </>
         )}

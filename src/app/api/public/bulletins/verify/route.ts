@@ -30,7 +30,7 @@ function clampAverage20(value: any): number | null {
 
 function isUuid(v: string): boolean {
   return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
-    v
+    v,
   );
 }
 
@@ -38,13 +38,17 @@ function normalizeBulletinLevel(level?: string | null): string | null {
   if (!level) return null;
   const x = String(level).trim().toLowerCase();
 
-  if (["6e", "5e", "4e", "3e", "seconde", "première", "terminale"].includes(x)) {
+  if (
+    ["6e", "5e", "4e", "3e", "seconde", "première", "terminale"].includes(x)
+  ) {
     return x;
   }
   if (x === "premiere") return "première";
 
-  if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2")) return "seconde";
-  if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1")) return "première";
+  if (x.startsWith("2de") || x.startsWith("2nde") || x.startsWith("2"))
+    return "seconde";
+  if (x.startsWith("1re") || x.startsWith("1ere") || x.startsWith("1"))
+    return "première";
   if (x.startsWith("t")) return "terminale";
 
   return null;
@@ -68,9 +72,7 @@ type InstitutionMeta = {
   settings_json?: any;
 };
 
-const CSCA_INSTITUTION_IDS = new Set([
-  "ee34ab2a-8033-4e0b-acf0-05979cce1697",
-]);
+const CSCA_INSTITUTION_IDS = new Set(["ee34ab2a-8033-4e0b-acf0-05979cce1697"]);
 
 function isCSCAInstitution(meta: InstitutionMeta | null | undefined): boolean {
   if (!meta) return false;
@@ -102,13 +104,21 @@ function isCSCALatinOrReligionLabel(value?: string | null): boolean {
   );
 }
 
-function isCSCALatinOrReligionSubjectMeta(subject: SubjectRow | null | undefined): boolean {
-  return isCSCALatinOrReligionLabel(`${subject?.code ?? ""} ${subject?.name ?? ""}`);
+function isCSCALatinOrReligionSubjectMeta(
+  subject: SubjectRow | null | undefined,
+): boolean {
+  return isCSCALatinOrReligionLabel(
+    `${subject?.code ?? ""} ${subject?.name ?? ""}`,
+  );
 }
 
 function isCSCAConductLabel(value?: string | null): boolean {
   const key = normalizeAsciiToken(value);
-  return key.includes("discipline") || key.includes("conduite") || key.includes("conduct");
+  return (
+    key.includes("discipline") ||
+    key.includes("conduite") ||
+    key.includes("conduct")
+  );
 }
 
 function safePublicLogoUrl(value?: string | null): string | null {
@@ -148,7 +158,8 @@ function normalizeCoeffLevelKey(level?: string | null): string | null {
   if (/^(1ere|1re|premiere)$/.test(x)) return "première";
 
   if (/^(tlea1|terminalea1|ta1)$/.test(x)) return "tleA1";
-  if (/^(tlea2|terminalea2|ta2|tlea|terminalea|ta|ta[0-9]+)$/.test(x)) return "tleA2";
+  if (/^(tlea2|terminalea2|ta2|tlea|terminalea|ta|ta[0-9]+)$/.test(x))
+    return "tleA2";
   if (/^(tlec|terminalec|tc|tc[0-9]+)$/.test(x)) return "tleC";
   if (/^(tled|terminaled|td|td[0-9]+)$/.test(x)) return "tleD";
   if (/^(tle|terminal|terminale)$/.test(x)) return "terminale";
@@ -163,7 +174,9 @@ function normalizeStoredLevel(level?: string | null): string | null {
   const n = normalizeBulletinLevel(level);
   if (n) return n;
 
-  const raw = String(level ?? "").trim().toLowerCase();
+  const raw = String(level ?? "")
+    .trim()
+    .toLowerCase();
   return raw || null;
 }
 
@@ -179,7 +192,10 @@ const STRICT_OFFICIAL_COEFF_LEVELS = new Set([
   "tleA2",
 ]);
 
-function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | null): string[] {
+function buildCoeffLevelCandidates(
+  classRow: ClassRow,
+  bulletinLevel: string | null,
+): string[] {
   const out: string[] = [];
   const official = normalizeCoeffLevelKey(classRow.official_track_code);
 
@@ -203,14 +219,16 @@ function buildCoeffLevelCandidates(classRow: ClassRow, bulletinLevel: string | n
   return out;
 }
 
-function allowSubjectComponentsForBulletinLevel(level?: string | null): boolean {
+function allowSubjectComponentsForBulletinLevel(
+  level?: string | null,
+): boolean {
   const n = normalizeBulletinLevel(level);
   return n === "6e" || n === "5e" || n === "4e" || n === "3e";
 }
 
 function pickBestCoeffRow(
   rows: SubjectCoeffRow[],
-  wantedLevels: Array<string | null | undefined>
+  wantedLevels: Array<string | null | undefined>,
 ): SubjectCoeffRow | null {
   if (!rows.length) return null;
 
@@ -232,7 +250,7 @@ function pickBestCoeffRow(
 
 function pickBestComponentRows<T extends { level?: string | null }>(
   rows: T[],
-  wantedLevels: Array<string | null | undefined>
+  wantedLevels: Array<string | null | undefined>,
 ): T[] {
   if (!rows.length) return [];
 
@@ -255,7 +273,6 @@ function pickBestComponentRows<T extends { level?: string | null }>(
 function normText(s?: string | null) {
   return (s ?? "").toString().trim().toLowerCase();
 }
-
 
 /* ───────── Conduite (route publique, sans session admin) ───────── */
 
@@ -403,7 +420,7 @@ function normalizeScoreFrom20(avg20: number, totalMax: number): number {
 
 async function loadInstitutionConductPolicy(
   srv: SupabaseClient,
-  institutionId: string
+  institutionId: string,
 ): Promise<InstitutionConductPolicy> {
   const fallback: InstitutionConductPolicy = {
     mode: "standard",
@@ -417,7 +434,9 @@ async function loadInstitutionConductPolicy(
   try {
     const { data, error } = await srv
       .from("institution_conduct_policies")
-      .select("mode, classic_conduct_weight, missing_subject_strategy, is_active")
+      .select(
+        "mode, classic_conduct_weight, missing_subject_strategy, is_active",
+      )
       .eq("institution_id", institutionId)
       .maybeSingle();
 
@@ -425,9 +444,13 @@ async function loadInstitutionConductPolicy(
 
     const modeRaw = String((data as any).mode || "standard");
     const mode: InstitutionConductPolicy["mode"] =
-      modeRaw === "conduct_plus_subjects" ? "conduct_plus_subjects" : "standard";
+      modeRaw === "conduct_plus_subjects"
+        ? "conduct_plus_subjects"
+        : "standard";
 
-    const strategyRaw = String((data as any).missing_subject_strategy || "ignore_missing");
+    const strategyRaw = String(
+      (data as any).missing_subject_strategy || "ignore_missing",
+    );
     const missing_subject_strategy: InstitutionConductPolicy["missing_subject_strategy"] =
       strategyRaw === "count_as_zero" ? "count_as_zero" : "ignore_missing";
 
@@ -435,7 +458,8 @@ async function loadInstitutionConductPolicy(
 
     return {
       mode,
-      classic_conduct_weight: Number.isFinite(weight) && weight >= 0 ? weight : 1,
+      classic_conduct_weight:
+        Number.isFinite(weight) && weight >= 0 ? weight : 1,
       missing_subject_strategy,
       is_active: true,
       display_label: "Conduite",
@@ -448,12 +472,14 @@ async function loadInstitutionConductPolicy(
 
 async function loadConductSubjectPolicies(
   srv: SupabaseClient,
-  institutionId: string
+  institutionId: string,
 ): Promise<ConductSubjectPolicy[]> {
   try {
     const { data, error } = await srv
       .from("institution_subject_grade_policies")
-      .select("subject_id, conduct_weight, include_in_conduct_average, is_active")
+      .select(
+        "subject_id, conduct_weight, include_in_conduct_average, is_active",
+      )
       .eq("institution_id", institutionId)
       .eq("include_in_conduct_average", true)
       .eq("is_active", true);
@@ -498,7 +524,7 @@ async function loadConductSubjectPolicies(
 
 async function loadCSCABuiltinConductSubjectPolicies(
   srv: SupabaseClient,
-  institutionId: string
+  institutionId: string,
 ): Promise<ConductSubjectPolicy[]> {
   try {
     const { data: instSubjects, error: instErr } = await srv
@@ -506,14 +532,15 @@ async function loadCSCABuiltinConductSubjectPolicies(
       .select("subject_id")
       .eq("institution_id", institutionId);
 
-    if (instErr || !Array.isArray(instSubjects) || instSubjects.length === 0) return [];
+    if (instErr || !Array.isArray(instSubjects) || instSubjects.length === 0)
+      return [];
 
     const subjectIds = Array.from(
       new Set(
         (instSubjects as any[])
           .map((row) => String(row.subject_id || ""))
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
 
     if (subjectIds.length === 0) return [];
@@ -523,7 +550,8 @@ async function loadCSCABuiltinConductSubjectPolicies(
       .select("id, name, code")
       .in("id", subjectIds);
 
-    if (subErr || !Array.isArray(subjectRows) || subjectRows.length === 0) return [];
+    if (subErr || !Array.isArray(subjectRows) || subjectRows.length === 0)
+      return [];
 
     return (subjectRows as any[])
       .map((subject) => {
@@ -531,7 +559,11 @@ async function loadCSCABuiltinConductSubjectPolicies(
         const label = String(subject.name || subject.code || "Matière").trim();
         const key = `${subject.name || ""} ${subject.code || ""}`;
         if (!subject_id || !isCSCALatinOrReligionLabel(key)) return null;
-        return { subject_id, subject_name: label || "Matière", conduct_weight: 1 };
+        return {
+          subject_id,
+          subject_name: label || "Matière",
+          conduct_weight: 1,
+        };
       })
       .filter((row): row is ConductSubjectPolicy => !!row);
   } catch {
@@ -541,7 +573,7 @@ async function loadCSCABuiltinConductSubjectPolicies(
 
 function mergeConductSubjectPolicies(
   configured: ConductSubjectPolicy[],
-  builtin: ConductSubjectPolicy[]
+  builtin: ConductSubjectPolicy[],
 ): ConductSubjectPolicy[] {
   const byId = new Map<string, ConductSubjectPolicy>();
   for (const row of [...configured, ...builtin]) {
@@ -553,7 +585,7 @@ function mergeConductSubjectPolicies(
     a.subject_name.localeCompare(b.subject_name, "fr", {
       sensitivity: "base",
       numeric: true,
-    })
+    }),
   );
 }
 
@@ -565,13 +597,14 @@ async function loadSubjectAveragesForConductPolicy(
     studentIds: string[];
     from: string;
     to: string;
-  }
+  },
 ): Promise<Map<string, Map<string, number>>> {
   const out = new Map<string, Map<string, number>>();
   const subjectIds = Array.from(new Set(opts.subjectIds.filter(Boolean)));
   const studentIds = Array.from(new Set(opts.studentIds.filter(Boolean)));
 
-  if (!opts.classId || subjectIds.length === 0 || studentIds.length === 0) return out;
+  if (!opts.classId || subjectIds.length === 0 || studentIds.length === 0)
+    return out;
 
   try {
     let evalQuery = srv
@@ -585,9 +618,13 @@ async function loadSubjectAveragesForConductPolicy(
     if (opts.to) evalQuery = evalQuery.lte("eval_date", opts.to);
 
     const { data: evalRows, error: evalErr } = await evalQuery;
-    if (evalErr || !Array.isArray(evalRows) || evalRows.length === 0) return out;
+    if (evalErr || !Array.isArray(evalRows) || evalRows.length === 0)
+      return out;
 
-    const evalById = new Map<string, { subject_id: string; scale: number; coeff: number }>();
+    const evalById = new Map<
+      string,
+      { subject_id: string; scale: number; coeff: number }
+    >();
     for (const ev of evalRows as any[]) {
       const id = String(ev.id || "");
       const subject_id = String(ev.subject_id || "");
@@ -610,7 +647,8 @@ async function loadSubjectAveragesForConductPolicy(
       .in("evaluation_id", evalIds)
       .in("student_id", studentIds);
 
-    if (scoreErr || !Array.isArray(scoreRows) || scoreRows.length === 0) return out;
+    if (scoreErr || !Array.isArray(scoreRows) || scoreRows.length === 0)
+      return out;
 
     const acc = new Map<string, { sum: number; coeff: number }>();
 
@@ -657,8 +695,12 @@ function applyInstitutionConductPolicyToStudent(opts: {
   subjectAverages: Map<string, Map<string, number>>;
 }): ConductPolicyResult {
   const classicTotal = clean2(opts.classicTotal) ?? 0;
-  const classicAvg20 = clean2(normalizeScoreTo20(classicTotal, opts.totalMax)) ?? 0;
-  const classicWeight = Math.max(0, Number(opts.conductPolicy.classic_conduct_weight ?? 1));
+  const classicAvg20 =
+    clean2(normalizeScoreTo20(classicTotal, opts.totalMax)) ?? 0;
+  const classicWeight = Math.max(
+    0,
+    Number(opts.conductPolicy.classic_conduct_weight ?? 1),
+  );
 
   const components: ConductPolicyComponent[] = [
     {
@@ -672,7 +714,10 @@ function applyInstitutionConductPolicyToStudent(opts: {
     },
   ];
 
-  if (opts.conductPolicy.mode !== "conduct_plus_subjects" || opts.subjectPolicies.length === 0) {
+  if (
+    opts.conductPolicy.mode !== "conduct_plus_subjects" ||
+    opts.subjectPolicies.length === 0
+  ) {
     return {
       total: classicTotal,
       avg20: classicAvg20,
@@ -694,9 +739,14 @@ function applyInstitutionConductPolicyToStudent(opts: {
       ?.get(opts.studentId);
 
     const hasAvg = typeof rawAvg === "number" && Number.isFinite(rawAvg);
-    const shouldCountMissing = opts.conductPolicy.missing_subject_strategy === "count_as_zero";
+    const shouldCountMissing =
+      opts.conductPolicy.missing_subject_strategy === "count_as_zero";
     const included = weight > 0 && (hasAvg || shouldCountMissing);
-    const avg20 = hasAvg ? clampConduct(rawAvg, 0, 20) : shouldCountMissing ? 0 : null;
+    const avg20 = hasAvg
+      ? clampConduct(rawAvg, 0, 20)
+      : shouldCountMissing
+        ? 0
+        : null;
 
     components.push({
       kind: "subject",
@@ -727,7 +777,8 @@ function applyInstitutionConductPolicyToStudent(opts: {
   }
 
   const finalAvg20 = clean2(weightedSum / totalWeight) ?? classicAvg20;
-  const finalTotal = clean2(normalizeScoreFrom20(finalAvg20, opts.totalMax)) ?? classicTotal;
+  const finalTotal =
+    clean2(normalizeScoreFrom20(finalAvg20, opts.totalMax)) ?? classicTotal;
 
   return {
     total: finalTotal,
@@ -742,7 +793,7 @@ function applyInstitutionConductPolicyToStudent(opts: {
 
 async function loadConductSettings(
   srv: SupabaseClient,
-  institutionId: string
+  institutionId: string,
 ): Promise<ConductSettings> {
   try {
     const { data, error } = await srv
@@ -759,7 +810,7 @@ async function loadConductSettings(
         lateness_mode,
         lateness_minutes_per_absent_hour,
         lateness_points_per_late
-      `
+      `,
       )
       .eq("institution_id", institutionId)
       .maybeSingle();
@@ -768,52 +819,77 @@ async function loadConductSettings(
 
     const raw = data as any;
     const modeRaw = String(
-      raw.lateness_mode ?? DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode
+      raw.lateness_mode ??
+        DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode,
     )
       .normalize("NFKC")
       .trim()
       .toLowerCase();
 
-    const allowedModes: LatenessMode[] = ["ignore", "as_hours", "direct_points"];
-    const lateness_mode: LatenessMode = allowedModes.includes(modeRaw as LatenessMode)
+    const allowedModes: LatenessMode[] = [
+      "ignore",
+      "as_hours",
+      "direct_points",
+    ];
+    const lateness_mode: LatenessMode = allowedModes.includes(
+      modeRaw as LatenessMode,
+    )
       ? (modeRaw as LatenessMode)
       : DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_mode;
 
     return {
       rubric_max: {
-        assiduite: numSetting(raw.assiduite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite),
-        tenue: numSetting(raw.tenue_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue),
-        moralite: numSetting(raw.moralite_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite),
-        discipline: numSetting(raw.discipline_max, DEFAULT_CONDUCT_SETTINGS.rubric_max.discipline),
+        assiduite: numSetting(
+          raw.assiduite_max,
+          DEFAULT_CONDUCT_SETTINGS.rubric_max.assiduite,
+        ),
+        tenue: numSetting(
+          raw.tenue_max,
+          DEFAULT_CONDUCT_SETTINGS.rubric_max.tenue,
+        ),
+        moralite: numSetting(
+          raw.moralite_max,
+          DEFAULT_CONDUCT_SETTINGS.rubric_max.moralite,
+        ),
+        discipline: numSetting(
+          raw.discipline_max,
+          DEFAULT_CONDUCT_SETTINGS.rubric_max.discipline,
+        ),
       },
       rules: {
         assiduite: {
           penalty_per_hour: numSetting(
             raw.points_per_absent_hour,
-            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.penalty_per_hour
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.penalty_per_hour,
           ),
           max_hours_before_zero: numSetting(
             raw.absent_hours_zero_threshold,
-            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.max_hours_before_zero
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.max_hours_before_zero,
           ),
           note_after_threshold: numSetting(
             raw.absent_hours_note_after_threshold,
-            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.note_after_threshold
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.note_after_threshold,
           ),
           lateness_mode,
           lateness_minutes_per_absent_hour: numSetting(
             raw.lateness_minutes_per_absent_hour,
-            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_minutes_per_absent_hour
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite
+              .lateness_minutes_per_absent_hour,
           ),
           lateness_points_per_late: numSetting(
             raw.lateness_points_per_late,
-            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late
+            DEFAULT_CONDUCT_SETTINGS.rules.assiduite.lateness_points_per_late,
           ),
         },
-        tenue: { warning_penalty: DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty },
-        moralite: { event_penalty: DEFAULT_CONDUCT_SETTINGS.rules.moralite.event_penalty },
+        tenue: {
+          warning_penalty: DEFAULT_CONDUCT_SETTINGS.rules.tenue.warning_penalty,
+        },
+        moralite: {
+          event_penalty: DEFAULT_CONDUCT_SETTINGS.rules.moralite.event_penalty,
+        },
         discipline: {
-          offense_penalty: DEFAULT_CONDUCT_SETTINGS.rules.discipline.offense_penalty,
+          offense_penalty:
+            DEFAULT_CONDUCT_SETTINGS.rules.discipline.offense_penalty,
           council_cap: DEFAULT_CONDUCT_SETTINGS.rules.discipline.council_cap,
         },
       },
@@ -825,7 +901,7 @@ async function loadConductSettings(
 
 async function loadDefaultSessionMinutes(
   srv: SupabaseClient,
-  institutionId: string
+  institutionId: string,
 ): Promise<number> {
   try {
     const { data, error } = await srv
@@ -889,17 +965,19 @@ function isLettersSubject(name?: string | null, code?: string | null): boolean {
 
   if (
     /(^|\b)(fr|francais|français|ang|anglais|esp|espagnol|all|allemand|ar|arabe|hg|hist|histoire|geo|geographie|géographie|lit|litt|eco|economie|économie)(\b|$)/.test(
-      c
+      c,
     )
   ) {
     return true;
   }
 
   return (
-    /(fran[cç]ais|french|anglais|english|espagnol|spanish|allemand|german|arabe|arabic)/.test(n) ||
+    /(fran[cç]ais|french|anglais|english|espagnol|spanish|allemand|german|arabe|arabic)/.test(
+      n,
+    ) ||
     /(histoire|hist\.|g[eé]ographie|histoire\s*-?\s*g[eé]o|hg)/.test(n) ||
     /(litt[eé]r|lettres|grammaire|orthograph|conjug|lecture|r[eé]daction|expression|compr[eé]hension)/.test(
-      n
+      n,
     ) ||
     /(economie|gestion|comptabilit|droit)/.test(n)
   );
@@ -912,8 +990,12 @@ function isScienceSubject(name?: string | null, code?: string | null): boolean {
   if (isOtherSubject(name, code)) return false;
 
   return (
-    /(math|math[ée]m|phys|chim|svt|bio|science|info|algo|stat|techno)/.test(c) ||
-    /(math|math[ée]m|phys|chim|svt|bio|science|informat|algo|stat|technolog)/.test(n)
+    /(math|math[ée]m|phys|chim|svt|bio|science|info|algo|stat|techno)/.test(
+      c,
+    ) ||
+    /(math|math[ée]m|phys|chim|svt|bio|science|informat|algo|stat|technolog)/.test(
+      n,
+    )
   );
 }
 
@@ -937,7 +1019,7 @@ function groupKey(s?: string | null) {
 
 function computeGroupAnnualCoeff(
   group: BulletinSubjectGroup,
-  coeffBySubject: Map<string, { coeff: number; include: boolean }>
+  coeffBySubject: Map<string, { coeff: number; include: boolean }>,
 ): number {
   let sumCoeff = 0;
 
@@ -1063,23 +1145,21 @@ type AdjustmentBonusMaps = {
 
 type ClassStudentRow = {
   student_id: string;
-  students?:
-    | {
-        full_name?: string | null;
-        last_name?: string | null;
-        first_name?: string | null;
-        matricule?: string | null;
-        photo_url?: string | null;
-        gender?: string | null;
-        birthdate?: string | null;
-        birth_place?: string | null;
-        nationality?: string | null;
-        regime?: string | null;
-        is_repeater?: boolean | null;
-        is_boarder?: boolean | null;
-        is_affecte?: boolean | null;
-      }
-    | null;
+  students?: {
+    full_name?: string | null;
+    last_name?: string | null;
+    first_name?: string | null;
+    matricule?: string | null;
+    photo_url?: string | null;
+    gender?: string | null;
+    birthdate?: string | null;
+    birth_place?: string | null;
+    nationality?: string | null;
+    regime?: string | null;
+    is_repeater?: boolean | null;
+    is_boarder?: boolean | null;
+    is_affecte?: boolean | null;
+  } | null;
 };
 
 /* ───────── Rangs front ───────── */
@@ -1096,7 +1176,9 @@ function applySubjectRanks(items: any[]) {
 
     perSubject.forEach((ps) => {
       const avg =
-        typeof ps.avg20 === "number" && Number.isFinite(ps.avg20) ? ps.avg20 : null;
+        typeof ps.avg20 === "number" && Number.isFinite(ps.avg20)
+          ? ps.avg20
+          : null;
       const sid = ps.subject_id as string | undefined;
       if (!sid || avg === null) return;
 
@@ -1141,7 +1223,9 @@ function applySubjectComponentRanks(items: any[]) {
 
     perComp.forEach((psc) => {
       const avg =
-        typeof psc.avg20 === "number" && Number.isFinite(psc.avg20) ? psc.avg20 : null;
+        typeof psc.avg20 === "number" && Number.isFinite(psc.avg20)
+          ? psc.avg20
+          : null;
       const cid = psc.component_id as string | undefined;
       if (!cid || avg === null) return;
 
@@ -1178,14 +1262,14 @@ function applySubjectComponentRanks(items: any[]) {
 
 function findGroupByMeaning(
   groups: BulletinSubjectGroup[],
-  meaning: "LETTRES" | "SCIENCES" | "AUTRES"
+  meaning: "LETTRES" | "SCIENCES" | "AUTRES",
 ): BulletinSubjectGroup | null {
   const keys =
     meaning === "LETTRES"
       ? ["BILANLETTRES", "LETTRES", "LITTERAIRE", "LITTERATURE", "LANGUES"]
       : meaning === "SCIENCES"
-      ? ["BILANSCIENCES", "SCIENCES", "SCIENTIFIQUE"]
-      : ["BILANAUTRES", "AUTRES", "DIVERS", "VIESCOLAIRE", "CONDUITE"];
+        ? ["BILANSCIENCES", "SCIENCES", "SCIENTIFIQUE"]
+        : ["BILANAUTRES", "AUTRES", "DIVERS", "VIESCOLAIRE", "CONDUITE"];
 
   for (const g of groups) {
     const k1 = groupKey(g.code);
@@ -1320,7 +1404,7 @@ async function computeStudentGeneralAvgForRange(opts: {
   let evalQuery = srv
     .from("grade_evaluations")
     .select(
-      "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
+      "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id",
     )
     .eq("class_id", classId)
     .eq("is_published", true)
@@ -1345,8 +1429,14 @@ async function computeStudentGeneralAvgForRange(opts: {
   if (scoreErr || !scoreData || !scoreData.length) return null;
   const scores = scoreData as ScoreRow[];
 
-  const perSubject = new Map<string, { sumWeighted: number; sumCoeff: number }>();
-  const perComp = new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
+  const perSubject = new Map<
+    string,
+    { sumWeighted: number; sumCoeff: number }
+  >();
+  const perComp = new Map<
+    string,
+    { subject_id: string; sumWeighted: number; sumCoeff: number }
+  >();
 
   for (const sc of scores) {
     const ev = evalById.get(sc.evaluation_id);
@@ -1370,12 +1460,11 @@ async function computeStudentGeneralAvgForRange(opts: {
     if (ev.subject_component_id) {
       const comp = subjectComponentById.get(String(ev.subject_component_id));
       if (comp) {
-        const compCell =
-          perComp.get(comp.id) || {
-            subject_id: comp.subject_id,
-            sumWeighted: 0,
-            sumCoeff: 0,
-          };
+        const compCell = perComp.get(comp.id) || {
+          subject_id: comp.subject_id,
+          sumWeighted: 0,
+          sumCoeff: 0,
+        };
         compCell.sumWeighted += norm20 * weight;
         compCell.sumCoeff += weight;
         perComp.set(comp.id, compCell);
@@ -1423,7 +1512,11 @@ async function computeStudentGeneralAvgForRange(opts: {
         .get(studentId)
         ?.get(String(s.subject_id)) ?? 0;
 
-    if (avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20))) {
+    if (
+      avg20 !== null &&
+      avg20 !== undefined &&
+      Number.isFinite(Number(avg20))
+    ) {
       const adjusted = clampAverage20(Number(avg20) + subjectBonus);
       avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
     }
@@ -1463,7 +1556,11 @@ async function computeStudentGeneralAvgForRange(opts: {
 
   if (!hasAcademicMatterAverage) return null;
 
-  if (!conductAlreadyCounted && conductAvg20 !== null && conductAvg20 !== undefined) {
+  if (
+    !conductAlreadyCounted &&
+    conductAvg20 !== null &&
+    conductAvg20 !== undefined
+  ) {
     const c = Number(conductAvg20);
     if (Number.isFinite(c)) {
       sumGen += c * 1;
@@ -1471,7 +1568,8 @@ async function computeStudentGeneralAvgForRange(opts: {
     }
   }
 
-  const generalBeforeBonus = sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
+  const generalBeforeBonus =
+    sumCoeffGen > 0 ? cleanNumber(sumGen / sumCoeffGen, 4) : null;
   if (generalBeforeBonus === null) return null;
 
   const generalBonus = bonusMaps?.generalBonusByStudent.get(studentId) ?? 0;
@@ -1490,7 +1588,7 @@ export async function GET(req: NextRequest) {
   const liteMode = ["1", "true", "yes"].includes(
     String(url.searchParams.get("lite") || url.searchParams.get("mode") || "")
       .trim()
-      .toLowerCase()
+      .toLowerCase(),
   );
 
   let mode: "short" | "token" = "token";
@@ -1507,10 +1605,14 @@ export async function GET(req: NextRequest) {
         {
           ok: false,
           error: "qr_store_error",
-          code: String(shortCode || "").trim().toUpperCase(),
-          detail: e?.message ? String(e.message) : String(e || "Erreur inconnue"),
+          code: String(shortCode || "")
+            .trim()
+            .toUpperCase(),
+          detail: e?.message
+            ? String(e.message)
+            : String(e || "Erreur inconnue"),
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -1519,9 +1621,11 @@ export async function GET(req: NextRequest) {
         {
           ok: false,
           error: rec?.error || "invalid_code",
-          code: String(shortCode || "").trim().toUpperCase(),
+          code: String(shortCode || "")
+            .trim()
+            .toUpperCase(),
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -1530,9 +1634,11 @@ export async function GET(req: NextRequest) {
         {
           ok: false,
           error: "invalid_payload",
-          code: String(shortCode || "").trim().toUpperCase(),
+          code: String(shortCode || "")
+            .trim()
+            .toUpperCase(),
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -1541,11 +1647,17 @@ export async function GET(req: NextRequest) {
     mode = "token";
     const dec: any = verifyBulletinQR(token);
     if (!dec) {
-      return NextResponse.json({ ok: false, error: "invalid_qr" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "invalid_qr" },
+        { status: 400 },
+      );
     }
     payload = dec;
   } else {
-    return NextResponse.json({ ok: false, error: "missing_param" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "missing_param" },
+      { status: 400 },
+    );
   }
 
   const instId: string | undefined = payload?.instId;
@@ -1553,7 +1665,10 @@ export async function GET(req: NextRequest) {
   const studentId: string | undefined = payload?.studentId;
 
   if (!instId || !classId || !studentId) {
-    return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "invalid_payload" },
+      { status: 400 },
+    );
   }
 
   const instIdStr: string = instId;
@@ -1590,7 +1705,8 @@ export async function GET(req: NextRequest) {
     payload?.p ??
     null;
 
-  const periodCodeToken: string | null = payload?.periodCode ?? payload?.period_code ?? null;
+  const periodCodeToken: string | null =
+    payload?.periodCode ?? payload?.period_code ?? null;
 
   const [
     { data: inst, error: instErr },
@@ -1598,16 +1714,8 @@ export async function GET(req: NextRequest) {
     { data: stu, error: stuErr },
   ] = await Promise.all([
     srv.from("institutions").select("*").eq("id", instIdStr).maybeSingle(),
-    srv
-      .from("classes")
-      .select("*")
-      .eq("id", classIdStr)
-      .maybeSingle(),
-    srv
-      .from("students")
-      .select("*")
-      .eq("id", studentIdStr)
-      .maybeSingle(),
+    srv.from("classes").select("*").eq("id", classIdStr).maybeSingle(),
+    srv.from("students").select("*").eq("id", studentIdStr).maybeSingle(),
   ]);
 
   if (instErr || !inst) {
@@ -1616,9 +1724,11 @@ export async function GET(req: NextRequest) {
         ok: false,
         error: instErr ? "INSTITUTION_QUERY_ERROR" : "INSTITUTION_NOT_FOUND",
         detail: instErr?.message ?? null,
-        hint: instErr ? "Vérifie les colonnes de la table institutions ou les variables Supabase de cet environnement." : null,
+        hint: instErr
+          ? "Vérifie les colonnes de la table institutions ou les variables Supabase de cet environnement."
+          : null,
       },
-      { status: instErr ? 500 : 404 }
+      { status: instErr ? 500 : 404 },
     );
   }
 
@@ -1628,9 +1738,11 @@ export async function GET(req: NextRequest) {
         ok: false,
         error: clsErr ? "CLASS_QUERY_ERROR" : "CLASS_NOT_FOUND",
         detail: clsErr?.message ?? null,
-        hint: clsErr ? "Vérifie les colonnes de la table classes ou les variables Supabase de cet environnement." : null,
+        hint: clsErr
+          ? "Vérifie les colonnes de la table classes ou les variables Supabase de cet environnement."
+          : null,
       },
-      { status: clsErr ? 500 : 404 }
+      { status: clsErr ? 500 : 404 },
     );
   }
 
@@ -1643,7 +1755,7 @@ export async function GET(req: NextRequest) {
         error: "CLASS_FORBIDDEN",
         detail: `class.institution_id=${classRow.institution_id ?? "null"} payload.instId=${instIdStr}`,
       },
-      { status: 403 }
+      { status: 403 },
     );
   }
 
@@ -1653,22 +1765,31 @@ export async function GET(req: NextRequest) {
         ok: false,
         error: stuErr ? "STUDENT_QUERY_ERROR" : "STUDENT_NOT_FOUND",
         detail: stuErr?.message ?? null,
-        hint: stuErr ? "Vérifie les colonnes de la table students. La route publique utilise maintenant select('*') pour éviter les colonnes optionnelles absentes." : null,
+        hint: stuErr
+          ? "Vérifie les colonnes de la table students. La route publique utilise maintenant select('*') pour éviter les colonnes optionnelles absentes."
+          : null,
       },
-      { status: stuErr ? 500 : 404 }
+      { status: stuErr ? 500 : 404 },
     );
   }
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
-  const coeffLevelCandidates = buildCoeffLevelCandidates(classRow, bulletinLevel);
-  const allowSubjectComponents = allowSubjectComponentsForBulletinLevel(bulletinLevel);
+  const coeffLevelCandidates = buildCoeffLevelCandidates(
+    classRow,
+    bulletinLevel,
+  );
+  const allowSubjectComponents =
+    allowSubjectComponentsForBulletinLevel(bulletinLevel);
   const institutionMeta: InstitutionMeta = {
     id: String((inst as any).id || instIdStr),
     name: (inst as any).name ?? null,
     code: (inst as any).code ?? null,
     code_unique: (inst as any).code_unique ?? null,
     acronym: (inst as any).acronym ?? null,
-    logo_url: (inst as any).logo_url ?? (inst as any).settings_json?.institution_logo_url ?? null,
+    logo_url:
+      (inst as any).logo_url ??
+      (inst as any).settings_json?.institution_logo_url ??
+      null,
     settings_json: (inst as any).settings_json ?? null,
   };
   const isCSCA = isCSCAInstitution(institutionMeta);
@@ -1686,12 +1807,15 @@ export async function GET(req: NextRequest) {
 
   if ((!dateFrom || !dateTo) && (academicYearToken || classRow.academic_year)) {
     const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
-    const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
+    const labelGuess =
+      periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
 
     if (yearGuess && labelGuess) {
       const { data: periodsData } = await srv
         .from("grade_periods")
-        .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+        .select(
+          "id, academic_year, code, label, short_label, start_date, end_date, coeff",
+        )
         .eq("institution_id", instIdStr)
         .eq("academic_year", yearGuess)
         .order("start_date", { ascending: true });
@@ -1704,7 +1828,7 @@ export async function GET(req: NextRequest) {
           (p) =>
             normText(p?.code) === tok ||
             normText(p?.label) === tok ||
-            normText(p?.short_label) === tok
+            normText(p?.short_label) === tok,
         ) ?? null;
 
       const fuzzy =
@@ -1731,7 +1855,9 @@ export async function GET(req: NextRequest) {
   if (dateFrom && dateTo) {
     const { data: gp, error: gpErr } = await srv
       .from("grade_periods")
-      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+      .select(
+        "id, academic_year, code, label, short_label, start_date, end_date, coeff",
+      )
       .eq("institution_id", instIdStr)
       .eq("start_date", dateFrom)
       .eq("end_date", dateTo)
@@ -1747,18 +1873,23 @@ export async function GET(req: NextRequest) {
         short_label: gp.short_label ?? null,
         academic_year: gp.academic_year ?? null,
         coeff:
-          gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
+          gp.coeff === null || gp.coeff === undefined
+            ? null
+            : cleanCoeff(gp.coeff),
       };
     } else {
       const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
-      const labelGuess = periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
+      const labelGuess =
+        periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
 
       let fuzzy: any | null = null;
 
       if (yearGuess && labelGuess) {
         const { data: periodsData } = await srv
           .from("grade_periods")
-          .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+          .select(
+            "id, academic_year, code, label, short_label, start_date, end_date, coeff",
+          )
           .eq("institution_id", instIdStr)
           .eq("academic_year", yearGuess)
           .order("start_date", { ascending: true });
@@ -1771,7 +1902,7 @@ export async function GET(req: NextRequest) {
             (p) =>
               normText(p?.code) === tok ||
               normText(p?.label) === tok ||
-              normText(p?.short_label) === tok
+              normText(p?.short_label) === tok,
           ) ??
           periods.find((p) => {
             const c = normText(p?.code);
@@ -1839,14 +1970,20 @@ export async function GET(req: NextRequest) {
 
   if (mode === "short" && liteMode) {
     const snap = (payload as any)?.s ?? null;
-    const snapGeneral = snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
-    const snapAnnual = snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
+    const snapGeneral =
+      snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
+    const snapAnnual =
+      snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
 
     const safePeriod = {
       ...periodMeta,
       label: periodMeta.label ?? periodLabelToken ?? null,
       short_label: periodMeta.short_label ?? periodLabelToken ?? null,
-      academic_year: periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+      academic_year:
+        periodMeta.academic_year ??
+        academicYearToken ??
+        classRow.academic_year ??
+        null,
     };
 
     return NextResponse.json({
@@ -1868,7 +2005,8 @@ export async function GET(req: NextRequest) {
         id: classRow.id,
         label: classRow.label || classRow.code || "Classe",
         code: classRow.code || null,
-        academic_year: classRow.academic_year || safePeriod.academic_year || null,
+        academic_year:
+          classRow.academic_year || safePeriod.academic_year || null,
         level: classRow.level || null,
         official_track_code: classRow.official_track_code || null,
         head_teacher: headTeacher
@@ -1883,7 +2021,9 @@ export async function GET(req: NextRequest) {
       student: {
         id: (stu as any).id,
         full_name:
-          [(stu as any).last_name, (stu as any).first_name].filter(Boolean).join(" ") ||
+          [(stu as any).last_name, (stu as any).first_name]
+            .filter(Boolean)
+            .join(" ") ||
           (stu as any).full_name ||
           null,
         last_name: (stu as any).last_name || null,
@@ -1921,7 +2061,10 @@ export async function GET(req: NextRequest) {
 
   let periodLooksAnnual = false;
   let yearForAnnual: string | null =
-    periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null;
+    periodMeta.academic_year ??
+    academicYearToken ??
+    classRow.academic_year ??
+    null;
   let yearPeriods: any[] = [];
   let shouldComputeAnnual = false;
 
@@ -1938,7 +2081,9 @@ export async function GET(req: NextRequest) {
   if (yearForAnnual) {
     const { data: yearPeriodsData } = await srv
       .from("grade_periods")
-      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
+      .select(
+        "id, academic_year, code, label, short_label, start_date, end_date, coeff",
+      )
       .eq("institution_id", instIdStr)
       .eq("academic_year", yearForAnnual)
       .order("start_date", { ascending: true });
@@ -1982,7 +2127,7 @@ export async function GET(req: NextRequest) {
         is_boarder,
         is_affecte
       )
-    `
+    `,
     )
     .eq("class_id", classIdStr);
 
@@ -1997,7 +2142,10 @@ export async function GET(req: NextRequest) {
   const { data: csData, error: csErr } = await enrollQuery;
 
   if (csErr) {
-    return NextResponse.json({ ok: false, error: "CLASS_STUDENTS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "CLASS_STUDENTS_ERROR" },
+      { status: 500 },
+    );
   }
 
   const classStudents = (csData || []) as ClassStudentRow[];
@@ -2082,10 +2230,18 @@ export async function GET(req: NextRequest) {
 
     const selectedByKey = new Map<
       string,
-      { student_id: string; subject_id: string | null; bonus: number; priority: number }
+      {
+        student_id: string;
+        subject_id: string | null;
+        bonus: number;
+        priority: number;
+      }
     >();
 
-    const ingest = (rows: GradeAdjustmentBonusRow[], hasPeriodColumn: boolean) => {
+    const ingest = (
+      rows: GradeAdjustmentBonusRow[],
+      hasPeriodColumn: boolean,
+    ) => {
       for (const row of rows || []) {
         const sid = String(row.student_id || "").trim();
         if (!sid) continue;
@@ -2173,7 +2329,7 @@ export async function GET(req: NextRequest) {
 
   async function fetchConductAverageMap(
     from: string,
-    to: string
+    to: string,
   ): Promise<Map<string, number | null>> {
     const out = new Map<string, number | null>();
     studentIds.forEach((sid) => out.set(sid, null));
@@ -2183,15 +2339,26 @@ export async function GET(req: NextRequest) {
     try {
       const conductSettings = await loadConductSettings(srv, instIdStr);
       const rubricMax = conductSettings.rubric_max;
-      const defaultSessionMinutes = await loadDefaultSessionMinutes(srv, instIdStr);
+      const defaultSessionMinutes = await loadDefaultSessionMinutes(
+        srv,
+        instIdStr,
+      );
       const totalMax =
-        rubricMax.assiduite + rubricMax.tenue + rubricMax.moralite + rubricMax.discipline;
+        rubricMax.assiduite +
+        rubricMax.tenue +
+        rubricMax.moralite +
+        rubricMax.discipline;
 
       let conductPeriodId: string | null = null;
       let conductAcademicYear = String(
-        periodMeta.academic_year || academicYearToken || classRow.academic_year || ""
+        periodMeta.academic_year ||
+          academicYearToken ||
+          classRow.academic_year ||
+          "",
       ).trim();
-      let conductPeriodCode = String(periodMeta.code || periodCodeToken || "").trim();
+      let conductPeriodCode = String(
+        periodMeta.code || periodCodeToken || "",
+      ).trim();
 
       try {
         const { data: gp } = await srv
@@ -2205,9 +2372,15 @@ export async function GET(req: NextRequest) {
 
         if (gp) {
           conductPeriodId = (gp as any).id ? String((gp as any).id) : null;
-          conductAcademicYear = String((gp as any).academic_year || conductAcademicYear || "").trim();
+          conductAcademicYear = String(
+            (gp as any).academic_year || conductAcademicYear || "",
+          ).trim();
           conductPeriodCode = String(
-            (gp as any).code || (gp as any).short_label || (gp as any).label || conductPeriodCode || ""
+            (gp as any).code ||
+              (gp as any).short_label ||
+              (gp as any).label ||
+              conductPeriodCode ||
+              "",
           ).trim();
         }
       } catch {
@@ -2229,7 +2402,10 @@ export async function GET(req: NextRequest) {
 
       let conductSubjectPolicies: ConductSubjectPolicy[] = [];
       if (conductPolicy.mode === "conduct_plus_subjects") {
-        const configuredPolicies = await loadConductSubjectPolicies(srv, instIdStr);
+        const configuredPolicies = await loadConductSubjectPolicies(
+          srv,
+          instIdStr,
+        );
         const cscaBuiltinPolicies = isCSCA
           ? await loadCSCABuiltinConductSubjectPolicies(srv, instIdStr)
           : [];
@@ -2237,32 +2413,40 @@ export async function GET(req: NextRequest) {
         conductSubjectPolicies = isCSCA
           ? mergeConductSubjectPolicies(
               configuredPolicies.filter((policy) =>
-                isCSCALatinOrReligionLabel(`${policy.subject_name || ""} ${policy.subject_id || ""}`)
+                isCSCALatinOrReligionLabel(
+                  `${policy.subject_name || ""} ${policy.subject_id || ""}`,
+                ),
               ),
-              cscaBuiltinPolicies
+              cscaBuiltinPolicies,
             )
           : configuredPolicies;
       }
 
       const conductSubjectAverageBySubject =
-        conductPolicy.mode === "conduct_plus_subjects" && conductSubjectPolicies.length > 0
+        conductPolicy.mode === "conduct_plus_subjects" &&
+        conductSubjectPolicies.length > 0
           ? await loadSubjectAveragesForConductPolicy(srv, {
               classId: classIdStr,
-              subjectIds: conductSubjectPolicies.map((policy) => policy.subject_id),
+              subjectIds: conductSubjectPolicies.map(
+                (policy) => policy.subject_id,
+              ),
               studentIds,
               from,
               to,
             })
           : new Map<string, Map<string, number>>();
 
-      const officialTotalMax = conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
+      const officialTotalMax =
+        conductPolicy.mode === "conduct_plus_subjects" ? 20 : totalMax;
 
       const overridesByStudent = new Map<string, ConductOverride>();
       if (conductAcademicYear && conductPeriodCode && studentIds.length > 0) {
         try {
           const { data: overrideRows } = await srv
             .from("conduct_average_overrides")
-            .select("student_id, override_total, calculated_total, reason, updated_at, edited_by")
+            .select(
+              "student_id, override_total, calculated_total, reason, updated_at, edited_by",
+            )
             .eq("institution_id", instIdStr)
             .eq("class_id", classIdStr)
             .eq("academic_year", conductAcademicYear)
@@ -2277,7 +2461,8 @@ export async function GET(req: NextRequest) {
               student_id: sid,
               override_total: Number(overrideTotal.toFixed(2)),
               calculated_total:
-                row.calculated_total === null || row.calculated_total === undefined
+                row.calculated_total === null ||
+                row.calculated_total === undefined
                   ? null
                   : Number(row.calculated_total),
               reason: row.reason ?? null,
@@ -2298,7 +2483,9 @@ export async function GET(req: NextRequest) {
         try {
           const { data: rubricRows } = await srv
             .from("conduct_rubric_overrides")
-            .select("student_id, rubric_key, override_value, calculated_value, updated_at, edited_by")
+            .select(
+              "student_id, rubric_key, override_value, calculated_value, updated_at, edited_by",
+            )
             .eq("institution_id", instIdStr)
             .eq("class_id", classIdStr)
             .eq("academic_year", conductAcademicYear)
@@ -2309,14 +2496,20 @@ export async function GET(req: NextRequest) {
             const sid = String(row.student_id || "");
             const keyRaw = row.rubric_key;
             const overrideValue = Number(row.override_value);
-            if (!sid || !isConductRubricKey(keyRaw) || !Number.isFinite(overrideValue)) continue;
+            if (
+              !sid ||
+              !isConductRubricKey(keyRaw) ||
+              !Number.isFinite(overrideValue)
+            )
+              continue;
             const current = rubricOverridesByStudent.get(sid) || {};
             current[keyRaw] = {
               student_id: sid,
               rubric_key: keyRaw,
               override_value: Number(overrideValue.toFixed(2)),
               calculated_value:
-                row.calculated_value === null || row.calculated_value === undefined
+                row.calculated_value === null ||
+                row.calculated_value === undefined
                   ? null
                   : Number(row.calculated_value),
               updated_at: row.updated_at ?? null,
@@ -2340,10 +2533,8 @@ export async function GET(req: NextRequest) {
 
       const absMarkIds = Array.from(
         new Set(
-          (absMarks || [])
-            .map((m: any) => String(m.id || ""))
-            .filter(Boolean)
-        )
+          (absMarks || []).map((m: any) => String(m.id || "")).filter(Boolean),
+        ),
       );
 
       let absReasonById = new Map<string, string | null>();
@@ -2357,7 +2548,7 @@ export async function GET(req: NextRequest) {
           (marksInfo || []).map((m: any) => [
             String(m.id),
             (m.reason ?? null) as string | null,
-          ])
+          ]),
         );
       }
 
@@ -2388,10 +2579,8 @@ export async function GET(req: NextRequest) {
 
         const tarMarkIds = Array.from(
           new Set(
-            (tardy || [])
-              .map((t: any) => String(t.id || ""))
-              .filter(Boolean)
-          )
+            (tardy || []).map((t: any) => String(t.id || "")).filter(Boolean),
+          ),
         );
 
         let tarReasonById = new Map<string, string | null>();
@@ -2405,7 +2594,7 @@ export async function GET(req: NextRequest) {
             (tMarksInfo || []).map((m: any) => [
               String(m.id),
               (m.reason ?? null) as string | null,
-            ])
+            ]),
           );
         }
 
@@ -2490,7 +2679,7 @@ export async function GET(req: NextRequest) {
             (p) =>
               p.rubric === "tenue" ||
               p.rubric === "moralite" ||
-              p.rubric === "discipline"
+              p.rubric === "discipline",
           )
           .map((p) => ({
             student_id: p.student_id,
@@ -2512,7 +2701,8 @@ export async function GET(req: NextRequest) {
           moralite: 0,
           discipline: 0,
         };
-        (cur as any)[p.rubric] = Number((cur as any)[p.rubric] || 0) + Number(p.points || 0);
+        (cur as any)[p.rubric] =
+          Number((cur as any)[p.rubric] || 0) + Number(p.points || 0);
         penByStudent.set(p.student_id, cur);
       }
 
@@ -2526,7 +2716,9 @@ export async function GET(req: NextRequest) {
         const absenceUnits = Math.max(0, absenceCount);
         const latenessDivisor = Math.max(
           1,
-          assRules.lateness_minutes_per_absent_hour || defaultSessionMinutes || 60
+          assRules.lateness_minutes_per_absent_hour ||
+            defaultSessionMinutes ||
+            60,
         );
 
         let effectiveHours = 0;
@@ -2544,13 +2736,13 @@ export async function GET(req: NextRequest) {
           assiduite = clampConduct(
             assRules.note_after_threshold,
             0,
-            rubricMax.assiduite
+            rubricMax.assiduite,
           );
         } else {
           assiduite = clampConduct(
             rubricMax.assiduite - assRules.penalty_per_hour * effectiveHours,
             0,
-            rubricMax.assiduite
+            rubricMax.assiduite,
           );
 
           if (
@@ -2561,65 +2753,102 @@ export async function GET(req: NextRequest) {
             assiduite = clampConduct(
               assiduite - assRules.lateness_points_per_late * tardyCount,
               0,
-              rubricMax.assiduite
+              rubricMax.assiduite,
             );
           }
         }
 
-        const tenueWarn = evs.filter((e) => e.event_type === "uniform_warning").length;
+        const tenueWarn = evs.filter(
+          (e) => e.event_type === "uniform_warning",
+        ).length;
         let tenue = clampConduct(
-          rubricMax.tenue - conductSettings.rules.tenue.warning_penalty * tenueWarn,
+          rubricMax.tenue -
+            conductSettings.rules.tenue.warning_penalty * tenueWarn,
           0,
-          rubricMax.tenue
+          rubricMax.tenue,
         );
 
         const moralN = evs.filter(
-          (e) => e.event_type === "cheating" || e.event_type === "alcohol_or_drug"
+          (e) =>
+            e.event_type === "cheating" || e.event_type === "alcohol_or_drug",
         ).length;
         let moralite = clampConduct(
-          rubricMax.moralite - conductSettings.rules.moralite.event_penalty * moralN,
+          rubricMax.moralite -
+            conductSettings.rules.moralite.event_penalty * moralN,
           0,
-          rubricMax.moralite
+          rubricMax.moralite,
         );
 
-        const firstWarn = evs.find((e) => e.event_type === "discipline_warning");
+        const firstWarn = evs.find(
+          (e) => e.event_type === "discipline_warning",
+        );
         let discN = 0;
         if (firstWarn) {
           discN = evs.filter(
             (e) =>
               e.event_type === "discipline_offense" &&
-              e.occurred_at >= firstWarn.occurred_at
+              e.occurred_at >= firstWarn.occurred_at,
           ).length;
         }
         let discipline = clampConduct(
-          rubricMax.discipline - conductSettings.rules.discipline.offense_penalty * discN,
+          rubricMax.discipline -
+            conductSettings.rules.discipline.offense_penalty * discN,
           0,
-          rubricMax.discipline
+          rubricMax.discipline,
         );
 
-        const p = penByStudent.get(sid) || { tenue: 0, moralite: 0, discipline: 0 };
+        const p = penByStudent.get(sid) || {
+          tenue: 0,
+          moralite: 0,
+          discipline: 0,
+        };
         tenue = clampConduct(tenue - p.tenue, 0, rubricMax.tenue);
         moralite = clampConduct(moralite - p.moralite, 0, rubricMax.moralite);
-        discipline = clampConduct(discipline - p.discipline, 0, rubricMax.discipline);
+        discipline = clampConduct(
+          discipline - p.discipline,
+          0,
+          rubricMax.discipline,
+        );
 
         const rubricOverrides = rubricOverridesByStudent.get(sid) || {};
         assiduite = rubricOverrides.assiduite
-          ? clampConduct(rubricOverrides.assiduite.override_value, 0, rubricMax.assiduite)
+          ? clampConduct(
+              rubricOverrides.assiduite.override_value,
+              0,
+              rubricMax.assiduite,
+            )
           : assiduite;
         tenue = rubricOverrides.tenue
-          ? clampConduct(rubricOverrides.tenue.override_value, 0, rubricMax.tenue)
+          ? clampConduct(
+              rubricOverrides.tenue.override_value,
+              0,
+              rubricMax.tenue,
+            )
           : tenue;
         moralite = rubricOverrides.moralite
-          ? clampConduct(rubricOverrides.moralite.override_value, 0, rubricMax.moralite)
+          ? clampConduct(
+              rubricOverrides.moralite.override_value,
+              0,
+              rubricMax.moralite,
+            )
           : moralite;
         discipline = rubricOverrides.discipline
-          ? clampConduct(rubricOverrides.discipline.override_value, 0, rubricMax.discipline)
+          ? clampConduct(
+              rubricOverrides.discipline.override_value,
+              0,
+              rubricMax.discipline,
+            )
           : discipline;
 
         let classicTotal = assiduite + tenue + moralite + discipline;
-        const hasCouncil = evs.some((e) => e.event_type === "discipline_council");
+        const hasCouncil = evs.some(
+          (e) => e.event_type === "discipline_council",
+        );
         if (hasCouncil) {
-          classicTotal = Math.min(classicTotal, conductSettings.rules.discipline.council_cap);
+          classicTotal = Math.min(
+            classicTotal,
+            conductSettings.rules.discipline.council_cap,
+          );
         }
 
         const automaticConduct = applyInstitutionConductPolicyToStudent({
@@ -2635,19 +2864,22 @@ export async function GET(req: NextRequest) {
           (conductPolicy.mode === "conduct_plus_subjects"
             ? automaticConduct.avg20
             : automaticConduct.total
-          ).toFixed(2)
+          ).toFixed(2),
         );
 
         const override = overridesByStudent.get(sid);
         const rawOverrideTotal = Number(override?.override_total);
         const isOverridden = !!override && Number.isFinite(rawOverrideTotal);
         const finalTotal = isOverridden
-          ? Number(clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2))
+          ? Number(
+              clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2),
+            )
           : calculatedTotal;
 
-        const finalAvg20 = officialTotalMax === 20
-          ? finalTotal
-          : normalizeScoreTo20(finalTotal, officialTotalMax);
+        const finalAvg20 =
+          officialTotalMax === 20
+            ? finalTotal
+            : normalizeScoreTo20(finalTotal, officialTotalMax);
 
         out.set(sid, cleanNumber(finalAvg20, 4));
       }
@@ -2676,7 +2908,11 @@ export async function GET(req: NextRequest) {
   }
 
   const currentBonusMaps = await loadAdjustmentBonusMaps({
-    academicYear: periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+    academicYear:
+      periodMeta.academic_year ??
+      academicYearToken ??
+      classRow.academic_year ??
+      null,
     periodId: periodMeta.id ?? null,
   });
 
@@ -2723,7 +2959,7 @@ export async function GET(req: NextRequest) {
     const { data: policyData, error: policyErr } = await srv
       .from("institution_subject_grade_policies")
       .select(
-        "subject_id, include_in_general_average, include_in_conduct_average, conduct_weight, is_active"
+        "subject_id, include_in_general_average, include_in_conduct_average, conduct_weight, is_active",
       )
       .eq("institution_id", instIdStr)
       .eq("is_active", true);
@@ -2740,7 +2976,9 @@ export async function GET(req: NextRequest) {
 
         const conductWeightRaw = Number(row.conduct_weight ?? 1);
         const conductWeight =
-          Number.isFinite(conductWeightRaw) && conductWeightRaw > 0 ? conductWeightRaw : 1;
+          Number.isFinite(conductWeightRaw) && conductWeightRaw > 0
+            ? conductWeightRaw
+            : 1;
 
         subjectGradePolicyBySubject.set(sid, {
           includeInGeneralAverage,
@@ -2763,7 +3001,7 @@ export async function GET(req: NextRequest) {
 
   const shouldIncludeSubjectInGeneralAverage = (
     subjectId: string,
-    fallback: boolean
+    fallback: boolean,
   ): boolean => {
     const policy = subjectGradePolicyBySubject.get(String(subjectId));
     if (policy && typeof policy.includeInGeneralAverage === "boolean") {
@@ -2777,7 +3015,7 @@ export async function GET(req: NextRequest) {
     let evalQuery = srv
       .from("grade_evaluations")
       .select(
-        "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id"
+        "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id",
       )
       .eq("class_id", classIdStr)
       .eq("is_published", true);
@@ -2788,14 +3026,18 @@ export async function GET(req: NextRequest) {
     const { data: evalData, error: evalErr } = await evalQuery;
 
     if (evalErr) {
-      return NextResponse.json({ ok: false, error: "EVALUATIONS_ERROR" }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "EVALUATIONS_ERROR" },
+        { status: 500 },
+      );
     }
 
     evals = (evalData || []) as EvalRow[];
   }
 
   const subjectIdSet = new Set<string>();
-  for (const e of evals) if (e.subject_id) subjectIdSet.add(String(e.subject_id));
+  for (const e of evals)
+    if (e.subject_id) subjectIdSet.add(String(e.subject_id));
 
   const assignedSubjectIds = new Set<string>();
   {
@@ -2821,8 +3063,8 @@ export async function GET(req: NextRequest) {
         new Set(
           (ctData as any[])
             .map((row) => String(row.subject_id || ""))
-            .filter((id) => !!id && isUuid(id))
-        )
+            .filter((id) => !!id && isUuid(id)),
+        ),
       );
 
       if (instSubjectIds.length) {
@@ -2849,7 +3091,7 @@ export async function GET(req: NextRequest) {
       ...Array.from(subjectIdsFromConfig),
       ...Array.from(subjectIdSet),
       ...Array.from(assignedSubjectIds),
-    ])
+    ]),
   );
   const subjectIds = subjectIdsUnionRaw.filter((sid) => isUuid(sid));
 
@@ -2915,7 +3157,10 @@ export async function GET(req: NextRequest) {
     .order("name", { ascending: true });
 
   if (subjErr) {
-    return NextResponse.json({ ok: false, error: "SUBJECTS_ERROR" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "SUBJECTS_ERROR" },
+      { status: 500 },
+    );
   }
 
   const subjects = (subjData || []) as SubjectRow[];
@@ -2948,7 +3193,8 @@ export async function GET(req: NextRequest) {
     const info = coeffBySubject.get(sid);
     const coeffBulletin = info ? info.coeff : 1;
 
-    const isCSCAConductComponentOnly = isCSCA && isCSCALatinOrReligionSubjectMeta(s);
+    const isCSCAConductComponentOnly =
+      isCSCA && isCSCALatinOrReligionSubjectMeta(s);
     const includeInAverage = isCSCAConductComponentOnly
       ? false
       : shouldIncludeSubjectInGeneralAverage(sid, info ? info.include : true);
@@ -2990,10 +3236,12 @@ export async function GET(req: NextRequest) {
   const { data: compData } = allowSubjectComponents
     ? await srv
         .from("grade_subject_components")
-        .select("id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level")
+        .select(
+          "id, subject_id, label, short_label, coeff_in_subject, order_index, is_active, level",
+        )
         .eq("institution_id", instIdStr)
         .in("subject_id", orderedSubjectIds)
-    : { data: null } as any;
+    : ({ data: null } as any);
 
   if (allowSubjectComponents && compData) {
     const rawRows = ((compData || []) as any[])
@@ -3006,10 +3254,12 @@ export async function GET(req: NextRequest) {
         coeff_in_subject: cleanCoeff(
           r.coeff_in_subject !== null && r.coeff_in_subject !== undefined
             ? Number(r.coeff_in_subject)
-            : 1
+            : 1,
         ),
         order_index:
-          r.order_index !== null && r.order_index !== undefined ? Number(r.order_index) : 1,
+          r.order_index !== null && r.order_index !== undefined
+            ? Number(r.order_index)
+            : 1,
         level: r.level ? String(r.level) : null,
       }));
 
@@ -3023,7 +3273,10 @@ export async function GET(req: NextRequest) {
     const finalRows: BulletinSubjectComponent[] = [];
 
     for (const sid of orderedSubjectIds) {
-      const chosen = pickBestComponentRows(rawBySubject.get(sid) || [], coeffLevelCandidates);
+      const chosen = pickBestComponentRows(
+        rawBySubject.get(sid) || [],
+        coeffLevelCandidates,
+      );
 
       chosen.sort((a, b) => {
         return (a.order_index ?? 1) - (b.order_index ?? 1);
@@ -3053,19 +3306,23 @@ export async function GET(req: NextRequest) {
   let subjectGroups: BulletinSubjectGroup[] = [];
   const subjectInfoById = new Map<string, { name: string; code: string }>();
   subjects.forEach((s) =>
-    subjectInfoById.set(s.id, { name: s.name ?? "", code: s.code ?? "" })
+    subjectInfoById.set(s.id, { name: s.name ?? "", code: s.code ?? "" }),
   );
 
   if (bulletinLevel) {
     const { data: groupsData } = await srv
       .from("bulletin_subject_groups")
-      .select("id, level, label, order_index, is_active, code, short_label, annual_coeff")
+      .select(
+        "id, level, label, order_index, is_active, code, short_label, annual_coeff",
+      )
       .eq("institution_id", instIdStr)
       .eq("level", bulletinLevel)
       .order("order_index", { ascending: true });
 
     if (groupsData && groupsData.length) {
-      const activeGroups = (groupsData as any[]).filter((g) => g.is_active !== false);
+      const activeGroups = (groupsData as any[]).filter(
+        (g) => g.is_active !== false,
+      );
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
 
@@ -3093,51 +3350,59 @@ export async function GET(req: NextRequest) {
           itemsByGroup.set(gId, arr);
         });
 
-        const builtGroups: BulletinSubjectGroup[] = activeGroups.map((g: any) => {
-          const rows = itemsByGroup.get(String(g.id)) || [];
-          const items: BulletinSubjectGroupItem[] = rows.flatMap((row: any, idx: number) => {
-            const sid = row.subject_id ? String(row.subject_id) : "";
-            if (!sid || !isUuid(sid)) return [];
-            if (!orderedSubjectIds.includes(sid)) return [];
+        const builtGroups: BulletinSubjectGroup[] = activeGroups.map(
+          (g: any) => {
+            const rows = itemsByGroup.get(String(g.id)) || [];
+            const items: BulletinSubjectGroupItem[] = rows.flatMap(
+              (row: any, idx: number) => {
+                const sid = row.subject_id ? String(row.subject_id) : "";
+                if (!sid || !isUuid(sid)) return [];
+                if (!orderedSubjectIds.includes(sid)) return [];
 
-            const meta = subjectInfoById.get(sid) || { name: "", code: "" };
-            const subjectName = meta.name || meta.code || "Matière";
+                const meta = subjectInfoById.get(sid) || { name: "", code: "" };
+                const subjectName = meta.name || meta.code || "Matière";
 
-            return [
-              {
-                id: String(row.id),
-                group_id: String(row.group_id),
-                subject_id: sid,
-                subject_name: subjectName,
-                order_index: idx + 1,
-                subject_coeff_override: null,
-                is_optional: false,
+                return [
+                  {
+                    id: String(row.id),
+                    group_id: String(row.group_id),
+                    subject_id: sid,
+                    subject_name: subjectName,
+                    order_index: idx + 1,
+                    subject_coeff_override: null,
+                    is_optional: false,
+                  },
+                ];
               },
-            ];
-          });
+            );
 
-          const annualCoeffRaw =
-            g.annual_coeff !== null && g.annual_coeff !== undefined ? Number(g.annual_coeff) : 1;
+            const annualCoeffRaw =
+              g.annual_coeff !== null && g.annual_coeff !== undefined
+                ? Number(g.annual_coeff)
+                : 1;
 
-          const groupCode =
-            g.code && String(g.code).trim() !== "" ? String(g.code) : String(g.label);
+            const groupCode =
+              g.code && String(g.code).trim() !== ""
+                ? String(g.code)
+                : String(g.label);
 
-          const shortLabel =
-            g.short_label && String(g.short_label).trim() !== ""
-              ? String(g.short_label)
-              : null;
+            const shortLabel =
+              g.short_label && String(g.short_label).trim() !== ""
+                ? String(g.short_label)
+                : null;
 
-          return {
-            id: String(g.id),
-            code: groupCode,
-            label: String(g.label),
-            short_label: shortLabel,
-            order_index: Number(g.order_index ?? 1),
-            is_active: g.is_active !== false,
-            annual_coeff: cleanCoeff(annualCoeffRaw),
-            items,
-          };
-        });
+            return {
+              id: String(g.id),
+              code: groupCode,
+              label: String(g.label),
+              short_label: shortLabel,
+              order_index: Number(g.order_index ?? 1),
+              is_active: g.is_active !== false,
+              annual_coeff: cleanCoeff(annualCoeffRaw),
+              items,
+            };
+          },
+        );
 
         const gLetters = findGroupByMeaning(builtGroups, "LETTRES");
         const gSciences = findGroupByMeaning(builtGroups, "SCIENCES");
@@ -3159,7 +3424,8 @@ export async function GET(req: NextRequest) {
           const name = meta.name;
           const code = meta.code;
 
-          if (isScienceSubject(name, code) && gSciences?.id) return gSciences.id;
+          if (isScienceSubject(name, code) && gSciences?.id)
+            return gSciences.id;
           if (isLettersSubject(name, code) && gLetters?.id) return gLetters.id;
 
           if (gAutres?.id) return gAutres.id;
@@ -3173,8 +3439,10 @@ export async function GET(req: NextRequest) {
           for (const it of g.items) {
             const sid = it.subject_id;
             if (!isUuid(sid)) continue;
-            if (!firstSeenOrder.has(sid)) firstSeenOrder.set(sid, it.order_index);
-            if (!chosenGroupIdBySubject.has(sid)) chosenGroupIdBySubject.set(sid, g.id);
+            if (!firstSeenOrder.has(sid))
+              firstSeenOrder.set(sid, it.order_index);
+            if (!chosenGroupIdBySubject.has(sid))
+              chosenGroupIdBySubject.set(sid, g.id);
           }
         }
 
@@ -3232,9 +3500,13 @@ export async function GET(req: NextRequest) {
   const evalById = new Map<string, EvalRow>();
   for (const e of evals) evalById.set(e.id, e);
 
-  const studentIdsInClass = classStudents.map((cs) => cs.student_id).filter(Boolean);
+  const studentIdsInClass = classStudents
+    .map((cs) => cs.student_id)
+    .filter(Boolean);
 
-  async function loadOfficialScoreRowsForEvalIds(evalIds: string[]): Promise<ScoreRow[]> {
+  async function loadOfficialScoreRowsForEvalIds(
+    evalIds: string[],
+  ): Promise<ScoreRow[]> {
     if (!evalIds.length || !studentIdsInClass.length) return [];
 
     const PAGE_SIZE = 1000;
@@ -3252,12 +3524,18 @@ export async function GET(req: NextRequest) {
         byKey.set(key, {
           evaluation_id: evaluationId,
           student_id: sid,
-          score: row?.score === null || row?.score === undefined ? null : Number(row.score),
+          score:
+            row?.score === null || row?.score === undefined
+              ? null
+              : Number(row.score),
         });
       }
     };
 
-    async function fetchDirectPublishedScores(): Promise<{ rows: any[]; error: any | null }> {
+    async function fetchDirectPublishedScores(): Promise<{
+      rows: any[];
+      error: any | null;
+    }> {
       const rows: any[] = [];
       for (let from = 0; ; from += PAGE_SIZE) {
         const to = from + PAGE_SIZE - 1;
@@ -3281,7 +3559,10 @@ export async function GET(req: NextRequest) {
       return { rows, error: null };
     }
 
-    async function fetchViewOfficialScores(): Promise<{ rows: any[]; error: any | null }> {
+    async function fetchViewOfficialScores(): Promise<{
+      rows: any[];
+      error: any | null;
+    }> {
       const rows: any[] = [];
       for (let from = 0; ; from += PAGE_SIZE) {
         const to = from + PAGE_SIZE - 1;
@@ -3322,7 +3603,10 @@ export async function GET(req: NextRequest) {
     try {
       scores = await loadOfficialScoreRowsForEvalIds(evalIds);
     } catch {
-      return NextResponse.json({ ok: false, error: "SCORES_ERROR" }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "SCORES_ERROR" },
+        { status: 500 },
+      );
     }
   }
 
@@ -3367,12 +3651,11 @@ export async function GET(req: NextRequest) {
           stuCompMap = new Map();
           perStudentSubjectComponent.set(sc.student_id, stuCompMap);
         }
-        const compCell =
-          stuCompMap.get(comp.id) || {
-            subject_id: comp.subject_id,
-            sumWeighted: 0,
-            sumCoeff: 0,
-          };
+        const compCell = stuCompMap.get(comp.id) || {
+          subject_id: comp.subject_id,
+          sumWeighted: 0,
+          sumCoeff: 0,
+        };
         compCell.sumWeighted += norm20 * weight;
         compCell.sumCoeff += weight;
         stuCompMap.set(comp.id, compCell);
@@ -3393,7 +3676,10 @@ export async function GET(req: NextRequest) {
 
     const stuCompMap =
       perStudentSubjectComponent.get(cs.student_id) ||
-      new Map<string, { subject_id: string; sumWeighted: number; sumCoeff: number }>();
+      new Map<
+        string,
+        { subject_id: string; sumWeighted: number; sumCoeff: number }
+      >();
 
     const per_subject_components =
       subjectComponentsForReport.length === 0
@@ -3452,7 +3738,11 @@ export async function GET(req: NextRequest) {
           .get(cs.student_id)
           ?.get(String(s.subject_id)) ?? 0;
 
-      if (avg20 !== null && avg20 !== undefined && Number.isFinite(Number(avg20))) {
+      if (
+        avg20 !== null &&
+        avg20 !== undefined &&
+        Number.isFinite(Number(avg20))
+      ) {
         const adjusted = clampAverage20(Number(avg20) + subjectBonus);
         avg20 = adjusted === null ? null : cleanNumber(adjusted, 4);
       }
@@ -3465,16 +3755,15 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    let per_group:
-      | {
-          group_id: string;
-          group_avg: number | null;
-        }[] = [];
+    let per_group: {
+      group_id: string;
+      group_avg: number | null;
+    }[] = [];
 
     if (hasGroupConfig) {
       const coeffBulletinBySubject = new Map<string, number>();
       subjectsForReport.forEach((s) =>
-        coeffBulletinBySubject.set(s.subject_id, Number(s.coeff_bulletin ?? 1))
+        coeffBulletinBySubject.set(s.subject_id, Number(s.coeff_bulletin ?? 1)),
       );
 
       per_group = subjectGroups.map((g) => {
@@ -3503,7 +3792,8 @@ export async function GET(req: NextRequest) {
           sumCoeffLocal += w;
         }
 
-        const groupAvg = sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal, 4) : null;
+        const groupAvg =
+          sumCoeffLocal > 0 ? cleanNumber(sum / sumCoeffLocal, 4) : null;
 
         return {
           group_id: g.id,
@@ -3514,7 +3804,8 @@ export async function GET(req: NextRequest) {
 
     let general_avg: number | null = null;
     let generalAvgBeforeBonus: number | null = null;
-    const generalBonus = currentBonusMaps.generalBonusByStudent.get(cs.student_id) ?? 0;
+    const generalBonus =
+      currentBonusMaps.generalBonusByStudent.get(cs.student_id) ?? 0;
 
     {
       let sumGen = 0;
@@ -3544,7 +3835,11 @@ export async function GET(req: NextRequest) {
 
       if (hasAcademicMatterAverage) {
         const conductNote = conductAvgMapCurrent.get(cs.student_id) ?? null;
-        if (!conductAlreadyCounted && conductNote !== null && conductNote !== undefined) {
+        if (
+          !conductAlreadyCounted &&
+          conductNote !== null &&
+          conductNote !== undefined
+        ) {
           const c = Number(conductNote);
           if (Number.isFinite(c)) {
             sumGen += c * 1;
@@ -3596,7 +3891,7 @@ export async function GET(req: NextRequest) {
   if (!bulletinForStudent) {
     return NextResponse.json(
       { ok: false, error: "STUDENT_NOT_IN_CLASS_FOR_PERIOD" },
-      { status: 404 }
+      { status: 404 },
     );
   }
 
@@ -3606,7 +3901,10 @@ export async function GET(req: NextRequest) {
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
 
-  const recomputedGeneralAvg = cleanNumber((bulletinForStudent as any).general_avg, 4);
+  const recomputedGeneralAvg = cleanNumber(
+    (bulletinForStudent as any).general_avg,
+    4,
+  );
   if (snapGeneral !== null) {
     (bulletinForStudent as any).qr_snapshot_general_avg = snapGeneral;
   }
@@ -3648,7 +3946,12 @@ export async function GET(req: NextRequest) {
           conductByPeriodKey.get(key)?.get(studentIdStr) ?? null;
 
         const periodBonusMaps = await loadAdjustmentBonusMaps({
-          academicYear: yearForAnnual ?? periodMeta.academic_year ?? academicYearToken ?? classRow.academic_year ?? null,
+          academicYear:
+            yearForAnnual ??
+            periodMeta.academic_year ??
+            academicYearToken ??
+            classRow.academic_year ??
+            null,
           periodId: p?.id ? String(p.id) : null,
         });
 
@@ -3676,7 +3979,7 @@ export async function GET(req: NextRequest) {
     if (sumCoeffPeriods > 0) {
       annual_avg_for_student = cleanNumber(
         sumWeightedPeriods / sumCoeffPeriods,
-        4
+        4,
       );
     }
   }
@@ -3752,14 +4055,15 @@ export async function GET(req: NextRequest) {
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,
-    conduct: conductForStudent === null
-      ? null
-      : {
-          total: conductForStudent,
-          avg20: conductForStudent,
-          label: isCSCA ? "Conduite" : "Conduite",
-          source: "public_verify",
-        },
+    conduct:
+      conductForStudent === null
+        ? null
+        : {
+            total: conductForStudent,
+            avg20: conductForStudent,
+            label: isCSCA ? "Discipline / Conduite" : "Conduite",
+            source: "public_verify",
+          },
     bulletin: bulletinForStudent,
   });
 }

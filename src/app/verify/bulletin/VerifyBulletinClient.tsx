@@ -16,6 +16,7 @@ type SubjectRow = {
   avg: number | null;
   coeff: number | null;
   total: number | null;
+  includeInAverage: boolean;
 };
 
 function formatNumber(value: unknown, digits = 2) {
@@ -37,7 +38,7 @@ function getInstitutionLogoUrl(data: any) {
     inst?.institution_logo_url ||
       inst?.logo_url ||
       inst?.settings_json?.institution_logo_url ||
-      ""
+      "",
   ).trim();
 }
 
@@ -72,6 +73,7 @@ function buildSubjectRows(data: any): SubjectRow[] {
         avg: Number.isFinite(avg) ? avg : null,
         coeff: Number.isFinite(coeff) && coeff > 0 ? coeff : null,
         total,
+        includeInAverage: subject?.include_in_average !== false,
       };
     })
     .filter(Boolean) as SubjectRow[];
@@ -87,7 +89,7 @@ export default function VerifyBulletinClient() {
       sp.get("qr_id") ??
       sp.get("scanned_code") ??
       "",
-    [sp]
+    [sp],
   );
 
   const [state, setState] = useState<VerifyState>({ status: "idle" });
@@ -171,8 +173,13 @@ export default function VerifyBulletinClient() {
   const bulletin = data?.bulletin ?? {};
   const logoUrl = getInstitutionLogoUrl(data);
   const subjectRows = buildSubjectRows(data);
+  const isCsca = Boolean(data?.is_csca || data?.calculation_profile === "csca");
   const conductAvg = Number(data?.conduct?.avg20 ?? data?.conduct?.total);
   const hasConduct = Number.isFinite(conductAvg);
+  const conductLabel = String(
+    data?.conduct?.label ||
+      (isCsca ? "Discipline / conduite" : "Moyenne de conduite"),
+  );
   const annualAvg = Number(bulletin?.annual_avg);
   const hasAnnual = Number.isFinite(annualAvg);
 
@@ -221,12 +228,16 @@ export default function VerifyBulletinClient() {
               {inst?.name ?? inst?.institution_name ?? "—"}
             </div>
             {inst?.code ? (
-              <div className="mt-1 text-sm text-slate-600">Code : {inst.code}</div>
+              <div className="mt-1 text-sm text-slate-600">
+                Code : {inst.code}
+              </div>
             ) : null}
           </div>
 
           <div className="rounded-xl bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Élève</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              Élève
+            </div>
             <div className="mt-1 font-semibold text-slate-900">
               {stu?.full_name ?? "—"}
             </div>
@@ -238,7 +249,9 @@ export default function VerifyBulletinClient() {
           </div>
 
           <div className="rounded-xl bg-slate-50 p-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500">Classe</div>
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              Classe
+            </div>
             <div className="mt-1 font-semibold text-slate-900">
               {cls?.label ?? cls?.name ?? "—"}
             </div>
@@ -262,7 +275,8 @@ export default function VerifyBulletinClient() {
                 Résultat officiel vérifié
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Ces valeurs proviennent des notes officielles publiées dans Mon Cahier.
+                Ces valeurs proviennent des notes officielles publiées dans Mon
+                Cahier.
               </p>
             </div>
             {(period?.from || period?.to) && (
@@ -293,7 +307,7 @@ export default function VerifyBulletinClient() {
 
             <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-amber-100">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                Moyenne de conduite
+                {conductLabel}
               </div>
               <div className="mt-2 text-2xl font-extrabold text-amber-900">
                 {hasConduct ? `${formatNumber(conductAvg)} / 20` : "—"}
@@ -308,7 +322,8 @@ export default function VerifyBulletinClient() {
                   Notes par matière
                 </div>
                 <div className="text-xs text-slate-500">
-                  Affichage public des moyennes utilisées pour vérifier le bulletin.
+                  Affichage public des moyennes utilisées pour vérifier le
+                  bulletin.
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -325,24 +340,40 @@ export default function VerifyBulletinClient() {
                     {subjectRows.map((row) => (
                       <tr key={row.id} className="border-t border-slate-200">
                         <td className="px-3 py-2 font-medium text-slate-900">
-                          {row.name}
+                          <span>{row.name}</span>
+                          {!row.includeInAverage ? (
+                            <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              {isCsca ? "détail CSCA" : "hors moyenne"}
+                            </span>
+                          ) : null}
                         </td>
-                        <td className="px-3 py-2 text-center">{formatNumber(row.avg)}</td>
+                        <td className="px-3 py-2 text-center">
+                          {formatNumber(row.avg)}
+                        </td>
                         <td className="px-3 py-2 text-center">
                           {formatNumber(row.coeff, 0)}
                         </td>
-                        <td className="px-3 py-2 text-center">{formatNumber(row.total)}</td>
+                        <td className="px-3 py-2 text-center">
+                          {formatNumber(row.total)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="mt-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              Aucune moyenne par matière n’a été retrouvée pour cette période.
+              La moyenne générale reste vérifiée, mais le tableau détaillé est
+              vide.
+            </div>
+          )}
 
           <p className="mt-4 text-[11px] leading-snug text-slate-500">
-            En cas d’écart entre une ancienne capture papier et cette page, il faut revérifier
-            le bulletin imprimé depuis la dernière version publiée.
+            En cas d’écart entre une ancienne capture papier et cette page, il
+            faut revérifier le bulletin imprimé depuis la dernière version
+            publiée.
           </p>
         </div>
       </div>
