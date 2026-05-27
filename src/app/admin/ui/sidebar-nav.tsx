@@ -1,4 +1,4 @@
-﻿//src/app/admin/ui/sidebar-nav.tsx
+//src/app/admin/ui/sidebar-nav.tsx
 "use client";
 
 import Link from "next/link";
@@ -237,6 +237,16 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
   {
     href: "/admin/bulletins",
     label: "Bulletins",
+    Icon: FileSpreadsheet,
+  },
+  {
+    href: "/admin/notes/bilan",
+    label: "Bilan trimestriel / annuel",
+    Icon: FileText,
+  },
+  {
+    href: "/admin/notes/matrices",
+    label: "Matrices trimestrielles",
     Icon: FileSpreadsheet,
   },
   {
