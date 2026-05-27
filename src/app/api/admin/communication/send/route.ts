@@ -79,7 +79,9 @@ export async function POST(req: NextRequest) {
     ]);
     const senderName = institution.display_name || "Mon Cahier";
     const signedMessageBody = buildSignedCommunicationBody(messageBody, senderName);
-    const pushTitle = senderName;
+    // Le titre visible de la notification doit être le titre saisi dans le module Communication.
+    // Le nom de l’établissement reste dans la signature du message et dans sender_name.
+    const pushTitle = title;
 
     const wantsPush = channel === "push" || channel === "push_sms";
     const wantsSms = channel === "sms" || channel === "push_sms";
