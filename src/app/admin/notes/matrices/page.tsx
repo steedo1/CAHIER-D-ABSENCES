@@ -192,6 +192,56 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
+function printHtmlDocument(html: string, onError: (message: string) => void) {
+  if (typeof document === "undefined") return;
+
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "Impression de la matrice");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+
+  document.body.appendChild(iframe);
+
+  const frameWindow = iframe.contentWindow;
+  const frameDocument = frameWindow?.document;
+  if (!frameWindow || !frameDocument) {
+    iframe.remove();
+    onError("Impossible de préparer l’impression. Réessayez après actualisation de la page.");
+    return;
+  }
+
+  let printed = false;
+  const cleanup = () => window.setTimeout(() => iframe.remove(), 500);
+  const launchPrint = () => {
+    if (printed) return;
+    printed = true;
+    try {
+      frameWindow.onafterprint = cleanup;
+      frameWindow.focus();
+      frameWindow.print();
+      window.setTimeout(() => {
+        if (iframe.parentNode) iframe.remove();
+      }, 60000);
+    } catch {
+      iframe.remove();
+      onError("La fenêtre d’impression n’a pas pu être ouverte. Réessayez avec un autre navigateur si le problème persiste.");
+    }
+  };
+
+  iframe.onload = () => window.setTimeout(launchPrint, 450);
+  frameDocument.open();
+  frameDocument.write(html);
+  frameDocument.close();
+  window.setTimeout(launchPrint, 1400);
+}
+
 export default function MatricesTrimestriellesPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
@@ -476,54 +526,50 @@ tr:nth-child(even) td { background: #f8fafc; }
   <div class="table-wrap"><table><thead><tr><th>N°</th><th>Matricule</th><th>Nom et prénoms</th>${subjectHeaders}<th>Moy. générale</th><th>Rang</th></tr></thead><tbody>${bodyRows}</tbody></table></div>
   <div class="footer"><strong>${BRAND_SITE}</strong> - ${escapeHtml(BRAND_SLOGAN)}</div>
 </div>
-<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
 </body></html>`;
 
-    const w = window.open("", "_blank", "noopener,noreferrer,width=1200,height=850");
-    if (!w) {
-      setErrorMsg("Le navigateur a bloqué la fenêtre d’impression. Autorisez les popups pour Mon Cahier.");
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+    setErrorMsg(null);
+    printHtmlDocument(html, setErrorMsg);
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 md:p-6">
-      <section className="rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-xl md:p-7">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-200 ring-1 ring-white/15">
-              <FileSpreadsheet className="h-4 w-4" /> Correspondant fichier
+    <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 md:px-6">
+      <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+              <FileSpreadsheet className="h-6 w-6" />
             </div>
-            <h1 className="mt-4 text-2xl font-black tracking-tight md:text-4xl">Matrices trimestrielles</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-              Une matrice officielle par classe : les élèves en lignes, toutes les matières en colonnes, avec les moyennes publiées du trimestre sélectionné.
-            </p>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Correspondant fichier</div>
+              <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 md:text-3xl">Matrices trimestrielles</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                Matrice officielle par classe : élèves en lignes, matières en colonnes, moyennes publiées du trimestre sélectionné.
+              </p>
+            </div>
           </div>
 
-          <div className="grid gap-3 rounded-3xl border border-white/10 bg-white/8 p-4 backdrop-blur md:grid-cols-[150px_220px_220px_auto]">
+          <div className="grid w-full gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[130px_minmax(180px,1fr)_minmax(180px,1fr)_auto] xl:max-w-4xl">
             <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-300">Année</label>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Année</label>
               <Select value={selectedAcademicYear} onChange={(e) => setSelectedAcademicYear(e.target.value)}>
                 {academicYears.length ? academicYears.map((y) => <option key={y} value={y}>{y}</option>) : <option value="">Année</option>}
               </Select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-300">Classe</label>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Classe</label>
               <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)}>
                 {filteredClasses.length ? filteredClasses.map((c) => <option key={c.id} value={c.id}>{clsLabel(c)}</option>) : <option value="">Aucune classe</option>}
               </Select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-300">Trimestre</label>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Trimestre</label>
               <Select value={selectedPeriodId} onChange={(e) => setSelectedPeriodId(e.target.value)}>
                 {filteredPeriods.length ? filteredPeriods.map((p) => <option key={p.id} value={p.id}>{periodLabel(p)}</option>) : <option value="">Aucune période</option>}
               </Select>
             </div>
             <div className="flex items-end gap-2">
-              <Button onClick={loadMatrix} disabled={loading}>
+              <Button onClick={loadMatrix} disabled={loading} className="min-w-[112px]">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Charger
               </Button>

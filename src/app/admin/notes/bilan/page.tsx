@@ -223,7 +223,7 @@ function StudentMiniTable({ items, valueKey = "moyenne" }: { items: StudentPerfo
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-      <table className="min-w-full text-left text-sm">
+      <table className="min-w-[560px] text-left text-sm">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr>
             <th className="px-3 py-2">Rang</th>
@@ -238,7 +238,7 @@ function StudentMiniTable({ items, valueKey = "moyenne" }: { items: StudentPerfo
             <tr key={`${item.student_id}-${idx}`}>
               <td className="px-3 py-2 font-black text-slate-900">{idx + 1}</td>
               <td className="px-3 py-2 text-slate-600">{item.matricule || "—"}</td>
-              <td className="px-3 py-2 font-bold text-slate-900">{classNameJoin(item)}</td>
+              <td className="px-3 py-2 font-bold text-slate-900 whitespace-nowrap">{classNameJoin(item)}</td>
               <td className="px-3 py-2 text-slate-600">{item.class_label}</td>
               <td className="px-3 py-2 text-right font-black text-emerald-700">{formatAvg(item[valueKey])}</td>
             </tr>
@@ -435,9 +435,58 @@ function buildReportHtml(data: ReportData) {
     <section class="block"><h2>10. Classes ayant le plus d’évaluations publiées</h2><table><thead><tr><th>Rang</th><th>Classe</th><th>Niveau</th><th>Évaluations publiées</th></tr></thead><tbody>${classEvalRows}</tbody></table></section>
     ${footer}
   </section>
-<script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
 </body>
 </html>`;
+}
+
+function printHtmlDocument(html: string, onError: (message: string) => void) {
+  if (typeof document === "undefined") return;
+
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "Impression du bilan");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+
+  document.body.appendChild(iframe);
+
+  const frameWindow = iframe.contentWindow;
+  const frameDocument = frameWindow?.document;
+  if (!frameWindow || !frameDocument) {
+    iframe.remove();
+    onError("Impossible de préparer l’impression. Réessayez après actualisation de la page.");
+    return;
+  }
+
+  let printed = false;
+  const cleanup = () => window.setTimeout(() => iframe.remove(), 500);
+  const launchPrint = () => {
+    if (printed) return;
+    printed = true;
+    try {
+      frameWindow.onafterprint = cleanup;
+      frameWindow.focus();
+      frameWindow.print();
+      window.setTimeout(() => {
+        if (iframe.parentNode) iframe.remove();
+      }, 60000);
+    } catch {
+      iframe.remove();
+      onError("La fenêtre d’impression n’a pas pu être ouverte. Réessayez avec un autre navigateur si le problème persiste.");
+    }
+  };
+
+  iframe.onload = () => window.setTimeout(launchPrint, 450);
+  frameDocument.open();
+  frameDocument.write(html);
+  frameDocument.close();
+  window.setTimeout(launchPrint, 1400);
 }
 
 export default function BilanTrimestrielAnnuelPage() {
@@ -486,47 +535,42 @@ export default function BilanTrimestrielAnnuelPage() {
 
   function printReport() {
     if (!data) return;
+    setErrorMsg(null);
     const html = buildReportHtml({ ...data, selected_period: selectedPeriod ?? data.selected_period ?? null });
-    const w = window.open("", "_blank", "noopener,noreferrer,width=1100,height=900");
-    if (!w) {
-      setErrorMsg("Le navigateur a bloqué la fenêtre d’impression. Autorisez les popups pour Mon Cahier.");
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+    printHtmlDocument(html, setErrorMsg);
   }
 
   const topClasses = data?.top_by_class || [];
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 md:p-6">
-      <section className="rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 p-5 text-white shadow-xl md:p-7">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-200 ring-1 ring-white/15">
-              <FileText className="h-4 w-4" /> Correspondant fichier
+    <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 md:px-6">
+      <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+              <FileText className="h-6 w-6" />
             </div>
-            <h1 className="mt-4 text-2xl font-black tracking-tight md:text-4xl">
-              Bilan trimestriel / annuel
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-              Rapport PDF institutionnel basé sur les bulletins officiels publiés : meilleurs élèves, niveaux, cycles, école, profils scientifiques/littéraires, mérite des classes, absences et évaluations publiées.
-            </p>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Correspondant fichier</div>
+              <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 md:text-3xl">Bilan trimestriel / annuel</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                Rapport multi-pages basé sur les bulletins publiés : meilleurs élèves, mérite des classes, absences et évaluations publiées.
+              </p>
+            </div>
           </div>
 
-          <div className="grid gap-3 rounded-3xl border border-white/10 bg-white/8 p-4 backdrop-blur md:grid-cols-[150px_220px_auto]">
+          <div className="grid w-full gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[150px_minmax(230px,1fr)_auto] xl:max-w-3xl">
             <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-300">Année</label>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Année</label>
               <input
                 value={academicYear}
                 onChange={(e) => setAcademicYear(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
                 placeholder="2025-2026"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-300">Période</label>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Période</label>
               <Select
                 value={selectedPeriodId}
                 onChange={(e) => setSelectedPeriodId(e.target.value)}
@@ -544,12 +588,12 @@ export default function BilanTrimestrielAnnuelPage() {
               </Select>
             </div>
             <div className="flex items-end gap-2">
-              <Button onClick={() => loadReport()} disabled={loading}>
+              <Button onClick={() => loadReport()} disabled={loading} className="min-w-[112px]">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Charger
               </Button>
-              <Button tone="amber" onClick={printReport} disabled={!data || loading}>
-                <Printer className="h-4 w-4" /> Imprimer / PDF
+              <Button tone="amber" onClick={printReport} disabled={!data || loading} className="min-w-[132px]">
+                <Printer className="h-4 w-4" /> Générer PDF
               </Button>
             </div>
           </div>
@@ -570,7 +614,7 @@ export default function BilanTrimestrielAnnuelPage() {
       </section>
 
       <section className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm ring-1 ring-slate-100">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-black text-slate-950">Les 3 premiers de chaque classe</h2>
@@ -583,7 +627,7 @@ export default function BilanTrimestrielAnnuelPage() {
           <div className="space-y-5">
             {topClasses.length ? (
               topClasses.map((group) => (
-                <div key={group.class_id} className="rounded-3xl border border-slate-100 bg-slate-50/70 p-4">
+                <div key={group.class_id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="font-black text-slate-900">{group.class_label}</h3>
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
