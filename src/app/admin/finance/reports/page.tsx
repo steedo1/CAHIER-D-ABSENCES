@@ -185,6 +185,16 @@ type InstitutionRow = {
   name: string | null;
 };
 
+type ReportView =
+  | "overview"
+  | "encaissements"
+  | "categories"
+  | "dettes"
+  | "depenses"
+  | "baremes";
+
+type DateFilterField = "payment_date" | "created_at";
+
 async function getCurrentInstitutionIdOrThrow() {
   return getFinanceInstitutionIdForCurrentUser();
 }
@@ -328,15 +338,59 @@ function reportPeriodLabel(startDate: string, endDate: string, fallback: string)
   return fallback;
 }
 
+function isoDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function currentMonthRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  return {
+    startDate: isoDateOnly(start),
+    endDate: isoDateOnly(end),
+  };
+}
+
+const reportViews: Array<{ key: ReportView; label: string; hint: string }> = [
+  { key: "overview", label: "Vue d’ensemble", hint: "Synthèse direction" },
+  { key: "encaissements", label: "Encaissements", hint: "Reçus et ventilations" },
+  { key: "categories", label: "Catégories", hint: "Scolarité, internat, kit…" },
+  { key: "dettes", label: "Dettes / impayés", hint: "Élèves débiteurs" },
+  { key: "depenses", label: "Dépenses", hint: "Sorties de caisse" },
+  { key: "baremes", label: "Barèmes", hint: "Frais attendus" },
+];
+
+function normalizeReportView(value: string | null | undefined): ReportView {
+  const requested = String(value || "").trim() as ReportView;
+  return reportViews.some((view) => view.key === requested) ? requested : "overview";
+}
+
+function normalizeDateFilterField(value: string | null | undefined): DateFilterField {
+  return value === "created_at" ? "created_at" : "payment_date";
+}
+
+function dateFieldLabel(value: DateFilterField) {
+  return value === "created_at" ? "date d’enregistrement" : "date de paiement";
+}
+
 function buildReportsHref(params: {
   academicYear?: string;
   startDate?: string;
   endDate?: string;
+  view?: ReportView;
+  dateField?: DateFilterField;
 }) {
   const sp = new URLSearchParams();
   if (params.academicYear) sp.set("academic_year", params.academicYear);
   if (params.startDate) sp.set("start_date", params.startDate);
   if (params.endDate) sp.set("end_date", params.endDate);
+  if (params.view && params.view !== "overview") sp.set("view", params.view);
+  if (params.dateField && params.dateField !== "payment_date") sp.set("date_field", params.dateField);
   const query = sp.toString();
   return query ? `/admin/finance/reports?${query}` : "/admin/finance/reports";
 }
@@ -924,11 +978,15 @@ function DateRangeSelector({
   startDate,
   endDate,
   periodLabel,
+  selectedView,
+  dateField,
 }: {
   academicYear: string;
   startDate: string;
   endDate: string;
   periodLabel: string;
+  selectedView: ReportView;
+  dateField: DateFilterField;
 }) {
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -946,15 +1004,16 @@ function DateRangeSelector({
               Période du rapport
             </div>
             <div className="mt-1 text-sm leading-6 text-slate-600">
-              Les encaissements et dépenses suivent cette période : <strong>{periodLabel}</strong>. Les dettes restent rattachées à l’année scolaire choisie.
+              Par défaut, la page ouvre le mois courant. Le comptable peut changer la période et choisir si elle s’applique à la date de paiement ou à la date d’enregistrement : <strong>{periodLabel}</strong>.
             </div>
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] sm:items-end">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto] sm:items-end">
           {academicYear ? (
             <input type="hidden" name="academic_year" value={academicYear} />
           ) : null}
+          <input type="hidden" name="view" value={selectedView} />
           <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
             Date début
             <input
@@ -973,14 +1032,25 @@ function DateRangeSelector({
               className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
             />
           </label>
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Type de date
+            <select
+              name="date_field"
+              defaultValue={dateField}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            >
+              <option value="payment_date">Date de paiement</option>
+              <option value="created_at">Date d’enregistrement</option>
+            </select>
+          </label>
           <button className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800">
             Filtrer
           </button>
           <a
-            href={buildReportsHref({ academicYear })}
+            href={buildReportsHref({ academicYear, view: selectedView, dateField })}
             className="inline-flex items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
           >
-            Réinitialiser
+            Mois courant
           </a>
         </div>
       </form>
@@ -988,10 +1058,76 @@ function DateRangeSelector({
   );
 }
 
+function ReportViewNavigation({
+  academicYear,
+  startDate,
+  endDate,
+  selectedView,
+  dateField,
+}: {
+  academicYear: string;
+  startDate: string;
+  endDate: string;
+  selectedView: ReportView;
+  dateField: DateFilterField;
+}) {
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">
+            Ce que le comptable veut voir
+          </div>
+          <div className="mt-1 text-sm text-slate-600">
+            Chaque onglet est une vue indépendante. L’impression et l’export concernent uniquement la vue sélectionnée.
+          </div>
+        </div>
+        <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-slate-600 ring-1 ring-slate-200">
+          Filtre : {dateFieldLabel(dateField)}
+        </div>
+      </div>
+
+      <nav className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {reportViews.map((view) => {
+          const active = view.key === selectedView;
+          return (
+            <a
+              key={view.key}
+              href={buildReportsHref({
+                academicYear,
+                startDate,
+                endDate,
+                view: view.key,
+                dateField,
+              })}
+              className={`rounded-2xl px-4 py-3 ring-1 transition ${
+                active
+                  ? "bg-slate-950 text-white ring-slate-950 shadow-sm"
+                  : "bg-slate-50 text-slate-700 ring-slate-200 hover:bg-white"
+              }`}
+            >
+              <span className="block text-sm font-black">{view.label}</span>
+              <span className={`mt-1 block text-xs ${active ? "text-slate-300" : "text-slate-500"}`}>
+                {view.hint}
+              </span>
+            </a>
+          );
+        })}
+      </nav>
+    </section>
+  );
+}
+
 export default async function FinanceReportsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ academic_year?: string; start_date?: string; end_date?: string }>;
+  searchParams?: Promise<{
+    academic_year?: string;
+    start_date?: string;
+    end_date?: string;
+    view?: string;
+    date_field?: string;
+  }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -1003,6 +1139,8 @@ export default async function FinanceReportsPage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
   const requestedStartDate = normalizeDateParam(params?.start_date);
   const requestedEndDate = normalizeDateParam(params?.end_date);
+  const selectedReportView = normalizeReportView(params?.view);
+  const selectedDateField = normalizeDateFilterField(params?.date_field);
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
@@ -1019,9 +1157,10 @@ export default async function FinanceReportsPage({
     selectedAcademicYearEnd,
   } = academicYearCtx;
 
+  const monthDefaultRange = currentMonthRange();
   const normalizedRange = normalizeDateRange(
-    requestedStartDate || selectedAcademicYearStart || "",
-    requestedEndDate || selectedAcademicYearEnd || "",
+    requestedStartDate || monthDefaultRange.startDate,
+    requestedEndDate || monthDefaultRange.endDate,
   );
   const selectedStartDate = normalizedRange.startDate;
   const selectedEndDate = normalizedRange.endDate;
@@ -1116,15 +1255,16 @@ export default async function FinanceReportsPage({
       if (selectedAcademicYearCode) {
         query = query.eq("academic_year", selectedAcademicYearCode);
       }
+      const filterColumn = selectedDateField === "created_at" ? "created_at" : "payment_date";
       if (selectedStartDate) {
-        query = query.gte("payment_date", `${selectedStartDate}T00:00:00`);
+        query = query.gte(filterColumn, `${selectedStartDate}T00:00:00`);
       }
       if (selectedEndDate) {
-        query = query.lte("payment_date", `${selectedEndDate}T23:59:59.999`);
+        query = query.lte(filterColumn, `${selectedEndDate}T23:59:59.999`);
       }
 
       return query
-        .order("payment_date", { ascending: false })
+        .order(filterColumn, { ascending: false })
         .order("created_at", { ascending: false });
     })(),
 
@@ -1620,7 +1760,7 @@ export default async function FinanceReportsPage({
   >();
 
   for (const receipt of postedReceipts) {
-    const key = monthKey(receipt.payment_date);
+    const key = monthKey(selectedDateField === "created_at" ? receipt.created_at : receipt.payment_date);
     if (!monthlyMap.has(key)) {
       monthlyMap.set(key, { month: monthLabel(key), receipts: 0, expenses: 0, balance: 0 });
     }
@@ -1660,7 +1800,7 @@ export default async function FinanceReportsPage({
     .sort((a, b) => a.category.localeCompare(b.category) || a.classLabel.localeCompare(b.classLabel));
 
   const exportPayload: FinanceReportExportPayload = {
-    title: "Rapport financier enrichi",
+    title: `Rapport financier — ${reportViews.find((view) => view.key === selectedReportView)?.label || "Vue"}`,
     institutionName: institutionRow?.name || "Établissement",
     academicYear: selectedAcademicYearLabel || selectedAcademicYearCode || "Année courante",
     periodLabel: selectedPeriodLabel,
@@ -1800,7 +1940,7 @@ export default async function FinanceReportsPage({
     schedules: schedulesForExport,
     months: monthlySummary,
     receipts: postedReceipts.map((row) => ({
-      date: formatDate(row.payment_date),
+      date: formatDate(selectedDateField === "created_at" ? row.created_at : row.payment_date),
       label: `${row.receipt_no}${row.payer_name ? ` — ${row.payer_name}` : ""}`,
       category: row.reference_no || "Encaissement validé",
       amount: toNumber(row.total_amount),
@@ -1855,8 +1995,10 @@ export default async function FinanceReportsPage({
         selectedAcademicYearCode={selectedAcademicYearCode}
         currentPath="/admin/finance/reports"
         hiddenParams={{
-          start_date: requestedStartDate || undefined,
-          end_date: requestedEndDate || undefined,
+          start_date: selectedStartDate || undefined,
+          end_date: selectedEndDate || undefined,
+          view: selectedReportView !== "overview" ? selectedReportView : undefined,
+          date_field: selectedDateField !== "payment_date" ? selectedDateField : undefined,
         }}
       />
 
@@ -1865,382 +2007,370 @@ export default async function FinanceReportsPage({
         startDate={selectedStartDate}
         endDate={selectedEndDate}
         periodLabel={selectedPeriodLabel}
+        selectedView={selectedReportView}
+        dateField={selectedDateField}
       />
 
-      <FinanceReportsExports payload={exportPayload} />
+      <ReportViewNavigation
+        academicYear={selectedAcademicYearCode}
+        startDate={selectedStartDate}
+        endDate={selectedEndDate}
+        selectedView={selectedReportView}
+        dateField={selectedDateField}
+      />
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<Users className="h-5 w-5" />}
-          label="Élèves suivis"
-          value={studentRows.length}
-          hint={`${classRows.length} classe${classRows.length > 1 ? "s" : ""} dans l’année`}
-          tone="sky"
-        />
-        <StatCard
-          icon={<CircleDollarSign className="h-5 w-5" />}
-          label="Montant attendu"
-          value={formatMoney(totalExpectedAmount)}
-          hint={`${balanceRows.length} ligne${balanceRows.length > 1 ? "s" : ""} de frais`}
-          tone="emerald"
-        />
-        <StatCard
-          icon={<Receipt className="h-5 w-5" />}
-          label="Total encaissé"
-          value={formatMoney(totalReceiptsAmount)}
-          hint={`${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} validé${postedReceipts.length > 1 ? "s" : ""}`}
-          tone="emerald"
-        />
-        <StatCard
-          icon={<ArrowDownRight className="h-5 w-5" />}
-          label="Reste à recouvrer"
-          value={formatMoney(totalBalanceDue)}
-          hint={`${studentsWithDebt} élève${studentsWithDebt > 1 ? "s" : ""} avec solde`}
-          tone="amber"
-        />
-        <StatCard
-          icon={<Percent className="h-5 w-5" />}
-          label="Taux recouvrement"
-          value={formatPercent(recoveryRate)}
-          hint={`${studentsPaidUp} élève${studentsPaidUp > 1 ? "s" : ""} soldé${studentsPaidUp > 1 ? "s" : ""}`}
-          tone="sky"
-        />
-        <StatCard
-          icon={<Wallet className="h-5 w-5" />}
-          label="Dépenses"
-          value={formatMoney(totalExpensesAmount)}
-          hint={`${postedExpenses.length} dépense${postedExpenses.length > 1 ? "s" : ""} validée${postedExpenses.length > 1 ? "s" : ""}`}
-          tone="rose"
-        />
-        <StatCard
-          icon={<ArrowUpRight className="h-5 w-5" />}
-          label="Solde net"
-          value={formatMoney(netBalance)}
-          hint="Encaissements moins dépenses"
-          tone={netBalance >= 0 ? "emerald" : "rose"}
-        />
-        <StatCard
-          icon={<TrendingUp className="h-5 w-5" />}
-          label="Ratio dépenses"
-          value={formatPercent(expenseRatio)}
-          hint="Dépenses / encaissements"
-          tone="slate"
-        />
-      </section>
+      <FinanceReportsExports payload={exportPayload} view={selectedReportView} />
 
-      <section className={`grid gap-6 ${hasInternatData ? "xl:grid-cols-2" : ""}`}>
-        <MoneyGroupTable
-          title="Encaissé : affectés / non affectés"
-          icon={<Users className="h-4 w-4 text-sky-600" />}
-          rows={paymentByAffectation}
-          emptyLabel="Aucun encaissement par statut d’affectation sur la période."
-        />
-        {hasInternatData ? (
-          <MoneyGroupTable
-            title="Encaissé : internes / non internes"
-            icon={<Wallet className="h-4 w-4 text-emerald-600" />}
-            rows={paymentByBoarding}
-            emptyLabel="Aucun encaissement lié au statut d’internat sur la période."
-          />
-        ) : null}
-      </section>
+      {selectedReportView === "overview" ? (
+        <>
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              icon={<Users className="h-5 w-5" />}
+              label="Élèves suivis"
+              value={studentRows.length}
+              hint={`${classRows.length} classe${classRows.length > 1 ? "s" : ""} dans l’année`}
+              tone="sky"
+            />
+            <StatCard
+              icon={<CircleDollarSign className="h-5 w-5" />}
+              label="Montant attendu"
+              value={formatMoney(totalExpectedAmount)}
+              hint={`${balanceRows.length} ligne${balanceRows.length > 1 ? "s" : ""} de frais`}
+              tone="emerald"
+            />
+            <StatCard
+              icon={<Receipt className="h-5 w-5" />}
+              label="Total encaissé"
+              value={formatMoney(totalReceiptsAmount)}
+              hint={`${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} validé${postedReceipts.length > 1 ? "s" : ""}`}
+              tone="emerald"
+            />
+            <StatCard
+              icon={<ArrowDownRight className="h-5 w-5" />}
+              label="Reste à recouvrer"
+              value={formatMoney(totalBalanceDue)}
+              hint={`${studentsWithDebt} élève${studentsWithDebt > 1 ? "s" : ""} avec solde`}
+              tone="amber"
+            />
+            <StatCard
+              icon={<Percent className="h-5 w-5" />}
+              label="Taux recouvrement"
+              value={formatPercent(recoveryRate)}
+              hint={`${studentsPaidUp} élève${studentsPaidUp > 1 ? "s" : ""} soldé${studentsPaidUp > 1 ? "s" : ""}`}
+              tone="sky"
+            />
+            <StatCard
+              icon={<Wallet className="h-5 w-5" />}
+              label="Dépenses"
+              value={formatMoney(totalExpensesAmount)}
+              hint={`${postedExpenses.length} dépense${postedExpenses.length > 1 ? "s" : ""} validée${postedExpenses.length > 1 ? "s" : ""}`}
+              tone="rose"
+            />
+            <StatCard
+              icon={<ArrowUpRight className="h-5 w-5" />}
+              label="Solde net"
+              value={formatMoney(netBalance)}
+              hint="Encaissements moins dépenses"
+              tone={netBalance >= 0 ? "emerald" : "rose"}
+            />
+            <StatCard
+              icon={<TrendingUp className="h-5 w-5" />}
+              label="Ratio dépenses"
+              value={formatPercent(expenseRatio)}
+              hint="Dépenses / encaissements"
+              tone="slate"
+            />
+          </section>
 
-      <section className="grid gap-6 xl:grid-cols-2">
-        <CategorySubRubricTable rows={paymentByCategorySubRubric} />
-        <MoneyGroupTable
-          title="Encaissé par niveau"
-          icon={<BarChart3 className="h-4 w-4 text-emerald-600" />}
-          rows={paymentByLevel}
-          emptyLabel="Aucun encaissement par niveau sur la période."
-        />
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-2">
-        <CycleClassPaymentTable rows={paymentByCycleClass} />
-        <StudentDebtTable rows={studentDebtByClass} />
-      </section>
-
-      <DebtDetailTable rows={debtDetailsByStudentCategory} />
-
-      <section className="grid gap-6 xl:grid-cols-2">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <Layers3 className="h-4 w-4 text-emerald-600" />
-            Recouvrement par catégorie de frais
-          </div>
-
-          {feePerformanceByCategory.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucune balance financière disponible pour le moment.
-            </div>
-          ) : (
-            <div className="mt-5 space-y-4">
-              {feePerformanceByCategory.map((row) => (
-                <article
-                  key={row.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">
-                        {row.name}
-                      </h2>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {row.count} écriture{row.count > 1 ? "s" : ""} • Taux {formatPercent(row.rate)}
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-800 ring-1 ring-amber-200">
-                      Reste {formatMoney(row.due)}
-                    </div>
-                  </div>
-                  <ProgressLine rate={row.rate} />
-                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                    <MiniMetric label="Attendu" value={formatMoney(row.expected)} tone="slate" />
-                    <MiniMetric label="Encaissé" value={formatMoney(row.paid)} tone="emerald" />
-                    <MiniMetric label="Reste" value={formatMoney(row.due)} tone="amber" />
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <CalendarClock className="h-4 w-4 text-emerald-600" />
-            Flux mensuels
-          </div>
-
-          {monthlySummary.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucun flux financier enregistré sur la période.
-            </div>
-          ) : (
-            <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
-              <div className="grid grid-cols-4 bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
-                <div>Mois</div>
-                <div className="text-right">Encaissements</div>
-                <div className="text-right">Dépenses</div>
-                <div className="text-right">Solde</div>
+          <section className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                <Layers3 className="h-4 w-4 text-emerald-600" />
+                Recouvrement par catégorie de frais
               </div>
-              <div className="divide-y divide-slate-200">
-                {monthlySummary.map((row) => (
-                  <div
-                    key={row.month}
-                    className="grid grid-cols-4 items-center px-4 py-3 text-sm"
-                  >
-                    <div className="font-bold text-slate-800">{row.month}</div>
-                    <div className="text-right font-bold text-emerald-700">
-                      {formatMoney(row.receipts)}
-                    </div>
-                    <div className="text-right font-bold text-rose-700">
-                      {formatMoney(row.expenses)}
-                    </div>
-                    <div
-                      className={`text-right font-black ${row.balance >= 0 ? "text-slate-900" : "text-rose-700"}`}
-                    >
-                      {formatMoney(row.balance)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
 
-      <section className="grid gap-6 xl:grid-cols-2">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            Recouvrement par classe
-          </div>
-
-          {classSummary.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucune synthèse disponible.
-            </div>
-          ) : (
-            <div className="mt-5 space-y-4">
-              {classSummary.map((row) => (
-                <article
-                  key={row.classId}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">
-                        {row.classLabel}
-                      </h2>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {row.level} • {row.academicYear} • {row.students} élève{row.students > 1 ? "s" : ""}
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-sky-50 px-3 py-1.5 text-sm font-bold text-sky-700 ring-1 ring-sky-200">
-                      Taux {formatPercent(row.rate)}
-                    </div>
-                  </div>
-                  <ProgressLine rate={row.rate} />
-                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                    <MiniMetric label="Attendu" value={formatMoney(row.expected)} tone="slate" />
-                    <MiniMetric label="Encaissé" value={formatMoney(row.paid)} tone="emerald" />
-                    <MiniMetric label="Reste" value={formatMoney(row.due)} tone="amber" />
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <Wallet className="h-4 w-4 text-rose-600" />
-            Dépenses par catégorie
-          </div>
-
-          {expensesByCategory.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucune dépense enregistrée pour le moment.
-            </div>
-          ) : (
-            <div className="mt-5 space-y-4">
-              {expensesByCategory.map((row) => (
-                <article
-                  key={row.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">
-                        {row.name}
-                      </h2>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {row.count} dépense{row.count > 1 ? "s" : ""}
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">
-                      {formatMoney(row.total)}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-2">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            Derniers encaissements validés
-          </div>
-
-          {postedReceipts.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucun encaissement récent.
-            </div>
-          ) : (
-            <div className="mt-5 space-y-4">
-              {postedReceipts.slice(0, 8).map((row) => (
-                <article
-                  key={row.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-black text-slate-900">
-                        {row.receipt_no}
-                      </h2>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {formatDate(row.payment_date)}
-                        {row.payer_name ? ` • ${row.payer_name}` : ""}
-                        {row.reference_no ? ` • Réf. ${row.reference_no}` : ""}
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                      {formatMoney(row.total_amount)}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            Dernières dépenses
-          </div>
-
-          {postedExpenses.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucune dépense récente.
-            </div>
-          ) : (
-            <div className="mt-5 space-y-4">
-              {postedExpenses.slice(0, 8).map((row) => {
-                const cat = row.category_id
-                  ? expenseCategoryMap.get(row.category_id)
-                  : null;
-                return (
-                  <article
-                    key={row.id}
-                    className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 className="text-lg font-black text-slate-900">
-                          {row.label}
-                        </h2>
-                        <div className="mt-1 text-sm text-slate-600">
-                          {formatDate(row.expense_date)} • {cat?.name || "Sans catégorie"}
-                          {row.beneficiary ? ` • ${row.beneficiary}` : ""}
+              {feePerformanceByCategory.length === 0 ? (
+                <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                  Aucune balance financière disponible pour le moment.
+                </div>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {feePerformanceByCategory.map((row) => (
+                    <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
+                          <div className="mt-1 text-sm text-slate-600">
+                            {row.count} écriture{row.count > 1 ? "s" : ""} • Taux {formatPercent(row.rate)}
+                          </div>
+                        </div>
+                        <div className="rounded-full bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-800 ring-1 ring-amber-200">
+                          Reste {formatMoney(row.due)}
                         </div>
                       </div>
-                      <div className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">
-                        {formatMoney(row.amount)}
+                      <ProgressLine rate={row.rate} />
+                      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                        <MiniMetric label="Attendu" value={formatMoney(row.expected)} tone="slate" />
+                        <MiniMetric label="Encaissé" value={formatMoney(row.paid)} tone="emerald" />
+                        <MiniMetric label="Reste" value={formatMoney(row.due)} tone="amber" />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+                <CalendarClock className="h-4 w-4 text-emerald-600" />
+                Flux de la période
+              </div>
+
+              {monthlySummary.length === 0 ? (
+                <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                  Aucun flux financier enregistré sur la période.
+                </div>
+              ) : (
+                <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+                  <div className="grid grid-cols-4 bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                    <div>Mois</div>
+                    <div className="text-right">Encaissements</div>
+                    <div className="text-right">Dépenses</div>
+                    <div className="text-right">Solde</div>
+                  </div>
+                  <div className="divide-y divide-slate-200">
+                    {monthlySummary.map((row) => (
+                      <div key={row.month} className="grid grid-cols-4 items-center px-4 py-3 text-sm">
+                        <div className="font-bold text-slate-800">{row.month}</div>
+                        <div className="text-right font-bold text-emerald-700">{formatMoney(row.receipts)}</div>
+                        <div className="text-right font-bold text-rose-700">{formatMoney(row.expenses)}</div>
+                        <div className={`text-right font-black ${row.balance >= 0 ? "text-slate-900" : "text-rose-700"}`}>
+                          {formatMoney(row.balance)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+              Recouvrement par classe
+            </div>
+
+            {classSummary.length === 0 ? (
+              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+                Aucune synthèse disponible.
+              </div>
+            ) : (
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                {classSummary.map((row) => (
+                  <article key={row.classId} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h2 className="text-lg font-black text-slate-900">{row.classLabel}</h2>
+                        <div className="mt-1 text-sm text-slate-600">
+                          {row.level} • {row.academicYear} • {row.students} élève{row.students > 1 ? "s" : ""}
+                        </div>
+                      </div>
+                      <div className="rounded-full bg-sky-50 px-3 py-1.5 text-sm font-bold text-sky-700 ring-1 ring-sky-200">
+                        Taux {formatPercent(row.rate)}
                       </div>
                     </div>
+                    <ProgressLine rate={row.rate} />
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      <MiniMetric label="Attendu" value={formatMoney(row.expected)} tone="slate" />
+                      <MiniMetric label="Encaissé" value={formatMoney(row.paid)} tone="emerald" />
+                      <MiniMetric label="Reste" value={formatMoney(row.due)} tone="amber" />
+                    </div>
                   </article>
-                );
-              })}
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+
+      {selectedReportView === "encaissements" ? (
+        <>
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard icon={<Receipt className="h-5 w-5" />} label="Total encaissé" value={formatMoney(totalReceiptsAmount)} hint={`${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} sur la période`} tone="emerald" />
+            <StatCard icon={<CalendarClock className="h-5 w-5" />} label="Filtre utilisé" value={dateFieldLabel(selectedDateField)} hint={selectedPeriodLabel} tone="sky" />
+            <StatCard icon={<Users className="h-5 w-5" />} label="Élèves concernés" value={new Set(paymentRecords.map((row) => row.studentId).filter(Boolean)).size} hint="Selon les ventilations de reçus" tone="slate" />
+            <StatCard icon={<Layers3 className="h-5 w-5" />} label="Lignes ventilées" value={paymentRecords.length} hint="Catégories et sous-rubriques" tone="emerald" />
+          </section>
+
+          <section className={`grid gap-6 ${hasInternatData ? "xl:grid-cols-2" : ""}`}>
+            <MoneyGroupTable title="Encaissé : affectés / non affectés" icon={<Users className="h-4 w-4 text-sky-600" />} rows={paymentByAffectation} emptyLabel="Aucun encaissement par statut d’affectation sur la période." />
+            {hasInternatData ? (
+              <MoneyGroupTable title="Encaissé : internes / non internes" icon={<Wallet className="h-4 w-4 text-emerald-600" />} rows={paymentByBoarding} emptyLabel="Aucun encaissement lié au statut d’internat sur la période." />
+            ) : null}
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-2">
+            <CategorySubRubricTable rows={paymentByCategorySubRubric} />
+            <MoneyGroupTable title="Encaissé par niveau" icon={<BarChart3 className="h-4 w-4 text-emerald-600" />} rows={paymentByLevel} emptyLabel="Aucun encaissement par niveau sur la période." />
+          </section>
+
+          <CycleClassPaymentTable rows={paymentByCycleClass} />
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Encaissements validés sur la période</div>
+            {postedReceipts.length === 0 ? (
+              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucun encaissement sur la période sélectionnée.</div>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {postedReceipts.map((row) => (
+                  <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-lg font-black text-slate-900">{row.receipt_no}</h2>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Paiement : {formatDate(row.payment_date)} • Enregistrement : {formatDate(row.created_at)}{row.payer_name ? ` • ${row.payer_name}` : ""}{row.reference_no ? ` • Réf. ${row.reference_no}` : ""}
+                        </div>
+                      </div>
+                      <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">{formatMoney(row.total_amount)}</div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+
+      {selectedReportView === "categories" ? (
+        <>
+          <section className="grid gap-6 xl:grid-cols-2">
+            <CategorySubRubricTable rows={paymentByCategorySubRubric} />
+            <MoneyGroupTable title="Encaissé par niveau" icon={<BarChart3 className="h-4 w-4 text-emerald-600" />} rows={paymentByLevel} emptyLabel="Aucun encaissement par niveau sur la période." />
+          </section>
+
+          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+              <Layers3 className="h-4 w-4 text-emerald-600" />
+              Recouvrement annuel par catégorie de frais
+            </div>
+            {feePerformanceByCategory.length === 0 ? (
+              <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucune catégorie disponible.</div>
+            ) : (
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                {feePerformanceByCategory.map((row) => (
+                  <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
+                        <div className="mt-1 text-sm text-slate-600">{row.count} écriture{row.count > 1 ? "s" : ""} • Taux {formatPercent(row.rate)}</div>
+                      </div>
+                      <div className="rounded-full bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-800 ring-1 ring-amber-200">Reste {formatMoney(row.due)}</div>
+                    </div>
+                    <ProgressLine rate={row.rate} />
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      <MiniMetric label="Attendu" value={formatMoney(row.expected)} tone="slate" />
+                      <MiniMetric label="Encaissé" value={formatMoney(row.paid)} tone="emerald" />
+                      <MiniMetric label="Reste" value={formatMoney(row.due)} tone="amber" />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
+
+      {selectedReportView === "dettes" ? (
+        <>
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard icon={<CircleDollarSign className="h-5 w-5" />} label="Montant attendu" value={formatMoney(totalExpectedAmount)} hint={`${balanceRows.length} lignes de frais`} tone="slate" />
+            <StatCard icon={<Receipt className="h-5 w-5" />} label="Déjà payé" value={formatMoney(totalPaidFromBalances)} hint="Selon les dettes de l’année" tone="emerald" />
+            <StatCard icon={<ArrowDownRight className="h-5 w-5" />} label="Reste à recouvrer" value={formatMoney(totalBalanceDue)} hint={`${studentsWithDebt} élève${studentsWithDebt > 1 ? "s" : ""} débiteur${studentsWithDebt > 1 ? "s" : ""}`} tone="amber" />
+            <StatCard icon={<Percent className="h-5 w-5" />} label="Taux recouvrement" value={formatPercent(recoveryRate)} hint="Payé / attendu" tone="sky" />
+          </section>
+          <StudentDebtTable rows={studentDebtByClass} />
+          <DebtDetailTable rows={debtDetailsByStudentCategory} />
+        </>
+      ) : null}
+
+      {selectedReportView === "depenses" ? (
+        <>
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard icon={<Wallet className="h-5 w-5" />} label="Dépenses" value={formatMoney(totalExpensesAmount)} hint={`${postedExpenses.length} dépense${postedExpenses.length > 1 ? "s" : ""} validée${postedExpenses.length > 1 ? "s" : ""}`} tone="rose" />
+            <StatCard icon={<Receipt className="h-5 w-5" />} label="Encaissements" value={formatMoney(totalReceiptsAmount)} hint="Sur la même période" tone="emerald" />
+            <StatCard icon={<ArrowUpRight className="h-5 w-5" />} label="Solde net" value={formatMoney(netBalance)} hint="Encaissements - dépenses" tone={netBalance >= 0 ? "emerald" : "rose"} />
+            <StatCard icon={<TrendingUp className="h-5 w-5" />} label="Ratio dépenses" value={formatPercent(expenseRatio)} hint="Dépenses / encaissements" tone="slate" />
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700"><Wallet className="h-4 w-4 text-rose-600" />Dépenses par catégorie</div>
+              {expensesByCategory.length === 0 ? (
+                <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucune dépense sur la période.</div>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {expensesByCategory.map((row) => (
+                    <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div><h2 className="text-lg font-black text-slate-900">{row.name}</h2><div className="mt-1 text-sm text-slate-600">{row.count} dépense{row.count > 1 ? "s" : ""}</div></div>
+                        <div className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">{formatMoney(row.total)}</div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Dépenses validées sur la période</div>
+              {postedExpenses.length === 0 ? (
+                <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucune dépense récente.</div>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {postedExpenses.map((row) => {
+                    const cat = row.category_id ? expenseCategoryMap.get(row.category_id) : null;
+                    return (
+                      <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div><h2 className="text-lg font-black text-slate-900">{row.label}</h2><div className="mt-1 text-sm text-slate-600">{formatDate(row.expense_date)} • {cat?.name || "Sans catégorie"}{row.beneficiary ? ` • ${row.beneficiary}` : ""}</div></div>
+                          <div className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">{formatMoney(row.amount)}</div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {selectedReportView === "baremes" ? (
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+            <Layers3 className="h-4 w-4 text-emerald-600" />
+            Barèmes configurés par catégorie
+          </div>
+
+          {schedulesByCategory.length === 0 ? (
+            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucun barème actif pour le moment.</div>
+          ) : (
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {schedulesByCategory.map((row) => (
+                <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
+                  <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
+                  <div className="mt-1 text-sm text-slate-600">{row.count} barème{row.count > 1 ? "s" : ""}</div>
+                  <div className="mt-3 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">{formatMoney(row.total)}</div>
+                </article>
+              ))}
             </div>
           )}
-        </div>
-      </section>
 
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-          <Layers3 className="h-4 w-4 text-emerald-600" />
-          Barèmes configurés par catégorie
-        </div>
-
-        {schedulesByCategory.length === 0 ? (
-          <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-            Aucun barème actif pour le moment.
+          <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Barèmes actifs : <strong>{activeSchedules.length}</strong> • Catégories de frais actives : <strong>{activeFeeCategories}</strong> • Montant barémé : <strong>{formatMoney(totalScheduledAmount)}</strong>
           </div>
-        ) : (
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {schedulesByCategory.map((row) => (
-              <article
-                key={row.id}
-                className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-              >
-                <h2 className="text-lg font-black text-slate-900">{row.name}</h2>
-                <div className="mt-1 text-sm text-slate-600">
-                  {row.count} barème{row.count > 1 ? "s" : ""}
-                </div>
-                <div className="mt-3 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">
-                  {formatMoney(row.total)}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Barèmes actifs : <strong>{activeSchedules.length}</strong> • Catégories de frais actives : <strong>{activeFeeCategories}</strong> • Montant barémé : <strong>{formatMoney(totalScheduledAmount)}</strong>
-        </div>
-      </section>
+        </section>
+      ) : null}
     </div>
   );
 }

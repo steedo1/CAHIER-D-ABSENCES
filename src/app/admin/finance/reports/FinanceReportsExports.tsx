@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FileSpreadsheet, FileText, Printer } from "lucide-react";
+import { Download, FileSpreadsheet, Printer } from "lucide-react";
 
 export type FinanceReportSummaryItem = {
   label: string;
@@ -148,8 +148,23 @@ export type FinanceReportExportPayload = {
   expenses: FinanceReportMovementItem[];
 };
 
-type ExportScope = "global" | "detailed";
 type ExportMode = "excel" | "pdf";
+export type FinanceReportExportView =
+  | "overview"
+  | "encaissements"
+  | "categories"
+  | "dettes"
+  | "depenses"
+  | "baremes";
+
+const viewLabels: Record<FinanceReportExportView, string> = {
+  overview: "Vue d’ensemble",
+  encaissements: "Encaissements",
+  categories: "Catégories",
+  dettes: "Dettes et impayés",
+  depenses: "Dépenses",
+  baremes: "Barèmes",
+};
 
 function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F CFA`;
@@ -173,7 +188,7 @@ function escapeHtml(value: unknown) {
 function makeFileName(
   payload: FinanceReportExportPayload,
   extension: string,
-  scope: ExportScope,
+  view: FinanceReportExportView,
 ) {
   const safeInstitution = (payload.institutionName || "etablissement")
     .normalize("NFD")
@@ -188,7 +203,7 @@ function makeFileName(
     .replace(/[^a-zA-Z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  return `rapport-financier-${scope}-${safeInstitution || "etablissement"}-${safeYear || "annee"}-${safePeriod || "periode"}.${extension}`;
+  return `rapport-financier-${view}-${safeInstitution || "etablissement"}-${safeYear || "annee"}-${safePeriod || "periode"}.${extension}`;
 }
 
 function buildTable<T>(
@@ -221,14 +236,149 @@ function buildTable<T>(
   `;
 }
 
+function buildSections(payload: FinanceReportExportPayload, view: FinanceReportExportView) {
+  if (view === "encaissements") {
+    return `
+      ${buildTable(
+        "Encaissements validés sur la période",
+        ["Date", "Reçu / payeur", "Référence", "Montant"],
+        payload.receipts,
+        (row) => [row.date, row.label, row.category, formatMoney(row.amount)],
+      )}
+      ${buildTable(
+        "Encaissements par catégorie et sous-rubrique",
+        ["Catégorie", "Sous-rubrique", "Montant encaissé", "Lignes", "Élèves"],
+        payload.paymentByCategorySubRubric,
+        (row) => [row.category, row.subRubric, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+      ${buildTable(
+        "Encaissements par classe et par cycle",
+        ["Cycle", "Classe", "Montant encaissé", "Lignes", "Élèves"],
+        payload.paymentByCycleClass,
+        (row) => [row.cycle, row.classLabel, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+      ${buildTable(
+        "Encaissements : affectés / non affectés",
+        ["Statut", "Montant", "Lignes", "Élèves"],
+        payload.paymentByAffectation,
+        (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+      ${buildTable(
+        "Encaissements : internes / non internes",
+        ["Statut", "Montant", "Lignes", "Élèves"],
+        payload.paymentByBoarding,
+        (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+    `;
+  }
+
+  if (view === "categories") {
+    return `
+      ${buildTable(
+        "Encaissements par catégorie et sous-rubrique",
+        ["Catégorie", "Sous-rubrique", "Montant encaissé", "Lignes", "Élèves"],
+        payload.paymentByCategorySubRubric,
+        (row) => [row.category, row.subRubric, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+      ${buildTable(
+        "Recouvrement annuel par catégorie de frais",
+        ["Catégorie", "Écritures", "Attendu", "Encaissé", "Reste", "Taux"],
+        payload.categories,
+        (row) => [row.name, row.count, formatMoney(row.expected), formatMoney(row.paid), formatMoney(row.due), formatPercent(row.rate)],
+      )}
+      ${buildTable(
+        "Encaissements par niveau",
+        ["Niveau", "Montant", "Lignes", "Élèves"],
+        payload.paymentByLevel,
+        (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
+      )}
+    `;
+  }
+
+  if (view === "dettes") {
+    return `
+      ${buildTable(
+        "Situation des créances par statut",
+        ["Statut", "Nombre", "Montant concerné"],
+        payload.statuses,
+        (row) => [row.label, row.count, formatMoney(row.amount)],
+      )}
+      ${buildTable(
+        "Liste des élèves et leurs dettes par classe",
+        ["Matricule", "Élève", "Classe", "Attendu", "Encaissé", "Dette", "Statut"],
+        payload.studentDebtsByClass,
+        (row) => [row.matricule, row.fullName, row.classLabel, formatMoney(row.expected), formatMoney(row.paid), formatMoney(row.due), row.status],
+      )}
+      ${buildTable(
+        "Dettes par élève, catégorie et classe",
+        ["Classe", "Matricule", "Élève", "Catégorie", "Sous-rubrique", "Attendu", "Encaissé", "Dette", "Échéance", "Statut"],
+        payload.debtDetails,
+        (row) => [row.classLabel, row.matricule, row.fullName, row.category, row.subRubric, formatMoney(row.expected), formatMoney(row.paid), formatMoney(row.due), row.dueDate, row.status],
+      )}
+    `;
+  }
+
+  if (view === "depenses") {
+    return `
+      ${buildTable(
+        "Dépenses validées sur la période",
+        ["Date", "Libellé", "Catégorie / bénéficiaire", "Montant"],
+        payload.expenses,
+        (row) => [row.date, row.label, row.category, formatMoney(row.amount)],
+      )}
+      ${buildTable(
+        "Dépenses par catégorie",
+        ["Catégorie", "Nombre", "Total"],
+        payload.expenseCategories,
+        (row) => [row.name, row.count, formatMoney(row.total)],
+      )}
+      ${buildTable(
+        "Flux de la période",
+        ["Mois", "Encaissements", "Dépenses", "Solde"],
+        payload.months,
+        (row) => [row.month, formatMoney(row.receipts), formatMoney(row.expenses), formatMoney(row.balance)],
+      )}
+    `;
+  }
+
+  if (view === "baremes") {
+    return buildTable(
+      "Barèmes configurés",
+      ["Libellé", "Catégorie", "Classe", "Échéance", "Montant", "Statut"],
+      payload.schedules,
+      (row) => [row.label, row.category, row.classLabel, row.dueDate, formatMoney(row.amount), row.active],
+    );
+  }
+
+  return `
+    ${buildTable(
+      "Recouvrement par catégorie de frais",
+      ["Catégorie", "Écritures", "Attendu", "Encaissé", "Reste", "Taux"],
+      payload.categories,
+      (row) => [row.name, row.count, formatMoney(row.expected), formatMoney(row.paid), formatMoney(row.due), formatPercent(row.rate)],
+    )}
+    ${buildTable(
+      "Recouvrement par classe",
+      ["Classe", "Niveau", "Année", "Élèves", "Attendu", "Encaissé", "Reste", "Taux"],
+      payload.classes,
+      (row) => [row.classLabel, row.level, row.academicYear, row.students, formatMoney(row.expected), formatMoney(row.paid), formatMoney(row.due), formatPercent(row.rate)],
+    )}
+    ${buildTable(
+      "Flux de la période",
+      ["Mois", "Encaissements", "Dépenses", "Solde"],
+      payload.months,
+      (row) => [row.month, formatMoney(row.receipts), formatMoney(row.expenses), formatMoney(row.balance)],
+    )}
+  `;
+}
+
 function buildReportHtml(
   payload: FinanceReportExportPayload,
   mode: ExportMode,
-  scope: ExportScope,
+  view: FinanceReportExportView,
 ) {
   const generatedDate = new Date(payload.generatedAt).toLocaleString("fr-FR");
-  const scopeLabel = scope === "global" ? "Statistiques globales" : "Statistiques détaillées";
-  const isDetailed = scope === "detailed";
+  const viewLabel = viewLabels[view] || "Vue sélectionnée";
   const css = `
     html, body { background: #ffffff; }
     body { font-family: Arial, sans-serif; color: #0f172a; margin: ${mode === "pdf" ? "24px" : "16px"}; }
@@ -270,177 +420,17 @@ function buildReportHtml(
     )
     .join("");
 
-  const globalSections = `
-    ${buildTable(
-      "Montant encaissé : affectés / non affectés",
-      ["Statut", "Montant encaissé", "Lignes", "Élèves"],
-      payload.paymentByAffectation,
-      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
-    )}
-
-    ${buildTable(
-      "Montant encaissé : internes / non internes",
-      ["Statut", "Montant encaissé", "Lignes", "Élèves"],
-      payload.paymentByBoarding,
-      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
-    )}
-
-    ${buildTable(
-      "Montant encaissé par catégorie et sous-rubrique",
-      ["Catégorie", "Sous-rubrique", "Montant encaissé", "Lignes", "Élèves"],
-      payload.paymentByCategorySubRubric,
-      (row) => [row.category, row.subRubric, formatMoney(row.amount), row.count, row.studentCount],
-    )}
-
-    ${buildTable(
-      "Montant encaissé par niveau",
-      ["Niveau", "Montant encaissé", "Lignes", "Élèves"],
-      payload.paymentByLevel,
-      (row) => [row.label, formatMoney(row.amount), row.count, row.studentCount],
-    )}
-
-    ${buildTable(
-      "Montant encaissé par classe et par cycle",
-      ["Cycle", "Classe", "Montant encaissé", "Lignes", "Élèves"],
-      payload.paymentByCycleClass,
-      (row) => [row.cycle, row.classLabel, formatMoney(row.amount), row.count, row.studentCount],
-    )}
-
-    ${buildTable(
-      "Recouvrement par catégorie de frais",
-      ["Catégorie", "Écritures", "Attendu", "Encaissé", "Reste", "Taux"],
-      payload.categories,
-      (row) => [
-        row.name,
-        row.count,
-        formatMoney(row.expected),
-        formatMoney(row.paid),
-        formatMoney(row.due),
-        formatPercent(row.rate),
-      ],
-    )}
-
-    ${buildTable(
-      "Recouvrement par classe",
-      ["Classe", "Niveau", "Année", "Élèves", "Attendu", "Encaissé", "Reste", "Taux"],
-      payload.classes,
-      (row) => [
-        row.classLabel,
-        row.level,
-        row.academicYear,
-        row.students,
-        formatMoney(row.expected),
-        formatMoney(row.paid),
-        formatMoney(row.due),
-        formatPercent(row.rate),
-      ],
-    )}
-
-    ${buildTable(
-      "Flux mensuels",
-      ["Mois", "Encaissements", "Dépenses", "Solde"],
-      payload.months,
-      (row) => [row.month, formatMoney(row.receipts), formatMoney(row.expenses), formatMoney(row.balance)],
-    )}
-
-    ${buildTable(
-      "Dépenses par catégorie",
-      ["Catégorie", "Nombre", "Total"],
-      payload.expenseCategories,
-      (row) => [row.name, row.count, formatMoney(row.total)],
-    )}
-  `;
-
-  const detailedSections = `
-    ${buildTable(
-      "Situation des créances par statut",
-      ["Statut", "Nombre", "Montant concerné"],
-      payload.statuses,
-      (row) => [row.label, row.count, formatMoney(row.amount)],
-    )}
-
-    ${buildTable(
-      "Liste des élèves et leurs dettes par classe",
-      ["Matricule", "Élève", "Classe", "Attendu", "Encaissé", "Dette", "Statut"],
-      payload.studentDebtsByClass,
-      (row) => [
-        row.matricule,
-        row.fullName,
-        row.classLabel,
-        formatMoney(row.expected),
-        formatMoney(row.paid),
-        formatMoney(row.due),
-        row.status,
-      ],
-    )}
-
-    ${buildTable(
-      "Liste des dettes par élève, catégorie et classe",
-      ["Classe", "Matricule", "Élève", "Catégorie", "Sous-rubrique", "Attendu", "Encaissé", "Dette", "Échéance", "Statut"],
-      payload.debtDetails,
-      (row) => [
-        row.classLabel,
-        row.matricule,
-        row.fullName,
-        row.category,
-        row.subRubric,
-        formatMoney(row.expected),
-        formatMoney(row.paid),
-        formatMoney(row.due),
-        row.dueDate,
-        row.status,
-      ],
-    )}
-
-    ${buildTable(
-      "Détail global par élève",
-      ["Matricule", "Élève", "Classe", "Attendu", "Encaissé", "Reste", "Taux", "Statut"],
-      payload.students,
-      (row) => [
-        row.matricule,
-        row.fullName,
-        row.classLabel,
-        formatMoney(row.expected),
-        formatMoney(row.paid),
-        formatMoney(row.due),
-        formatPercent(row.rate),
-        row.status,
-      ],
-    )}
-
-    ${buildTable(
-      "Barèmes configurés",
-      ["Libellé", "Catégorie", "Classe", "Échéance", "Montant", "Statut"],
-      payload.schedules,
-      (row) => [row.label, row.category, row.classLabel, row.dueDate, formatMoney(row.amount), row.active],
-    )}
-
-    ${buildTable(
-      "Encaissements validés sur la période",
-      ["Date", "Reçu / payeur", "Référence", "Montant"],
-      payload.receipts,
-      (row) => [row.date, row.label, row.category, formatMoney(row.amount)],
-    )}
-
-    ${buildTable(
-      "Dépenses validées sur la période",
-      ["Date", "Libellé", "Catégorie / bénéficiaire", "Montant"],
-      payload.expenses,
-      (row) => [row.date, row.label, row.category, formatMoney(row.amount)],
-    )}
-  `;
-
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(payload.title)} — ${escapeHtml(scopeLabel)}</title>
+  <title>${escapeHtml(payload.title)} — ${escapeHtml(viewLabel)}</title>
   <style>${css}</style>
 </head>
 <body>
   <div class="header">
     <div class="eyebrow">Mon Cahier — Rapport financier</div>
-    <h1>${escapeHtml(payload.title)} — ${escapeHtml(scopeLabel)}</h1>
+    <h1>${escapeHtml(payload.title)} — ${escapeHtml(viewLabel)}</h1>
     <div class="meta">
       Établissement : <strong>${escapeHtml(payload.institutionName)}</strong><br />
       Année scolaire : <strong>${escapeHtml(payload.academicYear)}</strong><br />
@@ -451,8 +441,7 @@ function buildReportHtml(
 
   <div class="summary">${summaryCards}</div>
 
-  ${globalSections}
-  ${isDetailed ? detailedSections : ""}
+  ${buildSections(payload, view)}
 
   <div class="footer">
     www.mon-cahier.com — La plateforme idéale pour une école connectée, l’école du futur.
@@ -461,23 +450,23 @@ function buildReportHtml(
 </html>`;
 }
 
-function downloadExcelFile(payload: FinanceReportExportPayload, scope: ExportScope) {
-  const html = buildReportHtml(payload, "excel", scope);
+function downloadExcelFile(payload: FinanceReportExportPayload, view: FinanceReportExportView) {
+  const html = buildReportHtml(payload, "excel", view);
   const blob = new Blob(["\ufeff", html], {
     type: "application/vnd.ms-excel;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = makeFileName(payload, "xls", scope);
+  link.download = makeFileName(payload, "xls", view);
   document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
-function printPdf(payload: FinanceReportExportPayload, scope: ExportScope) {
-  const html = buildReportHtml(payload, "pdf", scope);
+function printPdf(payload: FinanceReportExportPayload, view: FinanceReportExportView) {
+  const html = buildReportHtml(payload, "pdf", view);
   const iframe = document.createElement("iframe");
 
   iframe.setAttribute("title", "Impression du rapport financier");
@@ -520,55 +509,42 @@ function printPdf(payload: FinanceReportExportPayload, scope: ExportScope) {
 
 export default function FinanceReportsExports({
   payload,
+  view = "overview",
 }: {
   payload: FinanceReportExportPayload;
+  view?: FinanceReportExportView;
 }) {
+  const viewLabel = viewLabels[view] || "vue sélectionnée";
+
   return (
     <div className="rounded-[28px] border border-emerald-200 bg-emerald-50/70 p-4 shadow-sm print:hidden">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-800 ring-1 ring-emerald-200">
             <Download className="h-3.5 w-3.5" />
-            Exports du rapport
+            Export / impression de la vue actuelle
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-emerald-900/80">
-            Choisissez un export global pour la direction, ou un export détaillé avec encaissements
-            par statut, internat, catégorie, niveau, classe et dettes par élève.
+            Vue sélectionnée : <strong>{viewLabel}</strong>. Les fichiers générés reprennent uniquement cette vue et les filtres affichés à l’écran.
           </p>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[560px]">
+        <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[420px]">
           <button
             type="button"
-            onClick={() => downloadExcelFile(payload, "global")}
+            onClick={() => downloadExcelFile(payload, view)}
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-sm ring-1 ring-emerald-200 hover:bg-emerald-50"
           >
             <FileSpreadsheet className="h-4 w-4" />
-            Excel global
+            Excel cette vue
           </button>
           <button
             type="button"
-            onClick={() => downloadExcelFile(payload, "detailed")}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-sm ring-1 ring-emerald-200 hover:bg-emerald-50"
-          >
-            <FileText className="h-4 w-4" />
-            Excel détaillé
-          </button>
-          <button
-            type="button"
-            onClick={() => printPdf(payload, "global")}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-800"
-          >
-            <Printer className="h-4 w-4" />
-            PDF global
-          </button>
-          <button
-            type="button"
-            onClick={() => printPdf(payload, "detailed")}
+            onClick={() => printPdf(payload, view)}
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
           >
             <Printer className="h-4 w-4" />
-            PDF détaillé
+            Imprimer cette vue
           </button>
         </div>
       </div>
