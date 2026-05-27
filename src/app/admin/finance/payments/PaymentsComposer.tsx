@@ -101,6 +101,18 @@ function isPensionCharge(label: string | null | undefined) {
   return normalize(label).includes("pension");
 }
 
+function normalizeAnnexLabel(value: string | null | undefined) {
+  return normalize(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isOptionalInternatAnnexComponent(label: string | null | undefined) {
+  const text = normalizeAnnexLabel(label);
+  return text.includes("breviaire") || text.includes("bible");
+}
+
 function getSelectedComponentsTotal(
   charge: PaymentStudentRow["open_charges"][number],
   componentIdsByCharge: Record<string, string[]>,
@@ -117,12 +129,22 @@ function getInternatRecoverableTotal(
 ) {
   return charges.reduce((sum, charge) => {
     if (charge.components.length > 0) {
-      return sum + getSelectedComponentsTotal(charge, componentIdsByCharge);
+      // Les frais annexes internat ont maintenant une base minimale obligatoire :
+      // tous les composants sauf Bréviaire et Bible restent dus tant qu'ils ne
+      // sont pas soldés. Les composants optionnels n'entrent dans la dette que
+      // lorsqu'un montant est saisi dessus.
+      const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
+      const optionalSelectedTotal = charge.components
+        .filter(
+          (component) =>
+            selected.has(component.id) &&
+            isOptionalInternatAnnexComponent(component.label),
+        )
+        .reduce((componentSum, component) => componentSum + Number(component.amount || 0), 0);
+
+      return sum + Number(charge.balance_due || 0) + optionalSelectedTotal;
     }
 
-    // La pension reste un montant fixe. Les sous-rubriques annexes peuvent
-    // varier, mais la pension ouverte ne doit pas disparaître du total à
-    // recouvrer tant qu'elle n'est pas soldée.
     return sum + Number(charge.balance_due || 0);
   }, 0);
 }
@@ -1499,8 +1521,9 @@ function ChargeComponentChecklist({
             Détail des frais annexes
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Saisissez le montant payé maintenant pour chaque sous-rubrique. Le
-            paiement partiel est autorisé.
+            Saisissez le montant payé maintenant pour chaque sous-rubrique.
+            Les éléments obligatoires restent dus tant qu’ils ne sont pas soldés ;
+            Bréviaire et Bible sont ajoutés seulement si un montant est saisi.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
@@ -1528,6 +1551,11 @@ function ChargeComponentChecklist({
             >
               <div className="min-w-0 font-semibold text-slate-800">
                 {component.label}
+                {isOptionalInternatAnnexComponent(component.label) ? (
+                  <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
+                    Optionnel
+                  </span>
+                ) : null}
               </div>
               <div className="text-right font-black text-slate-900">
                 {formatMoney(component.amount)}
@@ -1576,7 +1604,7 @@ function ChargeComponentChecklist({
           Vider les montants
         </button>
         <span>
-          Base initiale : {formatMoney(remainingAmount)} · Montant saisi :{" "}
+          Reste obligatoire connu : {formatMoney(remainingAmount)} · Montant saisi :{" "}
           {formatMoney(selectedTotal)}
         </span>
       </div>

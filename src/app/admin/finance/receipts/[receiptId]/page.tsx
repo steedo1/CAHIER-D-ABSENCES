@@ -776,6 +776,8 @@ export default async function FinanceReceiptPrintPage({
       }
     : null;
 
+  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
+
   const allocatedChargeIds = new Set(
     rawLines.map((line) => line.alloc.student_charge_id),
   );
@@ -943,7 +945,6 @@ export default async function FinanceReceiptPrintPage({
     0,
   );
 
-  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
   const allLinesAreInternat =
     rawLines.length > 0 &&
     rawLines.every((line) => isInternatCharge(line.charge?.label));

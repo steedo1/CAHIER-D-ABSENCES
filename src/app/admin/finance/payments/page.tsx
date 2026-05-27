@@ -840,6 +840,18 @@ function isInternatAnnexesCharge(label: string | null | undefined) {
   );
 }
 
+function normalizeInternatAnnexComponentLabel(label: string | null | undefined) {
+  return normalize(label)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isOptionalInternatAnnexComponent(label: string | null | undefined) {
+  const text = normalizeInternatAnnexComponentLabel(label);
+  return text.includes("breviaire") || text.includes("bible");
+}
+
 async function syncVariableAnnexChargeAmounts({
   institutionId,
   allocations,
@@ -847,10 +859,8 @@ async function syncVariableAnnexChargeAmounts({
   institutionId: string;
   allocations: ResolvedPaymentAllocation[];
 }) {
-  const variableItems = allocations.filter(
-    (item) =>
-      isInternatAnnexesCharge(item.charge.label) &&
-      (item.selectedComponents.length > 0 || item.skippedComponents.length > 0),
+  const variableItems = allocations.filter((item) =>
+    isInternatAnnexesCharge(item.charge.label),
   );
 
   if (variableItems.length === 0) return;
@@ -896,8 +906,7 @@ async function syncVariableAnnexChargeAmounts({
       0,
     );
 
-    let componentPaidTotal = 0;
-    let componentExpectedTotal = 0;
+    const paidByComponent = new Map<string, number>();
 
     if (activeAllocationIds.length > 0) {
       const { data: componentRows, error: componentErr } = await admin
@@ -908,38 +917,45 @@ async function syncVariableAnnexChargeAmounts({
 
       if (componentErr) throw new Error(componentErr.message);
 
-      const componentIds = Array.from(
-        new Set(
-          ((componentRows ?? []) as Array<{ fee_schedule_component_id: string; amount: number | string }>)
-            .filter((row) => Number(row.amount || 0) > 0)
-            .map((row) => row.fee_schedule_component_id),
-        ),
-      );
-
-      componentPaidTotal = ((componentRows ?? []) as Array<{ amount: number | string }>).reduce(
-        (sum, row) => sum + Number(row.amount || 0),
-        0,
-      );
-
-      if (componentIds.length > 0) {
-        const { data: expectedRows, error: expectedErr } = await admin
-          .schema("finance")
-          .from("fee_schedule_components")
-          .select("id,amount")
-          .in("id", componentIds)
-          .eq("school_id", institutionId);
-
-        if (expectedErr) throw new Error(expectedErr.message);
-
-        componentExpectedTotal = ((expectedRows ?? []) as Array<{ amount: number | string }>).reduce(
-          (sum, row) => sum + Number(row.amount || 0),
-          0,
+      for (const row of (componentRows ?? []) as Array<{
+        fee_schedule_component_id: string;
+        amount: number | string;
+      }>) {
+        const amount = Number(row.amount || 0);
+        if (amount <= 0) continue;
+        paidByComponent.set(
+          row.fee_schedule_component_id,
+          (paidByComponent.get(row.fee_schedule_component_id) ?? 0) + amount,
         );
       }
     }
 
+    let mandatoryExpectedTotal = 0;
+    let optionalEngagedExpectedTotal = 0;
+
+    if (item.charge.fee_schedule_id) {
+      const activeComponents = await fetchActiveScheduleComponents(
+        institutionId,
+        [item.charge.fee_schedule_id],
+      );
+
+      for (const component of activeComponents) {
+        const expected = Number(component.amount || 0);
+        if (isOptionalInternatAnnexComponent(component.label)) {
+          if ((paidByComponent.get(component.id) ?? 0) > 0) {
+            optionalEngagedExpectedTotal += expected;
+          }
+        } else {
+          mandatoryExpectedTotal += expected;
+        }
+      }
+    }
+
     const confirmedAmount =
-      componentExpectedTotal > 0 ? componentExpectedTotal : 230000;
+      mandatoryExpectedTotal + optionalEngagedExpectedTotal > 0
+        ? mandatoryExpectedTotal + optionalEngagedExpectedTotal
+        : 208500;
+
     const nextStatus =
       allocationTotal >= confirmedAmount - 0.01 ? "paid" : "partial";
 
@@ -949,9 +965,8 @@ async function syncVariableAnnexChargeAmounts({
       .update({
         base_amount: confirmedAmount,
         status: nextStatus,
-        notes: item.skippedComponents.length > 0
-          ? "Frais annexes internat ajustés selon les sous-rubriques confirmées au reçu."
-          : "Frais annexes internat ajustés selon les sous-rubriques réglées.",
+        notes:
+          "Frais annexes internat recalculés : composants obligatoires dus, Bréviaire/Bible ajoutés seulement si engagés.",
         updated_at: new Date().toISOString(),
       } as any)
       .eq("id", item.charge.id)
@@ -1858,15 +1873,21 @@ export default async function FinancePaymentsPage({
     componentsBySchedule.get(component.fee_schedule_id)!.push(component);
   }
 
-  const paidComponentsByCharge = new Map<string, Set<string>>();
+  const paidComponentAmountsByCharge = new Map<string, Map<string, number>>();
   for (const paid of paidComponentRows) {
     if (paid.receipt_status === "cancelled") continue;
-    if (!paidComponentsByCharge.has(paid.student_charge_id)) {
-      paidComponentsByCharge.set(paid.student_charge_id, new Set<string>());
+    const amount = Number(paid.amount || 0);
+    if (amount <= 0) continue;
+
+    if (!paidComponentAmountsByCharge.has(paid.student_charge_id)) {
+      paidComponentAmountsByCharge.set(paid.student_charge_id, new Map<string, number>());
     }
-    paidComponentsByCharge
-      .get(paid.student_charge_id)!
-      .add(paid.fee_schedule_component_id);
+
+    const componentMap = paidComponentAmountsByCharge.get(paid.student_charge_id)!;
+    componentMap.set(
+      paid.fee_schedule_component_id,
+      (componentMap.get(paid.fee_schedule_component_id) ?? 0) + amount,
+    );
   }
 
   const balancesByStudent = new Map<string, ChargeBalanceRow[]>();
@@ -1887,8 +1908,8 @@ export default async function FinancePaymentsPage({
         const openCharges = studentBalances
           .filter((row) => row.class_id === student.class_id)
           .map((row) => {
-            const paidIds =
-              paidComponentsByCharge.get(row.id) ?? new Set<string>();
+            const paidComponentAmounts =
+              paidComponentAmountsByCharge.get(row.id) ?? new Map<string, number>();
             const allComponents = row.fee_schedule_id
               ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
               : [];
@@ -1896,27 +1917,47 @@ export default async function FinancePaymentsPage({
             const isInternatCategory = isFinanceInternatCategory(category);
             const isScolariteCategory = isFinanceScolariteCategory(category);
             const componentDrivenBalance =
-              isInternatCategory && allComponents.length > 0;
+              isInternatCategory &&
+              isInternatAnnexesCharge(row.label) &&
+              allComponents.length > 0;
+
+            let expectedComponentBase = 0;
+            let remainingComponentTotal = 0;
+
             const components = componentDrivenBalance
               ? allComponents
-                  .filter((component) => !paidIds.has(component.id))
-                  .map((component) => ({
-                    id: component.id,
-                    label: component.label,
-                    amount: Number(component.amount || 0),
-                    order_index: Number(component.order_index || 0),
-                  }))
+                  .map((component) => {
+                    const expected = Number(component.amount || 0);
+                    const alreadyPaid = paidComponentAmounts.get(component.id) ?? 0;
+                    const remaining = Math.max(expected - alreadyPaid, 0);
+                    const optional = isOptionalInternatAnnexComponent(component.label);
+                    const isDueComponent = !optional || alreadyPaid > 0;
+
+                    if (isDueComponent) {
+                      expectedComponentBase += expected;
+                      remainingComponentTotal += remaining;
+                    }
+
+                    // Les composants optionnels non engagés restent affichables
+                    // pour permettre leur paiement, mais ne gonflent pas le
+                    // reste dû tant qu’aucun montant n’est saisi.
+                    return remaining > 0
+                      ? {
+                          id: component.id,
+                          label: component.label,
+                          amount: remaining,
+                          order_index: Number(component.order_index || 0),
+                        }
+                      : null;
+                  })
+                  .filter((component): component is { id: string; label: string; amount: number; order_index: number } => Boolean(component))
               : [];
             const rawBalanceDue = Number(row.balance_due || 0);
-            const remainingComponentTotal = components.reduce(
-              (sum, component) => sum + Number(component.amount || 0),
-              0,
-            );
             const effectiveBalanceDue = componentDrivenBalance
               ? remainingComponentTotal
               : rawBalanceDue;
 
-            if (effectiveBalanceDue <= 0) return null;
+            if (effectiveBalanceDue <= 0 && components.length === 0) return null;
 
             return {
               charge_id: row.id,
@@ -1925,10 +1966,11 @@ export default async function FinancePaymentsPage({
               label: row.label,
               due_date: row.due_date,
               // Scolarité : le montant officiel reste celui du barème.
-              // On ne le réduit jamais selon des composants internes.
-              // Internat : seuls les frais annexes cochés restent dus.
+              // Internat annexes : tous les composants sauf Bréviaire/Bible
+              // sont obligatoires ; Bréviaire/Bible n’entrent dans la base
+              // que s’ils ont déjà été engagés/payés.
               net_amount: componentDrivenBalance
-                ? remainingComponentTotal
+                ? expectedComponentBase
                 : Number(row.net_amount || 0),
               paid_amount: Number(row.paid_amount || 0),
               balance_due: effectiveBalanceDue,
