@@ -243,6 +243,55 @@ function groupBy<T>(items: T[], keyFn: (item: T) => string): Record<string, T[]>
   return out;
 }
 
+async function loadTeacherNames(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  teacherIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = Array.from(new Set(teacherIds.map((id) => cleanText(id)).filter(Boolean)));
+  if (!ids.length) return out;
+
+  /*
+    Même source que les bulletins : profiles.display_name.
+    Important : ne pas sélectionner first_name/last_name ici. Sur certaines bases
+    Mon Cahier, ces colonnes n'existent pas dans profiles ; Supabase renvoie alors
+    une erreur et aucun nom d'enseignant n'est chargé.
+  */
+  const { data: profiles, error: profilesError } = await srv
+    .from("profiles")
+    .select("id,display_name,email")
+    .in("id", ids);
+
+  if (!profilesError) {
+    for (const p of profiles || []) {
+      const id = cleanText((p as any).id);
+      const label = cleanText((p as any).display_name) || cleanText((p as any).email);
+      if (id && label) out.set(id, label);
+    }
+  } else {
+    console.warn("[admin/notes/bilan] profiles teacher names warning ignored", profilesError);
+  }
+
+  // Fallback non cassant pour les anciennes bases qui avaient une table teachers.
+  const missingIds = ids.filter((id) => !out.has(id));
+  if (missingIds.length) {
+    const { data: teachers, error: teachersError } = await srv
+      .from("teachers")
+      .select("id,full_name")
+      .in("id", missingIds);
+
+    if (!teachersError) {
+      for (const t of teachers || []) {
+        const id = cleanText((t as any).id);
+        const label = cleanText((t as any).full_name);
+        if (id && label) out.set(id, label);
+      }
+    }
+  }
+
+  return out;
+}
+
 async function getContext() {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -410,24 +459,7 @@ async function loadEvaluationLeaders(params: {
   }
 
   const teacherIds = Array.from(new Set(evalRows.map((e) => cleanText(e.teacher_id)).filter(Boolean)));
-  const teacherNames = new Map<string, string>();
-
-  if (teacherIds.length) {
-    const { data: teachers } = await params.srv
-      .from("profiles")
-      .select("id,display_name,first_name,last_name,email")
-      .in("id", teacherIds);
-
-    for (const t of teachers || []) {
-      const id = cleanText((t as any).id);
-      const name =
-        cleanText((t as any).display_name) ||
-        cleanText(`${(t as any).last_name || ""} ${(t as any).first_name || ""}`) ||
-        cleanText((t as any).email) ||
-        "Enseignant";
-      if (id) teacherNames.set(id, name);
-    }
-  }
+  const teacherNames = await loadTeacherNames(params.srv, teacherIds);
 
   const byTeacher = new Map<string, Leader>();
   const byClass = new Map<string, Leader>();
