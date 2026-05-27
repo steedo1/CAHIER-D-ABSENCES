@@ -51,7 +51,7 @@ export async function GET() {
 
   const items = (studs || []).map(s => ({
     id: String(s.id),
-    full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "�",
+    full_name: `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() || "Élève",
     class_label: classLabelByStudent.get(String(s.id)) || null,
   }));
 

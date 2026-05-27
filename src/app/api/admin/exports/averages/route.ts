@@ -3873,7 +3873,7 @@ async function prepareRapportFOfficialExport(params: {
     const sorted = [...studentIds].sort((a, b) => {
       const ma = studentMetaByKey.get(`${currentClassId}__${a}`);
       const mb = studentMetaByKey.get(`${currentClassId}__${b}`);
-      return String(ma?.full_name || `${ma?.last_name || ""} ${ma?.first_name || ""}`).localeCompare(String(mb?.full_name || `${mb?.last_name || ""} ${mb?.first_name || ""}`), "fr", { sensitivity: "base", numeric: true });
+      return String(`${ma?.last_name || ""} ${ma?.first_name || ""}`.trim() || ma?.full_name || "").localeCompare(String(`${mb?.last_name || ""} ${mb?.first_name || ""}`.trim() || mb?.full_name || ""), "fr", { sensitivity: "base", numeric: true });
     });
 
     for (const studentId of sorted) {
@@ -3890,7 +3890,7 @@ async function prepareRapportFOfficialExport(params: {
       rows.push([
         line,
         meta?.matricule || "",
-        String(meta?.full_name || `${meta?.last_name || ""} ${meta?.first_name || ""}`).trim(),
+        String(`${meta?.last_name || ""} ${meta?.first_name || ""}`.trim() || meta?.full_name || "").trim(),
         formatDateFr(birthdate),
         datePart(birthdate, "day"),
         datePart(birthdate, "month"),

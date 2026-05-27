@@ -138,7 +138,7 @@ function pickProfileName(
   const explicit = cleanText(row?.full_name) || cleanText(row?.display_name);
   if (explicit) return explicit;
 
-  const combined = [row?.first_name, row?.last_name]
+  const combined = [row?.last_name, row?.first_name]
     .map((x) => cleanText(x))
     .filter(Boolean)
     .join(" ");

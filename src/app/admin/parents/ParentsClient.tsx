@@ -189,7 +189,7 @@ export default function AdminStudentsByClassPage() {
           s.id === editing.id
             ? {
                 ...s,
-                full_name: [editing.first_name, editing.last_name].filter(Boolean).join(" ") || s.full_name,
+                full_name: [editing.last_name, editing.first_name].filter(Boolean).join(" ") || s.full_name,
                 matricule: editing.matricule || null,
               }
             : s

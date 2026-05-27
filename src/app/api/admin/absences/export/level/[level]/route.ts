@@ -127,7 +127,7 @@ export async function GET(
           : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
       const units = minutes / 60;
 
-      const student = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
+      const student = `${st?.last_name ?? ""} ${st?.first_name ?? ""}`.trim() || "—";
       const class_label = cl?.label ?? "—";
       const lvl = cl?.level ?? level;
       const key = `${r.student_id}|${class_label}`;
@@ -178,7 +178,7 @@ export async function GET(
         : Number(r.minutes ?? 0) || Number(r.expected_minutes ?? 0);
     const units = minutes / 60;
 
-    const fullName = `${st?.first_name ?? ""} ${st?.last_name ?? ""}`.trim() || "—";
+    const fullName = `${st?.last_name ?? ""} ${st?.first_name ?? ""}`.trim() || "—";
     const subject = subjectText((r as any).subjects);
 
     return {

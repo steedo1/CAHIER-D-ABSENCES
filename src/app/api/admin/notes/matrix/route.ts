@@ -67,14 +67,11 @@ function relOne<T = any>(v: T | T[] | null | undefined): T | null {
 }
 
 function studentFullName(s: any) {
-  const full = cleanName(s?.full_name);
-  if (full) return full;
-
   const lastFirst = cleanName(s?.last_name, s?.first_name);
   if (lastFirst) return lastFirst;
 
-  const firstLast = cleanName(s?.first_name, s?.last_name);
-  if (firstLast) return firstLast;
+  const full = cleanName(s?.full_name);
+  if (full) return full;
 
   return "Élève";
 }

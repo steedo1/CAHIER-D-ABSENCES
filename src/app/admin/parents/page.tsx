@@ -1165,7 +1165,7 @@ export default function AdminStudentsByClassPage() {
             ? {
                 ...s,
                 full_name:
-                  [editing.first_name, editing.last_name]
+                  [editing.last_name, editing.first_name]
                     .filter(Boolean)
                     .join(" ") || s.full_name,
                 matricule: editing.matricule || null,
@@ -1376,7 +1376,7 @@ export default function AdminStudentsByClassPage() {
 
       const cls = classes.find((c) => c.id === classId);
       const full =
-        [stu.first_name || "", stu.last_name || ""].filter(Boolean).join(" ").trim() ||
+        [stu.last_name || "", stu.first_name || ""].filter(Boolean).join(" ").trim() ||
         "-";
 
       setStudents((prev) => {

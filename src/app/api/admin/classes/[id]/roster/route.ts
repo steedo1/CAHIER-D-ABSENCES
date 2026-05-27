@@ -13,6 +13,39 @@ type ProfileMini = {
   phone: string | null;
 };
 
+type OfficialTrackCode =
+  | "6eme"
+  | "5eme"
+  | "4eme"
+  | "3eme"
+  | "2ndeA"
+  | "2ndeC"
+  | "1ereA1"
+  | "1ereA2"
+  | "1ereC"
+  | "1ereD"
+  | "tleA1"
+  | "tleA2"
+  | "tleC"
+  | "tleD";
+
+const OFFICIAL_TRACK_CODES = new Set<string>([
+  "6eme",
+  "5eme",
+  "4eme",
+  "3eme",
+  "2ndeA",
+  "2ndeC",
+  "1ereA1",
+  "1ereA2",
+  "1ereC",
+  "1ereD",
+  "tleA1",
+  "tleA2",
+  "tleC",
+  "tleD",
+]);
+
 function fullName(row: any) {
   const lastName = cleanText(row?.last_name).toUpperCase();
   const firstName = cleanText(row?.first_name);
@@ -31,6 +64,18 @@ function cleanText(value: unknown) {
 function normalizeNullableText(value: unknown) {
   const s = cleanText(value);
   return s ? s : null;
+}
+
+function cleanOfficialTrackCode(value: unknown): OfficialTrackCode | null {
+  const raw = cleanText(value);
+  if (!raw) return null;
+  if (!OFFICIAL_TRACK_CODES.has(raw)) throw new Error("bad_official_track_code");
+  return raw as OfficialTrackCode;
+}
+
+function isMissingOfficialTrackColumn(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("official_track_code") && (message.includes("column") || message.includes("schema cache"));
 }
 
 function normalizeDateYmd(value: unknown) {
@@ -317,32 +362,44 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     return NextResponse.json({ error: institutionRes.error.message }, { status: 400 });
   }
 
-  const { data: enrollments, error: enrollErr } = await srv
-    .from("class_enrollments")
-    .select(
-      `
-      id,
-      student_id,
-      start_date,
-      end_date,
-      students:student_id(
+  async function loadEnrollments(includeStudentSeries: boolean) {
+    return srv
+      .from("class_enrollments")
+      .select(
+        `
         id,
-        first_name,
-        last_name,
-        full_name,
-        matricule,
-        gender,
-        birthdate,
-        birth_place,
-        nationality,
-        is_repeater,
-        lv2
+        student_id,
+        start_date,
+        end_date${includeStudentSeries ? ",\n        official_track_code" : ""},
+        students:student_id(
+          id,
+          first_name,
+          last_name,
+          full_name,
+          matricule,
+          gender,
+          birthdate,
+          birth_place,
+          nationality,
+          is_repeater,
+          lv2,
+          is_affecte,
+          is_boarder
+        )
+      `,
       )
-    `,
-    )
-    .eq("institution_id", institutionId)
-    .eq("class_id", classId)
-    .is("end_date", null);
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .is("end_date", null);
+  }
+
+  let { data: enrollments, error: enrollErr } = await loadEnrollments(true);
+
+  if (enrollErr && isMissingOfficialTrackColumn(enrollErr)) {
+    const fallback = await loadEnrollments(false);
+    enrollments = fallback.data;
+    enrollErr = fallback.error;
+  }
 
   if (enrollErr) {
     return NextResponse.json(
@@ -378,6 +435,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
             ? s.is_repeater
             : null,
         lv2: s.lv2 ?? null,
+        is_affecte: typeof s.is_affecte === "boolean" ? s.is_affecte : null,
+        is_boarder: typeof s.is_boarder === "boolean" ? s.is_boarder : null,
+        official_track_code: cleanOfficialTrackCode((row as any).official_track_code ?? null),
         enrollment_start_date: row.start_date ?? null,
       };
     })
@@ -489,24 +549,36 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
   const allowed = new Set((allowedRows || []).map((row: any) => String(row.student_id)));
 
-  const rows = updates
-    .map((row: any) => {
-      const studentId = cleanText(row?.student_id);
-      if (!studentId || !allowed.has(studentId)) return null;
+  let rows: Array<{ student_id: string; patch: Record<string, any>; official_track_code: OfficialTrackCode | null }> = [];
 
-      return {
-        student_id: studentId,
-        patch: {
-          gender: normalizeGender(row?.gender),
-          birthdate: normalizeDateYmd(row?.birthdate),
-          birth_place: normalizeNullableText(row?.birth_place),
-          nationality: normalizeNullableText(row?.nationality),
-          is_repeater: normalizeBool(row?.is_repeater),
-          lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
-        },
-      };
-    })
-    .filter(Boolean) as Array<{ student_id: string; patch: Record<string, any> }>;
+  try {
+    rows = updates
+      .map((row: any) => {
+        const studentId = cleanText(row?.student_id);
+        if (!studentId || !allowed.has(studentId)) return null;
+
+        return {
+          student_id: studentId,
+          patch: {
+            gender: normalizeGender(row?.gender),
+            birthdate: normalizeDateYmd(row?.birthdate),
+            birth_place: normalizeNullableText(row?.birth_place),
+            nationality: normalizeNullableText(row?.nationality),
+            is_repeater: normalizeBool(row?.is_repeater),
+            lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
+            is_affecte: normalizeBool(row?.is_affecte),
+            is_boarder: normalizeBool(row?.is_boarder),
+          },
+          official_track_code: cleanOfficialTrackCode(row?.official_track_code ?? null),
+        };
+      })
+      .filter(Boolean) as Array<{ student_id: string; patch: Record<string, any>; official_track_code: OfficialTrackCode | null }>;
+  } catch (error) {
+    if ((error as Error)?.message === "bad_official_track_code") {
+      return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+    }
+    throw error;
+  }
 
   if (!rows.length) return NextResponse.json({ ok: true, updated: 0 });
 
@@ -527,6 +599,26 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
               ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
               : error.message,
           details: error.message,
+        },
+        { status: 400 },
+      );
+    }
+
+    const { error: enrollmentErr } = await srv
+      .from("class_enrollments")
+      .update({ official_track_code: row.official_track_code })
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .eq("student_id", row.student_id)
+      .is("end_date", null);
+
+    if (enrollmentErr) {
+      return NextResponse.json(
+        {
+          error: isMissingOfficialTrackColumn(enrollmentErr)
+            ? "La colonne class_enrollments.official_track_code est absente. Exécutez src/db/class_enrollments_student_series_v1.sql dans Supabase, puis réessayez."
+            : enrollmentErr.message,
+          details: enrollmentErr.message,
         },
         { status: 400 },
       );

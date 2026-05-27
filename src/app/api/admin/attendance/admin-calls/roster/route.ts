@@ -117,16 +117,16 @@ async function tryExistingAdminStudents(req: NextRequest, class_id: string): Pro
       normString(row?.student?.id);
 
     const full_name =
-      normString(row?.full_name) ||
-      normString(row?.display_name) ||
-      normString(row?.name) ||
       [
         normString(row?.last_name || row?.lastname),
         normString(row?.first_name || row?.firstname),
       ]
         .filter(Boolean)
         .join(" ")
-        .trim();
+        .trim() ||
+      normString(row?.full_name) ||
+      normString(row?.display_name) ||
+      normString(row?.name);
 
     const matricule =
       normString(row?.matricule) ||
@@ -187,17 +187,20 @@ export async function GET(req: NextRequest) {
   try {
     const { data, error } = await srv
       .from("students")
-      .select("id,full_name,matricule,class_id,institution_id")
+      .select("id,first_name,last_name,full_name,matricule,class_id,institution_id")
       .eq("institution_id", institution_id)
       .eq("class_id", class_id)
-      .order("full_name");
+      .order("last_name", { ascending: true, nullsFirst: true })
+      .order("first_name", { ascending: true, nullsFirst: true });
 
     if (error) throw error;
 
     const items = uniqueRoster(
       (data || []).map((row: any) => ({
         id: String(row.id),
-        full_name: normString(row.full_name),
+        full_name:
+          [normString(row.last_name), normString(row.first_name)].filter(Boolean).join(" ").trim() ||
+          normString(row.full_name),
         matricule: normString(row.matricule) || null,
       }))
     );

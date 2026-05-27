@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   const items = (data ?? [])
     .map((row: any) => {
       const s = row.students || {};
-      const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "�";
+      const full = [s.last_name, s.first_name].filter(Boolean).join(" ").trim() || "Élève";
       return {
         id: s.id as string,
         full_name: full,

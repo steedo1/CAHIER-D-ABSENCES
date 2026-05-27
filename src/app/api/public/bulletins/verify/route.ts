@@ -1883,8 +1883,8 @@ export async function GET(req: NextRequest) {
       student: {
         id: (stu as any).id,
         full_name:
-          (stu as any).full_name ||
           [(stu as any).last_name, (stu as any).first_name].filter(Boolean).join(" ") ||
+          (stu as any).full_name ||
           null,
         last_name: (stu as any).last_name || null,
         first_name: (stu as any).first_name || null,
@@ -2036,8 +2036,8 @@ export async function GET(req: NextRequest) {
       student: {
         id: stu.id,
         full_name:
-          stu.full_name ||
           [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
+          stu.full_name ||
           null,
         matricule: stu.matricule || null,
         gender: stu.gender || null,
@@ -2887,8 +2887,8 @@ export async function GET(req: NextRequest) {
       student: {
         id: stu.id,
         full_name:
-          stu.full_name ||
           [stu.last_name, stu.first_name].filter(Boolean).join(" ") ||
+          stu.full_name ||
           null,
         matricule: stu.matricule || null,
         photo_url: stu.photo_url || null,
@@ -3383,8 +3383,8 @@ export async function GET(req: NextRequest) {
   const items = classStudents.map((cs) => {
     const stuLocal = cs.students || {};
     const fullName =
-      stuLocal.full_name ||
       [stuLocal.last_name, stuLocal.first_name].filter(Boolean).join(" ") ||
+      stuLocal.full_name ||
       "Élève";
 
     const stuMap =

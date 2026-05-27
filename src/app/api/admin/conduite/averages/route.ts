@@ -970,7 +970,7 @@ export async function GET(req: NextRequest) {
     const s = r.students || {};
     return {
       student_id: s.id as string,
-      full_name: `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() || "—",
+      full_name: `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() || "—",
     };
   });
 

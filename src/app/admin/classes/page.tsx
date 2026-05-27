@@ -592,8 +592,8 @@ export default function ClassesPage() {
         <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-slate-600">
           Créer, éditer et supprimer les classes par année scolaire. Les années viennent des paramètres de
-          l'établissement. Pour la série A, cochez seulement les classes réellement A1 ; les autres restent A2 par défaut.
-          La série officielle sert aux coefficients, bulletins, matrices et exports DESPS sans modifier le nom affiché.
+          l'établissement. Pour une classe commune A1/A2, gardez une seule classe physique puis renseignez la série de chaque élève dans sa liste de classe.
+          La série officielle de la classe reste utile par défaut, mais la série élève peut préciser les cas mixtes sans modifier le nom affiché.
         </p>
       </div>
 
@@ -665,8 +665,7 @@ export default function ClassesPage() {
             <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
           ) : isSeriesA(level) ? (
             <>
-              Série A : cochez uniquement les classes qui correspondent réellement à la <b>série officielle A1</b>.
-              Les classes non cochées seront rattachées à <b>A2</b> par défaut.
+              Série A : cochez uniquement les divisions entièrement A1. Pour une classe commune A1/A2, laissez la classe créée normalement, puis renseignez la série de chaque élève dans <b>Liste PDF</b>.
             </>
           ) : (
             <>
@@ -894,7 +893,7 @@ export default function ClassesPage() {
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Ne change pas le nom de la classe. Sert aux coefficients, bulletins, matrices et exports DESPS.
+              Ne change pas le nom de la classe. En cas de classe commune A1/A2, la série peut aussi être précisée élève par élève dans la liste de classe.
             </div>
           </div>
           <div>

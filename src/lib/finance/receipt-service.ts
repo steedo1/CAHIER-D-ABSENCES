@@ -78,7 +78,7 @@ async function getStudentName(studentId: string, institutionId: string) {
   const firstName = clean((data as any)?.first_name);
   const lastName = clean((data as any)?.last_name);
   const matricule = clean((data as any)?.matricule);
-  return [firstName, lastName].filter(Boolean).join(" ") || matricule || "Élève non précisé";
+  return [lastName, firstName].filter(Boolean).join(" ") || matricule || "Élève non précisé";
 }
 
 async function getClassInfo(classId: string | null | undefined, institutionId: string) {

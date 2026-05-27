@@ -429,8 +429,8 @@ async function fetchReceiptStudentServer(
       const s = (enrollment as any).students ?? {};
       const c = (enrollment as any).classes ?? {};
       const full =
+        `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() ||
         String(s.full_name || "").trim() ||
-        `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() ||
         "—";
 
       return {
@@ -470,8 +470,8 @@ async function fetchReceiptStudentServer(
 
     const s = studentData as any;
     const full =
+      `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() ||
       String(s.full_name || "").trim() ||
-      `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() ||
       "Élève sans nom";
 
     return {

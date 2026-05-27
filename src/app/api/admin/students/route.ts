@@ -167,8 +167,8 @@ export async function GET(req: NextRequest) {
     seen.add(sid);
 
     const full =
+      `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() ||
       String(s.full_name || "").trim() ||
-      `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim() ||
       "—";
 
     items.push({

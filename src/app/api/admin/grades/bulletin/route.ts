@@ -2091,7 +2091,7 @@ export async function GET(req: NextRequest) {
     const baseItems = classStudents.map((cs) => {
       const stu = cs.students || {};
       const fullName =
-        stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
+        [stu.last_name, stu.first_name].filter(Boolean).join(" ") || stu.full_name || "Élève";
       return {
         student_id: cs.student_id,
         full_name: fullName,
@@ -2898,7 +2898,7 @@ export async function GET(req: NextRequest) {
   const items = classStudents.map((cs) => {
     const stu = cs.students || {};
     const fullName =
-      stu.full_name || [stu.last_name, stu.first_name].filter(Boolean).join(" ") || "Élève";
+      [stu.last_name, stu.first_name].filter(Boolean).join(" ") || stu.full_name || "Élève";
 
     const stuMap =
       perStudentSubject.get(cs.student_id) ||

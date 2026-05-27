@@ -13,6 +13,7 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
@@ -73,39 +74,12 @@ function formatExpenseDate(value: string | null | undefined) {
   return d.toLocaleDateString("fr-FR", { dateStyle: "medium" });
 }
 
-function cleanFormValue(value: FormDataEntryValue | null) {
-  return String(value || "").trim();
-}
-
-function expensesRedirectUrl({
-  academicYear,
-  expenseError,
-  expenseSuccess,
-}: {
-  academicYear?: string;
-  expenseError?: string;
-  expenseSuccess?: string;
-}) {
-  const params = new URLSearchParams();
-
-  if (academicYear) params.set("academic_year", academicYear);
-  if (expenseError) params.set("expense_error", expenseError);
-  if (expenseSuccess) params.set("expense_success", expenseSuccess);
-
-  const qs = params.toString();
-  return `/admin/finance/expenses${qs ? `?${qs}` : ""}`;
-}
-
 async function getCurrentInstitutionIdOrThrow() {
   return getFinanceInstitutionIdForCurrentUser();
 }
 
 async function createExpenseCategoryAction(formData: FormData) {
   "use server";
-
-  const academicYear = cleanFormValue(formData.get("academic_year"));
-  const fail = (message: string) =>
-    redirect(expensesRedirectUrl({ academicYear, expenseError: message }));
 
   const access = await getFinanceAccessForCurrentUser();
   if (!access.ok) {
@@ -114,59 +88,20 @@ async function createExpenseCategoryAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
 
-  const name = cleanFormValue(formData.get("name"));
-  const codeInput = cleanFormValue(formData.get("code"));
+  const name = String(formData.get("name") || "").trim();
+  const codeInput = String(formData.get("code") || "").trim();
 
   if (!name) {
-    fail("Le nom de la catégorie est obligatoire.");
+    throw new Error("Le nom de la catégorie est obligatoire.");
   }
 
   const code = slugifyCode(codeInput || name);
   if (!code) {
-    fail("Le code de la catégorie est invalide.");
+    throw new Error("Le code de la catégorie est invalide.");
   }
 
   const nowIso = new Date().toISOString();
   const admin = getSupabaseServiceClient();
-
-  const { data: existingCategory, error: existingErr } = await admin
-    .schema("finance")
-    .from("expense_categories")
-    .select("id,is_active")
-    .eq("school_id", institutionId)
-    .eq("code", code)
-    .maybeSingle();
-
-  if (existingErr) {
-    fail(existingErr.message);
-  }
-
-  if (existingCategory?.id) {
-    const { error: updateErr } = await admin
-      .schema("finance")
-      .from("expense_categories")
-      .update({
-        name,
-        is_active: true,
-        updated_at: nowIso,
-      } as any)
-      .eq("id", existingCategory.id)
-      .eq("school_id", institutionId);
-
-    if (updateErr) {
-      fail(updateErr.message);
-    }
-
-    revalidatePath("/admin/finance/expenses");
-    revalidatePath("/admin/finance/reports");
-    revalidatePath("/admin/finance");
-    redirect(
-      expensesRedirectUrl({
-        academicYear,
-        expenseSuccess: "Catégorie existante réactivée et mise à jour.",
-      }),
-    );
-  }
 
   const { error } = await admin
     .schema("finance")
@@ -181,26 +116,21 @@ async function createExpenseCategoryAction(formData: FormData) {
     } as any);
 
   if (error) {
-    fail(error.message);
+    if (error.message?.toLowerCase().includes("duplicate")) {
+      throw new Error(
+        "Une catégorie portant ce code existe déjà pour cet établissement.",
+      );
+    }
+    throw new Error(error.message);
   }
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
-  redirect(
-    expensesRedirectUrl({
-      academicYear,
-      expenseSuccess: "Catégorie de dépense créée.",
-    }),
-  );
 }
 
 async function toggleExpenseCategoryAction(formData: FormData) {
   "use server";
-
-  const academicYear = cleanFormValue(formData.get("academic_year"));
-  const fail = (message: string) =>
-    redirect(expensesRedirectUrl({ academicYear, expenseError: message }));
 
   const access = await getFinanceAccessForCurrentUser();
   if (!access.ok) {
@@ -209,11 +139,11 @@ async function toggleExpenseCategoryAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
 
-  const id = cleanFormValue(formData.get("id"));
+  const id = String(formData.get("id") || "").trim();
   const nextActive = formData.get("next_active") === "true";
 
   if (!id) {
-    fail("Catégorie introuvable.");
+    throw new Error("Catégorie introuvable.");
   }
 
   const admin = getSupabaseServiceClient();
@@ -228,27 +158,15 @@ async function toggleExpenseCategoryAction(formData: FormData) {
     .eq("id", id)
     .eq("school_id", institutionId);
 
-  if (error) fail(error.message);
+  if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
-  redirect(
-    expensesRedirectUrl({
-      academicYear,
-      expenseSuccess: nextActive
-        ? "Catégorie réactivée."
-        : "Catégorie désactivée.",
-    }),
-  );
 }
 
 async function createExpenseAction(formData: FormData) {
   "use server";
-
-  const academicYear = cleanFormValue(formData.get("academic_year"));
-  const fail = (message: string) =>
-    redirect(expensesRedirectUrl({ academicYear, expenseError: message }));
 
   const access = await getFinanceAccessForCurrentUser();
   if (!access.ok) {
@@ -257,23 +175,23 @@ async function createExpenseAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
 
-  const categoryId = cleanFormValue(formData.get("category_id"));
-  const label = cleanFormValue(formData.get("label"));
-  const amountRaw = cleanFormValue(formData.get("amount"));
-  const expenseDate = cleanFormValue(formData.get("expense_date"));
-  const beneficiary = cleanFormValue(formData.get("beneficiary"));
+  const categoryId = String(formData.get("category_id") || "").trim();
+  const label = String(formData.get("label") || "").trim();
+  const amountRaw = String(formData.get("amount") || "").trim();
+  const expenseDate = String(formData.get("expense_date") || "").trim();
+  const beneficiary = String(formData.get("beneficiary") || "").trim();
 
   if (!categoryId) {
-    fail("La catégorie de dépense est obligatoire.");
+    throw new Error("La catégorie de dépense est obligatoire.");
   }
 
   if (!label) {
-    fail("Le libellé de la dépense est obligatoire.");
+    throw new Error("Le libellé de la dépense est obligatoire.");
   }
 
   const amount = Number(amountRaw);
   if (!Number.isFinite(amount) || amount <= 0) {
-    fail("Le montant doit être supérieur à 0.");
+    throw new Error("Le montant doit être supérieur à 0.");
   }
 
   const admin = getSupabaseServiceClient();
@@ -286,10 +204,10 @@ async function createExpenseAction(formData: FormData) {
     .eq("school_id", institutionId)
     .maybeSingle();
 
-  if (catErr) fail(catErr.message);
-  if (!category) fail("Catégorie introuvable.");
+  if (catErr) throw new Error(catErr.message);
+  if (!category) throw new Error("Catégorie introuvable.");
   if (!category.is_active) {
-    fail("La catégorie choisie est inactive.");
+    throw new Error("La catégorie choisie est inactive.");
   }
 
   const { error } = await admin
@@ -307,7 +225,7 @@ async function createExpenseAction(formData: FormData) {
       updated_at: new Date().toISOString(),
     } as any);
 
-  if (error) fail(error.message);
+  if (error) throw new Error(error.message);
 
   try {
     await queueFounderFinanceExpenseNotification({
@@ -323,20 +241,10 @@ async function createExpenseAction(formData: FormData) {
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
-  redirect(
-    expensesRedirectUrl({
-      academicYear,
-      expenseSuccess: "Dépense enregistrée.",
-    }),
-  );
 }
 
 async function cancelExpenseAction(formData: FormData) {
   "use server";
-
-  const academicYear = cleanFormValue(formData.get("academic_year"));
-  const fail = (message: string) =>
-    redirect(expensesRedirectUrl({ academicYear, expenseError: message }));
 
   const access = await getFinanceAccessForCurrentUser();
   if (!access.ok) {
@@ -345,9 +253,9 @@ async function cancelExpenseAction(formData: FormData) {
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
 
-  const id = cleanFormValue(formData.get("id"));
+  const id = String(formData.get("id") || "").trim();
   if (!id) {
-    fail("Dépense introuvable.");
+    throw new Error("Dépense introuvable.");
   }
 
   const admin = getSupabaseServiceClient();
@@ -362,17 +270,11 @@ async function cancelExpenseAction(formData: FormData) {
     .eq("id", id)
     .eq("school_id", institutionId);
 
-  if (error) fail(error.message);
+  if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
   revalidatePath("/admin/finance");
-  redirect(
-    expensesRedirectUrl({
-      academicYear,
-      expenseSuccess: "Dépense annulée.",
-    }),
-  );
 }
 
 function StatCard({
@@ -440,8 +342,6 @@ export default async function FinanceExpensesPage({
     status?: string;
     category_id?: string;
     academic_year?: string;
-    expense_error?: string;
-    expense_success?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -455,11 +355,9 @@ export default async function FinanceExpensesPage({
   const statusFilter = String(params?.status || "").trim();
   const categoryIdFilter = String(params?.category_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
-  const expenseError = String(params?.expense_error || "").trim();
-  const expenseSuccess = String(params?.expense_success || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
-  const admin = getSupabaseServiceClient();
+  const supabase = await getSupabaseServerClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
@@ -475,7 +373,7 @@ export default async function FinanceExpensesPage({
     { data: categories, error: catErr },
     { data: expenses, error: expErr },
   ] = await Promise.all([
-    admin
+    supabase
       .schema("finance")
       .from("expense_categories")
       .select("id,code,name,is_active")
@@ -483,7 +381,7 @@ export default async function FinanceExpensesPage({
       .order("name", { ascending: true }),
 
     (() => {
-      let query = admin
+      let query = supabase
         .schema("finance")
         .from("expenses")
         .select(
@@ -512,9 +410,11 @@ export default async function FinanceExpensesPage({
     })(),
   ]);
 
-  const systemError = catErr?.message || expErr?.message || "";
-  const categoryRows = (catErr ? [] : (categories ?? [])) as ExpenseCategoryRow[];
-  const expenseRows = (expErr ? [] : (expenses ?? [])) as ExpenseRow[];
+  if (catErr) throw new Error(catErr.message);
+  if (expErr) throw new Error(expErr.message);
+
+  const categoryRows = (categories ?? []) as ExpenseCategoryRow[];
+  const expenseRows = (expenses ?? []) as ExpenseRow[];
 
   const categoryMap = new Map(categoryRows.map((c) => [c.id, c]));
   const activeCategories = categoryRows.filter((c) => c.is_active);
@@ -599,25 +499,6 @@ export default async function FinanceExpensesPage({
         }}
       />
 
-      {expenseError ? (
-        <section className="rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-800">
-          {expenseError}
-        </section>
-      ) : null}
-
-      {expenseSuccess ? (
-        <section className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold text-emerald-800">
-          {expenseSuccess}
-        </section>
-      ) : null}
-
-      {systemError ? (
-        <section className="rounded-3xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-900">
-          Impossible de charger correctement les dépenses : {systemError}. Si les tables viennent d’être ajoutées,
-          exécuter le script src/db/finance_expenses_tables_v1.sql puis recharger la page.
-        </section>
-      ) : null}
-
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<FolderPlus className="h-6 w-6" />}
@@ -656,11 +537,6 @@ export default async function FinanceExpensesPage({
             action={createExpenseCategoryAction}
             className="mt-5 grid gap-4"
           >
-            <input
-              type="hidden"
-              name="academic_year"
-              value={selectedAcademicYearCode}
-            />
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                 Nom de la catégorie
@@ -718,11 +594,6 @@ export default async function FinanceExpensesPage({
               action={createExpenseAction}
               className="mt-5 grid gap-4 md:grid-cols-2"
             >
-              <input
-                type="hidden"
-                name="academic_year"
-                value={selectedAcademicYearCode}
-              />
               <div className="md:col-span-2">
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                   Catégorie
@@ -852,11 +723,6 @@ export default async function FinanceExpensesPage({
 
                 <div className="mt-4">
                   <form action={toggleExpenseCategoryAction}>
-                    <input
-                      type="hidden"
-                      name="academic_year"
-                      value={selectedAcademicYearCode}
-                    />
                     <input type="hidden" name="id" value={row.id} />
                     <input
                       type="hidden"
@@ -1041,11 +907,6 @@ export default async function FinanceExpensesPage({
 
                     {row.expense_status === "posted" ? (
                       <form action={cancelExpenseAction}>
-                        <input
-                          type="hidden"
-                          name="academic_year"
-                          value={selectedAcademicYearCode}
-                        />
                         <input type="hidden" name="id" value={row.id} />
                         <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">
                           <XCircle className="h-4 w-4" />

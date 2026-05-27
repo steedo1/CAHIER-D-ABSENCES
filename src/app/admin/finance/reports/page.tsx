@@ -586,8 +586,8 @@ async function fetchStudentsByIdsForReports({
     for (const raw of data ?? []) {
       const row = raw as any;
       const fullName =
+        `${row.last_name ?? ""} ${row.first_name ?? ""}`.trim() ||
         String(row.full_name || "").trim() ||
-        `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
         "Élève sans nom";
 
       rows.push({

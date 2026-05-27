@@ -59,14 +59,12 @@ function normFullName(s: {
   last_name: string | null;
   full_name?: string | null;
 }): string {
-  const explicit = (s.full_name || "").trim();
-  if (explicit) return explicit;
-
   const last = (s.last_name || "").trim();
   const first = (s.first_name || "").trim();
   const full = [last, first].filter(Boolean).join(" ").trim();
+  const explicit = (s.full_name || "").trim();
 
-  return full || "Élève";
+  return full || explicit || "Élève";
 }
 
 function formatDateFr(isoDate: string | null | undefined): string {

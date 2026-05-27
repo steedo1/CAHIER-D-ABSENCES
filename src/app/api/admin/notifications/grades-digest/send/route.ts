@@ -149,8 +149,6 @@ function safeHumanName(value: unknown) {
 }
 
 function pickStudentName(row: any, fallback = "Eleve") {
-  const full = safeHumanName(row?.full_name || row?.display_name);
-
   const combinedLastFirst = safeHumanName(
     [row?.last_name, row?.first_name]
       .map((x) => String(x || "").trim())
@@ -158,14 +156,9 @@ function pickStudentName(row: any, fallback = "Eleve") {
       .join(" ")
   );
 
-  const combinedFirstLast = safeHumanName(
-    [row?.first_name, row?.last_name]
-      .map((x) => String(x || "").trim())
-      .filter(Boolean)
-      .join(" ")
-  );
+  const full = safeHumanName(row?.full_name || row?.display_name);
 
-  return full || combinedLastFirst || combinedFirstLast || fallback || "Eleve";
+  return combinedLastFirst || full || fallback || "Eleve";
 }
 
 function pickClassLabel(row: any, fallback: string) {
