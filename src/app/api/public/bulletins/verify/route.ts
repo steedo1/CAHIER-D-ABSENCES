@@ -111,6 +111,23 @@ function isCSCAConductLabel(value?: string | null): boolean {
   return key.includes("discipline") || key.includes("conduite") || key.includes("conduct");
 }
 
+function safePublicLogoUrl(value?: string | null): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  // La vérification publique QR doit rester légère : ne jamais renvoyer
+  // de logo encodé en base64 (data:image...) ni une valeur énorme.
+  // Le logo reste intact en base et continue d'être utilisé ailleurs.
+  const lower = raw.toLowerCase();
+  if (lower.startsWith("data:image/")) return null;
+  if (raw.length > 5000) return null;
+
+  // Par sécurité, l’API publique n’expose que des URLs réelles.
+  if (!/^https?:\/\//i.test(raw)) return null;
+
+  return raw;
+}
+
 function normalizeCoeffLevelKey(level?: string | null): string | null {
   const x = normalizeAsciiToken(level);
   if (!x) return null;
@@ -1836,14 +1853,16 @@ export async function GET(req: NextRequest) {
       ok: true,
       mode: "short_lite",
       source: "bulletin_qr_codes_snapshot",
+      calculation_profile: isCSCA ? "csca" : "standard",
+      is_csca: isCSCA,
       institution: {
         id: institutionMeta.id,
         name: institutionMeta.name ?? null,
         code: institutionMeta.code ?? null,
         code_unique: institutionMeta.code_unique ?? null,
         acronym: institutionMeta.acronym ?? null,
-        logo_url: institutionMeta.logo_url ?? null,
-        institution_logo_url: institutionMeta.logo_url ?? null,
+        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
       },
       class: {
         id: classRow.id,
@@ -1993,8 +2012,8 @@ export async function GET(req: NextRequest) {
         code: institutionMeta.code ?? null,
         code_unique: institutionMeta.code_unique ?? null,
         acronym: institutionMeta.acronym ?? null,
-        logo_url: institutionMeta.logo_url ?? null,
-        institution_logo_url: institutionMeta.logo_url ?? null,
+        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
       },
       class: {
         id: classRow.id,
@@ -2844,8 +2863,8 @@ export async function GET(req: NextRequest) {
         code: institutionMeta.code ?? null,
         code_unique: institutionMeta.code_unique ?? null,
         acronym: institutionMeta.acronym ?? null,
-        logo_url: institutionMeta.logo_url ?? null,
-        institution_logo_url: institutionMeta.logo_url ?? null,
+        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
       },
       class: {
         id: classRow.id,
@@ -3681,14 +3700,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     mode,
+    calculation_profile: isCSCA ? "csca" : "standard",
+    is_csca: isCSCA,
     institution: {
       id: institutionMeta.id,
       name: institutionMeta.name ?? null,
       code: institutionMeta.code ?? null,
       code_unique: institutionMeta.code_unique ?? null,
       acronym: institutionMeta.acronym ?? null,
-      logo_url: institutionMeta.logo_url ?? null,
-      institution_logo_url: institutionMeta.logo_url ?? null,
+      logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+      institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
     },
     class: {
       id: classRow.id,
