@@ -1055,7 +1055,7 @@ export default async function FinanceReceiptPrintPage({
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 4mm;
+          margin: 8mm;
         }
 
         @media print {
@@ -1096,8 +1096,7 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-print-root {
             display: block !important;
-            position: fixed !important;
-            inset: 0 !important;
+            position: static !important;
             width: 100% !important;
             max-width: none !important;
             margin: 0 !important;
@@ -1107,14 +1106,13 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-card {
-            display: flex !important;
-            flex-direction: column !important;
-            width: 202mm !important;
-            height: 289mm !important;
-            min-height: 289mm !important;
-            max-height: 289mm !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 194mm !important;
+            min-height: 281mm !important;
+            height: auto !important;
             margin: 0 auto !important;
-            overflow: hidden !important;
+            overflow: visible !important;
             border-radius: 0 !important;
             box-shadow: none !important;
             border: 1px solid #cbd5e1 !important;
@@ -1126,11 +1124,11 @@ export default async function FinanceReceiptPrintPage({
             position: absolute !important;
             left: 50% !important;
             top: 52% !important;
-            width: 122mm !important;
-            height: 122mm !important;
+            width: 105mm !important;
+            height: 105mm !important;
             transform: translate(-50%, -50%) !important;
             object-fit: contain !important;
-            opacity: 0.055 !important;
+            opacity: 0.045 !important;
             z-index: 0 !important;
           }
 
@@ -1143,32 +1141,26 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-header {
-            padding: 3mm 5mm 2.5mm !important;
-            flex: 0 0 auto !important;
+            padding: 3mm 4mm 2.5mm !important;
           }
 
           .receipt-title-strip {
-            margin: 2.5mm 5mm 0 !important;
-            padding: 2.3mm 3.5mm !important;
+            margin: 2.5mm 4mm 0 !important;
+            padding: 2.1mm 3mm !important;
             border-radius: 10px !important;
           }
 
           .receipt-main-grid {
             display: grid !important;
-            flex: 1 1 auto !important;
-            grid-template-columns: 1.14fr 0.86fr !important;
+            grid-template-columns: minmax(0, 1fr) 58mm !important;
             gap: 3mm !important;
-            padding: 3mm 5mm 2.5mm !important;
-            min-height: 0 !important;
+            padding: 3mm 4mm 2.5mm !important;
+            align-items: start !important;
           }
 
-          .receipt-col {
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 3.5mm !important;
-          }
-          .receipt-col > * + * {
-            margin-top: 0 !important;
+          .receipt-payment-section,
+          .receipt-proof-section {
+            grid-column: 1 / -1 !important;
           }
 
           .receipt-header .gap-4 {
@@ -1180,137 +1172,192 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-logo {
-            width: 14mm !important;
-            height: 14mm !important;
+            width: 13mm !important;
+            height: 13mm !important;
             border-radius: 10px !important;
-            padding: 1.2mm !important;
-          }
-
-          .receipt-box {
-            break-inside: avoid-page;
-            page-break-inside: avoid;
+            padding: 1mm !important;
           }
 
           .receipt-box,
-          .receipt-summary-card,
-          .receipt-proof-note {
+          .receipt-summary-shell,
+          .receipt-proof-note,
+          .receipt-side-card,
+          .receipt-summary-card {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
             border-radius: 12px !important;
           }
 
           .receipt-box {
-            padding: 3.5mm !important;
+            padding: 3mm !important;
+          }
+
+          .receipt-payment-section {
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+
+          .receipt-payment-section > .border-b {
+            padding: 2.6mm 3mm !important;
           }
 
           .receipt-table-wrap {
-            overflow: hidden !important;
+            width: 100% !important;
+            overflow: visible !important;
+          }
+
+          .receipt-lines-table,
+          .receipt-components-table {
+            width: 100% !important;
+            min-width: 0 !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
           }
 
           .receipt-lines-table th,
           .receipt-lines-table td {
-            padding: 1.9mm 2.2mm !important;
-            font-size: 10.5px !important;
-            line-height: 1.22 !important;
+            padding: 1.45mm 1.55mm !important;
+            font-size: 9.2px !important;
+            line-height: 1.16 !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
+          }
+
+          .receipt-lines-table th:nth-child(1),
+          .receipt-lines-table td:nth-child(1) {
+            width: 27% !important;
+          }
+
+          .receipt-lines-table th:nth-child(2),
+          .receipt-lines-table td:nth-child(2) {
+            width: 12% !important;
+          }
+
+          .receipt-lines-table th:nth-child(3),
+          .receipt-lines-table td:nth-child(3),
+          .receipt-lines-table th:nth-child(4),
+          .receipt-lines-table td:nth-child(4),
+          .receipt-lines-table th:nth-child(5),
+          .receipt-lines-table td:nth-child(5),
+          .receipt-lines-table th:nth-child(6),
+          .receipt-lines-table td:nth-child(6) {
+            width: 15.25% !important;
+          }
+
+          .receipt-components-panel {
+            box-shadow: none !important;
           }
 
           .receipt-components-table th,
           .receipt-components-table td {
-            padding: 1.45mm 2mm !important;
-            font-size: 10px !important;
-            line-height: 1.15 !important;
+            padding: 1.2mm 1.6mm !important;
+            font-size: 8.8px !important;
+            line-height: 1.12 !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
           }
 
           .receipt-lines-table,
           .receipt-lines-table tr,
           .receipt-lines-table td,
-          .receipt-lines-table th {
+          .receipt-lines-table th,
+          .receipt-components-table,
+          .receipt-components-table tr,
+          .receipt-components-table td,
+          .receipt-components-table th {
             page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
 
           .receipt-school-title {
-            margin-top: 1.5mm !important;
-            font-size: 20px !important;
+            margin-top: 1.2mm !important;
+            font-size: 18px !important;
             line-height: 1.05 !important;
           }
 
           .receipt-top-meta {
-            margin-top: 1.5mm !important;
-            font-size: 11px !important;
-            line-height: 1.25 !important;
+            margin-top: 1.2mm !important;
+            font-size: 10px !important;
+            line-height: 1.22 !important;
           }
 
           .receipt-side-card {
             min-width: 0 !important;
-            padding: 3.5mm !important;
-            border-radius: 12px !important;
+            padding: 3mm !important;
           }
 
           .receipt-side-lines {
-            margin-top: 2.2mm !important;
-            gap: 1.2mm !important;
-            font-size: 11px !important;
+            margin-top: 2mm !important;
+            gap: 1.1mm !important;
+            font-size: 10px !important;
+            line-height: 1.2 !important;
           }
 
           .receipt-section-title {
-            font-size: 11px !important;
+            font-size: 10px !important;
             letter-spacing: 0.12em !important;
           }
 
           .receipt-student-grid {
-            margin-top: 2.5mm !important;
-            gap: 2mm 3mm !important;
-            font-size: 11px !important;
+            margin-top: 2.2mm !important;
+            gap: 1.6mm 2.4mm !important;
+            font-size: 10px !important;
+            line-height: 1.2 !important;
           }
 
           .receipt-note-box,
           .receipt-cancel-box {
-            margin-top: 2.4mm !important;
-            padding: 2.4mm 2.8mm !important;
-            font-size: 11px !important;
-            line-height: 1.3 !important;
+            margin-top: 2mm !important;
+            padding: 2mm 2.4mm !important;
+            font-size: 10px !important;
+            line-height: 1.25 !important;
           }
 
           .receipt-summary-shell {
-            padding: 3.5mm !important;
-          }
-
-          .receipt-summary-card {
-            margin-top: 2.5mm !important;
             padding: 3mm !important;
           }
 
+          .receipt-summary-card {
+            margin-top: 2mm !important;
+            padding: 2.5mm !important;
+          }
+
           .receipt-amount-label {
-            font-size: 11px !important;
+            font-size: 10px !important;
           }
 
           .receipt-amount-value {
-            margin-top: 1mm !important;
-            font-size: 22px !important;
+            margin-top: 0.8mm !important;
+            font-size: 19px !important;
             line-height: 1.05 !important;
           }
 
           .receipt-summary-grid {
-            margin-top: 2.4mm !important;
-            gap: 1.6mm !important;
-            font-size: 11px !important;
+            margin-top: 2mm !important;
+            gap: 1.15mm !important;
+            font-size: 9.7px !important;
+            line-height: 1.18 !important;
           }
 
           .receipt-status-wrap {
-            margin-top: 2.4mm !important;
+            margin-top: 2mm !important;
           }
 
-
           .receipt-proof-note {
-            padding: 3mm !important;
-            font-size: 10.5px !important;
-            line-height: 1.35 !important;
+            padding: 2.5mm 3mm !important;
+            font-size: 9.5px !important;
+            line-height: 1.25 !important;
           }
 
           .receipt-footer {
-            margin-top: auto !important;
-            padding: 2.2mm 5mm !important;
-            font-size: 9.8px !important;
+            display: block !important;
+            margin-top: 2mm !important;
+            padding: 2mm 4mm !important;
+            font-size: 8.8px !important;
             line-height: 1.2 !important;
+            background: #ffffff !important;
           }
         }
       `}</style>
@@ -1545,8 +1592,7 @@ export default async function FinanceReceiptPrintPage({
         </div>
 
         <div className="receipt-main-grid relative z-10 grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="receipt-col space-y-6">
-            <section className="receipt-box rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+          <section className="receipt-box receipt-student-section rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
               <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                 <GraduationCap className="h-4 w-4 text-emerald-600" />
                 Élève et payeur
@@ -1607,7 +1653,80 @@ export default async function FinanceReceiptPrintPage({
               ) : null}
             </section>
 
-            <section className="receipt-box rounded-3xl border border-slate-200 bg-white">
+          <section className="receipt-summary-shell receipt-summary-section rounded-3xl border border-slate-200 bg-emerald-50/60 p-5">
+              <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
+                Synthèse
+              </div>
+
+              <div className="receipt-summary-card mt-4 rounded-3xl bg-white px-5 py-5 shadow-sm">
+                <div className="receipt-amount-label text-sm text-slate-600">
+                  Montant du reçu
+                </div>
+                <div className="receipt-amount-value mt-2 text-3xl font-black text-slate-900">
+                  {formatMoney(typedReceipt.total_amount)}
+                </div>
+
+                <div className="receipt-summary-grid mt-4 grid gap-3 text-sm text-slate-700">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Total attendu</span>
+                    <span className="font-bold text-slate-900">
+                      {formatMoney(totalExpected)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Déjà payé</span>
+                    <span className="font-bold text-slate-900">
+                      {formatMoney(totalPaidBeforeReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Montant du reçu</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatMoney(totalAllocated)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Total versé</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatMoney(totalPaidAfterReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Reste à payer</span>
+                    <span className="font-bold text-rose-700">
+                      {formatMoney(totalRemainingAfterReceipt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Date d’émission</span>
+                    <span className="font-bold text-slate-900">
+                      {formatDateTime(typedReceipt.created_at)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Date de paiement</span>
+                    <span className="font-bold text-slate-900">
+                      {formatDateTime(typedReceipt.payment_date)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="receipt-status-wrap mt-5">
+                  {typedReceipt.receipt_status === "posted" ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
+                      <BadgeCheck className="h-3.5 w-3.5" />
+                      Reçu validé
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
+                      Reçu annulé
+                    </span>
+                  )}
+                </div>
+              </div>
+            </section>
+
+          <section className="receipt-box receipt-payment-section rounded-3xl border border-slate-200 bg-white lg:col-span-2">
               <div className="border-b border-slate-200 px-5 py-4">
                 <div className="receipt-section-title flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
                   <Wallet className="h-4 w-4 text-emerald-600" />
@@ -1769,87 +1888,10 @@ export default async function FinanceReceiptPrintPage({
                 </div>
               )}
             </section>
-          </div>
-
-          <div className="receipt-col space-y-6">
-            <section className="receipt-summary-shell rounded-3xl border border-slate-200 bg-emerald-50/60 p-5">
-              <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
-                Synthèse
-              </div>
-
-              <div className="receipt-summary-card mt-4 rounded-3xl bg-white px-5 py-5 shadow-sm">
-                <div className="receipt-amount-label text-sm text-slate-600">
-                  Montant du reçu
-                </div>
-                <div className="receipt-amount-value mt-2 text-3xl font-black text-slate-900">
-                  {formatMoney(typedReceipt.total_amount)}
-                </div>
-
-                <div className="receipt-summary-grid mt-4 grid gap-3 text-sm text-slate-700">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Total attendu</span>
-                    <span className="font-bold text-slate-900">
-                      {formatMoney(totalExpected)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Déjà payé</span>
-                    <span className="font-bold text-slate-900">
-                      {formatMoney(totalPaidBeforeReceipt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Montant du reçu</span>
-                    <span className="font-bold text-emerald-700">
-                      {formatMoney(totalAllocated)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Total versé</span>
-                    <span className="font-bold text-emerald-700">
-                      {formatMoney(totalPaidAfterReceipt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Reste à payer</span>
-                    <span className="font-bold text-rose-700">
-                      {formatMoney(totalRemainingAfterReceipt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Date d’émission</span>
-                    <span className="font-bold text-slate-900">
-                      {formatDateTime(typedReceipt.created_at)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Date de paiement</span>
-                    <span className="font-bold text-slate-900">
-                      {formatDateTime(typedReceipt.payment_date)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="receipt-status-wrap mt-5">
-                  {typedReceipt.receipt_status === "posted" ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
-                      <BadgeCheck className="h-3.5 w-3.5" />
-                      Reçu validé
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                      Reçu annulé
-                    </span>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="receipt-proof-note rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
+          <section className="receipt-proof-note receipt-proof-section rounded-3xl lg:col-span-2 border border-dashed border-slate-300 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
               Ce reçu atteste du paiement enregistré dans le système. Il doit
               être conservé par le payeur comme justificatif.
             </section>
-          </div>
         </div>
 
         <div className="receipt-footer relative z-10 border-t border-slate-200 px-6 py-4 text-xs text-slate-500">
