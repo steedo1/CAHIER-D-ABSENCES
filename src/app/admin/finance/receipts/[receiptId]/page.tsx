@@ -59,6 +59,7 @@ type ReceiptAllocationComponentRow = {
   amount: number | string;
   order_index: number | string | null;
   student_charge_id: string;
+  display_status?: "paid" | "not_billed";
 };
 
 type ReceiptDisplayComponentRow = ReceiptAllocationComponentRow & {
