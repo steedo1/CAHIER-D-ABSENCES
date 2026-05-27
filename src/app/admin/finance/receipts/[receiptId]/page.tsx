@@ -805,6 +805,8 @@ export default async function FinanceReceiptPrintPage({
     rawLines.map((line) => line.alloc.student_charge_id),
   );
 
+  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
+
   let internatReferenceCharges: ChargeRow[] = [];
   if (hasInternatLines) {
     const academicYear = String(typedReceipt.academic_year || "").trim();
@@ -1030,7 +1032,6 @@ export default async function FinanceReceiptPrintPage({
     0,
   );
 
-  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
   const allLinesAreInternat =
     rawLines.length > 0 &&
     rawLines.every((line) => isInternatCharge(line.charge?.label));
