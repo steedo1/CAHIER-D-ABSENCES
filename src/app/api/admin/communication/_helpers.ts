@@ -281,7 +281,7 @@ async function fetchPhonesByProfile(
   return out;
 }
 
-async function fetchPushAvailability(
+async function fetchProfilePushAvailability(
   srv: SupabaseClient,
   profileIds: string[]
 ) {
@@ -289,14 +289,63 @@ async function fetchPushAvailability(
   const out = new Set<string>();
   if (!ids.length) return out;
 
-  const { data } = await srv
+  const { data, error } = await srv
     .from("push_subscriptions")
     .select("user_id")
     .in("user_id", ids);
 
+  if (error) {
+    console.warn("[communication] push_subscriptions lookup failed", {
+      error: error.message,
+    });
+    return out;
+  }
+
   for (const row of data || []) {
     const userId = s((row as any).user_id);
     if (userId) out.add(userId);
+  }
+
+  return out;
+}
+
+/**
+ * Certains accès parents fonctionnent avec un appareil lié à l'élève
+ * plutôt qu'avec un compte parent Supabase classique. Dans ce cas,
+ * l'abonnement push est stocké dans push_subscriptions_student.
+ * Pour le module Communication, un parent est donc "push prêt" si :
+ * - son profil a un abonnement dans push_subscriptions ;
+ * - OU l'un des élèves liés a un abonnement dans push_subscriptions_student.
+ */
+async function fetchStudentPushAvailability(
+  srv: SupabaseClient,
+  studentIds: string[]
+) {
+  const ids = uniq(studentIds);
+  const out = new Set<string>();
+  if (!ids.length) return out;
+
+  try {
+    const { data, error } = await srv
+      .from("push_subscriptions_student")
+      .select("student_id")
+      .in("student_id", ids);
+
+    if (error) {
+      console.warn("[communication] push_subscriptions_student lookup failed", {
+        error: error.message,
+      });
+      return out;
+    }
+
+    for (const row of data || []) {
+      const studentId = s((row as any).student_id);
+      if (studentId) out.add(studentId);
+    }
+  } catch (e: any) {
+    console.warn("[communication] push_subscriptions_student lookup crashed", {
+      error: String(e?.message || e),
+    });
   }
 
   return out;
@@ -308,17 +357,27 @@ export async function enrichRecipientCapabilities(
   recipients: CommunicationRecipient[]
 ) {
   const profileIds = recipients.map((r) => r.profile_id);
-  const [phones, pushProfiles] = await Promise.all([
+  const studentIds = recipients.flatMap((r) => r.related_student_ids || []);
+  const [phones, pushProfiles, pushStudents] = await Promise.all([
     fetchPhonesByProfile(srv, profileIds, institutionId),
-    fetchPushAvailability(srv, profileIds),
+    fetchProfilePushAvailability(srv, profileIds),
+    fetchStudentPushAvailability(srv, studentIds),
   ]);
 
-  return recipients.map((r) => ({
-    ...r,
-    phone_e164: phones.get(r.profile_id) || r.phone_e164 || null,
-    has_push: pushProfiles.has(r.profile_id),
-    has_sms_phone: Boolean(phones.get(r.profile_id) || r.phone_e164),
-  }));
+  return recipients.map((r) => {
+    const hasProfilePush = pushProfiles.has(r.profile_id);
+    const hasStudentPush = (r.related_student_ids || []).some((studentId) =>
+      pushStudents.has(studentId)
+    );
+
+    return {
+      ...r,
+      phone_e164: phones.get(r.profile_id) || r.phone_e164 || null,
+      has_push: hasProfilePush || hasStudentPush,
+      has_sms_phone: Boolean(phones.get(r.profile_id) || r.phone_e164),
+      push_source: hasProfilePush ? "profile" : hasStudentPush ? "student_device" : "none",
+    };
+  });
 }
 
 export async function resolveCommunicationRecipients(

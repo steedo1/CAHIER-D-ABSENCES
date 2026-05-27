@@ -1,5 +1,6 @@
 "use client";
 
+import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import {
   useEffect,
   useMemo,
@@ -551,6 +552,16 @@ export default function AdminCommunicationPage() {
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <h3 className="text-base font-black text-slate-950">Appareil de l’utilisateur connecté</h3>
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              À faire une fois sur chaque appareil admin/enseignant qui doit recevoir les push.
+            </p>
+            <div className="mt-4">
+              <InstallAndPushCTA />
+            </div>
+          </Card>
+
           <Card className="xl:sticky xl:top-24">
             <h3 className="text-base font-black text-slate-950">Aperçu avant envoi</h3>
             {!preview ? (

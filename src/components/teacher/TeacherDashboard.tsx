@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import {
   registerServiceWorker,
   offlineGetJson,
@@ -1500,6 +1501,13 @@ export default function TeacherDashboard() {
           </GhostButton>
         </div>
       </header>
+
+      <section className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4 shadow-sm">
+        <div className="mb-2 text-sm font-semibold text-slate-800">
+          Notifications de l’établissement
+        </div>
+        <InstallAndPushCTA />
+      </section>
 
       {/* Sélection + paramètres horaire */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">

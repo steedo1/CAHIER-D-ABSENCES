@@ -113,6 +113,8 @@ type QueueRow = {
 };
 type SubRow = {
   user_id: string;
+  student_id?: string | null;
+  source?: "profile" | "student";
   platform: string | null;
   device_id: string | null;
   subscription_json: any;
@@ -137,6 +139,55 @@ function hasPushChannel(row: QueueRow) {
     });
     return false;
   }
+}
+
+
+function subscriptionKey(row: SubRow) {
+  const endpoint =
+    (row.subscription_json as any)?.endpoint ||
+    row.device_id ||
+    row.fcm_token ||
+    "";
+  return `${row.source || "profile"}|${row.platform || ""}|${String(endpoint)}`;
+}
+
+function dedupeSubscriptions(rows: SubRow[]) {
+  const seen = new Set<string>();
+  const out: SubRow[] = [];
+
+  for (const row of rows) {
+    const key = subscriptionKey(row);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+
+  return out;
+}
+
+async function deleteSubscription(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  sub: SubRow
+) {
+  if (sub.source === "student" && sub.student_id) {
+    let q = srv
+      .from("push_subscriptions_student")
+      .delete()
+      .eq("student_id", sub.student_id)
+      .eq("platform", sub.platform || "");
+
+    if (sub.device_id) q = q.eq("device_id", sub.device_id);
+    return q;
+  }
+
+  let q = srv
+    .from("push_subscriptions")
+    .delete()
+    .eq("user_id", sub.user_id)
+    .eq("platform", sub.platform || "");
+
+  if (sub.device_id) q = q.eq("device_id", sub.device_id);
+  return q;
 }
 
 /* ──────────────── Main ──────────────── */
@@ -243,6 +294,10 @@ async function run(req: Request) {
   );
   const studentIds = Array.from(
     new Set(noParent.map((r) => r.student_id).filter(Boolean)),
+  ) as string[];
+
+  const allRowStudentIds = Array.from(
+    new Set(rows.map((r) => r.student_id).filter(Boolean)),
   ) as string[];
 
   const deviceToParent = new Map<string, string>(); // device_id -> parent_profile_id
@@ -394,6 +449,20 @@ async function run(req: Request) {
       error: subsErr.message,
     });
 
+  const { data: studentSubs, error: studentSubsErr } = allRowStudentIds.length
+    ? await srv
+        .from("push_subscriptions_student")
+        .select("student_id,platform,device_id,subscription_json,fcm_token")
+        .in("student_id", allRowStudentIds)
+    : { data: [], error: null as any };
+
+  if (studentSubsErr) {
+    console.warn("[push/dispatch] student_subs_select_error", {
+      id,
+      error: studentSubsErr.message,
+    });
+  }
+
   const subsByUser = new Map<string, SubRow[]>();
   for (const s of (subs || []) as SubRow[]) {
     let subJson = s.subscription_json as any;
@@ -404,8 +473,33 @@ async function run(req: Request) {
     }
     const k = String(s.user_id);
     const arr = subsByUser.get(k) || [];
-    arr.push({ ...s, subscription_json: subJson });
+    arr.push({ ...s, source: "profile", subscription_json: subJson });
     subsByUser.set(k, arr);
+  }
+
+  const subsByStudent = new Map<string, SubRow[]>();
+  for (const s of (studentSubs || []) as any[]) {
+    let subJson = s.subscription_json as any;
+    if (subJson && typeof subJson === "string") {
+      try {
+        subJson = JSON.parse(subJson);
+      } catch {}
+    }
+
+    const studentId = String(s.student_id || "");
+    if (!studentId) continue;
+
+    const arr = subsByStudent.get(studentId) || [];
+    arr.push({
+      user_id: `student:${studentId}`,
+      student_id: studentId,
+      source: "student",
+      platform: s.platform ?? null,
+      device_id: s.device_id ?? null,
+      subscription_json: subJson,
+      fcm_token: s.fcm_token ?? null,
+    });
+    subsByStudent.set(studentId, arr);
   }
 
   // 4) Envois
@@ -440,9 +534,13 @@ async function run(req: Request) {
         : "/parents";
 
     const targetUsers = targetUserIdsByRow.get(n.id) || [];
-    const list: SubRow[] = targetUsers.flatMap(
+    const profileSubs: SubRow[] = targetUsers.flatMap(
       (uid) => subsByUser.get(uid) || [],
     );
+    const studentDeviceSubs: SubRow[] = n.student_id
+      ? subsByStudent.get(String(n.student_id)) || []
+      : [];
+    const list: SubRow[] = dedupeSubscriptions([...profileSubs, ...studentDeviceSubs]);
 
     console.info("[push/dispatch] item_begin", {
       id,
@@ -452,6 +550,7 @@ async function run(req: Request) {
       parent_id: shortId(n.parent_id),
       student: shortId(n.student_id),
       profile: shortId(n.profile_id),
+      student_device_subs: studentDeviceSubs.length,
     });
 
     const payloadStr = JSON.stringify({ title, body, url, data: core });
@@ -510,13 +609,7 @@ async function run(req: Request) {
             )
           ) {
             dropped++;
-            let q = srv
-              .from("push_subscriptions")
-              .delete()
-              .eq("user_id", s.user_id)
-              .eq("platform", s.platform || "");
-            if (s.device_id) q = q.eq("device_id", s.device_id);
-            const { error: delErr } = await q;
+            const { error: delErr } = await deleteSubscription(srv, s);
             if (delErr) {
               console.warn("[push/dispatch] sub_delete_fail", {
                 id,
@@ -559,12 +652,7 @@ async function run(req: Request) {
           });
           if (/(NotRegistered|InvalidRegistration|410|404)/i.test(msg)) {
             dropped++;
-            let q = srv
-              .from("push_subscriptions")
-              .delete()
-              .eq("user_id", s.user_id);
-            if (s.device_id) q = q.eq("device_id", s.device_id);
-            const { error: delErr } = await q;
+            const { error: delErr } = await deleteSubscription(srv, s);
             if (delErr) {
               console.warn("[push/dispatch] sub_delete_fail", {
                 id,
