@@ -522,10 +522,10 @@ export default function FinanceReportsExports({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-800 ring-1 ring-emerald-200">
             <Download className="h-3.5 w-3.5" />
-            Export / impression de la vue actuelle
+            Export de la section
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-emerald-900/80">
-            Vue sélectionnée : <strong>{viewLabel}</strong>. Les fichiers générés reprennent uniquement cette vue et les filtres affichés à l’écran.
+            <strong>{viewLabel}</strong> uniquement, avec les filtres appliqués.
           </p>
         </div>
 
@@ -536,7 +536,7 @@ export default function FinanceReportsExports({
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800 shadow-sm ring-1 ring-emerald-200 hover:bg-emerald-50"
           >
             <FileSpreadsheet className="h-4 w-4" />
-            Excel cette vue
+            Exporter Excel
           </button>
           <button
             type="button"
@@ -544,7 +544,7 @@ export default function FinanceReportsExports({
             className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
           >
             <Printer className="h-4 w-4" />
-            Imprimer cette vue
+            Imprimer
           </button>
         </div>
       </div>

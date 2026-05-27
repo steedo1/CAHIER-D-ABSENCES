@@ -677,6 +677,9 @@ export default async function FinanceReceiptsPage({
 
                       <Link
                         href={`/admin/finance/receipts/${row.id}?autoprint=1`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        prefetch={false}
                         className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
                       >
                         <Printer className="h-4 w-4" />

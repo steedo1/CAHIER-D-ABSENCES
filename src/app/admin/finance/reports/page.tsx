@@ -133,6 +133,11 @@ type ReceiptAllocationComponentRow = {
 
 type PaymentRecord = {
   receiptId: string;
+  receiptNo: string;
+  paymentDate: string;
+  createdAt: string;
+  payerName: string | null;
+  referenceNo: string | null;
   allocationId: string | null;
   studentId: string;
   studentName: string;
@@ -143,6 +148,7 @@ type PaymentRecord = {
   cycle: string;
   affectationLabel: string;
   boardingLabel: string;
+  categoryId: string | null;
   categoryName: string;
   subRubric: string;
   amount: number;
@@ -194,6 +200,7 @@ type ReportView =
   | "baremes";
 
 type DateFilterField = "payment_date" | "created_at";
+type ReportProfileFilter = "all" | "affecte" | "non_affecte" | "interne" | "non_interne";
 
 async function getCurrentInstitutionIdOrThrow() {
   return getFinanceInstitutionIdForCurrentUser();
@@ -266,6 +273,32 @@ function boardingLabelForStudent(student: { is_boarder?: boolean | null } | null
   if (student?.is_boarder === true) return "Interne";
   if (student?.is_boarder === false) return "Non interne";
   return "Profil à compléter";
+}
+
+function inferCategoryNameFromLabel(
+  label: string | null | undefined,
+  categoryNameByNormalized: Map<string, string>,
+) {
+  const raw = String(label || "").trim();
+  if (!raw) return "";
+
+  const prefix = raw.split(/\s[-–—]\s/)[0]?.trim();
+  if (prefix) {
+    const direct = categoryNameByNormalized.get(normalizeTextForReport(prefix));
+    if (direct) return direct;
+  }
+
+  const normalized = normalizeTextForReport(raw);
+  for (const [key, name] of categoryNameByNormalized.entries()) {
+    if (key && normalized.includes(key)) return name;
+  }
+
+  if (normalized.includes("internat") || normalized.includes("pension") || normalized.includes("trousseau")) return "Internat";
+  if (normalized.includes("scolar") || normalized.includes("ecolage") || normalized.includes("inscription")) return "Scolarité";
+  if (normalized.includes("kit") || normalized.includes("livre") || normalized.includes("cahier")) return "Kit livre";
+  if (normalized.includes("renforcement")) return "Cours de renforcement";
+
+  return "";
 }
 
 function cycleLabelFromLevel(level: string | null | undefined) {
@@ -357,12 +390,12 @@ function currentMonthRange() {
 }
 
 const reportViews: Array<{ key: ReportView; label: string; hint: string }> = [
-  { key: "overview", label: "Vue d’ensemble", hint: "Synthèse direction" },
-  { key: "encaissements", label: "Encaissements", hint: "Reçus et ventilations" },
-  { key: "categories", label: "Catégories", hint: "Scolarité, internat, kit…" },
-  { key: "dettes", label: "Dettes / impayés", hint: "Élèves débiteurs" },
-  { key: "depenses", label: "Dépenses", hint: "Sorties de caisse" },
-  { key: "baremes", label: "Barèmes", hint: "Frais attendus" },
+  { key: "overview", label: "Synthèse", hint: "Vue rapide" },
+  { key: "encaissements", label: "Encaissements", hint: "Reçus" },
+  { key: "categories", label: "Catégories", hint: "Ventilation" },
+  { key: "dettes", label: "Dettes", hint: "Impayés" },
+  { key: "depenses", label: "Dépenses", hint: "Sorties" },
+  { key: "baremes", label: "Barèmes", hint: "Frais" },
 ];
 
 function normalizeReportView(value: string | null | undefined): ReportView {
@@ -372,6 +405,33 @@ function normalizeReportView(value: string | null | undefined): ReportView {
 
 function normalizeDateFilterField(value: string | null | undefined): DateFilterField {
   return value === "created_at" ? "created_at" : "payment_date";
+}
+
+function normalizeProfileFilter(value: string | null | undefined): ReportProfileFilter {
+  if (value === "affecte" || value === "non_affecte" || value === "interne" || value === "non_interne") {
+    return value;
+  }
+  return "all";
+}
+
+function profileFilterLabel(value: ReportProfileFilter) {
+  if (value === "affecte") return "Affectés / réaffectés";
+  if (value === "non_affecte") return "Non affectés";
+  if (value === "interne") return "Internes";
+  if (value === "non_interne") return "Non internes";
+  return "Tous les profils";
+}
+
+function studentMatchesProfileFilter(
+  student: { is_affecte?: boolean | null; is_boarder?: boolean | null; regime?: string | null } | null | undefined,
+  profile: ReportProfileFilter,
+) {
+  if (profile === "all") return true;
+  if (profile === "affecte") return affectationLabelForStudent(student) === "Affecté / réaffecté";
+  if (profile === "non_affecte") return affectationLabelForStudent(student) === "Non affecté";
+  if (profile === "interne") return boardingLabelForStudent(student) === "Interne";
+  if (profile === "non_interne") return boardingLabelForStudent(student) === "Non interne";
+  return true;
 }
 
 function dateFieldLabel(value: DateFilterField) {
@@ -384,6 +444,9 @@ function buildReportsHref(params: {
   endDate?: string;
   view?: ReportView;
   dateField?: DateFilterField;
+  classId?: string;
+  categoryId?: string;
+  profile?: ReportProfileFilter;
 }) {
   const sp = new URLSearchParams();
   if (params.academicYear) sp.set("academic_year", params.academicYear);
@@ -391,6 +454,9 @@ function buildReportsHref(params: {
   if (params.endDate) sp.set("end_date", params.endDate);
   if (params.view && params.view !== "overview") sp.set("view", params.view);
   if (params.dateField && params.dateField !== "payment_date") sp.set("date_field", params.dateField);
+  if (params.classId) sp.set("class_id", params.classId);
+  if (params.categoryId) sp.set("category_id", params.categoryId);
+  if (params.profile && params.profile !== "all") sp.set("profile", params.profile);
   const query = sp.toString();
   return query ? `/admin/finance/reports?${query}` : "/admin/finance/reports";
 }
@@ -973,13 +1039,18 @@ function DebtDetailTable({ rows }: { rows: DebtDetailSummary[] }) {
   );
 }
 
-function DateRangeSelector({
+function ReportFilters({
   academicYear,
   startDate,
   endDate,
   periodLabel,
   selectedView,
   dateField,
+  selectedClassId,
+  selectedCategoryId,
+  selectedProfile,
+  classRows,
+  feeCategoryRows,
 }: {
   academicYear: string;
   startDate: string;
@@ -987,35 +1058,39 @@ function DateRangeSelector({
   periodLabel: string;
   selectedView: ReportView;
   dateField: DateFilterField;
+  selectedClassId: string;
+  selectedCategoryId: string;
+  selectedProfile: ReportProfileFilter;
+  classRows: ClassRow[];
+  feeCategoryRows: FeeCategoryRow[];
 }) {
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-      <form
-        method="GET"
-        action="/admin/finance/reports"
-        className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
-      >
-        <div className="flex items-start gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
-            <CalendarClock className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">
-              Période du rapport
+    <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+      <form method="GET" action="/admin/finance/reports" className="space-y-4">
+        <input type="hidden" name="academic_year" value={academicYear} />
+        <input type="hidden" name="view" value={selectedView} />
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+              <CalendarClock className="h-5 w-5" />
             </div>
-            <div className="mt-1 text-sm leading-6 text-slate-600">
-              Par défaut, la page ouvre le mois courant. Le comptable peut changer la période et choisir si elle s’applique à la date de paiement ou à la date d’enregistrement : <strong>{periodLabel}</strong>.
+            <div>
+              <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">Filtres du rapport</div>
+              <div className="mt-0.5 text-xs font-semibold text-slate-500">{periodLabel} • {dateFieldLabel(dateField)} • {profileFilterLabel(selectedProfile)}</div>
             </div>
           </div>
+          <a
+            href={buildReportsHref({ academicYear, view: selectedView, dateField, classId: selectedClassId, categoryId: selectedCategoryId, profile: selectedProfile })}
+            className="inline-flex items-center justify-center rounded-2xl bg-slate-100 px-4 py-2.5 text-sm font-black text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
+          >
+            Mois courant
+          </a>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto] sm:items-end">
-          {academicYear ? (
-            <input type="hidden" name="academic_year" value={academicYear} />
-          ) : null}
-          <input type="hidden" name="view" value={selectedView} />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-            Date début
+            Début
             <input
               type="date"
               name="start_date"
@@ -1024,7 +1099,7 @@ function DateRangeSelector({
             />
           </label>
           <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-            Date fin
+            Fin
             <input
               type="date"
               name="end_date"
@@ -1033,25 +1108,62 @@ function DateRangeSelector({
             />
           </label>
           <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-            Type de date
+            Date utilisée
             <select
               name="date_field"
               defaultValue={dateField}
               className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
             >
-              <option value="payment_date">Date de paiement</option>
-              <option value="created_at">Date d’enregistrement</option>
+              <option value="payment_date">Paiement</option>
+              <option value="created_at">Enregistrement</option>
             </select>
           </label>
-          <button className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800">
-            Filtrer
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Classe
+            <select
+              name="class_id"
+              defaultValue={selectedClassId}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            >
+              <option value="">Toutes</option>
+              {classRows.map((row) => (
+                <option key={row.id} value={row.id}>{row.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Catégorie
+            <select
+              name="category_id"
+              defaultValue={selectedCategoryId}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            >
+              <option value="">Toutes</option>
+              {feeCategoryRows.map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            Profil
+            <select
+              name="profile"
+              defaultValue={selectedProfile}
+              className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+            >
+              <option value="all">Tous</option>
+              <option value="affecte">Affectés</option>
+              <option value="non_affecte">Non affectés</option>
+              <option value="interne">Internes</option>
+              <option value="non_interne">Non internes</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="flex justify-end">
+          <button className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800">
+            Appliquer les filtres
           </button>
-          <a
-            href={buildReportsHref({ academicYear, view: selectedView, dateField })}
-            className="inline-flex items-center justify-center rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
-          >
-            Mois courant
-          </a>
         </div>
       </form>
     </section>
@@ -1064,30 +1176,29 @@ function ReportViewNavigation({
   endDate,
   selectedView,
   dateField,
+  selectedClassId,
+  selectedCategoryId,
+  selectedProfile,
 }: {
   academicYear: string;
   startDate: string;
   endDate: string;
   selectedView: ReportView;
   dateField: DateFilterField;
+  selectedClassId: string;
+  selectedCategoryId: string;
+  selectedProfile: ReportProfileFilter;
 }) {
   return (
-    <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm print:hidden">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">
-            Ce que le comptable veut voir
-          </div>
-          <div className="mt-1 text-sm text-slate-600">
-            Chaque onglet est une vue indépendante. L’impression et l’export concernent uniquement la vue sélectionnée.
-          </div>
-        </div>
-        <div className="rounded-2xl bg-slate-100 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-slate-600 ring-1 ring-slate-200">
-          Filtre : {dateFieldLabel(dateField)}
+    <section className="rounded-[28px] border border-slate-200 bg-white p-3 shadow-sm print:hidden">
+      <div className="mb-2 flex items-center justify-between gap-3 px-1">
+        <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-800">Sections du rapport</div>
+        <div className="hidden rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-slate-600 ring-1 ring-slate-200 sm:block">
+          {dateFieldLabel(dateField)}
         </div>
       </div>
 
-      <nav className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <nav className="flex gap-2 overflow-x-auto pb-1">
         {reportViews.map((view) => {
           const active = view.key === selectedView;
           return (
@@ -1099,17 +1210,17 @@ function ReportViewNavigation({
                 endDate,
                 view: view.key,
                 dateField,
+                classId: selectedClassId,
+                categoryId: selectedCategoryId,
+                profile: selectedProfile,
               })}
-              className={`rounded-2xl px-4 py-3 ring-1 transition ${
+              className={`shrink-0 rounded-2xl px-4 py-3 text-sm font-black ring-1 transition ${
                 active
                   ? "bg-slate-950 text-white ring-slate-950 shadow-sm"
                   : "bg-slate-50 text-slate-700 ring-slate-200 hover:bg-white"
               }`}
             >
-              <span className="block text-sm font-black">{view.label}</span>
-              <span className={`mt-1 block text-xs ${active ? "text-slate-300" : "text-slate-500"}`}>
-                {view.hint}
-              </span>
+              {view.label}
             </a>
           );
         })}
@@ -1127,6 +1238,9 @@ export default async function FinanceReportsPage({
     end_date?: string;
     view?: string;
     date_field?: string;
+    class_id?: string;
+    category_id?: string;
+    profile?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -1141,6 +1255,9 @@ export default async function FinanceReportsPage({
   const requestedEndDate = normalizeDateParam(params?.end_date);
   const selectedReportView = normalizeReportView(params?.view);
   const selectedDateField = normalizeDateFilterField(params?.date_field);
+  const selectedClassId = String(params?.class_id || "").trim();
+  const selectedCategoryId = String(params?.category_id || "").trim();
+  const selectedProfile = normalizeProfileFilter(params?.profile);
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const supabase = await getSupabaseServerClient();
@@ -1292,6 +1409,7 @@ export default async function FinanceReportsPage({
   let classIdSet = new Set(classIds);
   let classMap = new Map(reportClassRows.map((c) => [c.id, c]));
   const feeCategoryMap = new Map(feeCategoryRows.map((c) => [c.id, c]));
+  const feeCategoryNameByNormalized = new Map(feeCategoryRows.map((c) => [normalizeTextForReport(c.name), c.name]));
   const expenseCategoryMap = new Map(expenseCategoryRows.map((c) => [c.id, c]));
 
   const activeFeeCategories = feeCategoryRows.filter((r) => r.is_active).length;
@@ -1390,10 +1508,32 @@ export default async function FinanceReportsPage({
     });
   }
 
-  const studentRows = Array.from(studentMap.values()).filter((student) => {
+  let studentRows = Array.from(studentMap.values()).filter((student) => {
     if (studentIdsFromFinance.includes(student.id)) return true;
     return student.class_id ? classIdSet.has(student.class_id) : false;
   });
+
+  const matchesClassFilter = (classId: string | null | undefined) => {
+    return !selectedClassId || classId === selectedClassId;
+  };
+
+  const matchesCategoryFilter = (categoryId: string | null | undefined) => {
+    return !selectedCategoryId || categoryId === selectedCategoryId;
+  };
+
+  const matchesStudentFilters = (student: AdminStudentRow | null | undefined) => {
+    if (selectedClassId && student?.class_id !== selectedClassId) return false;
+    return studentMatchesProfileFilter(student, selectedProfile);
+  };
+
+  balanceRows = balanceRows.filter((row) => {
+    const student = studentMap.get(row.student_id);
+    if (!matchesClassFilter(row.class_id || student?.class_id || null)) return false;
+    if (!matchesCategoryFilter(row.fee_category_id)) return false;
+    return matchesStudentFilters(student);
+  });
+
+  studentRows = studentRows.filter((student) => matchesStudentFilters(student));
 
   const allocationsByReceipt = new Map<string, ReceiptAllocationRow[]>();
   for (const row of receiptAllocations) {
@@ -1421,7 +1561,7 @@ export default async function FinanceReportsPage({
     );
   }
 
-  const paymentRecords: PaymentRecord[] = [];
+  let paymentRecords: PaymentRecord[] = [];
   for (const receipt of postedReceipts) {
     const allocations = allocationsByReceipt.get(receipt.id) ?? [];
 
@@ -1431,6 +1571,11 @@ export default async function FinanceReportsPage({
       const level = student?.class_level || student?.level || cls?.level || "Niveau à compléter";
       paymentRecords.push({
         receiptId: receipt.id,
+        receiptNo: receipt.receipt_no,
+        paymentDate: receipt.payment_date,
+        createdAt: receipt.created_at,
+        payerName: receipt.payer_name,
+        referenceNo: receipt.reference_no,
         allocationId: null,
         studentId: receipt.student_id,
         studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
@@ -1441,6 +1586,7 @@ export default async function FinanceReportsPage({
         cycle: cycleLabelFromLevel(level),
         affectationLabel: affectationLabelForStudent(student),
         boardingLabel: boardingLabelForStudent(student),
+        categoryId: null,
         categoryName: "Non ventilé",
         subRubric: receipt.reference_no || "Reçu global",
         amount: toNumber(receipt.total_amount),
@@ -1460,11 +1606,20 @@ export default async function FinanceReportsPage({
       const category = charge?.fee_category_id
         ? feeCategoryMap.get(charge.fee_category_id)
         : null;
+      const categoryName =
+        category?.name ||
+        inferCategoryNameFromLabel(charge?.label, feeCategoryNameByNormalized) ||
+        "Catégorie à compléter";
       const components = (componentsByAllocation.get(allocation.id) ?? []).filter(
         (component) => toNumber(component.amount) > 0,
       );
       const baseRecord = {
         receiptId: receipt.id,
+        receiptNo: receipt.receipt_no,
+        paymentDate: receipt.payment_date,
+        createdAt: receipt.created_at,
+        payerName: receipt.payer_name,
+        referenceNo: receipt.reference_no,
         allocationId: allocation.id,
         studentId: student?.id || receipt.student_id,
         studentName: student?.full_name || receipt.payer_name || "Élève non identifié",
@@ -1475,7 +1630,8 @@ export default async function FinanceReportsPage({
         cycle: cycleLabelFromLevel(level),
         affectationLabel: affectationLabelForStudent(student),
         boardingLabel: boardingLabelForStudent(student),
-        categoryName: category?.name || "Sans catégorie",
+        categoryId: charge?.fee_category_id || null,
+        categoryName,
       };
 
       if (components.length > 0) {
@@ -1496,6 +1652,44 @@ export default async function FinanceReportsPage({
     }
   }
 
+  paymentRecords = paymentRecords.filter((record) => {
+    if (!matchesClassFilter(record.classId)) return false;
+    if (!matchesCategoryFilter(record.categoryId)) return false;
+    const student = studentMap.get(record.studentId);
+    return matchesStudentFilters(student);
+  });
+
+  const receiptSummaryMap = new Map<string, {
+    id: string;
+    receiptNo: string;
+    paymentDate: string;
+    createdAt: string;
+    payerName: string | null;
+    referenceNo: string | null;
+    amount: number;
+  }>();
+
+  for (const record of paymentRecords) {
+    if (!receiptSummaryMap.has(record.receiptId)) {
+      receiptSummaryMap.set(record.receiptId, {
+        id: record.receiptId,
+        receiptNo: record.receiptNo,
+        paymentDate: record.paymentDate,
+        createdAt: record.createdAt,
+        payerName: record.payerName,
+        referenceNo: record.referenceNo,
+        amount: 0,
+      });
+    }
+    receiptSummaryMap.get(record.receiptId)!.amount += record.amount;
+  }
+
+  const receiptSummaryRows = Array.from(receiptSummaryMap.values()).sort((a, b) => {
+    const aDate = selectedDateField === "created_at" ? a.createdAt : a.paymentDate;
+    const bDate = selectedDateField === "created_at" ? b.createdAt : b.paymentDate;
+    return bDate.localeCompare(aDate);
+  });
+
   const totalScheduledAmount = activeSchedules.reduce(
     (sum, row) => sum + toNumber(row.amount),
     0,
@@ -1513,8 +1707,8 @@ export default async function FinanceReportsPage({
     (sum, row) => sum + Math.max(0, toNumber(row.balance_due)),
     0,
   );
-  const totalReceiptsAmount = postedReceipts.reduce(
-    (sum, row) => sum + toNumber(row.total_amount),
+  const totalReceiptsAmount = paymentRecords.reduce(
+    (sum, row) => sum + toNumber(row.amount),
     0,
   );
   const totalExpensesAmount = postedExpenses.reduce(
@@ -1694,7 +1888,7 @@ export default async function FinanceReportsPage({
     const [category, subRubric] = row.key.split("|||");
     return {
       ...row,
-      category: category || "Sans catégorie",
+      category: category || "Catégorie à compléter",
       subRubric: subRubric || "Sous-rubrique à compléter",
     };
   }) as PaymentCategorySubSummary[];
@@ -1738,7 +1932,7 @@ export default async function FinanceReportsPage({
         fullName: student?.full_name || "Élève sans nom",
         classLabel: student?.class_label || cls?.label || "Classe à compléter",
         level,
-        category: category?.name || "Sans catégorie",
+        category: category?.name || inferCategoryNameFromLabel(row.label, feeCategoryNameByNormalized) || "Catégorie à compléter",
         subRubric: row.label || "Sous-rubrique à compléter",
         expected: toNumber(row.net_amount),
         paid: toNumber(row.paid_amount),
@@ -1759,13 +1953,13 @@ export default async function FinanceReportsPage({
     { month: string; receipts: number; expenses: number; balance: number }
   >();
 
-  for (const receipt of postedReceipts) {
-    const key = monthKey(selectedDateField === "created_at" ? receipt.created_at : receipt.payment_date);
+  for (const receipt of receiptSummaryRows) {
+    const key = monthKey(selectedDateField === "created_at" ? receipt.createdAt : receipt.paymentDate);
     if (!monthlyMap.has(key)) {
       monthlyMap.set(key, { month: monthLabel(key), receipts: 0, expenses: 0, balance: 0 });
     }
     const row = monthlyMap.get(key)!;
-    row.receipts += toNumber(receipt.total_amount);
+    row.receipts += toNumber(receipt.amount);
     row.balance = row.receipts - row.expenses;
   }
 
@@ -1790,7 +1984,7 @@ export default async function FinanceReportsPage({
       const cls = row.class_id ? classMap.get(row.class_id) : null;
       return {
         label: row.label || "Barème sans libellé",
-        category: cat?.name || "Sans catégorie",
+        category: cat?.name || inferCategoryNameFromLabel(row.label, feeCategoryNameByNormalized) || "Catégorie à compléter",
         classLabel: cls?.label || "Toutes les classes",
         dueDate: row.due_date ? formatDate(row.due_date) : "—",
         amount: toNumber(row.amount),
@@ -1821,7 +2015,7 @@ export default async function FinanceReportsPage({
       {
         label: "Total encaissé",
         value: formatFullMoney(totalReceiptsAmount),
-        hint: `${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} validé${postedReceipts.length > 1 ? "s" : ""}`,
+        hint: `${receiptSummaryRows.length} reçu${receiptSummaryRows.length > 1 ? "s" : ""} validé${receiptSummaryRows.length > 1 ? "s" : ""}`,
       },
       {
         label: "Reste à recouvrer",
@@ -1939,18 +2133,18 @@ export default async function FinanceReportsPage({
     })),
     schedules: schedulesForExport,
     months: monthlySummary,
-    receipts: postedReceipts.map((row) => ({
-      date: formatDate(selectedDateField === "created_at" ? row.created_at : row.payment_date),
-      label: `${row.receipt_no}${row.payer_name ? ` — ${row.payer_name}` : ""}`,
-      category: row.reference_no || "Encaissement validé",
-      amount: toNumber(row.total_amount),
+    receipts: receiptSummaryRows.map((row) => ({
+      date: formatDate(selectedDateField === "created_at" ? row.createdAt : row.paymentDate),
+      label: `${row.receiptNo}${row.payerName ? ` — ${row.payerName}` : ""}`,
+      category: row.referenceNo || "Encaissement validé",
+      amount: toNumber(row.amount),
     })),
     expenses: postedExpenses.map((row) => {
       const cat = row.category_id ? expenseCategoryMap.get(row.category_id) : null;
       return {
         date: formatDate(row.expense_date),
         label: row.label,
-        category: `${cat?.name || "Sans catégorie"}${row.beneficiary ? ` — ${row.beneficiary}` : ""}`,
+        category: `${cat?.name || "Catégorie à compléter"}${row.beneficiary ? ` — ${row.beneficiary}` : ""}`,
         amount: toNumber(row.amount),
       };
     }),
@@ -1999,16 +2193,24 @@ export default async function FinanceReportsPage({
           end_date: selectedEndDate || undefined,
           view: selectedReportView !== "overview" ? selectedReportView : undefined,
           date_field: selectedDateField !== "payment_date" ? selectedDateField : undefined,
+          class_id: selectedClassId || undefined,
+          category_id: selectedCategoryId || undefined,
+          profile: selectedProfile !== "all" ? selectedProfile : undefined,
         }}
       />
 
-      <DateRangeSelector
+      <ReportFilters
         academicYear={selectedAcademicYearCode}
         startDate={selectedStartDate}
         endDate={selectedEndDate}
         periodLabel={selectedPeriodLabel}
         selectedView={selectedReportView}
         dateField={selectedDateField}
+        selectedClassId={selectedClassId}
+        selectedCategoryId={selectedCategoryId}
+        selectedProfile={selectedProfile}
+        classRows={reportClassRows}
+        feeCategoryRows={feeCategoryRows}
       />
 
       <ReportViewNavigation
@@ -2017,6 +2219,9 @@ export default async function FinanceReportsPage({
         endDate={selectedEndDate}
         selectedView={selectedReportView}
         dateField={selectedDateField}
+        selectedClassId={selectedClassId}
+        selectedCategoryId={selectedCategoryId}
+        selectedProfile={selectedProfile}
       />
 
       <FinanceReportsExports payload={exportPayload} view={selectedReportView} />
@@ -2042,7 +2247,7 @@ export default async function FinanceReportsPage({
               icon={<Receipt className="h-5 w-5" />}
               label="Total encaissé"
               value={formatMoney(totalReceiptsAmount)}
-              hint={`${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} validé${postedReceipts.length > 1 ? "s" : ""}`}
+              hint={`${receiptSummaryRows.length} reçu${receiptSummaryRows.length > 1 ? "s" : ""} validé${receiptSummaryRows.length > 1 ? "s" : ""}`}
               tone="emerald"
             />
             <StatCard
@@ -2195,46 +2400,43 @@ export default async function FinanceReportsPage({
 
       {selectedReportView === "encaissements" ? (
         <>
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard icon={<Receipt className="h-5 w-5" />} label="Total encaissé" value={formatMoney(totalReceiptsAmount)} hint={`${postedReceipts.length} reçu${postedReceipts.length > 1 ? "s" : ""} sur la période`} tone="emerald" />
-            <StatCard icon={<CalendarClock className="h-5 w-5" />} label="Filtre utilisé" value={dateFieldLabel(selectedDateField)} hint={selectedPeriodLabel} tone="sky" />
-            <StatCard icon={<Users className="h-5 w-5" />} label="Élèves concernés" value={new Set(paymentRecords.map((row) => row.studentId).filter(Boolean)).size} hint="Selon les ventilations de reçus" tone="slate" />
-            <StatCard icon={<Layers3 className="h-5 w-5" />} label="Lignes ventilées" value={paymentRecords.length} hint="Catégories et sous-rubriques" tone="emerald" />
+          <section className="grid gap-4 md:grid-cols-3">
+            <StatCard icon={<Receipt className="h-5 w-5" />} label="Total encaissé" value={formatMoney(totalReceiptsAmount)} hint={`${receiptSummaryRows.length} reçu${receiptSummaryRows.length > 1 ? "s" : ""} dans la section`} tone="emerald" />
+            <StatCard icon={<Users className="h-5 w-5" />} label="Élèves concernés" value={new Set(paymentRecords.map((row) => row.studentId).filter(Boolean)).size} hint="Selon les reçus filtrés" tone="slate" />
+            <StatCard icon={<CalendarClock className="h-5 w-5" />} label="Date utilisée" value={selectedDateField === "created_at" ? "Enregistrement" : "Paiement"} hint={selectedPeriodLabel} tone="sky" />
           </section>
-
-          <section className={`grid gap-6 ${hasInternatData ? "xl:grid-cols-2" : ""}`}>
-            <MoneyGroupTable title="Encaissé : affectés / non affectés" icon={<Users className="h-4 w-4 text-sky-600" />} rows={paymentByAffectation} emptyLabel="Aucun encaissement par statut d’affectation sur la période." />
-            {hasInternatData ? (
-              <MoneyGroupTable title="Encaissé : internes / non internes" icon={<Wallet className="h-4 w-4 text-emerald-600" />} rows={paymentByBoarding} emptyLabel="Aucun encaissement lié au statut d’internat sur la période." />
-            ) : null}
-          </section>
-
-          <section className="grid gap-6 xl:grid-cols-2">
-            <CategorySubRubricTable rows={paymentByCategorySubRubric} />
-            <MoneyGroupTable title="Encaissé par niveau" icon={<BarChart3 className="h-4 w-4 text-emerald-600" />} rows={paymentByLevel} emptyLabel="Aucun encaissement par niveau sur la période." />
-          </section>
-
-          <CycleClassPaymentTable rows={paymentByCycleClass} />
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Encaissements validés sur la période</div>
-            {postedReceipts.length === 0 ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">Encaissements filtrés</div>
+              <div className="text-xs font-bold text-slate-500">Ouvrez “Catégories” pour la ventilation détaillée.</div>
+            </div>
+            {receiptSummaryRows.length === 0 ? (
               <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">Aucun encaissement sur la période sélectionnée.</div>
             ) : (
-              <div className="mt-5 space-y-4">
-                {postedReceipts.map((row) => (
-                  <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 className="text-lg font-black text-slate-900">{row.receipt_no}</h2>
-                        <div className="mt-1 text-sm text-slate-600">
-                          Paiement : {formatDate(row.payment_date)} • Enregistrement : {formatDate(row.created_at)}{row.payer_name ? ` • ${row.payer_name}` : ""}{row.reference_no ? ` • Réf. ${row.reference_no}` : ""}
-                        </div>
-                      </div>
-                      <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200">{formatMoney(row.total_amount)}</div>
-                    </div>
-                  </article>
-                ))}
+              <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-100 text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Reçu</th>
+                      <th className="px-4 py-3 text-left">Payeur</th>
+                      <th className="px-4 py-3 text-left">Date paiement</th>
+                      <th className="px-4 py-3 text-left">Enregistré le</th>
+                      <th className="px-4 py-3 text-right">Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {receiptSummaryRows.map((row) => (
+                      <tr key={row.id} className="bg-white">
+                        <td className="px-4 py-3 font-black text-slate-900">{row.receiptNo}</td>
+                        <td className="px-4 py-3 text-slate-700">{row.payerName || "—"}</td>
+                        <td className="px-4 py-3 text-slate-700">{formatDate(row.paymentDate)}</td>
+                        <td className="px-4 py-3 text-slate-700">{formatDate(row.createdAt)}</td>
+                        <td className="px-4 py-3 text-right font-black text-emerald-700">{formatMoney(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
@@ -2243,10 +2445,7 @@ export default async function FinanceReportsPage({
 
       {selectedReportView === "categories" ? (
         <>
-          <section className="grid gap-6 xl:grid-cols-2">
-            <CategorySubRubricTable rows={paymentByCategorySubRubric} />
-            <MoneyGroupTable title="Encaissé par niveau" icon={<BarChart3 className="h-4 w-4 text-emerald-600" />} rows={paymentByLevel} emptyLabel="Aucun encaissement par niveau sur la période." />
-          </section>
+          <CategorySubRubricTable rows={paymentByCategorySubRubric} />
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
@@ -2332,7 +2531,7 @@ export default async function FinanceReportsPage({
                     return (
                       <article key={row.id} className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div><h2 className="text-lg font-black text-slate-900">{row.label}</h2><div className="mt-1 text-sm text-slate-600">{formatDate(row.expense_date)} • {cat?.name || "Sans catégorie"}{row.beneficiary ? ` • ${row.beneficiary}` : ""}</div></div>
+                          <div><h2 className="text-lg font-black text-slate-900">{row.label}</h2><div className="mt-1 text-sm text-slate-600">{formatDate(row.expense_date)} • {cat?.name || "Catégorie à compléter"}{row.beneficiary ? ` • ${row.beneficiary}` : ""}</div></div>
                           <div className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-700 ring-1 ring-rose-200">{formatMoney(row.amount)}</div>
                         </div>
                       </article>

@@ -2177,6 +2177,9 @@ export default async function FinancePaymentsPage({
                       </Link>
                       <Link
                         href={`/admin/finance/receipts/${row.id}?autoprint=1`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        prefetch={false}
                         className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
                       >
                         <Printer className="h-3.5 w-3.5" />

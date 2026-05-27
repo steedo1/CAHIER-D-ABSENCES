@@ -21,6 +21,7 @@ import {
   getFinanceInstitutionIdForCurrentUser,
 } from "@/lib/finance-access";
 import { type AdminStudentRow } from "@/lib/admin-students-server";
+import ReceiptAutoPrint from "./ReceiptAutoPrint";
 
 export const dynamic = "force-dynamic";
 
@@ -1055,7 +1056,7 @@ export default async function FinanceReceiptPrintPage({
       <style>{`
         @page {
           size: A4 portrait;
-          margin: 8mm;
+          margin: 4mm;
         }
 
         @media print {
@@ -1083,6 +1084,7 @@ export default async function FinanceReceiptPrintPage({
           }
 
           main {
+            display: block !important;
             width: 100% !important;
             max-width: none !important;
             margin: 0 !important;
@@ -1092,6 +1094,7 @@ export default async function FinanceReceiptPrintPage({
           .receipt-print-root,
           .receipt-print-root * {
             visibility: visible !important;
+            box-sizing: border-box !important;
           }
 
           .receipt-print-root {
@@ -1103,20 +1106,29 @@ export default async function FinanceReceiptPrintPage({
             padding: 0 !important;
             overflow: visible !important;
             background: #ffffff !important;
+            break-after: avoid !important;
+            page-break-after: avoid !important;
           }
 
           .receipt-card {
             display: block !important;
+            position: relative !important;
             width: 100% !important;
-            max-width: 194mm !important;
-            min-height: 281mm !important;
+            max-width: 200mm !important;
+            min-height: 0 !important;
             height: auto !important;
             margin: 0 auto !important;
-            overflow: visible !important;
+            overflow: hidden !important;
             border-radius: 0 !important;
             box-shadow: none !important;
             border: 1px solid #cbd5e1 !important;
             font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 9.4px !important;
+            line-height: 1.16 !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            break-after: avoid !important;
+            page-break-after: avoid !important;
           }
 
           .receipt-watermark {
@@ -1124,11 +1136,11 @@ export default async function FinanceReceiptPrintPage({
             position: absolute !important;
             left: 50% !important;
             top: 52% !important;
-            width: 105mm !important;
-            height: 105mm !important;
+            width: 88mm !important;
+            height: 88mm !important;
             transform: translate(-50%, -50%) !important;
             object-fit: contain !important;
-            opacity: 0.045 !important;
+            opacity: 0.04 !important;
             z-index: 0 !important;
           }
 
@@ -1141,20 +1153,39 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-header {
-            padding: 3mm 4mm 2.5mm !important;
+            padding: 2.2mm 3mm 1.8mm !important;
           }
 
           .receipt-title-strip {
-            margin: 2.5mm 4mm 0 !important;
-            padding: 2.1mm 3mm !important;
-            border-radius: 10px !important;
+            margin: 1.8mm 3mm 0 !important;
+            padding: 1.6mm 2.4mm !important;
+            border-radius: 8px !important;
+          }
+
+          .receipt-title-strip > div:first-child {
+            font-size: 8px !important;
+            line-height: 1.05 !important;
+            letter-spacing: 0.16em !important;
+          }
+
+          .receipt-title-strip > div:nth-child(2) {
+            margin-top: 0.4mm !important;
+            font-size: 15.5px !important;
+            line-height: 1.03 !important;
+            letter-spacing: 0.06em !important;
+          }
+
+          .receipt-title-strip > div:nth-child(3) {
+            margin-top: 0.4mm !important;
+            font-size: 9px !important;
+            line-height: 1.05 !important;
           }
 
           .receipt-main-grid {
             display: grid !important;
-            grid-template-columns: minmax(0, 1fr) 58mm !important;
-            gap: 3mm !important;
-            padding: 3mm 4mm 2.5mm !important;
+            grid-template-columns: minmax(0, 1fr) 56mm !important;
+            gap: 2.2mm !important;
+            padding: 2.2mm 3mm 1.6mm !important;
             align-items: start !important;
           }
 
@@ -1164,18 +1195,24 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-header .gap-4 {
-            gap: 3mm !important;
+            gap: 2.2mm !important;
           }
 
           .receipt-header .gap-6 {
-            gap: 3.5mm !important;
+            gap: 2.8mm !important;
           }
 
           .receipt-logo {
-            width: 13mm !important;
-            height: 13mm !important;
-            border-radius: 10px !important;
-            padding: 1mm !important;
+            width: 10.5mm !important;
+            height: 10.5mm !important;
+            min-width: 10.5mm !important;
+            border-radius: 7px !important;
+            padding: 0.6mm !important;
+          }
+
+          .receipt-logo svg {
+            width: 6mm !important;
+            height: 6mm !important;
           }
 
           .receipt-box,
@@ -1185,20 +1222,20 @@ export default async function FinanceReceiptPrintPage({
           .receipt-summary-card {
             break-inside: avoid !important;
             page-break-inside: avoid !important;
-            border-radius: 12px !important;
+            border-radius: 9px !important;
           }
 
           .receipt-box {
-            padding: 3mm !important;
+            padding: 2.2mm !important;
           }
 
           .receipt-payment-section {
             padding: 0 !important;
-            overflow: visible !important;
+            overflow: hidden !important;
           }
 
           .receipt-payment-section > .border-b {
-            padding: 2.6mm 3mm !important;
+            padding: 1.8mm 2.2mm !important;
           }
 
           .receipt-table-wrap {
@@ -1216,9 +1253,9 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-lines-table th,
           .receipt-lines-table td {
-            padding: 1.45mm 1.55mm !important;
-            font-size: 9.2px !important;
-            line-height: 1.16 !important;
+            padding: 0.95mm 1.15mm !important;
+            font-size: 8.05px !important;
+            line-height: 1.08 !important;
             white-space: normal !important;
             word-break: break-word !important;
             overflow-wrap: anywhere !important;
@@ -1226,12 +1263,12 @@ export default async function FinanceReceiptPrintPage({
 
           .receipt-lines-table th:nth-child(1),
           .receipt-lines-table td:nth-child(1) {
-            width: 27% !important;
+            width: 25% !important;
           }
 
           .receipt-lines-table th:nth-child(2),
           .receipt-lines-table td:nth-child(2) {
-            width: 12% !important;
+            width: 11% !important;
           }
 
           .receipt-lines-table th:nth-child(3),
@@ -1242,18 +1279,27 @@ export default async function FinanceReceiptPrintPage({
           .receipt-lines-table td:nth-child(5),
           .receipt-lines-table th:nth-child(6),
           .receipt-lines-table td:nth-child(6) {
-            width: 15.25% !important;
+            width: 16% !important;
           }
 
           .receipt-components-panel {
             box-shadow: none !important;
+            border-radius: 8px !important;
+          }
+
+          .receipt-components-panel > div:first-child {
+            padding: 1.2mm 1.8mm !important;
+          }
+
+          .receipt-components-panel > div:first-child div {
+            line-height: 1.05 !important;
           }
 
           .receipt-components-table th,
           .receipt-components-table td {
-            padding: 1.2mm 1.6mm !important;
-            font-size: 8.8px !important;
-            line-height: 1.12 !important;
+            padding: 0.8mm 1.1mm !important;
+            font-size: 7.5px !important;
+            line-height: 1.04 !important;
             white-space: normal !important;
             word-break: break-word !important;
             overflow-wrap: anywhere !important;
@@ -1272,126 +1318,132 @@ export default async function FinanceReceiptPrintPage({
           }
 
           .receipt-school-title {
-            margin-top: 1.2mm !important;
-            font-size: 18px !important;
-            line-height: 1.05 !important;
+            margin-top: 0.65mm !important;
+            font-size: 14.5px !important;
+            line-height: 1.02 !important;
           }
 
           .receipt-top-meta {
-            margin-top: 1.2mm !important;
-            font-size: 10px !important;
-            line-height: 1.22 !important;
+            margin-top: 0.7mm !important;
+            font-size: 8.4px !important;
+            line-height: 1.12 !important;
           }
 
           .receipt-side-card {
             min-width: 0 !important;
-            padding: 3mm !important;
+            padding: 2mm !important;
+          }
+
+          .receipt-side-card .rounded-full {
+            padding: 0.8mm 1.4mm !important;
+            font-size: 7.8px !important;
+            line-height: 1.05 !important;
+            letter-spacing: 0.08em !important;
+          }
+
+          .receipt-side-card svg {
+            width: 9px !important;
+            height: 9px !important;
           }
 
           .receipt-side-lines {
-            margin-top: 2mm !important;
-            gap: 1.1mm !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
+            margin-top: 1.4mm !important;
+            gap: 0.7mm !important;
+            font-size: 8.6px !important;
+            line-height: 1.12 !important;
           }
 
           .receipt-section-title {
-            font-size: 10px !important;
-            letter-spacing: 0.12em !important;
+            font-size: 8.7px !important;
+            line-height: 1.08 !important;
+            letter-spacing: 0.1em !important;
+          }
+
+          .receipt-section-title svg {
+            width: 10px !important;
+            height: 10px !important;
           }
 
           .receipt-student-grid {
-            margin-top: 2.2mm !important;
-            gap: 1.6mm 2.4mm !important;
-            font-size: 10px !important;
-            line-height: 1.2 !important;
+            margin-top: 1.5mm !important;
+            gap: 1.1mm 1.8mm !important;
+            font-size: 8.8px !important;
+            line-height: 1.13 !important;
           }
 
           .receipt-note-box,
           .receipt-cancel-box {
-            margin-top: 2mm !important;
-            padding: 2mm 2.4mm !important;
-            font-size: 10px !important;
-            line-height: 1.25 !important;
+            margin-top: 1.4mm !important;
+            padding: 1.3mm 1.8mm !important;
+            font-size: 8.7px !important;
+            line-height: 1.16 !important;
           }
 
           .receipt-summary-shell {
-            padding: 3mm !important;
+            padding: 2.2mm !important;
+          }
+
+          .receipt-summary-shell > .text-xs {
+            font-size: 8px !important;
+            line-height: 1.05 !important;
+            letter-spacing: 0.1em !important;
           }
 
           .receipt-summary-card {
-            margin-top: 2mm !important;
-            padding: 2.5mm !important;
+            margin-top: 1.3mm !important;
+            padding: 1.9mm !important;
           }
 
           .receipt-amount-label {
-            font-size: 10px !important;
-          }
-
-          .receipt-amount-value {
-            margin-top: 0.8mm !important;
-            font-size: 19px !important;
+            font-size: 8.6px !important;
             line-height: 1.05 !important;
           }
 
+          .receipt-amount-value {
+            margin-top: 0.5mm !important;
+            font-size: 16.5px !important;
+            line-height: 1.02 !important;
+          }
+
           .receipt-summary-grid {
-            margin-top: 2mm !important;
-            gap: 1.15mm !important;
-            font-size: 9.7px !important;
-            line-height: 1.18 !important;
+            margin-top: 1.5mm !important;
+            gap: 0.65mm !important;
+            font-size: 8.4px !important;
+            line-height: 1.1 !important;
           }
 
           .receipt-status-wrap {
-            margin-top: 2mm !important;
+            margin-top: 1.3mm !important;
+          }
+
+          .receipt-status-wrap span {
+            padding: 0.7mm 1.4mm !important;
+            font-size: 7.8px !important;
+            line-height: 1.05 !important;
           }
 
           .receipt-proof-note {
-            padding: 2.5mm 3mm !important;
-            font-size: 9.5px !important;
-            line-height: 1.25 !important;
+            padding: 1.5mm 2mm !important;
+            font-size: 8.1px !important;
+            line-height: 1.12 !important;
           }
 
           .receipt-footer {
             display: block !important;
-            margin-top: 2mm !important;
-            padding: 2mm 4mm !important;
-            font-size: 8.8px !important;
-            line-height: 1.2 !important;
+            margin-top: 0 !important;
+            padding: 1.2mm 3mm !important;
+            font-size: 7.4px !important;
+            line-height: 1.08 !important;
             background: #ffffff !important;
+          }
+
+          .receipt-footer .flex {
+            gap: 0.6mm !important;
           }
         }
       `}</style>
 
-      {autoPrint ? (
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function () {
-                var printed = false;
-                function launchPrint() {
-                  if (printed) return;
-                  printed = true;
-                  setTimeout(function () {
-                    try {
-                      window.focus();
-                      window.print();
-                    } catch (e) {}
-                  }, 450);
-                }
-
-                if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                  launchPrint();
-                } else {
-                  document.addEventListener('DOMContentLoaded', launchPrint, { once: true });
-                }
-
-                window.addEventListener('load', launchPrint, { once: true });
-                setTimeout(launchPrint, 1200);
-              })();
-            `,
-          }}
-        />
-      ) : null}
+      <ReceiptAutoPrint enabled={autoPrint} />
 
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1415,6 +1467,9 @@ export default async function FinanceReceiptPrintPage({
           {typedReceipt.receipt_status === "posted" ? (
             <Link
               href={printHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              prefetch={false}
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
             >
               <Printer className="h-4 w-4" />
