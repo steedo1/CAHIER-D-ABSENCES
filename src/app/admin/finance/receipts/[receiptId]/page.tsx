@@ -61,12 +61,17 @@ type ReceiptAllocationComponentRow = {
   student_charge_id: string;
 };
 
+type ReceiptDisplayComponentRow = ReceiptAllocationComponentRow & {
+  display_status?: "paid" | "not_billed";
+};
+
 type ChargeRow = {
   id: string;
   school_id?: string | null;
   student_id: string;
   class_id: string | null;
   fee_category_id?: string | null;
+  fee_schedule_id?: string | null;
   label: string;
   due_date: string | null;
   net_amount: number | string;
@@ -81,6 +86,7 @@ type StudentChargeDirectRow = {
   student_id: string;
   class_id: string | null;
   fee_category_id: string | null;
+  fee_schedule_id: string | null;
   label: string;
   due_date: string | null;
   base_amount: number | string;
@@ -159,6 +165,24 @@ function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+}
+
+function normalizeNoAccent(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isBibleOrBreviaireComponent(label: string | null | undefined) {
+  const text = normalizeNoAccent(label);
+  return text.includes("bible") || text.includes("breviaire");
+}
+
+function isInternatAnnexesCharge(label: string | null | undefined) {
+  const text = normalizeNoAccent(label);
+  return text.includes("internat") && text.includes("frais") && text.includes("annexe");
 }
 
 function isScolariteCharge(label: string | null | undefined) {
@@ -542,7 +566,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("v_charge_balances")
         .select(
-          "id,school_id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
+          "id,school_id,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,net_amount,paid_amount,balance_due",
         )
         .in("id", chargeIds)
     : { data: [], error: null as null | { message?: string } };
@@ -654,7 +678,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("student_charges")
         .select(
-          "id,school_id,academic_year,student_id,class_id,fee_category_id,label,due_date,base_amount,status",
+          "id,school_id,academic_year,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,base_amount,status",
         )
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
@@ -728,6 +752,7 @@ export default async function FinanceReceiptPrintPage({
             student_id: charge.student_id,
             class_id: charge.class_id,
             fee_category_id: charge.fee_category_id,
+            fee_schedule_id: charge.fee_schedule_id,
             label: charge.label,
             due_date: charge.due_date,
             net_amount: expected,
@@ -776,8 +801,6 @@ export default async function FinanceReceiptPrintPage({
       }
     : null;
 
-  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
-
   const allocatedChargeIds = new Set(
     rawLines.map((line) => line.alloc.student_charge_id),
   );
@@ -796,7 +819,7 @@ export default async function FinanceReceiptPrintPage({
         .schema("finance")
         .from("student_charges")
         .select(
-          "id,school_id,academic_year,student_id,class_id,fee_category_id,label,due_date,base_amount,status",
+          "id,school_id,academic_year,student_id,class_id,fee_category_id,fee_schedule_id,label,due_date,base_amount,status",
         )
         .eq("school_id", institutionId)
         .eq("student_id", typedReceipt.student_id)
@@ -869,6 +892,7 @@ export default async function FinanceReceiptPrintPage({
             student_id: charge.student_id,
             class_id: charge.class_id,
             fee_category_id: charge.fee_category_id,
+            fee_schedule_id: charge.fee_schedule_id,
             label: charge.label,
             due_date: charge.due_date,
             net_amount: expected,
@@ -876,6 +900,64 @@ export default async function FinanceReceiptPrintPage({
             balance_due: Math.max(expected - paid, 0),
           } satisfies ChargeRow;
         });
+      }
+    }
+  }
+
+  const optionalInternatComponentsByCharge = new Map<string, ReceiptDisplayComponentRow[]>();
+  const internatAnnexScheduleIds = Array.from(
+    new Set(
+      internatReferenceCharges
+        .filter((charge) => isInternatAnnexesCharge(charge.label))
+        .map((charge) => charge.fee_schedule_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  if (internatAnnexScheduleIds.length > 0) {
+    const { data: optionalComponentsData } = await admin
+      .schema("finance")
+      .from("fee_schedule_components")
+      .select("id,fee_schedule_id,label,amount,order_index")
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .in("fee_schedule_id", internatAnnexScheduleIds);
+
+    const alreadyCoveredOptionalIds = new Set(
+      allocationComponentRows
+        .filter((component) => safeNumber(component.amount) > 0)
+        .map((component) => component.fee_schedule_component_id),
+    );
+
+    for (const charge of internatReferenceCharges) {
+      if (!isInternatAnnexesCharge(charge.label) || !charge.fee_schedule_id) continue;
+      const optionalRows = ((optionalComponentsData ?? []) as Array<{
+        id: string;
+        fee_schedule_id: string;
+        label: string;
+        amount: number | string;
+        order_index: number | string | null;
+      }>)
+        .filter(
+          (component) =>
+            component.fee_schedule_id === charge.fee_schedule_id &&
+            isBibleOrBreviaireComponent(component.label) &&
+            !alreadyCoveredOptionalIds.has(component.id),
+        )
+        .sort((a, b) => safeNumber(a.order_index) - safeNumber(b.order_index))
+        .map((component) => ({
+          id: `not-billed-${charge.id}-${component.id}`,
+          receipt_allocation_id: "",
+          fee_schedule_component_id: component.id,
+          label: component.label,
+          amount: component.amount,
+          order_index: component.order_index,
+          student_charge_id: charge.id,
+          display_status: "not_billed" as const,
+        }));
+
+      if (optionalRows.length > 0) {
+        optionalInternatComponentsByCharge.set(charge.id, optionalRows);
       }
     }
   }
@@ -888,7 +970,10 @@ export default async function FinanceReceiptPrintPage({
     .map((line) => {
       const visibleComponents = line.components.filter(
         (component) => safeNumber(component.amount) > 0,
-      );
+      ) as ReceiptDisplayComponentRow[];
+      const notBilledComponents = line.charge?.id
+        ? optionalInternatComponentsByCharge.get(line.charge.id) ?? []
+        : [];
 
       return {
         key: line.alloc.id,
@@ -901,7 +986,7 @@ export default async function FinanceReceiptPrintPage({
         paid: safeNumber(line.charge?.paid_amount),
         remaining: safeNumber(line.charge?.balance_due),
         amount: safeNumber(line.alloc.amount),
-        components: visibleComponents,
+        components: [...visibleComponents, ...notBilledComponents],
       };
     });
 
@@ -915,7 +1000,7 @@ export default async function FinanceReceiptPrintPage({
       paid: safeNumber(charge.paid_amount),
       remaining: safeNumber(charge.balance_due),
       amount: 0,
-      components: [] as ReceiptAllocationComponentRow[],
+      components: optionalInternatComponentsByCharge.get(charge.id) ?? [],
     }));
 
   const displayLines = [
@@ -945,6 +1030,7 @@ export default async function FinanceReceiptPrintPage({
     0,
   );
 
+  const hasInternatLines = rawLines.some((line) => isInternatCharge(line.charge?.label));
   const allLinesAreInternat =
     rawLines.length > 0 &&
     rawLines.every((line) => isInternatCharge(line.charge?.label));
@@ -1546,7 +1632,13 @@ export default async function FinanceReceiptPrintPage({
                     </thead>
                     <tbody>
                       {displayLines.map((line) => {
-                        const componentsTotal = line.components.reduce(
+                        const paidComponents = line.components.filter(
+                          (component) => component.display_status !== "not_billed",
+                        );
+                        const notBilledComponents = line.components.filter(
+                          (component) => component.display_status === "not_billed",
+                        );
+                        const componentsTotal = paidComponents.reduce(
                           (sum, component) =>
                             sum + safeNumber(component.amount),
                           0,
@@ -1593,10 +1685,10 @@ export default async function FinanceReceiptPrintPage({
                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 bg-emerald-50/80 px-4 py-3">
                                       <div>
                                         <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
-                                          Détail des frais annexes réglés
+                                          Détail des frais annexes
                                         </div>
                                         <div className="mt-1 text-xs text-slate-600">
-                                          Sous-rubriques couvertes par ce reçu.
+                                          Montants réglés et éléments non facturés car déjà fournis.
                                         </div>
                                       </div>
                                       <div className="rounded-full bg-white px-3 py-1.5 text-sm font-black text-emerald-700 shadow-sm">
@@ -1611,29 +1703,38 @@ export default async function FinanceReceiptPrintPage({
                                             Sous-rubrique
                                           </th>
                                           <th className="px-4 py-2 text-right font-bold">
-                                            Montant couvert
+                                            Statut / montant
                                           </th>
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {line.components.map((component) => (
-                                          <tr
-                                            key={component.id}
-                                            className="border-t border-slate-100"
-                                          >
-                                            <td className="px-4 py-2 font-semibold text-slate-700">
-                                              {component.label}
-                                            </td>
-                                            <td className="px-4 py-2 text-right font-black text-slate-900">
-                                              {formatMoney(component.amount)}
-                                            </td>
-                                          </tr>
-                                        ))}
+                                        {line.components.map((component) => {
+                                          const notBilled = component.display_status === "not_billed";
+                                          return (
+                                            <tr
+                                              key={component.id}
+                                              className="border-t border-slate-100"
+                                            >
+                                              <td className="px-4 py-2 font-semibold text-slate-700">
+                                                {component.label}
+                                              </td>
+                                              <td className="px-4 py-2 text-right font-black text-slate-900">
+                                                {notBilled ? (
+                                                  <span className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-[11px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
+                                                    Non facturé / déjà fourni
+                                                  </span>
+                                                ) : (
+                                                  formatMoney(component.amount)
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
                                       </tbody>
                                       <tfoot>
                                         <tr className="border-t border-emerald-100 bg-emerald-50/60">
                                           <td className="px-4 py-2 font-black text-slate-900">
-                                            Total des sous-rubriques réglées
+                                            Total réglé sur sous-rubriques
                                           </td>
                                           <td className="px-4 py-2 text-right font-black text-emerald-700">
                                             {formatMoney(componentsTotal)}

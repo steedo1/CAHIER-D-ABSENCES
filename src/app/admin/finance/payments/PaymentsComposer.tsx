@@ -50,6 +50,19 @@ function normalize(value: string | null | undefined) {
     .toLowerCase();
 }
 
+function normalizeNoAccent(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isBibleOrBreviaireComponent(label: string | null | undefined) {
+  const text = normalizeNoAccent(label);
+  return text.includes("bible") || text.includes("breviaire");
+}
+
 function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
@@ -101,18 +114,6 @@ function isPensionCharge(label: string | null | undefined) {
   return normalize(label).includes("pension");
 }
 
-function normalizeAnnexLabel(value: string | null | undefined) {
-  return normalize(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function isOptionalInternatAnnexComponent(label: string | null | undefined) {
-  const text = normalizeAnnexLabel(label);
-  return text.includes("breviaire") || text.includes("bible");
-}
-
 function getSelectedComponentsTotal(
   charge: PaymentStudentRow["open_charges"][number],
   componentIdsByCharge: Record<string, string[]>,
@@ -125,28 +126,9 @@ function getSelectedComponentsTotal(
 
 function getInternatRecoverableTotal(
   charges: PaymentStudentRow["open_charges"],
-  componentIdsByCharge: Record<string, string[]>,
+  _componentIdsByCharge: Record<string, string[]>,
 ) {
-  return charges.reduce((sum, charge) => {
-    if (charge.components.length > 0) {
-      // Les frais annexes internat ont maintenant une base minimale obligatoire :
-      // tous les composants sauf Bréviaire et Bible restent dus tant qu'ils ne
-      // sont pas soldés. Les composants optionnels n'entrent dans la dette que
-      // lorsqu'un montant est saisi dessus.
-      const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
-      const optionalSelectedTotal = charge.components
-        .filter(
-          (component) =>
-            selected.has(component.id) &&
-            isOptionalInternatAnnexComponent(component.label),
-        )
-        .reduce((componentSum, component) => componentSum + Number(component.amount || 0), 0);
-
-      return sum + Number(charge.balance_due || 0) + optionalSelectedTotal;
-    }
-
-    return sum + Number(charge.balance_due || 0);
-  }, 0);
+  return charges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0);
 }
 
 function PendingButton({
@@ -1369,8 +1351,9 @@ function InternatPaymentPlanner({
             Encaissement internat
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            La pension reste fixe. Les frais annexes ne comptent dans le barème
-            retenu que lorsqu’ils sont cochés : pension + éléments cochés.
+            La pension reste fixe. Les frais annexes restent dus, sauf Bible
+            Africaine et Bréviaire qui ne sont pas facturés si aucun montant
+            n’est saisi dessus. Paiement partiel possible par sous-rubrique.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1521,9 +1504,8 @@ function ChargeComponentChecklist({
             Détail des frais annexes
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Saisissez le montant payé maintenant pour chaque sous-rubrique.
-            Les éléments obligatoires restent dus tant qu’ils ne sont pas soldés ;
-            Bréviaire et Bible sont ajoutés seulement si un montant est saisi.
+            Saisissez le montant payé maintenant pour chaque sous-rubrique. Bible
+            Africaine et Bréviaire restent non facturés si vous laissez 0 F.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
@@ -1550,10 +1532,10 @@ function ChargeComponentChecklist({
               className="grid grid-cols-[1fr_110px_140px] items-center gap-2 border-t border-emerald-50 px-3 py-2 text-sm"
             >
               <div className="min-w-0 font-semibold text-slate-800">
-                {component.label}
-                {isOptionalInternatAnnexComponent(component.label) ? (
-                  <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
-                    Optionnel
+                <span>{component.label}</span>
+                {isBibleOrBreviaireComponent(component.label) ? (
+                  <span className="ml-2 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
+                    non facturé si 0 F
                   </span>
                 ) : null}
               </div>
@@ -1604,7 +1586,7 @@ function ChargeComponentChecklist({
           Vider les montants
         </button>
         <span>
-          Reste obligatoire connu : {formatMoney(remainingAmount)} · Montant saisi :{" "}
+          Reste dû officiel : {formatMoney(remainingAmount)} · Montant saisi :{" "}
           {formatMoney(selectedTotal)}
         </span>
       </div>
