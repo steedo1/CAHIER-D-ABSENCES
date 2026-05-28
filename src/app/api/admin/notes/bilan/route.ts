@@ -503,6 +503,10 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const requestedAcademicYear = cleanText(url.searchParams.get("academic_year"));
     const requestedPeriodId = cleanText(url.searchParams.get("period_id"));
+    const requestedReportMode = normalizeForMatch(
+      url.searchParams.get("report_mode") || url.searchParams.get("mode"),
+    );
+    const isAnnualRequested = requestedReportMode === "annual" || requestedReportMode === "annuel";
 
     const academicYear = requestedAcademicYear || (await getCurrentAcademicYear(srv, institutionId));
 
@@ -537,8 +541,11 @@ export async function GET(req: NextRequest) {
         return String(a.start_date || "").localeCompare(String(b.start_date || ""));
       });
 
-    const selectedPeriod =
-      periods.find((p) => p.id === requestedPeriodId) || periods[periods.length - 1] || null;
+    const firstPeriod = periods[0] || null;
+    const lastPeriod = periods[periods.length - 1] || null;
+    const selectedPeriod = isAnnualRequested
+      ? lastPeriod
+      : periods.find((p) => p.id === requestedPeriodId) || lastPeriod || null;
 
     if (!academicYear || !selectedPeriod?.start_date || !selectedPeriod?.end_date) {
       return NextResponse.json({
@@ -562,23 +569,24 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const lastPeriod = periods[periods.length - 1] || selectedPeriod;
-    const isAnnual = Boolean(lastPeriod && selectedPeriod.id === lastPeriod.id);
+    const isAnnual = Boolean(isAnnualRequested && lastPeriod && selectedPeriod.id === lastPeriod.id);
+    const reportFrom = isAnnual ? firstPeriod?.start_date || selectedPeriod.start_date : selectedPeriod.start_date;
+    const reportTo = isAnnual ? lastPeriod?.end_date || selectedPeriod.end_date : selectedPeriod.end_date;
 
     const [absenceMap, evalLeaders] = await Promise.all([
       loadAbsenceCounts({
         srv,
         institutionId,
         classes,
-        from: selectedPeriod.start_date,
-        to: selectedPeriod.end_date,
+        from: reportFrom,
+        to: reportTo,
       }),
       loadEvaluationLeaders({
         srv,
         institutionId,
         classes,
-        from: selectedPeriod.start_date,
-        to: selectedPeriod.end_date,
+        from: reportFrom,
+        to: reportTo,
       }),
     ]);
 
@@ -742,7 +750,9 @@ export async function GET(req: NextRequest) {
       teacher_evaluation_leaders: evalLeaders.teacher_leaders,
       class_evaluation_leaders: evalLeaders.class_leaders,
       meta: {
-        period_label: periodLabel(selectedPeriod),
+        period_label: isAnnual ? "Annuel" : periodLabel(selectedPeriod),
+        report_from: reportFrom,
+        report_to: reportTo,
         generated_at: new Date().toISOString(),
         classes_count: classes.length,
         classed_students_count: allStudents.length,

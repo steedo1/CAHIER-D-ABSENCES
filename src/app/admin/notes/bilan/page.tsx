@@ -102,6 +102,8 @@ type ReportData = {
   class_evaluation_leaders: Leader[];
   meta?: {
     period_label?: string;
+    report_from?: string;
+    report_to?: string;
     generated_at?: string;
     classes_count?: number;
     classed_students_count?: number;
@@ -112,6 +114,7 @@ type ReportData = {
 
 const BRAND_SITE = "www.mon-cahier.com";
 const BRAND_SLOGAN = "La plateforme idéale pour une école connectée, l’école du futur.";
+const ANNUAL_SELECTOR_VALUE = "__annual__";
 
 function formatAvg(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
@@ -126,6 +129,12 @@ function formatInt(value: number | null | undefined) {
 function periodLabel(period: PeriodRow | null | undefined) {
   if (!period) return "Période";
   return period.short_label || period.label || period.code || "Période";
+}
+
+function reportLabel(data: ReportData | null, period: PeriodRow | null | undefined) {
+  if (!data) return "Chargez le bilan pour afficher les données.";
+  if (data.mode === "annual") return `Bilan annuel • ${data.academic_year}`;
+  return `${periodLabel(period)} • ${data.academic_year}`;
 }
 
 function formatDateFr(value?: string | null) {
@@ -290,7 +299,9 @@ function buildReportHtml(data: ReportData) {
     : `<span>Logo</span>`;
   const period = data.selected_period;
   const docTitle = data.mode === "annual" ? "Bilan annuel" : "Bilan trimestriel";
-  const periodText = `${periodLabel(period)} (${formatDateFr(period?.start_date)} - ${formatDateFr(period?.end_date)})`;
+  const periodText = data.mode === "annual"
+    ? `Année scolaire ${data.academic_year} (${formatDateFr(data.meta?.report_from || period?.start_date)} - ${formatDateFr(data.meta?.report_to || period?.end_date)})`
+    : `${periodLabel(period)} (${formatDateFr(period?.start_date)} - ${formatDateFr(period?.end_date)})`;
   const metaLine = [inst.postal_address, inst.phone ? `Tél : ${inst.phone}` : "", inst.email, inst.code ? `Code : ${inst.code}` : ""]
     .map(safeText)
     .filter(Boolean)
@@ -498,7 +509,10 @@ export default function BilanTrimestrielAnnuelPage() {
 
   const periods = data?.periods || [];
   const selectedPeriod = useMemo(
-    () => periods.find((p) => p.id === selectedPeriodId) || data?.selected_period || null,
+    () =>
+      selectedPeriodId === ANNUAL_SELECTOR_VALUE
+        ? periods[periods.length - 1] || data?.selected_period || null
+        : periods.find((p) => p.id === selectedPeriodId) || data?.selected_period || null,
     [periods, selectedPeriodId, data?.selected_period],
   );
 
@@ -508,8 +522,14 @@ export default function BilanTrimestrielAnnuelPage() {
 
     try {
       const params = new URLSearchParams();
+      const annualMode = nextPeriodId === ANNUAL_SELECTOR_VALUE;
+      const periodIdForRequest = annualMode
+        ? periods[periods.length - 1]?.id || data?.selected_period?.id || ""
+        : nextPeriodId;
+
       if (nextYear) params.set("academic_year", nextYear);
-      if (nextPeriodId) params.set("period_id", nextPeriodId);
+      if (periodIdForRequest) params.set("period_id", periodIdForRequest);
+      if (annualMode) params.set("report_mode", "annual");
 
       const res = await fetch(`/api/admin/notes/bilan${params.toString() ? `?${params.toString()}` : ""}`, {
         cache: "no-store",
@@ -520,7 +540,7 @@ export default function BilanTrimestrielAnnuelPage() {
 
       setData(json);
       setAcademicYear(json.academic_year || nextYear || "");
-      setSelectedPeriodId(json.selected_period?.id || nextPeriodId || "");
+      setSelectedPeriodId(json.mode === "annual" ? ANNUAL_SELECTOR_VALUE : json.selected_period?.id || nextPeriodId || "");
     } catch (e: any) {
       setErrorMsg(e?.message || "Impossible de charger le bilan.");
     } finally {
@@ -577,11 +597,14 @@ export default function BilanTrimestrielAnnuelPage() {
                 disabled={!periods.length}
               >
                 {periods.length ? (
-                  periods.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {periodLabel(p)} — {formatDateFr(p.start_date)} au {formatDateFr(p.end_date)}
-                    </option>
-                  ))
+                  <>
+                    {periods.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {periodLabel(p)} — {formatDateFr(p.start_date)} au {formatDateFr(p.end_date)}
+                      </option>
+                    ))}
+                    <option value={ANNUAL_SELECTOR_VALUE}>Annuel — {academicYear || data?.academic_year || "année scolaire"}</option>
+                  </>
                 ) : (
                   <option value="">Aucune période</option>
                 )}
@@ -619,7 +642,7 @@ export default function BilanTrimestrielAnnuelPage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">Les 3 premiers de chaque classe</h2>
               <p className="text-sm text-slate-500">
-                {data ? `${periodLabel(selectedPeriod)} • ${data.academic_year}` : "Chargez le bilan pour afficher les données."}
+                {reportLabel(data, selectedPeriod)}
               </p>
             </div>
           </div>
