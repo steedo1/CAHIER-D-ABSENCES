@@ -1902,21 +1902,15 @@ export default async function FinancePaymentsPage({
     componentsBySchedule.get(component.fee_schedule_id)!.push(component);
   }
 
-  const paidComponentsByCharge = new Map<string, Map<string, number>>();
+  const paidComponentsByCharge = new Map<string, Set<string>>();
   for (const paid of paidComponentRows) {
     if (paid.receipt_status === "cancelled") continue;
-    const paidAmount = Number(paid.amount || 0);
-    if (!Number.isFinite(paidAmount) || paidAmount <= 0) continue;
-
     if (!paidComponentsByCharge.has(paid.student_charge_id)) {
-      paidComponentsByCharge.set(paid.student_charge_id, new Map<string, number>());
+      paidComponentsByCharge.set(paid.student_charge_id, new Set<string>());
     }
-
-    const componentMap = paidComponentsByCharge.get(paid.student_charge_id)!;
-    componentMap.set(
-      paid.fee_schedule_component_id,
-      (componentMap.get(paid.fee_schedule_component_id) ?? 0) + paidAmount,
-    );
+    paidComponentsByCharge
+      .get(paid.student_charge_id)!
+      .add(paid.fee_schedule_component_id);
   }
 
   const balancesByStudent = new Map<string, ChargeBalanceRow[]>();
@@ -1937,8 +1931,8 @@ export default async function FinancePaymentsPage({
         const openCharges = studentBalances
           .filter((row) => row.class_id === student.class_id)
           .map((row) => {
-            const paidAmountsByComponent =
-              paidComponentsByCharge.get(row.id) ?? new Map<string, number>();
+            const paidIds =
+              paidComponentsByCharge.get(row.id) ?? new Set<string>();
             const allComponents = row.fee_schedule_id
               ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
               : [];
@@ -1949,23 +1943,13 @@ export default async function FinancePaymentsPage({
               isInternatCategory && allComponents.length > 0;
             const components = componentDrivenBalance
               ? allComponents
-                  .map((component) => {
-                    const expectedAmount = Number(component.amount || 0);
-                    const alreadyPaidAmount =
-                      paidAmountsByComponent.get(component.id) ?? 0;
-                    const remainingComponentAmount = Math.max(
-                      expectedAmount - alreadyPaidAmount,
-                      0,
-                    );
-
-                    return {
-                      id: component.id,
-                      label: component.label,
-                      amount: remainingComponentAmount,
-                      order_index: Number(component.order_index || 0),
-                    };
-                  })
-                  .filter((component) => component.amount > 0)
+                  .filter((component) => !paidIds.has(component.id))
+                  .map((component) => ({
+                    id: component.id,
+                    label: component.label,
+                    amount: Number(component.amount || 0),
+                    order_index: Number(component.order_index || 0),
+                  }))
               : [];
             const rawBalanceDue = Number(row.balance_due || 0);
 
@@ -2028,9 +2012,13 @@ export default async function FinancePaymentsPage({
     (sum, row) => sum + Number(row.total_due || 0),
     0,
   );
-  const totalReceipts = receiptRows
-    .filter((r) => r.receipt_status === "posted")
-    .reduce((sum, row) => sum + Number(row.total_amount || 0), 0);
+  // Même base de calcul que le tableau de bord financier :
+  // on affiche le total réellement comptabilisé sur les dettes de l'année,
+  // pas seulement la somme des 8 reçus récents affichés en bas de page.
+  const totalCollected = balanceRows.reduce(
+    (sum, row) => sum + Number(row.paid_amount || 0),
+    0,
+  );
 
   return (
     <div className="space-y-6">
@@ -2093,9 +2081,9 @@ export default async function FinancePaymentsPage({
         />
         <StatCard
           icon={<CalendarClock className="h-5 w-5" />}
-          label="Montant récent"
-          value={formatMoney(totalReceipts)}
-          hint="Total des reçus affichés"
+          label="Total encaissé"
+          value={formatMoney(totalCollected)}
+          hint="Paiements comptabilisés"
         />
       </section>
 
@@ -2177,9 +2165,6 @@ export default async function FinancePaymentsPage({
                       </Link>
                       <Link
                         href={`/admin/finance/receipts/${row.id}?autoprint=1`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        prefetch={false}
                         className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
                       >
                         <Printer className="h-3.5 w-3.5" />
