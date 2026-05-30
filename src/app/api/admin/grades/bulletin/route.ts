@@ -718,10 +718,46 @@ async function addQrToItems<T extends { student_id: string }>(
     opts.periodMeta.short_label ?? opts.periodMeta.label ?? opts.periodMeta.code ?? null;
 
 const snapFor = (row: any) => {
+  const prepared = (row as any)?.__qr_snapshot;
+  if (prepared && typeof prepared === "object") return prepared;
+
   const g = cleanNumber((row as any)?.general_avg, 4);
   const a = cleanNumber((row as any)?.annual_avg, 4);
-  if (g === null && a === null) return null;
-  return { g, a };
+  const c = cleanNumber((row as any)?.conduct_avg, 4);
+  const r =
+    (row as any)?.rank !== null &&
+    (row as any)?.rank !== undefined &&
+    Number.isFinite(Number((row as any).rank))
+      ? Number((row as any).rank)
+      : null;
+  const ar =
+    (row as any)?.annual_rank !== null &&
+    (row as any)?.annual_rank !== undefined &&
+    Number.isFinite(Number((row as any).annual_rank))
+      ? Number((row as any).annual_rank)
+      : null;
+
+  if (g === null && a === null && c === null) return null;
+
+  return {
+    g,
+    a,
+    c,
+    r,
+    ar,
+    per_subject: Array.isArray((row as any)?.per_subject)
+      ? (row as any).per_subject
+      : [],
+    per_group: Array.isArray((row as any)?.per_group)
+      ? (row as any).per_group
+      : [],
+    per_subject_components: Array.isArray((row as any)?.per_subject_components)
+      ? (row as any).per_subject_components
+      : [],
+    previous_period_avgs: Array.isArray((row as any)?.previous_period_avgs)
+      ? (row as any).previous_period_avgs
+      : null,
+  };
 };
 
 
@@ -3171,6 +3207,10 @@ export async function GET(req: NextRequest) {
       per_subject,
       per_group,
       general_avg,
+      conduct_avg:
+        conductAvgByStudent && conductAvgByStudent.has(cs.student_id)
+          ? cleanNumber(conductAvgByStudent.get(cs.student_id), 4)
+          : null,
       general_bonus: Number(generalBonus.toFixed(2)),
       general_avg_before_bonus: generalAvgBeforeBonus,
       rank: null as number | null,
@@ -3792,6 +3832,44 @@ export async function GET(req: NextRequest) {
       (it as any).annual_avg_status = "not_last_period";
       (it as any).previous_period_avgs = null;
     }
+  }
+
+  // ✅ Snapshot officiel pour la vérification QR.
+  // La page publique ne doit pas reconstruire autrement les éléments sensibles
+  // du bulletin (moyenne, conduite CSCA, groupes de matières, rangs).
+  for (const it of items as any[]) {
+    const conductAvg =
+      conductAvgByStudent && conductAvgByStudent.has(String(it.student_id))
+        ? cleanNumber(conductAvgByStudent.get(String(it.student_id)), 4)
+        : cleanNumber(it?.conduct_avg, 4);
+
+    it.conduct_avg = conductAvg;
+    it.__qr_snapshot = {
+      g: cleanNumber(it?.general_avg, 4),
+      a: cleanNumber(it?.annual_avg, 4),
+      c: conductAvg,
+      r:
+        it?.rank !== null && it?.rank !== undefined && Number.isFinite(Number(it.rank))
+          ? Number(it.rank)
+          : null,
+      ar:
+        it?.annual_rank !== null &&
+        it?.annual_rank !== undefined &&
+        Number.isFinite(Number(it.annual_rank))
+          ? Number(it.annual_rank)
+          : null,
+      subjects: subjectsForReport,
+      subject_groups: subjectGroups,
+      subject_components: subjectComponentsForReport,
+      per_subject: Array.isArray(it?.per_subject) ? it.per_subject : [],
+      per_group: Array.isArray(it?.per_group) ? it.per_group : [],
+      per_subject_components: Array.isArray(it?.per_subject_components)
+        ? it.per_subject_components
+        : [],
+      previous_period_avgs: Array.isArray(it?.previous_period_avgs)
+        ? it.previous_period_avgs
+        : null,
+    };
   }
 
   // ✅ QR : URL courte /v/[code] (fallback token si besoin)

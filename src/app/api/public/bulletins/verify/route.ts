@@ -3903,6 +3903,33 @@ export async function GET(req: NextRequest) {
     snap && typeof snap.g === "number" ? cleanNumber(snap.g, 4) : null;
   const snapAnnual =
     snap && typeof snap.a === "number" ? cleanNumber(snap.a, 4) : null;
+  const snapConduct =
+    snap && typeof snap.c === "number" ? cleanNumber(snap.c, 4) : null;
+  const snapRank =
+    snap && snap.r !== null && snap.r !== undefined && Number.isFinite(Number(snap.r))
+      ? Number(snap.r)
+      : null;
+  const snapAnnualRank =
+    snap && snap.ar !== null && snap.ar !== undefined && Number.isFinite(Number(snap.ar))
+      ? Number(snap.ar)
+      : null;
+  const snapSubjects = snap && Array.isArray(snap.subjects) ? snap.subjects : null;
+  const snapSubjectGroups =
+    snap && Array.isArray(snap.subject_groups) ? snap.subject_groups : null;
+  const snapSubjectComponents =
+    snap && Array.isArray(snap.subject_components) ? snap.subject_components : null;
+  const snapPerSubject =
+    snap && Array.isArray(snap.per_subject) ? snap.per_subject : null;
+  const snapPerGroup =
+    snap && Array.isArray(snap.per_group) ? snap.per_group : null;
+  const snapPerSubjectComponents =
+    snap && Array.isArray(snap.per_subject_components)
+      ? snap.per_subject_components
+      : null;
+  const snapPreviousPeriodAvgs =
+    snap && Array.isArray(snap.previous_period_avgs)
+      ? snap.previous_period_avgs
+      : null;
 
   const recomputedGeneralAvg = cleanNumber(
     (bulletinForStudent as any).general_avg,
@@ -3924,6 +3951,22 @@ export async function GET(req: NextRequest) {
   } else if (recomputedGeneralAvg !== null) {
     (bulletinForStudent as any).general_avg = recomputedGeneralAvg;
     (bulletinForStudent as any).general_avg_source = "recomputed_official";
+  }
+
+  if (snapRank !== null) {
+    (bulletinForStudent as any).rank = snapRank;
+  }
+  if (snapPerSubject) {
+    (bulletinForStudent as any).per_subject = snapPerSubject;
+  }
+  if (snapPerGroup) {
+    (bulletinForStudent as any).per_group = snapPerGroup;
+  }
+  if (snapPerSubjectComponents) {
+    (bulletinForStudent as any).per_subject_components = snapPerSubjectComponents;
+  }
+  if (snapPreviousPeriodAvgs) {
+    (bulletinForStudent as any).previous_period_avgs = snapPreviousPeriodAvgs;
   }
 
   let annual_avg_for_student: number | null = null;
@@ -4003,6 +4046,10 @@ export async function GET(req: NextRequest) {
     (bulletinForStudent as any).annual_avg_source = "recomputed_official";
   }
 
+  if (snapAnnualRank !== null) {
+    (bulletinForStudent as any).annual_rank = snapAnnualRank;
+  }
+
   function deriveConductAvgFromOfficialGeneral(): number | null {
     const officialGeneral = cleanNumber((bulletinForStudent as any)?.general_avg, 4);
     if (officialGeneral === null) return null;
@@ -4048,9 +4095,15 @@ export async function GET(req: NextRequest) {
     ? deriveConductAvgFromOfficialGeneral()
     : null;
 
-  if (derivedConductFromOfficialGeneral !== null) {
+  if (snapConduct !== null) {
+    conductForStudent = snapConduct;
+  } else if (derivedConductFromOfficialGeneral !== null) {
     conductForStudent = derivedConductFromOfficialGeneral;
   }
+
+  const responseSubjects = snapSubjects || subjectsForReport;
+  const responseSubjectGroups = snapSubjectGroups || subjectGroups;
+  const responseSubjectComponents = snapSubjectComponents || subjectComponentsForReport;
 
   return NextResponse.json({
     ok: true,
@@ -4104,9 +4157,9 @@ export async function GET(req: NextRequest) {
       photo_url: stu.photo_url || null,
     },
     period: periodMeta,
-    subjects: subjectsForReport,
-    subject_groups: subjectGroups,
-    subject_components: subjectComponentsForReport,
+    subjects: responseSubjects,
+    subject_groups: responseSubjectGroups,
+    subject_components: responseSubjectComponents,
     conduct:
       conductForStudent === null
         ? null
@@ -4115,9 +4168,11 @@ export async function GET(req: NextRequest) {
             avg20: conductForStudent,
             label: isCSCA ? "Discipline / Conduite" : "Conduite",
             source:
-              derivedConductFromOfficialGeneral !== null
-                ? "derived_from_official_bulletin_average"
-                : "public_verify",
+              snapConduct !== null
+                ? "qr_snapshot_official"
+                : derivedConductFromOfficialGeneral !== null
+                  ? "derived_from_official_bulletin_average"
+                  : "public_verify",
           },
     bulletin: bulletinForStudent,
   });

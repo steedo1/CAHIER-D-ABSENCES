@@ -368,7 +368,7 @@ export default async function VerifyByCodePage(props: any) {
     : null;
 
   let derivedConductAvg: number | null = apiConductAvg;
-  if (canDeriveConduct) {
+  if (derivedConductAvg === null && canDeriveConduct) {
     const generalBonusRaw = Number(bulletin?.general_bonus ?? 0);
     const generalBonus = Number.isFinite(generalBonusRaw) ? generalBonusRaw : 0;
     const officialGeneralBeforeBonus = Number(bulletin.general_avg) - generalBonus;
@@ -377,13 +377,10 @@ export default async function VerifyByCodePage(props: any) {
       displayedWeightedTotal;
 
     if (Number.isFinite(raw) && raw >= -0.01 && raw <= 20.01) {
-      const candidate = round2(Math.max(0, Math.min(20, raw)));
-      // Pour le CSCA, la conduite affichée doit rester cohérente avec la
-      // moyenne officielle du bulletin, même si le recalcul public isolé
-      // renvoie une valeur différente.
-      if (derivedConductAvg === null || isCsca) {
-        derivedConductAvg = candidate;
-      }
+      // Secours seulement si l'API n'a renvoyé aucune conduite.
+      // La page QR ne doit jamais écraser une conduite officielle,
+      // surtout pour le CSCA.
+      derivedConductAvg = round2(Math.max(0, Math.min(20, raw)));
     }
   }
 
