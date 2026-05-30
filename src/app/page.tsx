@@ -421,6 +421,7 @@ export default function HomePage() {
           <nav className="hidden items-center gap-4 text-sm font-bold text-slate-700 lg:flex">
             <a href="#spaces" className="hover:text-emerald-700">Espaces</a>
             <a href="#modules" className="hover:text-emerald-700">Modules</a>
+            <a href="#finance" className="hover:text-emerald-700">Finance</a>
             <a href="#steps" className="hover:text-emerald-700">Déploiement</a>
             <a href="#faq" className="hover:text-emerald-700">FAQ</a>
             <a href="#contact" className="hover:text-emerald-700">Contact</a>
@@ -638,8 +639,8 @@ export default function HomePage() {
       <section id="modules" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
         <SectionTitle
           eyebrow="Modules clés"
-          title="Mon Cahier a grandi : l’accueil doit le montrer clairement"
-          description="La plateforme n’est plus seulement un cahier d’absences et de notes. Elle couvre désormais plusieurs dimensions de la gestion scolaire."
+          title="Tous les services essentiels de l’école réunis au même endroit"
+          description="La plateforme couvre l’assiduité, les notes, les bulletins, les finances, la communication avec les parents et le pilotage administratif."
         />
 
         <div className="mt-5 grid grid-cols-1 gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-3">
@@ -697,6 +698,58 @@ export default function HomePage() {
             desc="Tableaux de bord, états, exports et indicateurs pour mieux suivre le fonctionnement de l’école."
             tone="emerald"
           />
+        </div>
+      </section>
+
+      <section id="finance" className="mx-auto max-w-7xl px-4 py-6 md:py-8">
+        <div className="overflow-hidden rounded-[26px] border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-slate-50 p-5 shadow-sm md:rounded-[32px] md:p-7">
+          <SectionTitle
+            eyebrow="Gestion financière"
+            title="Un suivi clair des frais, paiements et dépenses de l’établissement"
+            description="Mon Cahier aide la direction et le gestionnaire financier à suivre les encaissements, les soldes, les reçus, les dépenses et les rapports sans mélanger la finance avec les autres rôles."
+          />
+
+          <div className="mt-5 grid grid-cols-1 gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-4">
+            <FeatureCard
+              icon={Wallet}
+              title="Frais et scolarité"
+              desc="Paramétrage des frais par année, classe, catégorie, statut affecté ou non affecté, internat et rubriques spécifiques."
+              tone="amber"
+            />
+            <FeatureCard
+              icon={ReceiptText}
+              title="Paiements et reçus"
+              desc="Enregistrement des paiements, reçus imprimables, historique des versements et suivi des encaissements par période."
+              tone="amber"
+            />
+            <FeatureCard
+              icon={Landmark}
+              title="Dépenses et rapports"
+              desc="Suivi des sorties, états financiers, totaux encaissés, ventilation par catégorie et aide à la décision pour la direction."
+              tone="slate"
+            />
+            <FeatureCard
+              icon={UserCog}
+              title="Espace finance séparé"
+              desc="Le gestionnaire financier travaille dans son propre espace, tandis que le fondateur garde une vue consolidée des établissements."
+              tone="violet"
+            />
+          </div>
+
+          <div className="mt-5 grid gap-4 rounded-[24px] border border-amber-200 bg-white/80 p-4 md:mt-6 md:grid-cols-3 md:p-5">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-700">Encaissements</div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">Voir ce qui est payé, restant dû, encaissé par période et par catégorie.</p>
+            </div>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-700">Parents</div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">Donner une information financière plus claire aux familles, avec reçus et historiques.</p>
+            </div>
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-700">Fondateur</div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">Suivre l’activité financière globale sans exposer les écrans sensibles aux mauvais profils.</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -826,6 +879,7 @@ export default function HomePage() {
             <ul className="mt-4 space-y-2 text-sm text-slate-300">
               <li><a href="#spaces" className="hover:text-white">Espaces de connexion</a></li>
               <li><a href="#modules" className="hover:text-white">Modules</a></li>
+              <li><a href="#finance" className="hover:text-white">Gestion financière</a></li>
               <li><a href="#steps" className="hover:text-white">Déploiement</a></li>
               <li><a href="#faq" className="hover:text-white">FAQ</a></li>
             </ul>
