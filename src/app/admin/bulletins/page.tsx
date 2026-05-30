@@ -145,6 +145,15 @@ type BulletinAnnualCoverage = {
   status?: "complete" | "partial" | "empty" | "not_last_period" | string;
 };
 
+type BulletinPreviousPeriodAverage = {
+  from?: string | null;
+  to?: string | null;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+  avg20?: number | null;
+};
+
 type BulletinItemBase = {
   student_id: string;
   full_name: string;
@@ -192,6 +201,9 @@ type BulletinItemBase = {
   annual_coverage?: BulletinAnnualCoverage | null;
   annual_avg_is_complete?: boolean | null;
   annual_avg_status?: "complete" | "partial" | "empty" | "not_last_period" | string | null;
+
+  // ✅ Rappel des moyennes précédentes (T1 / T2), renvoyé seulement au dernier trimestre.
+  previous_period_avgs?: BulletinPreviousPeriodAverage[] | null;
 
   // ✅ Décision administrative centralisée : NC au général.
   // Si true, la moyenne/rang général affichés doivent être NC,
@@ -1343,6 +1355,22 @@ function StudentBulletinCard({
   );
   const annualRank = item.annual_rank ?? null;
   const showAnnual = annualAvgOn20 !== null;
+  const previousPeriodAverages = useMemo(() => {
+    const rows = Array.isArray(item.previous_period_avgs)
+      ? item.previous_period_avgs
+      : [];
+
+    return rows
+      .map((row, idx) => ({
+        ...row,
+        avg20: clampTo20(row.avg20 ?? null),
+        fallbackLabel: `T${idx + 1}`,
+      }))
+      .slice(0, 2);
+  }, [item.previous_period_avgs]);
+  const isLastPeriodForDisplay = period.is_last === true || showAnnual;
+  const showPreviousPeriodAverages =
+    isLastPeriodForDisplay && previousPeriodAverages.length > 0;
 
   // Bulletin : on garde UNE SEULE ligne de conduite.
   // Même au CSCA, « Discipline » reste la composante issue des 4 rubriques ;
@@ -2152,7 +2180,7 @@ function StudentBulletinCard({
       {/* BLOCS BAS */}
       <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] leading-tight">
         <div className="bdr bottom-card p-1">
-          <div className="bottom-card-title font-semibold text-center">Assiduité</div>
+          <div className="bottom-card-title font-semibold text-center">Discipline générale</div>
           {conduct ? (
             <div className="mt-[2px] space-y-[2px]">
               <div>
@@ -2266,40 +2294,86 @@ function StudentBulletinCard({
             <div className="bottom-card-title font-semibold uppercase text-center">
               Mentions du conseil de classe
             </div>
-            <div className="mt-[2px] text-[9px] font-semibold">DISTINCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[9px]">
-              <div className="flex items-center">
-                {tick(mentions.distinction === "excellence")}
-                <span>TH + Excellence</span>
-              </div>
-              <div className="flex items-center">
-                {tick(mentions.distinction === "honour")}
-                <span>TH + Félicitations</span>
-              </div>
-              <div className="flex items-center">
-                {tick(mentions.distinction === "encouragement")}
-                <span>TH + Encouragement</span>
-              </div>
-            </div>
 
-            <div className="mt-2 text-[9px] font-semibold">SANCTIONS</div>
-            <div className="mt-[2px] space-y-[2px] text-[9px]">
-              <div className="flex items-center">
-                {tick(mentions.sanction === "warningWork")}
-                <span>Avertissement travail</span>
+            <div
+              className={[
+                "mentions-grid mt-[2px] grid gap-2",
+                showPreviousPeriodAverages
+                  ? "grid-cols-[1fr_1fr_0.9fr]"
+                  : "grid-cols-2",
+              ].join(" ")}
+            >
+              <div>
+                <div className="text-[9px] font-semibold">DISTINCTIONS</div>
+                <div className="mt-[2px] space-y-[2px] text-[9px]">
+                  <div className="flex items-center">
+                    {tick(mentions.distinction === "excellence")}
+                    <span>TH + Excellence</span>
+                  </div>
+                  <div className="flex items-center">
+                    {tick(mentions.distinction === "honour")}
+                    <span>TH + Félicitations</span>
+                  </div>
+                  <div className="flex items-center">
+                    {tick(mentions.distinction === "encouragement")}
+                    <span>TH + Encouragement</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center">
-                {tick(mentions.sanction === "warningConduct")}
-                <span>Avertissement conduite</span>
+
+              <div className="mentions-sanctions border-l border-slate-300 pl-2">
+                <div className="text-[9px] font-semibold">SANCTIONS</div>
+                <div className="mt-[2px] space-y-[2px] text-[9px]">
+                  <div className="flex items-center">
+                    {tick(mentions.sanction === "warningWork")}
+                    <span>Avertissement travail</span>
+                  </div>
+                  <div className="flex items-center">
+                    {tick(mentions.sanction === "warningConduct")}
+                    <span>Avertissement conduite</span>
+                  </div>
+                  <div className="flex items-center">
+                    {tick(mentions.sanction === "blameWork")}
+                    <span>Blâme travail</span>
+                  </div>
+                  <div className="flex items-center">
+                    {tick(mentions.sanction === "blameConduct")}
+                    <span>Blâme conduite</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center">
-                {tick(mentions.sanction === "blameWork")}
-                <span>Blâme travail</span>
-              </div>
-              <div className="flex items-center">
-                {tick(mentions.sanction === "blameConduct")}
-                <span>Blâme conduite</span>
-              </div>
+
+              {showPreviousPeriodAverages && (
+                <div className="previous-averages-column border-l border-slate-300 pl-2">
+                  <div className="text-[9px] font-semibold uppercase leading-tight">
+                    Rappel moyennes
+                  </div>
+                  <div className="mt-[3px] space-y-[3px] text-[9px]">
+                    {previousPeriodAverages.map((row, idx) => {
+                      const label =
+                        row.short_label ||
+                        row.label ||
+                        row.code ||
+                        row.fallbackLabel ||
+                        `T${idx + 1}`;
+
+                      return (
+                        <div
+                          key={`${row.from || idx}-${row.to || idx}`}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <span className="font-semibold uppercase">{label}</span>
+                          <span className="font-bold">
+                            {hasNumericValue(row.avg20)
+                              ? `${formatNumber(row.avg20)} / 20`
+                              : "NC"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

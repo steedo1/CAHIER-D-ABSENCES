@@ -3650,6 +3650,16 @@ export async function GET(req: NextRequest) {
       periodMaps.push({ w, period: p, map });
     }
 
+    // ✅ Pour le bulletin du dernier trimestre : rappeler les moyennes T1/T2
+    // dans la zone des mentions, sans recalcul côté front.
+    const previousPeriodMaps = periodMaps
+      .filter((pm) => {
+        const from = String(pm.period.start_date || "");
+        const to = String(pm.period.end_date || "");
+        return from !== String(dateFrom || "") || to !== String(dateTo || "");
+      })
+      .slice(0, 2);
+
     for (const sid of studentIds) {
       let sum = 0;
       let sumW = 0;
@@ -3740,6 +3750,14 @@ export async function GET(req: NextRequest) {
       // même si toutes les périodes ne sont pas encore couvertes.
       (it as any).annual_avg_is_complete = a !== null;
       (it as any).annual_avg_status = a !== null ? "complete" : "empty";
+      (it as any).previous_period_avgs = previousPeriodMaps.map((pm) => ({
+        from: pm.period.start_date ?? null,
+        to: pm.period.end_date ?? null,
+        code: pm.period.code ?? null,
+        label: pm.period.label ?? null,
+        short_label: pm.period.short_label ?? null,
+        avg20: pm.map.get(String(it.student_id)) ?? null,
+      }));
 
       if (annualOverride) {
         (it as any).admin_annual_forced_nc = true;
@@ -3767,6 +3785,7 @@ export async function GET(req: NextRequest) {
       (it as any).annual_coverage_status = "not_last_period";
       (it as any).annual_avg_is_complete = false;
       (it as any).annual_avg_status = "not_last_period";
+      (it as any).previous_period_avgs = null;
     }
   }
 
