@@ -694,8 +694,8 @@ export default function PaymentsComposer({
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             Ouvre le formulaire d’encaissement en plein écran : choix de
-            l’élève, catégorie, ventilation scolarité ou internat, puis
-            validation du reçu.
+            l’élève, ventilation scolarité/internat, puis génération séparée
+            des reçus pour le renforcement ou les kits livres si nécessaire.
           </p>
           <span className="mt-5 inline-flex rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-emerald-700">
             Commencer
@@ -1651,11 +1651,13 @@ function OtherFeesPaymentPlanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">
-            Autres catégories
+            Reçus séparés
           </div>
           <p className="mt-1 text-sm text-amber-900/80">
-            Les frais complémentaires, dont le cours de renforcement, sont
-            ventilés dans le même reçu lorsque le parent les règle.
+            Les catégories séparées, notamment Cours de renforcement et Kit
+            livres, ne sont plus imprimées sur le reçu scolarité/internat. Si
+            un montant est saisi ici, l’enregistrement génère automatiquement
+            un reçu distinct pour la catégorie concernée.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-amber-200">

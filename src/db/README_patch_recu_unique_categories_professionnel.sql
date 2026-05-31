@@ -1,7 +1,10 @@
--- Patch applicatif : reçu unique professionnel
--- Aucun SQL à exécuter.
+-- Patch applicatif : reçus par groupes comptables professionnels
+-- Aucun SQL destructif à exécuter.
 -- Changements :
--- 1) Paiement : toutes les catégories ouvertes de l'élève peuvent être ventilées dans une seule opération.
--- 2) Les textes explicatifs "Reçu unique / Scolarité en haut, internat en bas / Reçu Unique" sont retirés de l'interface.
--- 3) Cours de renforcement et autres catégories apparaissent dans le même reçu s'ils sont payés.
--- 4) Shell fondateur : notifications visibles par défaut et bouton Déconnexion en jaune/or.
+-- 1) Paiement : l'écran peut toujours saisir plusieurs montants en une seule opération.
+-- 2) Le backend ne crée plus forcément un seul reçu global : il sépare automatiquement les reçus par groupe comptable.
+-- 3) Scolarité et Internat restent sur le même reçu lorsque réglés ensemble.
+-- 4) Cours de renforcement a son propre reçu séparé.
+-- 5) Kit livres a son propre reçu séparé.
+-- 6) Les autres catégories non scolaires sont isolées par catégorie pour éviter les mélanges comptables.
+-- 7) Un diagnostic SQL séparé liste les anciens reçus déjà validés qui mélangent ces catégories.

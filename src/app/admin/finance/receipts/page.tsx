@@ -178,6 +178,7 @@ export default async function FinanceReceiptsPage({
     status?: string;
     class_id?: string;
     academic_year?: string;
+    created?: string;
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
@@ -191,6 +192,13 @@ export default async function FinanceReceiptsPage({
   const statusFilter = String(params?.status || "").trim();
   const classIdFilter = String(params?.class_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
+  const createdParam = String(params?.created || "").trim();
+  const createdReceiptIds = new Set(
+    createdParam
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const admin = getSupabaseServiceClient();
@@ -242,6 +250,9 @@ export default async function FinanceReceiptsPage({
   if (recErr) throw new Error(recErr.message);
 
   const receiptRows = (receipts ?? []) as ReceiptRow[];
+  const createdReceiptRows = receiptRows.filter((row) =>
+    createdReceiptIds.has(row.id),
+  );
 
   const receiptStudentIds = new Set(receiptRows.map((r) => r.student_id));
   const classIdSet = new Set(classIds);
@@ -406,6 +417,26 @@ export default async function FinanceReceiptsPage({
         currentPath="/admin/finance/receipts"
         hiddenParams={{ q, status: statusFilter, class_id: classIdFilter }}
       />
+
+      {createdReceiptRows.length > 1 ? (
+        <section className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900 shadow-sm">
+          <div className="font-black">
+            Plusieurs reçus ont été générés séparément pour le même encaissement.
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {createdReceiptRows.map((row) => (
+              <Link
+                key={row.id}
+                href={`/admin/finance/receipts/${row.id}`}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-black text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+              >
+                <Receipt className="h-3.5 w-3.5" />
+                {row.receipt_no} · {formatMoney(row.total_amount)}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard

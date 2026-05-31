@@ -140,6 +140,21 @@ type ReceiptRow = {
   created_at: string;
 };
 
+type ReceiptAllocationGroup = {
+  key: string;
+  label: string;
+  allocations: ResolvedPaymentAllocation[];
+  amount: number;
+};
+
+type CreatedReceiptInfo = {
+  id: string;
+  receiptNo: string;
+  totalAmount: number;
+  groupLabel: string;
+  allocations: ResolvedPaymentAllocation[];
+};
+
 export type ChargeOptionRow = {
   charge_id: string;
   fee_category_id: string;
@@ -252,6 +267,56 @@ function isFinanceScolariteCategory(
     text.includes("écolage") ||
     text.includes("inscription")
   );
+}
+
+function isFinanceReinforcementCategory(
+  category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
+) {
+  const text = normalizeNoAccent(`${category?.code || ""} ${category?.name || ""}`);
+  return text.includes("renforcement");
+}
+
+function isFinanceBookKitCategory(
+  category: Pick<FeeCategoryRow, "code" | "name"> | null | undefined,
+) {
+  const text = normalizeNoAccent(`${category?.code || ""} ${category?.name || ""}`);
+  return (
+    text.includes("livre") ||
+    text.includes("livres") ||
+    (text.includes("kit") && (text.includes("cahier") || text.includes("fourniture")))
+  );
+}
+
+function receiptGroupInfoForCharge(
+  charge: ChargeBalanceRow,
+  categoryMap: Map<string, Pick<FeeCategoryRow, "id" | "code" | "name">>,
+) {
+  const category = charge.fee_category_id
+    ? categoryMap.get(charge.fee_category_id)
+    : null;
+
+  if (isFinanceScolariteCategory(category) || isFinanceInternatCategory(category)) {
+    return { key: "core:scolarite-internat", label: "Scolarité & internat" };
+  }
+
+  if (isFinanceReinforcementCategory(category)) {
+    return {
+      key: `standalone:renforcement:${charge.fee_category_id || charge.id}`,
+      label: "Cours de renforcement",
+    };
+  }
+
+  if (isFinanceBookKitCategory(category)) {
+    return {
+      key: `standalone:kit-livres:${charge.fee_category_id || charge.id}`,
+      label: "Kit livres",
+    };
+  }
+
+  return {
+    key: `standalone:autre:${charge.fee_category_id || charge.id}`,
+    label: category?.name || charge.label || "Autres frais",
+  };
 }
 
 function paymentTypeLabel(value: string) {
@@ -1320,6 +1385,219 @@ async function resolveAllocationPlanForPayment({
   return resolved;
 }
 
+async function fetchFeeCategoriesForAllocations(
+  admin: any,
+  institutionId: string,
+  allocations: ResolvedPaymentAllocation[],
+) {
+  const categoryIds = Array.from(
+    new Set(
+      allocations
+        .map((item) => item.charge.fee_category_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  if (categoryIds.length === 0) {
+    return new Map<string, Pick<FeeCategoryRow, "id" | "code" | "name">>();
+  }
+
+  const { data, error } = await admin
+    .schema("finance")
+    .from("fee_categories")
+    .select("id,code,name")
+    .eq("school_id", institutionId)
+    .in("id", categoryIds);
+
+  if (error) throw new Error(error.message);
+
+  return new Map(
+    ((data ?? []) as Array<Pick<FeeCategoryRow, "id" | "code" | "name">>).map(
+      (category) => [category.id, category],
+    ),
+  );
+}
+
+function groupAllocationsForSeparateReceipts(
+  allocations: ResolvedPaymentAllocation[],
+  categoryMap: Map<string, Pick<FeeCategoryRow, "id" | "code" | "name">>,
+): ReceiptAllocationGroup[] {
+  const grouped = new Map<string, ReceiptAllocationGroup>();
+
+  for (const allocation of allocations) {
+    const info = receiptGroupInfoForCharge(allocation.charge, categoryMap);
+    const existing = grouped.get(info.key);
+    if (existing) {
+      existing.allocations.push(allocation);
+      existing.amount += Number(allocation.amount || 0);
+    } else {
+      grouped.set(info.key, {
+        key: info.key,
+        label: info.label,
+        allocations: [allocation],
+        amount: Number(allocation.amount || 0),
+      });
+    }
+  }
+
+  return Array.from(grouped.values())
+    .filter((group) => group.amount > 0)
+    .map((group) => {
+      if (group.key !== "core:scolarite-internat") return group;
+
+      const hasScolarite = group.allocations.some((item) =>
+        isFinanceScolariteCategory(categoryMap.get(item.charge.fee_category_id)),
+      );
+      const hasInternat = group.allocations.some((item) =>
+        isFinanceInternatCategory(categoryMap.get(item.charge.fee_category_id)),
+      );
+
+      return {
+        ...group,
+        label: hasScolarite && hasInternat
+          ? "Scolarité & internat"
+          : hasScolarite
+            ? "Scolarité"
+            : "Internat",
+      };
+    });
+}
+
+async function createReceiptForAllocationGroup({
+  admin,
+  institutionId,
+  academicYearId,
+  academicYear,
+  studentId,
+  userId,
+  paymentDateIso,
+  payerName,
+  referenceNo,
+  baseNotes,
+  group,
+}: {
+  admin: any;
+  institutionId: string;
+  academicYearId: string | null;
+  academicYear: string | null;
+  studentId: string;
+  userId: string;
+  paymentDateIso: string;
+  payerName: string;
+  referenceNo: string;
+  baseNotes: string | null;
+  group: ReceiptAllocationGroup;
+}): Promise<CreatedReceiptInfo> {
+  const receiptNo = makeReceiptNo();
+  const receiptNotes = [baseNotes, `Type de reçu : ${group.label}`]
+    .filter(Boolean)
+    .join("\n") || null;
+
+  const { data: receipt, error: receiptErr } = await admin
+    .schema("finance")
+    .from("receipts")
+    .insert({
+      school_id: institutionId,
+      academic_year_id: academicYearId,
+      academic_year: academicYear,
+      student_id: studentId,
+      receipt_no: receiptNo,
+      receipt_status: "posted",
+      payment_date: paymentDateIso,
+      payment_method_id: null,
+      cash_account_id: null,
+      payer_name: payerName || null,
+      reference_no: referenceNo || null,
+      total_amount: group.amount,
+      notes: receiptNotes,
+      cancelled_at: null,
+      cancelled_by: null,
+      cancel_reason: null,
+      created_by: userId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any)
+    .select("id, receipt_no")
+    .single();
+
+  if (receiptErr) throw new Error(receiptErr.message);
+
+  try {
+    const nowAllocationIso = new Date().toISOString();
+    const { data: allocationsInserted, error: allocErr } = await admin
+      .schema("finance")
+      .from("receipt_allocations")
+      .insert(
+        group.allocations.map((item) => ({
+          receipt_id: receipt.id,
+          student_charge_id: item.charge.id,
+          amount: item.amount,
+          created_at: nowAllocationIso,
+        })) as any[],
+      )
+      .select("id,student_charge_id");
+
+    if (allocErr) throw new Error(allocErr.message);
+
+    const allocationIdByChargeId = new Map<string, string>();
+    for (const row of (allocationsInserted ?? []) as Array<{
+      id: string;
+      student_charge_id: string;
+    }>) {
+      allocationIdByChargeId.set(row.student_charge_id, row.id);
+    }
+
+    const componentAllocations = group.allocations.flatMap((item) => {
+      const allocationId = allocationIdByChargeId.get(item.charge.id);
+      if (!allocationId) return [];
+
+      const paidComponents = item.selectedComponents.map((component) => ({
+        receipt_allocation_id: allocationId,
+        fee_schedule_component_id: component.id,
+        label: component.label,
+        amount: Number(component.paid_amount ?? component.amount ?? 0),
+        order_index: Number(component.order_index || 0),
+        created_at: nowAllocationIso,
+      }));
+
+      const skippedComponents = item.skippedComponents.map((component) => ({
+        receipt_allocation_id: allocationId,
+        fee_schedule_component_id: component.id,
+        label: component.label,
+        amount: 0,
+        order_index: Number(component.order_index || 0),
+        created_at: nowAllocationIso,
+      }));
+
+      return [...paidComponents, ...skippedComponents];
+    });
+
+    if (componentAllocations.length > 0) {
+      const { error: compAllocErr } = await admin
+        .schema("finance")
+        .from("receipt_allocation_components")
+        .insert(componentAllocations as any[]);
+
+      if (compAllocErr) throw new Error(compAllocErr.message);
+    }
+  } catch (error) {
+    await admin
+      .schema("finance")
+      .from("receipts")
+      .delete()
+      .eq("id", receipt.id);
+    throw error;
+  }
+
+  return {
+    id: receipt.id,
+    receiptNo: receipt.receipt_no,
+    totalAmount: group.amount,
+    groupLabel: group.label,
+    allocations: group.allocations,
+  };
+}
+
 async function createPaymentAction(formData: FormData) {
   "use server";
 
@@ -1508,128 +1786,60 @@ async function createPaymentAction(formData: FormData) {
     );
   }
 
-  const receiptNo = makeReceiptNo();
   const paymentDateIso = paymentDate
     ? `${paymentDate}T12:00:00`
     : new Date().toISOString();
   const receiptNotes =
     [notes, ...extraNotes].filter(Boolean).join("\n") || null;
 
-  const { data: receipt, error: receiptErr } = await admin
-    .schema("finance")
-    .from("receipts")
-    .insert({
-      school_id: institutionId,
-      academic_year_id: academicYearId,
-      academic_year: academicYear,
-      student_id: studentId,
-      receipt_no: receiptNo,
-      receipt_status: "posted",
-      payment_date: paymentDateIso,
-      payment_method_id: null,
-      cash_account_id: null,
-      payer_name: payerName || null,
-      reference_no: referenceNo || null,
-      total_amount: amount,
-      notes: receiptNotes,
-      cancelled_at: null,
-      cancelled_by: null,
-      cancel_reason: null,
-      created_by: userId,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any)
-    .select("id, receipt_no")
-    .single();
+  const categoryMap = await fetchFeeCategoriesForAllocations(
+    admin,
+    institutionId,
+    allocationDrafts,
+  );
+  const receiptGroups = groupAllocationsForSeparateReceipts(
+    allocationDrafts,
+    categoryMap,
+  );
 
-  if (receiptErr) throw new Error(receiptErr.message);
-
-  const nowAllocationIso = new Date().toISOString();
-  const { data: allocationsInserted, error: allocErr } = await admin
-    .schema("finance")
-    .from("receipt_allocations")
-    .insert(
-      allocationDrafts.map((item) => ({
-        receipt_id: receipt.id,
-        student_charge_id: item.charge.id,
-        amount: item.amount,
-        created_at: nowAllocationIso,
-      })) as any[],
-    )
-    .select("id,student_charge_id");
-
-  if (allocErr) {
-    await admin
-      .schema("finance")
-      .from("receipts")
-      .delete()
-      .eq("id", receipt.id);
-    throw new Error(allocErr.message);
+  if (receiptGroups.length === 0) {
+    throw new Error("Aucun reçu ne peut être généré avec une ventilation à 0 F.");
   }
 
-  const allocationIdByChargeId = new Map<string, string>();
-  for (const row of (allocationsInserted ?? []) as Array<{
-    id: string;
-    student_charge_id: string;
-  }>) {
-    allocationIdByChargeId.set(row.student_charge_id, row.id);
-  }
+  const createdReceipts: CreatedReceiptInfo[] = [];
 
-  const componentAllocations = allocationDrafts.flatMap((item) => {
-    const allocationId = allocationIdByChargeId.get(item.charge.id);
-    if (!allocationId) return [];
-
-    const paidComponents = item.selectedComponents.map((component) => ({
-      receipt_allocation_id: allocationId,
-      fee_schedule_component_id: component.id,
-      label: component.label,
-      amount: Number(component.paid_amount ?? component.amount ?? 0),
-      order_index: Number(component.order_index || 0),
-      created_at: nowAllocationIso,
-    }));
-
-    const skippedComponents = item.skippedComponents.map((component) => ({
-      receipt_allocation_id: allocationId,
-      fee_schedule_component_id: component.id,
-      label: component.label,
-      amount: 0,
-      order_index: Number(component.order_index || 0),
-      created_at: nowAllocationIso,
-    }));
-
-    return [...paidComponents, ...skippedComponents];
-  });
-
-  if (componentAllocations.length > 0) {
-    const { error: compAllocErr } = await admin
-      .schema("finance")
-      .from("receipt_allocation_components")
-      .insert(componentAllocations as any[]);
-
-    if (compAllocErr) {
+  try {
+    for (const group of receiptGroups) {
+      const created = await createReceiptForAllocationGroup({
+        admin,
+        institutionId,
+        academicYearId,
+        academicYear,
+        studentId,
+        userId,
+        paymentDateIso,
+        payerName,
+        referenceNo,
+        baseNotes: receiptNotes,
+        group,
+      });
+      createdReceipts.push(created);
+    }
+  } catch (error) {
+    for (const created of createdReceipts) {
       await admin
         .schema("finance")
         .from("receipts")
         .delete()
-        .eq("id", receipt.id);
-      throw new Error(compAllocErr.message);
+        .eq("id", created.id);
     }
+    throw error;
   }
 
   await syncVariableAnnexChargeAmounts({
     institutionId,
     allocations: allocationDrafts,
   });
-
-  const remainingDueAfterPayment = allocationDrafts.reduce((sum, item) => {
-    return (
-      sum +
-      Math.max(
-        Number(item.charge.balance_due || 0) - Number(item.amount || 0),
-        0,
-      )
-    );
-  }, 0);
 
   let studentNameForNotification = payerName || "";
   try {
@@ -1657,37 +1867,57 @@ async function createPaymentAction(formData: FormData) {
     );
   }
 
-  try {
-    await queueFounderFinancePaymentNotification({
-      institutionId,
-      amount,
-      receiptNo: receipt.receipt_no,
-      payerName: payerName || null,
-      studentName: studentNameForNotification || null,
-      className,
-      categoryName: String(
-        (feeCategory as any).name || primaryCharge.label || "Frais scolaire",
-      ),
-      remainingDue: remainingDueAfterPayment,
-      paidAt: paymentDateIso,
-    });
-  } catch (e: any) {
-    console.warn(
-      "[finance/payments] founder finance notification skipped",
-      e?.message || e,
-    );
+  for (const created of createdReceipts) {
+    const remainingDueAfterPayment = created.allocations.reduce((sum, item) => {
+      return (
+        sum +
+        Math.max(
+          Number(item.charge.balance_due || 0) - Number(item.amount || 0),
+          0,
+        )
+      );
+    }, 0);
+
+    try {
+      await queueFounderFinancePaymentNotification({
+        institutionId,
+        amount: created.totalAmount,
+        receiptNo: created.receiptNo,
+        payerName: payerName || null,
+        studentName: studentNameForNotification || null,
+        className,
+        categoryName: created.groupLabel,
+        remainingDue: remainingDueAfterPayment,
+        paidAt: paymentDateIso,
+      });
+    } catch (e: any) {
+      console.warn(
+        "[finance/payments] founder finance notification skipped",
+        e?.message || e,
+      );
+    }
   }
 
   revalidatePath("/admin/finance/payments");
   revalidatePath("/admin/finance/receipts");
-  revalidatePath(`/admin/finance/receipts/${receipt.id}`);
+  for (const created of createdReceipts) {
+    revalidatePath(`/admin/finance/receipts/${created.id}`);
+  }
   revalidatePath("/admin/finance/charges");
   revalidatePath("/admin/finance/arrears");
   revalidatePath("/admin/finance");
 
   // On ne lance plus l’impression automatiquement : le gestionnaire doit
   // pouvoir vérifier le reçu et corriger une éventuelle erreur avant PDF/papier.
-  redirect(`/admin/finance/receipts/${receipt.id}`);
+  if (createdReceipts.length === 1) {
+    redirect(`/admin/finance/receipts/${createdReceipts[0].id}`);
+  }
+
+  redirect(
+    `/admin/finance/receipts?created=${encodeURIComponent(
+      createdReceipts.map((receipt) => receipt.id).join(","),
+    )}`,
+  );
 }
 
 async function fetchAllChargeBalancesForPayments({
