@@ -261,7 +261,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
       ) : null}
 
       <header className="sticky top-0 z-40 bg-[#003766] text-white shadow">
-        <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between px-3 py-3 sm:px-4 lg:px-6">
+        <div className="mx-auto flex w-full max-w-none items-center justify-between px-3 py-3 sm:px-4 lg:px-5 xl:px-6 2xl:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -298,7 +298,7 @@ export default function FounderShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-[1440px] min-w-0 grid-cols-1 gap-0 px-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-6 lg:px-6">
+      <div className="mx-auto grid w-full max-w-none min-w-0 grid-cols-1 gap-0 px-0 lg:grid-cols-[260px_minmax(0,1fr)] lg:gap-5 lg:px-5 xl:grid-cols-[270px_minmax(0,1fr)] xl:px-6 2xl:px-8">
         <aside className="hidden w-full shrink-0 bg-[#003766] text-white lg:sticky lg:top-[72px] lg:flex lg:h-[calc(100vh-72px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain lg:rounded-b-[28px] lg:shadow-xl lg:shadow-slate-900/10">
           {navigation}
         </aside>
