@@ -942,8 +942,8 @@ function isOtherSubject(name?: string | null, code?: string | null): boolean {
     /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(c) ||
     /(^|\b)(eps|e\.p\.s|sport)(\b|$)/.test(n) ||
     /(education\s*physique|éducation\s*physique|sportive|eps)/.test(n) ||
-    /(edhc|civique|citoyenn|vie\s*scolaire|conduite)/.test(n) ||
-    /(musique|chant|arts?\s*plastiques|dessin|th[eé]atre)/.test(n) ||
+    /(edhc|civique|citoyenn|vie\s*scolaire|conduite|discipline)/.test(n) ||
+    /(musique|musical|musicale|chant|arts?\s*plastiques|dessin|th[eé]atre)/.test(n) ||
     /(tic|tice|informatique\s*(de\s*base)?)/.test(n) ||
     /(entrepreneuriat|travail\s*manuel|tm|bonus)/.test(n)
   );
@@ -1295,10 +1295,13 @@ function buildFallbackGroups(opts: {
     const name = meta.name;
     const code = meta.code;
 
-    if (isOtherSubject(name, code)) autres.push(sid);
-    else if (isPhiloSubject(name, code)) letters.push(sid);
-    else if (isScienceSubject(name, code)) sciences.push(sid);
-    else letters.push(sid);
+    // Même règle que le bulletin admin :
+    // Sciences si reconnu, Lettres si reconnu, sinon AUTRES.
+    // Cela évite qu'une matière comme « Éducation musicale »
+    // retombe par défaut dans BILAN LETTRES sur la page QR.
+    if (isScienceSubject(name, code)) sciences.push(sid);
+    else if (isLettersSubject(name, code)) letters.push(sid);
+    else autres.push(sid);
   }
 
   const mkGroup = (p: {
@@ -3909,16 +3912,18 @@ export async function GET(req: NextRequest) {
     (bulletinForStudent as any).qr_snapshot_general_avg = snapGeneral;
   }
 
-  // Source de vérité publique : les données officielles recalculées depuis la base.
-  // Le snapshot du QR reste seulement une trace/fallback. Sinon, un ancien code QR
-  // court peut continuer à afficher une moyenne périmée après correction du bulletin.
-  if (recomputedGeneralAvg !== null) {
-    (bulletinForStudent as any).general_avg = recomputedGeneralAvg;
-    (bulletinForStudent as any).general_avg_source = "recomputed_official";
-  } else if (snapGeneral !== null) {
+  // Source de vérité publique : la moyenne officielle figée au moment
+  // de la génération du bulletin.
+  // Le recalcul public reste utile pour le détail, mais il ne doit pas
+  // remplacer la moyenne imprimée/QR, sinon une divergence peut apparaître
+  // dès qu'une règle métier spécifique (ex. CSCA conduite) diffère.
+  if (snapGeneral !== null) {
     (bulletinForStudent as any).recomputed_general_avg = recomputedGeneralAvg;
     (bulletinForStudent as any).general_avg = snapGeneral;
-    (bulletinForStudent as any).general_avg_source = "qr_snapshot_fallback";
+    (bulletinForStudent as any).general_avg_source = "qr_snapshot_official";
+  } else if (recomputedGeneralAvg !== null) {
+    (bulletinForStudent as any).general_avg = recomputedGeneralAvg;
+    (bulletinForStudent as any).general_avg_source = "recomputed_official";
   }
 
   let annual_avg_for_student: number | null = null;
@@ -3989,16 +3994,63 @@ export async function GET(req: NextRequest) {
     (bulletinForStudent as any).qr_snapshot_annual_avg = snapAnnual;
   }
 
-  if (recomputedAnnualAvg !== null) {
-    (bulletinForStudent as any).annual_avg = recomputedAnnualAvg;
-    (bulletinForStudent as any).annual_avg_source = "recomputed_official";
-  } else if (snapAnnual !== null) {
+  if (snapAnnual !== null) {
     (bulletinForStudent as any).recomputed_annual_avg = recomputedAnnualAvg;
     (bulletinForStudent as any).annual_avg = snapAnnual;
-    (bulletinForStudent as any).annual_avg_source = "qr_snapshot_fallback";
+    (bulletinForStudent as any).annual_avg_source = "qr_snapshot_official";
+  } else if (recomputedAnnualAvg !== null) {
+    (bulletinForStudent as any).annual_avg = recomputedAnnualAvg;
+    (bulletinForStudent as any).annual_avg_source = "recomputed_official";
   }
 
-  const conductForStudent = conductAvgMapCurrent.get(studentIdStr) ?? null;
+  function deriveConductAvgFromOfficialGeneral(): number | null {
+    const officialGeneral = cleanNumber((bulletinForStudent as any)?.general_avg, 4);
+    if (officialGeneral === null) return null;
+
+    const generalBonusRaw = Number((bulletinForStudent as any)?.general_bonus ?? 0);
+    const generalBonus = Number.isFinite(generalBonusRaw) ? generalBonusRaw : 0;
+    const officialBeforeBonus = officialGeneral - generalBonus;
+    if (!Number.isFinite(officialBeforeBonus)) return null;
+
+    const perSubjectRows = Array.isArray((bulletinForStudent as any)?.per_subject)
+      ? ((bulletinForStudent as any).per_subject as any[])
+      : [];
+
+    let academicSum = 0;
+    let academicCoeff = 0;
+
+    for (const s of subjectsForReport as any[]) {
+      if (s?.include_in_average === false) continue;
+      if (conductSubjectIds.has(String(s?.subject_id ?? ""))) continue;
+
+      const coeff = Number(s?.coeff_bulletin ?? 0);
+      if (!Number.isFinite(coeff) || coeff <= 0) continue;
+
+      const ps = perSubjectRows.find((row: any) => String(row?.subject_id ?? "") === String(s.subject_id));
+      const avg = Number(ps?.avg20);
+      if (!Number.isFinite(avg)) continue;
+
+      academicSum += avg * coeff;
+      academicCoeff += coeff;
+    }
+
+    if (academicCoeff <= 0) return null;
+
+    // La conduite est ajoutée au bulletin avec le coefficient 1.
+    const derived = officialBeforeBonus * (academicCoeff + 1) - academicSum;
+    if (!Number.isFinite(derived) || derived < -0.01 || derived > 20.01) return null;
+
+    return cleanNumber(Math.max(0, Math.min(20, derived)), 4);
+  }
+
+  let conductForStudent = conductAvgMapCurrent.get(studentIdStr) ?? null;
+  const derivedConductFromOfficialGeneral = isCSCA
+    ? deriveConductAvgFromOfficialGeneral()
+    : null;
+
+  if (derivedConductFromOfficialGeneral !== null) {
+    conductForStudent = derivedConductFromOfficialGeneral;
+  }
 
   return NextResponse.json({
     ok: true,
@@ -4062,7 +4114,10 @@ export async function GET(req: NextRequest) {
             total: conductForStudent,
             avg20: conductForStudent,
             label: isCSCA ? "Discipline / Conduite" : "Conduite",
-            source: "public_verify",
+            source:
+              derivedConductFromOfficialGeneral !== null
+                ? "derived_from_official_bulletin_average"
+                : "public_verify",
           },
     bulletin: bulletinForStudent,
   });

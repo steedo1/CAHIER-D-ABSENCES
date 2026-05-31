@@ -356,7 +356,6 @@ export default async function VerifyByCodePage(props: any) {
     !!conductSubjectId && perSubjectMap.has(conductSubjectId);
 
   const canDeriveConduct =
-    !isCsca &&
     !conductAlreadyVisible &&
     typeof bulletin?.general_avg === "number" &&
     Number.isFinite(bulletin.general_avg) &&
@@ -369,12 +368,22 @@ export default async function VerifyByCodePage(props: any) {
     : null;
 
   let derivedConductAvg: number | null = apiConductAvg;
-  if (derivedConductAvg === null && canDeriveConduct) {
+  if (canDeriveConduct) {
+    const generalBonusRaw = Number(bulletin?.general_bonus ?? 0);
+    const generalBonus = Number.isFinite(generalBonusRaw) ? generalBonusRaw : 0;
+    const officialGeneralBeforeBonus = Number(bulletin.general_avg) - generalBonus;
     const raw =
-      Number(bulletin.general_avg) * (includedCoeffTotal + 1) -
+      officialGeneralBeforeBonus * (includedCoeffTotal + 1) -
       displayedWeightedTotal;
-    if (Number.isFinite(raw) && raw >= 0 && raw <= 20) {
-      derivedConductAvg = round2(raw);
+
+    if (Number.isFinite(raw) && raw >= -0.01 && raw <= 20.01) {
+      const candidate = round2(Math.max(0, Math.min(20, raw)));
+      // Pour le CSCA, la conduite affichée doit rester cohérente avec la
+      // moyenne officielle du bulletin, même si le recalcul public isolé
+      // renvoie une valeur différente.
+      if (derivedConductAvg === null || isCsca) {
+        derivedConductAvg = candidate;
+      }
     }
   }
 
