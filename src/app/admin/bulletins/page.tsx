@@ -232,8 +232,6 @@ type BulletinResponse = {
     code?: string | null;
     level?: string | null;
     official_track_code?: string | null;
-    coefficient_level?: string | null;
-    bulletin_level?: string | null;
     academic_year?: string | null;
     head_teacher?: {
       id: string;
@@ -1119,74 +1117,77 @@ function periodTitle(period: BulletinResponse["period"]) {
   return t || "Trimestre";
 }
 
-function normalizeDecisionLevel(classInfo: BulletinResponse["class"] | null | undefined): "3e" | "terminale" | null {
-  const raw = normalizePlainText(
-    [
-      classInfo?.level,
-      (classInfo as any)?.bulletin_level,
-      (classInfo as any)?.official_track_code,
-      (classInfo as any)?.coefficient_level,
-      classInfo?.code,
-      classInfo?.label,
-    ]
-      .filter(Boolean)
-      .join(" ")
+function normalizeDecisionToken(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isThirdGradeClass(classInfo: BulletinResponse["class"]): boolean {
+  const c = normalizeDecisionToken(
+    `${(classInfo as any)?.level || ""} ${(classInfo as any)?.official_track_code || ""} ${classInfo.code || ""} ${classInfo.label || ""}`
   );
 
-  const compact = raw.replace(/[^a-z0-9]+/g, "");
-
-  if (
-    compact.startsWith("3e") ||
-    compact.startsWith("3eme") ||
-    compact.startsWith("troisieme")
-  ) {
-    return "3e";
-  }
-
-  if (
-    compact.startsWith("tle") ||
-    compact.startsWith("terminal") ||
-    compact.startsWith("terminale")
-  ) {
-    return "terminale";
-  }
-
-  return null;
+  return (
+    c === "3e" ||
+    c === "3eme" ||
+    c === "troisieme" ||
+    c.startsWith("3e") ||
+    c.startsWith("3eme") ||
+    c.includes("troisieme")
+  );
 }
 
-function isStudentAffectedForDecision(item: BulletinItemBase): boolean {
-  return (item.is_assigned ?? item.is_affecte ?? false) === true;
-}
+function isTerminaleClass(classInfo: BulletinResponse["class"]): boolean {
+  const c = normalizeDecisionToken(
+    `${(classInfo as any)?.level || ""} ${(classInfo as any)?.official_track_code || ""} ${classInfo.code || ""} ${classInfo.label || ""}`
+  );
 
-function isStudentRepeaterForDecision(item: BulletinItemBase): boolean {
-  return item.is_repeater === true;
+  return (
+    c === "tle" ||
+    c === "terminale" ||
+    c.startsWith("tle") ||
+    c.startsWith("terminale")
+  );
 }
 
 function endOfYearDecisionLabel(
   avg: number | null | undefined,
-  item: BulletinItemBase,
-  classInfo: BulletinResponse["class"]
+  opts?: {
+    classInfo?: BulletinResponse["class"] | null;
+    item?: BulletinItemBase | null;
+  }
 ): string {
+  const classInfo = opts?.classInfo ?? null;
+  const item = opts?.item ?? null;
+
+  if (!classInfo) {
+    if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
+    return Number(avg) >= 10 ? "ADMIS" : "REDOUBLE";
+  }
+
+  const isAssigned = Boolean(item?.is_assigned ?? item?.is_affecte ?? false);
+  const isRepeater = Boolean(item?.is_repeater ?? false);
+
+  // 3e : décision spécifique selon le profil de l’élève.
+  // On n’affiche donc pas ADMIS/REDOUBLE sur le dernier bulletin de 3e.
+  if (isThirdGradeClass(classInfo)) {
+    return isAssigned && !isRepeater ? "RNO" : "ENO";
+  }
+
   if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
 
-  const annualAvg = Number(avg);
-  const isFailure = annualAvg < 10;
-  const level = normalizeDecisionLevel(classInfo);
+  const average = Number(avg);
+  if (average >= 10) return "ADMIS";
 
-  if (isFailure && level === "3e") {
-    const affected = isStudentAffectedForDecision(item);
-    const repeater = isStudentRepeaterForDecision(item);
-
-    // 3e : non-redoublant affecté => RNO ; tous les autres cas => ENO.
-    return affected && !repeater ? "RNO" : "ENO";
+  // Terminale : en cas d’échec, conclusion selon le statut affecté/non affecté.
+  if (isTerminaleClass(classInfo)) {
+    return isAssigned ? "REC" : "EEC";
   }
 
-  if (isFailure && level === "terminale") {
-    // Terminale : affecté en cas d'échec => REC ; non affecté en cas d'échec => EEC.
-    return isStudentAffectedForDecision(item) ? "REC" : "EEC";
-  }
-
-  return annualAvg >= 10 ? "ADMIS" : "REDOUBLE";
+  return "REDOUBLE";
 }
 
 function safeUpper(s: string) {
@@ -1727,7 +1728,7 @@ function StudentBulletinCard({
 
   const showEndOfYearDecision = showAnnual && annualAvgHasValue;
   const endOfYearDecision = showEndOfYearDecision
-    ? endOfYearDecisionLabel(annualAvgOn20, item, classInfo)
+    ? endOfYearDecisionLabel(annualAvgOn20, { classInfo, item })
     : "—";
 
   const isCscaSchool = isCscaInstitution(institution);
