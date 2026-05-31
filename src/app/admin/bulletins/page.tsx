@@ -1163,31 +1163,40 @@ function endOfYearDecisionLabel(
   const classInfo = opts?.classInfo ?? null;
   const item = opts?.item ?? null;
 
-  if (!classInfo) {
-    if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
-    return Number(avg) >= 10 ? "ADMIS" : "REDOUBLE";
-  }
-
   const isAssigned = Boolean(item?.is_assigned ?? item?.is_affecte ?? false);
   const isRepeater = Boolean(item?.is_repeater ?? false);
 
-  // 3e : décision spécifique selon le profil de l’élève.
-  // On n’affiche donc pas ADMIS/REDOUBLE sur le dernier bulletin de 3e.
-  if (isThirdGradeClass(classInfo)) {
+  /*
+   * Décisions de fin d'année :
+   * - pas d'« avis conseil » : le seuil d'admission reste 10/20 ;
+   * - pas d'ADMIS en classe d'examen avant les résultats officiels ;
+   * - pas de triplement : un redoublant qui échoue ne repart pas en redoublement.
+   */
+
+  // 3e : décision conditionnelle liée au BEPC / à l'orientation.
+  // Même avec une bonne moyenne annuelle, on n'affiche pas ADMIS avant l'examen.
+  if (classInfo && isThirdGradeClass(classInfo)) {
     return isAssigned && !isRepeater ? "RNO" : "ENO";
+  }
+
+  // Terminale : décision conditionnelle liée au BAC.
+  // REC uniquement pour l'affecté non redoublant ; tous les autres cas => EEC.
+  if (classInfo && isTerminaleClass(classInfo)) {
+    return isAssigned && !isRepeater ? "REC" : "EEC";
   }
 
   if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
 
   const average = Number(avg);
+
+  // Autres niveaux : 10 strict pour l'admission.
   if (average >= 10) return "ADMIS";
 
-  // Terminale : en cas d’échec, conclusion selon le statut affecté/non affecté.
-  if (isTerminaleClass(classInfo)) {
-    return isAssigned ? "REC" : "EEC";
-  }
+  // Redoublement autorisé seulement pour les non-redoublants dans la zone 8,50 à 9,99.
+  if (average >= 8.5 && !isRepeater) return "REDOUBLE";
 
-  return "REDOUBLE";
+  // Moins de 8,50 ou redoublant en échec : exclusion.
+  return "EXCLU";
 }
 
 function safeUpper(s: string) {
