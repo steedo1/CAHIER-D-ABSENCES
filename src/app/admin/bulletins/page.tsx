@@ -152,6 +152,7 @@ type BulletinPreviousPeriodAverage = {
   label?: string | null;
   short_label?: string | null;
   avg20?: number | null;
+  rank?: number | null;
 };
 
 type BulletinItemBase = {
@@ -511,6 +512,31 @@ function formatNumber(n: number | null | undefined, digits = 2): string {
 function formatRankOrNC(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
   return `${Number(n)}e`;
+}
+
+function formatReminderPeriodLabel(
+  row: BulletinPreviousPeriodAverage,
+  idx: number
+): string {
+  const raw = String(row.label || row.short_label || row.code || "").trim();
+  if (raw) {
+    const normalized = raw.toLowerCase();
+    if (normalized.includes("1") && normalized.includes("trim")) return "1er trimestre";
+    if (normalized.includes("2") && normalized.includes("trim")) return "2e trimestre";
+    if (normalized.includes("3") && normalized.includes("trim")) return "3e trimestre";
+    return raw;
+  }
+  if (idx === 0) return "1er trimestre";
+  if (idx === 1) return "2e trimestre";
+  return `${idx + 1}e trimestre`;
+}
+
+function formatReminderRank(
+  rank: number | null | undefined,
+  total: number
+): string {
+  if (rank === null || rank === undefined || !Number.isFinite(Number(rank))) return "NC";
+  return `${formatRankOrNC(rank)} / ${total}`;
 }
 
 function hasNumericValue(n: number | null | undefined): boolean {
@@ -1364,7 +1390,7 @@ function StudentBulletinCard({
       .map((row, idx) => ({
         ...row,
         avg20: clampTo20(row.avg20 ?? null),
-        fallbackLabel: `T${idx + 1}`,
+        fallbackLabel: idx === 0 ? "1er trimestre" : idx === 1 ? "2e trimestre" : `${idx + 1}e trimestre`,
       }))
       .slice(0, 2);
   }, [item.previous_period_avgs]);
@@ -2290,91 +2316,95 @@ function StudentBulletinCard({
 
       <div className="mt-1 grid grid-cols-2 items-stretch gap-2 text-[10px] leading-tight">
         <div className="flex flex-col gap-1">
-          <div className="bdr council-card flex-1 p-1">
-            <div className="bottom-card-title font-semibold uppercase text-center">
-              Mentions du conseil de classe
+          <div
+            className={[
+              "grid items-stretch gap-1",
+              showPreviousPeriodAverages ? "grid-cols-[1.45fr_0.92fr]" : "grid-cols-1",
+            ].join(" ")}
+          >
+            <div className="bdr council-card flex-1 p-1">
+              <div className="bottom-card-title font-semibold uppercase text-center">
+                Mentions du conseil de classe
+              </div>
+
+              <div className="mentions-grid mt-[2px] grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[9px] font-semibold">DISTINCTIONS</div>
+                  <div className="mt-[2px] space-y-[2px] text-[9px]">
+                    <div className="flex items-center">
+                      {tick(mentions.distinction === "excellence")}
+                      <span>TH + Excellence</span>
+                    </div>
+                    <div className="flex items-center">
+                      {tick(mentions.distinction === "honour")}
+                      <span>TH + Félicitations</span>
+                    </div>
+                    <div className="flex items-center">
+                      {tick(mentions.distinction === "encouragement")}
+                      <span>TH + Encouragement</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mentions-sanctions border-l border-slate-300 pl-2">
+                  <div className="text-[9px] font-semibold">SANCTIONS</div>
+                  <div className="mt-[2px] space-y-[2px] text-[9px]">
+                    <div className="flex items-center">
+                      {tick(mentions.sanction === "warningWork")}
+                      <span>Avertissement travail</span>
+                    </div>
+                    <div className="flex items-center">
+                      {tick(mentions.sanction === "warningConduct")}
+                      <span>Avertissement conduite</span>
+                    </div>
+                    <div className="flex items-center">
+                      {tick(mentions.sanction === "blameWork")}
+                      <span>Blâme travail</span>
+                    </div>
+                    <div className="flex items-center">
+                      {tick(mentions.sanction === "blameConduct")}
+                      <span>Blâme conduite</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div
-              className={[
-                "mentions-grid mt-[2px] grid gap-2",
-                showPreviousPeriodAverages
-                  ? "grid-cols-[1fr_1fr_0.9fr]"
-                  : "grid-cols-2",
-              ].join(" ")}
-            >
-              <div>
-                <div className="text-[9px] font-semibold">DISTINCTIONS</div>
-                <div className="mt-[2px] space-y-[2px] text-[9px]">
-                  <div className="flex items-center">
-                    {tick(mentions.distinction === "excellence")}
-                    <span>TH + Excellence</span>
-                  </div>
-                  <div className="flex items-center">
-                    {tick(mentions.distinction === "honour")}
-                    <span>TH + Félicitations</span>
-                  </div>
-                  <div className="flex items-center">
-                    {tick(mentions.distinction === "encouragement")}
-                    <span>TH + Encouragement</span>
-                  </div>
+            {showPreviousPeriodAverages && (
+              <div className="bdr council-card p-1">
+                <div className="bottom-card-title font-semibold uppercase text-center">
+                  Rappel moyennes
                 </div>
-              </div>
+                <div className="mt-[3px] space-y-[4px] text-[9px] leading-tight">
+                  {previousPeriodAverages.map((row, idx) => {
+                    const label = formatReminderPeriodLabel(row, idx);
+                    const avgLabel = hasNumericValue(row.avg20)
+                      ? `${formatNumber(row.avg20)} / 20`
+                      : "NC";
+                    const rankLabel = formatReminderRank(row.rank, total);
 
-              <div className="mentions-sanctions border-l border-slate-300 pl-2">
-                <div className="text-[9px] font-semibold">SANCTIONS</div>
-                <div className="mt-[2px] space-y-[2px] text-[9px]">
-                  <div className="flex items-center">
-                    {tick(mentions.sanction === "warningWork")}
-                    <span>Avertissement travail</span>
-                  </div>
-                  <div className="flex items-center">
-                    {tick(mentions.sanction === "warningConduct")}
-                    <span>Avertissement conduite</span>
-                  </div>
-                  <div className="flex items-center">
-                    {tick(mentions.sanction === "blameWork")}
-                    <span>Blâme travail</span>
-                  </div>
-                  <div className="flex items-center">
-                    {tick(mentions.sanction === "blameConduct")}
-                    <span>Blâme conduite</span>
-                  </div>
-                </div>
-              </div>
-
-              {showPreviousPeriodAverages && (
-                <div className="previous-averages-column border-l border-slate-300 pl-2">
-                  <div className="text-[9px] font-semibold uppercase leading-tight">
-                    Rappel moyennes
-                  </div>
-                  <div className="mt-[3px] space-y-[3px] text-[9px]">
-                    {previousPeriodAverages.map((row, idx) => {
-                      const label =
-                        row.short_label ||
-                        row.label ||
-                        row.code ||
-                        row.fallbackLabel ||
-                        `T${idx + 1}`;
-
-                      return (
-                        <div
-                          key={`${row.from || idx}-${row.to || idx}`}
-                          className="flex items-center justify-between gap-2"
-                        >
-                          <span className="font-semibold uppercase">{label}</span>
-                          <span className="font-bold">
-                            {hasNumericValue(row.avg20)
-                              ? `${formatNumber(row.avg20)} / 20`
-                              : "NC"}
-                          </span>
+                    return (
+                      <div
+                        key={`${row.from || idx}-${row.to || idx}`}
+                        className="bdr bg-white px-[5px] py-[4px]"
+                      >
+                        <div className="font-semibold uppercase text-[8.5px] tracking-[0.02em]">
+                          {label}
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div className="mt-[2px] flex items-center justify-between gap-2">
+                          <span>Moyenne</span>
+                          <span className="font-bold">{avgLabel}</span>
+                        </div>
+                        <div className="mt-[1px] flex items-center justify-between gap-2">
+                          <span>Rang</span>
+                          <span className="font-semibold">{rankLabel}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           <div

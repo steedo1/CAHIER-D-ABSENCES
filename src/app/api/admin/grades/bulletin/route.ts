@@ -3651,14 +3651,18 @@ export async function GET(req: NextRequest) {
     }
 
     // ✅ Pour le bulletin du dernier trimestre : rappeler les moyennes T1/T2
-    // dans la zone des mentions, sans recalcul côté front.
+    // dans une zone dédiée, avec moyenne + rang officiel, sans recalcul côté front.
     const previousPeriodMaps = periodMaps
       .filter((pm) => {
         const from = String(pm.period.start_date || "");
         const to = String(pm.period.end_date || "");
         return from !== String(dateFrom || "") || to !== String(dateTo || "");
       })
-      .slice(0, 2);
+      .slice(0, 2)
+      .map((pm) => ({
+        ...pm,
+        rankMap: buildRankMapFromAverageMap(pm.map),
+      }));
 
     for (const sid of studentIds) {
       let sum = 0;
@@ -3757,6 +3761,7 @@ export async function GET(req: NextRequest) {
         label: pm.period.label ?? null,
         short_label: pm.period.short_label ?? null,
         avg20: pm.map.get(String(it.student_id)) ?? null,
+        rank: pm.rankMap.get(String(it.student_id)) ?? null,
       }));
 
       if (annualOverride) {
