@@ -177,9 +177,13 @@ function normalizeNoAccent(value: string | null | undefined) {
     .toLowerCase();
 }
 
-function isBibleOrBreviaireComponent(label: string | null | undefined) {
+function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
   const text = normalizeNoAccent(label);
-  return text.includes("bible") || text.includes("breviaire");
+  return (
+    text.includes("bible") ||
+    text.includes("breviaire") ||
+    text.includes("convoi")
+  );
 }
 
 function isInternatAnnexesCharge(label: string | null | undefined) {
@@ -199,19 +203,6 @@ function isScolariteCharge(label: string | null | undefined) {
 
 function isInternatCharge(label: string | null | undefined) {
   return normalizeText(label).includes("internat");
-}
-
-function isReinforcementCharge(label: string | null | undefined) {
-  return normalizeNoAccent(label).includes("renforcement");
-}
-
-function isBookKitCharge(label: string | null | undefined) {
-  const text = normalizeNoAccent(label);
-  return (
-    text.includes("livre") ||
-    text.includes("livres") ||
-    (text.includes("kit") && (text.includes("cahier") || text.includes("fourniture")))
-  );
 }
 
 function safeNumber(value: number | string | null | undefined) {
@@ -958,7 +949,7 @@ export default async function FinanceReceiptPrintPage({
         .filter(
           (component) =>
             component.fee_schedule_id === charge.fee_schedule_id &&
-            isBibleOrBreviaireComponent(component.label) &&
+            isOptionalInternatAnnexeComponent(component.label) &&
             !alreadyCoveredOptionalIds.has(component.id),
         )
         .sort((a, b) => safeNumber(a.order_index) - safeNumber(b.order_index))
@@ -1050,12 +1041,6 @@ export default async function FinanceReceiptPrintPage({
   const allLinesAreInternat =
     rawLines.length > 0 &&
     rawLines.every((line) => isInternatCharge(line.charge?.label));
-  const allLinesAreReinforcement =
-    rawLines.length > 0 &&
-    rawLines.every((line) => isReinforcementCharge(line.charge?.label));
-  const allLinesAreBookKit =
-    rawLines.length > 0 &&
-    rawLines.every((line) => isBookKitCharge(line.charge?.label));
 
   const receiptKindLabel = hasScolariteLines && hasInternatLines
     ? "Reçu scolarité & internat"
@@ -1063,11 +1048,7 @@ export default async function FinanceReceiptPrintPage({
       ? "Reçu de scolarité"
       : allLinesAreInternat
         ? "Reçu d’internat"
-        : allLinesAreReinforcement
-          ? "Reçu cours de renforcement"
-          : allLinesAreBookKit
-            ? "Reçu kit livres"
-            : "Reçu de paiement";
+        : "Reçu de paiement";
 
   const schoolName = institutionDisplayName(institutionSettings);
   const printHref = `/admin/finance/receipts/${encodeURIComponent(

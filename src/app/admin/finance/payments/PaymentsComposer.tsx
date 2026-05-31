@@ -58,9 +58,13 @@ function normalizeNoAccent(value: string | null | undefined) {
     .toLowerCase();
 }
 
-function isBibleOrBreviaireComponent(label: string | null | undefined) {
+function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
   const text = normalizeNoAccent(label);
-  return text.includes("bible") || text.includes("breviaire");
+  return (
+    text.includes("bible") ||
+    text.includes("breviaire") ||
+    text.includes("convoi")
+  );
 }
 
 function formatMoney(value: number) {
@@ -95,12 +99,12 @@ function getComponentPaymentInputs(
     .filter((item) => item.amount > 0);
 }
 
-function getOptionalBibleBreviaireEnteredTotal(
+function getOptionalInternatAnnexesEnteredTotal(
   charge: PaymentStudentRow["open_charges"][number],
   amounts: Record<string, string>,
 ) {
   return charge.components
-    .filter((component) => isBibleOrBreviaireComponent(component.label))
+    .filter((component) => isOptionalInternatAnnexeComponent(component.label))
     .reduce(
       (sum, component) =>
         sum + getComponentAmount(amounts, charge.charge_id, component.id),
@@ -114,12 +118,13 @@ function getComponentDrivenChargeLimit(
 ) {
   if (charge.components.length === 0) return Number(charge.balance_due || 0);
 
-  // Règle CSCA : le solde officiel des frais annexes internat exclut Bible
-  // et Bréviaire tant qu'ils sont à 0 F. Dès qu'un montant est saisi dessus,
-  // ils deviennent facturés pour ce reçu et augmentent donc le plafond autorisé.
+  // Règle CSCA : le solde officiel des frais annexes internat exclut Bible,
+  // Bréviaire et Convoi internat tant qu'ils sont à 0 F. Dès qu'un
+  // montant est saisi dessus, ils deviennent facturés pour ce reçu et
+  // augmentent donc le plafond autorisé.
   return (
     Number(charge.balance_due || 0) +
-    getOptionalBibleBreviaireEnteredTotal(charge, amounts)
+    getOptionalInternatAnnexesEnteredTotal(charge, amounts)
   );
 }
 
@@ -694,8 +699,8 @@ export default function PaymentsComposer({
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             Ouvre le formulaire d’encaissement en plein écran : choix de
-            l’élève, ventilation scolarité/internat, puis génération séparée
-            des reçus pour le renforcement ou les kits livres si nécessaire.
+            l’élève, catégorie, ventilation scolarité ou internat, puis
+            validation du reçu.
           </p>
           <span className="mt-5 inline-flex rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-emerald-700">
             Commencer
@@ -1026,7 +1031,7 @@ export default function PaymentsComposer({
                     (sum, charge) =>
                       sum +
                       Number(charge.net_amount || 0) +
-                      getOptionalBibleBreviaireEnteredTotal(charge, internatAmounts),
+                      getOptionalInternatAnnexesEnteredTotal(charge, internatAmounts),
                     0,
                   )}
                   onAmountChange={(chargeId, value) =>
@@ -1386,8 +1391,9 @@ function InternatPaymentPlanner({
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
             La pension reste fixe. Les frais annexes restent dus, sauf Bible
-            Africaine et Bréviaire qui ne sont pas facturés si aucun montant
-            n’est saisi dessus. Paiement partiel possible par sous-rubrique.
+            Africaine, Bréviaire et Convoi internat qui ne sont pas facturés
+            si aucun montant n’est saisi dessus. Paiement partiel possible
+            par sous-rubrique.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1540,7 +1546,8 @@ function ChargeComponentChecklist({
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
             Saisissez le montant payé maintenant pour chaque sous-rubrique. Bible
-            Africaine et Bréviaire restent non facturés si vous laissez 0 F.
+            Africaine, Bréviaire et Convoi internat restent non facturés si
+            vous laissez 0 F.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
@@ -1568,7 +1575,7 @@ function ChargeComponentChecklist({
             >
               <div className="min-w-0 font-semibold text-slate-800">
                 <span>{component.label}</span>
-                {isBibleOrBreviaireComponent(component.label) ? (
+                {isOptionalInternatAnnexeComponent(component.label) ? (
                   <span className="ml-2 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
                     non facturé si 0 F
                   </span>
@@ -1651,13 +1658,11 @@ function OtherFeesPaymentPlanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">
-            Reçus séparés
+            Autres catégories
           </div>
           <p className="mt-1 text-sm text-amber-900/80">
-            Les catégories séparées, notamment Cours de renforcement et Kit
-            livres, ne sont plus imprimées sur le reçu scolarité/internat. Si
-            un montant est saisi ici, l’enregistrement génère automatiquement
-            un reçu distinct pour la catégorie concernée.
+            Les frais complémentaires, dont le cours de renforcement, sont
+            ventilés dans le même reçu lorsque le parent les règle.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-amber-200">

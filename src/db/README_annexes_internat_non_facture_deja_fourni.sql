@@ -2,7 +2,7 @@
 -- Aucun SQL obligatoire.
 -- Règle appliquée côté application :
 -- 1) Les frais annexes internat obligatoires restent dus.
--- 2) Bréviaire et Bible Africaine ne sont pas considérés comme « déjà payés »
+-- 2) Bréviaire, Bible Africaine et Convoi internat ne sont pas considérés comme « déjà payés »
 --    si aucun montant n’est saisi dessus.
 -- 3) Sur le reçu, ils apparaissent comme « Non facturé / déjà fourni ».
 -- 4) Le « Déjà payé » reste réservé aux vrais encaissements enregistrés.

@@ -1,9 +1,9 @@
--- CSCA 2026-2027 — frais annexes internat : base obligatoire hors Bréviaire/Bible
+-- CSCA 2026-2027 — frais annexes internat : base obligatoire hors Bréviaire/Bible/Convoi
 -- À exécuter après le patch applicatif.
 -- Règle :
 -- - Kit cahier, argent de poche, entretien toilettes, études surveillées,
---   convoi, trousseau et autres frais restent dus tant qu'ils ne sont pas soldés.
--- - Bréviaire et Bible Africaine n'entrent dans la dette que si un montant a déjà
+--   trousseau et autres frais restent dus tant qu'ils ne sont pas soldés.
+-- - Bréviaire, Bible Africaine et Convoi internat n'entrent dans la dette que si un montant a déjà
 --   été payé/engagé dessus.
 -- - La pension reste séparée à 700 000 F.
 
@@ -44,11 +44,11 @@ component_base AS (
   SELECT
     ac.id AS student_charge_id,
     COALESCE(SUM(fsc.amount) FILTER (
-      WHERE (fsc.label NOT ILIKE '%Bréviaire%' AND fsc.label NOT ILIKE '%Breviaire%' AND fsc.label NOT ILIKE '%Bible%')
+      WHERE (fsc.label NOT ILIKE '%Bréviaire%' AND fsc.label NOT ILIKE '%Breviaire%' AND fsc.label NOT ILIKE '%Bible%' AND fsc.label NOT ILIKE '%Convoi%')
     ), 0) AS mandatory_base,
     COALESCE(SUM(fsc.amount) FILTER (
       WHERE (
-          fsc.label ILIKE '%Bréviaire%' OR fsc.label ILIKE '%Breviaire%' OR fsc.label ILIKE '%Bible%'
+          fsc.label ILIKE '%Bréviaire%' OR fsc.label ILIKE '%Breviaire%' OR fsc.label ILIKE '%Bible%' OR fsc.label ILIKE '%Convoi%'
         )
         AND COALESCE(cp.paid_amount, 0) > 0
     ), 0) AS optional_engaged_base,
@@ -85,7 +85,7 @@ recalc AS (
     END,
     notes = CONCAT(
       COALESCE(sc.notes, ''),
-      E'\n[CORRECTION] Frais annexes internat recalculés : base obligatoire hors Bréviaire/Bible ; Bréviaire/Bible ajoutés seulement si engagés.'
+      E'\n[CORRECTION] Frais annexes internat recalculés : base obligatoire hors Bréviaire/Bible/Convoi ; Bréviaire/Bible/Convoi ajoutés seulement si engagés.'
     ),
     updated_at = now()
   FROM component_base cb
@@ -99,8 +99,8 @@ FROM recalc;
 
 COMMIT;
 
--- Contrôle attendu : 211 lignes / 211 élèves ; total proche de 43 993 500 F
--- si seul un élève a engagé 208 500 F et les autres restent au minimum 208 500 F.
+-- Contrôle attendu : si aucun Bréviaire/Bible/Convoi n’est engagé,
+-- le minimum des frais annexes internat doit être 178 500 F par élève.
 SELECT
   label,
   COUNT(*) AS lignes,
