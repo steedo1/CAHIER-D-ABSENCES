@@ -667,6 +667,16 @@ export default async function AdminFinancePage({
         />
         <QuickLinkCard
           href={financeYearHref(
+            "/admin/finance/avis-parents",
+            selectedAcademicYearCode,
+          )}
+          icon={<FileText className="h-5 w-5" />}
+          title="Avis aux parents"
+          description="Imprimer une note simple de situation financière, filtrable par classe."
+          badge="PDF"
+        />
+        <QuickLinkCard
+          href={financeYearHref(
             "/admin/finance/expenses",
             selectedAcademicYearCode,
           )}

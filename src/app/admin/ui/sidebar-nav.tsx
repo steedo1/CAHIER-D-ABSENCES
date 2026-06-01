@@ -341,6 +341,11 @@ const FINANCE_FULL_ITEMS: NavItem[] = [
   { href: "/admin/finance/receipts", label: "Reçus", Icon: FileText },
   { href: "/admin/finance/arrears", label: "Impayés", Icon: BarChart3 },
   {
+    href: "/admin/finance/avis-parents",
+    label: "Avis aux parents",
+    Icon: FileText,
+  },
+  {
     href: "/admin/finance/charges",
     label: "Charges élèves",
     Icon: FileSpreadsheet,
