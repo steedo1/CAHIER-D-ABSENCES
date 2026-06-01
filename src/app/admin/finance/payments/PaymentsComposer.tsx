@@ -1658,11 +1658,10 @@ function OtherFeesPaymentPlanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.16em] text-amber-800">
-            Autres catégories
+            Frais complémentaires
           </div>
           <p className="mt-1 text-sm text-amber-900/80">
-            Les frais complémentaires, dont le cours de renforcement, sont
-            ventilés dans le même reçu lorsque le parent les règle.
+            Kit livre, cours de renforcement et autres frais.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-amber-200">

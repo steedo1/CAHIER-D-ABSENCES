@@ -421,7 +421,7 @@ export default async function FinanceReceiptsPage({
       {createdReceiptRows.length > 1 ? (
         <section className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900 shadow-sm">
           <div className="font-black">
-            Plusieurs reçus ont été générés séparément pour le même encaissement.
+            Encaissement enregistré : plusieurs reçus ont été générés.
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {createdReceiptRows.map((row) => (
