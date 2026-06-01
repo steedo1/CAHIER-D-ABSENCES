@@ -618,6 +618,7 @@ export default async function FinanceParentNoticesPage({
           }
 
           .parent-notices-print-area {
+            display: block !important;
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
