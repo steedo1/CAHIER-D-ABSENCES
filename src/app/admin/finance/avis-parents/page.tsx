@@ -81,6 +81,13 @@ type StudentNoticeGroup = {
   charges: ChargeBalanceRow[];
 };
 
+type NoticeCategorySummary = {
+  label: string;
+  expected: number;
+  paid: number;
+  due: number;
+};
+
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
@@ -102,6 +109,73 @@ function normalize(input: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function getNoticeMainCategory(label: string) {
+  const normalized = normalize(label);
+
+  if (normalized.includes("internat") || normalized.includes("pension")) {
+    return "Internat";
+  }
+
+  if (normalized.includes("renforcement")) {
+    return "Cours de renforcement";
+  }
+
+  if (
+    normalized.includes("kit") ||
+    normalized.includes("livre") ||
+    normalized.includes("cahier")
+  ) {
+    return "Kit livre";
+  }
+
+  if (
+    normalized.includes("scolar") ||
+    normalized.includes("ecolage") ||
+    normalized.includes("inscription") ||
+    normalized.includes("frais generaux")
+  ) {
+    return "Scolarité";
+  }
+
+  return "Autres frais";
+}
+
+function summarizeNoticeCharges(charges: ChargeBalanceRow[]) {
+  const map = new Map<string, NoticeCategorySummary>();
+
+  for (const charge of charges) {
+    const label = getNoticeMainCategory(charge.label);
+    const current = map.get(label) ?? {
+      label,
+      expected: 0,
+      paid: 0,
+      due: 0,
+    };
+
+    current.expected += Number(charge.net_amount || 0);
+    current.paid += Number(charge.paid_amount || 0);
+    current.due += Number(charge.balance_due || 0);
+    map.set(label, current);
+  }
+
+  const order = [
+    "Scolarité",
+    "Internat",
+    "Kit livre",
+    "Cours de renforcement",
+    "Autres frais",
+  ];
+
+  return Array.from(map.values()).sort((a, b) => {
+    const ia = order.indexOf(a.label);
+    const ib = order.indexOf(b.label);
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    }
+    return a.label.localeCompare(b.label, "fr");
+  });
 }
 
 function pickInstitutionName(row: any): string {
@@ -218,6 +292,7 @@ function NoticeDocument({
   const cls = group.classRow;
   const logoUrl = String(institutionSettings.institution_logo_url || "").trim();
   const classLabel = student?.class_label || cls?.label || "—";
+  const summarizedCharges = summarizeNoticeCharges(group.charges);
 
   return (
     <article className="parent-notice-card relative overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
@@ -373,31 +448,31 @@ function NoticeDocument({
 
           <section className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
             <div className="border-b border-slate-200 bg-slate-100 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-slate-700">
-              Détail de la situation financière
+              Situation par grande catégorie
             </div>
             <table className="w-full border-collapse text-sm">
               <thead className="bg-white text-left text-xs font-black uppercase tracking-[0.12em] text-slate-500">
                 <tr>
-                  <th className="px-4 py-3">Libellé</th>
+                  <th className="px-4 py-3">Catégorie</th>
                   <th className="px-4 py-3 text-right">Attendu</th>
                   <th className="px-4 py-3 text-right">Payé</th>
                   <th className="px-4 py-3 text-right">Reste</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {group.charges.map((charge) => (
-                  <tr key={charge.id}>
+                {summarizedCharges.map((category) => (
+                  <tr key={category.label}>
                     <td className="px-4 py-3 font-semibold text-slate-800">
-                      {charge.label}
+                      {category.label}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {formatMoney(charge.net_amount)}
+                      {formatMoney(category.expected)}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">
-                      {formatMoney(charge.paid_amount)}
+                      {formatMoney(category.paid)}
                     </td>
                     <td className="px-4 py-3 text-right font-black text-rose-700">
-                      {formatMoney(charge.balance_due)}
+                      {formatMoney(category.due)}
                     </td>
                   </tr>
                 ))}
