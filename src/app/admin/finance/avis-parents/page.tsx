@@ -373,7 +373,7 @@ function NoticeDocument({
             Avis aux parents
           </h1>
 
-          <div className="mt-8 space-y-5 text-[15px] leading-7 text-slate-800">
+          <div className="parent-notice-intro mt-8 space-y-5 text-[15px] leading-7 text-slate-800">
             <p>Madame, Monsieur,</p>
 
             <p>
@@ -382,7 +382,7 @@ function NoticeDocument({
             </p>
           </div>
 
-          <section className="mt-7 rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+          <section className="parent-notice-identity mt-7 rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
@@ -419,7 +419,7 @@ function NoticeDocument({
             </div>
           </section>
 
-          <section className="mt-5 grid gap-4 sm:grid-cols-3">
+          <section className="parent-notice-amounts mt-5 grid gap-4 sm:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-4 text-center">
               <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
                 Montant attendu
@@ -446,7 +446,7 @@ function NoticeDocument({
             </div>
           </section>
 
-          <section className="mt-6 overflow-hidden rounded-3xl border border-slate-200">
+          <section className="parent-notice-category-table mt-6 overflow-hidden rounded-3xl border border-slate-200">
             <div className="border-b border-slate-200 bg-slate-100 px-4 py-3 text-sm font-black uppercase tracking-[0.14em] text-slate-700">
               Situation par grande catégorie
             </div>
@@ -480,17 +480,17 @@ function NoticeDocument({
             </table>
           </section>
 
-          <div className="mt-8 space-y-5 text-[15px] leading-7 text-slate-800">
+          <div className="parent-notice-message mt-8 space-y-5 text-[15px] leading-7 text-slate-800">
             <p>
               Nous vous prions de bien vouloir vous rapprocher du service
               comptabilité pour régularisation.
             </p>
           </div>
 
-          <div className="mt-12 flex justify-end">
+          <div className="parent-notice-signature mt-12 flex justify-end">
             <div className="w-56 text-center text-sm font-black text-slate-900">
               <div>La Comptabilité</div>
-              <div className="mt-12 border-t border-slate-400 pt-2 text-xs font-semibold text-slate-500">
+              <div className="parent-notice-signature-line mt-12 border-t border-slate-400 pt-2 text-xs font-semibold text-slate-500">
                 Signature / Cachet
               </div>
             </div>
@@ -665,7 +665,7 @@ export default async function FinanceParentNoticesPage({
         @media print {
           @page {
             size: A4;
-            margin: 8mm;
+            margin: 6mm;
           }
 
           html,
@@ -706,16 +706,24 @@ export default async function FinanceParentNoticesPage({
           .parent-notice-card {
             display: block !important;
             width: 100% !important;
-            max-width: 194mm !important;
-            min-height: 281mm !important;
+            max-width: 198mm !important;
+            min-height: 0 !important;
+            height: auto !important;
             margin: 0 auto !important;
             border-radius: 0 !important;
             box-shadow: none !important;
             border: 1px solid #cbd5e1 !important;
             page-break-after: always !important;
             break-after: page !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
             overflow: hidden !important;
             font-family: Arial, Helvetica, sans-serif !important;
+          }
+
+          .parent-notice-card > div {
+            min-height: 0 !important;
+            padding: 5mm 8mm 4mm !important;
           }
 
           .parent-notice-card:last-child {
@@ -741,6 +749,107 @@ export default async function FinanceParentNoticesPage({
           .parent-notice-footer {
             position: relative !important;
             z-index: 1 !important;
+          }
+
+          .parent-notice-header {
+            padding-bottom: 3mm !important;
+            gap: 4mm !important;
+          }
+
+          .parent-notice-logo {
+            width: 14mm !important;
+            height: 14mm !important;
+            border-radius: 10px !important;
+            padding: 1.5mm !important;
+          }
+
+          .parent-notice-school {
+            margin-top: 1mm !important;
+            font-size: 16pt !important;
+            line-height: 1.15 !important;
+          }
+
+          .parent-notice-meta {
+            margin-top: 1mm !important;
+            font-size: 8.5pt !important;
+            line-height: 1.35 !important;
+          }
+
+          .parent-notice-side {
+            min-width: 42mm !important;
+            padding: 3mm !important;
+            border-radius: 12px !important;
+            font-size: 9pt !important;
+          }
+
+          .parent-notice-body {
+            flex: none !important;
+            padding: 4mm 0 3mm !important;
+          }
+
+          .parent-notice-body h1 {
+            margin: 0 !important;
+            font-size: 16pt !important;
+            letter-spacing: 0.12em !important;
+          }
+
+          .parent-notice-intro,
+          .parent-notice-message {
+            margin-top: 4mm !important;
+            font-size: 10pt !important;
+            line-height: 1.45 !important;
+          }
+
+          .parent-notice-identity {
+            margin-top: 4mm !important;
+            padding: 3.5mm !important;
+            border-radius: 12px !important;
+          }
+
+          .parent-notice-identity .grid {
+            gap: 2mm !important;
+          }
+
+          .parent-notice-amounts {
+            margin-top: 3mm !important;
+            gap: 3mm !important;
+          }
+
+          .parent-notice-amounts > div {
+            padding: 3mm !important;
+            border-radius: 12px !important;
+          }
+
+          .parent-notice-category-table {
+            margin-top: 4mm !important;
+            border-radius: 12px !important;
+          }
+
+          .parent-notice-category-table > div {
+            padding: 2mm 3mm !important;
+            font-size: 9.5pt !important;
+          }
+
+          .parent-notice-category-table table {
+            font-size: 9pt !important;
+          }
+
+          .parent-notice-category-table th,
+          .parent-notice-category-table td {
+            padding: 2mm 3mm !important;
+          }
+
+          .parent-notice-signature {
+            margin-top: 6mm !important;
+          }
+
+          .parent-notice-signature-line {
+            margin-top: 8mm !important;
+          }
+
+          .parent-notice-footer {
+            padding-top: 3mm !important;
+            font-size: 8.5pt !important;
           }
         }
       `}</style>
