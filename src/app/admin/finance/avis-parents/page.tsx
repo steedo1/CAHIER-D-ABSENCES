@@ -1,14 +1,6 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import {
-  AlertTriangle,
-  FileText,
-  Search,
-  School2,
-  Users,
-  Wallet,
-} from "lucide-react";
+import { FileText, Search, School2 } from "lucide-react";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
@@ -246,35 +238,6 @@ async function fetchInstitutionSettingsServer(
   }
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string | number;
-  hint: string;
-}) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
-            {label}
-          </div>
-          <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
-          <div className="mt-1 text-sm text-slate-600">{hint}</div>
-        </div>
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function NoticeDocument({
   group,
   schoolName,
@@ -358,7 +321,9 @@ function NoticeDocument({
             <div className="mt-3 space-y-1">
               <div>
                 <span className="font-semibold text-slate-900">Date :</span>{" "}
-                {generatedAt.toLocaleDateString("fr-FR", { dateStyle: "medium" })}
+                {generatedAt.toLocaleDateString("fr-FR", {
+                  dateStyle: "medium",
+                })}
               </div>
               <div>
                 <span className="font-semibold text-slate-900">Année :</span>{" "}
@@ -612,36 +577,35 @@ export default async function FinanceParentNoticesPage({
     return haystack.includes(qn);
   });
 
-  const groupedByStudent = filteredRows.reduce<Record<string, StudentNoticeGroup>>(
-    (acc, row) => {
-      const student = studentMap.get(row.student_id);
-      const classRow = row.class_id
-        ? classMap.get(row.class_id)
-        : student?.class_id
-          ? classMap.get(student.class_id)
-          : undefined;
+  const groupedByStudent = filteredRows.reduce<
+    Record<string, StudentNoticeGroup>
+  >((acc, row) => {
+    const student = studentMap.get(row.student_id);
+    const classRow = row.class_id
+      ? classMap.get(row.class_id)
+      : student?.class_id
+        ? classMap.get(student.class_id)
+        : undefined;
 
-      if (!acc[row.student_id]) {
-        acc[row.student_id] = {
-          student,
-          classRow,
-          studentId: row.student_id,
-          expected: 0,
-          paid: 0,
-          due: 0,
-          charges: [],
-        };
-      }
+    if (!acc[row.student_id]) {
+      acc[row.student_id] = {
+        student,
+        classRow,
+        studentId: row.student_id,
+        expected: 0,
+        paid: 0,
+        due: 0,
+        charges: [],
+      };
+    }
 
-      acc[row.student_id].expected += Number(row.net_amount || 0);
-      acc[row.student_id].paid += Number(row.paid_amount || 0);
-      acc[row.student_id].due += Number(row.balance_due || 0);
-      acc[row.student_id].charges.push(row);
+    acc[row.student_id].expected += Number(row.net_amount || 0);
+    acc[row.student_id].paid += Number(row.paid_amount || 0);
+    acc[row.student_id].due += Number(row.balance_due || 0);
+    acc[row.student_id].charges.push(row);
 
-      return acc;
-    },
-    {},
-  );
+    return acc;
+  }, {});
 
   const studentGroups = Object.values(groupedByStudent).sort((a, b) => {
     const classA = a.student?.class_label || a.classRow?.label || "";
@@ -650,9 +614,6 @@ export default async function FinanceParentNoticesPage({
     return fullName(a.student).localeCompare(fullName(b.student), "fr");
   });
 
-  const totalDue = studentGroups.reduce((sum, row) => sum + row.due, 0);
-  const totalExpected = studentGroups.reduce((sum, row) => sum + row.expected, 0);
-  const totalPaid = studentGroups.reduce((sum, row) => sum + row.paid, 0);
   const generatedAt = new Date();
 
   return (
@@ -899,35 +860,11 @@ export default async function FinanceParentNoticesPage({
         />
       </div>
 
-      <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<Users className="h-5 w-5" />}
-          label="Élèves concernés"
-          value={studentGroups.length}
-          hint="Avec un solde restant dû"
-        />
-        <StatCard
-          icon={<Wallet className="h-5 w-5" />}
-          label="Montant attendu"
-          value={formatMoney(totalExpected)}
-          hint="Somme des dettes affichées"
-        />
-        <StatCard
-          icon={<Wallet className="h-5 w-5" />}
-          label="Montant payé"
-          value={formatMoney(totalPaid)}
-          hint="Déjà réglé sur ces lignes"
-        />
-        <StatCard
-          icon={<AlertTriangle className="h-5 w-5" />}
-          label="Reste à payer"
-          value={formatMoney(totalDue)}
-          hint="Total à rappeler aux parents"
-        />
-      </section>
-
       <section className="no-print rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <form method="GET" className="grid gap-3 lg:grid-cols-[1fr_280px_auto_auto]">
+        <form
+          method="GET"
+          className="grid gap-3 lg:grid-cols-[1fr_280px_auto_auto]"
+        >
           <input
             type="hidden"
             name="academic_year"
@@ -1020,7 +957,9 @@ export default async function FinanceParentNoticesPage({
                       </div>
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-700">
-                      {group.student?.class_label || group.classRow?.label || "—"}
+                      {group.student?.class_label ||
+                        group.classRow?.label ||
+                        "—"}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-700">
                       {formatMoney(group.expected)}
