@@ -173,13 +173,13 @@ const MONTAGE_EDT_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/montage-emploi-du-temps/volumes",
-    label: "Référentiel & services",
+    label: "Référentiels et services",
     Icon: FileSpreadsheet,
   },
   {
-    href: "/admin/montage-emploi-du-temps/regles-terrain",
-    label: "Règles terrain",
-    Icon: Settings,
+    href: "/admin/montage-emploi-du-temps/ressources",
+    label: "Salles et ressources",
+    Icon: School,
   },
   {
     href: "/admin/montage-emploi-du-temps/indisponibilites",
@@ -187,13 +187,13 @@ const MONTAGE_EDT_ITEMS: NavItem[] = [
     Icon: Users,
   },
   {
-    href: "/admin/montage-emploi-du-temps/ressources",
-    label: "Salles & ressources",
-    Icon: School,
+    href: "/admin/montage-emploi-du-temps/regles-terrain",
+    label: "Règles terrain",
+    Icon: Settings,
   },
   {
     href: "/admin/montage-emploi-du-temps/generation",
-    label: "Services & génération",
+    label: "Services et génération",
     Icon: BarChart3,
   },
   {

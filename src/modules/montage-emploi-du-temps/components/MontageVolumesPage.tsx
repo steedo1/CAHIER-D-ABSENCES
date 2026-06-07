@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import React from "react";
 import {
   AlertTriangle,
@@ -310,18 +311,26 @@ export default function MontageVolumesPage() {
 
   return (
     <MontageSectionShell
-      title="Matières et heures"
-      description="Écran fidèle à HoraClasse : niveau, matière, volume actuel, nouveau volume, découpage, type et action. Aucun enseignant ici."
-      badge="Matières et heures"
+      title="Référentiels et services"
+      description="Centraliser les référentiels utiles au montage : matières et heures, créneaux officiels et vérification des services enseignants, sans recréer les données Mon Cahier."
+      badge="Référentiels Mon Cahier"
       status="Mon Cahier source officielle"
-      note="Les matières affichées viennent des matières et affectations existantes de Mon Cahier. Cette page règle les volumes par niveau et matière ; les professeurs restent dans Services enseignants."
+      note="Les matières affichées viennent des matières et affectations existantes de Mon Cahier. Cette page règle les volumes par niveau et matière ; les professeurs restent consultables dans Services enseignants."
       cards={[
-        { title: "Pas d’enseignants ici", description: "Comme dans HoraClasse, cette page ne mélange pas les volumes avec les affectations professeurs." },
-        { title: "Volumes par niveau", description: "Une modification s’applique aux services existants du niveau et de la matière concernés." },
-        { title: "Mapping strict", description: "EPS reste EPS, P.C reste P.C. Si une matière n’est pas reconnue, elle passe en À compléter." },
+        { title: "Matières et heures", description: "Les volumes et découpages se règlent ici par niveau et matière." },
+        { title: "Créneaux officiels", description: "Les horaires restent ceux de institution_periods, sans créneaux parallèles." },
+        { title: "Services enseignants", description: "Les affectations sont lues depuis Mon Cahier et vérifiées avant génération." },
       ]}
     >
       <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Link href="/admin/montage-emploi-du-temps/creneaux" className="rounded-3xl border border-slate-200 bg-white p-5 text-sm font-bold text-slate-800 shadow-sm transition hover:bg-slate-50">
+            Voir les créneaux officiels Mon Cahier
+          </Link>
+          <Link href="/admin/montage-emploi-du-temps/services" className="rounded-3xl border border-slate-200 bg-white p-5 text-sm font-bold text-slate-800 shadow-sm transition hover:bg-slate-50">
+            Vérifier les services enseignants détectés
+          </Link>
+        </div>
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>

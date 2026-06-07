@@ -9,6 +9,7 @@ import {
   Info,
   Settings2,
 } from "lucide-react";
+import MontageStepNav from "./MontageStepNav";
 
 type Card = {
   title: string;
@@ -70,6 +71,8 @@ export default function MontageSectionShell({
             </div>
           </div>
         </div>
+
+        <MontageStepNav />
 
         {cards && cards.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

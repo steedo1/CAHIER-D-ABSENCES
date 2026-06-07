@@ -113,6 +113,20 @@ export async function POST(req: NextRequest) {
       p_user_id: guard.userId,
     });
     if (error) return NextResponse.json({ ok: false, error: "publish_failed", message: error.message }, { status: 400 });
+
+    const { error: statusError } = await guard.srv
+      .from("montage_timetable_projects")
+      .update({ status: "published", published_at: new Date().toISOString() })
+      .eq("id", projectId)
+      .eq("institution_id", guard.institutionId);
+
+    if (statusError) {
+      return NextResponse.json(
+        { ok: false, error: "publish_status_update_failed", message: statusError.message },
+        { status: 400 },
+      );
+    }
+
     return NextResponse.json({ ok: true, result: data, message: typeof data?.message === "string" ? data.message : "Emploi du temps publié officiellement." });
   } catch (error) {
     return NextResponse.json({ ok: false, error: "server_error", message: error instanceof Error ? error.message : "Erreur serveur pendant la publication." }, { status: 500 });

@@ -1,6 +1,7 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { fetchClassTeacherRows } from "@/modules/montage-emploi-du-temps/adapters/loadMonCahierAffectations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,24 +133,22 @@ export async function GET() {
     const guard = await guardAdmin();
     if (!guard.ok) return guard.response;
 
-    const [affectationsRes, periodsRes, itemsRes] = await Promise.all([
-      guard.srv
-        .from("class_teachers")
-        .select(
-          `
+    const [affectationsFetch, periodsRes, itemsRes] = await Promise.all([
+      fetchClassTeacherRows(
+        guard.srv,
+        guard.institutionId,
+        `
           teacher_id,
           subject_id,
           teacher:profiles(id,display_name,full_name,email),
+          class:classes(id,label,academic_year),
           instsub:institution_subjects(
             id,
             custom_name,
             subj:subjects(id,name,code)
           )
         `,
-        )
-        .eq("institution_id", guard.institutionId)
-        .is("end_date", null)
-        .limit(10000),
+      ),
       guard.srv
         .from("institution_periods")
         .select("id,weekday,period_no,label,start_time,end_time,duration_min")
@@ -164,7 +163,7 @@ export async function GET() {
         .order("period_no", { ascending: true }),
     ]);
 
-    const firstError = affectationsRes.error || periodsRes.error || itemsRes.error;
+    const firstError = periodsRes.error || itemsRes.error;
     if (firstError) {
       return NextResponse.json({ ok: false, error: "unavailability_fetch_failed", message: firstError.message }, { status: 400 });
     }
@@ -172,7 +171,7 @@ export async function GET() {
     const subjectMap = new Map<string, { id: string; label: string }>();
     const teacherMap = new Map<string, { id: string; name: string; email: string | null; subject_ids: string[]; subject_labels: string[] }>();
 
-    for (const row of affectationsRes.data || []) {
+    for (const row of affectationsFetch.rows || []) {
       const teacher = Array.isArray((row as any).teacher) ? (row as any).teacher[0] : (row as any).teacher;
       const instsub = Array.isArray((row as any).instsub) ? (row as any).instsub[0] : (row as any).instsub;
       const subj = Array.isArray(instsub?.subj) ? instsub.subj[0] : instsub?.subj;
@@ -237,8 +236,9 @@ export async function GET() {
         items: items.length,
       },
       warnings: [
-        ...(teachers.length === 0 ? ["Aucun enseignant affectÃ© dÃ©tectÃ© dans Mon Cahier."] : []),
-        ...(periods.length === 0 ? ["Aucun crÃ©neau officiel configurÃ© dans Mon Cahier."] : []),
+        ...(affectationsFetch.warnings || []),
+        ...(teachers.length === 0 ? ["Aucun enseignant affecté détecté dans les affectations Mon Cahier."] : []),
+        ...(periods.length === 0 ? ["Aucun créneau officiel configuré dans Mon Cahier."] : []),
       ],
     });
   } catch (error) {

@@ -16,6 +16,10 @@ import {
   seriesCodeFromOfficialTrack,
   normalizeText,
 } from "@/modules/montage-emploi-du-temps/adapters/horaclasseModelHelpers";
+import {
+  fetchClassTeacherRows,
+  filterClassRowsByAcademicYear,
+} from "@/modules/montage-emploi-du-temps/adapters/loadMonCahierAffectations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -174,7 +178,7 @@ function makeAffectationPayload(row: any) {
 async function loadVolumeContext(guard: GuardOk) {
   const { srv, institutionId } = guard;
 
-  const [institutionRes, classesRes, subjectsRes, affectationsRes, volumesRes] = await Promise.all([
+  const [institutionRes, classesRes, subjectsRes, affectationsFetch, volumesRes] = await Promise.all([
     srv
       .from("institutions")
       .select("id,name,code_unique,code,tz,default_session_minutes")
@@ -182,7 +186,7 @@ async function loadVolumeContext(guard: GuardOk) {
       .maybeSingle(),
     srv
       .from("classes")
-      .select("id,label,level,official_track_code")
+      .select("id,label,level,official_track_code,academic_year")
       .eq("institution_id", institutionId)
       .order("label", { ascending: true }),
     srv
@@ -191,39 +195,37 @@ async function loadVolumeContext(guard: GuardOk) {
       .eq("institution_id", institutionId)
       .eq("is_active", true)
       .order("custom_name", { ascending: true }),
-    srv
-      .from("class_teachers")
-      .select(
-        `
+    fetchClassTeacherRows(
+      srv,
+      institutionId,
+      `
         teacher_id,
         class_id,
         subject_id,
         end_date,
         teacher:profiles(id,display_name,email,phone),
-        class:classes(id,label,level,official_track_code),
+        class:classes(id,label,level,official_track_code,academic_year),
         instsub:institution_subjects(
           id,
           custom_name,
           subj:subjects(id,name,code)
         )
       `,
-      )
-      .eq("institution_id", institutionId)
-      .is("end_date", null)
-      .limit(10000),
+    ),
     srv
       .from("montage_timetable_subject_hours")
       .select("*")
       .eq("institution_id", institutionId),
   ]);
 
-  const firstError = institutionRes.error || classesRes.error || subjectsRes.error || affectationsRes.error || volumesRes.error;
+  const firstError = institutionRes.error || classesRes.error || subjectsRes.error || volumesRes.error;
   if (firstError) throw new Error(firstError.message);
 
   const institution = institutionRes.data;
-  const classes = (classesRes.data || []).map(makeClassPayload);
+  const classRows = filterClassRowsByAcademicYear(classesRes.data || [], affectationsFetch.academicYear);
+  const classes = classRows.map(makeClassPayload);
   const subjects = (subjectsRes.data || []).map(makeSubjectPayload);
-  const affectations = (affectationsRes.data || []).map(makeAffectationPayload);
+  const affectations = (affectationsFetch.rows || []).map(makeAffectationPayload);
   const serviceBuild = buildHoraclasseServiceAssignments({
     classes,
     subjects,
@@ -243,6 +245,7 @@ async function loadVolumeContext(guard: GuardOk) {
     subjects,
     affectations,
     overrides: volumesRes.data || [],
+    affectationWarnings: affectationsFetch.warnings || [],
     serviceBuild,
   };
 }
@@ -272,7 +275,7 @@ export async function GET() {
       catalog_coverage: context.serviceBuild.catalog_coverage,
       missing_catalog_subjects: context.serviceBuild.missing_catalog_subjects,
       totals: context.serviceBuild.totals,
-      warnings: context.serviceBuild.warnings,
+      warnings: Array.from(new Set([...(context.affectationWarnings || []), ...context.serviceBuild.warnings])),
     });
   } catch (error) {
     return NextResponse.json(

@@ -13,6 +13,10 @@ import {
 } from "@/modules/montage-emploi-du-temps/adapters/horaclasseModelHelpers";
 import { buildHoraclasseServiceAssignments } from "@/modules/montage-emploi-du-temps/adapters/buildHoraclasseServices";
 import { DEFAULT_TERRAIN_RULES } from "@/modules/montage-emploi-du-temps/scheduler/terrainRules";
+import {
+  fetchClassTeacherRows,
+  filterClassRowsByAcademicYear,
+} from "@/modules/montage-emploi-du-temps/adapters/loadMonCahierAffectations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -134,7 +138,7 @@ export async function GET() {
 
     const { srv, institutionId } = guard;
 
-    const [institutionRes, classesRes, subjectsRes, periodsRes, affectationsRes] =
+    const [institutionRes, classesRes, subjectsRes, periodsRes, affectationsFetch] =
       await Promise.all([
         srv
           .from("institutions")
@@ -144,7 +148,7 @@ export async function GET() {
 
         srv
           .from("classes")
-          .select("id,label,level,official_track_code")
+          .select("id,label,level,official_track_code,academic_year")
           .eq("institution_id", institutionId)
           .order("label", { ascending: true }),
 
@@ -161,34 +165,30 @@ export async function GET() {
           .order("weekday", { ascending: true })
           .order("period_no", { ascending: true }),
 
-        srv
-          .from("class_teachers")
-          .select(
-            `
+        fetchClassTeacherRows(
+          srv,
+          institutionId,
+          `
             teacher_id,
             class_id,
             subject_id,
             end_date,
             teacher:profiles(id,display_name,email,phone),
-            class:classes(id,label,level,official_track_code),
+            class:classes(id,label,level,official_track_code,academic_year),
             instsub:institution_subjects(
               id,
               custom_name,
               subj:subjects(id,name,code)
             )
           `,
-          )
-          .eq("institution_id", institutionId)
-          .is("end_date", null)
-          .limit(10000),
+        ),
       ]);
 
     const firstError =
       institutionRes.error ||
       classesRes.error ||
       subjectsRes.error ||
-      periodsRes.error ||
-      affectationsRes.error;
+      periodsRes.error;
 
     if (firstError) {
       return NextResponse.json(
@@ -199,7 +199,9 @@ export async function GET() {
 
     const institution = institutionRes.data;
 
-    const classes = (classesRes.data || []).map((item: any) => {
+    const classRows = filterClassRowsByAcademicYear(classesRes.data || [], affectationsFetch.academicYear);
+
+    const classes = classRows.map((item: any) => {
       const label = clean(item.label, "Classe");
       const officialTrackCode = normalizeOfficialTrackCode(item.official_track_code);
       const levelCode = levelCodeFromOfficialTrack(officialTrackCode) || clean(item.level) || inferLevelCode(label);
@@ -224,7 +226,7 @@ export async function GET() {
       };
     });
 
-    const affectations = (affectationsRes.data || []).map((row: any) => {
+    const affectations = (affectationsFetch.rows || []).map((row: any) => {
       const teacher = Array.isArray(row.teacher) ? row.teacher[0] : row.teacher;
       const cls = Array.isArray(row.class) ? row.class[0] : row.class;
       const instsub = Array.isArray(row.instsub) ? row.instsub[0] : row.instsub;
@@ -284,7 +286,7 @@ export async function GET() {
     const serviceAssignments = serviceBuild.service_assignments;
 
     const teacherMap = new Map<string, { id: string; display_name: string; email: string | null; phone: string | null }>();
-    for (const row of affectationsRes.data || []) {
+    for (const row of affectationsFetch.rows || []) {
       const teacher = Array.isArray((row as any).teacher) ? (row as any).teacher[0] : (row as any).teacher;
       const id = String((row as any).teacher_id || teacher?.id || "");
       if (!id || teacherMap.has(id)) continue;
@@ -308,6 +310,7 @@ export async function GET() {
 
     const warnings = Array.from(
       new Set([
+        ...(affectationsFetch.warnings || []),
         ...(periods.length === 0 ? ["Aucun créneau horaire détecté."] : []),
         ...((roomsRes.data || []).length === 0 ? ["Aucune salle ou ressource HoraClasse détectée."] : []),
         ...serviceBuild.warnings,
