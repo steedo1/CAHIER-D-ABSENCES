@@ -121,7 +121,7 @@ async function guardAdmin() {
 }
 
 function teacherName(teacher: any) {
-  return clean(teacher?.display_name || teacher?.full_name || teacher?.email, "Enseignant");
+  return clean(teacher?.display_name || teacher?.email, "Enseignant");
 }
 
 function subjectLabel(instsub: any, subj: any) {
@@ -140,7 +140,7 @@ export async function GET() {
         `
           teacher_id,
           subject_id,
-          teacher:profiles(id,display_name,full_name,email),
+          teacher:profiles(id,display_name,email),
           class:classes(id,label,academic_year),
           instsub:institution_subjects(
             id,
