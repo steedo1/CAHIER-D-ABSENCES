@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock3,
   Database,
+  Edit3,
   Eye,
   FileSpreadsheet,
   Gauge,
@@ -882,7 +883,7 @@ export default function MontageGenerationPage() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                          <div className="mt-4 grid gap-2 sm:grid-cols-4">
                             <button
                               type="button"
                               onClick={() => void generateExistingProject(project)}
@@ -898,6 +899,13 @@ export default function MontageGenerationPage() {
                             >
                               <Eye className="h-4 w-4" />
                               Voir
+                            </Link>
+                            <Link
+                              href={`/admin/montage-emploi-du-temps/projets/${project.id}/editor`}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                              Modifier
                             </Link>
                             <button
                               type="button"
