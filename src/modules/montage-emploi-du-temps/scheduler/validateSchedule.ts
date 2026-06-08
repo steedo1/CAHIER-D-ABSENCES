@@ -15,6 +15,7 @@ import {
   getEpsMaxSimultaneousCoursesPerField,
   getInstitutionCoverageRuleViolations,
   getInstitutionRuleViolationsForPlacement,
+  ruleCanBehaveAsCoverageRule,
   getTerrainRules,
   isEpsBlock,
   isEpsCandidateFavorable,
@@ -820,6 +821,13 @@ export function validateSchedule(
 
 
     for (const rule of getInstitutionRuleViolationsForPlacement(placement, block, context)) {
+      // Une règle de couverture (ex. première heure lundi/vendredi) se juge au
+      // niveau classe + jour. On évite donc de produire des faux messages par
+      // placement isolé ; le diagnostic dédié ci-dessous reste la référence.
+      if (ruleCanBehaveAsCoverageRule(rule)) {
+        continue;
+      }
+
       warnings.push(
         makeWarning(
           getInstitutionRuleSeverity(rule.priority, rule.behavior),

@@ -546,7 +546,7 @@ function ruleHasConcreteTimeWindow(rule: InstitutionSchedulingRule): boolean {
   );
 }
 
-function ruleCanBehaveAsCoverageRule(rule: InstitutionSchedulingRule): boolean {
+export function ruleCanBehaveAsCoverageRule(rule: InstitutionSchedulingRule): boolean {
   // Exemple terrain : « avoir cours tous les lundis et vendredis à la première heure ».
   // Ce n'est pas une obligation sur chaque bloc de cours ; c'est une attente de couverture
   // par classe et par jour ciblé. On l'identifie uniquement quand un créneau précis est indiqué.
@@ -558,7 +558,7 @@ function ruleCanBehaveAsCoverageRule(rule: InstitutionSchedulingRule): boolean {
   );
 }
 
-function ruleTargetsClass(rule: InstitutionSchedulingRule, schoolClass: { id: string; levelCode: string }, context: SchedulerContext): boolean {
+export function ruleTargetsClass(rule: InstitutionSchedulingRule, schoolClass: { id: string; levelCode: string }, context: SchedulerContext): boolean {
   if (!rule.enabled) return false;
   if (rule.scope === "all") return true;
 
@@ -601,7 +601,7 @@ export function violatesHardInstitutionRule(
   return false;
 }
 
-function candidateMatchesRuleTime(rule: InstitutionSchedulingRule, candidate: CandidateSlot, context: SchedulerContext): boolean {
+export function candidateMatchesRuleTime(rule: InstitutionSchedulingRule, candidate: CandidateSlot, context: SchedulerContext): boolean {
   if (rule.dayIndexes.length > 0 && !rule.dayIndexes.includes(candidate.dayIndex)) {
     return false;
   }
@@ -712,7 +712,7 @@ export function getInstitutionRuleCandidatePenalty(
   return penalty;
 }
 
-function placementMatchesRuleWindow(
+export function placementMatchesRuleWindow(
   placement: Placement,
   rule: InstitutionSchedulingRule,
   context: SchedulerContext,
@@ -746,9 +746,13 @@ export function getInstitutionCoverageCandidatePenalty(
 
     const weight = rulePriorityWeight(rule.priority);
     if (candidateMatchesRuleTime(rule, candidate, context)) {
-      penalty -= rule.behavior === "require" ? Math.round(weight * 0.45) : Math.round(weight * 0.30);
+      // Une règle de couverture (ex. chaque classe doit avoir cours lundi/vendredi
+      // à la première heure) doit attirer fortement le premier bloc compatible.
+      // Sinon le moteur glouton peut remplir d'autres cases puis constater la
+      // violation seulement en diagnostic.
+      penalty -= rule.behavior === "require" ? Math.round(weight * 1.35) : Math.round(weight * 0.90);
     } else {
-      penalty += rule.behavior === "require" ? Math.round(weight * 0.16) : Math.round(weight * 0.08);
+      penalty += rule.behavior === "require" ? Math.round(weight * 0.65) : Math.round(weight * 0.35);
     }
   }
 
@@ -792,6 +796,58 @@ function getCandidateForPlacement(placement: Placement): CandidateSlot {
     durationUnits: placement.durationUnits,
     roomId: placement.roomId ?? null,
   };
+}
+
+
+export type InstitutionCoverageNeed = {
+  rule: InstitutionSchedulingRule;
+  classId: string;
+  dayIndex: number;
+};
+
+export function getInstitutionCoverageNeeds(
+  context: SchedulerContext,
+): InstitutionCoverageNeed[] {
+  const needs: InstitutionCoverageNeed[] = [];
+
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (!ruleCanBehaveAsCoverageRule(rule)) continue;
+
+    const targetClasses = context.classes.filter((schoolClass) =>
+      ruleTargetsClass(rule, schoolClass, context),
+    );
+
+    for (const schoolClass of targetClasses) {
+      for (const dayIndex of rule.dayIndexes) {
+        needs.push({ rule, classId: schoolClass.id, dayIndex });
+      }
+    }
+  }
+
+  return needs;
+}
+
+export function candidateCoversInstitutionCoverageNeed(
+  need: InstitutionCoverageNeed,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): boolean {
+  return (
+    candidate.dayIndex === need.dayIndex &&
+    candidateMatchesRuleTime(need.rule, candidate, context)
+  );
+}
+
+export function placementCoversInstitutionCoverageNeed(
+  need: InstitutionCoverageNeed,
+  placement: Placement,
+  context: SchedulerContext,
+): boolean {
+  return (
+    placement.classId === need.classId &&
+    placement.dayIndex === need.dayIndex &&
+    placementMatchesRuleWindow(placement, need.rule, context)
+  );
 }
 
 export function getInstitutionRuleViolationsForPlacement(

@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   CandidateSlot,
   LessonBlock,
   Placement,
@@ -19,8 +19,11 @@ import {
   scoreCandidate,
 } from "./scoreCandidate";
 import {
+  candidateCoversInstitutionCoverageNeed,
+  getInstitutionCoverageNeeds,
   getTerrainRules,
   isEpsBlock,
+  placementCoversInstitutionCoverageNeed,
   withDefaultTerrainRules,
 } from "./terrainRules";
 import {
@@ -386,6 +389,80 @@ function getBlockById(
   return lessonBlocks.find((block) => block.id === blockId) ?? null;
 }
 
+function priorityValue(priority: string): number {
+  if (priority === "hard") return 0;
+  if (priority === "strong") return 1;
+  if (priority === "medium") return 2;
+  return 3;
+}
+
+function placementAlreadyCoversNeed(
+  need: ReturnType<typeof getInstitutionCoverageNeeds>[number],
+  placements: Placement[],
+  context: SchedulerContext,
+): boolean {
+  return placements.some((placement) =>
+    placementCoversInstitutionCoverageNeed(need, placement, context),
+  );
+}
+
+function prePlaceInstitutionCoverageNeeds(
+  orderedBlocks: LessonBlock[],
+  consumedBlockIds: Set<string>,
+  context: SchedulerContext,
+  placements: Placement[],
+  seed: number,
+): void {
+  const needs = getInstitutionCoverageNeeds(context)
+    .filter((need) => need.rule.behavior === "require" || need.rule.priority === "hard" || need.rule.priority === "strong")
+    .sort((a, b) => {
+      const priorityDelta = priorityValue(a.rule.priority) - priorityValue(b.rule.priority);
+      if (priorityDelta !== 0) return priorityDelta;
+      if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
+      return getClassOrder(a.classId, context) - getClassOrder(b.classId, context);
+    });
+
+  for (const need of needs) {
+    if (placementAlreadyCoversNeed(need, placements, context)) {
+      continue;
+    }
+
+    let bestBlock: LessonBlock | null = null;
+    let bestCandidate: CandidateSlot | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const block of orderedBlocks) {
+      if (consumedBlockIds.has(block.id) || block.classId !== need.classId) {
+        continue;
+      }
+
+      // Ne pas casser le montage spécifique P.C/SVT : ces blocs doivent rester
+      // disponibles pour le tandem parallèle ou rotatif.
+      if (getTerrainRules(context).enablePcSvtTandem && isPcSvtBlock(block)) {
+        continue;
+      }
+
+      const candidates = findCandidateSlots(block, context, placements)
+        .filter((candidate) => candidateCoversInstitutionCoverageNeed(need, candidate, context));
+
+      for (const candidate of candidates) {
+        const candidateScore = scoreCandidate(block, candidate, context, placements, { seed }) - getBlockDifficulty(block, context);
+
+        if (candidateScore < bestScore) {
+          bestBlock = block;
+          bestCandidate = candidate;
+          bestScore = candidateScore;
+        }
+      }
+    }
+
+    if (bestBlock && bestCandidate) {
+      placements.push(createPlacement(bestBlock, bestCandidate));
+      consumedBlockIds.add(bestBlock.id);
+    }
+  }
+}
+
 function sameCandidateAsPlacement(
   placement: Placement,
   candidate: CandidateSlot,
@@ -727,6 +804,18 @@ function runGenerationAttempt(
   const unplacedBlocks: LessonBlock[] = [];
   const consumedBlockIds = new Set<string>();
 
+  // Les règles de couverture établissement doivent être traitées avant le
+  // glouton principal. Exemple : avoir cours lundi/vendredi à la première heure.
+  // Sans cette réservation, le moteur peut utiliser ces cases pour d'autres
+  // classes/profs, puis découvrir trop tard que la règle n'est plus couverte.
+  prePlaceInstitutionCoverageNeeds(
+    orderedBlocks,
+    consumedBlockIds,
+    context,
+    placements,
+    attempt.seed,
+  );
+
   for (const block of orderedBlocks) {
     if (consumedBlockIds.has(block.id)) {
       continue;
@@ -852,12 +941,13 @@ function buildAttempts(context: SchedulerContext, lessonBlockCount: number): Gen
     strategies = ["ace_priority", "difficulty", "duration_first"];
     seedCount = 3;
   } else if (lessonBlockCount >= 180) {
-    strategies = ["ace_priority", "difficulty", "duration_first", "class_spread"];
-    // Les Ã©tablissements rÃ©els autour de 200 blocs restent gÃ©rables, et 4 graines
-    // donnent trop souvent un montage localement coincÃ© (matinÃ©es pleines, trous).
-    seedCount = isConstrained ? 6 : 4;
+    strategies = ["ace_priority", "difficulty", "duration_first", "class_spread", "subject_spread"];
+    // Les contraintes établissement ont besoin de plus de diversité d'ordre,
+    // sinon le glouton peut coincer les professeurs chargés comme Anglais/EPS.
+    seedCount = isConstrained ? 8 : 4;
   } else if (lessonBlockCount >= 120) {
-    seedCount = isConstrained ? 8 : 5;
+    strategies = ["ace_priority", "difficulty", "duration_first", "class_spread", "subject_spread"];
+    seedCount = isConstrained ? 10 : 5;
   }
 
   const attempts: GenerationAttempt[] = [];
