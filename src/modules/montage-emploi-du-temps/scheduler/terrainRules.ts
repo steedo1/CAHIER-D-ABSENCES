@@ -536,6 +536,71 @@ function ruleTargetsBlock(rule: InstitutionSchedulingRule, block: LessonBlock, c
   return true;
 }
 
+function ruleHasConcreteTimeWindow(rule: InstitutionSchedulingRule): boolean {
+  return Boolean(
+    rule.dayIndexes.length > 0 ||
+      rule.periodIndexes.length > 0 ||
+      rule.halfDays.length > 0 ||
+      rule.startTime ||
+      rule.endTime
+  );
+}
+
+function ruleCanBehaveAsCoverageRule(rule: InstitutionSchedulingRule): boolean {
+  // Exemple terrain : « avoir cours tous les lundis et vendredis à la première heure ».
+  // Ce n'est pas une obligation sur chaque bloc de cours ; c'est une attente de couverture
+  // par classe et par jour ciblé. On l'identifie uniquement quand un créneau précis est indiqué.
+  return (
+    (rule.behavior === "prefer" || rule.behavior === "require") &&
+    (rule.scope === "all" || rule.scope === "level" || rule.scope === "class") &&
+    rule.dayIndexes.length > 0 &&
+    (rule.periodIndexes.length > 0 || Boolean(rule.startTime && rule.endTime))
+  );
+}
+
+function ruleTargetsClass(rule: InstitutionSchedulingRule, schoolClass: { id: string; levelCode: string }, context: SchedulerContext): boolean {
+  if (!rule.enabled) return false;
+  if (rule.scope === "all") return true;
+
+  if (rule.scope === "class") {
+    return rule.classIds.length === 0 || rule.classIds.includes(schoolClass.id);
+  }
+
+  if (rule.scope === "level") {
+    return valuesMatch(schoolClass.levelCode, rule.levelCodes);
+  }
+
+  // Les règles matière/enseignant sont des règles de placement de bloc, pas des règles de couverture classe.
+  void context;
+  return false;
+}
+
+export function violatesHardInstitutionRule(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): boolean {
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (rule.priority !== "hard") continue;
+    if (!ruleTargetsBlock(rule, block, context)) continue;
+    if (!ruleHasConcreteTimeWindow(rule)) continue;
+
+    const matchesTime = candidateMatchesRuleTime(rule, candidate, context);
+
+    if ((rule.behavior === "forbid" || rule.behavior === "avoid") && matchesTime) {
+      return true;
+    }
+
+    // Les règles de couverture du type « chaque classe doit avoir cours à telle heure »
+    // ne doivent pas être appliquées à chaque bloc, sinon on rendrait le montage impossible.
+    if (rule.behavior === "require" && !ruleCanBehaveAsCoverageRule(rule) && !matchesTime) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function candidateMatchesRuleTime(rule: InstitutionSchedulingRule, candidate: CandidateSlot, context: SchedulerContext): boolean {
   if (rule.dayIndexes.length > 0 && !rule.dayIndexes.includes(candidate.dayIndex)) {
     return false;
@@ -628,7 +693,11 @@ export function getInstitutionRuleCandidatePenalty(
     }
 
     if (rule.behavior === "require") {
-      penalty += matchesTime ? -Math.round(weight * 0.04) : weight;
+      if (ruleCanBehaveAsCoverageRule(rule)) {
+        penalty += matchesTime ? -Math.round(weight * 0.10) : Math.round(weight * 0.18);
+      } else {
+        penalty += matchesTime ? -Math.round(weight * 0.04) : weight;
+      }
       continue;
     }
 
@@ -641,6 +710,79 @@ export function getInstitutionRuleCandidatePenalty(
   }
 
   return penalty;
+}
+
+function placementMatchesRuleWindow(
+  placement: Placement,
+  rule: InstitutionSchedulingRule,
+  context: SchedulerContext,
+): boolean {
+  return candidateMatchesRuleTime(rule, getCandidateForPlacement(placement), context);
+}
+
+export function getInstitutionCoverageCandidatePenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+  placements: Placement[],
+): number {
+  let penalty = 0;
+  const schoolClass = getClassForBlock(block, context);
+  if (!schoolClass) return 0;
+
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (!ruleCanBehaveAsCoverageRule(rule)) continue;
+    if (!ruleTargetsClass(rule, schoolClass, context)) continue;
+    if (!rule.dayIndexes.includes(candidate.dayIndex)) continue;
+
+    const alreadyCovered = placements.some(
+      (placement) =>
+        placement.classId === block.classId &&
+        placement.dayIndex === candidate.dayIndex &&
+        placementMatchesRuleWindow(placement, rule, context),
+    );
+
+    if (alreadyCovered) continue;
+
+    const weight = rulePriorityWeight(rule.priority);
+    if (candidateMatchesRuleTime(rule, candidate, context)) {
+      penalty -= rule.behavior === "require" ? Math.round(weight * 0.45) : Math.round(weight * 0.30);
+    } else {
+      penalty += rule.behavior === "require" ? Math.round(weight * 0.16) : Math.round(weight * 0.08);
+    }
+  }
+
+  return penalty;
+}
+
+export function getInstitutionCoverageRuleViolations(
+  placements: Placement[],
+  context: SchedulerContext,
+): Array<{ rule: InstitutionSchedulingRule; classId: string; dayIndex: number }> {
+  const violations: Array<{ rule: InstitutionSchedulingRule; classId: string; dayIndex: number }> = [];
+
+  for (const rule of getActiveInstitutionRules(context)) {
+    if (!ruleCanBehaveAsCoverageRule(rule)) continue;
+
+    const targetClasses = context.classes.filter((schoolClass) => ruleTargetsClass(rule, schoolClass, context));
+
+    for (const schoolClass of targetClasses) {
+      for (const dayIndex of rule.dayIndexes) {
+        const covered = placements.some(
+          (placement) =>
+            placement.classId === schoolClass.id &&
+            placement.dayIndex === dayIndex &&
+            placementMatchesRuleWindow(placement, rule, context),
+        );
+
+        if (!covered) {
+          violations.push({ rule, classId: schoolClass.id, dayIndex });
+        }
+      }
+    }
+  }
+
+  return violations;
 }
 
 function getCandidateForPlacement(placement: Placement): CandidateSlot {

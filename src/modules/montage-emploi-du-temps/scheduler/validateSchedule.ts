@@ -7,12 +7,13 @@ import type {
   SchedulerContext,
   SessionPeriod,
 } from "./types";
-import { breakCutsBlock, roomMatchesRequirement } from "./hardRules";
+import { breakCutsBlock, roomMatchesRequirement, teacherIsStrictlyUnavailable } from "./hardRules";
 import {
   canUseOrdinaryRoomFallback,
   candidateHitsClosedSchoolPeriod,
   getCandidateTimeRange,
   getEpsMaxSimultaneousCoursesPerField,
+  getInstitutionCoverageRuleViolations,
   getInstitutionRuleViolationsForPlacement,
   getTerrainRules,
   isEpsBlock,
@@ -710,6 +711,22 @@ export function validateSchedule(
       );
     }
 
+    if (teacherIsStrictlyUnavailable(placement.teacherId, candidate, context)) {
+      warnings.push(
+        makeWarning(
+          "critical",
+          "teacher_unavailability_violation",
+          `${describePlacement(placement, context)} : le professeur est déclaré indisponible sur cette plage.`,
+          {
+            lessonBlockId: placement.lessonBlockId,
+            classId: placement.classId,
+            teacherId: placement.teacherId,
+            roomId: placement.roomId ?? null,
+          },
+        ),
+      );
+    }
+
     if (rules.avoidBreakInsideMultiPeriodBlock && breakCutsBlock(candidate, context)) {
       warnings.push(
         makeWarning(
@@ -825,6 +842,20 @@ export function validateSchedule(
     // avec des messages informatifs répétitifs.
     void canUseOrdinaryRoomFallback;
     void isOrdinaryFallbackRoom;
+  }
+
+  for (const violation of getInstitutionCoverageRuleViolations(placements, context)) {
+    const dayLabel = context.days.find((day) => day.dayIndex === violation.dayIndex)?.label ?? `jour ${violation.dayIndex}`;
+    warnings.push(
+      makeWarning(
+        violation.rule.priority === "hard" || violation.rule.behavior === "require" ? "error" : getInstitutionRuleSeverity(violation.rule.priority, violation.rule.behavior),
+        violation.rule.priority === "hard" || violation.rule.behavior === "require"
+          ? "institution_coverage_hard_violation"
+          : "institution_coverage_soft_violation",
+        `${getClassLabel(violation.classId, context)} — ${dayLabel} : aucune séance ne couvre la règle établissement « ${violation.rule.name} ».`,
+        { classId: violation.classId },
+      ),
+    );
   }
 
   for (const block of unplacedBlocks) {

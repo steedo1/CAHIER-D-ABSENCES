@@ -13,6 +13,7 @@ import {
   getCandidateTimeRange,
   getTerrainRules,
   getEpsMaxSimultaneousCoursesPerField,
+  getInstitutionCoverageCandidatePenalty,
   getInstitutionRuleCandidatePenalty,
   isAfternoonEpsCandidate,
   isEpsBlock,
@@ -1293,6 +1294,36 @@ function getSpecializedRoomFallbackPenalty(
   return 0;
 }
 
+function teacherPreferencePenalty(
+  block: LessonBlock,
+  candidate: CandidateSlot,
+  context: SchedulerContext,
+): number {
+  const periods = getPeriodsForCandidate(candidate, context);
+  let penalty = 0;
+
+  for (const unavailability of context.teacherUnavailability) {
+    if (unavailability.teacherId !== block.teacherId) continue;
+    if (unavailability.constraintType !== "preference") continue;
+    if (unavailability.dayIndex !== candidate.dayIndex) continue;
+
+    const hitsPeriod =
+      typeof unavailability.periodIndex === "number" && unavailability.periodIndex > 0
+        ? periods.some((period) => period.periodIndex === unavailability.periodIndex)
+        : false;
+    const hitsHalfDay = unavailability.halfDay
+      ? periods.some((period) => period.halfDay === unavailability.halfDay)
+      : false;
+    const hitsFullDay = !unavailability.periodIndex && !unavailability.halfDay && periods.length > 0;
+
+    if (hitsPeriod || hitsHalfDay || hitsFullDay) {
+      penalty += 35000;
+    }
+  }
+
+  return penalty;
+}
+
 function createsAfternoonEpsTerminalProblem(
   block: LessonBlock,
   candidate: CandidateSlot,
@@ -1365,6 +1396,8 @@ export function scoreCandidate(
   score += getLateDayPenalty(block, candidate, context, placements);
   score += getProjectedClassDaySpreadPenalty(block, candidate, context, placements);
   score += getInstitutionRuleCandidatePenalty(block, candidate, context);
+  score += getInstitutionCoverageCandidatePenalty(block, candidate, context, placements);
+  score += teacherPreferencePenalty(block, candidate, context);
 
   // RÃ©partition rÃ©elle : Ã©viter lâ€™effet â€œje remplis les matinÃ©es puis je jette les restesâ€.
   score += getProjectedClassDayLoadPenalty(block, candidate, context, placements);

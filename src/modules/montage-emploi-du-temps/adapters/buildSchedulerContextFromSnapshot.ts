@@ -371,20 +371,28 @@ export function buildSchedulerContextFromSnapshot(
   }
 
   const teacherUnavailability: TeacherUnavailability[] = asArray(snapshot.teacher_unavailability)
-    .map((item) => ({
-      teacherId: clean(item.teacher_id || item.teacherId),
-      dayIndex: toNumber(item.weekday ?? item.dayIndex, 0),
-      periodIndex:
-        item.period_no || item.periodIndex
-          ? toNumber(item.period_no ?? item.periodIndex, 0)
-          : null,
-      halfDay: item.half_day || item.halfDay || null,
-      constraintType:
-        item.constraint_type === "preference" || item.constraintType === "preference"
-          ? ("preference" as const)
-          : ("strict" as const),
-      reason: item.reason ? clean(item.reason) : null,
-    }))
+    .filter((item) => item.is_active !== false && item.isActive !== false)
+    .map((item) => {
+      const periodIndex = item.period_no || item.periodIndex
+        ? toNumber(item.period_no ?? item.periodIndex, 0) || null
+        : null;
+      const rawHalfDay = item.half_day || item.halfDay || null;
+      const halfDay = rawHalfDay === "morning" || rawHalfDay === "afternoon" || rawHalfDay === "evening"
+        ? rawHalfDay
+        : null;
+
+      return {
+        teacherId: clean(item.teacher_id || item.teacherId),
+        dayIndex: toNumber(item.weekday ?? item.dayIndex, 0),
+        periodIndex,
+        halfDay,
+        constraintType:
+          item.constraint_type === "preference" || item.constraintType === "preference"
+            ? ("preference" as const)
+            : ("strict" as const),
+        reason: item.reason ? clean(item.reason) : null,
+      };
+    })
     .filter((item) => item.teacherId && item.dayIndex >= 1 && item.dayIndex <= 7);
 
   if (classes.length === 0) diagnostics.push({ level: "error", message: "Aucune classe disponible." });

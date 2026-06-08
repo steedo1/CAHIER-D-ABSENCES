@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   CandidateSlot,
   LessonBlock,
   Placement,
@@ -17,6 +17,7 @@ import {
   isEpsSubjectId,
   isOrdinaryFallbackRoom,
   isSharedSportsFieldRoom,
+  violatesHardInstitutionRule,
 } from "./terrainRules";
 import { parseSplitPattern } from "./utils";
 
@@ -254,7 +255,7 @@ export function teacherIsStrictlyUnavailable(
       return false;
     }
 
-    if (typeof unavailability.periodIndex === "number") {
+    if (typeof unavailability.periodIndex === "number" && unavailability.periodIndex > 0) {
       return candidatePeriods.some(
         (period) => period.periodIndex === unavailability.periodIndex,
       );
@@ -266,7 +267,10 @@ export function teacherIsStrictlyUnavailable(
       );
     }
 
-    return false;
+    // Indisponibilité "Toute la journée" : en base, period_no et half_day sont nuls.
+    // Avant ce correctif, ce cas ne bloquait aucun créneau, donc un professeur pouvait
+    // encore être placé le jour indiqué malgré une contrainte stricte.
+    return candidatePeriods.length > 0;
   });
 }
 
@@ -395,6 +399,10 @@ export function respectsHardRules(
   }
 
   if (teacherIsStrictlyUnavailable(block.teacherId, candidate, context)) {
+    return false;
+  }
+
+  if (violatesHardInstitutionRule(block, candidate, context)) {
     return false;
   }
 

@@ -46,6 +46,9 @@ const STRICT_BLOCKING_WARNING_TYPES = new Set([
   "single_hour_return",
   "same_subject_same_day",
   "same_subject_overlong_block",
+  "teacher_unavailability_violation",
+  "institution_rule_hard_violation",
+  "institution_coverage_hard_violation",
 ]);
 
 function isStrictBlockingDiagnostic(item: any): boolean {

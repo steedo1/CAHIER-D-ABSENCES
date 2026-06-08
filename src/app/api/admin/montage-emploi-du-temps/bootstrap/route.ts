@@ -273,7 +273,8 @@ export async function GET() {
       srv
         .from("montage_timetable_teacher_unavailability")
         .select("*")
-        .eq("institution_id", institutionId),
+        .eq("institution_id", institutionId)
+        .or("is_active.is.null,is_active.eq.true"),
     ]);
 
     const serviceBuild = buildHoraclasseServiceAssignments({
