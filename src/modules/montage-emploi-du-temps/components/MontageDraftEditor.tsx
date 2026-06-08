@@ -328,13 +328,25 @@ function isBlockingDiagnostic(item: { level?: string; warning_type?: string }) {
   return level === "error" || level === "critical";
 }
 
+function isWarningDiagnostic(item: { level?: string; warning_type?: string }) {
+  if (isBlockingDiagnostic(item)) return false;
+  const level = String(item.level || "").toLowerCase();
+  return level === "warning" || level === "warn" || Boolean(item.warning_type);
+}
+
+function diagnosticCardClass(item: { level?: string; warning_type?: string }) {
+  if (isBlockingDiagnostic(item)) return "border-red-200 bg-red-50 text-red-950";
+  if (isWarningDiagnostic(item)) return "border-amber-200 bg-amber-50 text-amber-950";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
 function DragHint() {
   return (
     <div className="rounded-3xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
       <div className="flex gap-3">
         <MousePointerClick className="mt-0.5 h-5 w-5 shrink-0" />
         <p className="font-semibold leading-6">
-          Clique dans une case vide pour ajouter une séance. Glisse une séance vers une autre case pour la déplacer. Glisse un bloc non placé dans la grille pour le placer.
+          Clique dans une case vide pour ajouter une séance. Glisse une séance déjà placée vers une autre case pour la déplacer. Les blocs non placés et les alertes s’ouvrent maintenant à la demande pour garder la grille en plein écran.
         </p>
       </div>
     </div>
@@ -351,6 +363,8 @@ export default function MontageDraftEditor({ projectId }: { projectId: string })
   const [selectedClassId, setSelectedClassId] = React.useState("all");
   const [addModal, setAddModal] = React.useState<AddModalState | null>(null);
   const [editModal, setEditModal] = React.useState<EditModalState | null>(null);
+  const [showUnplacedPanel, setShowUnplacedPanel] = React.useState(false);
+  const [showDiagnosticsPanel, setShowDiagnosticsPanel] = React.useState(false);
 
   async function load() {
     setLoading(true);
@@ -410,6 +424,8 @@ export default function MontageDraftEditor({ projectId }: { projectId: string })
   }, [addModal?.class_id, services]);
 
   const blockingCount = diagnostics.filter(isBlockingDiagnostic).length;
+  const warningCount = diagnostics.filter(isWarningDiagnostic).length;
+  const firstDiagnostics = diagnostics.slice(0, 5);
   const publicationAllowed = Boolean(result?.summary?.publication_allowed) || project?.status === "ready";
   const canEdit = Boolean(project && project.status !== "published" && !project.published_at);
 
@@ -687,18 +703,123 @@ export default function MontageDraftEditor({ projectId }: { projectId: string })
               </div>
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-              <div className="space-y-4">
-                <DragHint />
+            <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-xl font-black">
+                    <Megaphone className="h-5 w-5 text-amber-500" />
+                    Alertes du brouillon
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Les alertes restent visibles au-dessus de la grille. La colonne latérale a été retirée pour libérer toute la largeur de l’écran.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnosticsPanel(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-800 transition hover:bg-slate-100"
+                  >
+                    <Megaphone className="h-4 w-4" />
+                    Voir toutes les alertes ({diagnostics.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowUnplacedPanel(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-950 transition hover:bg-amber-100"
+                  >
+                    <AlertTriangle className="h-4 w-4" />
+                    Non placés ({unplaced.length})
+                  </button>
+                </div>
+              </div>
 
-                <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                      <h2 className="text-xl font-black">Grille du brouillon</h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Choisis une classe pour corriger plus facilement. La vue “Toutes” reste utile pour contrôler l’ensemble.
-                      </p>
+              <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                <div
+                  className={[
+                    "rounded-2xl border p-4",
+                    unplaced.length > 0
+                      ? "border-amber-200 bg-amber-50 text-amber-950"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900",
+                  ].join(" ")}
+                >
+                  <p className="text-xs font-black uppercase tracking-wide">Séances non placées</p>
+                  <p className="mt-1 text-2xl font-black">{unplaced.length}</p>
+                </div>
+                <div
+                  className={[
+                    "rounded-2xl border p-4",
+                    blockingCount > 0
+                      ? "border-red-200 bg-red-50 text-red-950"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900",
+                  ].join(" ")}
+                >
+                  <p className="text-xs font-black uppercase tracking-wide">Conflits bloquants</p>
+                  <p className="mt-1 text-2xl font-black">{blockingCount}</p>
+                </div>
+                <div
+                  className={[
+                    "rounded-2xl border p-4",
+                    warningCount > 0
+                      ? "border-amber-200 bg-amber-50 text-amber-950"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900",
+                  ].join(" ")}
+                >
+                  <p className="text-xs font-black uppercase tracking-wide">Avertissements</p>
+                  <p className="mt-1 text-2xl font-black">{warningCount}</p>
+                </div>
+              </div>
+
+              {firstDiagnostics.length > 0 ? (
+                <div className="mt-4 grid gap-2">
+                  {firstDiagnostics.map((item, index) => (
+                    <div
+                      key={`${item.message}-${index}`}
+                      className={[
+                        "rounded-2xl border px-4 py-3 text-sm font-bold leading-5",
+                        diagnosticCardClass(item),
+                      ].join(" ")}
+                    >
+                      • {item.message || "Alerte sans message"}
                     </div>
+                  ))}
+                  {diagnostics.length > firstDiagnostics.length ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowDiagnosticsPanel(true)}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-black text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Voir les {diagnostics.length - firstDiagnostics.length} autres alertes…
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
+                  Aucun diagnostic signalé pour le moment.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <DragHint />
+
+              <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h2 className="text-xl font-black">Grille du brouillon en plein écran</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Choisis une classe pour corriger plus facilement. La vue “Toutes” reste utile pour contrôler l’ensemble.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowUnplacedPanel(true)}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-950 transition hover:bg-amber-100"
+                    >
+                      <AlertTriangle className="h-4 w-4" />
+                      Non placés ({unplaced.length})
+                    </button>
                     <select
                       value={selectedClassId}
                       onChange={(event) => setSelectedClassId(event.target.value)}
@@ -715,169 +836,100 @@ export default function MontageDraftEditor({ projectId }: { projectId: string })
                       })}
                     </select>
                   </div>
+                </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[920px] table-fixed border-collapse text-sm">
-                      <thead>
-                        <tr>
-                          <th className="w-[120px] border border-slate-200 bg-slate-50 px-3 py-3 text-left text-xs font-black uppercase text-slate-500">
-                            Horaires
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm">
+                    <thead>
+                      <tr>
+                        <th className="w-[120px] border border-slate-200 bg-slate-50 px-3 py-3 text-left text-xs font-black uppercase text-slate-500">
+                          Horaires
+                        </th>
+                        {days.map((day) => (
+                          <th key={day} className="border border-slate-200 bg-slate-50 px-3 py-3 text-center text-xs font-black uppercase text-slate-500">
+                            {dayLabel(day)}
                           </th>
-                          {days.map((day) => (
-                            <th key={day} className="border border-slate-200 bg-slate-50 px-3 py-3 text-center text-xs font-black uppercase text-slate-500">
-                              {dayLabel(day)}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {periods.map((period) => (
-                          <tr key={period.period_no}>
-                            <th className="border border-slate-200 bg-white px-3 py-3 text-left text-xs font-black text-slate-600">
-                              {periodLabel(period)}
-                            </th>
-                            {days.map((day) => {
-                              const cellBlocks = visibleBlocks.filter((block) => blockIsInCell(block, day, period.period_no));
-                              return (
-                                <td
-                                  key={`${day}-${period.period_no}`}
-                                  onDragOver={(event) => event.preventDefault()}
-                                  onDrop={(event) => handleDrop(event, day, period.period_no)}
-                                  onClick={() => {
-                                    if (cellBlocks.length === 0) openAddModal(day, period.period_no);
-                                  }}
-                                  className="h-[112px] cursor-pointer border border-slate-200 bg-slate-50/60 p-2 align-top transition hover:bg-emerald-50"
-                                >
-                                  {cellBlocks.length === 0 ? (
-                                    <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-300 text-xs font-bold text-slate-400">
-                                      <Plus className="mr-1 h-4 w-4" /> Ajouter
-                                    </div>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {cellBlocks.map((block) => {
-                                        const isContinuation = period.period_no !== block.start;
-                                        return (
-                                          <button
-                                            key={`${block.key}-${period.period_no}`}
-                                            type="button"
-                                            draggable={canEdit}
-                                            onDragStart={(event) => handleDragStart(event, { kind: "placed", block_id: block.key })}
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              openEditModal(block);
-                                            }}
-                                            className={[
-                                              "w-full rounded-2xl border px-3 py-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-                                              isContinuation
-                                                ? "border-slate-200 bg-white/80 text-slate-500"
-                                                : "border-emerald-200 bg-white text-slate-950",
-                                            ].join(" ")}
-                                          >
-                                            <div className="flex items-start gap-2">
-                                              <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                                              <div className="min-w-0">
-                                                <p className="truncate text-xs font-black uppercase">
-                                                  {clean(block.first.subject_label, "Matière")}
-                                                  {block.duration > 1 ? ` · ${block.duration}h` : ""}
-                                                </p>
-                                                <p className="mt-1 truncate text-[11px] font-bold text-slate-600">
-                                                  {selectedClassId === "all" ? `${clean(block.first.class_label, "Classe")} · ` : ""}
-                                                  {clean(block.first.teacher_name, "Enseignant")}
-                                                </p>
-                                                {blank(block.first.room_label || block.first.room_id) ? (
-                                                  <p className="mt-1 truncate text-[10px] font-semibold text-slate-400">
-                                                    {clean(block.first.room_label || block.first.room_id)}
-                                                  </p>
-                                                ) : null}
-                                                {isContinuation ? (
-                                                  <p className="mt-1 text-[10px] font-black uppercase text-slate-400">Suite du bloc</p>
-                                                ) : null}
-                                              </div>
-                                            </div>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {periods.map((period) => (
+                        <tr key={period.period_no}>
+                          <th className="border border-slate-200 bg-white px-3 py-3 text-left text-xs font-black text-slate-600">
+                            {periodLabel(period)}
+                          </th>
+                          {days.map((day) => {
+                            const cellBlocks = visibleBlocks.filter((block) => blockIsInCell(block, day, period.period_no));
+                            return (
+                              <td
+                                key={`${day}-${period.period_no}`}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => handleDrop(event, day, period.period_no)}
+                                onClick={() => {
+                                  if (cellBlocks.length === 0) openAddModal(day, period.period_no);
+                                }}
+                                className="h-[112px] cursor-pointer border border-slate-200 bg-slate-50/60 p-2 align-top transition hover:bg-emerald-50"
+                              >
+                                {cellBlocks.length === 0 ? (
+                                  <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-300 text-xs font-bold text-slate-400">
+                                    <Plus className="mr-1 h-4 w-4" /> Ajouter
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {cellBlocks.map((block) => {
+                                      const isContinuation = period.period_no !== block.start;
+                                      return (
+                                        <button
+                                          key={`${block.key}-${period.period_no}`}
+                                          type="button"
+                                          draggable={canEdit}
+                                          onDragStart={(event) => handleDragStart(event, { kind: "placed", block_id: block.key })}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            openEditModal(block);
+                                          }}
+                                          className={[
+                                            "w-full rounded-2xl border px-3 py-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                                            isContinuation
+                                              ? "border-slate-200 bg-white/80 text-slate-500"
+                                              : "border-emerald-200 bg-white text-slate-950",
+                                          ].join(" ")}
+                                        >
+                                          <div className="flex items-start gap-2">
+                                            <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                                            <div className="min-w-0">
+                                              <p className="truncate text-xs font-black uppercase">
+                                                {clean(block.first.subject_label, "Matière")}
+                                                {block.duration > 1 ? ` · ${block.duration}h` : ""}
+                                              </p>
+                                              <p className="mt-1 truncate text-[11px] font-bold text-slate-600">
+                                                {selectedClassId === "all" ? `${clean(block.first.class_label, "Classe")} · ` : ""}
+                                                {clean(block.first.teacher_name, "Enseignant")}
+                                              </p>
+                                              {blank(block.first.room_label || block.first.room_id) ? (
+                                                <p className="mt-1 truncate text-[10px] font-semibold text-slate-400">
+                                                  {clean(block.first.room_label || block.first.room_id)}
+                                                </p>
+                                              ) : null}
+                                              {isContinuation ? (
+                                                <p className="mt-1 text-[10px] font-black uppercase text-slate-400">Suite du bloc</p>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-
-              <aside className="space-y-4">
-                <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 text-amber-950 shadow-sm">
-                  <h2 className="flex items-center gap-2 text-lg font-black">
-                    <AlertTriangle className="h-5 w-5" />
-                    Séances non placées
-                  </h2>
-                  <p className="mt-1 text-sm font-semibold text-amber-800">
-                    Glisse une séance dans la grille ou clique sur une case vide pour ajouter manuellement.
-                  </p>
-                  <div className="mt-4 space-y-2">
-                    {unplaced.map((item, index) => {
-                      const id = getUnplacedId(item);
-                      return (
-                        <div
-                          key={id || index}
-                          draggable={canEdit && Boolean(id)}
-                          onDragStart={(event) => handleDragStart(event, { kind: "unplaced", unplaced_id: id })}
-                          className="rounded-2xl border border-amber-200 bg-white px-3 py-3 text-sm shadow-sm"
-                        >
-                          <div className="flex items-start gap-2">
-                            <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                            <div>
-                              <p className="font-black text-slate-950">
-                                {clean(item.class_label, "Classe")} — {clean(item.subject_label, "Matière")}
-                              </p>
-                              <p className="mt-1 text-xs font-semibold text-slate-500">
-                                {clean(item.teacher_name, "Enseignant")} · {num(item.duration_units, 1)}h
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {unplaced.length === 0 ? (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
-                        Aucun bloc non placé.
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                  <h2 className="flex items-center gap-2 text-lg font-black">
-                    <Megaphone className="h-5 w-5 text-slate-500" />
-                    Diagnostics
-                  </h2>
-                  <div className="mt-4 max-h-[520px] space-y-2 overflow-y-auto pr-1 text-sm">
-                    {diagnostics.slice(0, 80).map((item, index) => (
-                      <div
-                        key={`${item.message}-${index}`}
-                        className={[
-                          "rounded-2xl border px-3 py-2 font-semibold leading-5",
-                          isBlockingDiagnostic(item)
-                            ? "border-red-200 bg-red-50 text-red-950"
-                            : "border-slate-200 bg-slate-50 text-slate-600",
-                        ].join(" ")}
-                      >
-                        • {item.message || "Alerte sans message"}
-                      </div>
-                    ))}
-                    {diagnostics.length === 0 ? (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
-                        Aucun diagnostic signalé.
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </aside>
             </div>
           </>
         ) : null}
@@ -887,6 +939,110 @@ export default function MontageDraftEditor({ projectId }: { projectId: string })
         <div className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-xl">
           <Loader2 className="h-4 w-4 animate-spin" />
           Enregistrement du brouillon...
+        </div>
+      ) : null}
+
+      {showUnplacedPanel ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/45 p-3 sm:p-5">
+          <div className="flex h-full w-full max-w-xl flex-col rounded-[28px] bg-white shadow-2xl">
+            <div className="border-b border-slate-200 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 text-xl font-black text-slate-950">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Séances non placées
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Ce panneau s’ouvre seulement quand tu en as besoin. Glisse une séance dans la grille puis ferme le panneau pour retrouver le plein écran.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowUnplacedPanel(false)}
+                  className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-200"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto p-5">
+              {unplaced.map((item, index) => {
+                const id = getUnplacedId(item);
+                return (
+                  <div
+                    key={id || index}
+                    draggable={canEdit && Boolean(id)}
+                    onDragStart={(event) => handleDragStart(event, { kind: "unplaced", unplaced_id: id })}
+                    className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm shadow-sm"
+                  >
+                    <div className="flex items-start gap-2">
+                      <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                      <div>
+                        <p className="font-black text-slate-950">
+                          {clean(item.class_label, "Classe")} — {clean(item.subject_label, "Matière")}
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                          {clean(item.teacher_name, "Enseignant")} · {num(item.duration_units, 1)}h
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {unplaced.length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
+                  Aucun bloc non placé.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showDiagnosticsPanel ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/45 p-3 sm:p-5">
+          <div className="flex h-full w-full max-w-2xl flex-col rounded-[28px] bg-white shadow-2xl">
+            <div className="border-b border-slate-200 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 text-xl font-black text-slate-950">
+                    <Megaphone className="h-5 w-5 text-amber-500" />
+                    Toutes les alertes du brouillon
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Rouge = à corriger avant publication. Orange = possible, mais à vérifier par l’admin.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDiagnosticsPanel(false)}
+                  className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-200"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto p-5 text-sm">
+              {diagnostics.map((item, index) => (
+                <div
+                  key={`${item.message}-${index}`}
+                  className={[
+                    "rounded-2xl border px-4 py-3 font-bold leading-5",
+                    diagnosticCardClass(item),
+                  ].join(" ")}
+                >
+                  • {item.message || "Alerte sans message"}
+                </div>
+              ))}
+              {diagnostics.length === 0 ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
+                  Aucun diagnostic signalé.
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
 
