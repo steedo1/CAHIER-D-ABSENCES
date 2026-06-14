@@ -191,11 +191,9 @@ function formatLongDate(value: string | Date | null | undefined) {
   });
 }
 
-function minutesToHourLabel(min: number) {
-  const m = Math.max(0, Math.round(Number(min || 0)));
-  const h = Math.floor(m / 60);
-  const r = m % 60;
-  return `${h}H${String(r).padStart(2, "0")}`;
+function formatMinutes(value: number | string | null | undefined) {
+  const minutes = Math.max(0, Math.round(Number(value || 0)));
+  return `${minutes.toLocaleString("fr-FR")} min`;
 }
 
 function formatSessions(value: number) {
@@ -1710,31 +1708,22 @@ export default async function FinancePayrollPage({
                         Statut
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Séances attendues
+                        Séances prév./faites
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Séances accomplies
+                        Temps prévu (min)
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Heures prévues
+                        Temps fait (min)
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Heures accomplies
+                        Temps perdu net (min)
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Minutes perdues
+                        Cycles 1er/2nd
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Eq. séances
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        1er cycle
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        2nd cycle
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Montant
+                        Montant net
                       </th>
                       <th className="border border-slate-300 px-3 py-3 text-center font-black text-slate-700">
                         Emargement
@@ -1755,47 +1744,40 @@ export default async function FinancePayrollPage({
                             : "Permanent"}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {row.expected_sessions}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
-                          {row.actual_sessions}
+                          {row.expected_sessions} /{" "}
+                          <span className="font-semibold text-slate-900">
+                            {row.actual_sessions}
+                          </span>
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {minutesToHourLabel(row.expected_minutes)}
+                          {formatMinutes(row.expected_minutes)}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
-                          {minutesToHourLabel(row.actual_minutes)}
+                          {formatMinutes(row.actual_minutes)}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
-                          {minutesToHourLabel(
+                          {formatMinutes(
                             numberValue(row.lost_minutes_after_tolerance),
                           )}
                         </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
-                          {formatSessions(
-                            lostSessionsForLine(
-                              row,
-                              effectiveSessionReferenceMinutes,
-                            ),
-                          )}
-                        </td>
                         <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {row.sessions_first_cycle}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {row.sessions_second_cycle}
+                          {row.sessions_first_cycle} / {row.sessions_second_cycle}
                         </td>
                         <td className="border border-slate-300 px-3 py-4 text-right font-black text-emerald-700">
                           {payableLine(row) ? (
                             <>
-                              {formatMoney(row.gross_amount)}
+                              {formatMoney(
+                                numberValue(row.adjusted_amount ?? row.gross_amount),
+                              )}
                               <div className="mt-1 text-xs font-bold text-slate-500">
-                                Avec pertes :{" "}
-                                {formatMoney(
-                                  numberValue(
-                                    row.adjusted_amount ?? row.gross_amount,
-                                  ),
-                                )}
+                                Brut : {formatMoney(row.gross_amount)}
+                                {numberValue(row.lost_amount) > 0 ? (
+                                  <>
+                                    <br />
+                                    Retenue :{" "}
+                                    {formatMoney(numberValue(row.lost_amount))}
+                                  </>
+                                ) : null}
                               </div>
                             </>
                           ) : (
@@ -1819,33 +1801,24 @@ export default async function FinancePayrollPage({
                         Total
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.expectedSessions}
+                        {totals.expectedSessions} / {totals.actualSessions}
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.actualSessions}
+                        {formatMinutes(totals.expectedMinutes)}
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {minutesToHourLabel(totals.expectedMinutes)}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {minutesToHourLabel(totals.actualMinutes)}
+                        {formatMinutes(totals.actualMinutes)}
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-amber-700">
-                        {minutesToHourLabel(totals.lostMinutes)}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-amber-700">
-                        {formatSessions(totals.lostSessions)}
+                        {formatMinutes(totals.lostMinutes)}
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.firstCycle}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.secondCycle}
+                        {totals.firstCycle} / {totals.secondCycle}
                       </td>
                       <td className="border border-slate-300 px-3 py-3 text-right font-black text-emerald-700">
-                        {formatMoney(totals.gross)}
+                        {formatMoney(totals.adjusted)}
                         <div className="mt-1 text-xs font-bold text-slate-500">
-                          Avec pertes : {formatMoney(totals.adjusted)}
+                          Brut : {formatMoney(totals.gross)}
                         </div>
                       </td>
                       <td className="border border-slate-300 px-3 py-3" />
@@ -1937,16 +1910,16 @@ export default async function FinancePayrollPage({
               icon={<CalendarClock className="h-6 w-6" />}
               label="Séances"
               value={totals.actualSessions}
-              hint={`${minutesToHourLabel(totals.actualMinutes)} réalisées`}
+              hint={`${formatMinutes(totals.actualMinutes)} réalisées`}
               tone="amber"
             />
             <StatCard
               icon={<Wallet className="h-6 w-6" />}
-              label="Salaire sans pertes"
-              value={formatMoney(totals.gross)}
+              label="Salaire net proposé"
+              value={formatMoney(totals.adjusted)}
               hint={
                 selectedRun
-                  ? `Avec pertes : ${formatMoney(totals.adjusted)}`
+                  ? `Brut avant retenues : ${formatMoney(totals.gross)}`
                   : "Aucun brouillon"
               }
               tone="violet"
@@ -1999,7 +1972,7 @@ export default async function FinancePayrollPage({
 
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Marge retard autorisée
+                    Marge retard autorisée (min)
                   </div>
                   <input
                     type="number"
@@ -2012,7 +1985,7 @@ export default async function FinancePayrollPage({
 
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Marge sortie anticipée
+                    Marge sortie anticipée (min)
                   </div>
                   <input
                     type="number"
@@ -2025,7 +1998,7 @@ export default async function FinancePayrollPage({
 
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Minutes pour 1 séance
+                    Durée de référence séance (min)
                   </div>
                   <input
                     type="number"
@@ -2279,21 +2252,21 @@ export default async function FinancePayrollPage({
                   icon={<CalendarClock className="h-6 w-6" />}
                   label="Séances attendues"
                   value={totals.expectedSessions}
-                  hint={minutesToHourLabel(totals.expectedMinutes)}
+                  hint={formatMinutes(totals.expectedMinutes)}
                   tone="emerald"
                 />
                 <StatCard
                   icon={<CalendarClock className="h-6 w-6" />}
-                  label="Minutes perdues"
-                  value={minutesToHourLabel(totals.lostMinutes)}
+                  label="Temps perdu net"
+                  value={formatMinutes(totals.lostMinutes)}
                   hint={`${formatSessions(totals.lostSessions)} séance(s) équivalente(s)`}
                   tone="amber"
                 />
                 <StatCard
                   icon={<Wallet className="h-6 w-6" />}
                   label="Paie vacataires"
-                  value={formatMoney(totals.gross)}
-                  hint={`Ajusté proposé : ${formatMoney(totals.adjusted)}`}
+                  value={formatMoney(totals.adjusted)}
+                  hint={`Brut avant retenues : ${formatMoney(totals.gross)}`}
                   tone="violet"
                 />
               </section>
@@ -2320,37 +2293,25 @@ export default async function FinancePayrollPage({
                             Statut
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Séances prévues
+                            Séances prév./faites
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Séances accomplies
+                            Temps prévu (min)
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Heures prévues
+                            Temps fait (min)
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Heures accomplies
+                            Temps perdu net (min)
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Minutes perdues
+                            Cycles 1er/2nd
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Eq. séances
+                            Tarifs 1er/2nd
                           </th>
                           <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            1er cycle
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            2nd cycle
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Tarif 1er cycle
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Tarif 2nd cycle
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Montant / Rapport
+                            Montant net / Rapport
                           </th>
                         </tr>
                       </thead>
@@ -2371,53 +2332,46 @@ export default async function FinancePayrollPage({
                                 : "Permanent"}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
-                              {row.expected_sessions}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {row.actual_sessions}
+                              {row.expected_sessions} /{" "}
+                              <span className="font-semibold text-slate-900">
+                                {row.actual_sessions}
+                              </span>
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
-                              {minutesToHourLabel(row.expected_minutes)}
+                              {formatMinutes(row.expected_minutes)}
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {minutesToHourLabel(row.actual_minutes)}
+                              {formatMinutes(row.actual_minutes)}
                             </td>
                             <td className="px-3 py-3 text-right font-semibold text-amber-700">
-                              {minutesToHourLabel(
+                              {formatMinutes(
                                 numberValue(row.lost_minutes_after_tolerance),
                               )}
                             </td>
-                            <td className="px-3 py-3 text-right font-semibold text-amber-700">
-                              {formatSessions(
-                                lostSessionsForLine(
-                                  row,
-                                  effectiveSessionReferenceMinutes,
-                                ),
-                              )}
+                            <td className="px-3 py-3 text-right text-slate-700">
+                              {row.sessions_first_cycle} / {row.sessions_second_cycle}
                             </td>
                             <td className="px-3 py-3 text-right text-slate-700">
-                              {row.sessions_first_cycle}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {row.sessions_second_cycle}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMoney(row.rate_first_cycle)}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
+                              {formatMoney(row.rate_first_cycle)} /{" "}
                               {formatMoney(row.rate_second_cycle)}
                             </td>
                             <td className="px-3 py-3 text-right font-black text-emerald-700">
                               {payableLine(row) ? (
                                 <>
-                                  {formatMoney(row.gross_amount)}
+                                  {formatMoney(
+                                    numberValue(
+                                      row.adjusted_amount ?? row.gross_amount,
+                                    ),
+                                  )}
                                   <div className="mt-1 text-xs font-bold text-slate-500">
-                                    Avec pertes :{" "}
-                                    {formatMoney(
-                                      numberValue(
-                                        row.adjusted_amount ?? row.gross_amount,
-                                      ),
-                                    )}
+                                    Brut : {formatMoney(row.gross_amount)}
+                                    {numberValue(row.lost_amount) > 0 ? (
+                                      <>
+                                        <br />
+                                        Retenue :{" "}
+                                        {formatMoney(numberValue(row.lost_amount))}
+                                      </>
+                                    ) : null}
                                   </div>
                                 </>
                               ) : (
@@ -2438,35 +2392,25 @@ export default async function FinancePayrollPage({
                             Total
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.expectedSessions}
+                            {totals.expectedSessions} / {totals.actualSessions}
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.actualSessions}
+                            {formatMinutes(totals.expectedMinutes)}
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {minutesToHourLabel(totals.expectedMinutes)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {minutesToHourLabel(totals.actualMinutes)}
+                            {formatMinutes(totals.actualMinutes)}
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-amber-700">
-                            {minutesToHourLabel(totals.lostMinutes)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-amber-700">
-                            {formatSessions(totals.lostSessions)}
+                            {formatMinutes(totals.lostMinutes)}
                           </td>
                           <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.firstCycle}
+                            {totals.firstCycle} / {totals.secondCycle}
                           </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.secondCycle}
-                          </td>
-                          <td className="px-3 py-3"></td>
                           <td className="px-3 py-3"></td>
                           <td className="px-3 py-3 text-right font-black text-emerald-700">
-                            {formatMoney(totals.gross)}
+                            {formatMoney(totals.adjusted)}
                             <div className="mt-1 text-xs font-bold text-slate-500">
-                              Avec pertes : {formatMoney(totals.adjusted)}
+                              Brut : {formatMoney(totals.gross)}
                             </div>
                           </td>
                         </tr>
