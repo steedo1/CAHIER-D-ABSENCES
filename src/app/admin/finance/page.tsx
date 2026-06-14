@@ -682,7 +682,7 @@ export default async function AdminFinancePage({
           )}
           icon={<Wallet className="h-5 w-5" />}
           title="Dépenses"
-          description="Saisir et suivre les dépenses internes de l’établissement."
+          description="Définir le budget des dépenses, saisir les sorties et suivre le disponible."
           badge={`${expenseRows.length}`}
         />
         <QuickLinkCard
