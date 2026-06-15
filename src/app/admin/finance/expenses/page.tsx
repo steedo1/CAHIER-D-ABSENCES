@@ -308,6 +308,45 @@ async function toggleExpenseBudgetLineAction(formData: FormData) {
   revalidatePath("/admin/finance");
 }
 
+async function updateExpenseBudgetLineAmountAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) {
+    redirect("/admin/finance/locked");
+  }
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const id = cleanText(formData.get("id"));
+  const plannedAmount = toNumber(cleanText(formData.get("planned_amount")));
+
+  if (!id) {
+    throw new Error("Poste budgétaire introuvable.");
+  }
+
+  if (!Number.isFinite(plannedAmount) || plannedAmount < 0) {
+    throw new Error("Le montant prévu doit être positif ou égal à 0.");
+  }
+
+  const admin = getSupabaseServiceClient();
+
+  const { error } = await admin
+    .schema("finance")
+    .from("expense_budget_lines")
+    .update({
+      planned_amount: plannedAmount,
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", id)
+    .eq("school_id", institutionId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/finance/expenses");
+  revalidatePath("/admin/finance/reports");
+  revalidatePath("/admin/finance");
+}
+
 async function createExpenseAction(formData: FormData) {
   "use server";
 
@@ -413,6 +452,45 @@ async function createExpenseAction(formData: FormData) {
       e?.message || e,
     );
   }
+
+  revalidatePath("/admin/finance/expenses");
+  revalidatePath("/admin/finance/reports");
+  revalidatePath("/admin/finance");
+}
+
+async function updateExpenseAmountAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) {
+    redirect("/admin/finance/locked");
+  }
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const id = cleanText(formData.get("id"));
+  const amount = toNumber(cleanText(formData.get("amount")));
+
+  if (!id) {
+    throw new Error("Dépense introuvable.");
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Le montant de la dépense doit être supérieur à 0.");
+  }
+
+  const admin = getSupabaseServiceClient();
+
+  const { error } = await admin
+    .schema("finance")
+    .from("expenses")
+    .update({
+      amount,
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", id)
+    .eq("school_id", institutionId);
+
+  if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/expenses");
   revalidatePath("/admin/finance/reports");
@@ -1216,6 +1294,32 @@ export default async function FinanceExpensesPage({
                       {row.notes}
                     </div>
                   ) : null}
+
+                  <form
+                    action={updateExpenseBudgetLineAmountAction}
+                    className="mt-4 rounded-2xl border border-slate-200 bg-white p-3"
+                  >
+                    <input type="hidden" name="id" value={row.id} />
+                    <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Modifier le budget prévu
+                    </label>
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                      <input
+                        name="planned_amount"
+                        type="number"
+                        min="0"
+                        step="1"
+                        defaultValue={row.planned}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500"
+                      />
+                      <button className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                        Mettre à jour
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      Le consommé et le disponible sont recalculés automatiquement.
+                    </p>
+                  </form>
                 </article>
               );
             })}
@@ -1503,6 +1607,24 @@ export default async function FinanceExpensesPage({
                       <div className="text-xs text-slate-500">
                         {formatExpenseDate(row.expense_date)}
                       </div>
+                      <form
+                        action={updateExpenseAmountAction}
+                        className="mt-1 flex w-full max-w-[280px] flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 sm:flex-row lg:w-[280px]"
+                      >
+                        <input type="hidden" name="id" value={row.id} />
+                        <label className="sr-only">Modifier le montant de la dépense</label>
+                        <input
+                          name="amount"
+                          type="number"
+                          min="1"
+                          step="1"
+                          defaultValue={toNumber(row.amount)}
+                          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500"
+                        />
+                        <button className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                          Modifier
+                        </button>
+                      </form>
                     </div>
                   </div>
 
