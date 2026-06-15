@@ -13,7 +13,6 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
@@ -577,7 +576,7 @@ export default async function FinanceExpensesPage({
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
-  const supabase = await getSupabaseServerClient();
+  const supabase = getSupabaseServiceClient();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
