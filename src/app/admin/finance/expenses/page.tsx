@@ -650,7 +650,6 @@ export default async function FinanceExpensesPage({
   const params = searchParams ? await searchParams : undefined;
   const q = String(params?.q || "").trim();
   const statusFilter = String(params?.status || "").trim();
-  const categoryIdFilter = String(params?.category_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
@@ -730,7 +729,6 @@ export default async function FinanceExpensesPage({
 
   const categoryMap = new Map(categoryRows.map((c) => [c.id, c]));
   const budgetMap = new Map(budgetRows.map((b) => [b.id, b]));
-  const activeCategories = categoryRows.filter((c) => c.is_active);
   const activeBudgetRows = budgetRows.filter((b) => b.is_active);
 
   const postedAllRows = expenseRows.filter((r) => r.expense_status === "posted");
@@ -780,10 +778,6 @@ export default async function FinanceExpensesPage({
 
     if (statusFilter === "posted" || statusFilter === "cancelled") {
       if (row.expense_status !== statusFilter) return false;
-    }
-
-    if (categoryIdFilter && row.category_id !== categoryIdFilter) {
-      return false;
     }
 
     if (!qn) return true;
@@ -864,7 +858,6 @@ export default async function FinanceExpensesPage({
         hiddenParams={{
           q,
           status: statusFilter,
-          category_id: categoryIdFilter,
         }}
       />
 
@@ -899,337 +892,336 @@ export default async function FinanceExpensesPage({
         />
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+<section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+  <div className="rounded-[28px] border border-emerald-200 bg-white p-5 shadow-sm">
+    <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+      <Wallet className="h-4 w-4 text-emerald-600" />
+      Saisir une dépense
+    </div>
+    <p className="mt-2 text-sm leading-6 text-slate-600">
+      Choisis un poste budgétaire si la dépense concerne une ligne prévue.
+      Sinon, laisse en dépense libre. Les catégories sont retirées de
+      l’écran principal pour garder la saisie rapide.
+    </p>
+
+    <form
+      action={createExpenseAction}
+      className="mt-5 grid gap-4 md:grid-cols-2"
+    >
+      <input
+        type="hidden"
+        name="academic_year_id"
+        value={selectedAcademicYearId || ""}
+      />
+      <input
+        type="hidden"
+        name="academic_year"
+        value={selectedAcademicYearCode || ""}
+      />
+      <input type="hidden" name="category_id" value="" />
+
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Rattachement budgétaire
+        </label>
+        <select
+          name="budget_line_id"
+          defaultValue=""
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+        >
+          <option value="">Dépense libre / aucun poste budgétaire</option>
+          {budgetRowsWithStats
+            .filter((row) => row.is_active)
+            .map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.account_no ? `${row.account_no} — ` : ""}
+                {row.label} · disponible {formatMoney(row.remaining)}
+              </option>
+            ))}
+        </select>
+        <p className="mt-2 text-xs text-slate-500">
+          Le rattachement met automatiquement à jour le consommé et le
+          disponible du poste choisi.
+        </p>
+      </div>
+
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Libellé
+        </label>
+        <input
+          name="label"
+          type="text"
+          placeholder="Ex. Achat de craies, réparation imprimante..."
+          required
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Montant
+        </label>
+        <input
+          name="amount"
+          type="number"
+          min="0"
+          step="1"
+          required
+          placeholder="0"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Date
+        </label>
+        <input
+          name="expense_date"
+          type="date"
+          defaultValue={new Date().toISOString().slice(0, 10)}
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Bénéficiaire / fournisseur
+        </label>
+        <input
+          name="beneficiary"
+          type="text"
+          placeholder="Ex. Papeterie, technicien, station-service..."
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Mode de paiement
+        </label>
+        <input
+          name="payment_method"
+          type="text"
+          placeholder="Ex. Caisse, mobile money, banque..."
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
+
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Référence / note
+        </label>
+        <div className="grid gap-3 md:grid-cols-2">
+          <input
+            name="reference_no"
+            type="text"
+            placeholder="N° pièce, facture, reçu..."
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+          />
+          <input
+            name="notes"
+            type="text"
+            placeholder="Note interne, facultatif"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+          />
+        </div>
+      </div>
+
+      <div className="md:col-span-2 flex flex-wrap gap-3">
+        <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
+          <Wallet className="h-4 w-4" />
+          Enregistrer la dépense
+        </button>
+
+        <Link
+          href={`/admin/finance/reports?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&view=depenses`}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Voir les rapports
+        </Link>
+      </div>
+    </form>
+  </div>
+
+  <details
+    className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+    open={budgetRowsWithStats.length === 0}
+  >
+    <summary className="cursor-pointer list-none">
+      <div className="flex items-center justify-between gap-4">
+        <div>
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
             <FolderPlus className="h-4 w-4 text-emerald-600" />
-            Nouveau poste budgétaire
+            Ajouter un poste budgétaire
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            À utiliser lorsqu’un établissement a un budget prévisionnel : compte
-            comptable, libellé et montant prévu par année scolaire.
+            À ouvrir seulement pour créer une nouvelle ligne de budget.
           </p>
-
-          <form
-            action={createExpenseBudgetLineAction}
-            className="mt-5 grid gap-4 md:grid-cols-2"
-          >
-            <input
-              type="hidden"
-              name="academic_year_id"
-              value={selectedAcademicYearId || ""}
-            />
-            <input
-              type="hidden"
-              name="academic_year"
-              value={selectedAcademicYearCode || ""}
-            />
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                N° de compte
-              </label>
-              <input
-                name="account_no"
-                type="text"
-                placeholder="Ex. 604150"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Montant prévu
-              </label>
-              <input
-                name="planned_amount"
-                type="number"
-                min="0"
-                step="1"
-                required
-                placeholder="0"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Libellé du poste
-              </label>
-              <input
-                name="label"
-                type="text"
-                placeholder="Ex. Fourniture de bureau, frais de mission, salaires..."
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Catégorie liée, facultatif
-              </label>
-              <select
-                name="category_id"
-                defaultValue=""
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
-              >
-                <option value="">Aucune catégorie liée</option>
-                {activeCategories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Observation, facultatif
-              </label>
-              <textarea
-                name="notes"
-                rows={3}
-                placeholder="Ex. Poste repris du budget signé, correction manuscrite à vérifier..."
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="md:col-span-2 flex flex-wrap gap-3">
-              <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                <FolderPlus className="h-4 w-4" />
-                Créer le poste budgétaire
-              </button>
-
-              <Link
-                href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              >
-                Retour Finance
-              </Link>
-            </div>
-          </form>
         </div>
+        <span className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600">
+          Ouvrir / fermer
+        </span>
+      </div>
+    </summary>
 
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <Wallet className="h-4 w-4 text-emerald-600" />
-            Saisir une dépense
-          </div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Le rattachement au budget est facultatif. Une école qui n’a pas
-            encore défini son budget peut donc saisir immédiatement ses dépenses.
-          </p>
+    <form
+      action={createExpenseBudgetLineAction}
+      className="mt-5 grid gap-4 md:grid-cols-2"
+    >
+      <input
+        type="hidden"
+        name="academic_year_id"
+        value={selectedAcademicYearId || ""}
+      />
+      <input
+        type="hidden"
+        name="academic_year"
+        value={selectedAcademicYearCode || ""}
+      />
+      <input type="hidden" name="category_id" value="" />
+      <input type="hidden" name="notes" value="" />
 
-          <form
-            action={createExpenseAction}
-            className="mt-5 grid gap-4 md:grid-cols-2"
-          >
-            <input
-              type="hidden"
-              name="academic_year_id"
-              value={selectedAcademicYearId || ""}
-            />
-            <input
-              type="hidden"
-              name="academic_year"
-              value={selectedAcademicYearCode || ""}
-            />
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          N° de compte
+        </label>
+        <input
+          name="account_no"
+          type="text"
+          placeholder="Ex. 604150"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Poste budgétaire, facultatif
-              </label>
-              <select
-                name="budget_line_id"
-                defaultValue=""
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
-              >
-                <option value="">Dépense libre / sans budget</option>
-                {budgetRowsWithStats
-                  .filter((row) => row.is_active)
-                  .map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.account_no ? `${row.account_no} — ` : ""}
-                      {row.label} · disponible {formatMoney(row.remaining)}
-                    </option>
-                  ))}
-              </select>
-            </div>
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Montant prévu
+        </label>
+        <input
+          name="planned_amount"
+          type="number"
+          min="0"
+          step="1"
+          required
+          placeholder="0"
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Catégorie, facultatif
-              </label>
-              <select
-                name="category_id"
-                defaultValue=""
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
-              >
-                <option value="">Sans catégorie</option>
-                {activeCategories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Libellé du poste
+        </label>
+        <input
+          name="label"
+          type="text"
+          placeholder="Ex. Fourniture de bureau, frais de mission, salaires..."
+          required
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
+        />
+      </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Libellé
-              </label>
-              <input
-                name="label"
-                type="text"
-                placeholder="Ex. Achat de craies, réparation imprimante..."
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
+      <div className="md:col-span-2 flex flex-wrap gap-3">
+        <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
+          <FolderPlus className="h-4 w-4" />
+          Créer le poste
+        </button>
 
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Montant
-              </label>
-              <input
-                name="amount"
-                type="number"
-                min="0"
-                step="1"
-                required
-                placeholder="0"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
+        <Link
+          href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
+          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+        >
+          Retour Finance
+        </Link>
+      </div>
+    </form>
+  </details>
+</section>
 
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Date
-              </label>
-              <input
-                name="expense_date"
-                type="date"
-                defaultValue={new Date().toISOString().slice(0, 10)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
-              />
-            </div>
+<section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+  <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+        Postes budgétaires de l’année
+      </div>
+      <p className="mt-1 text-sm text-slate-600">
+        Liste compacte : prévu, consommé, disponible. La zone est limitée
+        en hauteur pour ne plus envahir toute la page.
+      </p>
+    </div>
+    <div className="rounded-2xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
+      {budgetRowsWithStats.length} poste{budgetRowsWithStats.length > 1 ? "s" : ""}
+    </div>
+  </div>
 
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Bénéficiaire / fournisseur
-              </label>
-              <input
-                name="beneficiary"
-                type="text"
-                placeholder="Ex. Papeterie, technicien, station-service..."
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Mode de paiement
-              </label>
-              <input
-                name="payment_method"
-                type="text"
-                placeholder="Ex. Caisse, mobile money, banque..."
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Référence / observation, facultatif
-              </label>
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  name="reference_no"
-                  type="text"
-                  placeholder="N° pièce, facture, reçu..."
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-                />
-                <input
-                  name="notes"
-                  type="text"
-                  placeholder="Petite note interne"
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-                />
-              </div>
-            </div>
-
-            <div className="md:col-span-2 flex flex-wrap gap-3">
-              <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                <Wallet className="h-4 w-4" />
-                Enregistrer la dépense
-              </button>
-
-              <Link
-                href={`/admin/finance/reports?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&view=depenses`}
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-              >
-                Voir les rapports
-              </Link>
-            </div>
-          </form>
-        </div>
-      </section>
-
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-              Postes budgétaires de l’année
-            </div>
-            <p className="mt-1 text-sm text-slate-600">
-              Suivi du montant prévu, du montant consommé et du disponible par
-              poste budgétaire.
-            </p>
-          </div>
-        </div>
-
-        {budgetRowsWithStats.length === 0 ? (
-          <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-            Aucun poste budgétaire n’est enregistré pour cette année. Tu peux
-            quand même saisir des dépenses libres, puis créer le budget plus tard.
-          </div>
-        ) : (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+  {budgetRowsWithStats.length === 0 ? (
+    <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
+      Aucun poste budgétaire n’est enregistré pour cette année. Tu peux
+      quand même saisir des dépenses libres, puis créer le budget plus tard.
+    </div>
+  ) : (
+    <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+      <div className="max-h-[520px] overflow-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="sticky top-0 z-10 bg-slate-50">
+            <tr className="text-left text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+              <th className="px-4 py-3">Poste</th>
+              <th className="px-4 py-3 text-right">Prévu</th>
+              <th className="px-4 py-3 text-right">Consommé</th>
+              <th className="px-4 py-3 text-right">Disponible</th>
+              <th className="px-4 py-3">Modifier le prévu</th>
+              <th className="px-4 py-3 text-right">Statut</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-white">
             {budgetRowsWithStats.map((row) => {
-              const category = row.category_id ? categoryMap.get(row.category_id) : null;
-              const barWidth = Math.min(100, Math.max(0, row.executionPercent));
               const exceeded = row.remaining < 0;
 
               return (
-                <article
+                <tr
                   key={row.id}
-                  className={`rounded-3xl border p-4 ${
-                    row.is_active
-                      ? exceeded
-                        ? "border-rose-200 bg-rose-50/50"
-                        : "border-slate-200 bg-slate-50/60"
-                      : "border-slate-200 bg-slate-50/40 opacity-70"
-                  }`}
+                  className={row.is_active ? "hover:bg-slate-50" : "bg-slate-50/60 opacity-70"}
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {row.account_no ? (
-                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-700 ring-1 ring-slate-200">
-                            {row.account_no}
-                          </span>
-                        ) : null}
-                        <BudgetStatusPill active={row.is_active} />
-                      </div>
-                      <h2 className="mt-3 text-lg font-black text-slate-900">
-                        {row.label}
-                      </h2>
-                      <div className="mt-1 text-sm text-slate-600">
-                        {category?.name || "Catégorie non liée"}
-                      </div>
+                  <td className="px-4 py-3 align-top">
+                    <div className="font-black text-slate-900">
+                      {row.account_no ? `${row.account_no} — ` : ""}
+                      {row.label}
                     </div>
-
+                    <div className="mt-1 text-xs text-slate-500">
+                      Exécution : {formatPercent(row.executionPercent)}
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right align-top font-black text-slate-900">
+                    {formatMoney(row.planned)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right align-top font-bold text-emerald-800">
+                    {formatMoney(row.spent)}
+                  </td>
+                  <td className={`whitespace-nowrap px-4 py-3 text-right align-top font-bold ${exceeded ? "text-rose-700" : "text-amber-800"}`}>
+                    {exceeded ? "+ " : ""}{formatMoney(Math.abs(row.remaining))}
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    <form
+                      action={updateExpenseBudgetLineAmountAction}
+                      className="flex min-w-[220px] gap-2"
+                    >
+                      <input type="hidden" name="id" value={row.id} />
+                      <input
+                        name="planned_amount"
+                        type="number"
+                        min="0"
+                        step="1"
+                        defaultValue={row.planned}
+                        className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500"
+                      />
+                      <button className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                        OK
+                      </button>
+                    </form>
+                  </td>
+                  <td className="px-4 py-3 text-right align-top">
                     <form action={toggleExpenseBudgetLineAction}>
                       <input type="hidden" name="id" value={row.id} />
                       <input
@@ -1238,7 +1230,7 @@ export default async function FinanceExpensesPage({
                         value={row.is_active ? "false" : "true"}
                       />
                       <button
-                        className={`inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-2 text-xs font-bold ${
+                        className={`inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-bold ${
                           row.is_active
                             ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                             : "bg-emerald-600 text-white hover:bg-emerald-700"
@@ -1247,202 +1239,16 @@ export default async function FinanceExpensesPage({
                         {row.is_active ? "Désactiver" : "Réactiver"}
                       </button>
                     </form>
-                  </div>
-
-                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
-                      <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Prévu
-                      </div>
-                      <div className="mt-1 font-black text-slate-900">
-                        {formatMoney(row.planned)}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
-                      <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Consommé
-                      </div>
-                      <div className="mt-1 font-black text-emerald-800">
-                        {formatMoney(row.spent)}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
-                      <div className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                        {exceeded ? "Dépassement" : "Disponible"}
-                      </div>
-                      <div className={`mt-1 font-black ${exceeded ? "text-rose-700" : "text-amber-800"}`}>
-                        {formatMoney(Math.abs(row.remaining))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
-                      <span>Exécution</span>
-                      <span>{formatPercent(row.executionPercent)}</span>
-                    </div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-slate-200">
-                      <div
-                        className={`h-full rounded-full ${exceeded ? "bg-rose-500" : "bg-emerald-500"}`}
-                        style={{ width: `${barWidth}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {row.notes ? (
-                    <div className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
-                      {row.notes}
-                    </div>
-                  ) : null}
-
-                  <form
-                    action={updateExpenseBudgetLineAmountAction}
-                    className="mt-4 rounded-2xl border border-slate-200 bg-white p-3"
-                  >
-                    <input type="hidden" name="id" value={row.id} />
-                    <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Modifier le budget prévu
-                    </label>
-                    <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                      <input
-                        name="planned_amount"
-                        type="number"
-                        min="0"
-                        step="1"
-                        defaultValue={row.planned}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500"
-                      />
-                      <button className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
-                        Mettre à jour
-                      </button>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">
-                      Le consommé et le disponible sont recalculés automatiquement.
-                    </p>
-                  </form>
-                </article>
+                  </td>
+                </tr>
               );
             })}
-          </div>
-        )}
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-            <FolderPlus className="h-4 w-4 text-emerald-600" />
-            Nouvelle catégorie de dépense
-          </div>
-
-          <form
-            action={createExpenseCategoryAction}
-            className="mt-5 grid gap-4"
-          >
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Nom de la catégorie
-              </label>
-              <input
-                name="name"
-                type="text"
-                placeholder="Ex. Fournitures, carburant, maintenance"
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                Code
-              </label>
-              <input
-                name="code"
-                type="text"
-                placeholder="Ex. fournitures"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
-                <FolderPlus className="h-4 w-4" />
-                Créer la catégorie
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                Catégories existantes
-              </div>
-              <p className="mt-1 text-sm text-slate-600">
-                Les catégories restent facultatives, mais elles aident à obtenir
-                des rapports propres.
-              </p>
-            </div>
-          </div>
-
-          {categoryRows.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-              Aucune catégorie de dépense enregistrée pour le moment.
-            </div>
-          ) : (
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              {categoryRows.map((row) => (
-                <article
-                  key={row.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50/60 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-lg font-black text-slate-900">
-                        {row.name}
-                      </div>
-                      <div className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-                        {row.code}
-                      </div>
-                    </div>
-                    <CategoryStatusPill active={row.is_active} />
-                  </div>
-
-                  <div className="mt-4">
-                    <form action={toggleExpenseCategoryAction}>
-                      <input type="hidden" name="id" value={row.id} />
-                      <input
-                        type="hidden"
-                        name="next_active"
-                        value={row.is_active ? "false" : "true"}
-                      />
-                      <button
-                        className={`inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-bold ${
-                          row.is_active
-                            ? "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                            : "bg-emerald-600 text-white hover:bg-emerald-700"
-                        }`}
-                      >
-                        {row.is_active ? (
-                          <>
-                            <CircleOff className="h-4 w-4" />
-                            Désactiver
-                          </>
-                        ) : (
-                          <>
-                            <BadgeCheck className="h-4 w-4" />
-                            Réactiver
-                          </>
-                        )}
-                      </button>
-                    </form>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+</section>
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
@@ -1452,7 +1258,7 @@ export default async function FinanceExpensesPage({
 
         <form
           method="GET"
-          className="mt-5 grid gap-4 md:grid-cols-[1.3fr_0.8fr_0.8fr_auto]"
+          className="mt-5 grid gap-4 md:grid-cols-[1.4fr_0.8fr_auto]"
         >
           <input
             type="hidden"
@@ -1483,24 +1289,6 @@ export default async function FinanceExpensesPage({
               <option value="">Tous</option>
               <option value="posted">Validées</option>
               <option value="cancelled">Annulées</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-              Catégorie
-            </label>
-            <select
-              name="category_id"
-              defaultValue={categoryIdFilter}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
-            >
-              <option value="">Toutes</option>
-              {categoryRows.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
             </select>
           </div>
 
@@ -1557,9 +1345,6 @@ export default async function FinanceExpensesPage({
             </div>
           ) : (
             filteredRows.map((row) => {
-              const category = row.category_id
-                ? categoryMap.get(row.category_id)
-                : null;
               const budget = row.budget_line_id
                 ? budgetMap.get(row.budget_line_id)
                 : null;
@@ -1579,9 +1364,6 @@ export default async function FinanceExpensesPage({
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                        <span className="rounded-full bg-slate-100 px-3 py-1 ring-1 ring-slate-200">
-                          {category?.name || "Sans catégorie"}
-                        </span>
                         {budget ? (
                           <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-200">
                             {budget.account_no ? `${budget.account_no} — ` : ""}
