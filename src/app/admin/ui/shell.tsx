@@ -315,7 +315,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                 {isFounderFinance ? (
                   <TrueLogoutButton
                     label="Déconnexion"
-                    className="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5 text-sm font-black text-white shadow-sm shadow-red-950/20 transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-70"
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-sm font-black text-white shadow-sm transition hover:bg-white/15 disabled:cursor-wait disabled:opacity-70"
                   />
                 ) : (
                   <div className="rounded-full bg-white/10 px-2 py-1 ring-1 ring-white/20 hover:bg-white/15">
