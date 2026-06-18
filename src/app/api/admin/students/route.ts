@@ -129,7 +129,23 @@ export async function GET(req: NextRequest) {
       `
       student_id,
       class_id,
-      students:student_id ( id, first_name, last_name, full_name, matricule, institution_id, gender, regime, is_affecte, is_boarder ),
+      students:student_id (
+        id,
+        first_name,
+        last_name,
+        full_name,
+        matricule,
+        institution_id,
+        photo_url,
+        birthdate,
+        birth_place,
+        nationality,
+        gender,
+        regime,
+        is_repeater,
+        is_affecte,
+        is_boarder
+      ),
       classes:class_id!inner ( id, label, level, institution_id, academic_year )
     `,
     )
@@ -147,13 +163,21 @@ export async function GET(req: NextRequest) {
   const seen = new Set<string>();
   const items: Array<{
     id: string;
+    first_name: string | null;
+    last_name: string | null;
     full_name: string;
     matricule: string | null;
     class_id: string;
     class_label: string | null;
     class_level: string | null;
     academic_year: string | null;
+    photo_url: string | null;
+    birthdate: string | null;
+    birth_date: string | null;
+    birth_place: string | null;
+    nationality: string | null;
     gender: string | null;
+    is_repeater: boolean | null;
     is_affecte: boolean | null;
     is_boarder: boolean | null;
     regime: string | null;
@@ -173,13 +197,22 @@ export async function GET(req: NextRequest) {
 
     items.push({
       id: sid,
+      first_name: (s.first_name ?? null) as string | null,
+      last_name: (s.last_name ?? null) as string | null,
       full_name: full,
       matricule: (s.matricule ?? null) as string | null,
       class_id: (row as any).class_id as string,
       class_label: (c.label ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
+      photo_url: (s.photo_url ?? null) as string | null,
+      birthdate: (s.birthdate ?? null) as string | null,
+      birth_date: (s.birthdate ?? null) as string | null,
+      birth_place: (s.birth_place ?? null) as string | null,
+      nationality: (s.nationality ?? null) as string | null,
       gender: (s.gender ?? null) as string | null,
+      is_repeater:
+        typeof s.is_repeater === "boolean" ? (s.is_repeater as boolean) : null,
       is_affecte:
         typeof s.is_affecte === "boolean" ? (s.is_affecte as boolean) : null,
       is_boarder:

@@ -99,6 +99,8 @@ type ClassRow = {
 type StudentRow = {
   id: string;
   full_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   class_id: string | null;
   class_label: string | null;
   matricule?: string | null;
@@ -154,6 +156,17 @@ function nomAvantPrenoms(full: string): string {
   const last = parts[parts.length - 1];
   const firsts = parts.slice(0, -1).join(" ");
   return `${last} ${firsts}`;
+}
+
+function studentOfficialName(student: StudentRow): string {
+  const lastName = (student.last_name || "").trim();
+  const firstName = (student.first_name || "").trim();
+  const fromParts = [lastName, firstName].filter(Boolean).join(" ").trim();
+
+  // L'API /api/admin/students construit deja full_name en ordre officiel :
+  // NOM puis prenom(s). On ne doit donc pas reinverser ici, sinon
+  // l'attestation affiche les identites dans le mauvais ordre.
+  return fromParts || (student.full_name || "").trim() || "-";
 }
 
 function norm(s: string) {
@@ -351,9 +364,7 @@ function buildAttestationHtml(args: {
                 <div class="student-left">
                   <div class="row">
                     <span class="label">Nom et prénoms</span>
-                    <span class="value">${escapeHtml(
-                      nomAvantPrenoms(student.full_name || "")
-                    )}</span>
+                    <span class="value">${escapeHtml(studentOfficialName(student))}</span>
                   </div>
                   <div class="row">
                     <span class="label">Matricule</span>
@@ -1118,9 +1129,9 @@ export default function AdminStudentsByClassPage() {
   }
 
   function openEdit(student: StudentRow) {
-    const parts = (student.full_name || "").trim().split(/\s+/);
-    const first_name = parts[0] ?? "";
-    const last_name = parts.slice(1).join(" ");
+    const fullParts = (student.full_name || "").trim().split(/\s+/).filter(Boolean);
+    const first_name = (student.first_name || "").trim() || fullParts.slice(1).join(" ");
+    const last_name = (student.last_name || "").trim() || fullParts[0] || "";
 
     setEditing({
       id: student.id,
@@ -1164,6 +1175,8 @@ export default function AdminStudentsByClassPage() {
           s.id === editing.id
             ? {
                 ...s,
+                first_name: editing.first_name || null,
+                last_name: editing.last_name || null,
                 full_name:
                   [editing.last_name, editing.first_name]
                     .filter(Boolean)
@@ -1370,6 +1383,7 @@ export default function AdminStudentsByClassPage() {
         first_name: string | null;
         last_name: string | null;
         matricule: string | null;
+        photo_url?: string | null;
       };
 
       if (!stu?.id) throw new Error("Reponse incomplete: student manquant.");
@@ -1389,10 +1403,13 @@ export default function AdminStudentsByClassPage() {
             x.id === stu.id
               ? {
                   ...x,
+                  first_name: stu.first_name || null,
+                  last_name: stu.last_name || null,
                   full_name: full,
                   class_id: classId,
                   class_label,
                   matricule: stu.matricule,
+                  photo_url: stu.photo_url || x.photo_url || null,
                   level: levelOfClass,
                 }
               : x
@@ -1403,10 +1420,13 @@ export default function AdminStudentsByClassPage() {
           ...prev,
           {
             id: stu.id,
+            first_name: stu.first_name || null,
+            last_name: stu.last_name || null,
             full_name: full,
             class_id: classId,
             class_label,
             matricule: stu.matricule,
+            photo_url: stu.photo_url || null,
             level: levelOfClass,
           },
         ];
