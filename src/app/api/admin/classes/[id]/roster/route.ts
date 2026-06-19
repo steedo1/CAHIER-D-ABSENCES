@@ -514,6 +514,77 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   });
 }
 
+export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  const classId = String(id || "").trim();
+  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+
+  const ctx = await requireAdminContext(classId, { write: true });
+  if ("error" in ctx) return ctx.error;
+
+  const { srv, institutionId } = ctx;
+  const body = await req.json().catch(() => ({}));
+  const lastName = normalizeNullableText(body?.last_name);
+  const firstName = normalizeNullableText(body?.first_name);
+  const matricule = normalizeNullableText(body?.matricule);
+
+  if (!lastName) {
+    return NextResponse.json({ error: "Le nom de l’élève est obligatoire." }, { status: 400 });
+  }
+  if (!firstName) {
+    return NextResponse.json({ error: "Le prénom de l’élève est obligatoire." }, { status: 400 });
+  }
+
+  if (matricule) {
+    const { data: duplicate, error: dupErr } = await srv
+      .from("students")
+      .select("id")
+      .eq("institution_id", institutionId)
+      .eq("matricule", matricule)
+      .maybeSingle();
+
+    if (dupErr) return NextResponse.json({ error: dupErr.message }, { status: 400 });
+    if (duplicate?.id) {
+      return NextResponse.json(
+        { error: "Ce matricule existe déjà dans cet établissement." },
+        { status: 400 },
+      );
+    }
+  }
+
+  const { data: created, error: createErr } = await srv
+    .from("students")
+    .insert({
+      institution_id: institutionId,
+      first_name: firstName,
+      last_name: lastName,
+      matricule,
+    } as any)
+    .select("id")
+    .maybeSingle();
+
+  if (createErr) return NextResponse.json({ error: createErr.message }, { status: 400 });
+  if (!created?.id) return NextResponse.json({ error: "Impossible de créer l’élève." }, { status: 400 });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { error: enrollErr } = await srv.from("class_enrollments").upsert(
+    [
+      {
+        institution_id: institutionId,
+        class_id: classId,
+        student_id: created.id,
+        start_date: today,
+        end_date: null,
+      },
+    ],
+    { onConflict: "class_id,student_id", ignoreDuplicates: true },
+  );
+
+  if (enrollErr) return NextResponse.json({ error: enrollErr.message }, { status: 400 });
+
+  return NextResponse.json({ ok: true, student_id: created.id });
+}
+
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const classId = String(id || "").trim();

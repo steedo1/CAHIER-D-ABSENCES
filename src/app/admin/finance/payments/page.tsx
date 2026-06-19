@@ -1403,12 +1403,12 @@ async function createPaymentAction(formData: FormData) {
   const parentPhone = normalize(formData.get("parent_phone"));
 
   if (!classId) throw new Error("Veuillez choisir une classe.");
-  if (!feeCategoryId && !mixedReceipt)
+  if (mode !== "new" && !feeCategoryId && !mixedReceipt)
     throw new Error("Veuillez choisir une catégorie de frais.");
 
   let amount = Number(amountRaw);
   const hasAllocationPlan = allocationPlan.length > 0;
-  if ((!Number.isFinite(amount) || amount <= 0) && !hasAllocationPlan) {
+  if (mode !== "new" && (!Number.isFinite(amount) || amount <= 0) && !hasAllocationPlan) {
     throw new Error("Le montant encaissé doit être supérieur à 0.");
   }
 
@@ -1461,6 +1461,13 @@ async function createPaymentAction(formData: FormData) {
     extraNotes.push("Nouvelle inscription depuis le module Finance");
     extraNotes.push("Dossier élève à compléter si nécessaire");
     if (parentPhone) extraNotes.push(`Contact parent/tuteur : ${parentPhone}`);
+
+    revalidatePath("/admin/finance/payments");
+    revalidatePath("/admin/classes");
+    revalidatePath("/admin/finance");
+    redirect(
+      `/admin/finance/payments?student_id=${encodeURIComponent(studentId)}&class_id=${encodeURIComponent(classId)}`,
+    );
   }
 
   if (!studentId) {

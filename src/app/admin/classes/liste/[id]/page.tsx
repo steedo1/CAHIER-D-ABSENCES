@@ -1,7 +1,7 @@
 // src/app/admin/classes/liste/[id]/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 type ProfileMini = {
@@ -223,6 +223,14 @@ export default function ClassListPrintPage() {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showCorrections, setShowCorrections] = useState(false);
+  const [showNewStudent, setShowNewStudent] = useState(false);
+  const [creatingStudent, setCreatingStudent] = useState(false);
+  const [newStudentMsg, setNewStudentMsg] = useState<string | null>(null);
+  const [newStudentForm, setNewStudentForm] = useState({
+    last_name: "",
+    first_name: "",
+    matricule: "",
+  });
 
   async function load() {
     if (!classId) return;
@@ -294,6 +302,45 @@ export default function ClassListPrintPage() {
         ...patch,
       },
     }));
+  }
+
+  async function createMinimalStudent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!data || !canEdit) return;
+
+    const lastName = newStudentForm.last_name.replace(/\s+/g, " ").trim();
+    const firstName = newStudentForm.first_name.replace(/\s+/g, " ").trim();
+    const matricule = newStudentForm.matricule.replace(/\s+/g, " ").trim();
+
+    if (!lastName || !firstName) {
+      setNewStudentMsg("Le nom et le prénom sont obligatoires.");
+      return;
+    }
+
+    setCreatingStudent(true);
+    setNewStudentMsg(null);
+    try {
+      const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          last_name: lastName,
+          first_name: firstName,
+          matricule: matricule || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Impossible d’inscrire l’élève.");
+
+      setNewStudentForm({ last_name: "", first_name: "", matricule: "" });
+      setShowNewStudent(false);
+      setNewStudentMsg("Élève inscrit dans la classe. La liste est à jour.");
+      await load();
+    } catch (e: any) {
+      setNewStudentMsg(e?.message || "Erreur pendant l’inscription.");
+    } finally {
+      setCreatingStudent(false);
+    }
   }
 
   async function saveCorrections() {
@@ -626,6 +673,16 @@ export default function ClassListPrintPage() {
           {canEdit ? (
             <button
               type="button"
+              onClick={() => setShowNewStudent((v) => !v)}
+              disabled={loading || !!error || !data}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Inscrire un élève
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button
+              type="button"
               onClick={() => setShowCorrections((v) => !v)}
               disabled={loading || !!error || !data}
               className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -650,6 +707,64 @@ export default function ClassListPrintPage() {
           </button>
         </div>
       </div>
+
+      {newStudentMsg ? (
+        <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900 shadow-sm">
+          {newStudentMsg}
+        </div>
+      ) : null}
+
+      {showNewStudent && data && canEdit ? (
+        <form
+          onSubmit={createMinimalStudent}
+          className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm"
+        >
+          <div className="mb-3">
+            <div className="font-semibold">Inscription rapide dans cette classe</div>
+            <div className="text-sm text-slate-600">
+              Saisissez seulement les informations minimales. Les autres détails pourront être complétés plus tard dans le dossier élève ou le module Finance.
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[1fr_1fr_0.8fr_auto] md:items-end">
+            <label className="text-sm font-medium text-slate-700">
+              Nom
+              <input
+                value={newStudentForm.last_name}
+                onChange={(e) => setNewStudentForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                required
+                placeholder="Ex. KOUADIO"
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm uppercase"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Prénom(s)
+              <input
+                value={newStudentForm.first_name}
+                onChange={(e) => setNewStudentForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                required
+                placeholder="Ex. Ange Aristide"
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Matricule
+              <input
+                value={newStudentForm.matricule}
+                onChange={(e) => setNewStudentForm((prev) => ({ ...prev, matricule: e.target.value }))}
+                placeholder="Facultatif"
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={creatingStudent}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {creatingStudent ? "Inscription…" : "Inscrire"}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {showCorrections && data && canEdit ? (
         <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border bg-white p-4 shadow-sm">

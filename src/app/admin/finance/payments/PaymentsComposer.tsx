@@ -719,8 +719,8 @@ export default function PaymentsComposer({
             Nouvelle inscription
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Ouvre uniquement le formulaire d’inscription et d’encaissement.
-            Après validation, le reçu est généré et l’écran revient au module.
+            Crée rapidement le dossier élève avec les informations minimales.
+            Les frais et paiements se gèrent ensuite dans l’encaissement normal.
           </p>
           <span className="mt-5 inline-flex rounded-2xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white group-hover:bg-sky-700">
             Inscrire
@@ -1096,8 +1096,8 @@ export default function PaymentsComposer({
           Nouvelle inscription
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          Créez un élève avec le minimum nécessaire, puis encaissez directement
-          l’inscription, une tranche ou un versement libre.
+          Créez simplement le dossier élève. Après l’inscription, vous pourrez
+          gérer ses frais et paiements dans l’encaissement normal.
         </p>
 
         <input type="hidden" name="mode" value="new" />
@@ -1165,46 +1165,18 @@ export default function PaymentsComposer({
             </select>
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-              Téléphone parent/tuteur
-            </label>
-            <input
-              name="parent_phone"
-              placeholder="Facultatif"
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-400"
-            />
-          </div>
-
-          <FeeCategorySelect
-            feeCategories={feeCategories}
-            selectedCategoryId={selectedCategoryId}
-            onChange={setSelectedCategoryId}
-          />
-
-          <PaymentFields
-            paymentType={paymentType}
-            setPaymentType={setPaymentType}
-            expectedAmount={expectedAmount}
-            setExpectedAmount={setExpectedAmount}
-            amount={amount}
-            setAmount={setAmount}
-            today={today}
-            expectedAmountLocked={false}
-            amountLocked={false}
-          />
-
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            L’élève sera créé en base, rattaché à la classe, puis sa situation
-            financière sera créée ou complétée automatiquement au moment du
-            paiement.
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            Aucun choix de catégorie n’est demandé ici. L’objectif est seulement
+            de créer l’élève et de le rattacher à sa classe. Les frais, barèmes
+            et encaissements se traiteront ensuite depuis l’action
+            « Encaisser un paiement ».
           </div>
 
           <PendingButton
             icon={<UserPlus className="h-4 w-4" />}
-            label="Inscrire et encaisser"
-            pendingLabel="Inscription et encaissement..."
-            disabled={!newClassId || !selectedCategoryId || Number(amount) <= 0}
+            label="Inscrire l’élève"
+            pendingLabel="Inscription en cours..."
+            disabled={!newClassId}
           />
         </div>
       </form>
