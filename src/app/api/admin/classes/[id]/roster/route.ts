@@ -50,7 +50,7 @@ function fullName(row: any) {
   const lastName = cleanText(row?.last_name).toUpperCase();
   const firstName = cleanText(row?.first_name);
 
-  if (lastName && firstName) return `${lastName}, ${firstName}`;
+  if (lastName && firstName) return `${lastName} ${firstName}`;
   if (lastName) return lastName;
   if (firstName) return firstName;
 
@@ -668,6 +668,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       institution_id: institutionId,
       first_name: firstName,
       last_name: lastName,
+      full_name: `${lastName} ${firstName}`.trim(),
       matricule,
     } as any)
     .select("id")

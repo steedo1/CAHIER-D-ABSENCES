@@ -120,7 +120,7 @@ function formatTraditionalStudentName(student: Pick<StudentRow, "full_name" | "f
   const lastName = cleanNamePart(student.last_name).toUpperCase();
   const firstName = cleanNamePart(student.first_name);
 
-  if (lastName && firstName) return `${lastName}, ${firstName}`;
+  if (lastName && firstName) return `${lastName} ${firstName}`;
   if (lastName) return lastName;
   if (firstName) return firstName;
 
@@ -978,7 +978,7 @@ export default function ClassListPrintPage() {
                 <tr>
                   <th className="col-no">N°</th>
                   <th className="col-matricule">Matricule</th>
-                  <th className="col-name">Nom, prénoms</th>
+                  <th className="col-name">Nom et prénoms</th>
                   <th className="col-series">Série</th>
                   <th className="col-affect">Aff.</th>
                   <th className="col-board">Ext.</th>
