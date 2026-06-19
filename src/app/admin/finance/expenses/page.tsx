@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CircleOff,
   FolderPlus,
+  Layers,
   Receipt,
   Search,
   Wallet,
@@ -33,8 +34,20 @@ type ExpenseCategoryRow = {
   is_active: boolean;
 };
 
+type ExpenseBudgetRow = {
+  id: string;
+  academic_year_id: string | null;
+  academic_year: string | null;
+  code: string | null;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string | null;
+};
+
 type ExpenseBudgetLineRow = {
   id: string;
+  budget_id: string | null;
   category_id: string | null;
   academic_year_id: string | null;
   academic_year: string | null;
@@ -49,6 +62,7 @@ type ExpenseBudgetLineRow = {
 type ExpenseRow = {
   id: string;
   category_id: string | null;
+  budget_id: string | null;
   budget_line_id: string | null;
   expense_status: "posted" | "cancelled";
   expense_date: string;
@@ -204,6 +218,167 @@ async function toggleExpenseCategoryAction(formData: FormData) {
   revalidatePath("/admin/finance");
 }
 
+async function ensureExpenseBudget({
+  admin,
+  institutionId,
+  academicYearId,
+  academicYear,
+}: {
+  admin: ReturnType<typeof getSupabaseServiceClient>;
+  institutionId: string;
+  academicYearId: string | null;
+  academicYear: string | null;
+}) {
+  const code = slugifyCode(`budget_general_${academicYear || "global"}`) || "budget_general";
+
+  let query = admin
+    .schema("finance")
+    .from("expense_budgets")
+    .select("id")
+    .eq("school_id", institutionId)
+    .eq("code", code)
+    .limit(1);
+
+  if (academicYear) {
+    query = query.eq("academic_year", academicYear);
+  } else {
+    query = query.is("academic_year", null);
+  }
+
+  const { data: existing, error: existingErr } = await query.maybeSingle();
+  if (existingErr) throw new Error(existingErr.message);
+  if (existing?.id) return existing.id as string;
+
+  const nowIso = new Date().toISOString();
+  const { data: created, error: createErr } = await admin
+    .schema("finance")
+    .from("expense_budgets")
+    .insert({
+      school_id: institutionId,
+      academic_year_id: academicYearId,
+      academic_year: academicYear,
+      code,
+      name: "Budget général",
+      description: "Budget créé automatiquement pour rattacher les postes budgétaires.",
+      is_active: true,
+      created_at: nowIso,
+      updated_at: nowIso,
+    } as any)
+    .select("id")
+    .single();
+
+  if (createErr) {
+    const { data: fallback, error: fallbackErr } = await admin
+      .schema("finance")
+      .from("expense_budgets")
+      .select("id")
+      .eq("school_id", institutionId)
+      .eq("code", code)
+      .maybeSingle();
+
+    if (fallbackErr) throw new Error(fallbackErr.message);
+    if (fallback?.id) return fallback.id as string;
+    throw new Error(createErr.message);
+  }
+
+  return created.id as string;
+}
+
+async function createExpenseBudgetAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) {
+    redirect("/admin/finance/locked");
+  }
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+  const admin = getSupabaseServiceClient();
+
+  const academicYearId = cleanNullableText(formData.get("academic_year_id"));
+  const academicYear = cleanNullableText(formData.get("academic_year"));
+  const name = cleanText(formData.get("name"));
+  const codeInput = cleanText(formData.get("code"));
+  const description = cleanNullableText(formData.get("description"));
+
+  if (!academicYear) {
+    throw new Error("L’année scolaire est obligatoire pour créer un budget.");
+  }
+
+  if (!name) {
+    throw new Error("Le nom du budget est obligatoire.");
+  }
+
+  const code = slugifyCode(codeInput || name);
+  if (!code) {
+    throw new Error("Le code du budget est invalide.");
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const { error } = await admin
+    .schema("finance")
+    .from("expense_budgets")
+    .insert({
+      school_id: institutionId,
+      academic_year_id: academicYearId,
+      academic_year: academicYear,
+      code,
+      name,
+      description,
+      is_active: true,
+      created_at: nowIso,
+      updated_at: nowIso,
+    } as any);
+
+  if (error) {
+    if (error.message?.toLowerCase().includes("duplicate")) {
+      throw new Error("Un budget portant ce code existe déjà pour cette année.");
+    }
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/admin/finance/expenses");
+  revalidatePath("/admin/finance/reports");
+  revalidatePath("/admin/finance");
+}
+
+async function toggleExpenseBudgetAction(formData: FormData) {
+  "use server";
+
+  const access = await getFinanceAccessForCurrentUser();
+  if (!access.ok) {
+    redirect("/admin/finance/locked");
+  }
+
+  const institutionId = await getCurrentInstitutionIdOrThrow();
+
+  const id = cleanText(formData.get("id"));
+  const nextActive = formData.get("next_active") === "true";
+
+  if (!id) {
+    throw new Error("Budget introuvable.");
+  }
+
+  const admin = getSupabaseServiceClient();
+
+  const { error } = await admin
+    .schema("finance")
+    .from("expense_budgets")
+    .update({
+      is_active: nextActive,
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", id)
+    .eq("school_id", institutionId);
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/finance/expenses");
+  revalidatePath("/admin/finance/reports");
+  revalidatePath("/admin/finance");
+}
+
 async function createExpenseBudgetLineAction(formData: FormData) {
   "use server";
 
@@ -215,6 +390,7 @@ async function createExpenseBudgetLineAction(formData: FormData) {
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const admin = getSupabaseServiceClient();
 
+  let budgetId = cleanNullableText(formData.get("budget_id"));
   const categoryId = cleanNullableText(formData.get("category_id"));
   const academicYearId = cleanNullableText(formData.get("academic_year_id"));
   const academicYear = cleanNullableText(formData.get("academic_year"));
@@ -231,6 +407,27 @@ async function createExpenseBudgetLineAction(formData: FormData) {
   }
   if (!Number.isFinite(plannedAmount) || plannedAmount <= 0) {
     throw new Error("Le montant budgété doit être supérieur à 0.");
+  }
+
+  if (budgetId) {
+    const { data: budget, error: budgetErr } = await admin
+      .schema("finance")
+      .from("expense_budgets")
+      .select("id,is_active")
+      .eq("id", budgetId)
+      .eq("school_id", institutionId)
+      .maybeSingle();
+
+    if (budgetErr) throw new Error(budgetErr.message);
+    if (!budget) throw new Error("Budget introuvable.");
+    if (!budget.is_active) throw new Error("Le budget choisi est inactif.");
+  } else {
+    budgetId = await ensureExpenseBudget({
+      admin,
+      institutionId,
+      academicYearId,
+      academicYear,
+    });
   }
 
   if (categoryId) {
@@ -256,6 +453,7 @@ async function createExpenseBudgetLineAction(formData: FormData) {
       school_id: institutionId,
       academic_year_id: academicYearId,
       academic_year: academicYear,
+      budget_id: budgetId,
       category_id: categoryId,
       account_no: accountNo,
       label,
@@ -359,6 +557,7 @@ async function createExpenseAction(formData: FormData) {
   const admin = getSupabaseServiceClient();
 
   let categoryId = cleanNullableText(formData.get("category_id"));
+  let budgetId = cleanNullableText(formData.get("budget_id"));
   const budgetLineId = cleanNullableText(formData.get("budget_line_id"));
   const academicYearId = cleanNullableText(formData.get("academic_year_id"));
   const academicYear = cleanNullableText(formData.get("academic_year"));
@@ -382,7 +581,7 @@ async function createExpenseAction(formData: FormData) {
     const { data: budgetLine, error: budgetErr } = await admin
       .schema("finance")
       .from("expense_budget_lines")
-      .select("id,category_id,is_active")
+      .select("id,budget_id,category_id,is_active")
       .eq("id", budgetLineId)
       .eq("school_id", institutionId)
       .maybeSingle();
@@ -395,6 +594,26 @@ async function createExpenseAction(formData: FormData) {
 
     if (!categoryId && budgetLine.category_id) {
       categoryId = budgetLine.category_id;
+    }
+
+    if (budgetLine.budget_id) {
+      budgetId = budgetLine.budget_id;
+    }
+  }
+
+  if (budgetId) {
+    const { data: budget, error: budgetErr } = await admin
+      .schema("finance")
+      .from("expense_budgets")
+      .select("id,is_active")
+      .eq("id", budgetId)
+      .eq("school_id", institutionId)
+      .maybeSingle();
+
+    if (budgetErr) throw new Error(budgetErr.message);
+    if (!budget) throw new Error("Budget introuvable.");
+    if (!budget.is_active) {
+      throw new Error("Le budget choisi est inactif.");
     }
   }
 
@@ -422,6 +641,7 @@ async function createExpenseAction(formData: FormData) {
     .insert({
       school_id: institutionId,
       category_id: categoryId,
+      budget_id: budgetId,
       budget_line_id: budgetLineId,
       academic_year_id: academicYearId,
       academic_year: academicYear,
@@ -638,6 +858,7 @@ export default async function FinanceExpensesPage({
     q?: string;
     status?: string;
     category_id?: string;
+    budget_id?: string;
     academic_year?: string;
   }>;
 }) {
@@ -650,6 +871,7 @@ export default async function FinanceExpensesPage({
   const params = searchParams ? await searchParams : undefined;
   const q = String(params?.q || "").trim();
   const statusFilter = String(params?.status || "").trim();
+  const selectedBudgetFilter = String(params?.budget_id || "").trim();
   const requestedAcademicYear = String(params?.academic_year || "").trim();
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
@@ -668,6 +890,7 @@ export default async function FinanceExpensesPage({
 
   const [
     { data: categories, error: catErr },
+    { data: budgets, error: budgetsErr },
     { data: budgetLines, error: budgetErr },
     { data: expenses, error: expErr },
   ] = await Promise.all([
@@ -681,9 +904,25 @@ export default async function FinanceExpensesPage({
     (() => {
       let query = supabase
         .schema("finance")
+        .from("expense_budgets")
+        .select("id,academic_year_id,academic_year,code,name,description,is_active,created_at")
+        .eq("school_id", institutionId);
+
+      if (selectedAcademicYearCode) {
+        query = query.eq("academic_year", selectedAcademicYearCode);
+      }
+
+      return query
+        .order("is_active", { ascending: false })
+        .order("name", { ascending: true });
+    })(),
+
+    (() => {
+      let query = supabase
+        .schema("finance")
         .from("expense_budget_lines")
         .select(
-          "id,category_id,academic_year_id,academic_year,account_no,label,planned_amount,is_active,notes,created_at",
+          "id,budget_id,category_id,academic_year_id,academic_year,account_no,label,planned_amount,is_active,notes,created_at",
         )
         .eq("school_id", institutionId);
 
@@ -702,7 +941,7 @@ export default async function FinanceExpensesPage({
         .schema("finance")
         .from("expenses")
         .select(
-          "id,category_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,created_at",
+          "id,category_id,budget_id,budget_line_id,expense_status,expense_date,label,beneficiary,amount,payment_method,reference_no,notes,created_at",
         )
         .eq("school_id", institutionId);
 
@@ -720,25 +959,46 @@ export default async function FinanceExpensesPage({
   ]);
 
   if (catErr) throw new Error(catErr.message);
+  if (budgetsErr) throw new Error(budgetsErr.message);
   if (budgetErr) throw new Error(budgetErr.message);
   if (expErr) throw new Error(expErr.message);
 
   const categoryRows = (categories ?? []) as ExpenseCategoryRow[];
+  const budgetEnvelopeRows = (budgets ?? []) as ExpenseBudgetRow[];
   const budgetRows = (budgetLines ?? []) as ExpenseBudgetLineRow[];
   const expenseRows = (expenses ?? []) as ExpenseRow[];
 
   const categoryMap = new Map(categoryRows.map((c) => [c.id, c]));
+  const budgetEnvelopeMap = new Map(budgetEnvelopeRows.map((b) => [b.id, b]));
   const budgetMap = new Map(budgetRows.map((b) => [b.id, b]));
+  const activeBudgetEnvelopeRows = budgetEnvelopeRows.filter((b) => b.is_active);
   const activeBudgetRows = budgetRows.filter((b) => b.is_active);
+
+  const getExpenseBudgetId = (row: ExpenseRow) => {
+    if (row.budget_id) return row.budget_id;
+    if (row.budget_line_id) return budgetMap.get(row.budget_line_id)?.budget_id || null;
+    return null;
+  };
 
   const postedAllRows = expenseRows.filter((r) => r.expense_status === "posted");
   const budgetSpentMap = new Map<string, number>();
+  const budgetEnvelopeSpentMap = new Map<string, number>();
+
   for (const row of postedAllRows) {
-    if (!row.budget_line_id) continue;
-    budgetSpentMap.set(
-      row.budget_line_id,
-      (budgetSpentMap.get(row.budget_line_id) || 0) + toNumber(row.amount),
-    );
+    if (row.budget_line_id) {
+      budgetSpentMap.set(
+        row.budget_line_id,
+        (budgetSpentMap.get(row.budget_line_id) || 0) + toNumber(row.amount),
+      );
+    }
+
+    const envelopeId = getExpenseBudgetId(row);
+    if (envelopeId) {
+      budgetEnvelopeSpentMap.set(
+        envelopeId,
+        (budgetEnvelopeSpentMap.get(envelopeId) || 0) + toNumber(row.amount),
+      );
+    }
   }
 
   const budgetRowsWithStats = budgetRows.map((row) => {
@@ -752,29 +1012,70 @@ export default async function FinanceExpensesPage({
       spent,
       remaining,
       executionPercent,
+      budgetName: row.budget_id
+        ? budgetEnvelopeMap.get(row.budget_id)?.name || "Budget non nommé"
+        : "Sans budget",
     };
   });
 
-  const totalBudgetPlanned = activeBudgetRows.reduce(
-    (sum, row) => sum + toNumber(row.planned_amount),
+  const budgetSummaries = budgetEnvelopeRows.map((budget) => {
+    const lines = budgetRowsWithStats.filter((row) => row.budget_id === budget.id);
+    const activeLines = lines.filter((row) => row.is_active);
+    const planned = activeLines.reduce((sum, row) => sum + row.planned, 0);
+    const spent = budgetEnvelopeSpentMap.get(budget.id) || 0;
+    const remaining = planned - spent;
+    const executionPercent = planned > 0 ? Math.min(999, (spent / planned) * 100) : 0;
+
+    return {
+      ...budget,
+      lines,
+      activeLines,
+      planned,
+      spent,
+      remaining,
+      executionPercent,
+    };
+  });
+
+  const activeBudgetSummaries = budgetSummaries.filter((b) => b.is_active);
+  const selectedBudgetSummary = selectedBudgetFilter
+    ? budgetSummaries.find((budget) => budget.id === selectedBudgetFilter) || null
+    : null;
+
+  const totalBudgetPlanned = activeBudgetSummaries.reduce(
+    (sum, row) => sum + row.planned,
     0,
   );
-  const totalBudgetSpent = activeBudgetRows.reduce(
-    (sum, row) => sum + (budgetSpentMap.get(row.id) || 0),
+  const totalBudgetSpent = activeBudgetSummaries.reduce(
+    (sum, row) => sum + row.spent,
     0,
   );
   const totalBudgetRemaining = totalBudgetPlanned - totalBudgetSpent;
   const budgetExecutionRate =
     totalBudgetPlanned > 0 ? (totalBudgetSpent / totalBudgetPlanned) * 100 : 0;
   const unbudgetedPostedTotal = postedAllRows
-    .filter((row) => !row.budget_line_id)
+    .filter((row) => !getExpenseBudgetId(row))
     .reduce((sum, row) => sum + toNumber(row.amount), 0);
+
+  const budgetRowsForView = selectedBudgetFilter === "__unbudgeted"
+    ? []
+    : selectedBudgetFilter
+      ? budgetRowsWithStats.filter((row) => row.budget_id === selectedBudgetFilter)
+      : budgetRowsWithStats;
 
   const qn = normalize(q);
 
   const filteredRows = expenseRows.filter((row) => {
     const cat = row.category_id ? categoryMap.get(row.category_id) : null;
     const budget = row.budget_line_id ? budgetMap.get(row.budget_line_id) : null;
+    const envelopeId = getExpenseBudgetId(row);
+    const envelope = envelopeId ? budgetEnvelopeMap.get(envelopeId) : null;
+
+    if (selectedBudgetFilter === "__unbudgeted") {
+      if (envelopeId) return false;
+    } else if (selectedBudgetFilter) {
+      if (envelopeId !== selectedBudgetFilter) return false;
+    }
 
     if (statusFilter === "posted" || statusFilter === "cancelled") {
       if (row.expense_status !== statusFilter) return false;
@@ -791,6 +1092,8 @@ export default async function FinanceExpensesPage({
         row.notes || "",
         cat?.name || "",
         cat?.code || "",
+        envelope?.name || "",
+        envelope?.code || "",
         budget?.account_no || "",
         budget?.label || "",
         row.expense_date || "",
@@ -830,10 +1133,10 @@ export default async function FinanceExpensesPage({
             </h1>
 
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-              Chaque établissement peut définir ses postes budgétaires, rattacher
-              les dépenses aux lignes prévues, suivre le reste disponible et
-              enregistrer aussi des dépenses libres lorsqu’aucun budget n’a encore
-              été formalisé.
+              Chaque établissement peut définir un ou plusieurs budgets, rattacher
+              les postes budgétaires à chaque enveloppe, suivre une vue globale
+              consolidée et enregistrer aussi des dépenses libres lorsqu’aucun
+              budget n’a encore été formalisé.
             </p>
           </div>
 
@@ -858,15 +1161,16 @@ export default async function FinanceExpensesPage({
         hiddenParams={{
           q,
           status: statusFilter,
+          budget_id: selectedBudgetFilter,
         }}
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={<FolderPlus className="h-6 w-6" />}
-          label="Budget prévu"
+          label="Budget global"
           value={formatMoney(totalBudgetPlanned)}
-          hint={`${activeBudgetRows.length} poste${activeBudgetRows.length > 1 ? "s" : ""} actif${activeBudgetRows.length > 1 ? "s" : ""}`}
+          hint={`${activeBudgetSummaries.length} budget${activeBudgetSummaries.length > 1 ? "s" : ""} actif${activeBudgetSummaries.length > 1 ? "s" : ""} · ${activeBudgetRows.length} poste${activeBudgetRows.length > 1 ? "s" : ""}`}
           tone="slate"
         />
         <StatCard
@@ -880,16 +1184,195 @@ export default async function FinanceExpensesPage({
           icon={<Wallet className="h-6 w-6" />}
           label={totalBudgetRemaining < 0 ? "Dépassement" : "Disponible"}
           value={formatMoney(Math.abs(totalBudgetRemaining))}
-          hint="Budget prévu - dépenses rattachées"
+          hint="Budgets prévus - dépenses rattachées"
           tone={totalBudgetRemaining < 0 ? "rose" : "amber"}
         />
         <StatCard
           icon={<CircleOff className="h-6 w-6" />}
           label="Dépenses libres"
           value={formatMoney(unbudgetedPostedTotal)}
-          hint="Dépenses non rattachées à un poste"
+          hint="Dépenses non rattachées à un budget"
           tone={unbudgetedPostedTotal > 0 ? "rose" : "slate"}
         />
+      </section>
+
+      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
+              <Layers className="h-4 w-4 text-emerald-600" />
+              Budgets de dépenses
+            </div>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+              Crée une enveloppe par activité si nécessaire : Budget École,
+              Budget Internat, Cantine, Travaux, Projet. La vue globale additionne
+              automatiquement tous les budgets actifs de l’année.
+            </p>
+          </div>
+
+          <details className="w-full rounded-3xl border border-slate-200 bg-slate-50 p-4 lg:max-w-xl">
+            <summary className="cursor-pointer list-none text-sm font-black text-slate-800">
+              + Créer un budget / une enveloppe
+            </summary>
+
+            <form action={createExpenseBudgetAction} className="mt-4 grid gap-3 md:grid-cols-2">
+              <input type="hidden" name="academic_year_id" value={selectedAcademicYearId || ""} />
+              <input type="hidden" name="academic_year" value={selectedAcademicYearCode || ""} />
+
+              <div>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                  Nom du budget
+                </label>
+                <input
+                  name="name"
+                  type="text"
+                  required
+                  placeholder="Ex. Budget École, Budget Internat..."
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                  Code court
+                </label>
+                <input
+                  name="code"
+                  type="text"
+                  placeholder="Optionnel : internat, ecole..."
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                  Description
+                </label>
+                <input
+                  name="description"
+                  type="text"
+                  placeholder="Optionnel"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800">
+                  <Layers className="h-4 w-4" />
+                  Créer le budget
+                </button>
+              </div>
+            </form>
+          </details>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Link
+            href={`/admin/finance/expenses?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
+            className={`rounded-full px-4 py-2 text-sm font-bold ring-1 ${
+              !selectedBudgetFilter
+                ? "bg-emerald-600 text-white ring-emerald-600"
+                : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            Tous les budgets
+          </Link>
+
+          {budgetSummaries.map((budget) => (
+            <Link
+              key={budget.id}
+              href={`/admin/finance/expenses?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&budget_id=${encodeURIComponent(budget.id)}`}
+              className={`rounded-full px-4 py-2 text-sm font-bold ring-1 ${
+                selectedBudgetFilter === budget.id
+                  ? "bg-emerald-600 text-white ring-emerald-600"
+                  : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {budget.name}
+            </Link>
+          ))}
+
+          <Link
+            href={`/admin/finance/expenses?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&budget_id=__unbudgeted`}
+            className={`rounded-full px-4 py-2 text-sm font-bold ring-1 ${
+              selectedBudgetFilter === "__unbudgeted"
+                ? "bg-amber-500 text-white ring-amber-500"
+                : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            Hors budget
+          </Link>
+        </div>
+
+        {budgetSummaries.length === 0 ? (
+          <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-sm text-slate-600">
+            Aucun budget n’est encore défini pour cette année. Tu peux créer un
+            budget général, ou saisir des dépenses libres sans budget.
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {budgetSummaries.map((budget) => {
+              const exceeded = budget.remaining < 0;
+
+              return (
+                <article
+                  key={budget.id}
+                  className={`rounded-3xl border p-4 ${
+                    budget.is_active
+                      ? "border-slate-200 bg-white"
+                      : "border-slate-200 bg-slate-50 opacity-70"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-lg font-black text-slate-900">{budget.name}</div>
+                      <div className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        {budget.code || "budget"} · {budget.activeLines.length} poste{budget.activeLines.length > 1 ? "s" : ""}
+                      </div>
+                    </div>
+                    <BudgetStatusPill active={budget.is_active} />
+                  </div>
+
+                  {budget.description ? (
+                    <p className="mt-3 text-sm leading-6 text-slate-600">{budget.description}</p>
+                  ) : null}
+
+                  <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-2xl bg-slate-50 p-3">
+                      <div className="font-bold text-slate-500">Prévu</div>
+                      <div className="mt-1 font-black text-slate-900">{formatMoney(budget.planned)}</div>
+                    </div>
+                    <div className="rounded-2xl bg-emerald-50 p-3">
+                      <div className="font-bold text-emerald-700">Dépensé</div>
+                      <div className="mt-1 font-black text-emerald-800">{formatMoney(budget.spent)}</div>
+                    </div>
+                    <div className="rounded-2xl bg-amber-50 p-3">
+                      <div className={`font-bold ${exceeded ? "text-rose-700" : "text-amber-700"}`}>
+                        {exceeded ? "Dépassement" : "Reste"}
+                      </div>
+                      <div className={`mt-1 font-black ${exceeded ? "text-rose-800" : "text-amber-800"}`}>
+                        {formatMoney(Math.abs(budget.remaining))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs font-semibold text-slate-500">
+                      Exécution : {formatPercent(budget.executionPercent)}
+                    </div>
+                    <form action={toggleExpenseBudgetAction}>
+                      <input type="hidden" name="id" value={budget.id} />
+                      <input type="hidden" name="next_active" value={budget.is_active ? "false" : "true"} />
+                      <button className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                        {budget.is_active ? "Désactiver" : "Réactiver"}
+                      </button>
+                    </form>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
 
 <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
@@ -899,9 +1382,9 @@ export default async function FinanceExpensesPage({
       Saisir une dépense
     </div>
     <p className="mt-2 text-sm leading-6 text-slate-600">
-      Choisis un poste budgétaire si la dépense concerne une ligne prévue.
-      Sinon, laisse en dépense libre. Les catégories sont retirées de
-      l’écran principal pour garder la saisie rapide.
+      Choisis le budget concerné, puis un poste si la dépense correspond à
+      une ligne précise. Sinon, laisse hors budget ou hors poste selon le cas.
+      Les catégories restent retirées de l’écran principal pour garder la saisie rapide.
     </p>
 
     <form
@@ -922,26 +1405,44 @@ export default async function FinanceExpensesPage({
 
       <div className="md:col-span-2">
         <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-          Rattachement budgétaire
+          Budget concerné
+        </label>
+        <select
+          name="budget_id"
+          defaultValue={selectedBudgetSummary?.id || ""}
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+        >
+          <option value="">Dépense libre / hors budget</option>
+          {activeBudgetEnvelopeRows.map((budget) => (
+            <option key={budget.id} value={budget.id}>
+              {budget.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Poste budgétaire
         </label>
         <select
           name="budget_line_id"
           defaultValue=""
           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
         >
-          <option value="">Dépense libre / aucun poste budgétaire</option>
+          <option value="">Aucun poste précis</option>
           {budgetRowsWithStats
             .filter((row) => row.is_active)
+            .filter((row) => !selectedBudgetSummary || row.budget_id === selectedBudgetSummary.id)
             .map((row) => (
               <option key={row.id} value={row.id}>
-                {row.account_no ? `${row.account_no} — ` : ""}
+                [{row.budgetName}] {row.account_no ? `${row.account_no} — ` : ""}
                 {row.label} · disponible {formatMoney(row.remaining)}
               </option>
             ))}
         </select>
         <p className="mt-2 text-xs text-slate-500">
-          Le rattachement met automatiquement à jour le consommé et le
-          disponible du poste choisi.
+          Si un poste est choisi, le budget est repris automatiquement depuis ce poste.
         </p>
       </div>
 
@@ -1083,6 +1584,30 @@ export default async function FinanceExpensesPage({
       <input type="hidden" name="category_id" value="" />
       <input type="hidden" name="notes" value="" />
 
+      <div className="md:col-span-2">
+        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+          Budget à rattacher
+        </label>
+        <select
+          name="budget_id"
+          defaultValue={selectedBudgetSummary?.id || activeBudgetEnvelopeRows[0]?.id || ""}
+          required={activeBudgetEnvelopeRows.length > 0}
+          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+        >
+          <option value="">Choisir un budget</option>
+          {activeBudgetEnvelopeRows.map((budget) => (
+            <option key={budget.id} value={budget.id}>
+              {budget.name}
+            </option>
+          ))}
+        </select>
+        {activeBudgetEnvelopeRows.length === 0 ? (
+          <p className="mt-2 text-xs text-amber-700">
+            Crée d’abord un budget général ou spécifique avant d’ajouter des postes.
+          </p>
+        ) : null}
+      </div>
+
       <div>
         <label className="mb-1.5 block text-sm font-semibold text-slate-700">
           N° de compte
@@ -1144,19 +1669,22 @@ export default async function FinanceExpensesPage({
   <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
     <div>
       <div className="text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-        Postes budgétaires de l’année
+Postes budgétaires
       </div>
       <p className="mt-1 text-sm text-slate-600">
-        Liste compacte : prévu, consommé, disponible. La zone est limitée
-        en hauteur pour ne plus envahir toute la page.
+        {selectedBudgetSummary
+          ? `Budget affiché : ${selectedBudgetSummary.name}`
+          : selectedBudgetFilter === "__unbudgeted"
+            ? "Aucun poste pour les dépenses hors budget."
+            : "Liste consolidée : prévu, consommé, disponible."}
       </p>
     </div>
     <div className="rounded-2xl bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 ring-1 ring-slate-200">
-      {budgetRowsWithStats.length} poste{budgetRowsWithStats.length > 1 ? "s" : ""}
+      {budgetRowsForView.length} poste{budgetRowsForView.length > 1 ? "s" : ""}
     </div>
   </div>
 
-  {budgetRowsWithStats.length === 0 ? (
+  {budgetRowsForView.length === 0 ? (
     <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
       Aucun poste budgétaire n’est enregistré pour cette année. Tu peux
       quand même saisir des dépenses libres, puis créer le budget plus tard.
@@ -1167,6 +1695,7 @@ export default async function FinanceExpensesPage({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="text-left text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+              <th className="px-4 py-3">Budget</th>
               <th className="px-4 py-3">Poste</th>
               <th className="px-4 py-3 text-right">Prévu</th>
               <th className="px-4 py-3 text-right">Consommé</th>
@@ -1176,7 +1705,7 @@ export default async function FinanceExpensesPage({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {budgetRowsWithStats.map((row) => {
+            {budgetRowsForView.map((row) => {
               const exceeded = row.remaining < 0;
 
               return (
@@ -1184,6 +1713,9 @@ export default async function FinanceExpensesPage({
                   key={row.id}
                   className={row.is_active ? "hover:bg-slate-50" : "bg-slate-50/60 opacity-70"}
                 >
+                  <td className="whitespace-nowrap px-4 py-3 align-top text-sm font-bold text-slate-700">
+                    {row.budgetName}
+                  </td>
                   <td className="px-4 py-3 align-top">
                     <div className="font-black text-slate-900">
                       {row.account_no ? `${row.account_no} — ` : ""}
@@ -1258,7 +1790,7 @@ export default async function FinanceExpensesPage({
 
         <form
           method="GET"
-          className="mt-5 grid gap-4 md:grid-cols-[1.4fr_0.8fr_auto]"
+          className="mt-5 grid gap-4 md:grid-cols-[1.2fr_0.8fr_0.8fr_auto]"
         >
           <input
             type="hidden"
@@ -1275,6 +1807,25 @@ export default async function FinanceExpensesPage({
               placeholder="Libellé, bénéficiaire, budget, référence..."
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-emerald-500"
             />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+              Budget
+            </label>
+            <select
+              name="budget_id"
+              defaultValue={selectedBudgetFilter}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-emerald-500"
+            >
+              <option value="">Tous les budgets</option>
+              {budgetSummaries.map((budget) => (
+                <option key={budget.id} value={budget.id}>
+                  {budget.name}
+                </option>
+              ))}
+              <option value="__unbudgeted">Hors budget</option>
+            </select>
           </div>
 
           <div>
@@ -1348,6 +1899,8 @@ export default async function FinanceExpensesPage({
               const budget = row.budget_line_id
                 ? budgetMap.get(row.budget_line_id)
                 : null;
+              const envelopeId = getExpenseBudgetId(row);
+              const envelope = envelopeId ? budgetEnvelopeMap.get(envelopeId) : null;
 
               return (
                 <article
@@ -1364,16 +1917,25 @@ export default async function FinanceExpensesPage({
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                        {budget ? (
-                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-200">
-                            {budget.account_no ? `${budget.account_no} — ` : ""}
-                            {budget.label}
+                        {envelope ? (
+                          <span className="rounded-full bg-slate-100 px-3 py-1 font-bold text-slate-700 ring-1 ring-slate-200">
+                            {envelope.name}
                           </span>
                         ) : (
                           <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700 ring-1 ring-amber-200">
                             Hors budget
                           </span>
                         )}
+                        {budget ? (
+                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 ring-1 ring-emerald-200">
+                            {budget.account_no ? `${budget.account_no} — ` : ""}
+                            {budget.label}
+                          </span>
+                        ) : envelope ? (
+                          <span className="rounded-full bg-slate-50 px-3 py-1 text-slate-600 ring-1 ring-slate-200">
+                            Sans poste précis
+                          </span>
+                        ) : null}
                         {row.beneficiary ? (
                           <span className="rounded-full bg-sky-50 px-3 py-1 text-sky-700 ring-1 ring-sky-200">
                             {row.beneficiary}
@@ -1420,11 +1982,17 @@ export default async function FinanceExpensesPage({
                       </div>
                       <div>
                         <span className="font-semibold text-slate-800">
+                          Budget :
+                        </span>{" "}
+                        {envelope ? envelope.name : "Hors budget"}
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-800">
                           Poste budgétaire :
                         </span>{" "}
                         {budget
                           ? `${budget.account_no ? `${budget.account_no} — ` : ""}${budget.label}`
-                          : "Dépense libre"}
+                          : envelope ? "Sans poste précis" : "Dépense libre"}
                       </div>
                       <div>
                         <span className="font-semibold text-slate-800">
