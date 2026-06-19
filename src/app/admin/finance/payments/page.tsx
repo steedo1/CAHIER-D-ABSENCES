@@ -622,12 +622,14 @@ async function createManualCharge({
 
 async function createStudentAndEnroll({
   institutionId,
+  userId,
   classId,
   firstName,
   lastName,
   matricule,
 }: {
   institutionId: string;
+  userId: string;
   classId: string;
   firstName: string;
   lastName: string;
@@ -695,6 +697,17 @@ async function createStudentAndEnroll({
   );
 
   if (enrollErr) throw new Error(enrollErr.message);
+
+  // Important : on ne change pas la logique d'encaissement de Mon Cahier.
+  // Après l'inscription minimale, on crée simplement les situations ouvertes
+  // à partir des barèmes déjà définis pour la classe, comme le fait la
+  // régularisation financière.
+  await ensureChargesForStudent(
+    institutionId,
+    userId,
+    created.id as string,
+    classId,
+  );
 
   return created.id as string;
 }
@@ -1452,6 +1465,7 @@ async function createPaymentAction(formData: FormData) {
 
     studentId = await createStudentAndEnroll({
       institutionId,
+      userId,
       classId,
       firstName,
       lastName,
