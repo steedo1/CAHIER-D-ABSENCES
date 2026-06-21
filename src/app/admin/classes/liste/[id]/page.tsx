@@ -77,7 +77,19 @@ type ClassListPayload = {
 
 type EditableStudent = Pick<
   StudentRow,
-  "id" | "gender" | "birthdate" | "birth_place" | "nationality" | "is_repeater" | "lv2" | "is_affecte" | "is_boarder" | "official_track_code"
+  | "id"
+  | "first_name"
+  | "last_name"
+  | "matricule"
+  | "gender"
+  | "birthdate"
+  | "birth_place"
+  | "nationality"
+  | "is_repeater"
+  | "lv2"
+  | "is_affecte"
+  | "is_boarder"
+  | "official_track_code"
 >;
 
 function formatDateFR(value: string | null | undefined) {
@@ -114,6 +126,21 @@ function personLabel(person: ProfileMini | null | undefined) {
 
 function cleanNamePart(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function deriveStudentNameParts(student: Pick<StudentRow, "full_name" | "first_name" | "last_name">) {
+  const explicitFirstName = cleanNamePart(student.first_name);
+  const explicitLastName = cleanNamePart(student.last_name);
+
+  if (explicitFirstName || explicitLastName) {
+    return { firstName: explicitFirstName || null, lastName: explicitLastName || null };
+  }
+
+  const parts = cleanNamePart(student.full_name).split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts.slice(1).join(" ") || null,
+    lastName: parts[0] || null,
+  };
 }
 
 function formatTraditionalStudentName(student: Pick<StudentRow, "full_name" | "first_name" | "last_name">) {
@@ -193,8 +220,12 @@ function boardingShort(value: boolean | null | undefined) {
 function cloneEditable(students: StudentRow[]): Record<string, EditableStudent> {
   const out: Record<string, EditableStudent> = {};
   for (const s of students) {
+    const { firstName, lastName } = deriveStudentNameParts(s);
     out[s.id] = {
       id: s.id,
+      first_name: firstName,
+      last_name: lastName,
+      matricule: s.matricule ?? null,
       gender: s.gender ?? null,
       birthdate: s.birthdate ? String(s.birthdate).slice(0, 10) : null,
       birth_place: s.birth_place ?? null,
@@ -350,6 +381,9 @@ export default function ClassListPrintPage() {
     try {
       const updates = (Object.values(editable) as EditableStudent[]).map((row) => ({
         student_id: row.id,
+        first_name: row.first_name || null,
+        last_name: row.last_name || null,
+        matricule: row.matricule || null,
         gender: row.gender || null,
         birthdate: row.birthdate || null,
         birth_place: row.birth_place || null,
@@ -632,7 +666,7 @@ export default function ClassListPrintPage() {
         <div>
           <div className="text-lg font-semibold">Liste de classe imprimable</div>
           <div className="text-sm text-slate-600">
-            Vérifiez l’éducateur, corrigez au besoin Série / Affecté / Interne-Externe / Sexe / Red / LV2 / Nat, puis exportez en PDF.
+            Vérifiez l’éducateur, corrigez au besoin Nom / Prénoms / Matricule / Série / Affecté / Interne-Externe / Sexe / Red / LV2 / Nat, puis exportez en PDF.
           </div>
         </div>
 
@@ -772,7 +806,7 @@ export default function ClassListPrintPage() {
             <div>
               <div className="font-semibold">Corrections rapides de la liste</div>
               <div className="text-sm text-slate-600">
-                Ces valeurs complètent la liste PDF sans casser les autres modules. La série sert aux classes communes A1/A2 ; affectation et internat alimentent aussi le profil financier de l’élève.
+                Ces corrections mettent à jour directement l’identité de l’élève et les informations utiles à la liste PDF. La série sert aux classes communes A1/A2 ; affectation et internat alimentent aussi le profil financier de l’élève.
               </div>
             </div>
             <button
@@ -786,10 +820,12 @@ export default function ClassListPrintPage() {
           </div>
           {saveMsg ? <div className="mb-3 text-sm text-slate-700">{saveMsg}</div> : null}
           <div className="max-h-[420px] overflow-auto rounded-xl border">
-            <table className="min-w-full text-sm">
+            <table className="min-w-[1320px] text-sm">
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
-                  <th className="px-3 py-2 text-left">Élève</th>
+                  <th className="px-3 py-2 text-left">Nom</th>
+                  <th className="px-3 py-2 text-left">Prénom(s)</th>
+                  <th className="px-3 py-2 text-left">Matricule</th>
                   <th className="px-3 py-2 text-left">Série</th>
                   <th className="px-3 py-2 text-left">Affecté</th>
                   <th className="px-3 py-2 text-left">Internat</th>
@@ -805,9 +841,29 @@ export default function ClassListPrintPage() {
                   const row = editable[student.id] || { id: student.id };
                   return (
                     <tr key={student.id} className="border-t">
-                      <td className="min-w-[260px] px-3 py-2 font-medium">
-                        {formatTraditionalStudentName(student)}
-                        <div className="text-xs font-normal text-slate-500">{student.matricule || "Sans matricule"}</div>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.last_name || ""}
+                          onChange={(e) => updateStudent(student.id, { last_name: e.target.value.toUpperCase() || null })}
+                          placeholder="Nom"
+                          className="w-[170px] rounded-lg border px-2 py-1 font-medium uppercase"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.first_name || ""}
+                          onChange={(e) => updateStudent(student.id, { first_name: e.target.value || null })}
+                          placeholder="Prénom(s)"
+                          className="w-[210px] rounded-lg border px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.matricule || ""}
+                          onChange={(e) => updateStudent(student.id, { matricule: e.target.value.toUpperCase() || null })}
+                          placeholder="Matricule"
+                          className="w-[125px] rounded-lg border px-2 py-1 uppercase"
+                        />
                       </td>
                       <td className="px-3 py-2">
                         <select

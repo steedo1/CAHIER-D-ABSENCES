@@ -751,7 +751,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
   const allowed = new Set((allowedRows || []).map((row: any) => String(row.student_id)));
 
-  let rows: Array<{ student_id: string; patch: Record<string, any>; official_track_code: OfficialTrackCode | null }> = [];
+  let rows: Array<{
+    student_id: string;
+    patch: Record<string, any>;
+    matricule: string | null;
+    official_track_code: OfficialTrackCode | null;
+  }> = [];
 
   try {
     rows = updates
@@ -759,9 +764,19 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         const studentId = cleanText(row?.student_id);
         if (!studentId || !allowed.has(studentId)) return null;
 
+        const firstName = normalizeNullableText(row?.first_name);
+        const lastName = normalizeNullableText(row?.last_name);
+        const matricule = normalizeNullableText(row?.matricule)?.toUpperCase() ?? null;
+        const normalizedFullName = [lastName, firstName].filter(Boolean).join(" ").trim();
+
+        if (!normalizedFullName) throw new Error("missing_student_name");
+
         return {
           student_id: studentId,
           patch: {
+            first_name: firstName,
+            last_name: lastName,
+            full_name: normalizedFullName,
             gender: normalizeGender(row?.gender),
             birthdate: normalizeDateYmd(row?.birthdate),
             birth_place: normalizeNullableText(row?.birth_place),
@@ -771,25 +786,84 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
             is_affecte: normalizeBool(row?.is_affecte),
             is_boarder: normalizeBool(row?.is_boarder),
           },
+          matricule,
           official_track_code: cleanOfficialTrackCode(row?.official_track_code ?? null),
         };
       })
-      .filter(Boolean) as Array<{ student_id: string; patch: Record<string, any>; official_track_code: OfficialTrackCode | null }>;
+      .filter(Boolean) as Array<{
+        student_id: string;
+        patch: Record<string, any>;
+        matricule: string | null;
+        official_track_code: OfficialTrackCode | null;
+      }>;
   } catch (error) {
     if ((error as Error)?.message === "bad_official_track_code") {
       return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+    }
+    if ((error as Error)?.message === "missing_student_name") {
+      return NextResponse.json(
+        { error: "Le nom complet de chaque élève est obligatoire." },
+        { status: 400 },
+      );
     }
     throw error;
   }
 
   if (!rows.length) return NextResponse.json({ ok: true, updated: 0 });
 
+  const matriculesToCheck = rows
+    .map((row) => row.matricule)
+    .filter((matricule): matricule is string => Boolean(matricule));
+
+  if (matriculesToCheck.length > 0) {
+    const matriculeCounts = new Map<string, number>();
+    for (const matricule of matriculesToCheck) {
+      matriculeCounts.set(matricule, (matriculeCounts.get(matricule) || 0) + 1);
+    }
+
+    const duplicatedInRequest = Array.from(matriculeCounts.entries()).find(([, count]) => count > 1);
+    if (duplicatedInRequest) {
+      return NextResponse.json(
+        { error: `Le matricule ${duplicatedInRequest[0]} est saisi plusieurs fois dans cette liste.` },
+        { status: 400 },
+      );
+    }
+
+    const uniqueMatricules = Array.from(new Set(matriculesToCheck));
+    const { data: duplicates, error: duplicateErr } = await srv
+      .from("students")
+      .select("id,matricule")
+      .eq("institution_id", institutionId)
+      .in("matricule", uniqueMatricules);
+
+    if (duplicateErr) return NextResponse.json({ error: duplicateErr.message }, { status: 400 });
+
+    const duplicatesByMatricule = new Map<string, string[]>();
+    for (const duplicate of duplicates || []) {
+      const key = String((duplicate as any).matricule || "").trim().toUpperCase();
+      const id = String((duplicate as any).id || "");
+      if (!key || !id) continue;
+      duplicatesByMatricule.set(key, [...(duplicatesByMatricule.get(key) || []), id]);
+    }
+
+    for (const row of rows) {
+      if (!row.matricule) continue;
+      const owners = duplicatesByMatricule.get(row.matricule) || [];
+      if (owners.some((id) => id !== row.student_id)) {
+        return NextResponse.json(
+          { error: `Le matricule ${row.matricule} existe déjà dans cet établissement.` },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
   let updated = 0;
 
   for (const row of rows) {
     const { error } = await srv
       .from("students")
-      .update(row.patch)
+      .update({ ...row.patch, matricule: row.matricule })
       .eq("id", row.student_id)
       .eq("institution_id", institutionId);
 
