@@ -166,6 +166,10 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 ];
 
+const INFIRMARY_TOP_ITEMS: NavItem[] = [
+  { href: "/admin/infirmerie", label: "Infirmerie", Icon: HeartPulse },
+];
+
 const MONTAGE_EDT_ITEMS: NavItem[] = [
   {
     href: "/admin/montage-emploi-du-temps",
@@ -201,14 +205,6 @@ const MONTAGE_EDT_ITEMS: NavItem[] = [
     href: "/admin/montage-emploi-du-temps/publication",
     label: "Publication",
     Icon: ShieldCheck,
-  },
-];
-
-const INFIRMARY_ITEMS: NavItem[] = [
-  {
-    href: "/admin/infirmerie",
-    label: "Infirmerie",
-    Icon: HeartPulse,
   },
 ];
 
@@ -957,21 +953,20 @@ export default function SidebarNav() {
     [isFinanceOnlyShell],
   );
 
+  const infirmaryTopItems = React.useMemo(
+    () =>
+      INFIRMARY_TOP_ITEMS.filter(
+        () => !isFinanceManager && !isFinanceOnlyShell,
+      ),
+    [isFinanceManager, isFinanceOnlyShell],
+  );
+
   const montageEdtItems = React.useMemo(
     () =>
       MONTAGE_EDT_ITEMS.filter(
         () => !isEducator && !isFinanceManager && !isFinanceOnlyShell,
       ),
     [isEducator, isFinanceManager, isFinanceOnlyShell],
-  );
-
-  const infirmaryItems = React.useMemo(
-    () =>
-      INFIRMARY_ITEMS.filter(() => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
-        return true;
-      }),
-    [isFinanceManager, isFinanceOnlyShell],
   );
 
   const predictionItems = React.useMemo(
@@ -1200,13 +1195,13 @@ export default function SidebarNav() {
               />
             ))}
 
-            {infirmaryItems.map((item) => (
+            {infirmaryTopItems.map((item) => (
               <NavLinkItem
                 key={item.href}
                 item={item}
                 pathname={pathname}
                 currentTab={currentTab}
-                accent="sky"
+                accent="emerald"
                 pendingAbsenceCount={pendingAbsenceCount}
                 pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel

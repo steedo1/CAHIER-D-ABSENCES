@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
-import { triggerSmsDispatch } from "@/lib/sms-dispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -181,7 +180,7 @@ async function queueParentInfirmaryNotification(opts: {
 }) {
   const { req, srv, institutionId, visit, studentName, classLabel } = opts;
   const studentId = String(visit.student_id || "");
-  if (!studentId) return { queued: 0, push_dispatched: false, sms_dispatched: false };
+  if (!studentId) return { queued: 0, push_dispatched: false };
 
   const { data: guardians, error: guardErr } = await srv
     .from("student_guardians")
@@ -196,8 +195,8 @@ async function queueParentInfirmaryNotification(opts: {
         .filter((row: any) => row?.notifications_enabled !== false)
         .map((row: any) =>
           String(
-            row?.parent_id ||
-              row?.guardian_profile_id ||
+            row?.guardian_profile_id ||
+              row?.parent_id ||
               row?.parent_profile_id ||
               row?.profile_id ||
               row?.user_id ||
@@ -208,28 +207,26 @@ async function queueParentInfirmaryNotification(opts: {
     ),
   );
 
-  if (!parentIds.length) return { queued: 0, push_dispatched: false, sms_dispatched: false };
+  if (!parentIds.length) return { queued: 0, push_dispatched: false };
 
   const occurredAt = new Date().toISOString();
   const visitDate = String(visit.visit_date || "");
   const entryTime = String(visit.entry_time || "").slice(0, 5);
   const exitTime = visit.exit_time ? String(visit.exit_time).slice(0, 5) : null;
   const timeLabel = exitTime ? `${entryTime} - ${exitTime}` : `depuis ${entryTime}`;
-  const title = `Infirmerie - ${studentName}`;
+  const title = `Infirmerie — ${studentName}`;
   const body = [
     classLabel || "",
     visitDate,
     timeLabel,
-    `Recu ${visit.receipt_code}`,
+    `Reçu : ${visit.receipt_code}`,
   ]
     .filter(Boolean)
-    .join(" - ");
+    .join(" • ");
 
   const payload = {
     kind: "infirmary_visit",
-    event: "communication",
-    source_event: "infirmary_visit_created",
-    campaign_title: "Passage a l'infirmerie",
+    event: "infirmary_visit_created",
     student: { id: studentId, name: studentName },
     class: { id: visit.class_id ?? null, label: classLabel },
     visit: {
@@ -252,7 +249,7 @@ async function queueParentInfirmaryNotification(opts: {
     student_id: studentId,
     parent_id: parentId,
     profile_id: null,
-    channels: ["inapp", "push", "sms"],
+    channels: ["inapp", "push"],
     payload,
     title,
     body,
@@ -273,15 +270,16 @@ async function queueParentInfirmaryNotification(opts: {
 
   if (error) throw error;
 
-  const [pushDispatched, smsDispatched] = await Promise.all([
-    triggerPushDispatch({ req, reason: `infirmary:${visit.id}`, timeoutMs: 1200, retries: 1 }).catch(() => false),
-    triggerSmsDispatch({ req, reason: `infirmary:${visit.id}`, timeoutMs: 3500, retries: 1 }).catch(() => false),
-  ]);
+  const pushDispatched = await triggerPushDispatch({
+    req,
+    reason: `infirmary:${visit.id}`,
+    timeoutMs: 1200,
+    retries: 1,
+  }).catch(() => false);
 
   return {
     queued: count || rows.length,
     push_dispatched: Boolean(pushDispatched),
-    sms_dispatched: Boolean(smsDispatched),
   };
 }
 
@@ -480,7 +478,7 @@ export async function POST(req: NextRequest) {
   const studentName = studentFullName(student);
   const classLabel = klass?.label ? String(klass.label) : null;
 
-  let notification = { queued: 0, push_dispatched: false, sms_dispatched: false };
+  let notification = { queued: 0, push_dispatched: false };
   let finalRow = inserted;
 
   if (notifyParent) {
@@ -501,7 +499,6 @@ export async function POST(req: NextRequest) {
             parent_notified: true,
             parent_notified_at: new Date().toISOString(),
             notification_count: notification.queued,
-            status: status === "observation" ? "parent_informe" : status,
             updated_at: new Date().toISOString(),
           })
           .eq("id", (inserted as any).id)
@@ -518,7 +515,7 @@ export async function POST(req: NextRequest) {
       }
     } catch (e: any) {
       console.warn("[admin/infirmary] notification_error", String(e?.message || e));
-      notification = { queued: 0, push_dispatched: false, sms_dispatched: false };
+      notification = { queued: 0, push_dispatched: false };
     }
   }
 
@@ -530,7 +527,7 @@ export async function POST(req: NextRequest) {
       notifyParent && notification.queued === 0
         ? "Passage enregistré. Aucun parent notifiable n'a été trouvé."
         : notifyParent && notification.queued > 0
-          ? `Passage enregistré. Notification parent mise en file (${notification.queued}). Push: ${notification.push_dispatched ? "déclenché" : "non déclenché"}. SMS: ${notification.sms_dispatched ? "déclenché" : "non déclenché"}.`
+          ? "Passage enregistré. Alerte parent créée en notification interne/push."
           : "Passage infirmerie enregistré.",
   });
 }
