@@ -19,6 +19,7 @@ import {
   FileSpreadsheet,
   FileText,
   MessageSquare,
+  HeartPulse,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -310,6 +311,11 @@ const ADMIN_ITEMS: NavItem[] = [
     href: "/admin/communication",
     label: "Communication",
     Icon: MessageSquare,
+  },
+  {
+    href: "/admin/infirmerie",
+    label: "Infirmerie",
+    Icon: HeartPulse,
   },
   {
     href: "/admin/autorisations",

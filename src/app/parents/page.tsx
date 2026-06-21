@@ -148,6 +148,7 @@ function notificationKindLabel(payload: any) {
   const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
   if (kind === "finance_reminder") return "Rappel financier";
   if (kind === "communication") return "Communication";
+  if (kind === "infirmary_visit" || kind === "infirmary_visit_created") return "Infirmerie";
   if (kind === "attendance" || kind === "absent" || kind === "late") return "Absence / retard";
   if (kind === "penalty" || kind === "conduct_penalty") return "Conduite";
   return "Notification";
@@ -157,6 +158,7 @@ function notificationTone(payload: any, severity?: string | null) {
   const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
   if (kind === "finance_reminder") return "amber" as const;
   if (kind === "communication") return "emerald" as const;
+  if (kind === "infirmary_visit" || kind === "infirmary_visit_created") return "sky" as const;
   if (severity === "error" || severity === "warning") return "rose" as const;
   return "slate" as const;
 }

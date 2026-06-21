@@ -13,6 +13,7 @@ const PARENT_NOTIFICATION_KIND_FILTER = [
   "payload->>kind.eq.conduct_penalty",
   "payload->>kind.eq.communication",
   "payload->>kind.eq.finance_reminder",
+  "payload->>kind.eq.infirmary_visit",
   "payload->>type.eq.finance_reminder",
   "payload->>event.eq.communication",
   "payload->>event.eq.finance_reminder",
