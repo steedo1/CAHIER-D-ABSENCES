@@ -204,6 +204,14 @@ const MONTAGE_EDT_ITEMS: NavItem[] = [
   },
 ];
 
+const INFIRMARY_ITEMS: NavItem[] = [
+  {
+    href: "/admin/infirmerie",
+    label: "Infirmerie",
+    Icon: HeartPulse,
+  },
+];
+
 const PREDICTION_ITEMS: NavItem[] = [
   {
     href: "/admin/notes/predictions",
@@ -311,11 +319,6 @@ const ADMIN_ITEMS: NavItem[] = [
     href: "/admin/communication",
     label: "Communication",
     Icon: MessageSquare,
-  },
-  {
-    href: "/admin/infirmerie",
-    label: "Infirmerie",
-    Icon: HeartPulse,
   },
   {
     href: "/admin/autorisations",
@@ -962,6 +965,15 @@ export default function SidebarNav() {
     [isEducator, isFinanceManager, isFinanceOnlyShell],
   );
 
+  const infirmaryItems = React.useMemo(
+    () =>
+      INFIRMARY_ITEMS.filter(() => {
+        if (isFinanceManager || isFinanceOnlyShell) return false;
+        return true;
+      }),
+    [isFinanceManager, isFinanceOnlyShell],
+  );
+
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
@@ -1182,6 +1194,19 @@ export default function SidebarNav() {
                 pathname={pathname}
                 currentTab={currentTab}
                 accent="emerald"
+                pendingAbsenceCount={pendingAbsenceCount}
+                pendingGradePublicationCount={pendingGradePublicationCount}
+                topLevel
+              />
+            ))}
+
+            {infirmaryItems.map((item) => (
+              <NavLinkItem
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                currentTab={currentTab}
+                accent="sky"
                 pendingAbsenceCount={pendingAbsenceCount}
                 pendingGradePublicationCount={pendingGradePublicationCount}
                 topLevel

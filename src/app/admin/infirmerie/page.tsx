@@ -595,137 +595,158 @@ export default function AdminInfirmaryPage() {
             </p>
           </div>
 
-          <form onSubmit={saveVisit} className="grid gap-4 md:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Classe
-              </span>
-              <Select value={classId} onChange={(e) => onClassChange(e.target.value)} disabled={loadingClasses}>
-                <option value="">Toutes les classes</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label || c.name || "Classe"}
-                    {c.academic_year ? ` — ${c.academic_year}` : ""}
-                  </option>
-                ))}
-              </Select>
-            </label>
+          <form onSubmit={saveVisit} className="space-y-4">
+            <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs text-white">1</span>
+                Élève concerné
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Classe
+                  </span>
+                  <Select value={classId} onChange={(e) => onClassChange(e.target.value)} disabled={loadingClasses}>
+                    <option value="">Toutes les classes</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label || c.name || "Classe"}
+                        {c.academic_year ? ` — ${c.academic_year}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    La classe sert seulement à retrouver rapidement l'élève.
+                  </p>
+                </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Élève
-              </span>
-              <Select value={studentId} onChange={(e) => setStudentId(e.target.value)} disabled={loadingStudents} required>
-                <option value="">
-                  {loadingStudents ? "Chargement..." : "Sélectionner l'élève"}
-                </option>
-                {students.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.full_name} {student.class_label ? `— ${student.class_label}` : ""}
-                  </option>
-                ))}
-              </Select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Date
-              </span>
-              <Input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} required />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Entrée
-                </span>
-                <Input type="time" value={entryTime} onChange={(e) => setEntryTime(e.target.value)} required />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Sortie
-                </span>
-                <Input type="time" value={exitTime} onChange={(e) => setExitTime(e.target.value)} />
-              </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Élève
+                  </span>
+                  <Select value={studentId} onChange={(e) => setStudentId(e.target.value)} disabled={loadingStudents} required>
+                    <option value="">
+                      {loadingStudents ? "Chargement..." : "Sélectionner l'élève"}
+                    </option>
+                    {students.map((student) => (
+                      <option key={student.id} value={student.id}>
+                        {student.full_name} {student.class_label ? `— ${student.class_label}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              </div>
             </div>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Motif général
-              </span>
-              <Select value={reasonCategory} onChange={(e) => setReasonCategory(e.target.value)}>
-                {REASONS.map((reason) => (
-                  <option key={reason.value} value={reason.value}>
-                    {reason.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs text-white">2</span>
+                Date et heures du passage
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Date
+                  </span>
+                  <Input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} required />
+                </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Statut
-              </span>
-              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-                {STATUSES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Heure d'entrée
+                  </span>
+                  <Input type="time" value={entryTime} onChange={(e) => setEntryTime(e.target.value)} required />
+                </label>
 
-            <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Précision simple, sans diagnostic détaillé
-              </span>
-              <Textarea
-                value={reasonDetails}
-                onChange={(e) => setReasonDetails(e.target.value)}
-                placeholder="Ex. se plaint de maux de tête, repos demandé, parent à contacter..."
-              />
-            </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Heure de sortie
+                  </span>
+                  <Input type="time" value={exitTime} onChange={(e) => setExitTime(e.target.value)} />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Facultatif si l'élève est encore en observation.
+                  </p>
+                </label>
+              </div>
+            </div>
 
-            <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Action posée
-              </span>
-              <Textarea
-                value={actionTaken}
-                onChange={(e) => setActionTaken(e.target.value)}
-                placeholder="Ex. mis en observation, retour en classe, parent appelé, évacuation..."
-              />
-            </label>
+            <div className="rounded-2xl border border-slate-100 bg-white p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs text-white">3</span>
+                Reçu et information parent
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Motif général
+                  </span>
+                  <Select value={reasonCategory} onChange={(e) => setReasonCategory(e.target.value)}>
+                    {REASONS.map((reason) => (
+                      <option key={reason.value} value={reason.value}>
+                        {reason.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
 
-            <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Note interne facultative
-              </span>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Information interne à l'établissement."
-              />
-            </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Situation à la sortie
+                  </span>
+                  <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+                    {STATUSES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
 
-            <label className="flex items-start gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 md:col-span-2">
-              <input
-                type="checkbox"
-                checked={notifyParent}
-                onChange={(e) => setNotifyParent(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
-              />
-              <span>
-                <span className="block text-sm font-black text-emerald-950">
-                  Notifier le parent maintenant
-                </span>
-                <span className="mt-1 block text-xs leading-5 text-emerald-800">
-                  Le parent reçoit une alerte avec le code du reçu. Le détail médical sensible n'est pas nécessaire dans l'alerte.
-                </span>
-              </span>
-            </label>
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Observation courte sur le reçu
+                  </span>
+                  <Textarea
+                    value={reasonDetails}
+                    onChange={(e) => setReasonDetails(e.target.value)}
+                    placeholder="Ex. malaise signalé pendant la matinée, repos observé, parent contacté si nécessaire..."
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Rester simple : pas de diagnostic médical détaillé.
+                  </p>
+                </label>
 
-            <div className="flex flex-col gap-3 md:col-span-2 md:flex-row md:items-center md:justify-end">
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                    Suite donnée
+                  </span>
+                  <Textarea
+                    value={actionTaken}
+                    onChange={(e) => setActionTaken(e.target.value)}
+                    placeholder="Ex. repos, retour en classe, parent appelé, évacuation, observation prolongée..."
+                  />
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={notifyParent}
+                    onChange={(e) => setNotifyParent(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span>
+                    <span className="block text-sm font-black text-emerald-950">
+                      Notifier le parent maintenant
+                    </span>
+                    <span className="mt-1 block text-xs leading-5 text-emerald-800">
+                      Une notification est envoyée dans l'espace parent, puis le push/SMS est déclenché si le téléphone du parent est enregistré et si le service est actif.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
               <button
                 type="button"
                 onClick={() => {

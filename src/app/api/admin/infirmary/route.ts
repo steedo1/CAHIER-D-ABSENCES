@@ -196,8 +196,8 @@ async function queueParentInfirmaryNotification(opts: {
         .filter((row: any) => row?.notifications_enabled !== false)
         .map((row: any) =>
           String(
-            row?.guardian_profile_id ||
-              row?.parent_id ||
+            row?.parent_id ||
+              row?.guardian_profile_id ||
               row?.parent_profile_id ||
               row?.profile_id ||
               row?.user_id ||
@@ -215,19 +215,21 @@ async function queueParentInfirmaryNotification(opts: {
   const entryTime = String(visit.entry_time || "").slice(0, 5);
   const exitTime = visit.exit_time ? String(visit.exit_time).slice(0, 5) : null;
   const timeLabel = exitTime ? `${entryTime} - ${exitTime}` : `depuis ${entryTime}`;
-  const title = `Infirmerie — ${studentName}`;
+  const title = `Infirmerie - ${studentName}`;
   const body = [
     classLabel || "",
     visitDate,
     timeLabel,
-    `Reçu : ${visit.receipt_code}`,
+    `Recu ${visit.receipt_code}`,
   ]
     .filter(Boolean)
-    .join(" • ");
+    .join(" - ");
 
   const payload = {
     kind: "infirmary_visit",
-    event: "infirmary_visit_created",
+    event: "communication",
+    source_event: "infirmary_visit_created",
+    campaign_title: "Passage a l'infirmerie",
     student: { id: studentId, name: studentName },
     class: { id: visit.class_id ?? null, label: classLabel },
     visit: {
@@ -527,6 +529,8 @@ export async function POST(req: NextRequest) {
     message:
       notifyParent && notification.queued === 0
         ? "Passage enregistré. Aucun parent notifiable n'a été trouvé."
-        : "Passage infirmerie enregistré.",
+        : notifyParent && notification.queued > 0
+          ? `Passage enregistré. Notification parent mise en file (${notification.queued}). Push: ${notification.push_dispatched ? "déclenché" : "non déclenché"}. SMS: ${notification.sms_dispatched ? "déclenché" : "non déclenché"}.`
+          : "Passage infirmerie enregistré.",
   });
 }
