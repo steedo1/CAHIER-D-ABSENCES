@@ -341,10 +341,10 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
         </head>
         <body>
           <main class="sheet">
-            ${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="" />` : ""}
+            ${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="" loading="eager" decoding="sync" />` : ""}
             <div class="official-line"></div>
             <section class="header">
-              <div class="logo">${logo ? `<img src="${escapeHtml(logo)}" alt="Logo" />` : "<span>Logo</span>"}</div>
+              <div class="logo">${logo ? `<img src="${escapeHtml(logo)}" alt="Logo" loading="eager" decoding="sync" />` : "<span>Logo</span>"}</div>
               <div class="school">
                 <div class="school-name">${escapeHtml(instName)}</div>
                 <div class="school-meta">
@@ -370,7 +370,7 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
                 <div class="box"><div class="label">Matricule</div><div class="value">${escapeHtml(visit.student_matricule || "—")}</div></div>
                 <div class="box"><div class="label">Date du passage</div><div class="value">${escapeHtml(formatDate(visit.visit_date))}</div></div>
               </div>
-              <div class="student-photo">${studentPhoto ? `<img src="${escapeHtml(studentPhoto)}" alt="Photo élève" />` : "<span>PHOTO</span>"}</div>
+              <div class="student-photo">${studentPhoto ? `<img src="${escapeHtml(studentPhoto)}" alt="Photo élève" loading="eager" decoding="sync" />` : "<span>PHOTO</span>"}</div>
             </section>
 
             <section class="grid">
@@ -394,7 +394,57 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
               <div>Billet d'infirmerie généré par Mon Cahier</div>
             </footer>
           </main>
-          <script>window.print(); setTimeout(() => window.close(), 500);</script>
+          <script>
+            (async function () {
+              const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+              async function waitForFonts() {
+                try {
+                  if (document.fonts && document.fonts.ready) {
+                    await Promise.race([document.fonts.ready, delay(1200)]);
+                  }
+                } catch (_) {}
+              }
+
+              async function waitForImages() {
+                const images = Array.from(document.images || []).filter((img) => img && img.src);
+                if (!images.length) return;
+
+                await Promise.all(
+                  images.map((img) => {
+                    if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+
+                    return new Promise((resolve) => {
+                      let done = false;
+                      const finish = () => {
+                        if (done) return;
+                        done = true;
+                        resolve();
+                      };
+
+                      img.addEventListener("load", finish, { once: true });
+                      img.addEventListener("error", finish, { once: true });
+
+                      if (typeof img.decode === "function") {
+                        img.decode().then(finish).catch(() => {});
+                      }
+
+                      // Filet de sécurité : on ne bloque jamais l'impression indéfiniment.
+                      setTimeout(finish, 4500);
+                    });
+                  }),
+                );
+              }
+
+              await waitForFonts();
+              await waitForImages();
+              await delay(200);
+
+              window.focus();
+              window.print();
+              setTimeout(() => window.close(), 800);
+            })();
+          </script>
         </body>
       </html>`;
 
