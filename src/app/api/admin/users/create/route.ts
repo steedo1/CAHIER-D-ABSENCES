@@ -113,7 +113,7 @@ function canonicalSubjectKey(value: string | null | undefined) {
   return SUBJECT_ALIAS_TO_CANONICAL[raw] || raw;
 }
 
-type BodyRole = "teacher" | "parent" | "admin" | "educator" | "finance_manager";
+type BodyRole = "teacher" | "parent" | "admin" | "educator" | "finance_manager" | "infirmier";
 
 type SubjectLite = {
   id: string;
@@ -310,6 +310,7 @@ export async function POST(req: NextRequest) {
     "admin",
     "educator",
     "finance_manager",
+    "infirmier",
   ];
 
   if (!allowedRoles.includes(role)) {

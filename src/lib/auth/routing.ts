@@ -7,6 +7,7 @@ export type AppRole =
   | "drenaet_admin"
   | "admin"
   | "finance_manager"
+  | "infirmier"
   | "educator"
   | "teacher"
   | "parent"
@@ -21,6 +22,7 @@ export const ROLE_PRIORITY: AppRole[] = [
   "drenaet_admin",
   "admin",
   "finance_manager",
+  "infirmier",
   "educator",
   "teacher",
   "class_device",
@@ -49,6 +51,8 @@ export function routeForRole(role: AppRole): string {
       return "/admin/dashboard";
     case "finance_manager":
       return "/admin/finance";
+    case "infirmier":
+      return "/admin/infirmerie";
     case "educator":
       return "/admin/dashboard"; // même dashboard, mais menu filtré côté front
     case "teacher":
@@ -85,6 +89,8 @@ export function routeForRoleWithBook(role: AppRole, book?: Book): string {
         return "/founder/dashboard";
       case "finance_manager":
         return "/admin/finance";
+      case "infirmier":
+        return "/admin/infirmerie";
       case "parent":
         return "/parents?tab=notes"; // Onglet "notes" côté parent
       case "class_device":

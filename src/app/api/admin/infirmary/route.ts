@@ -12,7 +12,7 @@ type RoleRow = {
   institution_id: string | null;
 };
 
-const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator"]);
+const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator", "infirmier"]);
 
 const STATUS_VALUES = new Set([
   "observation",

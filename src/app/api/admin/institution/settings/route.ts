@@ -59,7 +59,7 @@ async function guard(
 
   const allowedRoles = options.write
     ? new Set(["admin", "super_admin"])
-    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+    : new Set(["admin", "super_admin", "founder", "finance_manager", "infirmier"]);
 
   let roleFromUR: string | null = null;
   let hasAllowedRole = allowedRoles.has(roleProfile);

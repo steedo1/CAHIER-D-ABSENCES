@@ -6,6 +6,7 @@ export type AppRole =
   | "drenaet_admin"
   | "admin"
   | "finance_manager"
+  | "infirmier"
   | "educator"
   | "teacher"
   | "parent"
@@ -18,6 +19,7 @@ export const ROLE_PRIORITY: AppRole[] = [
   "drenaet_admin",
   "admin",
   "finance_manager",
+  "infirmier",
   "educator",
   "teacher",
   "class_device",

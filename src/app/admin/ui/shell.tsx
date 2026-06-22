@@ -19,6 +19,7 @@ import {
   Settings,
   FileSpreadsheet,
   UserRoundCheck,
+  HeartPulse,
   Loader2,
 } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -95,6 +96,12 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     window.location.replace("/founder/dashboard");
   }, [role, pathname]);
 
+  useEffect(() => {
+    if (role !== "infirmier") return;
+    if (pathname === "/admin/infirmerie") return;
+    window.location.replace("/admin/infirmerie");
+  }, [role, pathname]);
+
   function startLoading(label: string) {
     setRouteLabel(label || "Chargement…");
     setRouteLoading(true);
@@ -155,11 +162,18 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }
 
   const isFinanceManager = role === "finance_manager";
+  const isInfirmier = role === "infirmier";
   const isAdmin = role === "admin";
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
 
   const mobileItems = useMemo(() => {
+    if (isInfirmier) {
+      return [
+        { href: "/admin/infirmerie", label: "Infirmerie", Icon: HeartPulse },
+      ];
+    }
+
     if (isFounderFinance) {
       return [
         { href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet },
@@ -200,7 +214,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
     ];
-  }, [isAdmin, isFinanceManager, isFinancePath, isFounderFinance]);
+  }, [isAdmin, isFinanceManager, isFinancePath, isFounderFinance, isInfirmier]);
 
   function isActive(href: string) {
     return pathname === href || (pathname ?? "").startsWith(href + "/");

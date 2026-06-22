@@ -47,6 +47,7 @@ const ROLE_ORDER = [
   "drenaet_admin",
   "admin",
   "finance_manager",
+  "infirmier",
   "teacher",
   "educator",
   "parent",

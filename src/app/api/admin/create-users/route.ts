@@ -4,7 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type NewUserInput = {
   email: string;
-  role: "teacher" | "parent" | "educator" | "admin" | "student";
+  role: "teacher" | "parent" | "educator" | "admin" | "student" | "infirmier";
   display_name?: string;
 };
 

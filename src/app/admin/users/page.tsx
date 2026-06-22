@@ -81,7 +81,7 @@ type AdminUserItem = {
   role: string | null;
 };
 
-type CreateRole = "teacher" | "educator" | "admin" | "finance_manager";
+type CreateRole = "teacher" | "educator" | "admin" | "finance_manager" | "infirmier";
 type EmploymentType = "vacataire" | "permanent";
 
 function onlyDigits(v: string) {
@@ -591,6 +591,7 @@ export default function UsersPage() {
         if (rawRole === "educator") labelRole = "éducateur";
         if (rawRole === "admin") labelRole = "admin";
         if (rawRole === "finance_manager") labelRole = "gestionnaire financier";
+        if (rawRole === "infirmier") labelRole = "infirmier";
 
         if (rawRole === "educator") {
           const scope = rawEducatorClassIds.length
@@ -796,7 +797,9 @@ export default function UsersPage() {
       ? "éducateur"
       : createRole === "finance_manager"
       ? "gestionnaire financier"
-      : "admin";
+      : createRole === "infirmier"
+        ? "infirmier"
+        : "admin";
 
   return (
     <div className="space-y-6">
@@ -804,7 +807,7 @@ export default function UsersPage() {
         <h1 className="text-2xl font-semibold">Utilisateurs & rôles</h1>
         <p className="text-slate-600">
           Créer et gérer les comptes du <b>personnel de l’établissement</b> :
-          enseignants, éducateurs, admins d’établissement et gestionnaires
+          enseignants, éducateurs, infirmiers, admins d’établissement et gestionnaires
           financiers. Les champs liés à la discipline et à la paie s’affichent
           uniquement pour les enseignants.
         </p>
@@ -821,7 +824,8 @@ export default function UsersPage() {
           Téléphone <b>obligatoire</b>. Email <b>facultatif</b>. Les champs
           <b> discipline</b>, <b>type d’enseignant</b> et <b>paie</b> apparaissent
           uniquement pour les enseignants. Le <b>gestionnaire financier</b> est
-          limité à la Gestion financière.
+          limité à la Gestion financière et le <b>compte infirmier</b> est limité
+          au module Infirmerie.
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -835,6 +839,7 @@ export default function UsersPage() {
               <option value="educator">Éducateur</option>
               <option value="admin">Admin d’établissement</option>
               <option value="finance_manager">Gestionnaire financier</option>
+              <option value="infirmier">Infirmier / Infirmerie</option>
             </Select>
           </div>
 

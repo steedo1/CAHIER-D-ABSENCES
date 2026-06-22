@@ -166,8 +166,9 @@ const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 ];
 
-const INFIRMARY_TOP_ITEMS: NavItem[] = [
-  { href: "/admin/infirmerie", label: "Infirmerie", Icon: HeartPulse },
+const INFIRMARY_ITEMS: NavItem[] = [
+  { href: "/admin/infirmerie/dashboard", label: "Tableau infirmerie", Icon: BarChart3 },
+  { href: "/admin/infirmerie", label: "Billets infirmerie", Icon: HeartPulse },
 ];
 
 const MONTAGE_EDT_ITEMS: NavItem[] = [
@@ -941,6 +942,7 @@ export default function SidebarNav() {
   }, []);
 
   const isEducator = role === "educator";
+  const isInfirmier = role === "infirmier";
   const isAdmin = role === "admin";
   const isFinanceManager = role === "finance_manager";
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
@@ -949,68 +951,70 @@ export default function SidebarNav() {
     isFounderFinance || (role === null && isFinancePath);
 
   const topLevelItems = React.useMemo(
-    () => (isFinanceOnlyShell ? [] : TOP_LEVEL_ITEMS),
-    [isFinanceOnlyShell],
+    () => (isFinanceOnlyShell || isInfirmier ? [] : TOP_LEVEL_ITEMS),
+    [isFinanceOnlyShell, isInfirmier],
   );
 
-  const infirmaryTopItems = React.useMemo(
+  const infirmaryItems = React.useMemo(
     () =>
-      INFIRMARY_TOP_ITEMS.filter(
-        () => !isFinanceManager && !isFinanceOnlyShell,
-      ),
-    [isFinanceManager, isFinanceOnlyShell],
+      INFIRMARY_ITEMS.filter((item) => {
+        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isInfirmier) return item.href === "/admin/infirmerie";
+        return true;
+      }),
+    [isFinanceManager, isFinanceOnlyShell, isInfirmier],
   );
 
   const montageEdtItems = React.useMemo(
     () =>
       MONTAGE_EDT_ITEMS.filter(
-        () => !isEducator && !isFinanceManager && !isFinanceOnlyShell,
+        () => !isEducator && !isInfirmier && !isFinanceManager && !isFinanceOnlyShell,
       ),
-    [isEducator, isFinanceManager, isFinanceOnlyShell],
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const predictionItems = React.useMemo(
     () =>
       PREDICTION_ITEMS.filter((item) => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager, isFinanceOnlyShell],
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const nonClassesItems = React.useMemo(
     () =>
       NON_CLASSES_ITEMS.filter((item) => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager, isFinanceOnlyShell],
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const fileCorrespondenceItems = React.useMemo(
     () =>
       FILE_CORRESPONDENCE_ITEMS.filter(() => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator) return false;
         return true;
       }),
-    [isEducator, isFinanceManager, isFinanceOnlyShell],
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const conductManagementItems = React.useMemo(
     () =>
-      isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
-    [isFinanceManager, isFinanceOnlyShell],
+      isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const organisationItems = React.useMemo(() => {
-    if (isFinanceOnlyShell) return [];
+    if (isInfirmier || isFinanceOnlyShell) return [];
     return isFinanceManager
       ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
       : ORGANISATION_ITEMS;
-  }, [isFinanceManager, isFinanceOnlyShell]);
+  }, [isInfirmier, isFinanceManager, isFinanceOnlyShell]);
 
   const adminItems = React.useMemo(() => {
     if (isFinanceOnlyShell || isFinanceManager) return FINANCE_FULL_ITEMS;
@@ -1024,34 +1028,41 @@ export default function SidebarNav() {
       if (isEducator && item.href.startsWith("/admin/communication")) return [];
       return [item];
     });
-  }, [isAdmin, isEducator, isFinanceManager, isFinanceOnlyShell]);
+  }, [isAdmin, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
 
   const callsControlItems = React.useMemo(
-    () => (isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
-    [isFinanceManager, isFinanceOnlyShell],
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
   const absItems = React.useMemo(
-    () => (isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
-    [isFinanceManager, isFinanceOnlyShell],
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isFinanceManager, isFinanceOnlyShell],
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const settingsItems = React.useMemo(
-    () => (isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
-    [isFinanceManager, isFinanceOnlyShell],
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
+  const infirmaryActive = groupHasActiveItem(
+    pathname,
+    infirmaryItems,
+    currentTab,
   );
 
   const fileCorrespondenceActive =
     !isEducator &&
+    !isInfirmier &&
     !isFinanceManager &&
     !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, fileCorrespondenceItems, currentTab);
@@ -1070,6 +1081,7 @@ export default function SidebarNav() {
 
   const montageEdtActive =
     !isEducator &&
+    !isInfirmier &&
     !isFinanceManager &&
     !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, montageEdtItems, currentTab);
@@ -1086,6 +1098,7 @@ export default function SidebarNav() {
 
   const notesActive =
     !isEducator &&
+    !isInfirmier &&
     !isFinanceManager &&
     !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, notesItems, currentTab);
@@ -1104,6 +1117,9 @@ export default function SidebarNav() {
 
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
+
+  const [infirmaryOpen, setInfirmaryOpen] =
+    React.useState<boolean>(infirmaryActive);
 
   const [montageEdtOpen, setMontageEdtOpen] =
     React.useState<boolean>(montageEdtActive);
@@ -1131,6 +1147,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
   }, [organisationActive]);
+
+  React.useEffect(() => {
+    if (infirmaryActive) setInfirmaryOpen(true);
+  }, [infirmaryActive]);
 
   React.useEffect(() => {
     if (montageEdtActive) setMontageEdtOpen(true);
@@ -1195,18 +1215,18 @@ export default function SidebarNav() {
               />
             ))}
 
-            {infirmaryTopItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
+            {infirmaryItems.length > 0 && (
+              <GroupSection
+                title="Infirmerie"
+                Icon={HeartPulse}
+                items={infirmaryItems}
                 pathname={pathname}
                 currentTab={currentTab}
+                open={infirmaryOpen}
+                onToggle={() => setInfirmaryOpen((v) => !v)}
                 accent="emerald"
-                pendingAbsenceCount={pendingAbsenceCount}
-                pendingGradePublicationCount={pendingGradePublicationCount}
-                topLevel
               />
-            ))}
+            )}
 
             {predictionItems.map((item) => (
               <NavLinkItem
@@ -1235,6 +1255,7 @@ export default function SidebarNav() {
             ))}
 
             {!isEducator &&
+              !isInfirmier &&
               !isFinanceOnlyShell &&
               fileCorrespondenceItems.length > 0 && (
                 <GroupSection
@@ -1249,7 +1270,7 @@ export default function SidebarNav() {
                 />
               )}
 
-            {!isFinanceManager && conductManagementItems.length > 0 && (
+            {!isInfirmier && !isFinanceManager && conductManagementItems.length > 0 && (
               <GroupSection
                 title="Gestion conduite"
                 Icon={ShieldCheck}
@@ -1262,7 +1283,7 @@ export default function SidebarNav() {
               />
             )}
 
-            {organisationItems.length > 0 && (
+            {!isInfirmier && organisationItems.length > 0 && (
               <GroupSection
                 title="Organisation scolaire"
                 Icon={School}
@@ -1291,7 +1312,7 @@ export default function SidebarNav() {
                 />
               )}
 
-            {adminItems.length > 0 && (
+            {!isInfirmier && adminItems.length > 0 && (
               <GroupSection
                 title={
                   isFinanceOnlyShell || isFinanceManager
@@ -1323,7 +1344,7 @@ export default function SidebarNav() {
               />
             )}
 
-            {!isFinanceManager &&
+            {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
               callsControlItems.length > 0 && (
                 <GroupSection
@@ -1338,7 +1359,7 @@ export default function SidebarNav() {
                 />
               )}
 
-            {!isFinanceManager &&
+            {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
               absItems.length > 0 && (
                 <GroupSection
@@ -1371,7 +1392,7 @@ export default function SidebarNav() {
                 />
               )}
 
-            {!isFinanceManager &&
+            {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
               settingsItems.length > 0 && (
                 <GroupSection

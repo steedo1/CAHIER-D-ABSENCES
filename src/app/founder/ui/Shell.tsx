@@ -13,6 +13,7 @@ import {
   Menu,
   ShieldCheck,
   Wallet,
+  HeartPulse,
   X,
 } from "lucide-react";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
@@ -54,6 +55,12 @@ const NAV = [
     label: "Créneaux",
     description: "Présence",
     Icon: CalendarDays,
+  },
+  {
+    href: "/founder/infirmerie",
+    label: "Infirmerie",
+    description: "Santé scolaire",
+    Icon: HeartPulse,
   },
   {
     href: "/admin/finance",

@@ -12,6 +12,7 @@ const READ_ALLOWED_ROLES = new Set([
   "founder",
   "finance_manager",
   "educator",
+  "infirmier",
 ]);
 
 async function getCurrentAcademicYear(

@@ -14,6 +14,7 @@ import {
   Building2,
   Clock,
   FileSpreadsheet,
+  HeartPulse,
   Landmark,
   MessageSquare,
   PhoneCall,
@@ -369,7 +370,8 @@ export default function HomePage() {
           <li>Absences, retards, présences en classe et suivi des créneaux.</li>
           <li>Notes, moyennes, bulletins, exports et publication officielle.</li>
           <li>Gestion financière : inscriptions, scolarité, paiements, reçus, dépenses et paie.</li>
-          <li>Espace parent, enseignant, direction, finance, fondateur et supervision.</li>
+          <li>Infirmerie scolaire : billet justificatif, notification parent et suivi des repos.</li>
+          <li>Espace parent, enseignant, direction, infirmerie, finance, fondateur et supervision.</li>
           <li>Prédiction scolaire et tableaux de bord de pilotage.</li>
         </ul>
       ),
@@ -589,10 +591,10 @@ export default function HomePage() {
         <SectionTitle
           eyebrow="Espaces de connexion"
           title="Chaque profil entre par le bon espace"
-          description="La page d’accueil présente maintenant les accès réellement disponibles : parent, enseignant, direction, finance et fondateur."
+          description="La page d’accueil présente maintenant les accès réellement disponibles : parent, enseignant, direction, infirmerie, finance et fondateur."
         />
 
-        <div className="mt-5 grid gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-5 grid gap-4 md:mt-6 md:grid-cols-2 xl:grid-cols-6">
           <SpaceCard
             href="/parents/login"
             icon={Users}
@@ -616,6 +618,14 @@ export default function HomePage() {
             description="Piloter l’établissement : classes, enseignants, bulletins, exports et statistiques."
             badge="Admin"
             tone="violet"
+          />
+          <SpaceCard
+            href="/login?space=infirmerie"
+            icon={HeartPulse}
+            title="Infirmerie"
+            description="Enregistrer les passages, notifier les parents et imprimer les billets justificatifs."
+            badge="Santé"
+            tone="emerald"
           />
           <SpaceCard
             href="/login?space=finance"
