@@ -28,6 +28,8 @@ type StudentRow = {
   id: string;
   full_name: string;
   matricule?: string | null;
+  photo_url?: string | null;
+  student_photo_url?: string | null;
   class_id: string;
   class_label?: string | null;
 };
@@ -35,6 +37,7 @@ type StudentRow = {
 type InstitutionSettings = {
   institution_name?: string | null;
   institution_logo_url?: string | null;
+  logo_url?: string | null;
   institution_phone?: string | null;
   institution_email?: string | null;
   institution_region?: string | null;
@@ -72,6 +75,8 @@ type InfirmaryVisit = {
   created_at: string;
   student_name: string;
   student_matricule: string | null;
+  student_photo_url?: string | null;
+  photo_url?: string | null;
   class_label: string | null;
   class_level: string | null;
 };
@@ -207,12 +212,66 @@ function escapeHtml(value: string | null | undefined) {
     .replace(/'/g, "&#039;");
 }
 
+function normalizeInstitutionSettings(json: any): InstitutionSettings {
+  const raw = json?.institution || json?.settings || json?.item || json || {};
+  const settingsJson = raw?.settings_json || {};
+
+  return {
+    ...settingsJson,
+    ...raw,
+    institution_name:
+      raw?.institution_name ||
+      raw?.name ||
+      settingsJson?.institution_name ||
+      settingsJson?.name ||
+      null,
+    institution_logo_url:
+      raw?.institution_logo_url ||
+      raw?.logo_url ||
+      raw?.logo ||
+      settingsJson?.institution_logo_url ||
+      settingsJson?.logo_url ||
+      settingsJson?.logo ||
+      null,
+    logo_url:
+      raw?.logo_url ||
+      raw?.institution_logo_url ||
+      settingsJson?.logo_url ||
+      settingsJson?.institution_logo_url ||
+      null,
+    institution_phone:
+      raw?.institution_phone || raw?.phone || settingsJson?.institution_phone || settingsJson?.phone || null,
+    institution_email:
+      raw?.institution_email || raw?.email || settingsJson?.institution_email || settingsJson?.email || null,
+    institution_postal_address:
+      raw?.institution_postal_address ||
+      raw?.postal_address ||
+      raw?.address ||
+      settingsJson?.institution_postal_address ||
+      settingsJson?.postal_address ||
+      settingsJson?.address ||
+      null,
+    institution_code:
+      raw?.institution_code || raw?.code || settingsJson?.institution_code || settingsJson?.code || null,
+  };
+}
+
 function institutionName(institution?: InstitutionSettings | null) {
   return String(institution?.institution_name || "ÉTABLISSEMENT").trim() || "ÉTABLISSEMENT";
 }
 
 function logoUrl(institution?: InstitutionSettings | null) {
-  return String(institution?.institution_logo_url || "").trim();
+  return String(
+    institution?.institution_logo_url ||
+      institution?.logo_url ||
+      (institution?.settings_json as any)?.institution_logo_url ||
+      (institution?.settings_json as any)?.logo_url ||
+      "",
+  ).trim();
+}
+
+function studentPhotoUrl(visit: InfirmaryVisit) {
+  return String(visit.student_photo_url || visit.photo_url || "").trim();
 }
 
 function conditionText(visit: InfirmaryVisit) {
@@ -226,6 +285,7 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
 
     const instName = institutionName(institution);
     const logo = logoUrl(institution);
+    const studentPhoto = studentPhotoUrl(visit);
     const phone = String(institution?.institution_phone || "").trim();
     const email = String(institution?.institution_email || "").trim();
     const address = String(institution?.institution_postal_address || "").trim();
@@ -247,6 +307,10 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
             .logo { width: 74px; height: 74px; border: 1px solid #e2e8f0; border-radius: 14px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
             .logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
             .logo span { font-size: 11px; color: #64748b; font-weight: 700; }
+            .student-row { display: grid; grid-template-columns: 1fr 96px; gap: 12px; align-items: stretch; margin-bottom: 10px; }
+            .student-photo { width: 96px; min-height: 114px; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fafc; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+            .student-photo img { width: 100%; height: 100%; object-fit: cover; }
+            .student-photo span { color: #94a3b8; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
             .school { text-align: center; }
             .school-name { font-size: 18px; line-height: 1.15; font-weight: 900; text-transform: uppercase; color: #064e3b; letter-spacing: .02em; }
             .school-meta { margin-top: 5px; font-size: 11px; line-height: 1.4; color: #475569; }
@@ -299,11 +363,17 @@ function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; ins
               <div class="title-sub">Passage de l'élève à l'infirmerie scolaire</div>
             </section>
 
+            <section class="student-row">
+              <div class="grid">
+                <div class="box"><div class="label">Élève</div><div class="value">${escapeHtml(visit.student_name)}</div></div>
+                <div class="box"><div class="label">Classe</div><div class="value">${escapeHtml(visit.class_label || "—")}</div></div>
+                <div class="box"><div class="label">Matricule</div><div class="value">${escapeHtml(visit.student_matricule || "—")}</div></div>
+                <div class="box"><div class="label">Date du passage</div><div class="value">${escapeHtml(formatDate(visit.visit_date))}</div></div>
+              </div>
+              <div class="student-photo">${studentPhoto ? `<img src="${escapeHtml(studentPhoto)}" alt="Photo élève" />` : "<span>PHOTO</span>"}</div>
+            </section>
+
             <section class="grid">
-              <div class="box"><div class="label">Élève</div><div class="value">${escapeHtml(visit.student_name)}</div></div>
-              <div class="box"><div class="label">Classe</div><div class="value">${escapeHtml(visit.class_label || "—")}</div></div>
-              <div class="box"><div class="label">Matricule</div><div class="value">${escapeHtml(visit.student_matricule || "—")}</div></div>
-              <div class="box"><div class="label">Date du passage</div><div class="value">${escapeHtml(formatDate(visit.visit_date))}</div></div>
               <div class="box"><div class="label">Heure d'entrée</div><div class="value">${escapeHtml(formatTime(visit.entry_time))}</div></div>
               <div class="box"><div class="label">Heure de sortie</div><div class="value">${escapeHtml(formatTime(visit.exit_time))}</div></div>
               <div class="box"><div class="label">Durée</div><div class="value">${escapeHtml(durationLabel(visit.duration_minutes))}</div></div>
@@ -360,8 +430,20 @@ function ReceiptPreview({ visit, institution }: { visit: InfirmaryVisit; institu
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <Info label="Élève" value={visit.student_name} />
-        <Info label="Classe" value={visit.class_label || "—"} />
+        <div className="md:col-span-2 flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="flex h-20 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white text-[10px] font-black text-slate-400">
+            {studentPhotoUrl(visit) ? (
+              <img src={studentPhotoUrl(visit)} alt="Photo élève" className="h-full w-full object-cover" />
+            ) : (
+              "PHOTO"
+            )}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500">Élève</p>
+            <p className="truncate text-base font-black text-slate-950">{visit.student_name}</p>
+            <p className="text-sm font-semibold text-slate-600">{visit.class_label || "—"} • Matricule : {visit.student_matricule || "—"}</p>
+          </div>
+        </div>
         <Info label="Date" value={formatDate(visit.visit_date)} />
         <Info label="Heures" value={`${formatTime(visit.entry_time)} → ${formatTime(visit.exit_time)}`} />
         <Info label="Durée" value={durationLabel(visit.duration_minutes)} />
@@ -430,7 +512,7 @@ export default function AdminInfirmaryPage() {
     try {
       const res = await fetch("/api/institution/settings", { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as InstitutionSettings & { error?: string };
-      if (res.ok && !json.error) setInstitution(json);
+      if (res.ok && !json.error) setInstitution(normalizeInstitutionSettings(json));
     } catch {
       setInstitution(null);
     }
