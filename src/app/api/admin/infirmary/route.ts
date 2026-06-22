@@ -46,6 +46,28 @@ function onlyYmd(value: unknown) {
   return todayYmd();
 }
 
+function optionalYmd(value: unknown) {
+  const s = cleanText(value, 20);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return null;
+}
+
+function inclusiveDays(startYmd: string | null, endYmd: string | null) {
+  if (!startYmd || !endYmd) return null;
+  const start = new Date(`${startYmd}T00:00:00Z`).getTime();
+  const end = new Date(`${endYmd}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return Math.floor((end - start) / 86400000) + 1;
+}
+
+function restText(visit: any) {
+  const start = visit?.rest_start_date ? String(visit.rest_start_date) : "";
+  const end = visit?.rest_end_date ? String(visit.rest_end_date) : "";
+  if (!start || !end) return "";
+  const days = Number(visit?.rest_days || 0);
+  return `Repos du ${start} au ${end}${days > 0 ? ` (${days} jour${days > 1 ? "s" : ""})` : ""}`;
+}
+
 function onlyTime(value: unknown) {
   const s = cleanText(value, 20);
   if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0, 5);
@@ -214,12 +236,19 @@ async function queueParentInfirmaryNotification(opts: {
   const entryTime = String(visit.entry_time || "").slice(0, 5);
   const exitTime = visit.exit_time ? String(visit.exit_time).slice(0, 5) : null;
   const timeLabel = exitTime ? `${entryTime} - ${exitTime}` : `depuis ${entryTime}`;
+  const conditionDescription = cleanText(
+    visit.condition_description || visit.reason_details || "",
+    280,
+  );
+  const rest = restText(visit);
   const title = `Infirmerie — ${studentName}`;
   const body = [
     classLabel || "",
     visitDate,
     timeLabel,
-    `Reçu : ${visit.receipt_code}`,
+    conditionDescription ? `Motif : ${conditionDescription}` : "",
+    rest,
+    `Billet : ${visit.receipt_code}`,
   ]
     .filter(Boolean)
     .join(" • ");
@@ -238,7 +267,12 @@ async function queueParentInfirmaryNotification(opts: {
       duration_minutes: visit.duration_minutes,
       status: visit.status,
       reason_category: visit.reason_category,
+      condition_description: conditionDescription || null,
+      rest_start_date: visit.rest_start_date || null,
+      rest_end_date: visit.rest_end_date || null,
+      rest_days: visit.rest_days ?? null,
     },
+    rest: rest || null,
     occurred_at: occurredAt,
     title,
     body,
@@ -300,6 +334,10 @@ function normalizeVisit(row: any) {
     duration_minutes: row.duration_minutes,
     reason_category: row.reason_category,
     reason_details: row.reason_details,
+    condition_description: row.condition_description ?? row.reason_details ?? null,
+    rest_start_date: row.rest_start_date ?? null,
+    rest_end_date: row.rest_end_date ?? null,
+    rest_days: row.rest_days ?? null,
     action_taken: row.action_taken,
     status: row.status,
     notify_parent_requested: row.notify_parent_requested,
@@ -373,9 +411,16 @@ export async function POST(req: NextRequest) {
   const reasonCategory = REASON_VALUES.has(reasonCategoryRaw) ? reasonCategoryRaw : "autre";
   const statusRaw = cleanText(body.status, 80) || "observation";
   const status = STATUS_VALUES.has(statusRaw) ? statusRaw : "observation";
-  const reasonDetails = cleanText(body.reason_details, 800) || null;
+  const conditionDescription = cleanText(
+    (body as any).condition_description ?? body.reason_details,
+    1200,
+  );
+  const reasonDetails = conditionDescription || cleanText(body.reason_details, 800) || null;
   const actionTaken = cleanText(body.action_taken, 1200) || null;
   const notes = cleanText(body.notes, 1200) || null;
+  const restStartDate = optionalYmd((body as any).rest_start_date);
+  const restEndDate = optionalYmd((body as any).rest_end_date);
+  const restDays = inclusiveDays(restStartDate, restEndDate);
   const notifyParent = body.notify_parent === true;
 
   if (!studentId) {
@@ -384,6 +429,27 @@ export async function POST(req: NextRequest) {
 
   if (!entryTime) {
     return NextResponse.json({ ok: false, error: "Heure d'entrée obligatoire." }, { status: 400 });
+  }
+
+  if (!conditionDescription) {
+    return NextResponse.json(
+      { ok: false, error: "Merci d'indiquer ce dont souffre l'enfant ou le constat fait à l'infirmerie." },
+      { status: 400 },
+    );
+  }
+
+  if ((restStartDate && !restEndDate) || (!restStartDate && restEndDate)) {
+    return NextResponse.json(
+      { ok: false, error: "Merci d'indiquer le début et la fin du repos." },
+      { status: 400 },
+    );
+  }
+
+  if (restStartDate && restEndDate && restDays === null) {
+    return NextResponse.json(
+      { ok: false, error: "La date de fin du repos doit être après la date de début." },
+      { status: 400 },
+    );
   }
 
   let enrollmentQuery = srv
@@ -448,6 +514,10 @@ export async function POST(req: NextRequest) {
     duration_minutes: duration,
     reason_category: reasonCategory,
     reason_details: reasonDetails,
+    condition_description: conditionDescription,
+    rest_start_date: restStartDate,
+    rest_end_date: restEndDate,
+    rest_days: restDays,
     action_taken: actionTaken,
     status,
     notify_parent_requested: notifyParent,
@@ -527,7 +597,7 @@ export async function POST(req: NextRequest) {
       notifyParent && notification.queued === 0
         ? "Passage enregistré. Aucun parent notifiable n'a été trouvé."
         : notifyParent && notification.queued > 0
-          ? "Passage enregistré. Alerte parent créée en notification interne/push."
+          ? "Passage enregistré. Alerte parent créée avec le motif et le billet d'infirmerie."
           : "Passage infirmerie enregistré.",
   });
 }

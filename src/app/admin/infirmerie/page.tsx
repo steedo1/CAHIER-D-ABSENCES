@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bell,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   FileText,
@@ -13,7 +14,6 @@ import {
   Printer,
   RefreshCw,
   Search,
-  ShieldCheck,
 } from "lucide-react";
 
 type ClassRow = {
@@ -32,6 +32,21 @@ type StudentRow = {
   class_label?: string | null;
 };
 
+type InstitutionSettings = {
+  institution_name?: string | null;
+  institution_logo_url?: string | null;
+  institution_phone?: string | null;
+  institution_email?: string | null;
+  institution_region?: string | null;
+  institution_postal_address?: string | null;
+  institution_status?: string | null;
+  institution_code?: string | null;
+  country_name?: string | null;
+  country_motto?: string | null;
+  ministry_name?: string | null;
+  settings_json?: Record<string, unknown> | null;
+};
+
 type InfirmaryVisit = {
   id: string;
   student_id: string;
@@ -43,6 +58,10 @@ type InfirmaryVisit = {
   duration_minutes: number | null;
   reason_category: string;
   reason_details: string | null;
+  condition_description?: string | null;
+  rest_start_date?: string | null;
+  rest_end_date?: string | null;
+  rest_days?: number | null;
   action_taken: string | null;
   status: string;
   notify_parent_requested: boolean;
@@ -69,24 +88,6 @@ type SaveResponse = {
     push_dispatched: boolean;
   };
 };
-
-const REASONS = [
-  { value: "malaise", label: "Malaise" },
-  { value: "douleur", label: "Douleur / plainte" },
-  { value: "blessure_legere", label: "Blessure légère" },
-  { value: "fatigue", label: "Fatigue" },
-  { value: "prise_traitement", label: "Prise de traitement signalée" },
-  { value: "controle", label: "Contrôle / observation" },
-  { value: "autre", label: "Autre" },
-];
-
-const STATUSES = [
-  { value: "observation", label: "En observation" },
-  { value: "retour_classe", label: "Retourné en classe" },
-  { value: "parent_informe", label: "Parent informé" },
-  { value: "evacue", label: "Évacué / pris en charge" },
-  { value: "cloture", label: "Clôturé" },
-];
 
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -121,17 +122,13 @@ function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
     <textarea
       {...props}
       className={[
-        "min-h-[88px] w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm",
+        "min-h-[96px] w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm",
         "outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         props.className ?? "",
       ].join(" ")}
     />
   );
-}
-
-function labelFor(list: Array<{ value: string; label: string }>, value?: string | null) {
-  return list.find((item) => item.value === value)?.label || value || "—";
 }
 
 function todayYmd() {
@@ -194,89 +191,139 @@ function durationLabel(minutes?: number | null) {
   return `${h} h ${m} min`;
 }
 
-function statusClasses(status: string) {
-  switch (status) {
-    case "retour_classe":
-      return "bg-emerald-50 text-emerald-800 ring-emerald-200";
-    case "parent_informe":
-      return "bg-sky-50 text-sky-800 ring-sky-200";
-    case "evacue":
-      return "bg-red-50 text-red-800 ring-red-200";
-    case "cloture":
-      return "bg-slate-100 text-slate-700 ring-slate-200";
-    default:
-      return "bg-amber-50 text-amber-800 ring-amber-200";
-  }
+function restLabel(visit: Pick<InfirmaryVisit, "rest_start_date" | "rest_end_date" | "rest_days">) {
+  if (!visit.rest_start_date || !visit.rest_end_date) return "Aucun repos indiqué";
+  const days = Number(visit.rest_days || 0);
+  const daysText = days > 0 ? ` (${days} jour${days > 1 ? "s" : ""})` : "";
+  return `Du ${formatDateShort(visit.rest_start_date)} au ${formatDateShort(visit.rest_end_date)}${daysText}`;
 }
 
-function PrintReceiptButton({ visit }: { visit: InfirmaryVisit }) {
+function escapeHtml(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function institutionName(institution?: InstitutionSettings | null) {
+  return String(institution?.institution_name || "ÉTABLISSEMENT").trim() || "ÉTABLISSEMENT";
+}
+
+function logoUrl(institution?: InstitutionSettings | null) {
+  return String(institution?.institution_logo_url || "").trim();
+}
+
+function conditionText(visit: InfirmaryVisit) {
+  return String(visit.condition_description || visit.reason_details || "").trim();
+}
+
+function PrintReceiptButton({ visit, institution }: { visit: InfirmaryVisit; institution: InstitutionSettings | null }) {
   function handlePrint() {
     const win = window.open("", "_blank", "width=900,height=1100");
     if (!win) return;
 
+    const instName = institutionName(institution);
+    const logo = logoUrl(institution);
+    const phone = String(institution?.institution_phone || "").trim();
+    const email = String(institution?.institution_email || "").trim();
+    const address = String(institution?.institution_postal_address || "").trim();
+    const code = String(institution?.institution_code || "").trim();
+    const condition = conditionText(visit) || "—";
     const receiptHtml = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Reçu infirmerie ${visit.receipt_code}</title>
+          <title>Billet infirmerie ${escapeHtml(visit.receipt_code)}</title>
           <style>
             * { box-sizing: border-box; }
-            body { font-family: Arial, sans-serif; color: #0f172a; margin: 32px; }
-            .receipt { border: 2px solid #0f172a; padding: 24px; border-radius: 14px; }
-            .top { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid #cbd5e1; padding-bottom: 14px; margin-bottom: 18px; }
-            .title { font-size: 22px; font-weight: 800; text-transform: uppercase; }
-            .code { font-size: 16px; font-weight: 800; color: #047857; }
-            .muted { color: #475569; font-size: 12px; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 22px; }
-            .box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
-            .label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 4px; }
-            .value { font-size: 15px; font-weight: 700; }
+            body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 0; background: #f8fafc; }
+            .sheet { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 18mm 16mm 14mm; position: relative; }
+            .watermark { position: absolute; inset: 42mm 24mm auto; height: 150mm; opacity: 0.035; object-fit: contain; pointer-events: none; }
+            .official-line { height: 5px; background: linear-gradient(90deg, #064e3b, #10b981, #d97706); border-radius: 999px; margin-bottom: 12px; }
+            .header { display: grid; grid-template-columns: 76px 1fr 132px; gap: 14px; align-items: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 12px; }
+            .logo { width: 74px; height: 74px; border: 1px solid #e2e8f0; border-radius: 14px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #fff; }
+            .logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+            .logo span { font-size: 11px; color: #64748b; font-weight: 700; }
+            .school { text-align: center; }
+            .school-name { font-size: 18px; line-height: 1.15; font-weight: 900; text-transform: uppercase; color: #064e3b; letter-spacing: .02em; }
+            .school-meta { margin-top: 5px; font-size: 11px; line-height: 1.4; color: #475569; }
+            .receipt-code { text-align: right; }
+            .code-label { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 800; letter-spacing: .08em; }
+            .code-value { margin-top: 4px; color: #047857; font-size: 15px; font-weight: 900; }
+            .title { margin: 18px 0 14px; border: 2px solid #064e3b; border-radius: 14px; padding: 11px; text-align: center; }
+            .title-main { font-size: 22px; font-weight: 900; letter-spacing: .05em; color: #064e3b; }
+            .title-sub { margin-top: 3px; font-size: 12px; color: #475569; font-weight: 700; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+            .box { border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; background: rgba(255,255,255,.92); }
             .wide { grid-column: 1 / -1; }
-            .note { margin-top: 18px; padding: 12px; border-left: 4px solid #10b981; background: #ecfdf5; font-size: 13px; line-height: 1.45; }
-            .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 46px; }
-            .sig { border-top: 1px solid #0f172a; padding-top: 8px; text-align: center; font-size: 12px; color: #334155; }
-            @media print { body { margin: 18mm; } .receipt { break-inside: avoid; } }
+            .label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 900; letter-spacing: .05em; margin-bottom: 4px; }
+            .value { font-size: 14px; font-weight: 800; line-height: 1.35; color: #0f172a; white-space: pre-wrap; }
+            .condition { border-left: 5px solid #059669; background: #ecfdf5; }
+            .rest { border-left: 5px solid #d97706; background: #fffbeb; }
+            .signature { margin-top: 46px; display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: end; }
+            .sig-box { min-height: 78px; border-top: 1px solid #0f172a; padding-top: 8px; text-align: center; font-size: 12px; color: #334155; font-weight: 700; }
+            .issued { font-size: 11px; color: #475569; line-height: 1.5; }
+            .footer { position: absolute; left: 16mm; right: 16mm; bottom: 9mm; border-top: 1px solid #cbd5e1; padding-top: 5px; text-align: center; font-size: 9px; line-height: 1.35; color: #0f172a; }
+            .footer .site { font-weight: 900; letter-spacing: .04em; }
+            @media print {
+              body { background: #fff; }
+              .sheet { margin: 0; width: auto; min-height: 0; box-shadow: none; padding: 16mm 14mm 14mm; }
+              @page { size: A4 portrait; margin: 0; }
+            }
           </style>
         </head>
         <body>
-          <div class="receipt">
-            <div class="top">
-              <div>
-                <div class="title">Reçu de passage à l'infirmerie</div>
-                <div class="muted">Mon Cahier — Pièce justificative scolaire interne</div>
+          <main class="sheet">
+            ${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="" />` : ""}
+            <div class="official-line"></div>
+            <section class="header">
+              <div class="logo">${logo ? `<img src="${escapeHtml(logo)}" alt="Logo" />` : "<span>Logo</span>"}</div>
+              <div class="school">
+                <div class="school-name">${escapeHtml(instName)}</div>
+                <div class="school-meta">
+                  ${escapeHtml(address)}${address && phone ? " • " : ""}${phone ? `Tél : ${escapeHtml(phone)}` : ""}${email ? ` • ${escapeHtml(email)}` : ""}${code ? `<br/>Code : ${escapeHtml(code)}` : ""}
+                </div>
               </div>
-              <div style="text-align:right">
-                <div class="code">${escapeHtml(visit.receipt_code)}</div>
-                <div class="muted">Émis le ${escapeHtml(formatDateTime(visit.created_at))}</div>
+              <div class="receipt-code">
+                <div class="code-label">Code billet</div>
+                <div class="code-value">${escapeHtml(visit.receipt_code)}</div>
+                <div class="issued">Émis le ${escapeHtml(formatDateTime(visit.created_at))}</div>
               </div>
-            </div>
+            </section>
 
-            <div class="grid">
+            <section class="title">
+              <div class="title-main">BILLET D'INFIRMERIE</div>
+              <div class="title-sub">Passage de l'élève à l'infirmerie scolaire</div>
+            </section>
+
+            <section class="grid">
               <div class="box"><div class="label">Élève</div><div class="value">${escapeHtml(visit.student_name)}</div></div>
               <div class="box"><div class="label">Classe</div><div class="value">${escapeHtml(visit.class_label || "—")}</div></div>
               <div class="box"><div class="label">Matricule</div><div class="value">${escapeHtml(visit.student_matricule || "—")}</div></div>
-              <div class="box"><div class="label">Date</div><div class="value">${escapeHtml(formatDate(visit.visit_date))}</div></div>
+              <div class="box"><div class="label">Date du passage</div><div class="value">${escapeHtml(formatDate(visit.visit_date))}</div></div>
               <div class="box"><div class="label">Heure d'entrée</div><div class="value">${escapeHtml(formatTime(visit.entry_time))}</div></div>
               <div class="box"><div class="label">Heure de sortie</div><div class="value">${escapeHtml(formatTime(visit.exit_time))}</div></div>
               <div class="box"><div class="label">Durée</div><div class="value">${escapeHtml(durationLabel(visit.duration_minutes))}</div></div>
-              <div class="box"><div class="label">Statut</div><div class="value">${escapeHtml(labelFor(STATUSES, visit.status))}</div></div>
-              <div class="box"><div class="label">Motif général</div><div class="value">${escapeHtml(labelFor(REASONS, visit.reason_category))}</div></div>
               <div class="box"><div class="label">Alerte parent</div><div class="value">${visit.parent_notified ? "Créée" : "Non créée"}</div></div>
-              <div class="box wide"><div class="label">Action posée / observation scolaire</div><div class="value">${escapeHtml(visit.action_taken || "—")}</div></div>
-              <div class="box wide"><div class="label">Précision simple</div><div class="value">${escapeHtml(visit.reason_details || "—")}</div></div>
-            </div>
+              <div class="box wide condition"><div class="label">Ce dont souffre l'enfant / constat</div><div class="value">${escapeHtml(condition)}</div></div>
+              <div class="box wide rest"><div class="label">Repos ou congé accordé</div><div class="value">${escapeHtml(restLabel(visit))}</div></div>
+            </section>
 
-            <div class="note">
-              Ce reçu confirme uniquement le passage de l'élève à l'infirmerie aux date et heures indiquées. Il ne justifie pas automatiquement les absences et ne modifie pas les notes. Il peut servir de pièce à l'éducateur et au professeur selon la procédure de l'établissement.
-            </div>
+            <section class="signature">
+              <div class="issued">
+                Ce billet est produit comme pièce justificative du passage à l'infirmerie. Il peut être présenté à l'administration scolaire, à l'éducateur ou au professeur concerné selon la procédure de l'établissement.
+              </div>
+              <div class="sig-box">Signature et cachet de l'infirmerie</div>
+            </section>
 
-            <div class="signatures">
-              <div class="sig">Infirmerie</div>
-              <div class="sig">Éducateur / Administration</div>
-              <div class="sig">Parent / Responsable</div>
-            </div>
-          </div>
+            <footer class="footer">
+              <div class="site">www.mon-cahier.com</div>
+              <div>Billet d'infirmerie généré par Mon Cahier</div>
+            </footer>
+          </main>
           <script>window.print(); setTimeout(() => window.close(), 500);</script>
         </body>
       </html>`;
@@ -293,58 +340,34 @@ function PrintReceiptButton({ visit }: { visit: InfirmaryVisit }) {
       className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
     >
       <Printer className="h-4 w-4" />
-      Imprimer le reçu
+      Imprimer le billet
     </button>
   );
 }
 
-function escapeHtml(value: string) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function ReceiptPreview({ visit }: { visit: InfirmaryVisit }) {
+function ReceiptPreview({ visit, institution }: { visit: InfirmaryVisit; institution: InstitutionSettings | null }) {
   return (
     <section className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-col gap-3 border-b border-slate-100 pb-4 md:flex-row md:items-start md:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 ring-1 ring-emerald-200">
-            <FileText className="h-4 w-4" /> Reçu généré
+            <FileText className="h-4 w-4" /> Billet généré
           </div>
-          <h2 className="mt-2 text-lg font-black text-slate-950">
-            {visit.receipt_code}
-          </h2>
-          <p className="text-sm text-slate-600">
-            Pièce justificative de passage à l'infirmerie.
-          </p>
+          <h2 className="mt-2 text-lg font-black text-slate-950">{visit.receipt_code}</h2>
+          <p className="text-sm text-slate-600">Pièce justificative de passage à l'infirmerie.</p>
         </div>
-        <PrintReceiptButton visit={visit} />
+        <PrintReceiptButton visit={visit} institution={institution} />
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <Info label="Élève" value={visit.student_name} />
         <Info label="Classe" value={visit.class_label || "—"} />
         <Info label="Date" value={formatDate(visit.visit_date)} />
-        <Info
-          label="Heures"
-          value={`${formatTime(visit.entry_time)} → ${formatTime(visit.exit_time)}`}
-        />
+        <Info label="Heures" value={`${formatTime(visit.entry_time)} → ${formatTime(visit.exit_time)}`} />
         <Info label="Durée" value={durationLabel(visit.duration_minutes)} />
-        <Info label="Statut" value={labelFor(STATUSES, visit.status)} />
-        <Info label="Motif général" value={labelFor(REASONS, visit.reason_category)} />
-        <Info
-          label="Notification parent"
-          value={visit.parent_notified ? "Alerte créée" : "Non créée"}
-        />
-        <Info className="md:col-span-2" label="Action posée" value={visit.action_taken || "—"} />
-      </div>
-
-      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <strong>Règle métier :</strong> ce reçu ne détecte pas les évaluations, ne justifie pas automatiquement les absences et n'annule pas les zéros. Il sert de preuve pour les traitements manuels par les personnes concernées.
+        <Info label="Alerte parent" value={visit.parent_notified ? "Créée" : "Non créée"} />
+        <Info className="md:col-span-2" label="Ce dont souffre l'enfant" value={conditionText(visit) || "—"} />
+        <Info className="md:col-span-2" label="Repos ou congé accordé" value={restLabel(visit)} />
       </div>
     </section>
   );
@@ -353,10 +376,8 @@ function ReceiptPreview({ visit }: { visit: InfirmaryVisit }) {
 function Info({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
     <div className={["rounded-xl border border-slate-100 bg-slate-50 px-4 py-3", className].join(" ")}>
-      <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-1 text-sm font-bold text-slate-900">{value}</div>
+      <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -366,17 +387,17 @@ export default function AdminInfirmaryPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [visits, setVisits] = useState<InfirmaryVisit[]>([]);
   const [selectedVisit, setSelectedVisit] = useState<InfirmaryVisit | null>(null);
+  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
 
   const [classId, setClassId] = useState("");
   const [studentId, setStudentId] = useState("");
   const [visitDate, setVisitDate] = useState(todayYmd());
   const [entryTime, setEntryTime] = useState(nowTime());
   const [exitTime, setExitTime] = useState("");
-  const [reasonCategory, setReasonCategory] = useState("malaise");
-  const [status, setStatus] = useState("observation");
-  const [reasonDetails, setReasonDetails] = useState("");
-  const [actionTaken, setActionTaken] = useState("");
-  const [notes, setNotes] = useState("");
+  const [conditionDescription, setConditionDescription] = useState("");
+  const [hasRest, setHasRest] = useState(false);
+  const [restStartDate, setRestStartDate] = useState(todayYmd());
+  const [restEndDate, setRestEndDate] = useState(todayYmd());
   const [notifyParent, setNotifyParent] = useState(true);
   const [search, setSearch] = useState("");
 
@@ -391,13 +412,29 @@ export default function AdminInfirmaryPage() {
     const q = search.trim().toLowerCase();
     if (!q) return visits;
     return visits.filter((visit) =>
-      [visit.student_name, visit.class_label, visit.receipt_code, visit.student_matricule]
+      [
+        visit.student_name,
+        visit.class_label,
+        visit.receipt_code,
+        visit.student_matricule,
+        conditionText(visit),
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
         .includes(q),
     );
   }, [search, visits]);
+
+  async function loadInstitution() {
+    try {
+      const res = await fetch("/api/institution/settings", { cache: "no-store" });
+      const json = (await res.json().catch(() => ({}))) as InstitutionSettings & { error?: string };
+      if (res.ok && !json.error) setInstitution(json);
+    } catch {
+      setInstitution(null);
+    }
+  }
 
   async function loadClasses() {
     try {
@@ -419,9 +456,7 @@ export default function AdminInfirmaryPage() {
       setStudentId("");
       const params = new URLSearchParams();
       if (nextClassId) params.set("class_id", nextClassId);
-      const res = await fetch(`/api/admin/students?${params.toString()}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/admin/students?${params.toString()}`, { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as ApiList<StudentRow>;
       if (!res.ok) throw new Error(json.error || "Erreur chargement des élèves.");
       setStudents(Array.isArray(json.items) ? json.items : []);
@@ -451,6 +486,7 @@ export default function AdminInfirmaryPage() {
   }
 
   useEffect(() => {
+    void loadInstitution();
     void loadClasses();
     void loadStudents("");
     void loadVisits();
@@ -475,6 +511,18 @@ export default function AdminInfirmaryPage() {
       setError("Merci d'indiquer l'heure d'entrée.");
       return;
     }
+    if (!conditionDescription.trim()) {
+      setError("Merci d'indiquer ce dont souffre l'enfant ou le constat fait à l'infirmerie.");
+      return;
+    }
+    if (hasRest && (!restStartDate || !restEndDate)) {
+      setError("Merci d'indiquer les dates du repos ou congé accordé.");
+      return;
+    }
+    if (hasRest && restEndDate < restStartDate) {
+      setError("La date de fin du repos doit être après la date de début.");
+      return;
+    }
 
     try {
       setSaving(true);
@@ -487,11 +535,12 @@ export default function AdminInfirmaryPage() {
           visit_date: visitDate,
           entry_time: entryTime,
           exit_time: exitTime || null,
-          reason_category: reasonCategory,
-          reason_details: reasonDetails,
-          action_taken: actionTaken,
-          status,
-          notes,
+          condition_description: conditionDescription,
+          reason_details: conditionDescription,
+          reason_category: "autre",
+          status: exitTime ? "cloture" : "observation",
+          rest_start_date: hasRest ? restStartDate : null,
+          rest_end_date: hasRest ? restEndDate : null,
           notify_parent: notifyParent,
         }),
       });
@@ -503,12 +552,12 @@ export default function AdminInfirmaryPage() {
       setSelectedVisit(json.item);
       setVisits((prev) => [json.item as InfirmaryVisit, ...prev]);
       setSuccess(json.message || "Passage infirmerie enregistré.");
-      setReasonDetails("");
-      setActionTaken("");
-      setNotes("");
+      setConditionDescription("");
+      setHasRest(false);
+      setRestStartDate(todayYmd());
+      setRestEndDate(todayYmd());
       setExitTime("");
       setEntryTime(nowTime());
-      setStatus("observation");
     } catch (e: any) {
       setError(e?.message || "Erreur lors de l'enregistrement.");
     } finally {
@@ -522,13 +571,11 @@ export default function AdminInfirmaryPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1 text-xs font-bold ring-1 ring-white/15">
-              <HeartPulse className="h-4 w-4" /> Vie scolaire & sécurité
+              <HeartPulse className="h-4 w-4" /> Vie scolaire & santé
             </div>
-            <h1 className="mt-3 text-2xl font-black tracking-tight md:text-3xl">
-              Infirmerie scolaire
-            </h1>
+            <h1 className="mt-3 text-2xl font-black tracking-tight md:text-3xl">Infirmerie scolaire</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-emerald-50">
-              Enregistrer un passage, générer un reçu clair et notifier le parent si nécessaire. Le reçu sert ensuite de pièce justificative pour les absences ou les notes, sans automatisme risqué.
+              Informer rapidement le parent et générer un billet d'infirmerie utilisable comme justificatif scolaire.
             </p>
           </div>
           <button
@@ -540,33 +587,6 @@ export default function AdminInfirmaryPage() {
           </button>
         </div>
       </header>
-
-      <section className="mb-6 grid gap-3 md:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-            <FileText className="h-4 w-4 text-emerald-600" /> Reçu officiel interne
-          </div>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
-            Date, heure d'entrée, heure de sortie, motif général, action posée et code reçu.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-            <Bell className="h-4 w-4 text-emerald-600" /> Notification parent
-          </div>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
-            Notification interne + push, SMS si le service est actif et si un parent est lié à l'élève.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-black text-amber-950">
-            <ShieldCheck className="h-4 w-4 text-amber-700" /> Pas d'automatisme dangereux
-          </div>
-          <p className="mt-1 text-xs leading-5 text-amber-900">
-            L'infirmerie ne détecte pas les évaluations et ne justifie rien automatiquement.
-          </p>
-        </div>
-      </section>
 
       {error && (
         <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -588,17 +608,15 @@ export default function AdminInfirmaryPage() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(420px,520px)]">
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-5">
-            <h2 className="text-lg font-black text-slate-950">Nouveau passage</h2>
+            <h2 className="text-lg font-black text-slate-950">Nouveau billet d'infirmerie</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Saisir uniquement les informations nécessaires au suivi scolaire. Éviter les diagnostics médicaux détaillés.
+              Saisir le passage, le constat utile et le repos éventuel. Le billet est imprimable immédiatement.
             </p>
           </div>
 
           <form onSubmit={saveVisit} className="grid gap-4 md:grid-cols-2">
             <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Classe
-              </span>
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Classe</span>
               <Select value={classId} onChange={(e) => onClassChange(e.target.value)} disabled={loadingClasses}>
                 <option value="">Toutes les classes</option>
                 {classes.map((c) => (
@@ -611,13 +629,9 @@ export default function AdminInfirmaryPage() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Élève
-              </span>
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Élève</span>
               <Select value={studentId} onChange={(e) => setStudentId(e.target.value)} disabled={loadingStudents} required>
-                <option value="">
-                  {loadingStudents ? "Chargement..." : "Sélectionner l'élève"}
-                </option>
+                <option value="">{loadingStudents ? "Chargement..." : "Sélectionner l'élève"}</option>
                 {students.map((student) => (
                   <option key={student.id} value={student.id}>
                     {student.full_name} {student.class_label ? `— ${student.class_label}` : ""}
@@ -627,85 +641,58 @@ export default function AdminInfirmaryPage() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Date
-              </span>
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Date</span>
               <Input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} required />
             </label>
 
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Entrée
-                </span>
+                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Entrée</span>
                 <Input type="time" value={entryTime} onChange={(e) => setEntryTime(e.target.value)} required />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                  Sortie
-                </span>
+                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Sortie</span>
                 <Input type="time" value={exitTime} onChange={(e) => setExitTime(e.target.value)} />
               </label>
             </div>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Motif général
-              </span>
-              <Select value={reasonCategory} onChange={(e) => setReasonCategory(e.target.value)}>
-                {REASONS.map((reason) => (
-                  <option key={reason.value} value={reason.value}>
-                    {reason.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Statut
-              </span>
-              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-                {STATUSES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
-
             <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Précision simple, sans diagnostic détaillé
-              </span>
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Ce dont souffre l'enfant / constat</span>
               <Textarea
-                value={reasonDetails}
-                onChange={(e) => setReasonDetails(e.target.value)}
-                placeholder="Ex. se plaint de maux de tête, repos demandé, parent à contacter..."
+                value={conditionDescription}
+                onChange={(e) => setConditionDescription(e.target.value)}
+                placeholder="Ex. maux de tête, fièvre signalée, douleur abdominale, blessure légère, malaise..."
+                required
               />
             </label>
 
-            <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Action posée
-              </span>
-              <Textarea
-                value={actionTaken}
-                onChange={(e) => setActionTaken(e.target.value)}
-                placeholder="Ex. mis en observation, retour en classe, parent appelé, évacuation..."
+            <label className="flex items-start gap-3 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={hasRest}
+                onChange={(e) => setHasRest(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
               />
+              <span>
+                <span className="block text-sm font-black text-amber-950">Repos ou congé accordé</span>
+                <span className="mt-1 block text-xs leading-5 text-amber-800">
+                  À cocher seulement si l'élève est mis au repos sur une période donnée.
+                </span>
+              </span>
             </label>
 
-            <label className="block md:col-span-2">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                Note interne facultative
-              </span>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Information interne à l'établissement."
-              />
-            </label>
+            {hasRest && (
+              <div className="grid gap-3 rounded-2xl border border-amber-100 bg-white p-4 md:col-span-2 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Début du repos</span>
+                  <Input type="date" value={restStartDate} onChange={(e) => setRestStartDate(e.target.value)} required={hasRest} />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Fin du repos</span>
+                  <Input type="date" value={restEndDate} onChange={(e) => setRestEndDate(e.target.value)} required={hasRest} />
+                </label>
+              </div>
+            )}
 
             <label className="flex items-start gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 md:col-span-2">
               <input
@@ -715,11 +702,9 @@ export default function AdminInfirmaryPage() {
                 className="mt-1 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
               />
               <span>
-                <span className="block text-sm font-black text-emerald-950">
-                  Notifier le parent maintenant
-                </span>
+                <span className="block text-sm font-black text-emerald-950">Notifier le parent maintenant</span>
                 <span className="mt-1 block text-xs leading-5 text-emerald-800">
-                  Le parent reçoit une alerte avec le code du reçu. Le détail médical sensible n'est pas nécessaire dans l'alerte.
+                  La notification contient le motif saisi, les heures de passage, le repos éventuel et le code du billet.
                 </span>
               </span>
             </label>
@@ -730,10 +715,10 @@ export default function AdminInfirmaryPage() {
                 onClick={() => {
                   setEntryTime(nowTime());
                   setExitTime("");
-                  setReasonDetails("");
-                  setActionTaken("");
-                  setNotes("");
-                  setStatus("observation");
+                  setConditionDescription("");
+                  setHasRest(false);
+                  setRestStartDate(todayYmd());
+                  setRestEndDate(todayYmd());
                   setSuccess(null);
                   setError(null);
                 }}
@@ -747,7 +732,7 @@ export default function AdminInfirmaryPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                Enregistrer et générer le reçu
+                Enregistrer et générer le billet
               </button>
             </div>
           </form>
@@ -755,13 +740,13 @@ export default function AdminInfirmaryPage() {
 
         <aside className="space-y-6">
           {selectedVisit ? (
-            <ReceiptPreview visit={selectedVisit} />
+            <ReceiptPreview visit={selectedVisit} institution={institution} />
           ) : (
             <section className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center shadow-sm">
               <Clock3 className="mx-auto h-10 w-10 text-slate-300" />
-              <h2 className="mt-3 text-base font-black text-slate-900">Aucun reçu sélectionné</h2>
+              <h2 className="mt-3 text-base font-black text-slate-900">Aucun billet sélectionné</h2>
               <p className="mt-1 text-sm leading-6 text-slate-600">
-                Après enregistrement, le reçu apparaîtra ici pour impression immédiate.
+                Après enregistrement, le billet apparaîtra ici pour impression immédiate.
               </p>
             </section>
           )}
@@ -772,16 +757,11 @@ export default function AdminInfirmaryPage() {
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-lg font-black text-slate-950">Derniers passages</h2>
-            <p className="text-sm text-slate-600">Historique récent des reçus générés.</p>
+            <p className="text-sm text-slate-600">Historique récent des billets générés.</p>
           </div>
           <div className="relative w-full md:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher élève, classe, reçu..."
-              className="pl-9"
-            />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher élève, classe, billet..." className="pl-9" />
           </div>
         </div>
 
@@ -790,20 +770,17 @@ export default function AdminInfirmaryPage() {
             <Loader2 className="h-4 w-4 animate-spin" /> Chargement des passages...
           </div>
         ) : filteredVisits.length === 0 ? (
-          <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
-            Aucun passage trouvé.
-          </div>
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">Aucun passage trouvé.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
               <thead>
                 <tr className="bg-slate-50 text-left text-xs font-black uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-3">Reçu</th>
+                  <th className="px-3 py-3">Billet</th>
                   <th className="px-3 py-3">Élève</th>
-                  <th className="px-3 py-3">Classe</th>
                   <th className="px-3 py-3">Date / heures</th>
-                  <th className="px-3 py-3">Motif</th>
-                  <th className="px-3 py-3">Statut</th>
+                  <th className="px-3 py-3">Constat</th>
+                  <th className="px-3 py-3">Repos</th>
                   <th className="px-3 py-3">Parent</th>
                   <th className="px-3 py-3 text-right">Action</th>
                 </tr>
@@ -814,29 +791,24 @@ export default function AdminInfirmaryPage() {
                     <td className="px-3 py-3 font-black text-emerald-700">{visit.receipt_code}</td>
                     <td className="px-3 py-3">
                       <div className="font-bold text-slate-900">{visit.student_name}</div>
-                      <div className="text-xs text-slate-500">{visit.student_matricule || "—"}</div>
+                      <div className="text-xs text-slate-500">{visit.class_label || "—"}</div>
                     </td>
-                    <td className="px-3 py-3 text-slate-700">{visit.class_label || "—"}</td>
                     <td className="px-3 py-3 text-slate-700">
                       <div>{formatDateShort(visit.visit_date)}</div>
-                      <div className="text-xs text-slate-500">
-                        {formatTime(visit.entry_time)} → {formatTime(visit.exit_time)}
-                      </div>
+                      <div className="text-xs text-slate-500">{formatTime(visit.entry_time)} → {formatTime(visit.exit_time)}</div>
                     </td>
-                    <td className="px-3 py-3 text-slate-700">{labelFor(REASONS, visit.reason_category)}</td>
-                    <td className="px-3 py-3">
-                      <span className={["inline-flex rounded-full px-2 py-1 text-xs font-bold ring-1", statusClasses(visit.status)].join(" ")}>
-                        {labelFor(STATUSES, visit.status)}
-                      </span>
+                    <td className="max-w-xs px-3 py-3 text-slate-700">
+                      <div className="line-clamp-2">{conditionText(visit) || "—"}</div>
                     </td>
+                    <td className="px-3 py-3 text-slate-700">{restLabel(visit)}</td>
                     <td className="px-3 py-3">
                       {visit.parent_notified ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800 ring-1 ring-emerald-200">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Alerte créée
+                          <Bell className="h-3.5 w-3.5" /> Alerte créée
                         </span>
                       ) : visit.notify_parent_requested ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-200">
-                          <AlertTriangle className="h-3.5 w-3.5" /> Aucun parent
+                          <AlertTriangle className="h-3.5 w-3.5" /> Non créée
                         </span>
                       ) : (
                         <span className="text-xs text-slate-500">Non demandé</span>
@@ -848,7 +820,7 @@ export default function AdminInfirmaryPage() {
                         onClick={() => setSelectedVisit(visit)}
                         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
                       >
-                        Voir reçu
+                        Voir billet
                       </button>
                     </td>
                   </tr>

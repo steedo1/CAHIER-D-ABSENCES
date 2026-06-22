@@ -25,6 +25,10 @@ create table if not exists public.infirmary_visits (
 
   reason_category text not null default 'autre',
   reason_details text,
+  condition_description text,
+  rest_start_date date,
+  rest_end_date date,
+  rest_days integer,
   action_taken text,
   status text not null default 'observation'
     check (status in ('observation', 'retour_classe', 'parent_informe', 'evacue', 'cloture')),
@@ -52,7 +56,19 @@ comment on table public.infirmary_visits is
   'Passages à l''infirmerie scolaire. Le reçu généré sert de justificatif, sans modification automatique des absences ou des notes.';
 
 comment on column public.infirmary_visits.reason_category is
-  'Motif général uniquement. Éviter les diagnostics médicaux détaillés.';
+  'Motif général uniquement.';
+
+comment on column public.infirmary_visits.condition_description is
+  'Ce dont souffre l''enfant ou constat utile saisi sur le billet d''infirmerie.';
+
+comment on column public.infirmary_visits.rest_start_date is
+  'Date de début du repos ou congé accordé, si applicable.';
+
+comment on column public.infirmary_visits.rest_end_date is
+  'Date de fin du repos ou congé accordé, si applicable.';
+
+comment on column public.infirmary_visits.rest_days is
+  'Nombre de jours de repos ou congé calculé inclusivement entre début et fin.';
 
 comment on column public.infirmary_visits.receipt_code is
   'Code du reçu d''infirmerie remis comme pièce justificative interne.';
