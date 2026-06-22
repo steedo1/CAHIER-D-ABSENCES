@@ -533,6 +533,35 @@ function splitStudentName(meta: Pick<StudentMetaRow, "first_name" | "last_name" 
   };
 }
 
+const BULLETIN_EXPORT_FETCH_TIMEOUT_MS = Number(process.env.BULLETIN_EXPORT_FETCH_TIMEOUT_MS || 45000);
+const BULLETIN_EXPORT_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Number(process.env.BULLETIN_EXPORT_CONCURRENCY || 4) || 4)
+);
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runOne = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => runOne())
+  );
+
+  return results;
+}
+
 function pickOrigin(req: NextRequest) {
   const host =
     req.headers.get("x-forwarded-host") ??
@@ -1361,14 +1390,20 @@ async function fetchBulletinForClass(params: {
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
   url.searchParams.set("published", "true");
+  // Les exports DESPS n'ont pas besoin des QR code ni des images PNG des bulletins.
+  // Ce mode allège fortement les appels internes et évite les délais excessifs.
+  url.searchParams.set("export_light", "true");
 
   const cookie = params.req.headers.get("cookie") ?? "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BULLETIN_EXPORT_FETCH_TIMEOUT_MS);
 
   try {
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: cookie ? { cookie } : {},
       cache: "no-store",
+      signal: controller.signal,
     });
 
     if (!res.ok) return null;
@@ -1379,6 +1414,8 @@ async function fetchBulletinForClass(params: {
     return data;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -3186,11 +3223,20 @@ async function collectOfficialTermStats(params: {
     return m.get(title)!;
   };
 
-  for (const cls of classes) {
+  const classBulletins = await mapWithConcurrency(classes, BULLETIN_EXPORT_CONCURRENCY, async (cls) => {
     const currentClassId = String(cls.id);
+    const bulletinData = await fetchBulletinForClass({
+      req,
+      classId: currentClassId,
+      from: resolvedPeriod.bulletinFrom,
+      to: resolvedPeriod.bulletinTo,
+    });
+    return { cls, currentClassId, bulletinData };
+  });
+
+  for (const { cls, currentClassId, bulletinData } of classBulletins) {
     const levelKey = officialLevelKey(cls);
     const cycleKey = officialCycleKey(levelKey);
-    const bulletinData = await fetchBulletinForClass({ req, classId: currentClassId, from: resolvedPeriod.bulletinFrom, to: resolvedPeriod.bulletinTo });
     const itemByStudent = new Map<string, BulletinItem>();
     for (const item of bulletinData?.items || []) itemByStudent.set(String(item.student_id), item);
 
@@ -3448,15 +3494,23 @@ async function prepareDespsOfficialAnnualExport(params: {
     return m.get(title)!;
   };
 
-  for (const cls of classes) {
+  const classBulletins = await mapWithConcurrency(classes, BULLETIN_EXPORT_CONCURRENCY, async (cls) => {
     const currentClassId = String(cls.id);
-    const levelKey = officialLevelKey(cls);
     const bulletinsByPeriod = new Map<string, BulletinResponse>();
     await Promise.all(displayPeriods.map(async (period) => {
-      const bulletin = await fetchBulletinForClass({ req, classId: currentClassId, from: period.start_date, to: period.end_date });
+      const bulletin = await fetchBulletinForClass({
+        req,
+        classId: currentClassId,
+        from: period.start_date,
+        to: period.end_date,
+      });
       if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
     }));
+    return { cls, currentClassId, bulletinsByPeriod };
+  });
 
+  for (const { cls, currentClassId, bulletinsByPeriod } of classBulletins) {
+    const levelKey = officialLevelKey(cls);
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
     const subjectValuesByStudent = new Map<string, Map<string, number[]>>();

@@ -1487,6 +1487,9 @@ export async function GET(req: NextRequest) {
   const classId = searchParams.get("class_id");
   const dateFrom = searchParams.get("from");
   const dateTo = searchParams.get("to");
+  const exportLight = ["1", "true", "yes", "on"].includes(
+    String(searchParams.get("export_light") || "").toLowerCase()
+  );
 
   if (!classId) {
     return NextResponse.json({ ok: false, error: "MISSING_CLASS_ID" }, { status: 400 });
@@ -2168,22 +2171,24 @@ export async function GET(req: NextRequest) {
 
     applyPeriodNcOverridesToItems(baseItems, periodNcOverrideMap);
 
-    const itemsWithQr = await addQrToItems(srvClient, baseItems, {
-      origin,
-      institutionId,
-      classId: classRow.id,
-      classAcademicYear: classRow.academic_year ?? null,
-      periodMeta: {
-        from: periodMeta.from ?? null,
-        to: periodMeta.to ?? null,
-        code: periodMeta.code ?? null,
-        label: periodMeta.label ?? null,
-        short_label: periodMeta.short_label ?? null,
-        academic_year: periodMeta.academic_year ?? null,
-      },
-    });
-
-    const itemsWithQrPng = await attachQrPng(itemsWithQr);
+    const itemsForResponse = exportLight
+      ? baseItems
+      : await attachQrPng(
+          await addQrToItems(srvClient, baseItems, {
+            origin,
+            institutionId,
+            classId: classRow.id,
+            classAcademicYear: classRow.academic_year ?? null,
+            periodMeta: {
+              from: periodMeta.from ?? null,
+              to: periodMeta.to ?? null,
+              code: periodMeta.code ?? null,
+              label: periodMeta.label ?? null,
+              short_label: periodMeta.short_label ?? null,
+              academic_year: periodMeta.academic_year ?? null,
+            },
+          })
+        );
 
     return NextResponse.json({
       ok: true,
@@ -2216,7 +2221,7 @@ export async function GET(req: NextRequest) {
       subjects: [],
       subject_groups: [],
       subject_components: [],
-      items: itemsWithQrPng,
+      items: itemsForResponse,
     });
   }
 
@@ -3837,6 +3842,7 @@ export async function GET(req: NextRequest) {
   // ✅ Snapshot officiel pour la vérification QR.
   // La page publique ne doit pas reconstruire autrement les éléments sensibles
   // du bulletin (moyenne, conduite CSCA, groupes de matières, rangs).
+  // En mode export statistique, on ne l'ajoute pas : le JSON reste beaucoup plus léger.
   for (const it of items as any[]) {
     const conductAvg =
       conductAvgByStudent && conductAvgByStudent.has(String(it.student_id))
@@ -3844,52 +3850,56 @@ export async function GET(req: NextRequest) {
         : cleanNumber(it?.conduct_avg, 4);
 
     it.conduct_avg = conductAvg;
-    it.__qr_snapshot = {
-      g: cleanNumber(it?.general_avg, 4),
-      a: cleanNumber(it?.annual_avg, 4),
-      c: conductAvg,
-      r:
-        it?.rank !== null && it?.rank !== undefined && Number.isFinite(Number(it.rank))
-          ? Number(it.rank)
+
+    if (!exportLight) {
+      it.__qr_snapshot = {
+        g: cleanNumber(it?.general_avg, 4),
+        a: cleanNumber(it?.annual_avg, 4),
+        c: conductAvg,
+        r:
+          it?.rank !== null && it?.rank !== undefined && Number.isFinite(Number(it.rank))
+            ? Number(it.rank)
+            : null,
+        ar:
+          it?.annual_rank !== null &&
+          it?.annual_rank !== undefined &&
+          Number.isFinite(Number(it.annual_rank))
+            ? Number(it.annual_rank)
+            : null,
+        subjects: subjectsForReport,
+        subject_groups: subjectGroups,
+        subject_components: subjectComponentsForReport,
+        per_subject: Array.isArray(it?.per_subject) ? it.per_subject : [],
+        per_group: Array.isArray(it?.per_group) ? it.per_group : [],
+        per_subject_components: Array.isArray(it?.per_subject_components)
+          ? it.per_subject_components
+          : [],
+        previous_period_avgs: Array.isArray(it?.previous_period_avgs)
+          ? it.previous_period_avgs
           : null,
-      ar:
-        it?.annual_rank !== null &&
-        it?.annual_rank !== undefined &&
-        Number.isFinite(Number(it.annual_rank))
-          ? Number(it.annual_rank)
-          : null,
-      subjects: subjectsForReport,
-      subject_groups: subjectGroups,
-      subject_components: subjectComponentsForReport,
-      per_subject: Array.isArray(it?.per_subject) ? it.per_subject : [],
-      per_group: Array.isArray(it?.per_group) ? it.per_group : [],
-      per_subject_components: Array.isArray(it?.per_subject_components)
-        ? it.per_subject_components
-        : [],
-      previous_period_avgs: Array.isArray(it?.previous_period_avgs)
-        ? it.previous_period_avgs
-        : null,
-    };
+      };
+    }
   }
 
-  // ✅ QR : URL courte /v/[code] (fallback token si besoin)
-  const itemsWithQr = await addQrToItems(srvClient, items, {
-    origin,
-    institutionId,
-    classId: classRow.id,
-    classAcademicYear: classRow.academic_year ?? null,
-    periodMeta: {
-      from: periodMeta.from ?? null,
-      to: periodMeta.to ?? null,
-      code: periodMeta.code ?? null,
-      label: periodMeta.label ?? null,
-      short_label: periodMeta.short_label ?? null,
-      academic_year: periodMeta.academic_year ?? null,
-    },
-  });
-
-  // ✅ QR PNG server-side
-  const itemsWithQrPng = await attachQrPng(itemsWithQr);
+  // ✅ Les exports statistiques n'ont pas besoin des QR/PNG : on évite ce traitement lourd.
+  const itemsForResponse = exportLight
+    ? items
+    : await attachQrPng(
+        await addQrToItems(srvClient, items, {
+          origin,
+          institutionId,
+          classId: classRow.id,
+          classAcademicYear: classRow.academic_year ?? null,
+          periodMeta: {
+            from: periodMeta.from ?? null,
+            to: periodMeta.to ?? null,
+            code: periodMeta.code ?? null,
+            label: periodMeta.label ?? null,
+            short_label: periodMeta.short_label ?? null,
+            academic_year: periodMeta.academic_year ?? null,
+          },
+        })
+      );
 
   return NextResponse.json({
     ok: true,
@@ -3922,6 +3932,6 @@ export async function GET(req: NextRequest) {
     subjects: subjectsForReport,
     subject_groups: subjectGroups,
     subject_components: subjectComponentsForReport,
-    items: itemsWithQrPng,
+    items: itemsForResponse,
   });
 }
