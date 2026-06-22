@@ -350,7 +350,7 @@ function normalizeVisit(row: any) {
     student_name: studentFullName(student),
     student_matricule: student?.matricule ?? null,
     photo_url: student?.photo_url ?? null,
-    student_photo_url: student?.student_photo_url ?? student?.photo_url ?? null,
+    student_photo_url: student?.photo_url ?? null,
     class_label: klass?.label ?? null,
     class_level: klass?.level ?? null,
   };
@@ -373,7 +373,7 @@ export async function GET(req: NextRequest) {
     .select(
       `
       *,
-      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url, student_photo_url ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
       classes:class_id ( id, label, level )
     `,
     )
@@ -535,7 +535,7 @@ export async function POST(req: NextRequest) {
     .select(
       `
       *,
-      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url, student_photo_url ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
       classes:class_id ( id, label, level )
     `,
     )
@@ -577,7 +577,7 @@ export async function POST(req: NextRequest) {
           .select(
             `
             *,
-            students:student_id ( id, first_name, last_name, full_name, matricule, photo_url, student_photo_url ),
+            students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
             classes:class_id ( id, label, level )
           `,
           )

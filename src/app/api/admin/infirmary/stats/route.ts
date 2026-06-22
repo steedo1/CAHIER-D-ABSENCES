@@ -148,7 +148,7 @@ export async function GET(req: NextRequest) {
       parent_notified,
       notification_count,
       created_at,
-      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url, student_photo_url ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
       classes:class_id ( id, label, level )
     `,
     )
