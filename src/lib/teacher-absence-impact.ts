@@ -78,13 +78,14 @@ function detectWeekdayMode(periods: any[]): WeekdayMode {
     )
   );
 
+  // Convention utilisée par l'app : 0 = dimanche, 1 = lundi, ..., 6 = samedi.
+  // Une semaine scolaire lundi-vendredi (1..5) ne doit pas être interprétée
+  // comme une convention legacy "lundi = 0".
   if (vals.includes(7)) return "iso";
+  if (vals.includes(6)) return "js";
+  if (vals.includes(0) && !vals.includes(5)) return "mon0";
 
-  const max = vals.length ? Math.max(...vals) : 6;
-  if (max === 5) return "mon0";
-  if (vals.includes(0) && max === 6) return "js";
-
-  return "iso";
+  return "js";
 }
 
 function jsDayToDbWeekday(jsDay0to6: number, mode: WeekdayMode): number {
