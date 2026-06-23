@@ -263,6 +263,11 @@ type PreparedWorkbook = {
   outputExtension?: "xlsx" | "xlsm";
 };
 
+type InstitutionExportInfo = {
+  name: string;
+  statusLabel: string;
+};
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -474,6 +479,62 @@ function normalizeForMatch(value: string | null | undefined): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function pickStringFromObject(source: unknown, keys: string[]): string {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return "";
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const cleaned = value.trim();
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+function normalizeDespsInstitutionStatus(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+  const normalized = normalizeForMatch(raw);
+
+  if (!normalized) return "Public";
+  if (normalized.includes("communautaire")) return "Communautaire";
+  if (normalized.includes("prive") || normalized.includes("private")) return "Privé";
+  if (normalized.includes("public")) return "Public";
+
+  return raw;
+}
+
+function resolveInstitutionExportInfo(row: unknown): InstitutionExportInfo {
+  const institution =
+    row && typeof row === "object" && !Array.isArray(row)
+      ? (row as Record<string, unknown>)
+      : {};
+  const settings =
+    institution.settings_json &&
+    typeof institution.settings_json === "object" &&
+    !Array.isArray(institution.settings_json)
+      ? (institution.settings_json as Record<string, unknown>)
+      : {};
+
+  const name =
+    pickStringFromObject(institution, ["name"]) ||
+    pickStringFromObject(settings, ["institution_name", "school_name", "header_title", "name", "label"]) ||
+    "Établissement";
+
+  const status =
+    pickStringFromObject(institution, ["status"]) ||
+    pickStringFromObject(settings, [
+      "institution_status",
+      "school_status",
+      "establishment_status",
+      "status",
+      "institution_type",
+      "school_type",
+      "type_etablissement",
+    ]);
+
+  return { name, statusLabel: normalizeDespsInstitutionStatus(status) };
 }
 
 function compactForMatch(value: string | null | undefined): string {
@@ -2971,10 +3032,10 @@ function termText(term: 1 | 2 | 3) {
   return { label: "3ème", title: "3ème TRIMESTRE", mg: "MGT3", mt: "MT3" };
 }
 
-function putTermGeneralRow(aoa: unknown[][], rowIndex1: number, level: string, stats: OfficialGeneralStats, institutionName: string) {
+function putTermGeneralRow(aoa: unknown[][], rowIndex1: number, level: string, stats: OfficialGeneralStats, institutionName: string, institutionStatusLabel: string) {
   const r = rowIndex1;
   setAoaCell(aoa, `B${r}`, institutionName);
-  setAoaCell(aoa, `C${r}`, "Public");
+  setAoaCell(aoa, `C${r}`, institutionStatusLabel);
   setAoaCell(aoa, `D${r}`, level);
   setAoaCell(aoa, `E${r}`, stats.girls);
   setAoaCell(aoa, `F${r}`, stats.boys);
@@ -3005,7 +3066,7 @@ function putTermGeneralRow(aoa: unknown[][], rowIndex1: number, level: string, s
   setAoaCell(aoa, `AE${r}`, percentCell(stats.lt850Girls + stats.lt850Boys, officialClassed(stats)));
 }
 
-function buildOfficialTermGeneralSheet(term: 1 | 2 | 3, academicYear: string, institutionName: string, statsByLevel: Map<string, OfficialGeneralStats>) {
+function buildOfficialTermGeneralSheet(term: 1 | 2 | 3, academicYear: string, institutionName: string, institutionStatusLabel: string, statsByLevel: Map<string, OfficialGeneralStats>) {
   const t = termText(term);
   const aoa = makeAoa(88, 31);
   setAoaCell(aoa, "B1", `ANALYSE DU RENDEMENT DES ELEVES AU ${t.title} (${academicYear})`);
@@ -3051,7 +3112,7 @@ function buildOfficialTermGeneralSheet(term: 1 | 2 | 3, academicYear: string, in
 
   for (const level of OFFICIAL_TERM_LEVELS) {
     const stats = statsByLevel.get(level) || makeOfficialGeneralStats();
-    putTermGeneralRow(aoa, rowByLevel[level], level === "TOTAL" ? "" : level, stats, institutionName);
+    putTermGeneralRow(aoa, rowByLevel[level], level === "TOTAL" ? "" : level, stats, institutionName, institutionStatusLabel);
   }
   setAoaCell(aoa, "B24", "TOTAL");
   return aoa;
@@ -3309,6 +3370,7 @@ async function prepareDespsOfficialTermExport(params: {
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
   institutionId: string;
   institutionName: string;
+  institutionStatusLabel: string;
   academicYear: string;
   periodRef: string;
   classId: string;
@@ -3346,7 +3408,7 @@ async function prepareDespsOfficialTermExport(params: {
       ...buildDropdownSheets().slice(0, 1),
       {
         sheetName: "Etab Rendement au général",
-        aoa: buildOfficialTermGeneralSheet(params.term, resolvedPeriod.academicYear, params.institutionName, generalByLevel),
+        aoa: buildOfficialTermGeneralSheet(params.term, resolvedPeriod.academicYear, params.institutionName, params.institutionStatusLabel, generalByLevel),
         cols: Array.from({ length: 31 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })),
         merges: [
           { s: { r: 0, c: 1 }, e: { r: 0, c: 30 } },
@@ -3366,10 +3428,10 @@ async function prepareDespsOfficialTermExport(params: {
   };
 }
 
-function putDfaRow(aoa: unknown[][], rowIndex1: number, level: string, stats: OfficialDfaStats, institutionName: string, exam = false) {
+function putDfaRow(aoa: unknown[][], rowIndex1: number, level: string, stats: OfficialDfaStats, institutionName: string, institutionStatusLabel: string, exam = false) {
   const r = rowIndex1;
   setAoaCell(aoa, `B${r}`, institutionName);
-  setAoaCell(aoa, `C${r}`, "Public");
+  setAoaCell(aoa, `C${r}`, institutionStatusLabel);
   setAoaCell(aoa, `D${r}`, level);
   setAoaCell(aoa, `E${r}`, stats.girls);
   setAoaCell(aoa, `F${r}`, stats.boys);
@@ -3408,7 +3470,7 @@ function putDfaRow(aoa: unknown[][], rowIndex1: number, level: string, stats: Of
   }
 }
 
-function buildDfaIntermediateSheet(academicYear: string, institutionName: string, statsByLevel: Map<string, OfficialDfaStats>) {
+function buildDfaIntermediateSheet(academicYear: string, institutionName: string, institutionStatusLabel: string, statsByLevel: Map<string, OfficialDfaStats>) {
   const aoa = makeAoa(83, 31);
   setAoaCell(aoa, "B1", `ANALYSE DU RENDEMENT ANNUEL DES ELEVES (${academicYear})`);
   setAoaCell(aoa, "C3", "Tableau 1: Récapitulatif de la répartition des élèves des classes intermédiaires par décision de fin d'année (DFA) selon le genre");
@@ -3431,12 +3493,12 @@ function buildDfaIntermediateSheet(academicYear: string, institutionName: string
   for (const ref of ["Q6", "W6", "AC6"]) setAoaCell(aoa, ref, "% garçons");
   for (const ref of ["S6", "Y6", "AE6"]) setAoaCell(aoa, ref, "% Ensemble");
   const rows: Record<string, number> = { "6ème": 7, "5ème": 8, "4ème": 9, "1er CYCLE": 10, "2ndeA": 11, "2ndeC": 12, "1èreA1": 13, "1èreA2": 14, "1èreC": 15, "1èreD": 16, "2nd CYCLE": 17, TOTAL: 19 };
-  for (const level of OFFICIAL_DFA_INTERMEDIATE_LEVELS) putDfaRow(aoa, rows[level], level === "TOTAL" ? "" : level, statsByLevel.get(level) || makeOfficialDfaStats(), institutionName, false);
+  for (const level of OFFICIAL_DFA_INTERMEDIATE_LEVELS) putDfaRow(aoa, rows[level], level === "TOTAL" ? "" : level, statsByLevel.get(level) || makeOfficialDfaStats(), institutionName, institutionStatusLabel, false);
   setAoaCell(aoa, "B19", "TOTAL");
   return aoa;
 }
 
-function buildDfaExamSheet(academicYear: string, institutionName: string, statsByLevel: Map<string, OfficialDfaStats>) {
+function buildDfaExamSheet(academicYear: string, institutionName: string, institutionStatusLabel: string, statsByLevel: Map<string, OfficialDfaStats>) {
   const aoa = makeAoa(79, 25);
   setAoaCell(aoa, "B1", `ANALYSE DU RENDEMENT ANNUEL DES ELEVES (${academicYear})`);
   setAoaCell(aoa, "C3", "Tableau 2: Récapitulatif de la répartition des élèves des classes d'examen au secondaire général  par décision de fin d'année (DFA) selon le genre ");
@@ -3458,7 +3520,7 @@ function buildDfaExamSheet(academicYear: string, institutionName: string, statsB
   for (const ref of ["Q6", "W6"]) setAoaCell(aoa, ref, "% garçons");
   for (const ref of ["S6", "Y6"]) setAoaCell(aoa, ref, "% Ensemble");
   const rows: Record<string, number> = { "3ème": 7, "1er CYCLE": 8, "TleA1": 9, "TleA2": 10, "TleC": 11, "TleD": 12, "2nd CYCLE": 13, TOTAL: 15 };
-  for (const level of OFFICIAL_DFA_EXAM_LEVELS) putDfaRow(aoa, rows[level], level === "TOTAL" ? "" : level, statsByLevel.get(level) || makeOfficialDfaStats(), institutionName, true);
+  for (const level of OFFICIAL_DFA_EXAM_LEVELS) putDfaRow(aoa, rows[level], level === "TOTAL" ? "" : level, statsByLevel.get(level) || makeOfficialDfaStats(), institutionName, institutionStatusLabel, true);
   setAoaCell(aoa, "B15", "TOTAL");
   return aoa;
 }
@@ -3468,6 +3530,7 @@ async function prepareDespsOfficialAnnualExport(params: {
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
   institutionId: string;
   institutionName: string;
+  institutionStatusLabel: string;
   academicYear: string;
   classId: string;
 }): Promise<PreparedWorkbook | { error: string; status: number }> {
@@ -3618,8 +3681,8 @@ async function prepareDespsOfficialAnnualExport(params: {
     mainSheetName: "Classes intermédiaires",
     rows: [],
     sheets: [
-      { sheetName: "Classes intermédiaires", aoa: buildDfaIntermediateSheet(academicYear, institutionName, statsByLevel), cols: Array.from({ length: 31 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
-      { sheetName: "Classes d'examen", aoa: buildDfaExamSheet(academicYear, institutionName, examStats), cols: Array.from({ length: 25 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
+      { sheetName: "Classes intermédiaires", aoa: buildDfaIntermediateSheet(academicYear, institutionName, params.institutionStatusLabel, statsByLevel), cols: Array.from({ length: 31 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
+      { sheetName: "Classes d'examen", aoa: buildDfaExamSheet(academicYear, institutionName, params.institutionStatusLabel, examStats), cols: Array.from({ length: 25 }, (_, i) => ({ wch: i < 4 ? 18 : 12 })) },
       {
         sheetName: "Moy par discipline au général",
         aoa: buildOfficialAnnualSubjectSheet(annualSubjectsByLevel),
@@ -4313,11 +4376,13 @@ export async function GET(req: NextRequest) {
 
   const { data: institution } = await supabase
     .from("institutions")
-    .select("name")
+    .select("name,status,settings_json")
     .eq("id", institutionId)
     .maybeSingle();
 
-  const institutionName = String((institution as any)?.name || "Établissement");
+  const institutionInfo = resolveInstitutionExportInfo(institution);
+  const institutionName = institutionInfo.name;
+  const institutionStatusLabel = institutionInfo.statusLabel;
 
   let prepared: PreparedWorkbook | { error: string; status: number };
 
@@ -4377,6 +4442,7 @@ export async function GET(req: NextRequest) {
       supabase,
       institutionId,
       institutionName,
+      institutionStatusLabel,
       academicYear,
       periodRef,
       classId,
@@ -4388,6 +4454,7 @@ export async function GET(req: NextRequest) {
       supabase,
       institutionId,
       institutionName,
+      institutionStatusLabel,
       academicYear,
       classId,
     });

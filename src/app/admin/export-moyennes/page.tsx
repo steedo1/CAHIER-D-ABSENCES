@@ -205,7 +205,7 @@ function RapportFCard({
         <div>
           <h2 className="text-lg font-black text-slate-950">Rapport F</h2>
           <p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-400">
-            Rapport établissement secondaire public
+            Rapport établissement secondaire
           </p>
         </div>
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 ring-1 ring-amber-100">
