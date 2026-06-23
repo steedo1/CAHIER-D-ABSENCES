@@ -29,6 +29,7 @@ type MonitorRow = {
   class_label?: string | null;
   subject_name?: string | null;
   teacher_name: string;
+  teacher_phone?: string | null;
   status: MonitorStatus;
   late_minutes?: number | null;
   opened_from?: "teacher" | "class_device" | null;
@@ -52,6 +53,7 @@ type ClassCell = {
   status: MonitorStatus;
   subjects: string[];
   teachers: string[];
+  teacher_contacts: { name: string; phone: string | null }[];
   absence_reason_label?: string | null;
   absence_admin_comment?: string | null;
 };
@@ -346,6 +348,7 @@ export default function AppelsMatricePage() {
         status: r.status,
         subjects: [] as string[],
         teachers: [] as string[],
+        teacher_contacts: [] as { name: string; phone: string | null }[],
         absence_reason_label: r.absence_reason_label ?? null,
         absence_admin_comment: r.absence_admin_comment ?? null,
       };
@@ -363,6 +366,17 @@ export default function AppelsMatricePage() {
       }
       if (r.teacher_name && !existing.teachers.includes(r.teacher_name)) {
         existing.teachers.push(r.teacher_name);
+      }
+      if (r.teacher_name) {
+        const phone = String(r.teacher_phone || "").trim() || null;
+        const contactKey = `${r.teacher_name}|${phone || ""}`;
+        const alreadyAdded = existing.teacher_contacts.some(
+          (contact) => `${contact.name}|${contact.phone || ""}` === contactKey
+        );
+
+        if (!alreadyAdded) {
+          existing.teacher_contacts.push({ name: r.teacher_name, phone });
+        }
       }
 
       byClass.set(label, existing);
@@ -665,12 +679,27 @@ export default function AppelsMatricePage() {
                       </div>
                     )}
 
-                    {cell.teachers.length > 0 && (
+                    {cell.teacher_contacts.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {cell.teacher_contacts.map((teacher) => (
+                          <div key={`${teacher.name}|${teacher.phone || ""}`} className="space-y-0.5">
+                            <div className="truncate">
+                              <span className="font-medium">Prof :</span>{" "}
+                              {teacher.name}
+                            </div>
+                            <div className="truncate">
+                              <span className="font-medium">Tél :</span>{" "}
+                              {teacher.phone || "Non renseigné"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : cell.teachers.length > 0 ? (
                       <div className="truncate">
                         <span className="font-medium">Prof :</span>{" "}
                         {cell.teachers.join(", ")}
                       </div>
-                    )}
+                    ) : null}
 
                     <p className="mt-1 text-[10px] opacity-90">
                       {statusHint(

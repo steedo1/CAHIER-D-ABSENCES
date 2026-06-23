@@ -22,6 +22,7 @@ type MonitorRow = {
   class_label?: string | null;
   subject_name?: string | null;
   teacher_name: string;
+  teacher_phone?: string | null;
   status: MonitorStatus;
   late_minutes?: number | null;
   opened_from?: "teacher" | "class_device" | null;
@@ -386,6 +387,7 @@ export async function GET(req: NextRequest) {
   });
 
   const teacherNameById = new Map<string, string>();
+  const teacherPhoneById = new Map<string, string>();
   (teachers || []).forEach((t: any) => {
     const id = String(t.id);
     const disp = (t.display_name as string | null) || "";
@@ -393,6 +395,9 @@ export async function GET(req: NextRequest) {
     const phone = (t.phone as string | null) || "";
     const name = disp.trim() || email.trim() || phone.trim() || "Enseignant";
     teacherNameById.set(id, name);
+    if (phone.trim()) {
+      teacherPhoneById.set(id, phone.trim());
+    }
   });
 
   const teacherHasSubjects = new Set<string>();
@@ -576,6 +581,7 @@ export async function GET(req: NextRequest) {
     subjName = subjName.trim() || "Discipline";
 
     const teacherName = teacherNameById.get(teacherId) || "Enseignant";
+    const teacherPhone = teacherPhoneById.get(teacherId) || null;
 
     for (const ymd of datesForDay) {
       const key = [ymd, classId, subjectId, teacherId].join("|");
@@ -663,6 +669,7 @@ export async function GET(req: NextRequest) {
         class_label: classLabel || null,
         subject_name: subjName || null,
         teacher_name: teacherName,
+        teacher_phone: teacherPhone,
         status,
         late_minutes: lateMinutes,
         opened_from,
