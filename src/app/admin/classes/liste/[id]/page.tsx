@@ -217,6 +217,34 @@ function boardingShort(value: boolean | null | undefined) {
   return "";
 }
 
+const EDITABLE_STUDENT_FIELDS: Array<keyof EditableStudent> = [
+  "first_name",
+  "last_name",
+  "matricule",
+  "gender",
+  "birthdate",
+  "birth_place",
+  "nationality",
+  "is_repeater",
+  "lv2",
+  "is_affecte",
+  "is_boarder",
+  "official_track_code",
+];
+
+function comparableEditableValue(value: unknown) {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim() || null;
+  if (typeof value === "boolean") return value;
+  return value ?? null;
+}
+
+function editableStudentChanged(current: EditableStudent, original: EditableStudent | undefined) {
+  if (!original) return true;
+  return EDITABLE_STUDENT_FIELDS.some(
+    (field) => comparableEditableValue(current[field]) !== comparableEditableValue(original[field]),
+  );
+}
+
 function cloneEditable(students: StudentRow[]): Record<string, EditableStudent> {
   const out: Record<string, EditableStudent> = {};
   for (const s of students) {
@@ -379,21 +407,29 @@ export default function ClassListPrintPage() {
     setSaving(true);
     setSaveMsg(null);
     try {
-      const updates = (Object.values(editable) as EditableStudent[]).map((row) => ({
-        student_id: row.id,
-        first_name: row.first_name || null,
-        last_name: row.last_name || null,
-        matricule: row.matricule || null,
-        gender: row.gender || null,
-        birthdate: row.birthdate || null,
-        birth_place: row.birth_place || null,
-        nationality: row.nationality || null,
-        is_repeater: row.is_repeater,
-        lv2: row.lv2 || null,
-        is_affecte: row.is_affecte,
-        is_boarder: row.is_boarder,
-        official_track_code: row.official_track_code || null,
-      }));
+      const originalEditable = cloneEditable(Array.isArray(data.students) ? data.students : []);
+      const updates = (Object.values(editable) as EditableStudent[])
+        .filter((row) => editableStudentChanged(row, originalEditable[row.id]))
+        .map((row) => ({
+          student_id: row.id,
+          first_name: row.first_name || null,
+          last_name: row.last_name || null,
+          matricule: row.matricule || null,
+          gender: row.gender || null,
+          birthdate: row.birthdate || null,
+          birth_place: row.birth_place || null,
+          nationality: row.nationality || null,
+          is_repeater: row.is_repeater,
+          lv2: row.lv2 || null,
+          is_affecte: row.is_affecte,
+          is_boarder: row.is_boarder,
+          official_track_code: row.official_track_code || null,
+        }));
+
+      if (updates.length === 0) {
+        setSaveMsg("Aucune modification détectée.");
+        return;
+      }
 
       const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster`, {
         method: "PATCH",
@@ -402,7 +438,28 @@ export default function ClassListPrintPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Impossible d’enregistrer les corrections.");
-      setSaveMsg("Corrections enregistrées. La liste PDF est à jour.");
+
+      const financeSync = json?.finance_sync || {};
+      const financeChanges =
+        Number(financeSync.inserted || 0) +
+        Number(financeSync.reactivated || 0) +
+        Number(financeSync.cancelled || 0);
+      const warnings = Array.isArray(json?.finance_warnings) ? json.finance_warnings : [];
+
+      setSaveMsg(
+        [
+          `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`,
+          financeChanges > 0
+            ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.cancelled || 0)} annulée(s).`
+            : "Finance vérifiée : aucune dette à ajuster.",
+          Number(financeSync.skippedPaid || 0) > 0
+            ? `${Number(financeSync.skippedPaid || 0)} dette(s) déjà encaissée(s) conservée(s).`
+            : null,
+          warnings.length > 0 ? `Alerte finance : ${warnings[0]}` : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
       await load();
     } catch (e: any) {
       setSaveMsg(e?.message || "Erreur d’enregistrement.");

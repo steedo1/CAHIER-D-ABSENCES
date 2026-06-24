@@ -1,4 +1,5 @@
 // src/app/api/admin/classes/[id]/roster/route.ts
+import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -46,6 +47,31 @@ const OFFICIAL_TRACK_CODES = new Set<string>([
   "tleD",
 ]);
 
+type FinanceScheduleRow = {
+  id: string;
+  school_id: string;
+  academic_year: string | null;
+  class_id: string | null;
+  fee_category_id: string;
+  label: string | null;
+  amount: number | string | null;
+  due_date: string | null;
+  is_active?: boolean | null;
+  notes?: string | null;
+};
+
+type FinanceStudentProfile = {
+  is_affecte: boolean | null;
+  is_boarder: boolean | null;
+};
+
+type FinanceSyncResult = {
+  inserted: number;
+  reactivated: number;
+  cancelled: number;
+  skippedPaid: number;
+};
+
 function fullName(row: any) {
   const lastName = cleanText(row?.last_name).toUpperCase();
   const firstName = cleanText(row?.first_name);
@@ -59,6 +85,48 @@ function fullName(row: any) {
 
 function cleanText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeFinanceLabel(value: unknown) {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function financeScheduleAppliesToStudent(
+  schedule: Pick<FinanceScheduleRow, "label">,
+  student: FinanceStudentProfile,
+) {
+  const label = normalizeFinanceLabel(schedule.label);
+
+  // Frais communs à tous les élèves.
+  if (
+    label === "scolarite - inscription" ||
+    label === "scolarite - frais generaux" ||
+    label === "scolarite - frais annexes scolarite"
+  ) {
+    return true;
+  }
+
+  // L'ordre est volontaire : "non affecté" contient aussi le mot "affecté".
+  if (label === "scolarite - ecolage non affecte") {
+    return student.is_affecte === false;
+  }
+
+  if (label === "scolarite - ecolage affecte") {
+    return student.is_affecte === true;
+  }
+
+  if (label === "internat - pension" || label === "internat - frais annexes internat") {
+    return student.is_boarder === true;
+  }
+
+  // Les autres barèmes personnalisés restent appliqués normalement.
+  return true;
 }
 
 function normalizeNullableText(value: unknown) {
@@ -100,6 +168,9 @@ function normalizeBool(value: unknown): boolean | null {
   const s = cleanText(value)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
     .toLowerCase();
   if (!s) return null;
   if (["oui", "yes", "y", "1", "true", "vrai", "r", "x"].includes(s)) return true;
@@ -276,7 +347,7 @@ async function requireAdminContext(
     return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
   }
 
-  const hasAccess = allowedRoleRows.some((row: any) => {
+  const roleAppliesToInstitution = (row: any) => {
     const role = String(row.role || "");
     if (role === "super_admin") return true;
     const roleInstitutionId = String(row.institution_id || "").trim();
@@ -284,6 +355,12 @@ async function requireAdminContext(
     // lecture/écriture limitée à l'établissement du profil connecté.
     if (!roleInstitutionId) return Boolean(institutionId);
     return roleInstitutionId === institutionId;
+  };
+
+  const hasAccess = allowedRoleRows.some(roleAppliesToInstitution);
+  const canWrite = (roleRows || []).some((row: any) => {
+    const role = String(row.role || "");
+    return (role === "admin" || role === "super_admin") && roleAppliesToInstitution(row);
   });
 
   if (!hasAccess) {
@@ -300,7 +377,7 @@ async function requireAdminContext(
   if (classErr) return { error: NextResponse.json({ error: classErr.message }, { status: 400 }) };
   if (!cls) return { error: NextResponse.json({ error: "class_not_found" }, { status: 404 }) };
 
-  return { supa, srv, user, me, institutionId, cls };
+  return { supa, srv, user, me, institutionId, cls, canWrite };
 }
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -312,7 +389,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   const ctx = await requireAdminContext(classId);
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId, cls } = ctx;
+  const { srv, institutionId, cls, canWrite } = ctx;
 
   const url = new URL(req.url);
   const academicYearParam = String(url.searchParams.get("academic_year") || "").trim();
@@ -461,6 +538,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 
   return NextResponse.json({
     ok: true,
+    can_edit: canWrite,
     class: {
       id: String((cls as any).id),
       label: String((cls as any).label || (cls as any).code || "Classe"),
@@ -532,13 +610,21 @@ async function getAcademicYearIdForFinance(
   return data?.id ? String(data.id) : null;
 }
 
-async function ensureFinanceChargesForStudent(
+async function reconcileFinanceChargesForStudent(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   userId: string,
   studentId: string,
   classId: string,
-) {
+  studentProfile: FinanceStudentProfile,
+): Promise<FinanceSyncResult> {
+  const empty: FinanceSyncResult = {
+    inserted: 0,
+    reactivated: 0,
+    cancelled: 0,
+    skippedPaid: 0,
+  };
+
   const { data: classRow, error: classErr } = await srv
     .from("classes")
     .select("id,label,level,academic_year,institution_id")
@@ -559,15 +645,23 @@ async function ensureFinanceChargesForStudent(
 
   if (scheduleErr) throw new Error(scheduleErr.message);
 
-  const scheduleRows = Array.isArray(schedules) ? schedules : [];
-  if (scheduleRows.length === 0) return 0;
+  const scheduleRows = (Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[];
+  if (scheduleRows.length === 0) return empty;
 
-  const scheduleIds = scheduleRows.map((row: any) => String(row.id)).filter(Boolean);
+  const scheduleIds = scheduleRows.map((row) => String(row.id)).filter(Boolean);
+  const academicYear = String((classRow as any).academic_year || "").trim() || null;
+  const academicYearId = await getAcademicYearIdForFinance(
+    srv,
+    institutionId,
+    academicYear,
+  );
+  const nowIso = new Date().toISOString();
+  const today = nowIso.slice(0, 10);
 
   const { data: existingCharges, error: existingErr } = await srv
     .schema("finance")
-    .from("student_charges")
-    .select("fee_schedule_id")
+    .from("v_charge_balances")
+    .select("id,fee_schedule_id,paid_amount,computed_status")
     .eq("school_id", institutionId)
     .eq("student_id", studentId)
     .eq("class_id", classId)
@@ -575,24 +669,30 @@ async function ensureFinanceChargesForStudent(
 
   if (existingErr) throw new Error(existingErr.message);
 
-  const existing = new Set(
-    (existingCharges || [])
-      .map((row: any) => String(row.fee_schedule_id || ""))
-      .filter(Boolean),
-  );
+  const existingBySchedule = new Map<
+    string,
+    { id: string; paid_amount: number; computed_status: string | null }
+  >();
 
-  const academicYear = String((classRow as any).academic_year || "").trim() || null;
-  const academicYearId = await getAcademicYearIdForFinance(
-    srv,
-    institutionId,
-    academicYear,
-  );
-  const today = new Date().toISOString().slice(0, 10);
-  const nowIso = new Date().toISOString();
+  for (const charge of existingCharges || []) {
+    const scheduleId = String((charge as any).fee_schedule_id || "").trim();
+    const chargeId = String((charge as any).id || "").trim();
+    if (!scheduleId || !chargeId) continue;
+    existingBySchedule.set(scheduleId, {
+      id: chargeId,
+      paid_amount: Number((charge as any).paid_amount || 0),
+      computed_status: (charge as any).computed_status ? String((charge as any).computed_status) : null,
+    });
+  }
 
-  const rowsToInsert = scheduleRows
-    .filter((schedule: any) => !existing.has(String(schedule.id)))
-    .map((schedule: any) => ({
+  const applicableSchedules = scheduleRows.filter((schedule) =>
+    financeScheduleAppliesToStudent(schedule, studentProfile),
+  );
+  const applicableScheduleIds = new Set(applicableSchedules.map((schedule) => String(schedule.id)));
+
+  const rowsToInsert = applicableSchedules
+    .filter((schedule) => !existingBySchedule.has(String(schedule.id)))
+    .map((schedule) => ({
       school_id: institutionId,
       academic_year_id: academicYearId,
       academic_year: schedule.academic_year || academicYear,
@@ -607,21 +707,99 @@ async function ensureFinanceChargesForStudent(
       status: "pending",
       notes:
         schedule.notes ||
-        "Situation créée automatiquement depuis " + schedule.label,
+        "Situation créée automatiquement après correction de la liste de classe.",
       created_by: userId,
       created_at: nowIso,
       updated_at: nowIso,
     }));
 
-  if (rowsToInsert.length === 0) return 0;
+  let inserted = 0;
+  if (rowsToInsert.length > 0) {
+    const { error: insertErr } = await srv
+      .schema("finance")
+      .from("student_charges")
+      .insert(rowsToInsert as any[]);
 
-  const { error: insertErr } = await srv
-    .schema("finance")
-    .from("student_charges")
-    .insert(rowsToInsert as any[]);
+    if (insertErr) throw new Error(insertErr.message);
+    inserted = rowsToInsert.length;
+  }
 
-  if (insertErr) throw new Error(insertErr.message);
-  return rowsToInsert.length;
+  const rowsToReactivate = applicableSchedules
+    .map((schedule) => {
+      const existing = existingBySchedule.get(String(schedule.id));
+      if (!existing || existing.computed_status !== "cancelled" || existing.paid_amount > 0) {
+        return null;
+      }
+      return { chargeId: existing.id, schedule };
+    })
+    .filter(Boolean) as Array<{ chargeId: string; schedule: FinanceScheduleRow }>;
+
+  let reactivated = 0;
+  for (const row of rowsToReactivate) {
+    const { error: reactivateErr } = await srv
+      .schema("finance")
+      .from("student_charges")
+      .update({
+        base_amount: Number(row.schedule.amount || 0),
+        due_date: row.schedule.due_date || null,
+        status: "pending",
+        updated_at: nowIso,
+      } as any)
+      .eq("id", row.chargeId)
+      .eq("school_id", institutionId);
+
+    if (reactivateErr) throw new Error(reactivateErr.message);
+    reactivated++;
+  }
+
+  const obsoleteChargeIds: string[] = [];
+  let skippedPaid = 0;
+
+  for (const [scheduleId, charge] of existingBySchedule.entries()) {
+    if (applicableScheduleIds.has(scheduleId)) continue;
+    if (charge.computed_status === "cancelled") continue;
+    if (charge.paid_amount > 0) {
+      skippedPaid++;
+      continue;
+    }
+    obsoleteChargeIds.push(charge.id);
+  }
+
+  let cancelled = 0;
+  if (obsoleteChargeIds.length > 0) {
+    const { error: cancelErr } = await srv
+      .schema("finance")
+      .from("student_charges")
+      .update({
+        status: "cancelled",
+        updated_at: nowIso,
+      } as any)
+      .eq("school_id", institutionId)
+      .in("id", obsoleteChargeIds);
+
+    if (cancelErr) throw new Error(cancelErr.message);
+    cancelled = obsoleteChargeIds.length;
+  }
+
+  return { inserted, reactivated, cancelled, skippedPaid };
+}
+
+async function ensureFinanceChargesForStudent(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  userId: string,
+  studentId: string,
+  classId: string,
+) {
+  const result = await reconcileFinanceChargesForStudent(
+    srv,
+    institutionId,
+    userId,
+    studentId,
+    classId,
+    { is_affecte: null, is_boarder: null },
+  );
+  return result.inserted + result.reactivated;
 }
 
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -859,13 +1037,28 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   }
 
   let updated = 0;
+  const financeSync: FinanceSyncResult = {
+    inserted: 0,
+    reactivated: 0,
+    cancelled: 0,
+    skippedPaid: 0,
+  };
+  const financeWarnings: string[] = [];
 
   for (const row of rows) {
-    const { error } = await srv
+    const { data: updatedStudent, error } = await srv
       .from("students")
-      .update({ ...row.patch, matricule: row.matricule })
+      .update({
+        ...row.patch,
+        matricule: row.matricule,
+        // Répare aussi les anciens élèves importés sans institution_id ou avec
+        // une institution incohérente. Le droit d'écriture est déjà sécurisé
+        // par l'inscription active dans cette classe de l'établissement.
+        institution_id: institutionId,
+      } as any)
       .eq("id", row.student_id)
-      .eq("institution_id", institutionId);
+      .select("id")
+      .maybeSingle();
 
     if (error) {
       return NextResponse.json(
@@ -877,6 +1070,17 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
           details: error.message,
         },
         { status: 400 },
+      );
+    }
+
+    if (!updatedStudent?.id) {
+      return NextResponse.json(
+        {
+          error:
+            "Correction non appliquée : l'élève existe dans la liste de classe, mais sa fiche élève n'a pas pu être mise à jour.",
+          details: "student_update_affected_zero_rows",
+        },
+        { status: 409 },
       );
     }
 
@@ -900,8 +1104,49 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
+    try {
+      const result = await reconcileFinanceChargesForStudent(
+        srv,
+        institutionId,
+        ctx.user.id,
+        row.student_id,
+        classId,
+        {
+          is_affecte:
+            typeof row.patch.is_affecte === "boolean" ? row.patch.is_affecte : null,
+          is_boarder:
+            typeof row.patch.is_boarder === "boolean" ? row.patch.is_boarder : null,
+        },
+      );
+      financeSync.inserted += result.inserted;
+      financeSync.reactivated += result.reactivated;
+      financeSync.cancelled += result.cancelled;
+      financeSync.skippedPaid += result.skippedPaid;
+    } catch (error) {
+      financeWarnings.push(
+        error instanceof Error
+          ? error.message
+          : "Synchronisation finance impossible pour un élève.",
+      );
+    }
+
     updated++;
   }
 
-  return NextResponse.json({ ok: true, updated });
+  try {
+    revalidatePath("/admin/classes");
+    revalidatePath("/admin/finance");
+    revalidatePath("/admin/finance/charges");
+    revalidatePath("/admin/finance/payments");
+    revalidatePath("/admin/finance/reports");
+  } catch {
+    // La correction est déjà enregistrée ; la revalidation ne doit pas bloquer la réponse API.
+  }
+
+  return NextResponse.json({
+    ok: true,
+    updated,
+    finance_sync: financeSync,
+    finance_warnings: Array.from(new Set(financeWarnings)).slice(0, 5),
+  });
 }
