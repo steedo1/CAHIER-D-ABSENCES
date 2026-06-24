@@ -80,6 +80,29 @@ type StatsItem = {
   realized_hours: number;
 };
 
+type AdminTextbookTab = "library" | "progressions" | "stats";
+
+const ITEM_TYPE_OPTIONS = [
+  "lesson",
+  "regulation",
+  "revision",
+  "evaluation",
+  "remediation",
+  "session",
+  "theme",
+  "rubric",
+  "competency",
+  "chapter",
+  "other",
+];
+
+function normalizeSearch(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
 const emptyCreate = {
   title: "",
   academic_year: "",
@@ -300,6 +323,13 @@ export default function AdminTextbookPage() {
   const [importText, setImportText] = useState(() => makeImportSample(null));
   const [replaceExisting, setReplaceExisting] = useState(true);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<AdminTextbookTab>("library");
+  const [nationalSearch, setNationalSearch] = useState("");
+  const [nationalYearFilter, setNationalYearFilter] = useState("");
+  const [nationalSubjectFilter, setNationalSubjectFilter] = useState("");
+  const [schoolSearch, setSchoolSearch] = useState("");
+  const [showLocalCreate, setShowLocalCreate] = useState(false);
+  const [editableItems, setEditableItems] = useState<ProgressionItem[]>([]);
 
   const selected = useMemo(
     () => progressions.find((p) => p.id === selectedId) || null,
@@ -310,6 +340,46 @@ export default function AdminTextbookPage() {
     () => nationalProgressions.find((p) => p.id === nationalSelectedId) || null,
     [nationalProgressions, nationalSelectedId],
   );
+
+
+  const nationalYears = useMemo(
+    () =>
+      Array.from(
+        new Set(nationalProgressions.map((p) => p.academic_year).filter(Boolean)),
+      ).sort((a, b) => String(b).localeCompare(String(a))),
+    [nationalProgressions],
+  );
+
+  const nationalSubjects = useMemo(
+    () =>
+      Array.from(
+        new Set(nationalProgressions.map((p) => String(p.subject_name || "")).filter(Boolean)),
+      ).sort((a, b) => String(a).localeCompare(String(b))),
+    [nationalProgressions],
+  );
+
+  const filteredNationalProgressions = useMemo(() => {
+    const q = normalizeSearch(nationalSearch);
+    return nationalProgressions.filter((p) => {
+      if (nationalYearFilter && p.academic_year !== nationalYearFilter) return false;
+      if (nationalSubjectFilter && (p.subject_name || "") !== nationalSubjectFilter) return false;
+      if (!q) return true;
+      const haystack = normalizeSearch(
+        [p.title, p.subject_name, p.level, p.series, p.academic_year].join(" "),
+      );
+      return haystack.includes(q);
+    });
+  }, [nationalProgressions, nationalSearch, nationalYearFilter, nationalSubjectFilter]);
+
+  const filteredProgressions = useMemo(() => {
+    const q = normalizeSearch(schoolSearch);
+    if (!q) return progressions;
+    return progressions.filter((p) =>
+      normalizeSearch([p.title, p.subject_name, p.level, p.academic_year].join(" ")).includes(q),
+    );
+  }, [progressions, schoolSearch]);
+
+  const selectedItemCount = items.length || selected?.items?.length || 0;
 
   useEffect(() => {
     if (!selected) return;
@@ -378,7 +448,9 @@ export default function AdminTextbookPage() {
         fetchJson(`/api/admin/textbook/progressions/${id}/items`),
         fetchJson(`/api/admin/textbook/progressions/${id}/assignments`),
       ]);
-      setItems(itemsJson.items || []);
+      const loadedItems = itemsJson.items || [];
+      setItems(loadedItems);
+      setEditableItems(loadedItems);
       setAssignments(assignmentsJson.items || []);
     } catch (e: any) {
       setError(e?.message || "Détails indisponibles");
@@ -391,6 +463,7 @@ export default function AdminTextbookPage() {
 
   useEffect(() => {
     setItems([]);
+    setEditableItems([]);
     setAssignments([]);
     setSelectedClassIds([]);
     if (selectedId) loadSelected(selectedId);
@@ -549,6 +622,94 @@ export default function AdminTextbookPage() {
     }
   }
 
+
+  function updateEditableItem(
+    index: number,
+    key: keyof ProgressionItem,
+    value: string,
+  ) {
+    setEditableItems((prev) =>
+      prev.map((row, rowIndex) => {
+        if (rowIndex !== index) return row;
+        if (key === "sort_order" || key === "planned_duration_minutes") {
+          const n = Number(value);
+          return { ...row, [key]: Number.isFinite(n) && value !== "" ? n : null };
+        }
+        return { ...row, [key]: value };
+      }),
+    );
+  }
+
+  function addEditableItem() {
+    setEditableItems((prev) => [
+      ...prev,
+      {
+        id: `draft-${Date.now()}`,
+        sort_order: prev.length + 1,
+        item_type: "lesson",
+        title: "Nouvelle leçon",
+        rubric: "",
+        theme: "",
+        trimester: "",
+        week_label: "",
+        planned_duration_minutes: 55,
+        indent_level: 1,
+      },
+    ]);
+  }
+
+  function removeEditableItem(index: number) {
+    setEditableItems((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  async function saveEditableItems() {
+    if (!selected) return;
+    const prepared = editableItems
+      .map((row, index) => {
+        const title = String(row.title || "").trim();
+        if (!title) return null;
+        const type = normalizeImportType(
+          row.item_type || "lesson",
+          Number(row.planned_duration_minutes || 0) > 0,
+        );
+        return {
+          sort_order: Number(row.sort_order || index + 1),
+          item_type: type,
+          rubric: row.rubric || null,
+          theme: row.theme || null,
+          title,
+          planned_duration_minutes: Number(row.planned_duration_minutes || 0) || null,
+          trimester: row.trimester || null,
+          week_label: row.week_label || null,
+          indent_level: STRUCTURAL_ITEM_TYPES.has(type) ? 0 : 1,
+        };
+      })
+      .filter(Boolean);
+
+    if (!prepared.length) {
+      setError("Aucune ligne exploitable à enregistrer.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await fetchJson(`/api/admin/textbook/progressions/${selected.id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: prepared, replace: true }),
+      });
+      setMessage(`${prepared.length} ligne(s) enregistrée(s) dans la copie établissement.`);
+      await loadSelected(selected.id);
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message || "Enregistrement du tableau impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function assignClasses() {
     if (!selected || !selectedClassIds.length) return;
     setBusy(true);
@@ -623,534 +784,328 @@ export default function AdminTextbookPage() {
           </div>
         ) : null}
 
+        <div className="rounded-[26px] border border-slate-200 bg-white p-2 shadow-sm">
+          <div className="grid gap-2 md:grid-cols-3">
+            {[
+              ["library", "Bibliothèque Nexa", `${filteredNationalProgressions.length} modèle(s)`],
+              ["progressions", "Copies & classes", `${progressions.length} progression(s)`],
+              ["stats", "Suivi", `${stats.length} classe(s)`],
+            ].map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveTab(key as AdminTextbookTab)}
+                className={classNames(
+                  "rounded-2xl px-4 py-3 text-left transition",
+                  activeTab === key
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-slate-50 text-slate-700 hover:bg-slate-100",
+                )}
+              >
+                <div className="text-sm font-black">{label}</div>
+                <div className={classNames("mt-1 text-xs font-bold", activeTab === key ? "text-emerald-50" : "text-slate-400")}>{count}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {loading ? (
           <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-6 text-sm font-bold text-slate-600 shadow-sm">
-            <Loader2 className="h-5 w-5 animate-spin" /> Chargement du cahier de
-            texte…
+            <Loader2 className="h-5 w-5 animate-spin" /> Chargement du cahier de texte…
           </div>
-        ) : (
-          <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
-            <section className="space-y-6">
-              <section className="rounded-[28px] border border-indigo-100 bg-white p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-black uppercase tracking-[0.16em] text-indigo-700">
-                      Bibliothèque nationale Nexa
-                    </div>
-                    <h2 className="mt-1 text-lg font-black">Étape 1 — Copier une progression nationale</h2>
-                    <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-                      Fonctionnement normal : Nexa met les progressions officielles à disposition.
-                      L’établissement clique sur « Utiliser dans mon établissement », puis affecte la copie aux classes.
-                    </p>
+        ) : activeTab === "library" ? (
+          <section className="grid gap-5 xl:grid-cols-[380px_1fr]">
+            <div className="rounded-[28px] border border-indigo-100 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-indigo-700">
+                    Bibliothèque nationale Nexa
                   </div>
+                  <h2 className="mt-1 text-lg font-black">Choisir un modèle</h2>
                 </div>
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-black text-indigo-700">
+                  {filteredNationalProgressions.length}/{nationalProgressions.length}
+                </span>
+              </div>
 
-                {canManageNational ? (
-                  <form onSubmit={createNationalProgression} className="mt-4 space-y-3 rounded-2xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
-                    <div className="text-sm font-black text-indigo-900">Ajouter un modèle national</div>
-                    <input
-                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
-                      placeholder="Titre : Progression nationale Anglais 2nde A-C"
-                      value={nationalForm.title}
-                      onChange={(e) => setNationalForm((f) => ({ ...f, title: e.target.value }))}
-                      required
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                      <input
-                        className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
-                        placeholder="Année 2026-2027"
-                        value={nationalForm.academic_year}
-                        onChange={(e) => setNationalForm((f) => ({ ...f, academic_year: e.target.value }))}
-                      />
-                      <input
-                        className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
-                        placeholder="Niveau : 2nde A-C"
-                        value={nationalForm.level}
-                        onChange={(e) => setNationalForm((f) => ({ ...f, level: e.target.value }))}
-                        required
-                      />
-                    </div>
-                    <select
-                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
-                      value={nationalForm.subject_id}
-                      onChange={(e) => setNationalForm((f) => ({ ...f, subject_id: e.target.value }))}
-                      required
-                    >
-                      <option value="">Choisir la discipline</option>
-                      {subjects.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
-                      placeholder="Série / option si nécessaire"
-                      value={nationalForm.series}
-                      onChange={(e) => setNationalForm((f) => ({ ...f, series: e.target.value }))}
-                    />
-                    <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-indigo-200 bg-white px-4 py-3 text-sm font-bold text-slate-700">
-                      <Upload className="h-4 w-4" />
-                      <span>{nationalDocumentFile ? nationalDocumentFile.name : "Joindre le fichier officiel national"}</span>
-                      <input
-                        className="hidden"
-                        type="file"
-                        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
-                        onChange={(e) => setNationalDocumentFile(e.target.files?.[0] || null)}
-                      />
-                    </label>
-                    <button
-                      disabled={busy}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-700 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
-                    >
-                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      Publier dans la bibliothèque nationale
-                    </button>
-                  </form>
-                ) : null}
-
-                <div className="mt-4 space-y-2">
-                  {nationalProgressions.map((p) => (
-                    <div key={p.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                      <button
-                        type="button"
-                        onClick={() => setNationalSelectedId(p.id)}
-                        className={classNames(
-                          "w-full rounded-xl px-3 py-2 text-left transition",
-                          nationalSelectedId === p.id ? "bg-white ring-2 ring-indigo-200" : "bg-transparent hover:bg-white",
-                        )}
-                      >
-                        <div className="text-sm font-black text-slate-900">{p.title}</div>
-                        <div className="mt-1 text-xs font-bold text-slate-500">
-                          {p.subject_name || "Matière"} · {p.level || "Niveau"} · {p.academic_year}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
-                          <span className="rounded-full bg-white px-2 py-1 text-indigo-700 ring-1 ring-indigo-100">
-                            Nationale
-                          </span>
-                          <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">
-                            {p.items?.length || 0} lignes
-                          </span>
-                        </div>
-                      </button>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => copyNationalProgression(p)}
-                          disabled={busy}
-                          className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-60"
-                        >
-                          Utiliser dans mon établissement
-                        </button>
-                        {p.document?.signed_url ? (
-                          <a
-                            href={p.document.signed_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-black text-slate-700 ring-1 ring-slate-200"
-                          >
-                            Fichier officiel
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                  {!nationalProgressions.length ? (
-                    <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
-                      Aucun modèle national publié pour le moment. Vérifiez d’abord que Nexa a alimenté la bibliothèque nationale dans l’espace Super Admin.
-                    </div>
-                  ) : null}
-                </div>
-
-                {canManageNational && selectedNational ? (
-                  <div className="mt-4 rounded-2xl border border-indigo-100 bg-white p-3">
-                    <div className="text-sm font-black text-slate-900">
-                      Lignes nationales : {selectedNational.title}
-                    </div>
-                    <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-                      Import réservé à Nexa. Ces lignes serviront de source aux copies établissement.
-                    </p>
-                    <textarea
-                      className="mt-3 h-44 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-indigo-400"
-                      value={nationalImportText}
-                      onChange={(e) => setNationalImportText(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={importNationalItems}
-                      disabled={busy}
-                      className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
-                    >
-                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                      Importer les lignes nationales
-                    </button>
-                  </div>
-                ) : null}
-              </section>
-
-              <details className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
-                <summary className="cursor-pointer list-none">
-                  <div className="flex items-center gap-3">
-                    <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-amber-700 ring-1 ring-amber-100">
-                      <Plus className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-black text-amber-950">
-                        Cas exceptionnel : créer une progression établissement
-                      </h2>
-                      <p className="text-xs font-bold leading-5 text-amber-800">
-                        À utiliser seulement si aucune progression nationale Nexa ne convient.
-                        Le chemin normal reste : bibliothèque nationale → copie établissement → affectation aux classes.
-                      </p>
-                    </div>
-                  </div>
-                </summary>
-
-                <form onSubmit={createProgression} className="mt-5 space-y-3">
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                    placeholder="Titre : Progression Mathématiques 4e"
-                    value={createForm.title}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, title: e.target.value }))
-                    }
-                    required
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                      placeholder="Année 2026-2027"
-                      value={createForm.academic_year}
-                      onChange={(e) =>
-                        setCreateForm((f) => ({
-                          ...f,
-                          academic_year: e.target.value,
-                        }))
-                      }
-                    />
-                    <input
-                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                      placeholder="Niveau : 4e"
-                      value={createForm.level}
-                      onChange={(e) =>
-                        setCreateForm((f) => ({ ...f, level: e.target.value }))
-                      }
-                      required
-                    />
-                  </div>
+              <div className="mt-4 space-y-2">
+                <input
+                  value={nationalSearch}
+                  onChange={(e) => setNationalSearch(e.target.value)}
+                  placeholder="Rechercher : matière, niveau, année..."
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                />
+                <div className="grid grid-cols-2 gap-2">
                   <select
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                    value={createForm.subject_id}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        subject_id: e.target.value,
-                      }))
-                    }
-                    required
+                    value={nationalYearFilter}
+                    onChange={(e) => setNationalYearFilter(e.target.value)}
+                    className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:border-indigo-400"
                   >
-                    <option value="">Choisir la discipline</option>
-                    {subjects.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
+                    <option value="">Toutes années</option>
+                    {nationalYears.map((year) => (
+                      <option key={year} value={year}>{year}</option>
                     ))}
                   </select>
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                    placeholder="Série / option si nécessaire : 2nde C, Tle A2…"
-                    value={createForm.series}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, series: e.target.value }))
-                    }
-                  />
-                  <textarea
-                    className="min-h-20 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400"
-                    placeholder="Observation ou précision sur le modèle de progression"
-                    value={createForm.description}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        description: e.target.value,
-                      }))
-                    }
-                  />
-                  <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
-                    <Upload className="h-4 w-4" />
-                    <span>
-                      {documentFile
-                        ? documentFile.name
-                        : "Joindre le fichier officiel PDF/Word/Excel"}
-                    </span>
-                    <input
-                      className="hidden"
-                      type="file"
-                      accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
-                      onChange={(e) =>
-                        setDocumentFile(e.target.files?.[0] || null)
-                      }
-                    />
-                  </label>
-                  <button
-                    disabled={busy}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                  <select
+                    value={nationalSubjectFilter}
+                    onChange={(e) => setNationalSubjectFilter(e.target.value)}
+                    className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:border-indigo-400"
                   >
-                    {busy ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
+                    <option value="">Toutes matières</option>
+                    {nationalSubjects.map((subject) => (
+                      <option key={subject} value={subject}>{subject}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-4 max-h-[540px] space-y-2 overflow-auto pr-1">
+                {filteredNationalProgressions.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setNationalSelectedId(p.id)}
+                    className={classNames(
+                      "w-full rounded-2xl border px-3 py-3 text-left transition",
+                      nationalSelectedId === p.id
+                        ? "border-indigo-300 bg-indigo-50"
+                        : "border-slate-200 bg-slate-50 hover:bg-white",
                     )}
-                    Enregistrer la progression établissement
-                  </button>
-                </form>
-              </details>
-
-              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-black">Progressions établissement</h2>
-                <div className="mt-4 space-y-2">
-                  {progressions.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => setSelectedId(p.id)}
-                      className={classNames(
-                        "w-full rounded-2xl border px-4 py-3 text-left transition",
-                        selectedId === p.id
-                          ? "border-emerald-300 bg-emerald-50"
-                          : "border-slate-200 bg-white hover:bg-slate-50",
-                      )}
-                    >
-                      <div className="text-sm font-black text-slate-900">
-                        {p.title}
-                      </div>
-                      <div className="mt-1 text-xs font-bold text-slate-500">
-                        {p.subject_name || "Matière"} · {p.level || "Niveau"} ·{" "}
-                        {p.academic_year}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
-                        {p.source_national_template_id ? (
-                          <span className="rounded-full bg-indigo-50 px-2 py-1 text-indigo-700 ring-1 ring-indigo-100">
-                            Depuis bibliothèque Nexa
-                          </span>
-                        ) : null}
-                        {p.is_customized ? (
-                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700 ring-1 ring-amber-100">
-                            Adaptée
-                          </span>
-                        ) : null}
-                        <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">
-                          {p.items?.length || 0} lignes
-                        </span>
-                        <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">
-                          {p.assignments?.length || 0} classes
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                  {!progressions.length ? (
-                    <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
-                      Aucune progression créée pour le moment.
+                  >
+                    <div className="line-clamp-1 text-sm font-black text-slate-950">{p.title}</div>
+                    <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-black text-slate-500">
+                      <span>{p.subject_name || "Matière"}</span>
+                      <span>·</span>
+                      <span>{p.level || "Niveau"}</span>
+                      <span>·</span>
+                      <span>{p.academic_year}</span>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-indigo-700 ring-1 ring-indigo-100">
+                        {p.items?.length || 0} lignes
+                      </span>
                     </div>
-                  ) : null}
-                </div>
-              </section>
-            </section>
+                  </button>
+                ))}
+                {!filteredNationalProgressions.length ? (
+                  <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
+                    Aucun modèle ne correspond aux filtres.
+                  </div>
+                ) : null}
+              </div>
+            </div>
 
-            <section className="space-y-6">
-              {!selected ? (
-                <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-500 shadow-sm">
-                  Copiez d’abord une progression depuis la bibliothèque nationale Nexa, puis sélectionnez la copie établissement pour l’affecter aux classes.
-                </div>
-              ) : (
-                <>
-                  <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
-                          Progression sélectionnée
-                        </div>
-                        <h2 className="mt-1 text-2xl font-black">
-                          {selected.title}
-                        </h2>
-                        <p className="mt-1 text-sm font-bold text-slate-500">
-                          {selected.subject_name || "Matière"} ·{" "}
-                          {selected.level || "Niveau"} ·{" "}
-                          {selected.academic_year}
-                        </p>
+            <div className="space-y-5">
+              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                {!selectedNational ? (
+                  <div className="py-10 text-center text-sm font-bold text-slate-400">
+                    Sélectionnez une progression nationale.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-[0.16em] text-indigo-700">
+                        Modèle sélectionné
                       </div>
-                      {selected.document?.signed_url ? (
+                      <h2 className="mt-1 text-2xl font-black">{selectedNational.title}</h2>
+                      <p className="mt-1 text-sm font-bold text-slate-500">
+                        {selectedNational.subject_name || "Matière"} · {selectedNational.level || "Niveau"} · {selectedNational.academic_year}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
+                        <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">Nationale</span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{selectedNational.items?.length || 0} lignes</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedNational.document?.signed_url ? (
                         <a
-                          href={selected.document.signed_url}
+                          href={selectedNational.document.signed_url}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-700"
                         >
-                          <FileText className="h-4 w-4" /> Ouvrir le fichier
-                          officiel
+                          <FileText className="h-4 w-4" /> Fichier officiel
                         </a>
                       ) : null}
-                    </div>
-                  </section>
-
-                  <div className="grid gap-6 lg:grid-cols-2">
-                    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                      <h3 className="text-lg font-black">
-                        Progression copiée / adaptée
-                      </h3>
-                      <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-                        Les lignes viennent normalement de la bibliothèque nationale Nexa.
-                        Cette zone sert uniquement à corriger ou adapter la copie établissement, pas à ré-uploader la progression officielle.
-                      </p>
-                      <div className="mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-xs font-bold leading-5 text-emerald-800 ring-1 ring-emerald-100">
-                        {items.length || selected.items?.length || 0} ligne(s) disponible(s).
-                        Utilisez surtout l’affectation aux classes à droite.
-                      </div>
-                      <details className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <summary className="cursor-pointer text-sm font-black text-slate-800">
-                          Mode avancé : modifier / remplacer les lignes de la copie établissement
-                        </summary>
-                      <textarea
-                        className="mt-4 h-52 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-emerald-400"
-                        value={importText}
-                        onChange={(e) => setImportText(e.target.value)}
-                      />
-                      <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-5 text-amber-900">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={replaceExisting}
-                          onChange={(e) => setReplaceExisting(e.target.checked)}
-                        />
-                        <span>
-                          Remplacer les lignes existantes. À garder coché si vous
-                          corrigez une progression ou si un exemple a été importé
-                          par erreur. Le fichier officiel reste attaché, mais les
-                          statistiques utilisent uniquement les lignes ci-dessus.
-                        </span>
-                      </label>
                       <button
-                        onClick={importItems}
+                        type="button"
+                        onClick={() => copyNationalProgression(selectedNational)}
                         disabled={busy}
-                        className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+                        className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
                       >
-                        {busy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Upload className="h-4 w-4" />
-                        )}
-                        Remplacer / importer dans la copie : {selected.title}
+                        Utiliser dans mon établissement
                       </button>
-                      </details>
-                    </section>
-
-                    <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                      <h3 className="text-lg font-black">
-                        Affecter aux classes
-                      </h3>
-                      <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-                        La progression devient visible dans le cahier de texte
-                        des enseignants affectés à la classe et à la discipline.
-                      </p>
-                      <div className="mt-4 max-h-64 space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        {compatibleClasses.map((c) => {
-                          const checked = selectedClassIds.includes(c.id);
-                          const already = assignments.some(
-                            (a) => a.class_id === c.id && a.is_active,
-                          );
-                          return (
-                            <label
-                              key={c.id}
-                              className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm font-bold ring-1 ring-slate-200"
-                            >
-                              <span>
-                                {labelClass(c)}{" "}
-                                <span className="text-xs text-slate-400">
-                                  {c.level || ""}
-                                </span>
-                              </span>
-                              <span className="flex items-center gap-2">
-                                {already ? (
-                                  <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">
-                                    Déjà liée
-                                  </span>
-                                ) : null}
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(e) =>
-                                    setSelectedClassIds((prev) =>
-                                      e.target.checked
-                                        ? [...prev, c.id]
-                                        : prev.filter((id) => id !== c.id),
-                                    )
-                                  }
-                                />
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <button
-                        onClick={assignClasses}
-                        disabled={busy || !selectedClassIds.length}
-                        className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
-                      >
-                        <CheckCircle2 className="h-4 w-4" /> Affecter les
-                        classes sélectionnées
-                      </button>
-                    </section>
+                    </div>
                   </div>
+                )}
+              </section>
 
+              {canManageNational ? (
+                <details className="rounded-[28px] border border-indigo-100 bg-white p-5 shadow-sm">
+                  <summary className="cursor-pointer text-sm font-black text-indigo-800">
+                    Gestion nationale avancée
+                  </summary>
+                  <form onSubmit={createNationalProgression} className="mt-4 grid gap-3 md:grid-cols-2">
+                    <input className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400" placeholder="Titre national" value={nationalForm.title} onChange={(e) => setNationalForm((f) => ({ ...f, title: e.target.value }))} required />
+                    <input className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400" placeholder="Année" value={nationalForm.academic_year} onChange={(e) => setNationalForm((f) => ({ ...f, academic_year: e.target.value }))} />
+                    <input className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400" placeholder="Niveau" value={nationalForm.level} onChange={(e) => setNationalForm((f) => ({ ...f, level: e.target.value }))} required />
+                    <select className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400" value={nationalForm.subject_id} onChange={(e) => setNationalForm((f) => ({ ...f, subject_id: e.target.value }))} required>
+                      <option value="">Discipline</option>
+                      {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                    <label className="md:col-span-2 flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-bold text-slate-700">
+                      <Upload className="h-4 w-4" />
+                      <span>{nationalDocumentFile ? nationalDocumentFile.name : "Joindre le fichier officiel national"}</span>
+                      <input className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv" onChange={(e) => setNationalDocumentFile(e.target.files?.[0] || null)} />
+                    </label>
+                    <button disabled={busy} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-700 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Publier
+                    </button>
+                  </form>
+                  {selectedNational ? (
+                    <div className="mt-5">
+                      <textarea className="h-44 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-indigo-400" value={nationalImportText} onChange={(e) => setNationalImportText(e.target.value)} />
+                      <button type="button" onClick={importNationalItems} disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                        <Upload className="h-4 w-4" /> Importer les lignes nationales
+                      </button>
+                    </div>
+                  ) : null}
+                </details>
+              ) : null}
+            </div>
+          </section>
+        ) : activeTab === "progressions" ? (
+          <section className="grid gap-5 xl:grid-cols-[320px_1fr]">
+            <aside className="space-y-4">
+              <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-lg font-black">Copies établissement</h2>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">{filteredProgressions.length}</span>
+                </div>
+                <input
+                  value={schoolSearch}
+                  onChange={(e) => setSchoolSearch(e.target.value)}
+                  placeholder="Rechercher une copie..."
+                  className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                />
+                <select
+                  value={selectedId}
+                  onChange={(e) => setSelectedId(e.target.value)}
+                  className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black outline-none focus:border-emerald-400"
+                >
+                  <option value="">Sélectionner une progression</option>
+                  {filteredProgressions.map((p) => (
+                    <option key={p.id} value={p.id}>{p.title} — {p.level || "Niveau"}</option>
+                  ))}
+                </select>
+                <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
+                  {filteredProgressions.slice(0, 18).map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedId(p.id)}
+                      className={classNames(
+                        "w-full rounded-2xl border px-3 py-3 text-left transition",
+                        selectedId === p.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50 hover:bg-white",
+                      )}
+                    >
+                      <div className="line-clamp-1 text-sm font-black">{p.title}</div>
+                      <div className="mt-1 text-xs font-bold text-slate-500">{p.subject_name || "Matière"} · {p.level || "Niveau"} · {p.academic_year}</div>
+                      <div className="mt-2 text-[11px] font-black text-slate-500">{p.items?.length || 0} lignes · {p.assignments?.length || 0} classes</div>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowLocalCreate((v) => !v)}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-black text-amber-800 ring-1 ring-amber-100"
+                >
+                  <Plus className="h-4 w-4" /> Cas exceptionnel
+                </button>
+              </section>
+
+              {showLocalCreate ? (
+                <form onSubmit={createProgression} className="rounded-[28px] border border-amber-200 bg-amber-50 p-4 shadow-sm space-y-3">
+                  <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Titre" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} required />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Année" value={createForm.academic_year} onChange={(e) => setCreateForm((f) => ({ ...f, academic_year: e.target.value }))} />
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Niveau" value={createForm.level} onChange={(e) => setCreateForm((f) => ({ ...f, level: e.target.value }))} required />
+                  </div>
+                  <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" value={createForm.subject_id} onChange={(e) => setCreateForm((f) => ({ ...f, subject_id: e.target.value }))} required>
+                    <option value="">Discipline</option>
+                    {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">
+                    <Upload className="h-4 w-4" />
+                    <span>{documentFile ? documentFile.name : "Fichier officiel"}</span>
+                    <input className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv" onChange={(e) => setDocumentFile(e.target.files?.[0] || null)} />
+                  </label>
+                  <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                    <Save className="h-4 w-4" /> Enregistrer
+                  </button>
+                </form>
+              ) : null}
+            </aside>
+
+            {!selected ? (
+              <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-500 shadow-sm">
+                Choisissez ou copiez une progression pour continuer.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Progression sélectionnée</div>
+                      <h2 className="mt-1 text-2xl font-black">{selected.title}</h2>
+                      <p className="mt-1 text-sm font-bold text-slate-500">{selected.subject_name || "Matière"} · {selected.level || "Niveau"} · {selected.academic_year}</p>
+                    </div>
+                    {selected.document?.signed_url ? (
+                      <a href={selected.document.signed_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-700">
+                        <FileText className="h-4 w-4" /> Fichier officiel
+                      </a>
+                    ) : null}
+                  </div>
+                </section>
+
+                <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
                   <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                    <h3 className="text-lg font-black">
-                      Lignes de progression
-                    </h3>
-                    <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-lg font-black">Tableau des lignes</h3>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={addEditableItem} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><Plus className="h-4 w-4" /> Ligne</button>
+                        <button type="button" onClick={saveEditableItems} disabled={busy || !editableItems.length} className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-60"><Save className="h-4 w-4" /> Enregistrer</button>
+                      </div>
+                    </div>
+                    <div className="mt-4 overflow-auto rounded-2xl border border-slate-200">
+                      <table className="min-w-[900px] w-full text-left text-xs">
+                        <thead className="bg-slate-50 uppercase tracking-wide text-slate-500">
                           <tr>
-                            <th className="px-3 py-3">Ordre</th>
-                            <th className="px-3 py-3">Type</th>
-                            <th className="px-3 py-3">Titre</th>
-                            <th className="px-3 py-3">Durée</th>
-                            <th className="px-3 py-3">Période</th>
+                            <th className="px-2 py-3">Ordre</th>
+                            <th className="px-2 py-3">Type</th>
+                            <th className="px-2 py-3">Titre</th>
+                            <th className="px-2 py-3">Rubrique</th>
+                            <th className="px-2 py-3">Thème</th>
+                            <th className="px-2 py-3">Min</th>
+                            <th className="px-2 py-3">Trim.</th>
+                            <th className="px-2 py-3">Semaine</th>
+                            <th className="px-2 py-3"></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {items.map((item) => (
-                            <tr key={item.id}>
-                              <td className="px-3 py-3 font-bold text-slate-500">
-                                {item.sort_order || "—"}
-                              </td>
-                              <td className="px-3 py-3">
-                                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black text-slate-600">
-                                  {item.item_type}
-                                </span>
-                              </td>
-                              <td
-                                className="px-3 py-3 font-bold"
-                                style={{
-                                  paddingLeft: `${12 + (item.indent_level || 0) * 18}px`,
-                                }}
-                              >
-                                {item.title}
-                              </td>
-                              <td className="px-3 py-3 text-slate-600">
-                                {item.planned_duration_minutes
-                                  ? `${item.planned_duration_minutes} min`
-                                  : "—"}
-                              </td>
-                              <td className="px-3 py-3 text-slate-600">
-                                {item.trimester || item.week_label || "—"}
-                              </td>
+                          {editableItems.map((item, index) => (
+                            <tr key={item.id || index}>
+                              <td className="px-2 py-2"><input className="w-16 rounded-lg border border-slate-200 px-2 py-1 font-bold" value={item.sort_order ?? index + 1} onChange={(e) => updateEditableItem(index, "sort_order", e.target.value)} /></td>
+                              <td className="px-2 py-2"><select className="w-28 rounded-lg border border-slate-200 px-2 py-1 font-bold" value={item.item_type || "lesson"} onChange={(e) => updateEditableItem(index, "item_type", e.target.value)}>{ITEM_TYPE_OPTIONS.map((type) => <option key={type} value={type}>{type}</option>)}</select></td>
+                              <td className="px-2 py-2"><input className="min-w-72 rounded-lg border border-slate-200 px-2 py-1 font-bold" value={item.title || ""} onChange={(e) => updateEditableItem(index, "title", e.target.value)} /></td>
+                              <td className="px-2 py-2"><input className="w-32 rounded-lg border border-slate-200 px-2 py-1" value={item.rubric || ""} onChange={(e) => updateEditableItem(index, "rubric", e.target.value)} /></td>
+                              <td className="px-2 py-2"><input className="w-32 rounded-lg border border-slate-200 px-2 py-1" value={item.theme || ""} onChange={(e) => updateEditableItem(index, "theme", e.target.value)} /></td>
+                              <td className="px-2 py-2"><input className="w-20 rounded-lg border border-slate-200 px-2 py-1" value={item.planned_duration_minutes ?? ""} onChange={(e) => updateEditableItem(index, "planned_duration_minutes", e.target.value)} /></td>
+                              <td className="px-2 py-2"><input className="w-20 rounded-lg border border-slate-200 px-2 py-1" value={item.trimester || ""} onChange={(e) => updateEditableItem(index, "trimester", e.target.value)} /></td>
+                              <td className="px-2 py-2"><input className="w-32 rounded-lg border border-slate-200 px-2 py-1" value={item.week_label || ""} onChange={(e) => updateEditableItem(index, "week_label", e.target.value)} /></td>
+                              <td className="px-2 py-2"><button type="button" onClick={() => removeEditableItem(index)} className="rounded-full bg-red-50 px-2 py-1 font-black text-red-600">×</button></td>
                             </tr>
                           ))}
-                          {!items.length ? (
-                            <tr>
-                              <td
-                                colSpan={5}
-                                className="px-3 py-8 text-center font-bold text-slate-400"
-                              >
-                                Aucune ligne importée.
-                              </td>
-                            </tr>
+                          {!editableItems.length ? (
+                            <tr><td colSpan={9} className="px-3 py-8 text-center font-bold text-slate-400">Aucune ligne.</td></tr>
                           ) : null}
                         </tbody>
                       </table>
@@ -1158,90 +1113,68 @@ export default function AdminTextbookPage() {
                   </section>
 
                   <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                    <h3 className="text-lg font-black">
-                      Statistiques d’exécution
-                    </h3>
-                    <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <div className="rounded-2xl bg-slate-50 p-4">
-                        <div className="text-xs font-black uppercase text-slate-500">
-                          Classes suivies
-                        </div>
-                        <div className="mt-1 text-2xl font-black">
-                          {stats.length}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl bg-emerald-50 p-4">
-                        <div className="text-xs font-black uppercase text-emerald-700">
-                          Séances saisies
-                        </div>
-                        <div className="mt-1 text-2xl font-black text-emerald-800">
-                          {stats.reduce((s, i) => s + i.sessions_count, 0)}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl bg-sky-50 p-4">
-                        <div className="text-xs font-black uppercase text-sky-700">
-                          Heures réalisées
-                        </div>
-                        <div className="mt-1 text-2xl font-black text-sky-800">
-                          {Math.round(
-                            stats.reduce((s, i) => s + i.realized_hours, 0) *
-                              10,
-                          ) / 10}
-                        </div>
-                      </div>
+                    <h3 className="text-lg font-black">Affecter aux classes</h3>
+                    <div className="mt-4 max-h-72 space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                      {compatibleClasses.map((c) => {
+                        const checked = selectedClassIds.includes(c.id);
+                        const already = assignments.some((a) => a.class_id === c.id && a.is_active);
+                        return (
+                          <label key={c.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm font-bold ring-1 ring-slate-200">
+                            <span>{labelClass(c)} <span className="text-xs text-slate-400">{c.level || ""}</span></span>
+                            <span className="flex items-center gap-2">
+                              {already ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">Déjà liée</span> : null}
+                              <input type="checkbox" checked={checked} onChange={(e) => setSelectedClassIds((prev) => e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id))} />
+                            </span>
+                          </label>
+                        );
+                      })}
                     </div>
-                    <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                          <tr>
-                            <th className="px-3 py-3">Classe</th>
-                            <th className="px-3 py-3">Matière</th>
-                            <th className="px-3 py-3">Prof</th>
-                            <th className="px-3 py-3">Progression</th>
-                            <th className="px-3 py-3">Séances</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {stats.slice(0, 12).map((row) => (
-                            <tr key={row.assignment_id}>
-                              <td className="px-3 py-3 font-black">
-                                {row.class_label}
-                              </td>
-                              <td className="px-3 py-3">{row.subject_name}</td>
-                              <td className="px-3 py-3 text-slate-600">
-                                {row.teacher_name}
-                              </td>
-                              <td className="px-3 py-3">
-                                <span className="font-black text-emerald-700">
-                                  {row.completion_rate}%
-                                </span>{" "}
-                                <span className="text-xs text-slate-500">
-                                  ({row.completed_items}/{row.expected_items})
-                                </span>
-                              </td>
-                              <td className="px-3 py-3">
-                                {row.sessions_count}
-                              </td>
-                            </tr>
-                          ))}
-                          {!stats.length ? (
-                            <tr>
-                              <td
-                                colSpan={5}
-                                className="px-3 py-8 text-center font-bold text-slate-400"
-                              >
-                                Aucune statistique disponible.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
+                    <button onClick={assignClasses} disabled={busy || !selectedClassIds.length} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                      <CheckCircle2 className="h-4 w-4" /> Affecter
+                    </button>
+                    <details className="mt-4 rounded-2xl bg-slate-50 p-3">
+                      <summary className="cursor-pointer text-xs font-black text-slate-600">Import CSV avancé</summary>
+                      <textarea className="mt-3 h-40 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs outline-none focus:border-emerald-400" value={importText} onChange={(e) => setImportText(e.target.value)} />
+                      <button onClick={importItems} disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                        <Upload className="h-4 w-4" /> Remplacer par CSV
+                      </button>
+                    </details>
                   </section>
-                </>
-              )}
-            </section>
-          </div>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-black">Statistiques d’exécution</h2>
+              <button onClick={loadAll} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><RefreshCw className="h-4 w-4" /> Actualiser</button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl bg-slate-50 p-4"><div className="text-xs font-black uppercase text-slate-500">Classes suivies</div><div className="mt-1 text-2xl font-black">{stats.length}</div></div>
+              <div className="rounded-2xl bg-emerald-50 p-4"><div className="text-xs font-black uppercase text-emerald-700">Séances saisies</div><div className="mt-1 text-2xl font-black text-emerald-800">{stats.reduce((s, i) => s + i.sessions_count, 0)}</div></div>
+              <div className="rounded-2xl bg-sky-50 p-4"><div className="text-xs font-black uppercase text-sky-700">Heures réalisées</div><div className="mt-1 text-2xl font-black text-sky-800">{Math.round(stats.reduce((s, i) => s + i.realized_hours, 0) * 10) / 10}</div></div>
+            </div>
+            <div className="mt-4 overflow-auto rounded-2xl border border-slate-200">
+              <table className="min-w-[820px] w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr><th className="px-3 py-3">Classe</th><th className="px-3 py-3">Matière</th><th className="px-3 py-3">Prof</th><th className="px-3 py-3">Progression</th><th className="px-3 py-3">Séances</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {stats.map((row) => (
+                    <tr key={row.assignment_id}>
+                      <td className="px-3 py-3 font-black">{row.class_label}</td>
+                      <td className="px-3 py-3">{row.subject_name}</td>
+                      <td className="px-3 py-3 text-slate-600">{row.teacher_name}</td>
+                      <td className="px-3 py-3"><span className="font-black text-emerald-700">{row.completion_rate}%</span> <span className="text-xs text-slate-500">({row.completed_items}/{row.expected_items})</span></td>
+                      <td className="px-3 py-3">{row.sessions_count}</td>
+                    </tr>
+                  ))}
+                  {!stats.length ? <tr><td colSpan={5} className="px-3 py-8 text-center font-bold text-slate-400">Aucune statistique disponible.</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
         )}
       </div>
     </main>
