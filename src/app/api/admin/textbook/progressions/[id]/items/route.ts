@@ -63,6 +63,7 @@ function normalizeItem(raw: any, progressionId: string, institutionId: string, i
     sort_order: Number.isFinite(sortOrder) ? sortOrder : index + 1,
     indent_level: Number.isFinite(indentLevel) ? Math.max(0, Math.min(6, Math.round(indentLevel))) : 0,
     metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
+    is_customized: true,
   };
 }
 
@@ -74,9 +75,10 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ id: st
 
   const { data: progression, error: progressionErr } = await srv
     .from("textbook_progression_templates")
-    .select("id")
+    .select("id,scope")
     .eq("id", id)
     .eq("institution_id", institutionId)
+    .eq("scope", "school")
     .maybeSingle();
 
   if (progressionErr) {
@@ -117,9 +119,10 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
   const { data: progression, error: progressionErr } = await srv
     .from("textbook_progression_templates")
-    .select("id")
+    .select("id,scope")
     .eq("id", id)
     .eq("institution_id", institutionId)
+    .eq("scope", "school")
     .maybeSingle();
 
   if (progressionErr) {
@@ -157,6 +160,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
   }
+
+  await srv
+    .from("textbook_progression_templates")
+    .update({ is_customized: true, updated_by: auth.ctx.userId, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("institution_id", institutionId);
 
   return NextResponse.json({ ok: true, items: data || [], inserted: (data || []).length }, { status: 201 });
 }

@@ -69,6 +69,9 @@ export async function GET(req: NextRequest) {
       title,
       description,
       status,
+      scope,
+      source_national_template_id,
+      is_customized,
       created_at,
       updated_at,
       document:textbook_progression_documents(
@@ -85,6 +88,7 @@ export async function GET(req: NextRequest) {
     `
     )
     .eq("institution_id", institutionId)
+    .eq("scope", "school")
     .order("updated_at", { ascending: false });
 
   if (academicYear) query = query.eq("academic_year", academicYear);
@@ -218,6 +222,8 @@ export async function POST(req: NextRequest) {
       title,
       description,
       status: "active",
+      scope: "school",
+      is_customized: true,
       created_by: userId,
       updated_by: userId,
     })

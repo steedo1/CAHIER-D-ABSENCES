@@ -38,9 +38,10 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
 
   const { data: progression, error: progressionErr } = await srv
     .from("textbook_progression_templates")
-    .select("id,subject_id,institution_subject_id,subject_name")
+    .select("id,subject_id,institution_subject_id,subject_name,scope")
     .eq("id", id)
     .eq("institution_id", institutionId)
+    .eq("scope", "school")
     .maybeSingle();
 
   if (progressionErr) return NextResponse.json({ ok: false, error: progressionErr.message }, { status: 400 });
