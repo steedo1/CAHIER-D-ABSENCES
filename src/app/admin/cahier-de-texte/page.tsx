@@ -539,17 +539,65 @@ export default function AdminTextbookPage() {
       const json = await fetchJson(`/api/admin/textbook/national/${progression.id}/copy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ auto_assign: true }),
       });
+      const autoAssigned = Number(json.auto_assigned_classes || 0);
+      const autoText = autoAssigned
+        ? ` ${autoAssigned} classe(s) liée(s) automatiquement.`
+        : json.auto_assign_skipped === "manual_subject"
+          ? " Affectation manuelle requise pour cette discipline."
+          : "";
       setMessage(
         json.already_exists
-          ? "Cette progression nationale est déjà disponible dans votre établissement."
-          : `Progression copiée dans l’établissement avec ${json.copied_items || 0} ligne(s).`,
+          ? `Cette progression est déjà disponible dans votre établissement.${autoText}`
+          : `Progression copiée avec ${json.copied_items || 0} ligne(s).${autoText}`,
       );
       await loadAll();
       if (json.item?.id) setSelectedId(json.item.id);
+      setActiveTab("progressions");
     } catch (e: any) {
       setError(e?.message || "Copie depuis la bibliothèque nationale impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyFilteredNationalProgressions() {
+    const list = filteredNationalProgressions;
+    if (!list.length) {
+      setError("Aucun modèle affiché à utiliser.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      let copied = 0;
+      let already = 0;
+      let autoAssigned = 0;
+      let lastCopiedId = "";
+
+      for (const progression of list) {
+        const json = await fetchJson(`/api/admin/textbook/national/${progression.id}/copy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_assign: true }),
+        });
+        if (json.already_exists) already += 1;
+        else copied += 1;
+        autoAssigned += Number(json.auto_assigned_classes || 0);
+        if (json.item?.id) lastCopiedId = json.item.id;
+      }
+
+      await loadAll();
+      if (lastCopiedId) setSelectedId(lastCopiedId);
+      setActiveTab("progressions");
+      setMessage(
+        `${copied} nouvelle(s) progression(s), ${already} déjà existante(s). ${autoAssigned} affectation(s) automatique(s) créée(s).`,
+      );
+    } catch (e: any) {
+      setError(e?.message || "Copie groupée impossible");
     } finally {
       setBusy(false);
     }
@@ -787,9 +835,9 @@ export default function AdminTextbookPage() {
         <div className="rounded-[26px] border border-slate-200 bg-white p-2 shadow-sm">
           <div className="grid gap-2 md:grid-cols-3">
             {[
-              ["library", "Bibliothèque Nexa", `${filteredNationalProgressions.length} modèle(s)`],
-              ["progressions", "Copies & classes", `${progressions.length} progression(s)`],
-              ["stats", "Suivi", `${stats.length} classe(s)`],
+              ["library", "Choisir depuis Nexa", `${filteredNationalProgressions.length} modèle(s)`],
+              ["progressions", "Progressions & affectations", `${progressions.length} progression(s)`],
+              ["stats", "Tableau de bord", `${stats.length} classe(s)`],
             ].map(([key, label, count]) => (
               <button
                 key={key}
@@ -859,7 +907,17 @@ export default function AdminTextbookPage() {
                 </div>
               </div>
 
-              <div className="mt-4 max-h-[540px] space-y-2 overflow-auto pr-1">
+              <button
+                type="button"
+                onClick={copyFilteredNationalProgressions}
+                disabled={busy || !filteredNationalProgressions.length}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Utiliser tous les modèles affichés
+              </button>
+
+              <div className="mt-4 max-h-[460px] space-y-2 overflow-auto pr-1">
                 {filteredNationalProgressions.map((p) => (
                   <button
                     key={p.id}
@@ -931,7 +989,7 @@ export default function AdminTextbookPage() {
                         disabled={busy}
                         className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
                       >
-                        Utiliser dans mon établissement
+                        Utiliser ce modèle
                       </button>
                     </div>
                   </div>
@@ -977,7 +1035,7 @@ export default function AdminTextbookPage() {
             <aside className="space-y-4">
               <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-black">Copies établissement</h2>
+                  <h2 className="text-lg font-black">Progressions de l’établissement</h2>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">{filteredProgressions.length}</span>
                 </div>
                 <input
@@ -1018,7 +1076,7 @@ export default function AdminTextbookPage() {
                   onClick={() => setShowLocalCreate((v) => !v)}
                   className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-black text-amber-800 ring-1 ring-amber-100"
                 >
-                  <Plus className="h-4 w-4" /> Cas exceptionnel
+                  <Plus className="h-4 w-4" /> Créer une progression personnalisée
                 </button>
               </section>
 
@@ -1054,7 +1112,7 @@ export default function AdminTextbookPage() {
                 <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Progression sélectionnée</div>
+                      <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Progression d’établissement</div>
                       <h2 className="mt-1 text-2xl font-black">{selected.title}</h2>
                       <p className="mt-1 text-sm font-bold text-slate-500">{selected.subject_name || "Matière"} · {selected.level || "Niveau"} · {selected.academic_year}</p>
                     </div>
@@ -1069,7 +1127,7 @@ export default function AdminTextbookPage() {
                 <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
                   <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="text-lg font-black">Tableau des lignes</h3>
+                      <h3 className="text-lg font-black">Adapter les lignes</h3>
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={addEditableItem} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><Plus className="h-4 w-4" /> Ligne</button>
                         <button type="button" onClick={saveEditableItems} disabled={busy || !editableItems.length} className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-60"><Save className="h-4 w-4" /> Enregistrer</button>
@@ -1112,9 +1170,21 @@ export default function AdminTextbookPage() {
                     </div>
                   </section>
 
-                  <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                    <h3 className="text-lg font-black">Affecter aux classes</h3>
-                    <div className="mt-4 max-h-72 space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <section className="rounded-[28px] border border-emerald-200 bg-white p-5 shadow-sm lg:sticky lg:top-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-lg font-black">Classes concernées</h3>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedClassIds(compatibleClasses.map((c) => c.id))}
+                        className="rounded-full bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 ring-1 ring-emerald-100"
+                      >
+                        Tout cocher
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs font-bold leading-5 text-slate-500">
+                      Auto pour les matières communes. Manuel pour LV2, musique et arts plastiques.
+                    </p>
+                    <div className="mt-4 max-h-[420px] space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
                       {compatibleClasses.map((c) => {
                         const checked = selectedClassIds.includes(c.id);
                         const already = assignments.some((a) => a.class_id === c.id && a.is_active);
@@ -1130,7 +1200,7 @@ export default function AdminTextbookPage() {
                       })}
                     </div>
                     <button onClick={assignClasses} disabled={busy || !selectedClassIds.length} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
-                      <CheckCircle2 className="h-4 w-4" /> Affecter
+                      <CheckCircle2 className="h-4 w-4" /> Affecter les classes
                     </button>
                     <details className="mt-4 rounded-2xl bg-slate-50 p-3">
                       <summary className="cursor-pointer text-xs font-black text-slate-600">Import CSV avancé</summary>
@@ -1147,7 +1217,7 @@ export default function AdminTextbookPage() {
         ) : (
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-black">Statistiques d’exécution</h2>
+              <h2 className="text-xl font-black">Tableau de bord des progressions</h2>
               <button onClick={loadAll} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><RefreshCw className="h-4 w-4" /> Actualiser</button>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-3">

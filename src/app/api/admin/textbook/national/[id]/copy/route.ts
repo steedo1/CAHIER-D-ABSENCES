@@ -4,6 +4,144 @@ import { cleanText, requireTextbookManager } from "@/lib/textbook/context";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function normalizeLabel(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isManualAssignmentSubject(subjectName: unknown) {
+  const normalized = normalizeLabel(subjectName);
+  return (
+    normalized.includes("lv2") ||
+    normalized.includes("espagnol") ||
+    normalized.includes("allemand") ||
+    normalized.includes("musique") ||
+    normalized.includes("education musicale") ||
+    normalized.includes("art plastique") ||
+    normalized.includes("arts plastique")
+  );
+}
+
+function levelAliases(level: unknown) {
+  const normalized = normalizeLabel(level);
+  const aliases = new Set<string>();
+  if (normalized) aliases.add(normalized);
+
+  const secondAorC = normalized.match(/^(2nde|seconde)\s+a\s*c$/) ||
+    normalized.match(/^(2nde|seconde)\s+a\s+c$/) ||
+    normalized.match(/^(2nde|seconde)\s+a\s*[-/]\s*c$/);
+  if (secondAorC) {
+    aliases.add(`${secondAorC[1]} a`);
+    aliases.add(`${secondAorC[1]} c`);
+  }
+
+  return Array.from(aliases).filter(Boolean);
+}
+
+function classMatchesLevel(row: any, level: unknown) {
+  const aliases = levelAliases(level);
+  if (!aliases.length) return false;
+  const classLevel = normalizeLabel(row?.level);
+  const classLabel = normalizeLabel(row?.label || row?.name);
+  return aliases.some((alias) => classLevel === alias || classLabel.includes(alias));
+}
+
+async function autoAssignCompatibleClasses(
+  srv: any,
+  institutionId: string,
+  userId: string,
+  progression: any,
+  progressionId: string,
+) {
+  if (isManualAssignmentSubject(progression?.subject_name)) {
+    return { count: 0, skipped: "manual_subject" };
+  }
+
+  async function fetchClasses(filterYear: boolean) {
+    let query = srv
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId);
+
+    if (filterYear && progression?.academic_year) {
+      query = query.eq("academic_year", progression.academic_year);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+
+  let classes = await fetchClasses(true);
+  if (!classes.length) classes = await fetchClasses(false);
+
+  const classIds = classes
+    .filter((row: any) => classMatchesLevel(row, progression?.level))
+    .map((row: any) => String(row.id))
+    .filter(Boolean);
+
+  if (!classIds.length) return { count: 0, skipped: "no_matching_class" };
+
+  const rows = Array.from(new Set(classIds)).map((classId) => ({
+    institution_id: institutionId,
+    progression_id: progressionId,
+    class_id: classId,
+    teacher_id: null,
+    subject_id: progression?.subject_id || null,
+    institution_subject_id: progression?.institution_subject_id || null,
+    is_active: true,
+    created_by: userId,
+    updated_by: userId,
+  }));
+
+  const { data, error } = await srv
+    .from("textbook_progression_class_assignments")
+    .upsert(rows, {
+      onConflict: "progression_id,class_id,teacher_id_key",
+      ignoreDuplicates: false,
+    })
+    .select("id");
+
+  if (!error) return { count: (data || []).length, skipped: null };
+
+  const touched: any[] = [];
+  for (const row of rows) {
+    const { data: existing } = await srv
+      .from("textbook_progression_class_assignments")
+      .select("id")
+      .eq("progression_id", row.progression_id)
+      .eq("class_id", row.class_id)
+      .is("teacher_id", null)
+      .maybeSingle();
+
+    if ((existing as any)?.id) {
+      const { data: updated, error: updateErr } = await srv
+        .from("textbook_progression_class_assignments")
+        .update({ is_active: true, updated_by: userId, updated_at: new Date().toISOString() })
+        .eq("id", (existing as any).id)
+        .select("id")
+        .maybeSingle();
+      if (updateErr) throw updateErr;
+      touched.push(updated);
+    } else {
+      const { data: created, error: insertErr } = await srv
+        .from("textbook_progression_class_assignments")
+        .insert(row)
+        .select("id")
+        .maybeSingle();
+      if (insertErr) throw insertErr;
+      touched.push(created);
+    }
+  }
+
+  return { count: touched.length, skipped: null };
+}
+
 function cloneItem(raw: any, newProgressionId: string, schoolInstitutionId: string, idMap: Map<string, string>) {
   const newId = crypto.randomUUID();
   const oldId = String(raw.id || "");
@@ -40,6 +178,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   const { srv, institutionId, userId } = auth.ctx;
   const body = await req.json().catch(() => ({}));
   const titleOverride = cleanText(body.title, 180);
+  const shouldAutoAssign = body.auto_assign === true;
 
   const { data: national, error: nationalErr } = await srv
     .from("textbook_progression_templates")
@@ -82,7 +221,22 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .maybeSingle();
 
   if ((existing as any)?.id) {
-    return NextResponse.json({ ok: true, item: existing, already_exists: true, copied_items: 0 });
+    let autoAssigned = { count: 0, skipped: null as string | null };
+    if (shouldAutoAssign) {
+      try {
+        autoAssigned = await autoAssignCompatibleClasses(srv, institutionId, userId, national, (existing as any).id);
+      } catch (e: any) {
+        return NextResponse.json({ ok: false, error: e?.message || "auto_assign_failed" }, { status: 400 });
+      }
+    }
+    return NextResponse.json({
+      ok: true,
+      item: existing,
+      already_exists: true,
+      copied_items: 0,
+      auto_assigned_classes: autoAssigned.count,
+      auto_assign_skipped: autoAssigned.skipped,
+    });
   }
 
   let schoolInstitutionSubjectId: string | null = null;
@@ -157,5 +311,21 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     }
   }
 
-  return NextResponse.json({ ok: true, item: created, already_exists: false, copied_items: rows.length }, { status: 201 });
+  let autoAssigned = { count: 0, skipped: null as string | null };
+  if (shouldAutoAssign) {
+    try {
+      autoAssigned = await autoAssignCompatibleClasses(srv, institutionId, userId, national, newProgressionId);
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: e?.message || "auto_assign_failed" }, { status: 400 });
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    item: created,
+    already_exists: false,
+    copied_items: rows.length,
+    auto_assigned_classes: autoAssigned.count,
+    auto_assign_skipped: autoAssigned.skipped,
+  }, { status: 201 });
 }
