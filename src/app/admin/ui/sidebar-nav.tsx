@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   NotebookPen,
+  BookOpen,
   FileSpreadsheet,
   FileText,
   MessageSquare,
@@ -470,6 +471,17 @@ const NOTES_ITEMS: NavItem[] = [
     href: "/admin/notes/evaluations",
     label: "Stats évaluations",
     Icon: NotebookPen,
+  },
+];
+
+/* =========================
+   Groupe : Cahier de texte
+========================= */
+const TEXTBOOK_ITEMS: NavItem[] = [
+  {
+    href: "/admin/cahier-de-texte",
+    label: "Progressions & suivi",
+    Icon: BookOpen,
   },
 ];
 
@@ -1039,6 +1051,11 @@ export default function SidebarNav() {
     [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
+  const textbookItems = React.useMemo(
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : TEXTBOOK_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
@@ -1096,6 +1113,12 @@ export default function SidebarNav() {
 
   const absActive = groupHasActiveItem(pathname, absItems, currentTab);
 
+  const textbookActive =
+    !isInfirmier &&
+    !isFinanceManager &&
+    !isFinanceOnlyShell &&
+    groupHasActiveItem(pathname, textbookItems, currentTab);
+
   const notesActive =
     !isEducator &&
     !isInfirmier &&
@@ -1130,6 +1153,9 @@ export default function SidebarNav() {
     React.useState<boolean>(callsControlActive);
 
   const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
+
+  const [textbookOpen, setTextbookOpen] =
+    React.useState<boolean>(textbookActive);
 
   const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
 
@@ -1167,6 +1193,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (absActive) setAbsOpen(true);
   }, [absActive]);
+
+  React.useEffect(() => {
+    if (textbookActive) setTextbookOpen(true);
+  }, [textbookActive]);
 
   React.useEffect(() => {
     if (notesActive) setNotesOpen(true);
@@ -1371,6 +1401,21 @@ export default function SidebarNav() {
                   open={absOpen}
                   onToggle={() => setAbsOpen((v) => !v)}
                   accent="emerald"
+                />
+              )}
+
+            {!isInfirmier && !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              textbookItems.length > 0 && (
+                <GroupSection
+                  title="Cahier de texte"
+                  Icon={BookOpen}
+                  items={textbookItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={textbookOpen}
+                  onToggle={() => setTextbookOpen((v) => !v)}
+                  accent="sky"
                 />
               )}
 

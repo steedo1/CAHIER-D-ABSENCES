@@ -9,6 +9,7 @@ export type AppRole =
   | "finance_manager"
   | "infirmier"
   | "educator"
+  | "inspector"
   | "teacher"
   | "parent"
   | "student"
@@ -24,6 +25,7 @@ export const ROLE_PRIORITY: AppRole[] = [
   "finance_manager",
   "infirmier",
   "educator",
+  "inspector",
   "teacher",
   "class_device",
   "parent",
@@ -55,6 +57,8 @@ export function routeForRole(role: AppRole): string {
       return "/admin/infirmerie";
     case "educator":
       return "/admin/dashboard"; // même dashboard, mais menu filtré côté front
+    case "inspector":
+      return "/admin/cahier-de-texte";
     case "teacher":
       return "/attendance"; // espace assiduité enseignant
     case "class_device":
@@ -85,6 +89,8 @@ export function routeForRoleWithBook(role: AppRole, book?: Book): string {
         return "/drenaet/dashboard"; // Supervision régionale, lecture seule
       case "super_admin":
         return "/super/notes"; // Cahier de notes — super admin
+      case "inspector":
+        return "/admin/cahier-de-texte";
       case "founder":
         return "/founder/dashboard";
       case "finance_manager":

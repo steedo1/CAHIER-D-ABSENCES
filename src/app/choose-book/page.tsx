@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Notebook,
   NotebookPen,
+  BookOpen,
   PenTool,
   FileText,
   ArrowRight,
@@ -427,6 +428,19 @@ export default function ChooseBookPage() {
               badge="Évaluations"
               accent="violet"
               loading={routeLoading && routeLabel.includes("notes")}
+            />
+
+            <PremiumActionCard
+              href="/enseignant/cahier-de-texte"
+              onClick={handleSimplePush(
+                "/enseignant/cahier-de-texte",
+                "Ouverture du cahier de texte"
+              )}
+              icon={<BookOpen className="h-7 w-7" />}
+              title="Cahier de texte"
+              badge="Progression"
+              accent="emerald"
+              loading={routeLoading && routeLabel.includes("texte")}
             />
 
             <PremiumActionCard

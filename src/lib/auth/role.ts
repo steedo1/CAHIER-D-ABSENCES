@@ -8,6 +8,7 @@ export type AppRole =
   | "finance_manager"
   | "infirmier"
   | "educator"
+  | "inspector"
   | "teacher"
   | "parent"
   | "student"
@@ -21,6 +22,7 @@ export const ROLE_PRIORITY: AppRole[] = [
   "finance_manager",
   "infirmier",
   "educator",
+  "inspector",
   "teacher",
   "class_device",
   "parent",
