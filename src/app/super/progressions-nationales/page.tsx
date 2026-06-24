@@ -1,7 +1,15 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { BookOpen, FileText, Loader2, RefreshCw, Save, Upload } from "lucide-react";
+import { BookOpen, CheckCircle2, Eye, FileText, Loader2, RefreshCw, Save, Upload, Wand2 } from "lucide-react";
+import {
+  extractStructuredItems,
+  makeImportSample,
+  parseImportLines,
+  serializeImportLines,
+  type StructuredProgressionItem,
+} from "@/lib/textbook/import-assistant";
+
 
 type NationalProgression = {
   id: string;
@@ -26,29 +34,15 @@ type ProgressionItem = {
   title: string;
   rubric?: string | null;
   theme?: string | null;
+  competency?: string | null;
   trimester?: string | null;
+  month_label?: string | null;
   week_label?: string | null;
   planned_duration_minutes?: number | null;
+  planned_sessions_count?: number | null;
   sort_order?: number | null;
 };
 
-const IMPORT_HEADER = "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Trimestre;Semaine";
-
-const ANGLAIS_2NDE_A_C_SAMPLE = [
-  IMPORT_HEADER,
-  "1;theme;UNIT 1;People;UNIT 1 PEOPLE;;T1;Semaines 1-2",
-  "2;lesson;UNIT 1;People;UNIT 1 PEOPLE;360;T1;Semaines 1-2",
-  "3;revision;UNIT 1;People;Révisions - UNIT 1 PEOPLE;60;T1;Semaine 3",
-  "4;evaluation;UNIT 1;People;Évaluation - UNIT 1 PEOPLE;60;T1;Semaine 3",
-  "5;remediation;UNIT 1;People;Correction / Remédiation - UNIT 1 PEOPLE;60;T1;Semaine 3",
-  "6;theme;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;;T1;Semaines 4-5",
-  "7;lesson;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;360;T1;Semaines 4-5",
-  "8;revision;UNIT 2;Health and lifestyle;Révisions - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
-  "9;evaluation;UNIT 2;Health and lifestyle;Évaluation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
-  "10;remediation;UNIT 2;Health and lifestyle;Correction / Remédiation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
-].join("\n");
-
-const STRUCTURAL_ITEM_TYPES = new Set(["section", "theme", "rubric", "competency", "chapter"]);
 
 const emptyForm = {
   title: "",
@@ -63,94 +57,6 @@ function classNames(...arr: Array<string | false | null | undefined>) {
   return arr.filter(Boolean).join(" ");
 }
 
-function normalizeImportType(value: unknown, hasDuration: boolean) {
-  const raw = String(value || "")
-    .trim()
-    .toLowerCase();
-  const compact = raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[\s_\-]+/g, " ");
-
-  const map: Record<string, string> = {
-    section: "section",
-    partie: "section",
-    theme: "theme",
-    rubrique: "rubric",
-    competence: "competency",
-    chapitre: "chapter",
-    chapter: "chapter",
-    lecon: "lesson",
-    lesson: "lesson",
-    cours: "lesson",
-    sequence: "sequence",
-    seance: "session",
-    session: "session",
-    evaluation: "evaluation",
-    devoir: "evaluation",
-    remediation: "remediation",
-    regulation: "regulation",
-    revision: "revision",
-    autre: "other",
-    other: "other",
-  };
-
-  const normalized = map[compact] || "lesson";
-  if (STRUCTURAL_ITEM_TYPES.has(normalized) && hasDuration) return "lesson";
-  return normalized;
-}
-
-function makeImportSample(progression?: NationalProgression | null) {
-  const subject = String(progression?.subject_name || progression?.title || "").toLowerCase();
-  if (subject.includes("anglais") || subject.includes("english")) return ANGLAIS_2NDE_A_C_SAMPLE;
-  if (subject.includes("français") || subject.includes("francais")) {
-    return [
-      IMPORT_HEADER,
-      "1;rubric;Grammaire;Phrase;La phrase simple;;T1;Semaine 1",
-      "2;lesson;Grammaire;Phrase;Les constituants de la phrase simple;55;T1;Semaine 1",
-      "3;lesson;Expression écrite;Rédaction;Rédiger un paragraphe cohérent;55;T1;Semaine 2",
-    ].join("\n");
-  }
-  return [
-    IMPORT_HEADER,
-    "1;theme;Activités numériques;Nombres;Nombres et calculs;;T1;Semaine 1",
-    "2;lesson;Activités numériques;Nombres;Nombres entiers naturels;120;T1;Semaine 1",
-    "3;lesson;Activités numériques;Nombres;Comparaison et rangement;55;T1;Semaine 2",
-  ].join("\n");
-}
-
-function parseImportLines(raw: string) {
-  const lines = String(raw || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return lines
-    .filter((line, index) => index > 0 || !line.toLowerCase().startsWith("ordre;"))
-    .map((line, index) => {
-      const parts = line.includes(";") ? line.split(";") : line.split("\t");
-      const [order, type, rubric, theme, title, duration, trimester, week] = parts.map((p) => String(p || "").trim());
-      const finalTitle = title || theme || rubric;
-      if (!finalTitle) return null;
-
-      const minutes = Number(duration || 0);
-      const hasDuration = Number.isFinite(minutes) && minutes > 0;
-      const itemType = normalizeImportType(type, hasDuration);
-
-      return {
-        sort_order: Number(order) || index + 1,
-        item_type: itemType,
-        rubric: rubric || null,
-        theme: theme || null,
-        title: finalTitle,
-        planned_duration_minutes: hasDuration ? minutes : null,
-        trimester: trimester || null,
-        week_label: week || null,
-        indent_level: STRUCTURAL_ITEM_TYPES.has(itemType) ? 0 : 1,
-      };
-    })
-    .filter(Boolean);
-}
 
 export default function SuperNationalProgressionsPage() {
   const [loading, setLoading] = useState(true);
@@ -163,6 +69,9 @@ export default function SuperNationalProgressionsPage() {
   const [form, setForm] = useState(emptyForm);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [importText, setImportText] = useState(makeImportSample(null));
+  const [rawProgressionText, setRawProgressionText] = useState("");
+  const [assistantItems, setAssistantItems] = useState<StructuredProgressionItem[]>([]);
+  const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
 
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) || null,
@@ -270,6 +179,52 @@ export default function SuperNationalProgressionsPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+
+  function runAssistantExtraction() {
+    const extracted = extractStructuredItems(rawProgressionText, selected || undefined);
+    setAssistantItems(extracted);
+
+    if (!rawProgressionText.trim()) {
+      setAssistantMessage("Colle d'abord le texte extrait de la progression ou importe un fichier TXT/CSV.");
+      return;
+    }
+
+    if (!extracted.length) {
+      setAssistantMessage("Aucune ligne exploitable détectée. Il faudra corriger le texte ou utiliser le modèle structuré.");
+      return;
+    }
+
+    setAssistantMessage(`${extracted.length} ligne(s) détectée(s). Vérifie l'aperçu avant d'importer.`);
+  }
+
+  function useAssistantPreview() {
+    if (!assistantItems.length) {
+      setAssistantMessage("Lance d'abord l'extraction assistée pour générer une prévisualisation.");
+      return;
+    }
+    setImportText(serializeImportLines(assistantItems));
+    setAssistantMessage("Prévisualisation copiée dans la zone d'import. Tu peux encore corriger avant validation.");
+  }
+
+  async function readStructuredFile(file: File | null) {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    const isTextLike = file.type.startsWith("text/") || name.endsWith(".txt") || name.endsWith(".csv") || name.endsWith(".tsv");
+
+    if (!isTextLike) {
+      setAssistantMessage(
+        "Pour l'instant, l'assistant lit directement les TXT/CSV. Pour un PDF/Word, ouvre le document, copie le tableau en texte, puis colle-le ici.",
+      );
+      return;
+    }
+
+    const text = await file.text();
+    setRawProgressionText(text);
+    const extracted = extractStructuredItems(text, selected || undefined);
+    setAssistantItems(extracted);
+    setAssistantMessage(`${extracted.length} ligne(s) détectée(s) depuis le fichier.`);
   }
 
   return (
@@ -381,8 +336,95 @@ export default function SuperNationalProgressionsPage() {
             </div>
 
             {selected ? (
-              <div className="mt-5 space-y-4">
-                <textarea className="h-64 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-violet-400" value={importText} onChange={(e) => setImportText(e.target.value)} />
+              <div className="mt-5 space-y-5">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <div className="font-black">Important</div>
+                  <p className="mt-1 font-semibold">
+                    Le fichier officiel reste la preuve documentaire. Les statistiques, les leçons cliquables et les séances viennent des lignes structurées ci-dessous.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-violet-100 bg-violet-50/50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <h3 className="inline-flex items-center gap-2 text-base font-black text-slate-900">
+                        <Wand2 className="h-4 w-4 text-violet-700" /> Assistant de structuration
+                      </h3>
+                      <p className="mt-1 text-sm font-semibold text-slate-600">
+                        Colle le texte extrait d'un PDF/Word, ou importe un TXT/CSV. L'assistant propose les unités, leçons, séances, évaluations et remédiations à vérifier avant validation.
+                      </p>
+                    </div>
+                    <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 hover:bg-violet-50">
+                      <Upload className="h-4 w-4" /> TXT / CSV
+                      <input className="hidden" type="file" accept=".txt,.csv,.tsv,text/plain,text/csv" onChange={(e) => readStructuredFile(e.target.files?.[0] || null)} />
+                    </label>
+                  </div>
+
+                  <textarea
+                    className="mt-4 h-36 w-full rounded-2xl border border-violet-100 bg-white px-4 py-3 text-xs font-semibold text-slate-700 outline-none focus:border-violet-400"
+                    placeholder="Colle ici le texte brut de la progression officielle. Exemple : UNIT 1 PEOPLE, Révisions, Evaluation, Correction / Remédiation..."
+                    value={rawProgressionText}
+                    onChange={(e) => setRawProgressionText(e.target.value)}
+                  />
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" onClick={runAssistantExtraction} className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-xs font-black text-white">
+                      <Eye className="h-4 w-4" /> Prévisualiser l'extraction
+                    </button>
+                    <button type="button" onClick={useAssistantPreview} disabled={!assistantItems.length} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                      <CheckCircle2 className="h-4 w-4" /> Utiliser cette prévisualisation
+                    </button>
+                  </div>
+
+                  {assistantMessage ? (
+                    <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-700 ring-1 ring-violet-100">{assistantMessage}</div>
+                  ) : null}
+
+                  {assistantItems.length ? (
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-violet-100 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-violet-50 text-[11px] uppercase tracking-wide text-violet-700">
+                          <tr>
+                            <th className="px-3 py-2">Ordre</th>
+                            <th className="px-3 py-2">Type</th>
+                            <th className="px-3 py-2">Titre détecté</th>
+                            <th className="px-3 py-2">Durée / séances</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-violet-50">
+                          {assistantItems.slice(0, 12).map((item, index) => (
+                            <tr key={`${item.sort_order}-${index}`}>
+                              <td className="px-3 py-2 font-bold text-slate-500">{item.sort_order}</td>
+                              <td className="px-3 py-2 font-black text-violet-700">{item.item_type}</td>
+                              <td className="px-3 py-2">
+                                <div className="font-bold text-slate-900">{item.title}</div>
+                                <div className="text-[11px] text-slate-500">{item.rubric || item.theme || item.competency || ""}</div>
+                              </td>
+                              <td className="px-3 py-2 font-bold text-slate-500">
+                                {item.planned_duration_minutes ? `${item.planned_duration_minutes} min` : "—"}
+                                {item.planned_sessions_count ? ` · ${item.planned_sessions_count} séance(s)` : ""}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {assistantItems.length > 12 ? (
+                        <div className="border-t border-violet-50 px-3 py-2 text-xs font-bold text-slate-500">+ {assistantItems.length - 12} autre(s) ligne(s) détectée(s)</div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-black text-slate-900">Import structuré final</h3>
+                      <p className="text-xs font-semibold text-slate-500">Corrige ici avant de remplacer les lignes nationales.</p>
+                    </div>
+                  </div>
+                  <textarea className="h-64 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-violet-400" value={importText} onChange={(e) => setImportText(e.target.value)} />
+                </div>
+
                 <button type="button" onClick={importItems} disabled={busy} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   Remplacer / importer les lignes nationales
@@ -411,10 +453,10 @@ export default function SuperNationalProgressionsPage() {
                       <td className="px-3 py-3 text-xs font-black text-violet-700">{item.item_type}</td>
                       <td className="px-3 py-3">
                         <div className="font-bold text-slate-900">{item.title}</div>
-                        <div className="text-xs text-slate-500">{item.rubric || item.theme || ""}</div>
+                        <div className="text-xs text-slate-500">{[item.rubric, item.theme, item.competency].filter(Boolean).join(" · ")}</div>
                       </td>
-                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.trimester || ""} {item.week_label || ""}</td>
-                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.planned_duration_minutes ? `${item.planned_duration_minutes} min` : "—"}</td>
+                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{[item.trimester, item.month_label, item.week_label].filter(Boolean).join(" · ")}</td>
+                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.planned_duration_minutes ? `${item.planned_duration_minutes} min` : "—"}{item.planned_sessions_count ? ` · ${item.planned_sessions_count} séance(s)` : ""}</td>
                     </tr>
                   ))}
                   {!selectedItems.length ? (
