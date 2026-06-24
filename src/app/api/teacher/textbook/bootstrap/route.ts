@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   canManageTextbook,
+  findTextbookClassDevice,
   requireTeacherTextbook,
 } from "@/lib/textbook/context";
 
@@ -50,40 +51,6 @@ function findEffectiveTeacherId(assignment: any, classTeacherRows: any[]) {
   return String(matched?.teacher_id || "").trim() || null;
 }
 
-async function getAuthPhone(srv: any, userId: string) {
-  const fromSchema = await srv
-    .schema("auth")
-    .from("users")
-    .select("phone")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!fromSchema.error && fromSchema.data?.phone) {
-    return String(fromSchema.data.phone || "").trim();
-  }
-
-  const fromQualified = await srv
-    .from("auth.users")
-    .select("phone")
-    .eq("id", userId)
-    .maybeSingle();
-
-  return String(fromQualified.data?.phone || "").trim();
-}
-
-async function getClassDevice(srv: any, userId: string, institutionId: string) {
-  const phone = await getAuthPhone(srv, userId);
-  if (!phone) return null;
-
-  const { data } = await srv
-    .from("classes")
-    .select("id,label,level,institution_id,class_phone_e164")
-    .eq("institution_id", institutionId)
-    .eq("class_phone_e164", phone)
-    .maybeSingle();
-
-  return data || null;
-}
 
 async function decorateDocuments(srv: any, assignments: any[]) {
   for (const assignment of assignments) {
@@ -117,7 +84,7 @@ export async function GET() {
   const privileged = canManageTextbook(roles) && !isClassDevice;
 
   const classDevice = isClassDevice
-    ? await getClassDevice(srv, userId, institutionId)
+    ? await findTextbookClassDevice(srv, userId, institutionId)
     : null;
   if (isClassDevice && !classDevice) {
     return NextResponse.json(

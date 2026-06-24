@@ -87,6 +87,60 @@ const emptyCreate = {
 
 const IMPORT_HEADER =
   "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Trimestre;Semaine";
+
+const ANGLAIS_2NDE_A_C_OFFICIAL_SAMPLE = [
+  IMPORT_HEADER,
+  "1;theme;UNIT 1;People;UNIT 1 PEOPLE;;T1;Semaines 1-2",
+  "2;lesson;UNIT 1;People;UNIT 1 PEOPLE;360;T1;Semaines 1-2",
+  "3;revision;UNIT 1;People;Révisions - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "4;evaluation;UNIT 1;People;Évaluation - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "5;remediation;UNIT 1;People;Correction / Remédiation - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "6;theme;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;;T1;Semaines 4-5",
+  "7;lesson;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;360;T1;Semaines 4-5",
+  "8;revision;UNIT 2;Health and lifestyle;Révisions - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+  "9;evaluation;UNIT 2;Health and lifestyle;Évaluation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+  "10;remediation;UNIT 2;Health and lifestyle;Correction / Remédiation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+  "11;theme;UNIT 3;Technology;UNIT 3 TECHNOLOGY;;T1;Semaines 7-8",
+  "12;lesson;UNIT 3;Technology;UNIT 3 TECHNOLOGY;360;T1;Semaines 7-8",
+  "13;revision;UNIT 3;Technology;Révisions - UNIT 3 TECHNOLOGY;60;T1;Semaine 9",
+  "14;evaluation;UNIT 3;Technology;Évaluation - UNIT 3 TECHNOLOGY;60;T1;Semaine 9",
+  "15;remediation;UNIT 3;Technology;Correction / Remédiation - UNIT 3 TECHNOLOGY;60;T1;Semaine 9",
+  "16;theme;UNIT 4;Looking forward;UNIT 4 LOOKING FORWARD;;T1;Semaines 10-11",
+  "17;lesson;UNIT 4;Looking forward;UNIT 4 LOOKING FORWARD;360;T1;Semaines 10-11",
+  "18;revision;UNIT 4;Looking forward;Révisions - UNIT 4 LOOKING FORWARD;60;T1;Semaine 12",
+  "19;evaluation;UNIT 4;Looking forward;Évaluation - UNIT 4 LOOKING FORWARD;60;T1;Semaine 12",
+  "20;remediation;UNIT 4;Looking forward;Correction / Remédiation - UNIT 4 LOOKING FORWARD;60;T1;Semaine 12",
+  "21;theme;UNIT 5;Gender and education;UNIT 5 GENDER AND EDUCATION;;T2;Semaines 13-14",
+  "22;lesson;UNIT 5;Gender and education;UNIT 5 GENDER AND EDUCATION;360;T2;Semaines 13-14",
+  "23;revision;UNIT 5;Gender and education;Révisions - UNIT 5 GENDER AND EDUCATION;60;T2;Semaine 15",
+  "24;evaluation;UNIT 5;Gender and education;Évaluation - UNIT 5 GENDER AND EDUCATION;60;T2;Semaine 15",
+  "25;remediation;UNIT 5;Gender and education;Correction / Remédiation - UNIT 5 GENDER AND EDUCATION;60;T2;Semaine 15",
+  "26;theme;UNIT 6;Citizenship;UNIT 6 CITIZENSHIP;;T2;Semaines 16-17",
+  "27;lesson;UNIT 6;Citizenship;UNIT 6 CITIZENSHIP;360;T2;Semaines 16-17",
+  "28;revision;UNIT 6;Citizenship;Révisions - UNIT 6 CITIZENSHIP;60;T2;Semaine 18",
+  "29;evaluation;UNIT 6;Citizenship;Évaluation - UNIT 6 CITIZENSHIP;60;T2;Semaine 18",
+  "30;remediation;UNIT 6;Citizenship;Correction / Remédiation - UNIT 6 CITIZENSHIP;60;T2;Semaine 18",
+  "31;theme;UNIT 7;Sports;UNIT 7 SPORTS;;T2;Semaines 19-20",
+  "32;lesson;UNIT 7;Sports;UNIT 7 SPORTS;360;T2;Semaines 19-20",
+  "33;revision;UNIT 7;Sports;Révisions - UNIT 7 SPORTS;60;T2;Semaine 21",
+  "34;evaluation;UNIT 7;Sports;Évaluation - UNIT 7 SPORTS;60;T2;Semaine 21",
+  "35;remediation;UNIT 7;Sports;Correction / Remédiation - UNIT 7 SPORTS;60;T2;Semaine 21",
+  "36;theme;UNIT 8;Science;UNIT 8 SCIENCE;;T3;Semaines 22-23",
+  "37;lesson;UNIT 8;Science;UNIT 8 SCIENCE;360;T3;Semaines 22-23",
+  "38;revision;UNIT 8;Science;Révisions - UNIT 8 SCIENCE;60;T3;Semaine 24",
+  "39;evaluation;UNIT 8;Science;Évaluation - UNIT 8 SCIENCE;60;T3;Semaine 24",
+  "40;remediation;UNIT 8;Science;Correction / Remédiation - UNIT 8 SCIENCE;60;T3;Semaine 24",
+  "41;theme;UNIT 9;Wildlife;UNIT 9 WILDLIFE;;T3;Semaines 25-26",
+  "42;lesson;UNIT 9;Wildlife;UNIT 9 WILDLIFE;360;T3;Semaines 25-26",
+  "43;revision;UNIT 9;Wildlife;Révisions - UNIT 9 WILDLIFE;60;T3;Semaine 27",
+  "44;evaluation;UNIT 9;Wildlife;Évaluation - UNIT 9 WILDLIFE;60;T3;Semaine 27",
+  "45;remediation;UNIT 9;Wildlife;Correction / Remédiation - UNIT 9 WILDLIFE;60;T3;Semaine 27",
+  "46;theme;UNIT 10;Culture and civilization;UNIT 10 CULTURE AND CIVILIZATION;;T3;Semaines 28-29",
+  "47;lesson;UNIT 10;Culture and civilization;UNIT 10 CULTURE AND CIVILIZATION;360;T3;Semaines 28-29",
+  "48;revision;UNIT 10;Culture and civilization;Révisions - UNIT 10 CULTURE AND CIVILIZATION;60;T3;Semaine 30",
+  "49;evaluation;UNIT 10;Culture and civilization;Évaluation - UNIT 10 CULTURE AND CIVILIZATION;60;T3;Semaine 30",
+  "50;remediation;UNIT 10;Culture and civilization;Correction / Remédiation - UNIT 10 CULTURE AND CIVILIZATION;60;T3;Semaine 30",
+].join("\n");
 const STRUCTURAL_ITEM_TYPES = new Set([
   "section",
   "theme",
@@ -140,12 +194,7 @@ function makeImportSample(progression?: Progression | null) {
   ).toLowerCase();
 
   if (subject.includes("anglais") || subject.includes("english")) {
-    return [
-      IMPORT_HEADER,
-      "1;theme;Unit 1;Identity;Identity and introductions;;T1;Semaine 1",
-      "2;lesson;Unit 1;Identity;Greetings and introductions;55;T1;Semaine 1",
-      "3;lesson;Unit 1;Identity;Asking and giving personal information;55;T1;Semaine 2",
-    ].join("\n");
+    return ANGLAIS_2NDE_A_C_OFFICIAL_SAMPLE;
   }
 
   if (subject.includes("français") || subject.includes("francais")) {
@@ -238,6 +287,7 @@ export default function AdminTextbookPage() {
   const [createForm, setCreateForm] = useState(emptyCreate);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [importText, setImportText] = useState(() => makeImportSample(null));
+  const [replaceExisting, setReplaceExisting] = useState(true);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
 
   const selected = useMemo(
@@ -369,9 +419,13 @@ export default function AdminTextbookPage() {
       await fetchJson(`/api/admin/textbook/progressions/${selected.id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: parsed, replace: items.length === 0 }),
+        body: JSON.stringify({ items: parsed, replace: replaceExisting }),
       });
-      setMessage(`${parsed.length} ligne(s) importée(s) dans la progression.`);
+      setMessage(
+        replaceExisting
+          ? `${parsed.length} ligne(s) importée(s). Les anciennes lignes ont été remplacées.`
+          : `${parsed.length} ligne(s) ajoutée(s) dans la progression.`,
+      );
       await loadSelected(selected.id);
       await loadAll();
     } catch (e: any) {
@@ -673,6 +727,20 @@ export default function AdminTextbookPage() {
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
                       />
+                      <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold leading-5 text-amber-900">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={replaceExisting}
+                          onChange={(e) => setReplaceExisting(e.target.checked)}
+                        />
+                        <span>
+                          Remplacer les lignes existantes. À garder coché si vous
+                          corrigez une progression ou si un exemple a été importé
+                          par erreur. Le fichier officiel reste attaché, mais les
+                          statistiques utilisent uniquement les lignes ci-dessus.
+                        </span>
+                      </label>
                       <button
                         onClick={importItems}
                         disabled={busy}

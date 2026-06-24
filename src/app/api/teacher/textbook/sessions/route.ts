@@ -3,6 +3,7 @@ import {
   canManageTextbook,
   cleanText,
   cleanUuid,
+  findTextbookClassDevice,
   requireTeacherTextbook,
   toPositiveInt,
 } from "@/lib/textbook/context";
@@ -37,37 +38,6 @@ function subjectMatches(assignment: any, rows: any[]) {
   );
 }
 
-async function getAuthPhone(srv: any, userId: string) {
-  const fromSchema = await srv
-    .schema("auth")
-    .from("users")
-    .select("phone")
-    .eq("id", userId)
-    .maybeSingle();
-  if (!fromSchema.error && fromSchema.data?.phone)
-    return String(fromSchema.data.phone || "").trim();
-
-  const fromQualified = await srv
-    .from("auth.users")
-    .select("phone")
-    .eq("id", userId)
-    .maybeSingle();
-  return String(fromQualified.data?.phone || "").trim();
-}
-
-async function getClassDevice(srv: any, userId: string, institutionId: string) {
-  const phone = await getAuthPhone(srv, userId);
-  if (!phone) return null;
-
-  const { data } = await srv
-    .from("classes")
-    .select("id,label,level,institution_id,class_phone_e164")
-    .eq("institution_id", institutionId)
-    .eq("class_phone_e164", phone)
-    .maybeSingle();
-
-  return data || null;
-}
 
 async function findTeacherForClassSubject(srv: any, assignment: any) {
   const { data: rows } = await srv
@@ -99,7 +69,7 @@ async function resolveAssignmentAccess(
   const isClassDevice = roles.has("class_device");
 
   if (isClassDevice) {
-    const classDevice = await getClassDevice(srv, userId, institutionId);
+    const classDevice = await findTextbookClassDevice(srv, userId, institutionId);
     if (
       !classDevice ||
       String(classDevice.id || "") !== String(assignment.class_id || "")

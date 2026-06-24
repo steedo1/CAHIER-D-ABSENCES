@@ -187,6 +187,121 @@ export async function getCurrentAcademicYearCode(
   return (latest as any)?.code ? String((latest as any).code) : null;
 }
 
+
+export function uniqText(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
+  );
+}
+
+export function buildPhoneVariants(raw: unknown) {
+  const value = String(raw || "").trim();
+  const compact = value.replace(/\s+/g, "");
+  const digits = compact.replace(/\D/g, "");
+  const local10 = digits ? digits.slice(-10) : "";
+  const localNo0 = local10.replace(/^0/, "");
+  const cc = "225";
+
+  return uniqText([
+    value,
+    compact,
+    digits,
+    digits ? `+${digits}` : "",
+    local10,
+    localNo0 ? `0${localNo0}` : "",
+    localNo0,
+    local10 ? `${cc}${local10}` : "",
+    localNo0 ? `${cc}${localNo0}` : "",
+    local10 ? `+${cc}${local10}` : "",
+    localNo0 ? `+${cc}${localNo0}` : "",
+    local10 ? `00${cc}${local10}` : "",
+    localNo0 ? `00${cc}${localNo0}` : "",
+  ]);
+}
+
+function normalizePhoneComparable(raw: unknown) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (!digits) return "";
+  const local10 = digits.slice(-10);
+  return local10 || digits;
+}
+
+async function getAuthPhoneCandidates(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  userId: string,
+) {
+  const phones: string[] = [];
+
+  const fromSchema = await srv
+    .schema("auth")
+    .from("users")
+    .select("phone")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!fromSchema.error && fromSchema.data?.phone) {
+    phones.push(String(fromSchema.data.phone || "").trim());
+  }
+
+  const fromQualified = await srv
+    .from("auth.users")
+    .select("phone")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!fromQualified.error && fromQualified.data?.phone) {
+    phones.push(String(fromQualified.data.phone || "").trim());
+  }
+
+  const fromProfile = await srv
+    .from("profiles")
+    .select("phone")
+    .eq("id", userId)
+    .maybeSingle();
+  if (!fromProfile.error && fromProfile.data?.phone) {
+    phones.push(String(fromProfile.data.phone || "").trim());
+  }
+
+  return uniqText(phones);
+}
+
+export async function findTextbookClassDevice(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  userId: string,
+  institutionId: string,
+) {
+  const phones = await getAuthPhoneCandidates(srv, userId);
+  const variants = uniqText(phones.flatMap((phone) => buildPhoneVariants(phone)));
+  if (!variants.length) return null;
+
+  const { data: directRows } = await srv
+    .from("classes")
+    .select("id,label,level,institution_id,class_phone_e164")
+    .eq("institution_id", institutionId)
+    .in("class_phone_e164", variants)
+    .limit(2);
+
+  if (Array.isArray(directRows) && directRows.length === 1) return directRows[0];
+
+  const candidateKeys = new Set(variants.map(normalizePhoneComparable).filter(Boolean));
+  const { data: allClasses } = await srv
+    .from("classes")
+    .select("id,label,level,institution_id,class_phone_e164")
+    .eq("institution_id", institutionId)
+    .not("class_phone_e164", "is", null)
+    .limit(1000);
+
+  const matches = ((allClasses || []) as any[]).filter((cls) => {
+    const stored = String(cls.class_phone_e164 || "").trim();
+    if (!stored) return false;
+    if (variants.includes(stored) || variants.includes(stored.replace(/\s+/g, ""))) {
+      return true;
+    }
+    const storedKey = normalizePhoneComparable(stored);
+    return Boolean(storedKey && candidateKeys.has(storedKey));
+  });
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function cleanText(value: unknown, max = 500) {
   const s = typeof value === "string" ? value.trim() : "";
   if (!s) return "";
