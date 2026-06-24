@@ -109,6 +109,53 @@ function isUsableExtractedText(text: string) {
   return extractionQuality(text).usable;
 }
 
+async function loadPdfParseModule(): Promise<any | null> {
+  try {
+    // Import direct pour que Next/Vercel embarque vraiment pdf-parse dans la route serveur.
+    return await import("pdf-parse");
+  } catch {
+    return null;
+  }
+}
+
+async function parsePdfBuffer(
+  buffer: Buffer,
+  mod: any,
+): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  // Ancienne API de pdf-parse : default export = fonction(buffer).
+  const legacyParser = typeof mod?.default === "function" ? mod.default : typeof mod === "function" ? mod : null;
+  if (legacyParser) {
+    try {
+      const result = await legacyParser(buffer);
+      return { ok: true, text: String(result?.text || "") };
+    } catch {
+      // On tente ensuite l'API récente si elle existe.
+    }
+  }
+
+  // API récente de pdf-parse v2 : import { PDFParse } from "pdf-parse".
+  const PDFParseClass =
+    typeof mod?.PDFParse === "function"
+      ? mod.PDFParse
+      : typeof mod?.default?.PDFParse === "function"
+        ? mod.default.PDFParse
+        : null;
+
+  if (!PDFParseClass) {
+    return { ok: false, reason: "pdf_parse_api_not_found" };
+  }
+
+  const parser = new PDFParseClass({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return { ok: true, text: String(result?.text || "") };
+  } finally {
+    if (typeof parser.destroy === "function") {
+      await parser.destroy().catch(() => null);
+    }
+  }
+}
+
 async function extractTextFromDocument(buffer: Buffer, kind: string) {
   if (kind === "text") {
     return { rawText: compactExtractedText(buffer.toString("utf8")), warning: null as string | null };
@@ -150,19 +197,26 @@ async function extractTextFromDocument(buffer: Buffer, kind: string) {
   }
 
   if (kind === "pdf") {
-    const mod: any = await optionalImport("pdf-parse");
-    const pdfParse = mod?.default || mod;
-
-    if (typeof pdfParse !== "function") {
+    const mod = await loadPdfParseModule();
+    if (!mod) {
       return {
         rawText: "",
         warning: "pdf_parser_missing",
-        error: "Le lecteur PDF n'est pas disponible côté serveur. Installe le package pdf-parse, puis relance le build.",
+        error: "Le lecteur PDF n'est pas disponible côté serveur. Vérifie que pdf-parse est dans package.json, puis relance npm install et npm run build.",
       };
     }
 
-    const result = await pdfParse(buffer);
-    const text = compactExtractedText(result?.text || "");
+    const parsed = await parsePdfBuffer(buffer, mod);
+    if (!parsed.ok) {
+      return {
+        rawText: "",
+        warning: parsed.reason,
+        error:
+          "Le package pdf-parse est installé, mais son API n'a pas été reconnue par la route serveur. Applique le correctif V4.2, relance le build, puis redéploie.",
+      };
+    }
+
+    const text = compactExtractedText(parsed.text);
     if (!isUsableExtractedText(text)) {
       return {
         rawText: "",
