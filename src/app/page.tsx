@@ -3,7 +3,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./providers";
 import {
@@ -340,10 +340,430 @@ function TestimonialCard({
   );
 }
 
+
+type HomeSlideTone = "emerald" | "violet" | "amber" | "sky" | "slate";
+
+type HomeSlide = {
+  key: string;
+  label: string;
+  eyebrow: string;
+  title: string;
+  accent: string;
+  description: string;
+  imageSrc: string;
+  imageAlt: string;
+  href: string;
+  cta: string;
+  icon: LucideIcon;
+  tone: HomeSlideTone;
+  badges: string[];
+  metrics: { label: string; value: string; hint: string }[];
+};
+
+const homeSlides: HomeSlide[] = [
+  {
+    key: "absences",
+    label: "Cahier des absences",
+    eyebrow: "Assiduité en temps réel",
+    title: "Les présences et absences",
+    accent: "sont suivies dès l’appel.",
+    description:
+      "L’appel est digitalisé, les retards et absences sont enregistrés immédiatement, puis les parents et la direction disposent d’une information claire.",
+    imageSrc: "/accueil.png",
+    imageAlt: "Cahier des absences Mon Cahier avec suivi des élèves en classe",
+    href: "/parents/login",
+    cta: "Voir les absences",
+    icon: Clock,
+    tone: "emerald",
+    badges: ["Appel digital", "Retards", "Notifications"],
+    metrics: [
+      { label: "Assiduité", value: "94,2%", hint: "taux de présence" },
+      { label: "Alertes", value: "Instantané", hint: "absence ou retard" },
+      { label: "Suivi", value: "Par classe", hint: "élèves et enseignants" },
+    ],
+  },
+  {
+    key: "notes",
+    label: "Notes & Évaluations",
+    eyebrow: "Résultats scolaires",
+    title: "Les notes, moyennes et bulletins",
+    accent: "sont centralisés par période.",
+    description:
+      "Les enseignants saisissent les évaluations, l’administration suit les moyennes et les parents consultent les résultats publiés.",
+    imageSrc: "/home/hero-notes.png",
+    imageAlt: "Cahier de notes Mon Cahier avec moyennes, matières et bulletin scolaire",
+    href: "/parents/login",
+    cta: "Voir les notes",
+    icon: FileSpreadsheet,
+    tone: "amber",
+    badges: ["Notes", "Moyennes", "Bulletins"],
+    metrics: [
+      { label: "Moyenne", value: "14,2/20", hint: "exemple de classe" },
+      { label: "Bulletin", value: "Disponible", hint: "après publication" },
+      { label: "Exports", value: "PDF", hint: "listes et bilans" },
+    ],
+  },
+  {
+    key: "textes",
+    label: "Cahier de textes",
+    eyebrow: "Suivi pédagogique",
+    title: "Les leçons, devoirs et progressions",
+    accent: "restent accessibles à tout moment.",
+    description:
+      "Le professeur renseigne les séances, devoirs et ressources ; la direction suit l’avancement du programme et les familles restent informées.",
+    imageSrc: "/home/hero-textes.png",
+    imageAlt: "Cahier de textes numérique Mon Cahier avec professeur, tablette et progression pédagogique",
+    href: "/login?space=enseignant",
+    cta: "Voir le cahier de textes",
+    icon: ReceiptText,
+    tone: "violet",
+    badges: ["Leçons", "Devoirs", "Progression"],
+    metrics: [
+      { label: "Leçon", value: "Publiée", hint: "séance du jour" },
+      { label: "Devoirs", value: "À rendre", hint: "dates visibles" },
+      { label: "Programme", value: "72%", hint: "progression suivie" },
+    ],
+  },
+  {
+    key: "communication",
+    label: "Communication parents-école",
+    eyebrow: "Messages et annonces",
+    title: "Les parents reçoivent les informations",
+    accent: "sans attendre le papier.",
+    description:
+      "Les annonces, rappels et notifications importantes circulent plus vite entre l’école, les familles et les responsables d’élèves.",
+    imageSrc: "/home/hero-communication.png",
+    imageAlt: "Communication parents école Mon Cahier avec messages et notifications",
+    href: "/parents/login",
+    cta: "Voir les messages",
+    icon: MessageSquare,
+    tone: "sky",
+    badges: ["Messages", "Annonces", "Parents"],
+    metrics: [
+      { label: "Canal", value: "Direct", hint: "école vers parent" },
+      { label: "Suivi", value: "Historique", hint: "messages envoyés" },
+      { label: "Infos", value: "Claires", hint: "annonces et rappels" },
+    ],
+  },
+  {
+    key: "finance",
+    label: "Finance scolaire",
+    eyebrow: "Paiements et reçus",
+    title: "La scolarité, l’internat et les dépenses",
+    accent: "sont suivis avec précision.",
+    description:
+      "La finance scolaire couvre les frais, paiements, reçus, soldes, rapports, dépenses et vues consolidées pour la direction ou le fondateur.",
+    imageSrc: "/home/hero-finance.png",
+    imageAlt: "Finance scolaire Mon Cahier avec paiements, reçus et suivi des frais",
+    href: "/login?space=finance",
+    cta: "Voir la finance",
+    icon: Wallet,
+    tone: "emerald",
+    badges: ["Paiements", "Reçus", "Rapports"],
+    metrics: [
+      { label: "Paiements", value: "Suivis", hint: "par élève et période" },
+      { label: "Reçus", value: "Imprimables", hint: "historique disponible" },
+      { label: "Budget", value: "Contrôlé", hint: "dépenses et soldes" },
+    ],
+  },
+];
+
+const slideToneClasses: Record<
+  HomeSlideTone,
+  {
+    accent: string;
+    button: string;
+    soft: string;
+    ring: string;
+    icon: string;
+    glow: string;
+    progress: string;
+    fallback: string;
+  }
+> = {
+  emerald: {
+    accent: "text-emerald-600",
+    button: "bg-emerald-600 text-white hover:bg-emerald-700",
+    soft: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+    ring: "border-emerald-200 bg-emerald-50/70",
+    icon: "bg-emerald-100 text-emerald-700",
+    glow: "bg-emerald-400/20",
+    progress: "bg-emerald-600",
+    fallback: "from-emerald-50 via-white to-emerald-100 text-emerald-700",
+  },
+  violet: {
+    accent: "text-violet-600",
+    button: "bg-violet-600 text-white hover:bg-violet-700",
+    soft: "bg-violet-50 text-violet-700 ring-violet-200",
+    ring: "border-violet-200 bg-violet-50/70",
+    icon: "bg-violet-100 text-violet-700",
+    glow: "bg-violet-400/20",
+    progress: "bg-violet-600",
+    fallback: "from-violet-50 via-white to-violet-100 text-violet-700",
+  },
+  amber: {
+    accent: "text-amber-600",
+    button: "bg-amber-500 text-white hover:bg-amber-600",
+    soft: "bg-amber-50 text-amber-700 ring-amber-200",
+    ring: "border-amber-200 bg-amber-50/70",
+    icon: "bg-amber-100 text-amber-700",
+    glow: "bg-amber-400/20",
+    progress: "bg-amber-500",
+    fallback: "from-amber-50 via-white to-amber-100 text-amber-700",
+  },
+  sky: {
+    accent: "text-sky-600",
+    button: "bg-sky-600 text-white hover:bg-sky-700",
+    soft: "bg-sky-50 text-sky-700 ring-sky-200",
+    ring: "border-sky-200 bg-sky-50/70",
+    icon: "bg-sky-100 text-sky-700",
+    glow: "bg-sky-400/20",
+    progress: "bg-sky-600",
+    fallback: "from-sky-50 via-white to-sky-100 text-sky-700",
+  },
+  slate: {
+    accent: "text-slate-700",
+    button: "bg-slate-900 text-white hover:bg-slate-800",
+    soft: "bg-slate-100 text-slate-700 ring-slate-200",
+    ring: "border-slate-200 bg-slate-50/80",
+    icon: "bg-slate-100 text-slate-700",
+    glow: "bg-slate-300/25",
+    progress: "bg-slate-900",
+    fallback: "from-slate-50 via-white to-slate-100 text-slate-700",
+  },
+};
+
+function SmartHomeImage({
+  slide,
+  priority = false,
+  className = "",
+}: {
+  slide: HomeSlide;
+  priority?: boolean;
+  className?: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const tone = slideToneClasses[slide.tone];
+  const Icon = slide.icon;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [slide.imageSrc]);
+
+  if (imageFailed) {
+    return (
+      <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${tone.fallback} ${className}`}>
+        <div className="text-center">
+          <div className={`mx-auto grid h-16 w-16 place-items-center rounded-3xl ${tone.icon}`}>
+            <Icon className="h-8 w-8" />
+          </div>
+          <div className="mt-4 text-sm font-black uppercase tracking-[0.16em]">{slide.label}</div>
+          <div className="mx-auto mt-2 max-w-xs text-sm leading-6 text-slate-600">{slide.eyebrow}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Image
+      key={slide.imageSrc}
+      src={slide.imageSrc}
+      alt={slide.imageAlt}
+      fill
+      priority={priority}
+      sizes="(min-width: 1024px) 58vw, 100vw"
+      className={`object-cover ${className}`}
+      onError={() => setImageFailed(true)}
+    />
+  );
+}
+
+function HeroSlider({
+  activeIndex,
+  onSelect,
+  onNext,
+  onPrevious,
+}: {
+  activeIndex: number;
+  onSelect: (index: number) => void;
+  onNext: () => void;
+  onPrevious: () => void;
+}) {
+  const slide = homeSlides[activeIndex];
+  const tone = slideToneClasses[slide.tone];
+  const Icon = slide.icon;
+
+  return (
+    <div className="relative overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-xl md:rounded-[36px]">
+      <div className={`pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full blur-3xl ${tone.glow}`} />
+      <div className="grid min-h-[560px] grid-cols-1 lg:grid-cols-[0.9fr_1.15fr]">
+        <div className="relative z-10 flex flex-col justify-center px-5 py-7 sm:px-8 md:px-10 lg:py-10">
+          <div className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-black uppercase tracking-[0.14em] ring-1 ${tone.soft}`}>
+            <Icon className="h-4 w-4" />
+            {slide.eyebrow}
+          </div>
+
+          <h1 className="mt-5 text-[2.4rem] font-black leading-[1.08] tracking-tight text-slate-950 sm:text-5xl xl:text-[3.4rem]">
+            {slide.title}
+            <span className={`block ${tone.accent}`}>{slide.accent}</span>
+          </h1>
+
+          <p className="mt-5 max-w-2xl text-[15px] leading-7 text-slate-600 md:text-base md:leading-8">
+            {slide.description}
+          </p>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {slide.badges.map((badge) => (
+              <span key={badge} className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
+                {badge}
+              </span>
+            ))}
+          </div>
+
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <Link href={slide.href} className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-black shadow-sm ${tone.button}`}>
+              {slide.cta}
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <a
+              href="#modules"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-800 hover:bg-slate-50"
+            >
+              Tous les modules
+            </a>
+          </div>
+        </div>
+
+        <div className="relative min-h-[360px] border-t border-slate-200 lg:min-h-full lg:border-l lg:border-t-0">
+          <SmartHomeImage slide={slide} priority className="transition duration-700" />
+
+          <div className="absolute inset-x-4 bottom-4 grid gap-2 sm:grid-cols-3 lg:inset-x-6 lg:bottom-6">
+            {slide.metrics.map((metric) => (
+              <div key={metric.label} className="rounded-2xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
+                <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">{metric.label}</div>
+                <div className="mt-1 text-lg font-black text-slate-950">{metric.value}</div>
+                <div className="text-xs font-semibold text-slate-500">{metric.hint}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-slate-200 bg-slate-950 px-3 py-3 text-white md:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {homeSlides.map((item, index) => {
+              const itemTone = slideToneClasses[item.tone];
+              const ItemIcon = item.icon;
+              const active = index === activeIndex;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onSelect(index)}
+                  className={`group flex items-center gap-2 rounded-2xl px-3 py-2 text-left text-xs font-black transition ${
+                    active ? "bg-white text-slate-950 shadow-sm" : "bg-white/5 text-slate-200 hover:bg-white/10"
+                  }`}
+                >
+                  <span className={`grid h-8 w-8 flex-none place-items-center rounded-xl ${active ? itemTone.icon : "bg-white/10 text-white"}`}>
+                    <ItemIcon className="h-4 w-4" />
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 lg:justify-end">
+            <button
+              type="button"
+              onClick={onPrevious}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white ring-1 ring-white/15 hover:bg-white/20"
+              aria-label="Module précédent"
+            >
+              <ArrowRight className="h-4 w-4 rotate-180" />
+            </button>
+            <div className="flex items-center gap-1.5">
+              {homeSlides.map((item, index) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onSelect(index)}
+                  className={`h-2 rounded-full transition ${index === activeIndex ? `w-8 ${tone.progress}` : "w-2 bg-white/40"}`}
+                  aria-label={`Afficher ${item.label}`}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={onNext}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white ring-1 ring-white/15 hover:bg-white/20"
+              aria-label="Module suivant"
+            >
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeModuleCards({ activeIndex, onSelect }: { activeIndex: number; onSelect: (index: number) => void }) {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      {homeSlides.map((slide, index) => {
+        const tone = slideToneClasses[slide.tone];
+        const Icon = slide.icon;
+        const active = activeIndex === index;
+
+        return (
+          <button
+            key={slide.key}
+            type="button"
+            onClick={() => onSelect(index)}
+            className={`group overflow-hidden rounded-[24px] border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md md:rounded-[28px] ${
+              active ? tone.ring : "border-slate-200"
+            }`}
+          >
+            <div className="relative h-32 overflow-hidden bg-slate-100">
+              <SmartHomeImage slide={slide} className="transition duration-500 group-hover:scale-[1.03]" />
+              <div className="absolute left-3 top-3 grid h-10 w-10 place-items-center rounded-2xl bg-white/90 text-slate-900 shadow-sm backdrop-blur">
+                <Icon className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="p-4">
+              <h3 className="text-sm font-black text-slate-950 md:text-[15px]">{slide.label}</h3>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{slide.description}</p>
+              <div className={`mt-3 inline-flex items-center gap-1 text-xs font-black ${tone.accent}`}>
+                Découvrir
+                <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const { session } = useAuth();
   const router = useRouter();
   const redirectedRef = useRef(false);
+  const [activeHeroIndex, setActiveHeroIndex] = useState(0);
+
+  const selectHeroSlide = (index: number) => {
+    setActiveHeroIndex(index);
+  };
+
+  const showNextHeroSlide = () => {
+    setActiveHeroIndex((current) => (current + 1) % homeSlides.length);
+  };
+
+  const showPreviousHeroSlide = () => {
+    setActiveHeroIndex((current) => (current - 1 + homeSlides.length) % homeSlides.length);
+  };
 
   useEffect(() => {
     if (session && !redirectedRef.current) {
@@ -351,6 +771,14 @@ export default function HomePage() {
       router.replace("/redirect");
     }
   }, [session, router]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveHeroIndex((current) => (current + 1) % homeSlides.length);
+    }, 6500);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   const subscribeFaq: FaqItem[] = [
     {
@@ -369,6 +797,8 @@ export default function HomePage() {
         <ul className="ml-5 list-disc space-y-1.5">
           <li>Absences, retards, présences en classe et suivi des créneaux.</li>
           <li>Notes, moyennes, bulletins, exports et publication officielle.</li>
+          <li>Cahier de textes : leçons, devoirs, ressources et progression pédagogique.</li>
+          <li>Communication parents-école : annonces, messages et notifications.</li>
           <li>Gestion financière : inscriptions, scolarité, paiements, reçus, dépenses et paie.</li>
           <li>Infirmerie scolaire : billet justificatif, notification parent et suivi des repos.</li>
           <li>Espace parent, enseignant, direction, infirmerie, finance, fondateur et supervision.</li>
@@ -488,70 +918,18 @@ export default function HomePage() {
       </section>
 
       <section id="hero" className="px-4 pb-5 pt-4 md:pb-8 md:pt-8">
-        <div className="mx-auto max-w-7xl overflow-hidden rounded-[26px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-5 py-6 text-white shadow-xl md:rounded-[32px] md:px-8 md:py-8">
-          <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="max-w-3xl">
-              <Pill>
-                <Rocket className="h-3.5 w-3.5" />
-                <span>Plateforme complète de pilotage scolaire</span>
-              </Pill>
-
-              <h1 className="mt-4 text-[2.25rem] font-black leading-[1.12] tracking-tight sm:text-5xl">
-                Une seule plateforme pour gérer
-                <span className="block text-emerald-300">l’école, les résultats et les finances</span>
-              </h1>
-
-              <p className="mt-4 max-w-2xl text-[15px] leading-7 text-slate-200 sm:text-[15px]">
-                Mon Cahier centralise les appels, notes, bulletins, paiements, reçus, dépenses,
-                paie du personnel, supervision fondateur et prédiction scolaire dans des espaces séparés par rôle.
-              </p>
-
-              <div className="mt-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
-                <span className="rounded-full bg-emerald-500/15 px-3 py-1 ring-1 ring-emerald-400/25">
-                  Gestion financière intégrée
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Espace fondateur multi-écoles
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Connexion par profil
-                </span>
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-3 md:mt-6">
-                <a
-                  href="#spaces"
-                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-sm hover:bg-emerald-700 md:px-5 md:py-3"
-                >
-                  Choisir mon espace
-                  <ArrowRight className="h-4 w-4" />
-                </a>
-
-                <a
-                  href="#modules"
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-white hover:bg-white/15 md:px-5 md:py-3"
-                >
-                  Voir les modules
-                </a>
-              </div>
-            </div>
-
-            <div className="relative hidden lg:block">
-              <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 backdrop-blur">
-                <div className="overflow-hidden rounded-[24px] border border-slate-200/10 bg-slate-950/40">
-                  <Image
-                    src="/accueil.png"
-                    alt="Interface Mon Cahier : pilotage scolaire et gestion financière"
-                    width={900}
-                    height={600}
-                    className="h-auto w-full object-cover"
-                    priority
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="mx-auto max-w-7xl">
+          <HeroSlider
+            activeIndex={activeHeroIndex}
+            onSelect={selectHeroSlide}
+            onNext={showNextHeroSlide}
+            onPrevious={showPreviousHeroSlide}
+          />
         </div>
+      </section>
+
+      <section className="mx-auto max-w-7xl px-4 pb-5 md:pb-6">
+        <HomeModuleCards activeIndex={activeHeroIndex} onSelect={selectHeroSlide} />
       </section>
 
       <section className="mx-auto max-w-7xl px-4 pb-5 md:pb-6">
@@ -665,6 +1043,18 @@ export default function HomePage() {
             title="Notes, moyennes et bulletins"
             desc="Évaluations, moyennes, publication officielle, bulletins, signatures et exports administratifs."
             tone="emerald"
+          />
+          <FeatureCard
+            icon={ReceiptText}
+            title="Cahier de textes numérique"
+            desc="Séances, leçons, devoirs, ressources pédagogiques et progression du programme accessibles par classe."
+            tone="violet"
+          />
+          <FeatureCard
+            icon={MessageSquare}
+            title="Communication parents-école"
+            desc="Annonces, messages, alertes et informations importantes transmises rapidement aux familles."
+            tone="slate"
           />
           <FeatureCard
             icon={Wallet}
