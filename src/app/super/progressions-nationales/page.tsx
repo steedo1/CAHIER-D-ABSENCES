@@ -1,0 +1,435 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { BookOpen, FileText, Loader2, RefreshCw, Save, Upload } from "lucide-react";
+
+type NationalProgression = {
+  id: string;
+  title: string;
+  academic_year: string;
+  subject_name?: string | null;
+  level?: string | null;
+  series?: string | null;
+  description?: string | null;
+  status?: string | null;
+  published_at?: string | null;
+  document?: {
+    original_name?: string | null;
+    signed_url?: string | null;
+  } | null;
+  items?: Array<{ id: string }>;
+};
+
+type ProgressionItem = {
+  id: string;
+  item_type: string;
+  title: string;
+  rubric?: string | null;
+  theme?: string | null;
+  trimester?: string | null;
+  week_label?: string | null;
+  planned_duration_minutes?: number | null;
+  sort_order?: number | null;
+};
+
+const IMPORT_HEADER = "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Trimestre;Semaine";
+
+const ANGLAIS_2NDE_A_C_SAMPLE = [
+  IMPORT_HEADER,
+  "1;theme;UNIT 1;People;UNIT 1 PEOPLE;;T1;Semaines 1-2",
+  "2;lesson;UNIT 1;People;UNIT 1 PEOPLE;360;T1;Semaines 1-2",
+  "3;revision;UNIT 1;People;Révisions - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "4;evaluation;UNIT 1;People;Évaluation - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "5;remediation;UNIT 1;People;Correction / Remédiation - UNIT 1 PEOPLE;60;T1;Semaine 3",
+  "6;theme;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;;T1;Semaines 4-5",
+  "7;lesson;UNIT 2;Health and lifestyle;UNIT 2 HEALTH AND LIFESTYLE;360;T1;Semaines 4-5",
+  "8;revision;UNIT 2;Health and lifestyle;Révisions - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+  "9;evaluation;UNIT 2;Health and lifestyle;Évaluation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+  "10;remediation;UNIT 2;Health and lifestyle;Correction / Remédiation - UNIT 2 HEALTH AND LIFESTYLE;60;T1;Semaine 6",
+].join("\n");
+
+const STRUCTURAL_ITEM_TYPES = new Set(["section", "theme", "rubric", "competency", "chapter"]);
+
+const emptyForm = {
+  title: "",
+  academic_year: "",
+  subject_name: "",
+  level: "",
+  series: "",
+  description: "",
+};
+
+function classNames(...arr: Array<string | false | null | undefined>) {
+  return arr.filter(Boolean).join(" ");
+}
+
+function normalizeImportType(value: unknown, hasDuration: boolean) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  const compact = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_\-]+/g, " ");
+
+  const map: Record<string, string> = {
+    section: "section",
+    partie: "section",
+    theme: "theme",
+    rubrique: "rubric",
+    competence: "competency",
+    chapitre: "chapter",
+    chapter: "chapter",
+    lecon: "lesson",
+    lesson: "lesson",
+    cours: "lesson",
+    sequence: "sequence",
+    seance: "session",
+    session: "session",
+    evaluation: "evaluation",
+    devoir: "evaluation",
+    remediation: "remediation",
+    regulation: "regulation",
+    revision: "revision",
+    autre: "other",
+    other: "other",
+  };
+
+  const normalized = map[compact] || "lesson";
+  if (STRUCTURAL_ITEM_TYPES.has(normalized) && hasDuration) return "lesson";
+  return normalized;
+}
+
+function makeImportSample(progression?: NationalProgression | null) {
+  const subject = String(progression?.subject_name || progression?.title || "").toLowerCase();
+  if (subject.includes("anglais") || subject.includes("english")) return ANGLAIS_2NDE_A_C_SAMPLE;
+  if (subject.includes("français") || subject.includes("francais")) {
+    return [
+      IMPORT_HEADER,
+      "1;rubric;Grammaire;Phrase;La phrase simple;;T1;Semaine 1",
+      "2;lesson;Grammaire;Phrase;Les constituants de la phrase simple;55;T1;Semaine 1",
+      "3;lesson;Expression écrite;Rédaction;Rédiger un paragraphe cohérent;55;T1;Semaine 2",
+    ].join("\n");
+  }
+  return [
+    IMPORT_HEADER,
+    "1;theme;Activités numériques;Nombres;Nombres et calculs;;T1;Semaine 1",
+    "2;lesson;Activités numériques;Nombres;Nombres entiers naturels;120;T1;Semaine 1",
+    "3;lesson;Activités numériques;Nombres;Comparaison et rangement;55;T1;Semaine 2",
+  ].join("\n");
+}
+
+function parseImportLines(raw: string) {
+  const lines = String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines
+    .filter((line, index) => index > 0 || !line.toLowerCase().startsWith("ordre;"))
+    .map((line, index) => {
+      const parts = line.includes(";") ? line.split(";") : line.split("\t");
+      const [order, type, rubric, theme, title, duration, trimester, week] = parts.map((p) => String(p || "").trim());
+      const finalTitle = title || theme || rubric;
+      if (!finalTitle) return null;
+
+      const minutes = Number(duration || 0);
+      const hasDuration = Number.isFinite(minutes) && minutes > 0;
+      const itemType = normalizeImportType(type, hasDuration);
+
+      return {
+        sort_order: Number(order) || index + 1,
+        item_type: itemType,
+        rubric: rubric || null,
+        theme: theme || null,
+        title: finalTitle,
+        planned_duration_minutes: hasDuration ? minutes : null,
+        trimester: trimester || null,
+        week_label: week || null,
+        indent_level: STRUCTURAL_ITEM_TYPES.has(itemType) ? 0 : 1,
+      };
+    })
+    .filter(Boolean);
+}
+
+export default function SuperNationalProgressionsPage() {
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [items, setItems] = useState<NationalProgression[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [selectedItems, setSelectedItems] = useState<ProgressionItem[]>([]);
+  const [form, setForm] = useState(emptyForm);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [importText, setImportText] = useState(makeImportSample(null));
+
+  const selected = useMemo(
+    () => items.find((item) => item.id === selectedId) || null,
+    [items, selectedId],
+  );
+
+  async function fetchJson(url: string, init?: RequestInit) {
+    const res = await fetch(url, { cache: "no-store", credentials: "include", ...init });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.ok === false) {
+      throw new Error(json?.error || json?.details || `Erreur HTTP ${res.status}`);
+    }
+    return json;
+  }
+
+  async function loadAll() {
+    setLoading(true);
+    setError(null);
+    try {
+      const json = await fetchJson("/api/super/textbook/national");
+      setItems(json.items || []);
+      setSelectedId((current) => current || json.items?.[0]?.id || "");
+    } catch (e: any) {
+      setError(e?.message || "Chargement impossible");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadSelected(id: string) {
+    if (!id) return;
+    try {
+      const json = await fetchJson(`/api/super/textbook/national/${id}/items`);
+      setSelectedItems(json.items || []);
+    } catch (e: any) {
+      setError(e?.message || "Lignes indisponibles");
+    }
+  }
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  useEffect(() => {
+    setSelectedItems([]);
+    if (selectedId) loadSelected(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setImportText(makeImportSample(selected));
+  }, [selected?.id]);
+
+  async function createProgression(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const fd = new FormData();
+      fd.set("title", form.title);
+      fd.set("academic_year", form.academic_year);
+      fd.set("subject_name", form.subject_name);
+      fd.set("level", form.level);
+      fd.set("series", form.series);
+      fd.set("description", form.description);
+      fd.set("status", "active");
+      if (documentFile) fd.set("document_file", documentFile);
+
+      const json = await fetchJson("/api/super/textbook/national", { method: "POST", body: fd });
+      setMessage("Progression nationale créée dans la bibliothèque globale Nexa.");
+      setForm(emptyForm);
+      setDocumentFile(null);
+      await loadAll();
+      if (json.item?.id) setSelectedId(json.item.id);
+    } catch (e: any) {
+      setError(e?.message || "Création impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importItems() {
+    if (!selected) return;
+    const parsed = parseImportLines(importText);
+    if (!parsed.length) {
+      setError("Aucune ligne exploitable dans l’import.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await fetchJson(`/api/super/textbook/national/${selected.id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: parsed, replace: true }),
+      });
+      setMessage(`${parsed.length} ligne(s) importée(s) dans le modèle national.`);
+      await loadAll();
+      await loadSelected(selected.id);
+    } catch (e: any) {
+      setError(e?.message || "Import impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <header className="rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-violet-600">Nexa · Super Admin</p>
+            <h1 className="mt-2 text-2xl font-black text-slate-900">Progressions nationales</h1>
+            <p className="mt-1 max-w-3xl text-sm text-slate-600">
+              Alimente la bibliothèque globale. Les établissements y copieront ensuite les progressions valides,
+              sans modifier la source nationale.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={loadAll}
+            disabled={loading || busy}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Actualiser
+          </button>
+        </div>
+      </header>
+
+      {message ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">{message}</div> : null}
+      {error ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div> : null}
+
+      <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
+        <section className="space-y-6">
+          <form onSubmit={createProgression} className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-violet-50 text-violet-700">
+                <BookOpen className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900">Ajouter un modèle national</h2>
+                <p className="text-xs text-slate-500">Source globale Nexa, indépendante des écoles.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Titre : Progression nationale Anglais 2nde A-C" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required />
+              <div className="grid grid-cols-2 gap-3">
+                <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Année : 2026-2027" value={form.academic_year} onChange={(e) => setForm((f) => ({ ...f, academic_year: e.target.value }))} required />
+                <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Niveau : 2nde A-C" value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value }))} required />
+              </div>
+              <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Discipline : Anglais" value={form.subject_name} onChange={(e) => setForm((f) => ({ ...f, subject_name: e.target.value }))} required />
+              <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Série / option si nécessaire" value={form.series} onChange={(e) => setForm((f) => ({ ...f, series: e.target.value }))} />
+              <textarea className="h-24 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Description / source officielle" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-3 text-sm font-bold text-slate-700">
+                <Upload className="h-4 w-4" />
+                <span>{documentFile ? documentFile.name : "Joindre le fichier officiel national"}</span>
+                <input className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv" onChange={(e) => setDocumentFile(e.target.files?.[0] || null)} />
+              </label>
+              <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-700 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Publier dans la bibliothèque nationale
+              </button>
+            </div>
+          </form>
+
+          <section className="rounded-2xl border bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-black text-slate-900">Bibliothèque nationale</h2>
+            <p className="mt-1 text-xs text-slate-500">Modèles visibles par les établissements après publication.</p>
+            <div className="mt-4 space-y-2">
+              {items.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedId(p.id)}
+                  className={classNames(
+                    "w-full rounded-2xl border p-3 text-left transition",
+                    selectedId === p.id ? "border-violet-200 bg-violet-50" : "border-slate-200 bg-white hover:bg-slate-50",
+                  )}
+                >
+                  <div className="text-sm font-black text-slate-900">{p.title}</div>
+                  <div className="mt-1 text-xs font-bold text-slate-500">
+                    {p.subject_name || "Discipline"} · {p.level || "Niveau"} · {p.academic_year}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
+                    <span className="rounded-full bg-white px-2 py-1 text-violet-700 ring-1 ring-violet-100">{p.status || "active"}</span>
+                    <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">{p.items?.length || 0} lignes</span>
+                  </div>
+                </button>
+              ))}
+              {!items.length && !loading ? (
+                <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">Aucun modèle national pour le moment.</div>
+              ) : null}
+            </div>
+          </section>
+        </section>
+
+        <section className="space-y-6">
+          <section className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-lg font-black text-slate-900">Lignes cliquables</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {selected ? selected.title : "Sélectionne un modèle national pour importer ses unités, leçons et séances."}
+                </p>
+              </div>
+              {selected?.document?.signed_url ? (
+                <a href={selected.document.signed_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                  <FileText className="h-4 w-4" /> Fichier officiel
+                </a>
+              ) : null}
+            </div>
+
+            {selected ? (
+              <div className="mt-5 space-y-4">
+                <textarea className="h-64 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-violet-400" value={importText} onChange={(e) => setImportText(e.target.value)} />
+                <button type="button" onClick={importItems} disabled={busy} className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Remplacer / importer les lignes nationales
+                </button>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="rounded-2xl border bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-black text-slate-900">Aperçu des lignes publiées</h2>
+            <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-3">Ordre</th>
+                    <th className="px-3 py-3">Type</th>
+                    <th className="px-3 py-3">Titre</th>
+                    <th className="px-3 py-3">Période</th>
+                    <th className="px-3 py-3">Durée</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {selectedItems.map((item) => (
+                    <tr key={item.id} className="align-top">
+                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.sort_order ?? ""}</td>
+                      <td className="px-3 py-3 text-xs font-black text-violet-700">{item.item_type}</td>
+                      <td className="px-3 py-3">
+                        <div className="font-bold text-slate-900">{item.title}</div>
+                        <div className="text-xs text-slate-500">{item.rubric || item.theme || ""}</div>
+                      </td>
+                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.trimester || ""} {item.week_label || ""}</td>
+                      <td className="px-3 py-3 text-xs font-bold text-slate-500">{item.planned_duration_minutes ? `${item.planned_duration_minutes} min` : "—"}</td>
+                    </tr>
+                  ))}
+                  {!selectedItems.length ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-8 text-center text-sm font-bold text-slate-500">
+                        Aucune ligne publiée pour ce modèle.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </div>
+    </div>
+  );
+}

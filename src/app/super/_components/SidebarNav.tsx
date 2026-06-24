@@ -10,6 +10,7 @@ import {
   Users,
   Settings,
   Crown,
+  BookOpen,
 } from "lucide-react";
 
 type NavItem = {
@@ -24,6 +25,7 @@ const items: NavItem[] = [
   { href: "/super/abonnements",      label: "Abonnements",     Icon: BadgeDollarSign },
   { href: "/super/admins",           label: "Admins",          Icon: Users },
   { href: "/super/founders",         label: "Fondateurs",      Icon: Crown },
+  { href: "/super/progressions-nationales", label: "Progressions", Icon: BookOpen },
   { href: "/super/parametres",       label: "Parametres",      Icon: Settings },
 ];
 

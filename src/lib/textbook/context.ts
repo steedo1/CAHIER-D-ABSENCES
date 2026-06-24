@@ -51,6 +51,12 @@ export function canManageTextbook(roles: Set<TextbookRole>) {
   return hasAnyRole(roles, ADMIN_ROLES);
 }
 
+export function canManageNationalTextbook(roles: Set<TextbookRole>) {
+  // La bibliothèque nationale Nexa est une donnée globale de la plateforme.
+  // Elle ne doit pas être alimentée par les fondateurs/administrateurs d'école.
+  return roles.has("super_admin");
+}
+
 export function canUseTeacherTextbook(roles: Set<TextbookRole>) {
   return hasAnyRole(roles, TEACHER_ROLES);
 }
@@ -125,6 +131,23 @@ export async function getTextbookContext(): Promise<
       roles,
     },
   };
+}
+
+export async function requireNationalTextbookManager(): Promise<
+  | { ok: true; ctx: TextbookContext }
+  | { ok: false; response: NextResponse }
+> {
+  const base = await getTextbookContext();
+  if (!base.ok) return base;
+
+  if (!canManageNationalTextbook(base.ctx.roles)) {
+    return {
+      ok: false,
+      response: NextResponse.json({ ok: false, error: "forbidden_national_library" }, { status: 403 }),
+    };
+  }
+
+  return base;
 }
 
 export async function requireTextbookManager(): Promise<
