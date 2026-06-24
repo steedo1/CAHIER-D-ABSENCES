@@ -87,6 +87,28 @@ function fallbackPdfLiteralExtraction(buffer: Buffer) {
   return text.length >= 80 ? text : "";
 }
 
+function extractionQuality(text: string) {
+  const value = String(text || "");
+  const chars = [...value];
+  if (!chars.length) return { usable: false, weirdRatio: 1, wordCount: 0 };
+
+  const allowed = /[A-Za-zÀ-ÿ0-9\s.,;:!?"'’`´()\[\]{}\/_+\-=°%&€$#@\n\r]/;
+  const weird = chars.filter((char) => !allowed.test(char)).length;
+  const wordCount = value.match(/[A-Za-zÀ-ÿ]{3,}/g)?.length || 0;
+  const usefulSignals = value.match(/\b(unit|unité|progression|semaine|mois|séance|session|lesson|revision|révision|evaluation|évaluation|remédiation|correction|competence|compétence|theme|thème|chapitre|leçon)\b/gi)?.length || 0;
+  const weirdRatio = weird / chars.length;
+
+  return {
+    usable: value.trim().length >= 40 && weirdRatio < 0.08 && (wordCount >= 8 || usefulSignals >= 2),
+    weirdRatio,
+    wordCount,
+  };
+}
+
+function isUsableExtractedText(text: string) {
+  return extractionQuality(text).usable;
+}
+
 async function extractTextFromDocument(buffer: Buffer, kind: string) {
   if (kind === "text") {
     return { rawText: compactExtractedText(buffer.toString("utf8")), warning: null as string | null };
@@ -131,19 +153,26 @@ async function extractTextFromDocument(buffer: Buffer, kind: string) {
     const mod: any = await optionalImport("pdf-parse");
     const pdfParse = mod?.default || mod;
 
-    if (typeof pdfParse === "function") {
-      const result = await pdfParse(buffer);
-      return { rawText: compactExtractedText(result?.text || ""), warning: null as string | null };
+    if (typeof pdfParse !== "function") {
+      return {
+        rawText: "",
+        warning: "pdf_parser_missing",
+        error: "Le lecteur PDF n'est pas disponible côté serveur. Installe le package pdf-parse, puis relance le build.",
+      };
     }
 
-    const fallback = fallbackPdfLiteralExtraction(buffer);
-    if (fallback) return { rawText: fallback, warning: "pdf_fallback" };
+    const result = await pdfParse(buffer);
+    const text = compactExtractedText(result?.text || "");
+    if (!isUsableExtractedText(text)) {
+      return {
+        rawText: "",
+        warning: "pdf_text_unusable",
+        error:
+          "Le PDF a été lu, mais aucun texte pédagogique exploitable n'a été trouvé. Il s'agit probablement d'un PDF scanné/image ou d'un PDF encodé en images. L'ancien mode secours a été désactivé pour éviter les lignes illisibles. Prochaine étape : ajouter une vraie OCR avant la structuration.",
+      };
+    }
 
-    return {
-      rawText: "",
-      warning: "pdf_parser_missing",
-      error: "Le lecteur PDF n'est pas disponible côté serveur. Installe le package pdf-parse, puis relance le build. Pour les PDF scannés/image, il faudra ensuite ajouter une vraie OCR.",
-    };
+    return { rawText: text, warning: null as string | null };
   }
 
   return {
@@ -220,13 +249,18 @@ export async function POST(_req: NextRequest, context: { params: Promise<{ id: s
   }
 
   const rawText = extracted.rawText;
-  if (!rawText || rawText.length < 20) {
+  if (!rawText || rawText.length < 20 || !isUsableExtractedText(rawText)) {
+    const quality = extractionQuality(rawText || "");
     return NextResponse.json(
       {
         ok: false,
-        error: "empty_extracted_text",
-        details: "Le document a été lu, mais aucun texte exploitable n'a été extrait. Le fichier est peut-être scanné/image ou mal encodé.",
+        error: "empty_or_unusable_extracted_text",
+        details:
+          kind === "pdf"
+            ? "Le document a été lu, mais le texte extrait n'est pas exploitable. Très probablement : PDF scanné/image. Il faut passer par une OCR avant de générer les lignes cliquables."
+            : "Le document a été lu, mais aucun texte exploitable n'a été extrait. Vérifie le format ou importe un TXT/CSV.",
         file_kind: kind,
+        quality,
       },
       { status: 422 },
     );

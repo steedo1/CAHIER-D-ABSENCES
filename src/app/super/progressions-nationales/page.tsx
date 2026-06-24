@@ -83,7 +83,7 @@ export default function SuperNationalProgressionsPage() {
     const res = await fetch(url, { cache: "no-store", credentials: "include", ...init });
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.ok === false) {
-      throw new Error(json?.error || json?.details || `Erreur HTTP ${res.status}`);
+      throw new Error(json?.details || json?.error || `Erreur HTTP ${res.status}`);
     }
     return json;
   }
