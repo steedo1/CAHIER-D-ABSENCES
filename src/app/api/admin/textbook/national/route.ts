@@ -52,9 +52,10 @@ export async function GET(req: NextRequest) {
   const canManageNational = false;
 
   const url = new URL(req.url);
-  const academicYear =
-    cleanText(url.searchParams.get("academic_year"), 30) ||
-    (await getCurrentAcademicYearCode(srv, institutionId));
+  // Ne pas filtrer automatiquement sur l’année scolaire courante.
+  // Une école peut vouloir copier une progression nationale d’une autre année
+  // (ex. 2025-2026) même si son année active locale est déjà 2026-2027.
+  const academicYear = cleanText(url.searchParams.get("academic_year"), 30);
   const level = cleanText(url.searchParams.get("level"), 80);
   const subjectId = cleanUuid(url.searchParams.get("subject_id"));
 
@@ -107,7 +108,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     items: rows,
-    academic_year: academicYear,
+    academic_year: academicYear || null,
     can_manage_national: canManageNational,
   });
 }
@@ -196,7 +197,7 @@ export async function POST(req: NextRequest) {
     const { error: docErr } = await srv.from("textbook_progression_documents").insert({
       id: documentId,
       institution_id: institutionId,
-      academic_year: academicYear,
+      academic_year: academicYear || null,
       original_name: file.name || "progression",
       storage_bucket: PROGRESSION_BUCKET,
       storage_path: path,
@@ -213,7 +214,7 @@ export async function POST(req: NextRequest) {
     .insert({
       id: progressionId,
       institution_id: institutionId,
-      academic_year: academicYear,
+      academic_year: academicYear || null,
       document_id: documentId,
       subject_id: subjectId,
       institution_subject_id: institutionSubjectId,

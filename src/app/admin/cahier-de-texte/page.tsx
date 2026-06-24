@@ -34,6 +34,10 @@ type Progression = {
   level?: string | null;
   series?: string | null;
   description?: string | null;
+  status?: string | null;
+  scope?: "national" | "school" | string | null;
+  source_national_template_id?: string | null;
+  is_customized?: boolean | null;
   document?: {
     original_name?: string | null;
     signed_url?: string | null;
@@ -221,6 +225,7 @@ function isBundledImportSample(text: string) {
     value.startsWith(IMPORT_HEADER) &&
     (value.includes("Nombres entiers naturels") ||
       value.includes("Greetings and introductions") ||
+      value.includes("UNIT 1 PEOPLE") ||
       value.includes("La phrase simple"))
   );
 }
@@ -279,6 +284,9 @@ export default function AdminTextbookPage() {
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [progressions, setProgressions] = useState<Progression[]>([]);
+  const [nationalProgressions, setNationalProgressions] = useState<Progression[]>([]);
+  const [canManageNational, setCanManageNational] = useState(false);
+  const [nationalSelectedId, setNationalSelectedId] = useState<string>("");
   const [selectedId, setSelectedId] = useState<string>("");
   const [items, setItems] = useState<ProgressionItem[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -286,6 +294,9 @@ export default function AdminTextbookPage() {
 
   const [createForm, setCreateForm] = useState(emptyCreate);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [nationalForm, setNationalForm] = useState(emptyCreate);
+  const [nationalDocumentFile, setNationalDocumentFile] = useState<File | null>(null);
+  const [nationalImportText, setNationalImportText] = useState(() => makeImportSample(null));
   const [importText, setImportText] = useState(() => makeImportSample(null));
   const [replaceExisting, setReplaceExisting] = useState(true);
   const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
@@ -295,12 +306,24 @@ export default function AdminTextbookPage() {
     [progressions, selectedId],
   );
 
+  const selectedNational = useMemo(
+    () => nationalProgressions.find((p) => p.id === nationalSelectedId) || null,
+    [nationalProgressions, nationalSelectedId],
+  );
+
   useEffect(() => {
     if (!selected) return;
     setImportText((current) =>
       isBundledImportSample(current) ? makeImportSample(selected) : current,
     );
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (!selectedNational) return;
+    setNationalImportText((current) =>
+      isBundledImportSample(current) ? makeImportSample(selectedNational) : current,
+    );
+  }, [selectedNational?.id]);
 
   async function fetchJson(url: string, init?: RequestInit) {
     const res = await fetch(url, {
@@ -321,21 +344,26 @@ export default function AdminTextbookPage() {
     setLoading(true);
     setError(null);
     try {
-      const [subjectJson, classJson, progressionJson, statsJson] =
+      const [subjectJson, classJson, progressionJson, statsJson, nationalJson] =
         await Promise.all([
           fetchJson("/api/admin/subjects"),
           fetchJson("/api/admin/classes?limit=999"),
           fetchJson("/api/admin/textbook/progressions"),
           fetchJson("/api/admin/textbook/stats"),
+          fetchJson("/api/admin/textbook/national"),
         ]);
 
       setSubjects(subjectJson.items || []);
       setClasses(classJson.items || []);
       setProgressions(progressionJson.items || []);
       setStats(statsJson.items || []);
+      setNationalProgressions(nationalJson.items || []);
+      setCanManageNational(Boolean(nationalJson.can_manage_national));
 
       const firstId = progressionJson.items?.[0]?.id || "";
+      const firstNationalId = nationalJson.items?.[0]?.id || "";
       setSelectedId((current) => current || firstId);
+      setNationalSelectedId((current) => current || firstNationalId);
     } catch (e: any) {
       setError(e?.message || "Chargement impossible");
     } finally {
@@ -367,6 +395,92 @@ export default function AdminTextbookPage() {
     setSelectedClassIds([]);
     if (selectedId) loadSelected(selectedId);
   }, [selectedId]);
+
+  async function createNationalProgression(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canManageNational) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const subject = subjects.find((s) => s.id === nationalForm.subject_id);
+      const form = new FormData();
+      form.set("title", nationalForm.title);
+      form.set("academic_year", nationalForm.academic_year);
+      form.set("level", nationalForm.level);
+      form.set("series", nationalForm.series);
+      form.set("subject_id", subject?.id || "");
+      form.set("institution_subject_id", subject?.inst_subject_id || "");
+      form.set("subject_name", subject?.name || "");
+      form.set("description", nationalForm.description);
+      form.set("status", "active");
+      if (nationalDocumentFile) form.set("document_file", nationalDocumentFile);
+
+      const json = await fetchJson("/api/admin/textbook/national", {
+        method: "POST",
+        body: form,
+      });
+
+      setMessage("Modèle national créé. Vous pouvez maintenant importer ses lignes cliquables.");
+      setNationalForm(emptyCreate);
+      setNationalDocumentFile(null);
+      await loadAll();
+      setNationalSelectedId(json.item?.id || "");
+    } catch (e: any) {
+      setError(e?.message || "Création du modèle national impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importNationalItems() {
+    if (!selectedNational || !canManageNational) return;
+    const parsed = parseImportLines(nationalImportText);
+    if (!parsed.length) {
+      setError("Aucune ligne exploitable dans l'import national.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await fetchJson(`/api/admin/textbook/national/${selectedNational.id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: parsed, replace: true }),
+      });
+      setMessage(`${parsed.length} ligne(s) publiée(s) dans le modèle national.`);
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message || "Import national impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyNationalProgression(progression: Progression) {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const json = await fetchJson(`/api/admin/textbook/national/${progression.id}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      setMessage(
+        json.already_exists
+          ? "Cette progression nationale est déjà disponible dans votre établissement."
+          : `Progression copiée dans l’établissement avec ${json.copied_items || 0} ligne(s).`,
+      );
+      await loadAll();
+      if (json.item?.id) setSelectedId(json.item.id);
+    } catch (e: any) {
+      setError(e?.message || "Copie depuis la bibliothèque nationale impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function createProgression(e: React.FormEvent) {
     e.preventDefault();
@@ -517,26 +631,180 @@ export default function AdminTextbookPage() {
         ) : (
           <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
             <section className="space-y-6">
-              <form
-                onSubmit={createProgression}
-                className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-50 text-emerald-700">
-                    <Plus className="h-5 w-5" />
-                  </div>
+              <section className="rounded-[28px] border border-indigo-100 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-black">
-                      Créer une progression
-                    </h2>
-                    <p className="text-xs font-medium text-slate-500">
-                      Une progression = une discipline + un niveau/classe + une
-                      année.
+                    <div className="text-xs font-black uppercase tracking-[0.16em] text-indigo-700">
+                      Bibliothèque nationale Nexa
+                    </div>
+                    <h2 className="mt-1 text-lg font-black">Étape 1 — Copier une progression nationale</h2>
+                    <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
+                      Fonctionnement normal : Nexa met les progressions officielles à disposition.
+                      L’établissement clique sur « Utiliser dans mon établissement », puis affecte la copie aux classes.
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-5 space-y-3">
+                {canManageNational ? (
+                  <form onSubmit={createNationalProgression} className="mt-4 space-y-3 rounded-2xl bg-indigo-50 p-3 ring-1 ring-indigo-100">
+                    <div className="text-sm font-black text-indigo-900">Ajouter un modèle national</div>
+                    <input
+                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                      placeholder="Titre : Progression nationale Anglais 2nde A-C"
+                      value={nationalForm.title}
+                      onChange={(e) => setNationalForm((f) => ({ ...f, title: e.target.value }))}
+                      required
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                        placeholder="Année 2026-2027"
+                        value={nationalForm.academic_year}
+                        onChange={(e) => setNationalForm((f) => ({ ...f, academic_year: e.target.value }))}
+                      />
+                      <input
+                        className="rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                        placeholder="Niveau : 2nde A-C"
+                        value={nationalForm.level}
+                        onChange={(e) => setNationalForm((f) => ({ ...f, level: e.target.value }))}
+                        required
+                      />
+                    </div>
+                    <select
+                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                      value={nationalForm.subject_id}
+                      onChange={(e) => setNationalForm((f) => ({ ...f, subject_id: e.target.value }))}
+                      required
+                    >
+                      <option value="">Choisir la discipline</option>
+                      {subjects.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="w-full rounded-2xl border border-indigo-100 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
+                      placeholder="Série / option si nécessaire"
+                      value={nationalForm.series}
+                      onChange={(e) => setNationalForm((f) => ({ ...f, series: e.target.value }))}
+                    />
+                    <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-indigo-200 bg-white px-4 py-3 text-sm font-bold text-slate-700">
+                      <Upload className="h-4 w-4" />
+                      <span>{nationalDocumentFile ? nationalDocumentFile.name : "Joindre le fichier officiel national"}</span>
+                      <input
+                        className="hidden"
+                        type="file"
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
+                        onChange={(e) => setNationalDocumentFile(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                    <button
+                      disabled={busy}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-700 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+                    >
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Publier dans la bibliothèque nationale
+                    </button>
+                  </form>
+                ) : null}
+
+                <div className="mt-4 space-y-2">
+                  {nationalProgressions.map((p) => (
+                    <div key={p.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                      <button
+                        type="button"
+                        onClick={() => setNationalSelectedId(p.id)}
+                        className={classNames(
+                          "w-full rounded-xl px-3 py-2 text-left transition",
+                          nationalSelectedId === p.id ? "bg-white ring-2 ring-indigo-200" : "bg-transparent hover:bg-white",
+                        )}
+                      >
+                        <div className="text-sm font-black text-slate-900">{p.title}</div>
+                        <div className="mt-1 text-xs font-bold text-slate-500">
+                          {p.subject_name || "Matière"} · {p.level || "Niveau"} · {p.academic_year}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
+                          <span className="rounded-full bg-white px-2 py-1 text-indigo-700 ring-1 ring-indigo-100">
+                            Nationale
+                          </span>
+                          <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">
+                            {p.items?.length || 0} lignes
+                          </span>
+                        </div>
+                      </button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => copyNationalProgression(p)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-60"
+                        >
+                          Utiliser dans mon établissement
+                        </button>
+                        {p.document?.signed_url ? (
+                          <a
+                            href={p.document.signed_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-black text-slate-700 ring-1 ring-slate-200"
+                          >
+                            Fichier officiel
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                  {!nationalProgressions.length ? (
+                    <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
+                      Aucun modèle national publié pour le moment. Vérifiez d’abord que Nexa a alimenté la bibliothèque nationale dans l’espace Super Admin.
+                    </div>
+                  ) : null}
+                </div>
+
+                {canManageNational && selectedNational ? (
+                  <div className="mt-4 rounded-2xl border border-indigo-100 bg-white p-3">
+                    <div className="text-sm font-black text-slate-900">
+                      Lignes nationales : {selectedNational.title}
+                    </div>
+                    <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
+                      Import réservé à Nexa. Ces lignes serviront de source aux copies établissement.
+                    </p>
+                    <textarea
+                      className="mt-3 h-44 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-indigo-400"
+                      value={nationalImportText}
+                      onChange={(e) => setNationalImportText(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={importNationalItems}
+                      disabled={busy}
+                      className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+                    >
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      Importer les lignes nationales
+                    </button>
+                  </div>
+                ) : null}
+              </section>
+
+              <details className="rounded-[28px] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <summary className="cursor-pointer list-none">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-amber-700 ring-1 ring-amber-100">
+                      <Plus className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-black text-amber-950">
+                        Cas exceptionnel : créer une progression établissement
+                      </h2>
+                      <p className="text-xs font-bold leading-5 text-amber-800">
+                        À utiliser seulement si aucune progression nationale Nexa ne convient.
+                        Le chemin normal reste : bibliothèque nationale → copie établissement → affectation aux classes.
+                      </p>
+                    </div>
+                  </div>
+                </summary>
+
+                <form onSubmit={createProgression} className="mt-5 space-y-3">
                   <input
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
                     placeholder="Titre : Progression Mathématiques 4e"
@@ -630,13 +898,13 @@ export default function AdminTextbookPage() {
                     ) : (
                       <Save className="h-4 w-4" />
                     )}
-                    Enregistrer la progression
+                    Enregistrer la progression établissement
                   </button>
-                </div>
-              </form>
+                </form>
+              </details>
 
               <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-black">Progressions disponibles</h2>
+                <h2 className="text-lg font-black">Progressions établissement</h2>
                 <div className="mt-4 space-y-2">
                   {progressions.map((p) => (
                     <button
@@ -657,6 +925,16 @@ export default function AdminTextbookPage() {
                         {p.academic_year}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
+                        {p.source_national_template_id ? (
+                          <span className="rounded-full bg-indigo-50 px-2 py-1 text-indigo-700 ring-1 ring-indigo-100">
+                            Depuis bibliothèque Nexa
+                          </span>
+                        ) : null}
+                        {p.is_customized ? (
+                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700 ring-1 ring-amber-100">
+                            Adaptée
+                          </span>
+                        ) : null}
                         <span className="rounded-full bg-white px-2 py-1 text-slate-600 ring-1 ring-slate-200">
                           {p.items?.length || 0} lignes
                         </span>
@@ -678,7 +956,7 @@ export default function AdminTextbookPage() {
             <section className="space-y-6">
               {!selected ? (
                 <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center text-sm font-bold text-slate-500 shadow-sm">
-                  Sélectionnez une progression pour continuer.
+                  Copiez d’abord une progression depuis la bibliothèque nationale Nexa, puis sélectionnez la copie établissement pour l’affecter aux classes.
                 </div>
               ) : (
                 <>
@@ -714,14 +992,20 @@ export default function AdminTextbookPage() {
                   <div className="grid gap-6 lg:grid-cols-2">
                     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
                       <h3 className="text-lg font-black">
-                        Importer les lignes cliquables
+                        Progression copiée / adaptée
                       </h3>
                       <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-                        Format simple : Ordre;Type;Rubrique;Thème;Titre;Durée
-                        minutes;Trimestre;Semaine. Exemple adapté à la
-                        progression sélectionnée ; les lignes avec durée
-                        deviennent cliquables côté professeur.
+                        Les lignes viennent normalement de la bibliothèque nationale Nexa.
+                        Cette zone sert uniquement à corriger ou adapter la copie établissement, pas à ré-uploader la progression officielle.
                       </p>
+                      <div className="mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-xs font-bold leading-5 text-emerald-800 ring-1 ring-emerald-100">
+                        {items.length || selected.items?.length || 0} ligne(s) disponible(s).
+                        Utilisez surtout l’affectation aux classes à droite.
+                      </div>
+                      <details className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <summary className="cursor-pointer text-sm font-black text-slate-800">
+                          Mode avancé : modifier / remplacer les lignes de la copie établissement
+                        </summary>
                       <textarea
                         className="mt-4 h-52 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-emerald-400"
                         value={importText}
@@ -751,8 +1035,9 @@ export default function AdminTextbookPage() {
                         ) : (
                           <Upload className="h-4 w-4" />
                         )}
-                        Importer dans : {selected.title}
+                        Remplacer / importer dans la copie : {selected.title}
                       </button>
+                      </details>
                     </section>
 
                     <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
