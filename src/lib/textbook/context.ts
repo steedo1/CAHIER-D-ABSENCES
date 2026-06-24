@@ -10,6 +10,7 @@ export type TextbookRole =
   | "educator"
   | "inspector"
   | "teacher"
+  | "class_device"
   | string;
 
 export type TextbookContext = {
@@ -31,6 +32,7 @@ const ADMIN_ROLES = new Set<TextbookRole>([
 
 const TEACHER_ROLES = new Set<TextbookRole>([
   "teacher",
+  "class_device",
   "admin",
   "educator",
   "super_admin",

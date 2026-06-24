@@ -17,7 +17,46 @@ const ACTIONABLE_TYPES = new Set([
   "remediation",
   "regulation",
   "revision",
+  "other",
 ]);
+
+function uniq(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
+  );
+}
+
+function assignmentSubjectTokens(assignment: any) {
+  return uniq([
+    assignment.subject_id,
+    assignment.institution_subject_id,
+    assignment.progression?.subject_id,
+    assignment.progression?.institution_subject_id,
+  ]);
+}
+
+function findEffectiveTeacherId(assignment: any, classTeacherRows: any[]) {
+  const explicit = String(assignment.teacher_id || "").trim();
+  if (explicit) return explicit;
+
+  const tokens = assignmentSubjectTokens(assignment);
+  const matched = classTeacherRows.find((row) => {
+    const teacherId = String(row.teacher_id || "").trim();
+    if (!teacherId) return false;
+    if (!tokens.length) return true;
+    return tokens.includes(String(row.subject_id || ""));
+  });
+
+  return String(matched?.teacher_id || "").trim() || null;
+}
+
+function isActionableItem(item: any) {
+  return (
+    ACTIONABLE_TYPES.has(String(item.item_type || "")) ||
+    Number(item.planned_duration_minutes || 0) > 0 ||
+    Number(item.planned_sessions_count || 0) > 0
+  );
+}
 
 function pct(done: number, total: number) {
   if (!total) return 0;
@@ -57,36 +96,75 @@ export async function GET(req: NextRequest) {
         level,
         series
       )
-    `
+    `,
     )
     .eq("institution_id", institutionId)
     .eq("is_active", true);
 
   if (classId) assignmentsQuery = assignmentsQuery.eq("class_id", classId);
-  if (subjectId) assignmentsQuery = assignmentsQuery.eq("subject_id", subjectId);
+  if (subjectId)
+    assignmentsQuery = assignmentsQuery.eq("subject_id", subjectId);
 
   const { data: assignmentRows, error: assignmentErr } = await assignmentsQuery;
-  if (assignmentErr) return NextResponse.json({ ok: false, error: assignmentErr.message }, { status: 400 });
+  if (assignmentErr)
+    return NextResponse.json(
+      { ok: false, error: assignmentErr.message },
+      { status: 400 },
+    );
 
   const assignments = ((assignmentRows || []) as any[]).filter((a) => {
     const p = a?.progression || {};
-    if (academicYear && String(p.academic_year || "") !== academicYear) return false;
+    if (academicYear && String(p.academic_year || "") !== academicYear)
+      return false;
     return true;
   });
 
-  const progressionIds = Array.from(new Set(assignments.map((a) => String(a.progression?.id || "")).filter(Boolean)));
+  const progressionIds = uniq(assignments.map((a) => a.progression?.id));
   const assignmentIds = assignments.map((a) => String(a.id)).filter(Boolean);
-  const teacherIds = Array.from(new Set(assignments.map((a) => String(a.teacher_id || "")).filter(Boolean)));
+  const classIds = uniq(assignments.map((a) => a.class_id));
+
+  const classTeachersByClass = new Map<string, any[]>();
+  if (classIds.length) {
+    const { data: classTeachers } = await srv
+      .from("class_teachers")
+      .select("class_id,teacher_id,subject_id")
+      .in("class_id", classIds);
+
+    for (const row of (classTeachers || []) as any[]) {
+      const key = String(row.class_id || "");
+      if (!key) continue;
+      if (!classTeachersByClass.has(key)) classTeachersByClass.set(key, []);
+      classTeachersByClass.get(key)!.push(row);
+    }
+  }
+
+  const effectiveTeacherByAssignment = new Map<string, string | null>();
+  for (const assignment of assignments) {
+    const rows =
+      classTeachersByClass.get(String(assignment.class_id || "")) || [];
+    effectiveTeacherByAssignment.set(
+      String(assignment.id),
+      findEffectiveTeacherId(assignment, rows),
+    );
+  }
+
+  const teacherIds = uniq(Array.from(effectiveTeacherByAssignment.values()));
 
   const itemsByProgression = new Map<string, any[]>();
   if (progressionIds.length) {
     const { data: items, error: itemsErr } = await srv
       .from("textbook_progression_items")
-      .select("id,progression_id,item_type,planned_duration_minutes,planned_sessions_count")
+      .select(
+        "id,progression_id,item_type,planned_duration_minutes,planned_sessions_count",
+      )
       .eq("institution_id", institutionId)
       .in("progression_id", progressionIds);
 
-    if (itemsErr) return NextResponse.json({ ok: false, error: itemsErr.message }, { status: 400 });
+    if (itemsErr)
+      return NextResponse.json(
+        { ok: false, error: itemsErr.message },
+        { status: 400 },
+      );
     for (const item of (items || []) as any[]) {
       const key = String(item.progression_id || "");
       if (!itemsByProgression.has(key)) itemsByProgression.set(key, []);
@@ -103,10 +181,15 @@ export async function GET(req: NextRequest) {
       .in("assignment_id", assignmentIds)
       .eq("status", "completed");
 
-    if (completionErr) return NextResponse.json({ ok: false, error: completionErr.message }, { status: 400 });
+    if (completionErr)
+      return NextResponse.json(
+        { ok: false, error: completionErr.message },
+        { status: 400 },
+      );
     for (const row of (completions || []) as any[]) {
       const key = String(row.assignment_id || "");
-      if (!completedByAssignment.has(key)) completedByAssignment.set(key, new Set());
+      if (!completedByAssignment.has(key))
+        completedByAssignment.set(key, new Set());
       completedByAssignment.get(key)!.add(String(row.item_id || ""));
     }
   }
@@ -119,7 +202,11 @@ export async function GET(req: NextRequest) {
       .eq("institution_id", institutionId)
       .in("assignment_id", assignmentIds);
 
-    if (sessionErr) return NextResponse.json({ ok: false, error: sessionErr.message }, { status: 400 });
+    if (sessionErr)
+      return NextResponse.json(
+        { ok: false, error: sessionErr.message },
+        { status: 400 },
+      );
     for (const row of (sessions || []) as any[]) {
       const key = String(row.assignment_id || "");
       const prev = sessionStats.get(key) || { count: 0, minutes: 0 };
@@ -138,8 +225,12 @@ export async function GET(req: NextRequest) {
 
     for (const p of (profiles || []) as any[]) {
       const name =
-        String(p.display_name || p.full_name || `${p.first_name || ""} ${p.last_name || ""}` || "").trim() ||
-        "Enseignant";
+        String(
+          p.display_name ||
+            p.full_name ||
+            `${p.first_name || ""} ${p.last_name || ""}` ||
+            "",
+        ).trim() || "Enseignant";
       teacherNames.set(String(p.id), name);
     }
   }
@@ -147,10 +238,13 @@ export async function GET(req: NextRequest) {
   const items = assignments.map((assignment) => {
     const progression = assignment.progression || {};
     const allItems = itemsByProgression.get(String(progression.id || "")) || [];
-    const actionable = allItems.filter((item) => ACTIONABLE_TYPES.has(String(item.item_type || "")));
+    const actionable = allItems.filter(isActionableItem);
     const expected = actionable.length;
     const done = completedByAssignment.get(String(assignment.id))?.size || 0;
-    const sess = sessionStats.get(String(assignment.id)) || { count: 0, minutes: 0 };
+    const sess = sessionStats.get(String(assignment.id)) || {
+      count: 0,
+      minutes: 0,
+    };
 
     return {
       assignment_id: assignment.id,
@@ -162,8 +256,13 @@ export async function GET(req: NextRequest) {
       level: assignment.classes?.level || progression.level || null,
       subject_id: progression.subject_id || assignment.subject_id || null,
       subject_name: progression.subject_name || "Matière",
-      teacher_id: assignment.teacher_id || null,
-      teacher_name: assignment.teacher_id ? teacherNames.get(String(assignment.teacher_id)) || "Enseignant" : "Tous enseignants affectés",
+      teacher_id:
+        effectiveTeacherByAssignment.get(String(assignment.id)) || null,
+      teacher_name: effectiveTeacherByAssignment.get(String(assignment.id))
+        ? teacherNames.get(
+            String(effectiveTeacherByAssignment.get(String(assignment.id))),
+          ) || "Enseignant"
+        : "Enseignant non affecté",
       expected_items: expected,
       completed_items: done,
       completion_rate: pct(done, expected),
@@ -182,7 +281,13 @@ export async function GET(req: NextRequest) {
       acc.realized_minutes += item.realized_minutes;
       return acc;
     },
-    { assignments: 0, expected_items: 0, completed_items: 0, sessions_count: 0, realized_minutes: 0 }
+    {
+      assignments: 0,
+      expected_items: 0,
+      completed_items: 0,
+      sessions_count: 0,
+      realized_minutes: 0,
+    },
   );
 
   return NextResponse.json({
