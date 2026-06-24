@@ -13,6 +13,7 @@ import {
   Bell,
   Building2,
   Clock,
+  ClipboardList,
   FileSpreadsheet,
   HeartPulse,
   Landmark,
@@ -415,7 +416,7 @@ const homeSlides: HomeSlide[] = [
     imageAlt: "Cahier de textes numérique Mon Cahier avec professeur, tablette et progression pédagogique",
     href: "/login?space=enseignant",
     cta: "Voir le cahier de textes",
-    icon: ReceiptText,
+    icon: ClipboardList,
     tone: "violet",
     badges: ["Leçons", "Devoirs", "Progression"],
     metrics: [
@@ -571,8 +572,8 @@ function SmartHomeImage({
       alt={slide.imageAlt}
       fill
       priority={priority}
-      sizes="(min-width: 1024px) 58vw, 100vw"
-      className={`object-cover ${className}`}
+      sizes="(min-width: 1280px) 54vw, (min-width: 1024px) 52vw, 100vw"
+      className={`object-contain bg-white ${className}`}
       onError={() => setImageFailed(true)}
     />
   );
@@ -594,21 +595,21 @@ function HeroSlider({
   const Icon = slide.icon;
 
   return (
-    <div className="relative overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-xl md:rounded-[36px]">
+    <div className="relative overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-xl md:rounded-[32px]">
       <div className={`pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full blur-3xl ${tone.glow}`} />
-      <div className="grid min-h-[560px] grid-cols-1 lg:grid-cols-[0.9fr_1.15fr]">
-        <div className="relative z-10 flex flex-col justify-center px-5 py-7 sm:px-8 md:px-10 lg:py-10">
-          <div className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-black uppercase tracking-[0.14em] ring-1 ${tone.soft}`}>
+      <div className="grid min-h-[440px] grid-cols-1 lg:min-h-[470px] lg:grid-cols-[0.84fr_1.16fr] xl:min-h-[500px]">
+        <div className="relative z-10 flex flex-col justify-center px-5 py-6 sm:px-8 md:px-9 lg:py-8 xl:px-10">
+          <div className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] ring-1 md:text-xs ${tone.soft}`}>
             <Icon className="h-4 w-4" />
             {slide.eyebrow}
           </div>
 
-          <h1 className="mt-5 text-[2.4rem] font-black leading-[1.08] tracking-tight text-slate-950 sm:text-5xl xl:text-[3.4rem]">
+          <h1 className="mt-4 text-[2.05rem] font-black leading-[1.08] tracking-tight text-slate-950 sm:text-4xl lg:text-[2.55rem] xl:text-[2.9rem]">
             {slide.title}
             <span className={`block ${tone.accent}`}>{slide.accent}</span>
           </h1>
 
-          <p className="mt-5 max-w-2xl text-[15px] leading-7 text-slate-600 md:text-base md:leading-8">
+          <p className="mt-4 max-w-2xl text-[14px] leading-7 text-slate-600 md:text-[15px]">
             {slide.description}
           </p>
 
@@ -620,7 +621,7 @@ function HeroSlider({
             ))}
           </div>
 
-          <div className="mt-7 flex flex-wrap items-center gap-3">
+          <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link href={slide.href} className={`inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-black shadow-sm ${tone.button}`}>
               {slide.cta}
               <ArrowRight className="h-4 w-4" />
@@ -634,14 +635,14 @@ function HeroSlider({
           </div>
         </div>
 
-        <div className="relative min-h-[360px] border-t border-slate-200 lg:min-h-full lg:border-l lg:border-t-0">
+        <div className="relative min-h-[300px] border-t border-slate-200 bg-white lg:min-h-full lg:border-l lg:border-t-0">
           <SmartHomeImage slide={slide} priority className="transition duration-700" />
 
-          <div className="absolute inset-x-4 bottom-4 grid gap-2 sm:grid-cols-3 lg:inset-x-6 lg:bottom-6">
+          <div className="absolute inset-x-3 bottom-3 grid gap-2 sm:grid-cols-3 lg:inset-x-5 lg:bottom-5">
             {slide.metrics.map((metric) => (
-              <div key={metric.label} className="rounded-2xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
+              <div key={metric.label} className="rounded-2xl border border-white/70 bg-white/95 p-2.5 shadow-lg backdrop-blur">
                 <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">{metric.label}</div>
-                <div className="mt-1 text-lg font-black text-slate-950">{metric.value}</div>
+                <div className="mt-1 text-base font-black text-slate-950 xl:text-lg">{metric.value}</div>
                 <div className="text-xs font-semibold text-slate-500">{metric.hint}</div>
               </div>
             ))}
@@ -649,7 +650,7 @@ function HeroSlider({
         </div>
       </div>
 
-      <div className="border-t border-slate-200 bg-slate-950 px-3 py-3 text-white md:px-5">
+      <div className="border-t border-slate-200 bg-slate-950 px-3 py-3 text-white md:px-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {homeSlides.map((item, index) => {
@@ -661,7 +662,7 @@ function HeroSlider({
                   key={item.key}
                   type="button"
                   onClick={() => onSelect(index)}
-                  className={`group flex items-center gap-2 rounded-2xl px-3 py-2 text-left text-xs font-black transition ${
+                  className={`group flex min-w-0 items-center gap-2 rounded-2xl px-3 py-2 text-left text-[11px] font-black transition xl:text-xs ${
                     active ? "bg-white text-slate-950 shadow-sm" : "bg-white/5 text-slate-200 hover:bg-white/10"
                   }`}
                 >
@@ -711,7 +712,7 @@ function HeroSlider({
 
 function HomeModuleCards({ activeIndex, onSelect }: { activeIndex: number; onSelect: (index: number) => void }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
       {homeSlides.map((slide, index) => {
         const tone = slideToneClasses[slide.tone];
         const Icon = slide.icon;
@@ -726,7 +727,7 @@ function HomeModuleCards({ activeIndex, onSelect }: { activeIndex: number; onSel
               active ? tone.ring : "border-slate-200"
             }`}
           >
-            <div className="relative h-32 overflow-hidden bg-slate-100">
+            <div className="relative h-36 overflow-hidden bg-white">
               <SmartHomeImage slide={slide} className="transition duration-500 group-hover:scale-[1.03]" />
               <div className="absolute left-3 top-3 grid h-10 w-10 place-items-center rounded-2xl bg-white/90 text-slate-900 shadow-sm backdrop-blur">
                 <Icon className="h-5 w-5" />
@@ -918,7 +919,7 @@ export default function HomePage() {
       </section>
 
       <section id="hero" className="px-4 pb-5 pt-4 md:pb-8 md:pt-8">
-        <div className="mx-auto max-w-7xl">
+        <div className="mx-auto max-w-[96rem]">
           <HeroSlider
             activeIndex={activeHeroIndex}
             onSelect={selectHeroSlide}
@@ -928,7 +929,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 pb-5 md:pb-6">
+      <section className="mx-auto max-w-[96rem] px-4 pb-5 md:pb-6">
         <HomeModuleCards activeIndex={activeHeroIndex} onSelect={selectHeroSlide} />
       </section>
 
