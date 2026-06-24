@@ -72,6 +72,7 @@ export default function SuperNationalProgressionsPage() {
   const [rawProgressionText, setRawProgressionText] = useState("");
   const [assistantItems, setAssistantItems] = useState<StructuredProgressionItem[]>([]);
   const [assistantMessage, setAssistantMessage] = useState<string | null>(null);
+  const [extractingOfficial, setExtractingOfficial] = useState(false);
 
   const selected = useMemo(
     () => items.find((item) => item.id === selectedId) || null,
@@ -215,7 +216,7 @@ export default function SuperNationalProgressionsPage() {
 
     if (!isTextLike) {
       setAssistantMessage(
-        "Pour l'instant, l'assistant lit directement les TXT/CSV. Pour un PDF/Word, ouvre le document, copie le tableau en texte, puis colle-le ici.",
+        "Ce bouton lit les fichiers TXT/CSV déjà structurés. Pour exploiter le PDF officiel uploadé, clique plutôt sur “Extraire depuis le fichier officiel”.",
       );
       return;
     }
@@ -225,6 +226,34 @@ export default function SuperNationalProgressionsPage() {
     const extracted = extractStructuredItems(text, selected || undefined);
     setAssistantItems(extracted);
     setAssistantMessage(`${extracted.length} ligne(s) détectée(s) depuis le fichier.`);
+  }
+
+  async function extractFromOfficialDocument() {
+    if (!selected) return;
+    if (!selected.document?.signed_url) {
+      setAssistantMessage("Aucun fichier officiel n'est attaché à cette progression nationale.");
+      return;
+    }
+
+    setExtractingOfficial(true);
+    setError(null);
+    setAssistantMessage(null);
+    try {
+      const json = await fetchJson(`/api/super/textbook/national/${selected.id}/extract`, { method: "POST" });
+      const rawText = String(json.raw_text || "");
+      const extracted = Array.isArray(json.items) ? json.items : [];
+      setRawProgressionText(rawText);
+      setAssistantItems(extracted);
+      setImportText(json.import_text || serializeImportLines(extracted));
+
+      const warning = json.warning === "pdf_fallback" ? " Extraction PDF réalisée en mode secours : vérifie bien les lignes." : "";
+      setAssistantMessage(`${extracted.length} ligne(s) détectée(s) depuis le fichier officiel.${warning}`);
+    } catch (e: any) {
+      setAssistantItems([]);
+      setAssistantMessage(e?.message || "Extraction du fichier officiel impossible.");
+    } finally {
+      setExtractingOfficial(false);
+    }
   }
 
   return (
@@ -351,7 +380,7 @@ export default function SuperNationalProgressionsPage() {
                         <Wand2 className="h-4 w-4 text-violet-700" /> Assistant de structuration
                       </h3>
                       <p className="mt-1 text-sm font-semibold text-slate-600">
-                        Colle le texte extrait d'un PDF/Word, ou importe un TXT/CSV. L'assistant propose les unités, leçons, séances, évaluations et remédiations à vérifier avant validation.
+                        Clique sur “Extraire depuis le fichier officiel” pour tenter de lire le document uploadé. Tu peux aussi coller un texte brut ou importer un TXT/CSV déjà préparé.
                       </p>
                     </div>
                     <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 hover:bg-violet-50">
@@ -362,14 +391,17 @@ export default function SuperNationalProgressionsPage() {
 
                   <textarea
                     className="mt-4 h-36 w-full rounded-2xl border border-violet-100 bg-white px-4 py-3 text-xs font-semibold text-slate-700 outline-none focus:border-violet-400"
-                    placeholder="Colle ici le texte brut de la progression officielle. Exemple : UNIT 1 PEOPLE, Révisions, Evaluation, Correction / Remédiation..."
+                    placeholder="Le texte extrait du fichier officiel apparaîtra ici. Tu peux aussi coller le texte brut de la progression officielle."
                     value={rawProgressionText}
                     onChange={(e) => setRawProgressionText(e.target.value)}
                   />
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={runAssistantExtraction} className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-xs font-black text-white">
-                      <Eye className="h-4 w-4" /> Prévisualiser l'extraction
+                    <button type="button" onClick={extractFromOfficialDocument} disabled={extractingOfficial || !selected?.document?.signed_url} className="inline-flex items-center gap-2 rounded-xl bg-violet-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
+                      {extractingOfficial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Extraire depuis le fichier officiel
+                    </button>
+                    <button type="button" onClick={runAssistantExtraction} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-black text-violet-700 ring-1 ring-violet-200">
+                      <Eye className="h-4 w-4" /> Prévisualiser le texte collé
                     </button>
                     <button type="button" onClick={useAssistantPreview} disabled={!assistantItems.length} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-50">
                       <CheckCircle2 className="h-4 w-4" /> Utiliser cette prévisualisation
