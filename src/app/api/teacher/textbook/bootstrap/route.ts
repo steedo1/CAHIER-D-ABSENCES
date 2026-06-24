@@ -136,6 +136,7 @@ export async function GET() {
         title,
         description,
         status,
+        source_national_template_id,
         document:textbook_progression_documents(
           id,
           original_name,
@@ -171,6 +172,52 @@ export async function GET() {
     const rows = classRowsByClass.get(String(assignment.class_id || "")) || [];
     return subjectMatches(assignment, rows);
   });
+
+  const sourceIdsMissingDocument = uniq(
+    assignments
+      .filter((a) => !a?.progression?.document)
+      .map((a) => a?.progression?.source_national_template_id),
+  );
+
+  if (sourceIdsMissingDocument.length) {
+    const { data: sourceProgressions } = await srv
+      .from("textbook_progression_templates")
+      .select(
+        `
+        id,
+        document:textbook_progression_documents(
+          id,
+          original_name,
+          storage_bucket,
+          storage_path,
+          mime_type,
+          size_bytes
+        )
+      `,
+      )
+      .in("id", sourceIdsMissingDocument);
+
+    const sourceDocuments = new Map<string, any>();
+    for (const row of (sourceProgressions || []) as any[]) {
+      if (row?.document) sourceDocuments.set(String(row.id), row.document);
+    }
+
+    assignments = assignments.map((assignment) => {
+      const sourceId = String(
+        assignment?.progression?.source_national_template_id || "",
+      );
+      if (!assignment?.progression?.document && sourceDocuments.has(sourceId)) {
+        return {
+          ...assignment,
+          progression: {
+            ...assignment.progression,
+            document: sourceDocuments.get(sourceId),
+          },
+        };
+      }
+      return assignment;
+    });
+  }
 
   assignments = await decorateDocuments(srv, assignments);
 

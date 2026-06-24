@@ -63,6 +63,14 @@ function pct(done: number, total: number) {
   return Math.round((done / total) * 1000) / 10;
 }
 
+function plannedMinutes(item: any) {
+  const duration = Number(item?.planned_duration_minutes || 0);
+  if (duration > 0) return duration;
+  const sessions = Number(item?.planned_sessions_count || 0);
+  if (sessions > 0) return sessions * 55;
+  return 0;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireTextbookManager();
   if (!auth.ok) return auth.response;
@@ -240,7 +248,19 @@ export async function GET(req: NextRequest) {
     const allItems = itemsByProgression.get(String(progression.id || "")) || [];
     const actionable = allItems.filter(isActionableItem);
     const expected = actionable.length;
-    const done = completedByAssignment.get(String(assignment.id))?.size || 0;
+    const completedSet = completedByAssignment.get(String(assignment.id)) || new Set<string>();
+    const done = completedSet.size;
+    const planned_minutes = actionable.reduce(
+      (sum, item) => sum + plannedMinutes(item),
+      0,
+    );
+    const completed_planned_minutes = actionable.reduce(
+      (sum, item) =>
+        completedSet.has(String(item.id || ""))
+          ? sum + plannedMinutes(item)
+          : sum,
+      0,
+    );
     const sess = sessionStats.get(String(assignment.id)) || {
       count: 0,
       minutes: 0,
@@ -265,7 +285,14 @@ export async function GET(req: NextRequest) {
         : "Enseignant non affecté",
       expected_items: expected,
       completed_items: done,
-      completion_rate: pct(done, expected),
+      planned_minutes,
+      planned_hours: Math.round((planned_minutes / 60) * 10) / 10,
+      completed_planned_minutes,
+      completed_planned_hours:
+        Math.round((completed_planned_minutes / 60) * 10) / 10,
+      completion_rate: planned_minutes
+        ? pct(completed_planned_minutes, planned_minutes)
+        : pct(done, expected),
       sessions_count: sess.count,
       realized_minutes: sess.minutes,
       realized_hours: Math.round((sess.minutes / 60) * 10) / 10,
@@ -279,6 +306,8 @@ export async function GET(req: NextRequest) {
       acc.completed_items += item.completed_items;
       acc.sessions_count += item.sessions_count;
       acc.realized_minutes += item.realized_minutes;
+      acc.planned_minutes += item.planned_minutes || 0;
+      acc.completed_planned_minutes += item.completed_planned_minutes || 0;
       return acc;
     },
     {
@@ -287,6 +316,8 @@ export async function GET(req: NextRequest) {
       completed_items: 0,
       sessions_count: 0,
       realized_minutes: 0,
+      planned_minutes: 0,
+      completed_planned_minutes: 0,
     },
   );
 
@@ -295,7 +326,12 @@ export async function GET(req: NextRequest) {
     academic_year: academicYear,
     totals: {
       ...totals,
-      completion_rate: pct(totals.completed_items, totals.expected_items),
+      completion_rate: totals.planned_minutes
+        ? pct(totals.completed_planned_minutes, totals.planned_minutes)
+        : pct(totals.completed_items, totals.expected_items),
+      planned_hours: Math.round((totals.planned_minutes / 60) * 10) / 10,
+      completed_planned_hours:
+        Math.round((totals.completed_planned_minutes / 60) * 10) / 10,
       realized_hours: Math.round((totals.realized_minutes / 60) * 10) / 10,
     },
     items,

@@ -15,6 +15,23 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeHm(value: unknown) {
+  const m = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const hh = Math.max(0, Math.min(23, Number(m[1]) || 0));
+  const mm = Math.max(0, Math.min(59, Number(m[2]) || 0));
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function minutesBetween(start: string | null, end: string | null) {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let diff = eh * 60 + em - (sh * 60 + sm);
+  if (diff <= 0) diff += 24 * 60;
+  return diff > 0 && diff <= 24 * 60 ? diff : 0;
+}
+
 function uniq(values: Array<string | null | undefined>) {
   return Array.from(
     new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
@@ -205,8 +222,14 @@ export async function POST(req: NextRequest) {
 
   const sessionTitle =
     cleanText(body.session_title, 160) || `Séance ${(count || 0) + 1}`;
-  const durationMinutes = toPositiveInt(body.duration_minutes, 55) || 55;
   const sessionDate = cleanText(body.session_date, 20) || todayIso();
+  const sessionStartTime = normalizeHm(body.session_start_time);
+  const sessionEndTime = normalizeHm(body.session_end_time);
+  const durationFromRange = minutesBetween(sessionStartTime, sessionEndTime);
+  const durationMinutes =
+    durationFromRange || toPositiveInt(body.duration_minutes, 55) || 55;
+  const sessionPeriodId = cleanUuid(body.session_period_id);
+  const sessionPeriodLabel = cleanText(body.session_period_label, 120) || null;
 
   const { data, error } = await srv
     .from("textbook_lesson_sessions")
@@ -227,6 +250,10 @@ export async function POST(req: NextRequest) {
       teacher_id: effectiveTeacherId,
       session_title: sessionTitle,
       session_date: sessionDate,
+      session_period_id: sessionPeriodId || null,
+      session_period_label: sessionPeriodLabel,
+      session_start_time: sessionStartTime,
+      session_end_time: sessionEndTime,
       duration_minutes: durationMinutes,
       content: cleanText(body.content, 4000) || null,
       homework: cleanText(body.homework, 2000) || null,

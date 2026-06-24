@@ -17,7 +17,19 @@ type Session = {
   session_title: string;
   session_date: string;
   duration_minutes: number;
+  session_start_time?: string | null;
+  session_end_time?: string | null;
+  session_period_label?: string | null;
   content?: string | null;
+};
+
+type PeriodSlot = {
+  id: string;
+  label: string;
+  start_hm: string;
+  duration_minutes: number;
+  weekday?: number | null;
+  period_no?: number | null;
 };
 
 type Completion = {
@@ -90,6 +102,84 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function normalizeHm(value?: string | null) {
+  const m = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "";
+  const hh = Math.max(0, Math.min(23, Number(m[1]) || 0));
+  const mm = Math.max(0, Math.min(59, Number(m[2]) || 0));
+  return `${pad2(hh)}:${pad2(mm)}`;
+}
+
+function addMinutes(hm: string, minutes: number) {
+  const clean = normalizeHm(hm);
+  if (!clean) return "";
+  const [h, m] = clean.split(":").map(Number);
+  const total = h * 60 + m + Math.max(1, Number(minutes || 0));
+  return `${pad2(Math.floor(total / 60) % 24)}:${pad2(total % 60)}`;
+}
+
+function minutesBetween(start?: string | null, end?: string | null) {
+  const s = normalizeHm(start);
+  const e = normalizeHm(end);
+  if (!s || !e) return 0;
+  const [sh, sm] = s.split(":").map(Number);
+  const [eh, em] = e.split(":").map(Number);
+  let diff = eh * 60 + em - (sh * 60 + sm);
+  if (diff <= 0) diff += 24 * 60;
+  return diff > 0 && diff <= 24 * 60 ? diff : 0;
+}
+
+function formatTimeRange(start?: string | null, end?: string | null) {
+  const s = normalizeHm(start);
+  const e = normalizeHm(end);
+  if (!s || !e) return "";
+  return `${s}–${e}`;
+}
+
+function plannedMinutes(item: ProgressionItem) {
+  const duration = Number(item.planned_duration_minutes || 0);
+  if (duration > 0) return duration;
+  const sessions = Number(item.planned_sessions_count || 0);
+  if (sessions > 0) return sessions * 55;
+  return 0;
+}
+
+function formatHours(minutes: number) {
+  if (!minutes) return "0h";
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+}
+
+function buildUniquePeriodSlots(slots: PeriodSlot[]) {
+  const seen = new Set<string>();
+  const out: PeriodSlot[] = [];
+  for (const slot of slots || []) {
+    const start = normalizeHm(slot.start_hm);
+    const duration = Math.max(1, Number(slot.duration_minutes || 0));
+    if (!start || !duration) continue;
+    const end = addMinutes(start, duration);
+    const key = `${start}|${end}|${slot.period_no || slot.label || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      ...slot,
+      start_hm: start,
+      duration_minutes: duration,
+      label: slot.label || `Créneau ${slot.period_no || out.length + 1}`,
+    });
+  }
+  return out.sort((a, b) => {
+    const pa = Number(a.period_no || 999);
+    const pb = Number(b.period_no || 999);
+    if (pa !== pb) return pa - pb;
+    return String(a.start_hm).localeCompare(String(b.start_hm));
+  });
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const d = new Date(`${value}T00:00:00`);
@@ -126,6 +216,7 @@ export default function TeacherTextbookPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [periodSlots, setPeriodSlots] = useState<PeriodSlot[]>([]);
   const [accessMode, setAccessMode] = useState<"teacher" | "class_device">(
     "teacher",
   );
@@ -134,7 +225,10 @@ export default function TeacherTextbookPage() {
   const [form, setForm] = useState({
     session_title: "",
     session_date: todayIso(),
-    duration_minutes: "55",
+    session_period_id: "",
+    session_period_label: "",
+    session_start_time: "",
+    session_end_time: "",
     content: "",
     homework: "",
     observations: "",
@@ -159,16 +253,29 @@ export default function TeacherTextbookPage() {
     const completed = actionable.filter(
       (it) => it.completion?.status === "completed",
     );
+    const plannedTotal = actionable.reduce(
+      (sum, it) => sum + plannedMinutes(it),
+      0,
+    );
+    const completedPlanned = completed.reduce(
+      (sum, it) => sum + plannedMinutes(it),
+      0,
+    );
     const sessions = items.reduce(
       (sum, it) => sum + (it.sessions?.length || 0),
       0,
     );
+    const rate = plannedTotal
+      ? Math.round((completedPlanned / plannedTotal) * 1000) / 10
+      : actionable.length
+        ? Math.round((completed.length / actionable.length) * 1000) / 10
+        : 0;
     return {
       total: actionable.length,
       completed: completed.length,
-      rate: actionable.length
-        ? Math.round((completed.length / actionable.length) * 1000) / 10
-        : 0,
+      plannedTotal,
+      completedPlanned,
+      rate,
       sessions,
     };
   }, [selectedAssignment]);
@@ -191,10 +298,14 @@ export default function TeacherTextbookPage() {
     setLoading(true);
     setError(null);
     try {
-      const json = await fetchJson("/api/teacher/textbook/bootstrap");
+      const [json, slotsJson] = await Promise.all([
+        fetchJson("/api/teacher/textbook/bootstrap"),
+        fetchJson("/api/institution/slots").catch(() => ({ items: [] })),
+      ]);
       const items = json.items || [];
       setAccessMode(json.mode === "class_device" ? "class_device" : "teacher");
       setAssignments(items);
+      setPeriodSlots(buildUniquePeriodSlots(slotsJson.items || []));
       setSelectedAssignmentId((current) => current || items[0]?.id || "");
     } catch (e: any) {
       setError(e?.message || "Chargement impossible");
@@ -214,15 +325,48 @@ export default function TeacherTextbookPage() {
   function openItem(item: ProgressionItem) {
     if (!isActionableItem(item)) return;
     const nextIndex = (item.sessions?.length || 0) + 1;
+    const defaultSlot = periodSlots[0] || null;
+    const start = defaultSlot?.start_hm || "";
+    const end = defaultSlot
+      ? addMinutes(defaultSlot.start_hm, defaultSlot.duration_minutes)
+      : "";
     setSelectedItemId(item.id);
     setForm({
       session_title: `Séance ${nextIndex}`,
       session_date: todayIso(),
-      duration_minutes: String(item.planned_duration_minutes || 55),
+      session_period_id: defaultSlot?.id || "",
+      session_period_label: defaultSlot
+        ? `${defaultSlot.label} · ${formatTimeRange(start, end)}`
+        : "",
+      session_start_time: start,
+      session_end_time: end,
       content: "",
       homework: "",
       observations: "",
     });
+  }
+
+  function handlePeriodChange(periodId: string) {
+    if (periodId === "custom") {
+      setForm((f) => ({
+        ...f,
+        session_period_id: "",
+        session_period_label: "Plage personnalisée",
+      }));
+      return;
+    }
+
+    const slot = periodSlots.find((s) => s.id === periodId) || null;
+    if (!slot) return;
+    const start = normalizeHm(slot.start_hm);
+    const end = addMinutes(start, slot.duration_minutes);
+    setForm((f) => ({
+      ...f,
+      session_period_id: slot.id,
+      session_period_label: `${slot.label} · ${formatTimeRange(start, end)}`,
+      session_start_time: start,
+      session_end_time: end,
+    }));
   }
 
   async function saveSession(e: React.FormEvent) {
@@ -239,7 +383,8 @@ export default function TeacherTextbookPage() {
           assignment_id: selectedAssignment.id,
           item_id: selectedItem.id,
           ...form,
-          duration_minutes: Number(form.duration_minutes) || 55,
+          duration_minutes:
+            minutesBetween(form.session_start_time, form.session_end_time) || 55,
         }),
       });
       setMessage("Séance enregistrée dans le cahier de texte.");
@@ -390,7 +535,12 @@ export default function TeacherTextbookPage() {
                     />
                   </div>
                   <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-600">
-                    {progressStats.sessions} séance(s) enregistrée(s)
+                    <div>{progressStats.sessions} séance(s) enregistrée(s)</div>
+                    {progressStats.plannedTotal ? (
+                      <div className="mt-1 text-xs font-medium text-slate-500">
+                        {formatHours(progressStats.completedPlanned)} / {formatHours(progressStats.plannedTotal)} prévues terminées
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               ) : null}
@@ -526,31 +676,69 @@ export default function TeacherTextbookPage() {
                             }
                             placeholder="Séance 1"
                           />
-                          <div className="grid grid-cols-2 gap-3">
-                            <input
-                              type="date"
-                              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                              value={form.session_date}
-                              onChange={(e) =>
-                                setForm((f) => ({
-                                  ...f,
-                                  session_date: e.target.value,
-                                }))
-                              }
-                            />
-                            <input
-                              type="number"
-                              min="1"
-                              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                              value={form.duration_minutes}
-                              onChange={(e) =>
-                                setForm((f) => ({
-                                  ...f,
-                                  duration_minutes: e.target.value,
-                                }))
-                              }
-                              placeholder="Durée min"
-                            />
+                          <input
+                            type="date"
+                            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                            value={form.session_date}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                session_date: e.target.value,
+                              }))
+                            }
+                          />
+
+                          <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                            <label className="text-xs font-black uppercase tracking-wide text-slate-500">
+                              Plage horaire de la séance
+                            </label>
+                            <select
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
+                              value={form.session_period_id || "custom"}
+                              onChange={(e) => handlePeriodChange(e.target.value)}
+                            >
+                              {periodSlots.map((slot) => {
+                                const start = normalizeHm(slot.start_hm);
+                                const end = addMinutes(start, slot.duration_minutes);
+                                return (
+                                  <option key={slot.id} value={slot.id}>
+                                    {slot.label} — {formatTimeRange(start, end)}
+                                  </option>
+                                );
+                              })}
+                              <option value="custom">Plage personnalisée</option>
+                            </select>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="time"
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
+                                value={form.session_start_time}
+                                onChange={(e) =>
+                                  setForm((f) => ({
+                                    ...f,
+                                    session_period_id: "",
+                                    session_period_label: "Plage personnalisée",
+                                    session_start_time: e.target.value,
+                                  }))
+                                }
+                              />
+                              <input
+                                type="time"
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
+                                value={form.session_end_time}
+                                onChange={(e) =>
+                                  setForm((f) => ({
+                                    ...f,
+                                    session_period_id: "",
+                                    session_period_label: "Plage personnalisée",
+                                    session_end_time: e.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="text-xs font-bold text-slate-500">
+                              Durée calculée : {minutesBetween(form.session_start_time, form.session_end_time) || 55} min
+                            </div>
                           </div>
                           <textarea
                             className="min-h-28 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400"
@@ -625,8 +813,7 @@ export default function TeacherTextbookPage() {
                                     <div className="flex items-center gap-2">
                                       <Clock3 className="h-3.5 w-3.5" />{" "}
                                       {formatDate(s.session_date)} ·{" "}
-                                      {s.session_title} · {s.duration_minutes}{" "}
-                                      min
+                                      {formatTimeRange(s.session_start_time, s.session_end_time) || `${s.duration_minutes} min`} · {s.session_title}
                                     </div>
                                     {s.content ? (
                                       <div className="mt-1 font-medium text-slate-500">
