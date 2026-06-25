@@ -330,8 +330,8 @@ async function requireAdminContext(
   if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
 
   const allowedRoles = options.write
-    ? new Set(["admin", "super_admin"])
-    : new Set(["admin", "super_admin", "founder", "finance_manager"]);
+    ? new Set(["admin", "super_admin", "founder", "finance_manager", "finance"])
+    : new Set(["admin", "super_admin", "founder", "finance_manager", "finance"]);
 
   const allowedRoleRows = (roleRows || []).filter((row: any) =>
     allowedRoles.has(String(row.role || "")),
@@ -358,9 +358,10 @@ async function requireAdminContext(
   };
 
   const hasAccess = allowedRoleRows.some(roleAppliesToInstitution);
+  const writeRoles = new Set(["admin", "super_admin", "founder", "finance_manager", "finance"]);
   const canWrite = (roleRows || []).some((row: any) => {
     const role = String(row.role || "");
-    return (role === "admin" || role === "super_admin") && roleAppliesToInstitution(row);
+    return writeRoles.has(role) && roleAppliesToInstitution(row);
   });
 
   if (!hasAccess) {
