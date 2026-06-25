@@ -18,6 +18,7 @@ import {
   NotebookPen,
   Settings,
   FileSpreadsheet,
+  BarChart3,
   UserRoundCheck,
   HeartPulse,
   Loader2,
@@ -210,6 +211,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
     return [
       { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+      { href: "/admin/mon-cahier-ia", label: "IA", Icon: BarChart3 },
       { href: "/admin/absences", label: "Absences", Icon: Ban },
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },

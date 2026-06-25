@@ -6,6 +6,165 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const MON_CAHIER_AI_MODEL_KEY = "mon_cahier_ai_pedagogique";
+const MON_CAHIER_AI_MODEL_VERSION = "2026.06-v1";
+const ML_PREDICT_URL = process.env.ML_PREDICT_URL || "";
+
+type ModelSource = "sql_baseline" | "ml_service";
+
+type MlServiceStudentResponse = {
+  student_id: string;
+  p_success: number | null;
+  risk_level?: string | null;
+};
+
+type MlServicePredictResponse = {
+  ok: boolean;
+  model_version?: string | null;
+  students?: MlServiceStudentResponse[];
+};
+
+async function callMonCahierAiService(args: {
+  institution_id: string;
+  class_id: string;
+  academic_year: string;
+  exam_date: string;
+  key_subjects_coverage: number;
+  students: any[];
+}): Promise<MlServicePredictResponse | null> {
+  if (!ML_PREDICT_URL) return null;
+
+  try {
+    const res = await fetch(ML_PREDICT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model_key: MON_CAHIER_AI_MODEL_KEY,
+        institution_id: args.institution_id,
+        class_id: args.class_id,
+        academic_year: args.academic_year,
+        exam_date: args.exam_date,
+        key_subjects_coverage: args.key_subjects_coverage,
+        students: args.students.map((row) => ({
+          student_id: String(row.student_id || ""),
+          features: {
+            general_avg_20: row.general_avg_20 ?? null,
+            raw_all_avg_20: row.raw_all_avg_20 ?? null,
+            raw_core_avg_20: row.raw_core_avg_20 ?? null,
+            bonus_effect_20: row.bonus_effect_20 ?? null,
+            draft_ratio: row.draft_ratio ?? null,
+            bonus_points_total: row.bonus_points_total ?? null,
+            presence_rate: row.presence_rate ?? null,
+            total_absent_hours: row.total_absent_hours ?? null,
+            nb_lates: row.nb_lates ?? null,
+            conduct_total_20: row.conduct_total_20 ?? null,
+            conduct_norm: row.conduct_norm ?? null,
+            class_size: row.class_size ?? null,
+            class_size_norm: row.class_size_norm ?? null,
+            key_subjects_coverage: args.key_subjects_coverage,
+          },
+        })),
+      }),
+    });
+
+    if (!res.ok) {
+      console.error("[Mon Cahier IA] service ML non disponible", res.status);
+      return null;
+    }
+
+    const json = (await res
+      .json()
+      .catch(() => null)) as MlServicePredictResponse | null;
+    if (!json?.ok || !Array.isArray(json.students)) return null;
+    return json;
+  } catch (err) {
+    console.error("[Mon Cahier IA] appel service ML échoué", err);
+    return null;
+  }
+}
+
+async function savePredictionHistory(args: {
+  srv: ReturnType<typeof getSupabaseServiceClient>;
+  institution_id: string;
+  created_by: string;
+  class_id: string;
+  academic_year: string;
+  exam_date: string;
+  model_source: ModelSource;
+  model_version: string;
+  response: any;
+  students: StudentResult[];
+}) {
+  try {
+    const { data: run, error: runErr } = await args.srv
+      .from("ai_prediction_runs")
+      .insert({
+        institution_id: args.institution_id,
+        class_id: args.class_id,
+        academic_year: args.academic_year,
+        exam_date: args.exam_date,
+        model_key: MON_CAHIER_AI_MODEL_KEY,
+        model_version: args.model_version,
+        model_source: args.model_source,
+        class_size: args.response?.metrics?.class_size ?? null,
+        class_predicted_success_rate:
+          args.response?.metrics?.predicted_success_rate ?? null,
+        input_json: args.response?.input ?? {},
+        metrics_json: args.response?.metrics ?? {},
+        recommendations_json: args.response?.recommendations ?? [],
+        created_by: args.created_by,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (runErr || !run?.id) {
+      // Migration non appliquée : on ne bloque jamais la prédiction métier.
+      if (runErr)
+        console.warn(
+          "[Mon Cahier IA] historique non enregistré",
+          runErr.message,
+        );
+      return null;
+    }
+
+    const lines = args.students.slice(0, 500).map((s) => ({
+      prediction_run_id: run.id,
+      institution_id: args.institution_id,
+      class_id: args.class_id,
+      academic_year: args.academic_year,
+      student_id: s.student_id,
+      predicted_success: s.predicted_success,
+      risk_label: s.risk_label,
+      general_avg_20: s.general_avg_20,
+      features_json: {
+        academic_score: s.academic_score,
+        attendance_score: s.attendance_score,
+        conduct_score: s.conduct_score,
+        bonus_total: s.bonus_total,
+        bonus_score: s.bonus_score,
+        draft_ratio: s.draft_ratio,
+        draft_score: s.draft_score,
+      },
+    }));
+
+    if (lines.length) {
+      const { error: lineErr } = await args.srv
+        .from("ai_prediction_students")
+        .insert(lines);
+      if (lineErr)
+        console.warn(
+          "[Mon Cahier IA] lignes élèves non enregistrées",
+          lineErr.message,
+        );
+    }
+
+    return String(run.id);
+  } catch (err) {
+    console.warn("[Mon Cahier IA] historique ignoré", err);
+    return null;
+  }
+}
+
 type KeySubjectPayload = {
   subject_id: string;
   name?: string;
@@ -75,7 +234,7 @@ function normalizeCoverage(value: unknown, fallback = 60): number {
 
 function normalizeKeySubjects(
   rawSubjects: KeySubjectPayload[] | undefined,
-  rawIds: string[] | undefined
+  rawIds: string[] | undefined,
 ): Array<{
   subject_id: string;
   subject_name: string;
@@ -175,8 +334,8 @@ function buildRecommendations(args: {
           .toFixed(2)
           .replace(
             ".",
-            ","
-          )}/20 (au-dessus du seuil 12/20). L'objectif est désormais de consolider ce niveau et de réduire l'écart entre les élèves moyens et en difficulté.`
+            ",",
+          )}/20 (au-dessus du seuil 12/20). L'objectif est désormais de consolider ce niveau et de réduire l'écart entre les élèves moyens et en difficulté.`,
       );
     } else {
       recs.push(
@@ -184,23 +343,23 @@ function buildRecommendations(args: {
           .toFixed(2)
           .replace(
             ".",
-            ","
-          )}/20, en dessous du seuil 12/20. Il est nécessaire de mettre en place un plan de remédiation (soutien ciblé, devoirs surveillés, études dirigées).`
+            ",",
+          )}/20, en dessous du seuil 12/20. Il est nécessaire de mettre en place un plan de remédiation (soutien ciblé, devoirs surveillés, études dirigées).`,
       );
     }
   }
 
   if (predictedClass >= 80) {
     recs.push(
-      "La classe présente un bon niveau global. Maintenir le rythme de travail et les évaluations régulières, en particulier pour les élèves moyens afin d’éviter les décrochages de fin d’année."
+      "La classe présente un bon niveau global. Maintenir le rythme de travail et les évaluations régulières, en particulier pour les élèves moyens afin d’éviter les décrochages de fin d’année.",
     );
   } else if (predictedClass >= 60) {
     recs.push(
-      "Le niveau global est correct mais fragile. Renforcer le suivi des élèves moyens et organiser des séances de remédiation ciblées avant l’examen."
+      "Le niveau global est correct mais fragile. Renforcer le suivi des élèves moyens et organiser des séances de remédiation ciblées avant l’examen.",
     );
   } else {
     recs.push(
-      "Risque important d'échec pour la classe. Mettre en place un plan d'accompagnement intensif (soutien, devoirs surveillés, études dirigées, suivi individualisé des cas les plus préoccupants)."
+      "Risque important d'échec pour la classe. Mettre en place un plan d'accompagnement intensif (soutien, devoirs surveillés, études dirigées, suivi individualisé des cas les plus préoccupants).",
     );
   }
 
@@ -210,24 +369,24 @@ function buildRecommendations(args: {
     if (coverage < 100) {
       recs.push(
         `Nous sommes à moins d'un mois de la date d'examen et la couverture du programme dans les matières clés est de ${coverage.toFixed(
-          0
-        )}%. Elle devrait être à 100% à ce stade : terminer au plus vite les chapitres manquants et privilégier les révisions actives (sujets types, annales, corrections dirigées).`
+          0,
+        )}%. Elle devrait être à 100% à ce stade : terminer au plus vite les chapitres manquants et privilégier les révisions actives (sujets types, annales, corrections dirigées).`,
       );
     } else {
       recs.push(
         `La couverture du programme dans les matières clés est de ${coverage.toFixed(
-          0
-        )}% à moins d'un mois de l'examen. Concentrer les efforts sur les révisions, la gestion du temps et la préparation aux sujets d’examen.`
+          0,
+        )}% à moins d'un mois de l'examen. Concentrer les efforts sur les révisions, la gestion du temps et la préparation aux sujets d’examen.`,
       );
     }
   } else {
     if (coverageGap <= -10) {
       recs.push(
         `L'exécution du programme accuse un retard d'environ ${Math.abs(
-          coverageGap
+          coverageGap,
         ).toFixed(
-          0
-        )} points par rapport au planning normal. Revoir la programmation hebdomadaire et augmenter légèrement le rythme dans les matières clés.`
+          0,
+        )} points par rapport au planning normal. Revoir la programmation hebdomadaire et augmenter légèrement le rythme dans les matières clés.`,
       );
     } else if (coverageGap >= 5) {
       recs.push(
@@ -235,49 +394,49 @@ function buildRecommendations(args: {
           .toFixed(0)
           .replace(
             ".",
-            ","
-          )} points). Profiter de cette marge pour renforcer les révisions et accompagner les élèves les plus fragiles.`
+            ",",
+          )} points). Profiter de cette marge pour renforcer les révisions et accompagner les élèves les plus fragiles.`,
       );
     }
   }
 
   if (avgAttendance < 85) {
     recs.push(
-      "Le taux d'assiduité moyen est faible. Renforcer le contrôle des appels, alerter rapidement les parents et envisager des mesures de rappel ou de sanction pédagogique."
+      "Le taux d'assiduité moyen est faible. Renforcer le contrôle des appels, alerter rapidement les parents et envisager des mesures de rappel ou de sanction pédagogique.",
     );
   } else if (avgAttendance < 90) {
     recs.push(
-      "L'assiduité moyenne est juste. Sensibiliser les élèves et les parents à l’importance de la présence régulière, en ciblant les classes ou matières les plus touchées."
+      "L'assiduité moyenne est juste. Sensibiliser les élèves et les parents à l’importance de la présence régulière, en ciblant les classes ou matières les plus touchées.",
     );
   }
 
   if (evalsDevoirRatio < 0.9 || evalsInterroRatio < 0.9) {
     recs.push(
-      `Le volume d'évaluations reste en dessous du rythme conseillé dans les matières clés : environ ${evalsDevoirDone} devoir(s) et ${evalsInterroDone} interrogation(s) réalisés, alors que la norme cible est de 4 devoirs et 4 interrogations par matière. Planifier des évaluations supplémentaires (interrogations courtes, devoirs surveillés) pour mieux étaler la préparation des élèves.`
+      `Le volume d'évaluations reste en dessous du rythme conseillé dans les matières clés : environ ${evalsDevoirDone} devoir(s) et ${evalsInterroDone} interrogation(s) réalisés, alors que la norme cible est de 4 devoirs et 4 interrogations par matière. Planifier des évaluations supplémentaires (interrogations courtes, devoirs surveillés) pour mieux étaler la préparation des élèves.`,
     );
   } else if (evalsDevoirRatio > 1.2 || evalsInterroRatio > 1.2) {
     recs.push(
-      "Le nombre d'évaluations dépasse largement la norme (4 devoirs et 4 interrogations par matière). Veiller à ce que la charge de travail reste supportable et à équilibrer les évaluations sommatives et formatives."
+      "Le nombre d'évaluations dépasse largement la norme (4 devoirs et 4 interrogations par matière). Veiller à ce que la charge de travail reste supportable et à équilibrer les évaluations sommatives et formatives.",
     );
   }
 
   if (ratioBonus > 0.3) {
     recs.push(
-      "Limiter les ajustements de notes et les bonus : privilégier des évaluations régulières, transparentes et bien réparties dans l’année."
+      "Limiter les ajustements de notes et les bonus : privilégier des évaluations régulières, transparentes et bien réparties dans l’année.",
     );
   }
 
   if (avgDraftRatio > 0.2) {
     recs.push(
-      "Réduire le nombre de notes conservées au brouillon : publier davantage d'évaluations pour refléter la réalité du travail des élèves et donner de la visibilité aux parents."
+      "Réduire le nombre de notes conservées au brouillon : publier davantage d'évaluations pour refléter la réalité du travail des élèves et donner de la visibilité aux parents.",
     );
   }
 
   if (worstStudents.length) {
     recs.push(
       `Surveiller en priorité les élèves suivants : ${worstStudents.join(
-        ", "
-      )} (risque élevé). Mettre en place un suivi individualisé avec le professeur principal et, si possible, un échange avec les parents.`
+        ", ",
+      )} (risque élevé). Mettre en place un suivi individualisé avec le professeur principal et, si possible, un échange avec les parents.`,
     );
   }
 
@@ -296,7 +455,7 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json(
         { ok: false, error: "unauthorized" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -317,7 +476,7 @@ export async function POST(req: NextRequest) {
           error: "missing_params",
           message: "class_id, academic_year et exam_date sont requis.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -329,7 +488,7 @@ export async function POST(req: NextRequest) {
           error: "invalid_exam_date",
           message: "Date d'examen invalide.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -342,7 +501,7 @@ export async function POST(req: NextRequest) {
     if (meErr) {
       return NextResponse.json(
         { ok: false, error: meErr.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -354,7 +513,7 @@ export async function POST(req: NextRequest) {
           error: "no_institution",
           message: "Aucune institution associée à ce compte.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -373,7 +532,7 @@ export async function POST(req: NextRequest) {
           error: "forbidden",
           message: "Droits insuffisants pour lancer une prédiction.",
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
@@ -386,7 +545,7 @@ export async function POST(req: NextRequest) {
     if (clsErr) {
       return NextResponse.json(
         { ok: false, error: clsErr.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -397,7 +556,7 @@ export async function POST(req: NextRequest) {
           error: "invalid_class",
           message: "Classe introuvable pour cette institution.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -411,7 +570,7 @@ export async function POST(req: NextRequest) {
     if (yearErr) {
       return NextResponse.json(
         { ok: false, error: yearErr.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -422,7 +581,7 @@ export async function POST(req: NextRequest) {
           error: "invalid_year",
           message: "Année scolaire introuvable pour cette institution.",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -446,17 +605,18 @@ export async function POST(req: NextRequest) {
         (finalPrepDate.getTime() - yearStart.getTime());
     }
 
-    if (!Number.isFinite(timelineFactor) || timelineFactor < 0) timelineFactor = 0;
+    if (!Number.isFinite(timelineFactor) || timelineFactor < 0)
+      timelineFactor = 0;
     if (timelineFactor > 1) timelineFactor = 1;
 
     const expectedCoverage = Math.round(timelineFactor * 100);
     const daysToExam = Math.round(
-      (examDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)
+      (examDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
     );
 
     const normalizedKeySubjects = normalizeKeySubjects(
       Array.isArray(raw.key_subjects) ? raw.key_subjects : [],
-      Array.isArray(raw.key_subject_ids) ? raw.key_subject_ids : []
+      Array.isArray(raw.key_subject_ids) ? raw.key_subject_ids : [],
     );
 
     const key_subject_ids = normalizedKeySubjects.map((s) => s.subject_id);
@@ -493,7 +653,7 @@ export async function POST(req: NextRequest) {
       if (evalErr) {
         return NextResponse.json(
           { ok: false, error: evalErr.message },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -533,56 +693,58 @@ export async function POST(req: NextRequest) {
 
     const expectedPerSubject = Math.max(0, Math.round(4 * timelineFactor));
 
-    const keySubjectScores: KeySubjectScore[] = normalizedKeySubjects.map((s) => {
-      const stats = evalsBySubject.get(s.subject_id) || {
-        devoir: 0,
-        interro: 0,
-        total: 0,
-      };
+    const keySubjectScores: KeySubjectScore[] = normalizedKeySubjects.map(
+      (s) => {
+        const stats = evalsBySubject.get(s.subject_id) || {
+          devoir: 0,
+          interro: 0,
+          total: 0,
+        };
 
-      const coverage_percent = normalizeCoverage(s.coverage, coverage);
-      const coverage_norm = coverage_percent / 100;
-      const expected_coverage_norm = expectedCoverage / 100;
+        const coverage_percent = normalizeCoverage(s.coverage, coverage);
+        const coverage_norm = coverage_percent / 100;
+        const expected_coverage_norm = expectedCoverage / 100;
 
-      const eval_devoir_ratio_norm =
-        expectedPerSubject > 0
-          ? Math.min(1.5, stats.devoir / expectedPerSubject)
-          : 0;
+        const eval_devoir_ratio_norm =
+          expectedPerSubject > 0
+            ? Math.min(1.5, stats.devoir / expectedPerSubject)
+            : 0;
 
-      const eval_interro_ratio_norm =
-        expectedPerSubject > 0
-          ? Math.min(1.5, stats.interro / expectedPerSubject)
-          : 0;
+        const eval_interro_ratio_norm =
+          expectedPerSubject > 0
+            ? Math.min(1.5, stats.interro / expectedPerSubject)
+            : 0;
 
-      const eval_volume_norm =
-        (eval_devoir_ratio_norm + eval_interro_ratio_norm) / 2;
+        const eval_volume_norm =
+          (eval_devoir_ratio_norm + eval_interro_ratio_norm) / 2;
 
-      let status: KeySubjectScore["status"] = "au_niveau";
-      if (
-        coverage_norm < expected_coverage_norm - 0.15 ||
-        eval_volume_norm < 0.75
-      ) {
-        status = "en_retard";
-      } else if (
-        coverage_norm < expected_coverage_norm - 0.05 ||
-        eval_volume_norm < 0.95
-      ) {
-        status = "en_bonne_voie";
-      }
+        let status: KeySubjectScore["status"] = "au_niveau";
+        if (
+          coverage_norm < expected_coverage_norm - 0.15 ||
+          eval_volume_norm < 0.75
+        ) {
+          status = "en_retard";
+        } else if (
+          coverage_norm < expected_coverage_norm - 0.05 ||
+          eval_volume_norm < 0.95
+        ) {
+          status = "en_bonne_voie";
+        }
 
-      return {
-        subject_id: s.subject_id,
-        subject_name: s.subject_name,
-        coeff: s.coeff,
-        coverage_percent,
-        coverage_norm,
-        expected_coverage_norm,
-        eval_devoir_ratio_norm,
-        eval_interro_ratio_norm,
-        eval_volume_norm,
-        status,
-      };
-    });
+        return {
+          subject_id: s.subject_id,
+          subject_name: s.subject_name,
+          coeff: s.coeff,
+          coverage_percent,
+          coverage_norm,
+          expected_coverage_norm,
+          eval_devoir_ratio_norm,
+          eval_interro_ratio_norm,
+          eval_volume_norm,
+          status,
+        };
+      },
+    );
 
     const { data: rows, error: predErr } = await srv.rpc(
       "predict_success_for_class",
@@ -592,21 +754,64 @@ export async function POST(req: NextRequest) {
         p_academic_year: academic_year,
         p_exam_date: exam_date_raw,
         p_core_completion_percent: coverage,
-      }
+      },
     );
 
     if (predErr) {
       return NextResponse.json(
         { ok: false, error: predErr.message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const preds = (rows || []) as any[];
 
+    let modelSource: ModelSource = "sql_baseline";
+    let modelVersion = MON_CAHIER_AI_MODEL_VERSION;
+
+    if (preds.length > 0) {
+      const ml = await callMonCahierAiService({
+        institution_id,
+        class_id,
+        academic_year,
+        exam_date: exam_date_raw,
+        key_subjects_coverage: coverage,
+        students: preds,
+      });
+
+      if (ml?.students?.length) {
+        modelSource = "ml_service";
+        modelVersion = ml.model_version || modelVersion;
+
+        const byStudent = new Map<string, MlServiceStudentResponse>();
+        for (const item of ml.students) {
+          const id = String(item.student_id || "").trim();
+          if (id) byStudent.set(id, item);
+        }
+
+        for (const row of preds) {
+          const item = byStudent.get(String(row.student_id || ""));
+          if (!item) continue;
+          if (
+            typeof item.p_success === "number" &&
+            Number.isFinite(item.p_success)
+          ) {
+            row.p_success = item.p_success;
+          }
+          if (item.risk_level) row.risk_level = item.risk_level;
+        }
+      }
+    }
+
     if (!preds.length) {
       return NextResponse.json({
         ok: true,
+        model: {
+          key: MON_CAHIER_AI_MODEL_KEY,
+          version: modelVersion,
+          source: modelSource,
+          mode: "aide_decision_explicable",
+        },
         class: {
           id: cls.id,
           label: cls.label,
@@ -650,7 +855,7 @@ export async function POST(req: NextRequest) {
     const classSize = Number(preds[0].class_size || preds.length);
 
     const bonusStudentsCount = preds.filter(
-      (r) => Number(r.bonus_points_total || 0) > 0
+      (r) => Number(r.bonus_points_total || 0) > 0,
     ).length;
     const bonusRatio = classSize ? bonusStudentsCount / classSize : 0;
 
@@ -698,8 +903,8 @@ export async function POST(req: NextRequest) {
         typeof row.conduct_norm === "number"
           ? Number(row.conduct_norm)
           : typeof row.conduct_total_20 === "number"
-          ? Number(row.conduct_total_20) / 20
-          : 0.75;
+            ? Number(row.conduct_total_20) / 20
+            : 0.75;
       const conduct_score = clamp01(conductNorm) * 100;
 
       const bonus_total = Number(row.bonus_points_total ?? 0);
@@ -721,7 +926,9 @@ export async function POST(req: NextRequest) {
       const full_name =
         `${(row.last_name as string) || ""} ${
           (row.first_name as string) || ""
-        }`.trim() || (row.matricule as string) || "";
+        }`.trim() ||
+        (row.matricule as string) ||
+        "";
 
       sumPredicted += predicted_success;
       sumAttendance += attendance_score;
@@ -778,8 +985,19 @@ export async function POST(req: NextRequest) {
       worstStudents,
     });
 
-    return NextResponse.json({
+    const responsePayload: any = {
       ok: true,
+      model: {
+        key: MON_CAHIER_AI_MODEL_KEY,
+        version: modelVersion,
+        source: modelSource,
+        mode:
+          modelSource === "ml_service"
+            ? "ml_supervise"
+            : "aide_decision_explicable",
+        notice:
+          "Cette estimation est une aide à la décision. Elle déclenche un accompagnement pédagogique et ne remplace jamais l’équipe éducative.",
+      },
       class: {
         id: cls.id,
         label: cls.label,
@@ -817,11 +1035,28 @@ export async function POST(req: NextRequest) {
       key_subjects: keySubjectScores,
       recommendations,
       students,
-    });
+    };
+
+    responsePayload.history = {
+      prediction_run_id: await savePredictionHistory({
+        srv,
+        institution_id,
+        created_by: user.id,
+        class_id,
+        academic_year,
+        exam_date: exam_date_raw,
+        model_source: modelSource,
+        model_version: modelVersion,
+        response: responsePayload,
+        students,
+      }),
+    };
+
+    return NextResponse.json(responsePayload);
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "prediction_failed" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

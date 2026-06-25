@@ -165,6 +165,12 @@ function TextBadge({ text }: { text: string }) {
 ========================= */
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
+  {
+    href: "/admin/mon-cahier-ia",
+    label: "Mon Cahier IA",
+    Icon: BarChart3,
+    badge: "V2",
+  },
 ];
 
 const INFIRMARY_ITEMS: NavItem[] = [

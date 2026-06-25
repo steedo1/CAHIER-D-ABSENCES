@@ -1,0 +1,646 @@
+export type MonCahierAiIntent =
+  | "students_to_follow"
+  | "class_decline_risk"
+  | "blocking_subjects"
+  | "school_summary"
+  | "council_note"
+  | "remediation_plan"
+  | "general_analysis";
+
+export type RiskLevel = "low" | "medium" | "high";
+
+export type AiStudentSignal = {
+  student_id: string;
+  full_name: string;
+  matricule?: string | null;
+  class_id: string;
+  class_label: string;
+  class_level?: string | null;
+  general_avg_20: number | null;
+  core_avg_20?: number | null;
+  presence_rate?: number | null;
+  total_absent_hours?: number | null;
+  nb_lates?: number | null;
+  conduct_total_20?: number | null;
+  p_success: number | null;
+  risk_level: RiskLevel;
+  priority_score: number;
+  reasons: string[];
+};
+
+export type AiClassSignal = {
+  class_id: string;
+  class_label: string;
+  class_level?: string | null;
+  students_count: number;
+  avg_success_probability: number | null;
+  avg_general_20: number | null;
+  high_risk_count: number;
+  medium_risk_count: number;
+  low_risk_count: number;
+  risk_index: number;
+  main_reasons: string[];
+};
+
+export type AiSubjectSignal = {
+  class_id: string;
+  class_label: string;
+  class_level?: string | null;
+  subject_id: string;
+  subject_name: string;
+  evaluations_count: number;
+  notes_count: number;
+  avg_score_20: number | null;
+  weak_students_count: number;
+  blocker_score: number;
+};
+
+export type MonCahierAiContext = {
+  institution_id: string;
+  academic_year: string;
+  exam_date: string;
+  model_key: string;
+  model_version: string;
+  model_source: "rules_baseline" | "ml_service" | "hybrid";
+  classes: AiClassSignal[];
+  students: AiStudentSignal[];
+  subjects: AiSubjectSignal[];
+  warnings: string[];
+};
+
+export type MonCahierAiAnswer = {
+  intent: MonCahierAiIntent;
+  title: string;
+  summary: string;
+  confidence: number;
+  recommendations: string[];
+  students_to_follow: AiStudentSignal[];
+  classes_at_risk: AiClassSignal[];
+  blocking_subjects: AiSubjectSignal[];
+  council_note?: string;
+  remediation_plan?: string[];
+  model: {
+    key: string;
+    version: string;
+    source: MonCahierAiContext["model_source"];
+  };
+  ethics_notice: string;
+};
+
+const STOPWORDS = new Set([
+  "les",
+  "des",
+  "une",
+  "un",
+  "dans",
+  "pour",
+  "avant",
+  "avec",
+  "qui",
+  "quoi",
+  "quel",
+  "quelle",
+  "quelles",
+  "quels",
+  "classe",
+  "eleves",
+  "élèves",
+  "matiere",
+  "matières",
+  "matieres",
+  "situation",
+  "pedagogique",
+  "pédagogique",
+]);
+
+export function clamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+export function round1(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  return Math.round(Number(value) * 10) / 10;
+}
+
+export function round2(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  return Math.round(Number(value) * 100) / 100;
+}
+
+export function pct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return `${Math.round(Number(value) * 100)}%`;
+}
+
+export function scorePct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return `${Math.round(Number(value))}%`;
+}
+
+export function formatAvg(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return `${round2(Number(value))?.toString().replace(".", ",")}/20`;
+}
+
+export function cleanText(input: unknown): string {
+  return String(input || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function inferIntent(question: string): MonCahierAiIntent {
+  const q = cleanText(question);
+
+  if (!q) return "school_summary";
+
+  if (
+    q.includes("conseil") ||
+    q.includes("note") ||
+    q.includes("rapport") ||
+    q.includes("preparer") ||
+    q.includes("rediger")
+  ) {
+    return "council_note";
+  }
+
+  if (
+    q.includes("remediation") ||
+    q.includes("remediat") ||
+    q.includes("plan") ||
+    q.includes("soutien") ||
+    q.includes("accompagnement")
+  ) {
+    return "remediation_plan";
+  }
+
+  if (
+    q.includes("matiere") ||
+    q.includes("matieres") ||
+    q.includes("bloque") ||
+    q.includes("bloquent") ||
+    q.includes("faible") ||
+    q.includes("discipline")
+  ) {
+    return "blocking_subjects";
+  }
+
+  if (
+    q.includes("classe") &&
+    (q.includes("risque") || q.includes("baisse") || q.includes("chute") || q.includes("fragile"))
+  ) {
+    return "class_decline_risk";
+  }
+
+  if (
+    q.includes("eleve") ||
+    q.includes("eleves") ||
+    q.includes("suivre") ||
+    q.includes("suivi") ||
+    q.includes("bepc") ||
+    q.includes("bac") ||
+    q.includes("examen")
+  ) {
+    return "students_to_follow";
+  }
+
+  if (
+    q.includes("resume") ||
+    q.includes("resumer") ||
+    q.includes("situation") ||
+    q.includes("etablissement") ||
+    q.includes("ecole") ||
+    q.includes("global")
+  ) {
+    return "school_summary";
+  }
+
+  return "general_analysis";
+}
+
+export function extractLevelHint(question: string): string | null {
+  const q = cleanText(question);
+  const patterns = [
+    /\b(6e|5e|4e|3e|2nde|2de|1ere|1re|tle|terminale)\b/,
+    /\b(sixieme|cinquieme|quatrieme|troisieme|seconde|premiere|terminale)\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = q.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  if (q.includes("bepc")) return "3e";
+  if (q.includes("bac")) return "tle";
+  return null;
+}
+
+export function levelMatches(level: string | null | undefined, hint: string | null): boolean {
+  if (!hint) return true;
+  const l = cleanText(level || "");
+  const h = cleanText(hint);
+
+  if (!l) return false;
+  if (l.includes(h)) return true;
+
+  const aliases: Record<string, string[]> = {
+    "6e": ["6", "sixieme"],
+    "5e": ["5", "cinquieme"],
+    "4e": ["4", "quatrieme"],
+    "3e": ["3", "troisieme"],
+    "2nde": ["2", "2de", "seconde"],
+    "2de": ["2", "2nde", "seconde"],
+    "1re": ["1", "1ere", "premiere"],
+    "1ere": ["1", "1re", "premiere"],
+    tle: ["tle", "terminale", "t"],
+    terminale: ["tle", "terminale", "t"],
+  };
+
+  const targets = aliases[h] || [h];
+  return targets.some((target) => l.includes(target));
+}
+
+export function getRiskLevel(pSuccess: number | null | undefined): RiskLevel {
+  const p = Number(pSuccess);
+  if (!Number.isFinite(p)) return "medium";
+  if (p < 0.45) return "high";
+  if (p < 0.7) return "medium";
+  return "low";
+}
+
+export function buildStudentReasons(row: {
+  general_avg_20?: number | null;
+  core_avg_20?: number | null;
+  presence_rate?: number | null;
+  total_absent_hours?: number | null;
+  nb_lates?: number | null;
+  conduct_total_20?: number | null;
+  p_success?: number | null;
+}): string[] {
+  const reasons: string[] = [];
+
+  if (row.p_success != null && Number(row.p_success) < 0.45) {
+    reasons.push(`indice de réussite faible (${pct(row.p_success)})`);
+  } else if (row.p_success != null && Number(row.p_success) < 0.7) {
+    reasons.push(`indice de réussite fragile (${pct(row.p_success)})`);
+  }
+
+  if (row.general_avg_20 != null && Number(row.general_avg_20) < 10) {
+    reasons.push(`moyenne générale sous 10/20 (${formatAvg(row.general_avg_20)})`);
+  } else if (row.general_avg_20 != null && Number(row.general_avg_20) < 12) {
+    reasons.push(`moyenne générale encore fragile (${formatAvg(row.general_avg_20)})`);
+  }
+
+  if (row.core_avg_20 != null && Number(row.core_avg_20) < 10) {
+    reasons.push(`matières clés insuffisantes (${formatAvg(row.core_avg_20)})`);
+  }
+
+  if (row.presence_rate != null && Number(row.presence_rate) < 0.85) {
+    reasons.push(`assiduité faible (${pct(row.presence_rate)})`);
+  }
+
+  if (row.total_absent_hours != null && Number(row.total_absent_hours) >= 12) {
+    reasons.push(`${round1(Number(row.total_absent_hours))} h d’absence`);
+  }
+
+  if (row.nb_lates != null && Number(row.nb_lates) >= 5) {
+    reasons.push(`${Number(row.nb_lates)} retards`);
+  }
+
+  if (row.conduct_total_20 != null && Number(row.conduct_total_20) < 10) {
+    reasons.push(`conduite à surveiller (${formatAvg(row.conduct_total_20)})`);
+  }
+
+  return reasons.slice(0, 5);
+}
+
+export function computePriorityScore(row: {
+  p_success?: number | null;
+  general_avg_20?: number | null;
+  core_avg_20?: number | null;
+  presence_rate?: number | null;
+  conduct_total_20?: number | null;
+  total_absent_hours?: number | null;
+  nb_lates?: number | null;
+}): number {
+  const p = row.p_success == null ? 0.55 : clamp(Number(row.p_success), 0, 1);
+  const avg = row.general_avg_20 == null ? 10 : clamp(Number(row.general_avg_20), 0, 20);
+  const core = row.core_avg_20 == null ? avg : clamp(Number(row.core_avg_20), 0, 20);
+  const presence = row.presence_rate == null ? 0.9 : clamp(Number(row.presence_rate), 0, 1);
+  const conduct = row.conduct_total_20 == null ? 14 : clamp(Number(row.conduct_total_20), 0, 20);
+  const abs = row.total_absent_hours == null ? 0 : Math.max(0, Number(row.total_absent_hours));
+  const lates = row.nb_lates == null ? 0 : Math.max(0, Number(row.nb_lates));
+
+  const riskFromPrediction = (1 - p) * 45;
+  const riskFromAvg = Math.max(0, (12 - avg) / 12) * 20;
+  const riskFromCore = Math.max(0, (12 - core) / 12) * 15;
+  const riskFromPresence = Math.max(0, (0.92 - presence) / 0.92) * 10;
+  const riskFromConduct = Math.max(0, (12 - conduct) / 12) * 5;
+  const riskFromBehavior = Math.min(5, abs / 6 + lates / 3);
+
+  return Math.round(
+    clamp(
+      riskFromPrediction +
+        riskFromAvg +
+        riskFromCore +
+        riskFromPresence +
+        riskFromConduct +
+        riskFromBehavior,
+      0,
+      100,
+    ),
+  );
+}
+
+export function summarizeClassReasons(cls: AiClassSignal): string[] {
+  const reasons: string[] = [];
+
+  if (cls.avg_success_probability != null && cls.avg_success_probability < 0.55) {
+    reasons.push(`indice moyen de préparation faible (${scorePct(cls.avg_success_probability * 100)})`);
+  } else if (cls.avg_success_probability != null && cls.avg_success_probability < 0.7) {
+    reasons.push(`préparation moyenne encore fragile (${scorePct(cls.avg_success_probability * 100)})`);
+  }
+
+  if (cls.avg_general_20 != null && cls.avg_general_20 < 10) {
+    reasons.push(`moyenne générale de classe sous 10/20 (${formatAvg(cls.avg_general_20)})`);
+  } else if (cls.avg_general_20 != null && cls.avg_general_20 < 12) {
+    reasons.push(`moyenne générale de classe fragile (${formatAvg(cls.avg_general_20)})`);
+  }
+
+  if (cls.high_risk_count > 0) {
+    reasons.push(`${cls.high_risk_count} élève${cls.high_risk_count > 1 ? "s" : ""} en suivi prioritaire`);
+  }
+
+  if (cls.medium_risk_count > cls.low_risk_count) {
+    reasons.push("plus d’élèves fragiles que d’élèves sécurisés");
+  }
+
+  return reasons.slice(0, 4);
+}
+
+function topKeywords(question: string) {
+  return cleanText(question)
+    .split(" ")
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+}
+
+export function selectContextByQuestion(context: MonCahierAiContext, question: string) {
+  const levelHint = extractLevelHint(question);
+  const keywords = topKeywords(question);
+
+  const matchingClasses = context.classes.filter((cls) => {
+    if (!levelMatches(cls.class_level, levelHint)) return false;
+    if (!keywords.length) return true;
+    const hay = cleanText(`${cls.class_label} ${cls.class_level || ""}`);
+    return keywords.some((kw) => hay.includes(kw)) || levelHint !== null;
+  });
+
+  const classIds = new Set(
+    (matchingClasses.length ? matchingClasses : context.classes).map((c) => c.class_id),
+  );
+
+  return {
+    levelHint,
+    classes: (matchingClasses.length ? matchingClasses : context.classes).slice(0, 80),
+    students: context.students.filter((s) => classIds.has(s.class_id)),
+    subjects: context.subjects.filter((s) => classIds.has(s.class_id)),
+  };
+}
+
+export function buildAiAnswer(context: MonCahierAiContext, question: string): MonCahierAiAnswer {
+  const intent = inferIntent(question);
+  const scoped = selectContextByQuestion(context, question);
+
+  const studentsSorted = [...scoped.students].sort((a, b) => b.priority_score - a.priority_score);
+  const studentsToFollow = studentsSorted.filter((s) => s.priority_score >= 45).slice(0, 20);
+  const classesAtRisk = [...scoped.classes].sort((a, b) => b.risk_index - a.risk_index).slice(0, 12);
+  const blockers = [...scoped.subjects].sort((a, b) => b.blocker_score - a.blocker_score).slice(0, 15);
+
+  const totalStudents = scoped.students.length;
+  const highRisk = scoped.students.filter((s) => s.risk_level === "high").length;
+  const mediumRisk = scoped.students.filter((s) => s.risk_level === "medium").length;
+  const avgSuccess =
+    scoped.classes.length > 0
+      ? scoped.classes.reduce((acc, cls) => acc + (cls.avg_success_probability ?? 0), 0) / scoped.classes.length
+      : null;
+
+  const commonRecs = buildCommonRecommendations({
+    studentsToFollow,
+    classesAtRisk,
+    blockers,
+    totalStudents,
+    highRisk,
+    mediumRisk,
+  });
+
+  let title = "Analyse pédagogique Mon Cahier IA";
+  let summary = "Mon Cahier IA a analysé les notes, l’assiduité, la conduite et les signaux de progression disponibles.";
+  let recommendations = commonRecs;
+  let council_note: string | undefined;
+  let remediation_plan: string[] | undefined;
+
+  if (intent === "students_to_follow") {
+    title = scoped.levelHint ? `Élèves à suivre en ${scoped.levelHint.toUpperCase()}` : "Élèves à suivre en priorité";
+    summary = studentsToFollow.length
+      ? `${studentsToFollow.length} élève${studentsToFollow.length > 1 ? "s" : ""} ressortent en suivi prioritaire. Le classement est basé sur l’indice de réussite, les moyennes, les matières clés, l’assiduité et la conduite.`
+      : "Aucun élève ne ressort actuellement en suivi prioritaire avec les données disponibles. Il faut tout de même surveiller les élèves moyens et les données manquantes.";
+  } else if (intent === "class_decline_risk") {
+    title = "Classes avec risque de baisse";
+    summary = classesAtRisk.length
+      ? `La classe la plus sensible est ${classesAtRisk[0].class_label}, avec un indice de risque de ${classesAtRisk[0].risk_index}/100. Les classes suivantes doivent être observées avant les prochains conseils.`
+      : "Aucune classe ne présente assez de données pour établir un risque fiable.";
+  } else if (intent === "blocking_subjects") {
+    title = "Matières bloquantes";
+    summary = blockers.length
+      ? `Les matières les plus bloquantes sont repérées à partir des moyennes par classe, du nombre d’évaluations et du volume d’élèves faibles. Première alerte : ${blockers[0].subject_name} en ${blockers[0].class_label}.`
+      : "Aucune matière bloquante claire n’a été détectée avec les notes publiées disponibles.";
+  } else if (intent === "school_summary" || intent === "general_analysis") {
+    title = "Résumé de la situation pédagogique";
+    summary = `Analyse de ${scoped.classes.length} classe${scoped.classes.length > 1 ? "s" : ""} et ${totalStudents} élève${totalStudents > 1 ? "s" : ""}. Indice moyen de préparation : ${avgSuccess == null ? "—" : pct(avgSuccess)}. ${highRisk} élève${highRisk > 1 ? "s" : ""} en suivi prioritaire et ${mediumRisk} en suivi renforcé.`;
+  } else if (intent === "council_note") {
+    title = "Note préparatoire au conseil de classe";
+    council_note = buildCouncilNote({ context, scoped, classesAtRisk, studentsToFollow, blockers, avgSuccess });
+    summary = "Voici une note structurée pour préparer le conseil de classe à partir des signaux pédagogiques disponibles.";
+    recommendations = [
+      "Relire la note avec le professeur principal avant diffusion.",
+      "Valider les cas individuels avec l’éducateur de niveau et les enseignants concernés.",
+      "Ne jamais utiliser l’indice IA comme sanction automatique : il sert à orienter l’accompagnement.",
+    ];
+  } else if (intent === "remediation_plan") {
+    title = "Plan de remédiation proposé";
+    remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers });
+    summary = "Le plan cible d’abord les matières bloquantes, ensuite les élèves prioritaires, puis l’assiduité et le suivi parents.";
+    recommendations = remediation_plan;
+  }
+
+  const confidence = computeConfidence(context, scoped.classes.length, totalStudents);
+
+  return {
+    intent,
+    title,
+    summary,
+    confidence,
+    recommendations,
+    students_to_follow: studentsToFollow,
+    classes_at_risk: classesAtRisk,
+    blocking_subjects: blockers,
+    council_note,
+    remediation_plan,
+    model: {
+      key: context.model_key,
+      version: context.model_version,
+      source: context.model_source,
+    },
+    ethics_notice:
+      "Mon Cahier IA est un outil d’aide à la décision pédagogique. Il ne remplace pas l’appréciation de l’équipe éducative et ne doit jamais servir à sanctionner automatiquement un élève.",
+  };
+}
+
+function computeConfidence(context: MonCahierAiContext, classesCount: number, studentsCount: number): number {
+  let score = 40;
+  if (classesCount >= 1) score += 10;
+  if (studentsCount >= 20) score += 15;
+  if (context.subjects.length >= 5) score += 10;
+  if (context.model_source === "ml_service") score += 15;
+  if (context.model_source === "hybrid") score += 12;
+  if (context.warnings.length) score -= Math.min(20, context.warnings.length * 5);
+  return clamp(Math.round(score), 20, 95);
+}
+
+function buildCommonRecommendations(args: {
+  studentsToFollow: AiStudentSignal[];
+  classesAtRisk: AiClassSignal[];
+  blockers: AiSubjectSignal[];
+  totalStudents: number;
+  highRisk: number;
+  mediumRisk: number;
+}): string[] {
+  const recs: string[] = [];
+
+  if (args.studentsToFollow.length) {
+    recs.push(
+      `Traiter d’abord les ${Math.min(args.studentsToFollow.length, 10)} premiers élèves en suivi prioritaire : entretien éducateur/professeur principal, point avec les enseignants des matières faibles, puis information parent si nécessaire.`,
+    );
+  }
+
+  if (args.blockers.length) {
+    const first = args.blockers[0];
+    recs.push(
+      `Organiser une remédiation ciblée sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme le premier blocage actuel.`,
+    );
+  }
+
+  if (args.classesAtRisk.length) {
+    const cls = args.classesAtRisk[0];
+    recs.push(
+      `Suivre particulièrement ${cls.class_label} : ${cls.main_reasons.length ? cls.main_reasons.join(" ; ") : "les indicateurs de classe sont fragiles"}.`,
+    );
+  }
+
+  if (args.highRisk + args.mediumRisk > args.totalStudents * 0.35) {
+    recs.push(
+      "Prévoir une réunion pédagogique courte pour harmoniser les devoirs, les interrogations, les remédiations et les relances parents.",
+    );
+  }
+
+  recs.push(
+    "Vérifier que toutes les notes importantes sont publiées avant de tirer une conclusion définitive : une IA fiable dépend d’abord de données complètes.",
+  );
+
+  return recs.slice(0, 6);
+}
+
+function buildCouncilNote(args: {
+  context: MonCahierAiContext;
+  scoped: ReturnType<typeof selectContextByQuestion>;
+  classesAtRisk: AiClassSignal[];
+  studentsToFollow: AiStudentSignal[];
+  blockers: AiSubjectSignal[];
+  avgSuccess: number | null;
+}): string {
+  const topClass = args.classesAtRisk[0];
+  const topBlocker = args.blockers[0];
+  const topStudents = args.studentsToFollow.slice(0, 8);
+
+  const lines = [
+    `NOTE PRÉPARATOIRE AU CONSEIL DE CLASSE`,
+    `Année scolaire : ${args.context.academic_year}`,
+    `Date d’analyse : ${new Date().toLocaleDateString("fr-FR")}`,
+    "",
+    `1. Situation générale`,
+    `L’analyse porte sur ${args.scoped.classes.length} classe(s) et ${args.scoped.students.length} élève(s). L’indice moyen de préparation est ${args.avgSuccess == null ? "non disponible" : pct(args.avgSuccess)}. Cette estimation combine les résultats scolaires, les signaux d’assiduité, la conduite et les données d’évaluation disponibles.`,
+    "",
+    `2. Points d’attention`,
+    topClass
+      ? `La classe à surveiller en priorité est ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
+      : `Aucune classe prioritaire ne ressort clairement avec les données disponibles.`,
+    topBlocker
+      ? `La matière la plus bloquante détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}.`
+      : `Aucune matière bloquante n’est clairement isolée.`,
+    "",
+    `3. Élèves à suivre`,
+    topStudents.length
+      ? topStudents
+          .map(
+            (s, i) =>
+              `${i + 1}. ${s.full_name} (${s.class_label}) — priorité ${s.priority_score}/100 : ${s.reasons.join(" ; ") || "indicateurs fragiles"}.`,
+          )
+          .join("\n")
+      : `Aucun élève ne ressort en suivi prioritaire.`,
+    "",
+    `4. Actions proposées`,
+    `- Organiser une remédiation ciblée dans les matières bloquantes.`,
+    `- Confier les cas prioritaires au professeur principal et à l’éducateur de niveau.`,
+    `- Relancer les parents lorsque l’assiduité ou les résultats chutent.`,
+    `- Vérifier la publication des notes avant toute décision définitive.`,
+    "",
+    `Observation éthique : cette note est une aide à la décision. Elle ne remplace pas le jugement de l’équipe pédagogique.`,
+  ];
+
+  return lines.join("\n");
+}
+
+function buildRemediationPlan(args: {
+  studentsToFollow: AiStudentSignal[];
+  classesAtRisk: AiClassSignal[];
+  blockers: AiSubjectSignal[];
+}): string[] {
+  const plan: string[] = [];
+  const blockerBySubject = args.blockers.slice(0, 5);
+  const topClasses = args.classesAtRisk.slice(0, 3);
+  const topStudents = args.studentsToFollow.slice(0, 10);
+
+  if (blockerBySubject.length) {
+    plan.push(
+      `Semaine 1 : lancer une remédiation dans les matières bloquantes (${blockerBySubject
+        .map((b) => `${b.subject_name} / ${b.class_label}`)
+        .join(", ")}).`,
+    );
+  } else {
+    plan.push("Semaine 1 : identifier les chapitres non maîtrisés à partir des dernières évaluations publiées.");
+  }
+
+  if (topClasses.length) {
+    plan.push(
+      `Semaine 1-2 : suivre les classes sensibles (${topClasses
+        .map((c) => c.class_label)
+        .join(", ")}) avec un point rapide professeur principal + éducateur.`,
+    );
+  }
+
+  if (topStudents.length) {
+    plan.push(
+      `Semaine 2 : établir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${topStudents.length > 1 ? "s" : ""}, avec objectif par matière et responsable de suivi.`,
+    );
+  }
+
+  plan.push("Semaine 2-3 : organiser des exercices courts corrigés immédiatement, plutôt que multiplier seulement les devoirs longs.");
+  plan.push("Semaine 3 : faire un mini-bilan : nouvelles notes, assiduité, retards, participation, évolution par élève.");
+  plan.push("Avant conseil : produire une note de synthèse Mon Cahier IA et valider les conclusions avec l’équipe pédagogique.");
+
+  return plan;
+}
