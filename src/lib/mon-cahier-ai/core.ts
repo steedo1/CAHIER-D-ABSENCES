@@ -415,14 +415,21 @@ export function selectContextByQuestion(context: MonCahierAiContext, question: s
   };
 }
 
+function buildScopeLabel(scoped: ReturnType<typeof selectContextByQuestion>): string | null {
+  if (scoped.classes.length === 1) return scoped.classes[0].class_label;
+  if (scoped.levelHint) return scoped.levelHint.toUpperCase();
+  return null;
+}
+
 export function buildAiAnswer(context: MonCahierAiContext, question: string): MonCahierAiAnswer {
   const intent = inferIntent(question);
   const scoped = selectContextByQuestion(context, question);
+  const scopeLabel = buildScopeLabel(scoped);
 
   const studentsSorted = [...scoped.students].sort((a, b) => b.priority_score - a.priority_score);
   const studentsToFollow = studentsSorted.filter((s) => s.priority_score >= 45).slice(0, 20);
   const classesAtRisk = [...scoped.classes]
-    .filter((c) => c.students_count > 0)
+    .filter((c) => c.students_count > 0 && c.risk_index >= 35)
     .sort((a, b) => b.risk_index - a.risk_index)
     .slice(0, 12);
   const blockers = [...scoped.subjects].sort((a, b) => b.blocker_score - a.blocker_score).slice(0, 15);
@@ -451,25 +458,25 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
   let remediation_plan: string[] | undefined;
 
   if (intent === "students_to_follow") {
-    title = scoped.levelHint ? `Élèves à suivre en ${scoped.levelHint.toUpperCase()}` : "Élèves à suivre en priorité";
+    title = scopeLabel ? `Élèves à suivre en ${scopeLabel}` : "Élèves à suivre en priorité";
     summary = studentsToFollow.length
       ? `${studentsToFollow.length} élève${studentsToFollow.length > 1 ? "s" : ""} ressortent en suivi prioritaire. Le classement est basé sur l’indice de réussite, les moyennes, les matières clés, l’assiduité et la conduite.`
       : "Aucun élève ne ressort actuellement en suivi prioritaire avec les données disponibles. Il faut tout de même surveiller les élèves moyens et les données manquantes.";
   } else if (intent === "class_decline_risk") {
-    title = "Classes avec risque de baisse";
+    title = scopeLabel ? `Risque de baisse — ${scopeLabel}` : "Classes avec risque de baisse";
     summary = classesAtRisk.length
       ? `La classe la plus sensible est ${classesAtRisk[0].class_label}, avec un indice de risque de ${classesAtRisk[0].risk_index}/100. Les classes suivantes doivent être observées avant les prochains conseils.`
-      : "Aucune classe ne présente assez de données pour établir un risque fiable.";
+      : "Aucune classe ne ressort comme sensible avec le seuil actuel. Le suivi reste utile, mais les données disponibles ne justifient pas une alerte de risque.";
   } else if (intent === "blocking_subjects") {
-    title = "Matières bloquantes";
+    title = scopeLabel ? `Matières bloquantes — ${scopeLabel}` : "Matières bloquantes";
     summary = blockers.length
       ? `Les matières les plus bloquantes sont repérées à partir des moyennes par classe, du nombre d’évaluations et du volume d’élèves faibles. Première alerte : ${blockers[0].subject_name} en ${blockers[0].class_label}.`
       : "Aucune matière bloquante claire n’a été détectée avec les notes publiées disponibles.";
   } else if (intent === "school_summary" || intent === "general_analysis") {
-    title = "Résumé de la situation pédagogique";
+    title = scopeLabel ? `Résumé pédagogique — ${scopeLabel}` : "Résumé de la situation pédagogique";
     summary = `Analyse de ${scoped.classes.length} classe${scoped.classes.length > 1 ? "s" : ""} et ${totalStudents} élève${totalStudents > 1 ? "s" : ""}. Indice moyen de préparation : ${avgSuccess == null ? "—" : pct(avgSuccess)}. ${highRisk} élève${highRisk > 1 ? "s" : ""} en suivi prioritaire et ${mediumRisk} en suivi renforcé.`;
   } else if (intent === "council_note") {
-    title = "Note préparatoire au conseil de classe";
+    title = scopeLabel ? `Note préparatoire au conseil de classe — ${scopeLabel}` : "Note préparatoire au conseil de classe";
     council_note = buildCouncilNote({ context, scoped, classesAtRisk, studentsToFollow, blockers, avgSuccess });
     summary = "Voici une note structurée pour préparer le conseil de classe à partir des signaux pédagogiques disponibles.";
     recommendations = [
@@ -478,7 +485,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
       "Ne jamais utiliser l’indice IA comme sanction automatique : il sert à orienter l’accompagnement.",
     ];
   } else if (intent === "remediation_plan") {
-    title = "Plan de remédiation proposé";
+    title = scopeLabel ? `Plan de remédiation — ${scopeLabel}` : "Plan de remédiation proposé";
     remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers });
     summary = "Le plan cible d’abord les matières bloquantes, ensuite les élèves prioritaires, puis l’assiduité et le suivi parents.";
     recommendations = remediation_plan;

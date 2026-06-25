@@ -132,6 +132,31 @@ function cleanNumberOrNull(value: unknown, precision = 2): number | null {
   return Number(n.toFixed(precision));
 }
 
+function inferLevelFromClassLabel(label: unknown, fallbackLevel: unknown) {
+  const labelText = cleanText(label);
+  const fallbackText = String(fallbackLevel || "").trim();
+
+  // La classe sélectionnée est la source métier la plus forte. Si une classe
+  // s'appelle "Tle D1" mais que son champ niveau est resté à "1ère", Mon Cahier IA
+  // doit raisonner Terminale/BAC et signaler le périmètre réel de la classe.
+  if (/\b(tle|terminale|terminal)\b/.test(labelText)) return "Terminale";
+  if (/\b(3e|3eme|troisieme)\b/.test(labelText)) return "3e";
+  if (/\b(2nde|2de|seconde)\b/.test(labelText)) return "2nde";
+  if (/\b(1ere|1re|premiere)\b/.test(labelText)) return "1ère";
+  if (/\b(6e|6eme|sixieme)\b/.test(labelText)) return "6e";
+  if (/\b(5e|5eme|cinquieme)\b/.test(labelText)) return "5e";
+  if (/\b(4e|4eme|quatrieme)\b/.test(labelText)) return "4e";
+
+  return fallbackText || null;
+}
+
+function normalizeClassRow(cls: ClassRow): ClassRow {
+  return {
+    ...cls,
+    level: inferLevelFromClassLabel(cls.label, cls.level),
+  };
+}
+
 function chooseOfficialAverage(avg: OfficialBulletinAverage | undefined): number | null {
   if (!avg) return null;
   return avg.annual_avg_20 ?? avg.general_avg_20 ?? null;
@@ -362,7 +387,7 @@ async function loadClasses(args: {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  let classes = ((data || []) as ClassRow[]).filter((cls) => cls.id);
+  let classes = ((data || []) as ClassRow[]).filter((cls) => cls.id).map(normalizeClassRow);
   if (args.levelHint) {
     const filtered = classes.filter((cls) => levelMatches(cls.level, args.levelHint));
     if (filtered.length) classes = filtered;

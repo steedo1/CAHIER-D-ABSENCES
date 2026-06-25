@@ -7,6 +7,34 @@ export const dynamic = "force-dynamic";
 
 type Role = "super_admin" | "admin" | "educator" | string;
 
+function normalizeText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferLevelFromClassLabel(label: unknown, fallbackLevel: unknown) {
+  const labelText = normalizeText(label);
+  const fallbackText = String(fallbackLevel || "").trim();
+
+  // La classe est plus fiable pour le périmètre immédiat que le niveau stocké :
+  // si une classe s'appelle "Tle D1" mais que son niveau est mal renseigné, l'IA
+  // doit raisonner sur Terminale/BAC et non sur 1ère.
+  if (/\b(tle|terminale|terminal)\b/.test(labelText)) return "Terminale";
+  if (/\b(3e|3eme|troisieme)\b/.test(labelText)) return "3e";
+  if (/\b(2nde|2de|seconde)\b/.test(labelText)) return "2nde";
+  if (/\b(1ere|1re|premiere)\b/.test(labelText)) return "1ère";
+  if (/\b(6e|6eme|sixieme)\b/.test(labelText)) return "6e";
+  if (/\b(5e|5eme|cinquieme)\b/.test(labelText)) return "5e";
+  if (/\b(4e|4eme|quatrieme)\b/.test(labelText)) return "4e";
+
+  return fallbackText || null;
+}
+
 async function getAdminContext() {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -84,7 +112,10 @@ export async function GET() {
       },
       current_academic_year: currentYear,
       academic_years: years || [],
-      classes: classes || [],
+      classes: (classes || []).map((cls: any) => ({
+        ...cls,
+        level: inferLevelFromClassLabel(cls?.label, cls?.level),
+      })),
       presets: [
         "Quels élèves de 3e doivent être suivis avant le BEPC ?",
         "Quelle classe a le plus fort risque de baisse au deuxième trimestre ?",
