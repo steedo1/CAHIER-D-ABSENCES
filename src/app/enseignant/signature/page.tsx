@@ -271,7 +271,7 @@ export default function TeacherSignaturePage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Ma signature</h1>
           <p className="text-sm text-slate-600">
-            Signez une fois. Si l’établissement active la signature électronique, elle apparaîtra sur les bulletins.
+            Signez une fois. Si l’établissement active les signatures enseignants numérisées, elle apparaîtra sur les bulletins.
           </p>
         </div>
         <Link href="/choose-book" className="rounded-xl border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50">

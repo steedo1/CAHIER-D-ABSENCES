@@ -38,7 +38,7 @@ type InstitutionSettings = {
   ministry_name?: string | null;
   institution_code?: string | null;
 
-  // 🆕 option signatures électroniques
+  // 🆕 option signatures numérisées
   bulletin_signatures_enabled?: boolean | null;
 
   // (compat éventuelle)
@@ -2831,7 +2831,7 @@ export default function BulletinsPage() {
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(
-          `Impossible de mettre à jour les signatures électroniques (${res.status}). ${
+          `Impossible de mettre à jour les signatures numérisées (${res.status}). ${
             txt || ""
           }`
         );
@@ -2853,7 +2853,7 @@ export default function BulletinsPage() {
       console.error(e);
       setErrorMsg(
         e?.message ||
-          "Une erreur est survenue lors de la mise à jour des signatures électroniques."
+          "Une erreur est survenue lors de la mise à jour des signatures numérisées."
       );
     } finally {
       setSignaturesToggling(false);
@@ -3488,7 +3488,7 @@ export default function BulletinsPage() {
               <div className="flex items-center justify-end gap-2">
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
                   <span className="font-semibold">
-                    Signatures électroniques :{" "}
+                    Signatures enseignants numérisées :{" "}
                   </span>
                   <span
                     className={

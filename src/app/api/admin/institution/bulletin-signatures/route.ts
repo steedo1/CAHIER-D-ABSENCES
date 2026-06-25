@@ -60,7 +60,7 @@ function statusFromError(error?: string): number {
   return 400;
 }
 
-/* ───────── GET: lire l’état des signatures électroniques ───────── */
+/* ───────── GET: lire l’état des signatures numérisées ───────── */
 export async function GET(_req: NextRequest) {
   const supabase = await getSupabaseServerClient();
   const srv = await getSupabaseServiceClient();

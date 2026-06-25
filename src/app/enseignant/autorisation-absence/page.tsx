@@ -1227,7 +1227,7 @@ function ApprovedRequestPrintSheet({
               {teacherSignature ? (
                 <SignatureInk src={teacherSignature} alt="Signature enseignant" className="absence-signature-img" />
               ) : (
-                <div className="absence-signature-placeholder">Signature électronique non disponible</div>
+                <div className="absence-signature-placeholder">Signature numérisée non disponible</div>
               )}
             </div>
           </div>
@@ -1948,7 +1948,7 @@ export default function EnseignantAutorisationAbsencePage() {
                 className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
               />
               <span className="text-sm text-slate-700">
-                J’atteste cette demande et j’autorise l’utilisation de ma signature électronique si elle est enregistrée.
+                J’atteste cette demande et j’autorise l’utilisation de ma signature numérisée si elle est enregistrée.
               </span>
             </label>
 

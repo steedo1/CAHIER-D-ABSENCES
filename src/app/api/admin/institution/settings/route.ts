@@ -31,7 +31,7 @@ type InstitutionSettingsRow = {
   ministry_name: string | null;
   code: string | null; // code MEN / établissement
 
-  // ✅ option signatures électroniques (niveau établissement)
+  // ✅ option signatures numérisées (niveau établissement)
   bulletin_signatures_enabled: boolean | null;
 
   // ✅ fallback (si name vide)
