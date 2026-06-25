@@ -120,13 +120,44 @@ type AssistantResponse = {
 };
 
 const DEFAULT_PRESETS = [
-  "Quels élèves de 3e doivent être suivis avant le BEPC ?",
-  "Quelle classe a le plus fort risque de baisse au deuxième trimestre ?",
-  "Quelles matières bloquent les élèves de 2nde A ?",
+  "Quels élèves doivent être suivis en priorité avant les examens ?",
+  "Quelle classe a le plus fort risque de baisse ?",
+  "Quelles matières bloquent les élèves ?",
   "Résume-moi la situation pédagogique de cette école.",
   "Prépare une note pour le conseil de classe.",
   "Propose un plan de remédiation.",
 ];
+
+function normalizeForQuestion(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function levelExamLabel(level: string | null | undefined) {
+  const normalized = normalizeForQuestion(level);
+  if (normalized.includes("3e") || normalized.includes("troisieme")) return "avant le BEPC";
+  if (normalized.includes("tle") || normalized.includes("terminal") || normalized.includes("terminale")) return "avant le BAC";
+  return "avant les examens";
+}
+
+function buildScopePresets(args: { classLabel?: string | null; level?: string | null }) {
+  const scope = String(args.classLabel || args.level || "").trim();
+  const exam = levelExamLabel(args.level || args.classLabel);
+  const studentScope = scope ? `de ${scope}` : "";
+  const classScope = scope ? `dans ${scope}` : "dans l’établissement";
+
+  return [
+    `Quels élèves ${studentScope} doivent être suivis en priorité ${exam} ?`.replace(/\s+/g, " ").trim(),
+    scope ? `Quels signaux fragilisent ${scope} ?` : "Quelle classe a le plus fort risque de baisse ?",
+    scope ? `Quelles matières bloquent les élèves de ${scope} ?` : "Quelles matières bloquent les élèves ?",
+    `Résume-moi la situation pédagogique ${classScope}.`,
+    scope ? `Prépare une note pour le conseil de classe de ${scope}.` : "Prépare une note pour le conseil de classe.",
+    scope ? `Propose un plan de remédiation pour ${scope}.` : "Propose un plan de remédiation.",
+  ];
+}
 
 function todayPlusMonths(months: number) {
   const d = new Date();
@@ -219,6 +250,32 @@ export default function MonCahierIaPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "fr", { numeric: true }));
   }, [filteredClasses]);
 
+  const selectedClass = useMemo(() => {
+    return filteredClasses.find((c) => c.id === classId) || null;
+  }, [filteredClasses, classId]);
+
+  const effectiveLevel = selectedClass?.level || level || "";
+
+  const scopePresets = useMemo(() => {
+    return buildScopePresets({
+      classLabel: selectedClass?.label || null,
+      level: selectedClass?.level || level || null,
+    });
+  }, [selectedClass?.label, selectedClass?.level, level]);
+
+  useEffect(() => {
+    if (selectedClass?.level && selectedClass.level !== level) {
+      setLevel(selectedClass.level);
+    }
+  }, [selectedClass?.level, level]);
+
+  useEffect(() => {
+    const allKnownPresets = new Set([...presets, ...DEFAULT_PRESETS]);
+    if (!question || allKnownPresets.has(question)) {
+      setQuestion(scopePresets[0] || DEFAULT_PRESETS[0]);
+    }
+  }, [scopePresets, presets, question]);
+
   async function ask(nextQuestion?: string) {
     const q = String(nextQuestion || question || "").trim();
     if (!q) return;
@@ -236,7 +293,7 @@ export default function MonCahierIaPage() {
           academic_year: academicYear,
           exam_date: examDate,
           class_id: classId || null,
-          level: level || null,
+          level: effectiveLevel || null,
           core_completion_percent: completion,
         }),
       });
@@ -311,7 +368,11 @@ export default function MonCahierIaPage() {
             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Classe</span>
             <select
               value={classId}
-              onChange={(e) => setClassId(e.target.value)}
+              onChange={(e) => {
+                const nextClassId = e.target.value;
+                setClassId(nextClassId);
+                if (!nextClassId) setLevel("");
+              }}
               className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-cyan-400"
             >
               <option value="">Toutes les classes</option>
@@ -326,9 +387,13 @@ export default function MonCahierIaPage() {
           <label className="space-y-1.5">
             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Niveau</span>
             <select
-              value={level}
-              onChange={(e) => setLevel(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-cyan-400"
+              value={effectiveLevel}
+              onChange={(e) => {
+                setLevel(e.target.value);
+                setClassId("");
+              }}
+              disabled={Boolean(classId)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-cyan-400 disabled:bg-slate-100 disabled:text-slate-500"
             >
               <option value="">Tous</option>
               {levels.map((item) => (
@@ -376,7 +441,7 @@ export default function MonCahierIaPage() {
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {presets.map((preset) => (
+            {scopePresets.map((preset) => (
               <button
                 key={preset}
                 type="button"
@@ -389,12 +454,16 @@ export default function MonCahierIaPage() {
             ))}
           </div>
 
+          <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-semibold leading-5 text-blue-900">
+            Périmètre actif : {selectedClass?.label || effectiveLevel || "toutes les classes"}. Les questions proposées s’adaptent à ce périmètre pour éviter de mélanger BEPC, BAC, niveaux et classes différentes.
+          </div>
+
           <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-3">
             <textarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               rows={4}
-              placeholder="Ex : Quels élèves de 3e doivent être suivis avant le BEPC ?"
+              placeholder={scopePresets[0] || "Ex : Quels élèves doivent être suivis en priorité ?"}
               className="min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 outline-none focus:border-cyan-400"
             />
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

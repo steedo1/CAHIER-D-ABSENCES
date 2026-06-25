@@ -8,6 +8,7 @@ import {
   clamp,
   computePriorityScore,
   getRiskLevel,
+  extractLevelHint,
   levelMatches,
   round2,
   summarizeClassReasons,
@@ -268,6 +269,16 @@ async function callMlService(args: {
       return { source: "rules_baseline", version: MODEL_VERSION, byId: empty };
     }
 
+    const modelSource = String(json.model_source || "").toLowerCase();
+    const modelVersion = String(json.model_version || json.version || MODEL_VERSION);
+
+    // Très important : quand le service Python n'a pas encore de modèle entraîné,
+    // il renvoie un fallback de règles. On ne doit pas présenter ce fallback comme
+    // un vrai modèle ML ni écraser les moyennes officielles du bulletin avec lui.
+    if (modelSource !== "ml_service" || modelVersion.includes("rules-fallback")) {
+      return { source: "rules_baseline", version: modelVersion, byId: empty };
+    }
+
     const byId = new Map<string, { p_success: number; risk_level?: string }>();
     for (const item of json.students) {
       const studentId = String(item?.student_id || "").trim();
@@ -281,12 +292,54 @@ async function callMlService(args: {
 
     return {
       source: byId.size ? "ml_service" : "rules_baseline",
-      version: String(json.model_version || json.version || MODEL_VERSION),
+      version: modelVersion,
       byId,
     };
   } catch {
     return { source: "rules_baseline", version: MODEL_VERSION, byId: empty };
   }
+}
+
+
+function buildScopeMismatchAnswer(args: {
+  selectedScope: string;
+  questionScope: string;
+  academic_year: string;
+}) {
+  return {
+    intent: "general_analysis",
+    title: "Question incompatible avec les filtres choisis",
+    summary: `Les filtres ciblent ${args.selectedScope}, mais la question vise ${args.questionScope}. Pour éviter une analyse confuse, Mon Cahier IA ne mélange pas deux niveaux ou deux classes différents.`,
+    confidence: 95,
+    recommendations: [
+      "Choisir le niveau ou la classe correspondant à la question posée.",
+      "Ou remettre la classe et le niveau sur “Tous” si la question doit laisser Mon Cahier IA sélectionner le bon périmètre.",
+      "Exemple : pour le BEPC, choisir un niveau de 3e ou toutes les classes, puis relancer l’analyse.",
+    ],
+    students_to_follow: [],
+    classes_at_risk: [],
+    blocking_subjects: [],
+    model: { key: MODEL_KEY, version: MODEL_VERSION, source: "rules_baseline" as const },
+    ethics_notice:
+      "Mon Cahier IA refuse de mélanger un filtre et une question contradictoires afin de produire une aide à la décision fiable.",
+  };
+}
+
+function normalizeScopeLabel(value: string | null | undefined) {
+  const text = String(value || "").trim();
+  return text || "le périmètre choisi";
+}
+
+function buildMlRowsWithOfficialAverages(rows: PredictionRow[], officialAverages: Map<string, OfficialBulletinAverage>): PredictionRow[] {
+  return rows.map((row) => {
+    const official = chooseOfficialAverage(officialAverages.get(row.student_id));
+    if (official == null) return row;
+    return {
+      ...row,
+      general_avg_20: round2(official),
+      raw_all_avg_20: round2(official),
+    };
+  });
 }
 
 async function loadClasses(args: {
@@ -773,15 +826,59 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const questionLevelHint = levelHint || (cleanText(question).includes("bepc") ? "3e" : cleanText(question).includes("bac") ? "tle" : null);
+    const questionLevelHint = extractLevelHint(question);
 
-    const classes = await loadClasses({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      academic_year,
-      class_id,
-      levelHint: questionLevelHint,
-    });
+    const selectedClasses = class_id
+      ? await loadClasses({
+          srv: ctx.srv,
+          institution_id: ctx.institution_id,
+          academic_year,
+          class_id,
+          levelHint: null,
+        })
+      : [];
+
+    const selectedClass = selectedClasses[0] || null;
+    const selectedScopeLevel = selectedClass?.level || levelHint || null;
+
+    if (questionLevelHint && selectedScopeLevel && !levelMatches(selectedScopeLevel, questionLevelHint)) {
+      const answer = buildScopeMismatchAnswer({
+        selectedScope: selectedClass
+          ? `${selectedClass.label || "la classe sélectionnée"}${selectedClass.level ? ` (${selectedClass.level})` : ""}`
+          : `le niveau ${normalizeScopeLabel(selectedScopeLevel)}`,
+        questionScope: questionLevelHint.toLowerCase() === "3e"
+          ? "la 3e / le BEPC"
+          : questionLevelHint.toLowerCase().includes("tle") || questionLevelHint.toLowerCase().includes("terminale")
+            ? "la Terminale / le BAC"
+            : `le niveau ${questionLevelHint}`,
+        academic_year,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        answer,
+        context_meta: {
+          classes_count: 0,
+          students_count: 0,
+          subjects_count: 0,
+          warnings: [answer.summary],
+          model_source: "rules_baseline",
+          model_version: MODEL_VERSION,
+        },
+      });
+    }
+
+    const scopeLevelHint = class_id ? null : levelHint || questionLevelHint;
+
+    const classes = class_id
+      ? selectedClasses
+      : await loadClasses({
+          srv: ctx.srv,
+          institution_id: ctx.institution_id,
+          academic_year,
+          class_id,
+          levelHint: scopeLevelHint,
+        });
 
     if (!classes.length) {
       return NextResponse.json({
@@ -820,12 +917,14 @@ export async function POST(req: NextRequest) {
       warnings: predictionResult.warnings,
     });
 
+    const mlRows = buildMlRowsWithOfficialAverages(predictionResult.rows, officialAverages);
+
     const ml = await callMlService({
       institution_id: ctx.institution_id,
       academic_year,
       exam_date,
       core_completion_percent,
-      rows: predictionResult.rows,
+      rows: mlRows,
     });
 
     const students: AiStudentSignal[] = predictionResult.rows.map((row) => {
