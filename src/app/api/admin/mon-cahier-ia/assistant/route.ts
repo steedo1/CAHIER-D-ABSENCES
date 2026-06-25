@@ -78,6 +78,32 @@ type MarkRow = {
   mark_20?: number | null;
 };
 
+type GradePeriodRow = {
+  id: string;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+  academic_year?: string | null;
+  start_date: string;
+  end_date: string;
+  coeff?: number | null;
+};
+
+type OfficialBulletinAverage = {
+  student_id: string;
+  general_avg_20: number | null;
+  annual_avg_20: number | null;
+  rank: number | null;
+  annual_rank: number | null;
+  status: string | null;
+  source_period: {
+    from: string;
+    to: string;
+    label: string | null;
+    code: string | null;
+  };
+};
+
 const MODEL_KEY = "mon_cahier_ai_pedagogy";
 const MODEL_VERSION = "2.0.0";
 const AI_SERVICE_URL =
@@ -97,6 +123,67 @@ function normalizeRisk(raw: unknown, pSuccess: number | null | undefined) {
   const value = String(raw || "").toLowerCase();
   if (["low", "medium", "high"].includes(value)) return value as "low" | "medium" | "high";
   return getRiskLevel(pSuccess);
+}
+
+function cleanNumberOrNull(value: unknown, precision = 2): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(precision));
+}
+
+function chooseOfficialAverage(avg: OfficialBulletinAverage | undefined): number | null {
+  if (!avg) return null;
+  return avg.annual_avg_20 ?? avg.general_avg_20 ?? null;
+}
+
+function computeOfficialBaselineSuccess(args: {
+  official_avg_20: number;
+  core_avg_20?: number | null;
+  presence_rate?: number | null;
+  conduct_total_20?: number | null;
+  total_absent_hours?: number | null;
+  nb_lates?: number | null;
+  core_completion_percent: number;
+}): number {
+  const avg = clamp(Number(args.official_avg_20), 0, 20);
+  const core = args.core_avg_20 == null ? avg : clamp(Number(args.core_avg_20), 0, 20);
+  const presence = args.presence_rate == null ? 0.92 : clamp(Number(args.presence_rate), 0, 1);
+  const conduct = args.conduct_total_20 == null ? 14 : clamp(Number(args.conduct_total_20), 0, 20);
+  const abs = args.total_absent_hours == null ? 0 : Math.max(0, Number(args.total_absent_hours));
+  const lates = args.nb_lates == null ? 0 : Math.max(0, Number(args.nb_lates));
+  const completion = clamp(Number(args.core_completion_percent), 0, 100);
+
+  const avgComponent = (avg - 6) / 12;
+  const coreAdjustment = (core - avg) / 60;
+  const presenceAdjustment = (presence - 0.9) * 0.18;
+  const conductAdjustment = (conduct - 12) / 120;
+  const behaviorPenalty = Math.min(0.12, abs / 220 + lates / 180);
+  const completionAdjustment = (completion - 60) / 500;
+
+  return clamp(
+    avgComponent + coreAdjustment + presenceAdjustment + conductAdjustment + completionAdjustment - behaviorPenalty,
+    0.03,
+    0.97,
+  );
+}
+
+function pickTargetPeriod(periods: GradePeriodRow[], examDate: string): GradePeriodRow | null {
+  if (!periods.length) return null;
+  const target = String(examDate || "").slice(0, 10);
+
+  const containing = periods.find((period) => {
+    const start = String(period.start_date || "").slice(0, 10);
+    const end = String(period.end_date || "").slice(0, 10);
+    return start && end && start <= target && target <= end;
+  });
+  if (containing) return containing;
+
+  const beforeOrEqual = periods
+    .filter((period) => String(period.end_date || "").slice(0, 10) <= target)
+    .sort((a, b) => String(a.end_date || "").localeCompare(String(b.end_date || "")));
+  if (beforeOrEqual.length) return beforeOrEqual[beforeOrEqual.length - 1];
+
+  return periods[periods.length - 1];
 }
 
 async function getAdminContext() {
@@ -231,6 +318,95 @@ async function loadClasses(args: {
   return classes.slice(0, 80);
 }
 
+async function loadOfficialBulletinAverages(args: {
+  req: NextRequest;
+  srv: any;
+  institution_id: string;
+  classes: ClassRow[];
+  academic_year: string;
+  exam_date: string;
+  warnings: string[];
+}): Promise<Map<string, OfficialBulletinAverage>> {
+  const out = new Map<string, OfficialBulletinAverage>();
+  if (!args.classes.length) return out;
+
+  const { data: periodsData, error: periodsError } = await args.srv
+    .from("grade_periods")
+    .select("id,code,label,short_label,academic_year,start_date,end_date,coeff")
+    .eq("institution_id", args.institution_id)
+    .eq("academic_year", args.academic_year)
+    .order("start_date", { ascending: true });
+
+  if (periodsError) {
+    args.warnings.push(`Moyennes bulletin indisponibles : ${periodsError.message}`);
+    return out;
+  }
+
+  const periods = ((periodsData || []) as GradePeriodRow[]).filter((period) => period.start_date && period.end_date);
+  const targetPeriod = pickTargetPeriod(periods, args.exam_date);
+
+  if (!targetPeriod) {
+    args.warnings.push("Moyennes bulletin indisponibles : aucune période de bulletin trouvée pour l'année scolaire.");
+    return out;
+  }
+
+  const origin = args.req.nextUrl.origin;
+  const cookie = args.req.headers.get("cookie") || "";
+  const authorization = args.req.headers.get("authorization") || "";
+
+  for (const cls of args.classes) {
+    try {
+      const url = new URL("/api/admin/grades/bulletin", origin);
+      url.searchParams.set("class_id", cls.id);
+      url.searchParams.set("from", String(targetPeriod.start_date).slice(0, 10));
+      url.searchParams.set("to", String(targetPeriod.end_date).slice(0, 10));
+      url.searchParams.set("export_light", "1");
+
+      const res = await fetch(url.toString(), {
+        headers: {
+          ...(cookie ? { cookie } : {}),
+          ...(authorization ? { authorization } : {}),
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : HTTP ${res.status}`);
+        continue;
+      }
+
+      const json = (await res.json().catch(() => null)) as any;
+      const items = Array.isArray(json?.items) ? json.items : [];
+
+      for (const item of items) {
+        const studentId = String(item?.student_id || "").trim();
+        if (!studentId) continue;
+
+        const annualAvg = cleanNumberOrNull(item?.annual_avg, 4);
+        const periodAvg = cleanNumberOrNull(item?.general_avg, 4);
+        out.set(studentId, {
+          student_id: studentId,
+          general_avg_20: periodAvg,
+          annual_avg_20: annualAvg,
+          rank: item?.rank == null ? null : Number(item.rank),
+          annual_rank: item?.annual_rank == null ? null : Number(item.annual_rank),
+          status: String(item?.annual_avg_status || item?.general_avg_status || "").trim() || null,
+          source_period: {
+            from: String(targetPeriod.start_date).slice(0, 10),
+            to: String(targetPeriod.end_date).slice(0, 10),
+            label: targetPeriod.label || targetPeriod.short_label || null,
+            code: targetPeriod.code || null,
+          },
+        });
+      }
+    } catch (err: any) {
+      args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : ${err?.message || "erreur"}`);
+    }
+  }
+
+  return out;
+}
+
 async function loadPredictionRows(args: {
   srv: any;
   institution_id: string;
@@ -279,6 +455,23 @@ function buildClassSignals(classes: ClassRow[], students: AiStudentSignal[]): Ai
 
   return classes.map((cls) => {
     const bucket = byClass.get(cls.id) || [];
+
+    if (!bucket.length) {
+      return {
+        class_id: cls.id,
+        class_label: cls.label || "Classe",
+        class_level: cls.level || null,
+        students_count: 0,
+        avg_success_probability: null,
+        avg_general_20: null,
+        high_risk_count: 0,
+        medium_risk_count: 0,
+        low_risk_count: 0,
+        risk_index: 0,
+        main_reasons: ["données insuffisantes"],
+      };
+    }
+
     const high = bucket.filter((s) => s.risk_level === "high").length;
     const medium = bucket.filter((s) => s.risk_level === "medium").length;
     const low = bucket.filter((s) => s.risk_level === "low").length;
@@ -291,9 +484,10 @@ function buildClassSignals(classes: ClassRow[], students: AiStudentSignal[]): Ai
       : null;
     const riskIndex = Math.round(
       clamp(
-        (avgSuccess == null ? 35 : (1 - avgSuccess) * 55) +
-          (bucket.length ? (high / bucket.length) * 25 + (medium / bucket.length) * 12 : 0) +
-          (avgGeneral == null ? 5 : Math.max(0, (12 - avgGeneral) / 12) * 20),
+        (avgSuccess == null ? 0 : (1 - avgSuccess) * 55) +
+          (high / bucket.length) * 25 +
+          (medium / bucket.length) * 12 +
+          (avgGeneral == null ? 0 : Math.max(0, (12 - avgGeneral) / 12) * 20),
         0,
         100,
       ),
@@ -504,6 +698,7 @@ async function saveRunAndStudents(args: {
         nb_lates: student.nb_lates,
         conduct_total_20: student.conduct_total_20,
         core_completion_percent: args.core_completion_percent,
+        average_source: "bulletin_official_or_prediction_fallback",
       },
       reasons_json: student.reasons,
     }));
@@ -615,6 +810,16 @@ export async function POST(req: NextRequest) {
       core_completion_percent,
     });
 
+    const officialAverages = await loadOfficialBulletinAverages({
+      req,
+      srv: ctx.srv,
+      institution_id: ctx.institution_id,
+      classes,
+      academic_year,
+      exam_date,
+      warnings: predictionResult.warnings,
+    });
+
     const ml = await callMlService({
       institution_id: ctx.institution_id,
       academic_year,
@@ -625,9 +830,13 @@ export async function POST(req: NextRequest) {
 
     const students: AiStudentSignal[] = predictionResult.rows.map((row) => {
       const mlRow = ml.byId.get(row.student_id);
-      const p_success = mlRow ? mlRow.p_success : row.p_success == null ? null : clamp(Number(row.p_success), 0, 1);
-      const risk_level = normalizeRisk(mlRow?.risk_level || row.risk_level, p_success);
-      const general_avg_20 = row.general_avg_20 == null ? null : round2(Number(row.general_avg_20));
+      const officialAverage = officialAverages.get(row.student_id);
+      const officialGeneralAvg = chooseOfficialAverage(officialAverage);
+      const general_avg_20 = officialGeneralAvg == null
+        ? row.general_avg_20 == null
+          ? null
+          : round2(Number(row.general_avg_20))
+        : round2(officialGeneralAvg);
       const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
       const conduct_total_20 =
         row.conduct_total_20 == null
@@ -638,6 +847,25 @@ export async function POST(req: NextRequest) {
       const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
       const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
       const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
+      const officialBaselineSuccess = general_avg_20 == null
+        ? null
+        : computeOfficialBaselineSuccess({
+            official_avg_20: general_avg_20,
+            core_avg_20,
+            presence_rate,
+            conduct_total_20,
+            total_absent_hours,
+            nb_lates,
+            core_completion_percent,
+          });
+      const p_success = mlRow
+        ? mlRow.p_success
+        : officialBaselineSuccess != null
+          ? officialBaselineSuccess
+          : row.p_success == null
+            ? null
+            : clamp(Number(row.p_success), 0, 1);
+      const risk_level = normalizeRisk(mlRow?.risk_level, p_success);
 
       const priority_score = computePriorityScore({
         p_success,

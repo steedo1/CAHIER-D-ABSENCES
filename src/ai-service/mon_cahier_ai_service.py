@@ -9,11 +9,11 @@ L'objectif est de brancher Mon Cahier sur un vrai modèle ML sans bloquer la pro
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import joblib
-import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
@@ -67,7 +67,7 @@ _model_bundle: Optional[Dict[str, Any]] = None
 
 
 def clamp(value: float, low: float, high: float) -> float:
-    if not np.isfinite(value):
+    if not math.isfinite(value):
         return low
     return float(min(high, max(low, value)))
 
@@ -77,7 +77,7 @@ def as_float(value: Any, default: float) -> float:
         if value is None:
             return default
         value = float(value)
-        if not np.isfinite(value):
+        if not math.isfinite(value):
             return default
         return value
     except Exception:
@@ -121,15 +121,15 @@ def load_model() -> Optional[Dict[str, Any]]:
     return _model_bundle
 
 
-def features_to_matrix(students: List[StudentPayload], request_completion: float, feature_names: List[str]) -> np.ndarray:
+def features_to_matrix(students: List[StudentPayload], request_completion: float, feature_names: List[str]) -> List[List[float]]:
     matrix = []
     for item in students:
         row = []
         for name in feature_names:
-            default = request_completion if name == "core_completion_percent" else np.nan
+            default = request_completion if name == "core_completion_percent" else float("nan")
             row.append(as_float(item.features.get(name), default))
         matrix.append(row)
-    return np.asarray(matrix, dtype=float)
+    return matrix
 
 
 @app.get("/health")

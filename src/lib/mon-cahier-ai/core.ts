@@ -283,6 +283,10 @@ export function buildStudentReasons(row: {
 }): string[] {
   const reasons: string[] = [];
 
+  if (row.general_avg_20 == null) {
+    reasons.push("moyenne bulletin officielle indisponible");
+  }
+
   if (row.p_success != null && Number(row.p_success) < 0.45) {
     reasons.push(`indice de réussite faible (${pct(row.p_success)})`);
   } else if (row.p_success != null && Number(row.p_success) < 0.7) {
@@ -417,7 +421,10 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
 
   const studentsSorted = [...scoped.students].sort((a, b) => b.priority_score - a.priority_score);
   const studentsToFollow = studentsSorted.filter((s) => s.priority_score >= 45).slice(0, 20);
-  const classesAtRisk = [...scoped.classes].sort((a, b) => b.risk_index - a.risk_index).slice(0, 12);
+  const classesAtRisk = [...scoped.classes]
+    .filter((c) => c.students_count > 0)
+    .sort((a, b) => b.risk_index - a.risk_index)
+    .slice(0, 12);
   const blockers = [...scoped.subjects].sort((a, b) => b.blocker_score - a.blocker_score).slice(0, 15);
 
   const totalStudents = scoped.students.length;

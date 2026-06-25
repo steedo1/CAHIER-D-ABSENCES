@@ -558,7 +558,7 @@ export default function MonCahierIaPage() {
                         </span>
                       </div>
                       <div className="mt-2 text-xs text-slate-600">
-                        Moy. {fmtAvg(student.general_avg_20)} · Réussite {fmtPct(student.p_success)}
+                        Moy. bulletin {fmtAvg(student.general_avg_20)} · Indice {fmtPct(student.p_success)}
                       </div>
                       {student.reasons?.length ? (
                         <ul className="mt-2 list-inside list-disc text-xs leading-5 text-slate-600">
@@ -587,7 +587,7 @@ export default function MonCahierIaPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="font-black text-slate-950">{cls.class_label}</div>
-                          <div className="text-xs font-semibold text-slate-500">{cls.students_count} élèves · Moy. {fmtAvg(cls.avg_general_20)}</div>
+                          <div className="text-xs font-semibold text-slate-500">{cls.students_count} élèves · Moy. bulletin {fmtAvg(cls.avg_general_20)}</div>
                         </div>
                         <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800">
                           risque {cls.risk_index}/100
