@@ -109,6 +109,20 @@ export type AiScopeStats = {
   classes_by_level?: Array<{ level: string; count: number }>;
 };
 
+export type AiProgramProgressionSignal = {
+  class_id: string;
+  class_label: string;
+  class_level?: string | null;
+  subject_id?: string | null;
+  subject_name: string;
+  progression_title?: string | null;
+  expected_items: number;
+  completed_items: number;
+  completion_rate: number;
+  sessions_count: number;
+  source: "textbook" | "manual";
+};
+
 export type MonCahierAiContext = {
   institution_id: string;
   academic_year: string;
@@ -122,6 +136,7 @@ export type MonCahierAiContext = {
   warnings: string[];
   data_quality?: AiDataQuality;
   scope_stats?: AiScopeStats;
+  progressions?: AiProgramProgressionSignal[];
 };
 
 export type MonCahierAiAnswer = {
@@ -546,6 +561,28 @@ function buildScopeLabel(scoped: ReturnType<typeof selectContextByQuestion>): st
   return null;
 }
 
+function selectProgressionsForScope(
+  context: MonCahierAiContext,
+  scoped: ReturnType<typeof selectContextByQuestion>,
+): AiProgramProgressionSignal[] {
+  const classIds = new Set(scoped.classes.map((cls) => cls.class_id));
+  return (context.progressions || []).filter((item) => classIds.has(item.class_id));
+}
+
+function averageProgressionRate(items: AiProgramProgressionSignal[]): number | null {
+  if (!items.length) return null;
+  const usable = items.filter((item) => Number.isFinite(Number(item.completion_rate)));
+  if (!usable.length) return null;
+  return round1(usable.reduce((acc, item) => acc + Number(item.completion_rate), 0) / usable.length);
+}
+
+function weakestProgressions(items: AiProgramProgressionSignal[], limit = 3): AiProgramProgressionSignal[] {
+  return [...items]
+    .filter((item) => Number.isFinite(Number(item.completion_rate)))
+    .sort((a, b) => Number(a.completion_rate) - Number(b.completion_rate))
+    .slice(0, limit);
+}
+
 function pluralize(value: number, singular: string, plural = `${singular}s`): string {
   return `${value} ${value > 1 ? plural : singular}`;
 }
@@ -624,6 +661,18 @@ function buildQuickStats(args: {
     tone: subjectsCount ? "good" : "warning",
   });
 
+  const progressionItems = selectProgressionsForScope(args.context, args.scoped);
+  const progressionAvg = averageProgressionRate(progressionItems);
+  if (progressionItems.length) {
+    cards.push({
+      key: "textbook_progression",
+      label: "Progression cahier de textes",
+      value: `${progressionAvg ?? 0}%`,
+      details: `${progressionItems.length} progression${progressionItems.length > 1 ? "s" : ""} active${progressionItems.length > 1 ? "s" : ""} exploitée${progressionItems.length > 1 ? "s" : ""}.`,
+      tone: progressionAvg == null ? "warning" : progressionAvg >= 75 ? "good" : progressionAvg >= 50 ? "neutral" : "warning",
+    });
+  }
+
   if (highRiskCount || mediumRiskCount) {
     cards.push({
       key: "followup",
@@ -689,6 +738,9 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     scoped.classes.length > 0
       ? scoped.classes.reduce((acc, cls) => acc + (cls.avg_success_probability ?? 0), 0) / scoped.classes.length
       : null;
+  const scopedProgressions = selectProgressionsForScope(context, scoped);
+  const avgTextbookProgression = averageProgressionRate(scopedProgressions);
+  const weakTextbookProgressions = weakestProgressions(scopedProgressions, 3);
 
   const commonRecs = buildCommonRecommendations({
     studentsToFollow,
@@ -698,6 +750,15 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     highRisk,
     mediumRisk,
   });
+
+  if (weakTextbookProgressions.length) {
+    const weakest = weakTextbookProgressions[0];
+    if (Number(weakest.completion_rate) < 50) {
+      commonRecs.unshift(
+        `Vérifier la progression en ${weakest.subject_name} (${weakest.class_label}) : ${weakest.completion_rate}% d’avancement dans le cahier de textes.`,
+      );
+    }
+  }
 
   let title = "Analyse pédagogique Mon Cahier IA";
   let summary = "Mon Cahier IA a analysé les notes, l’assiduité, la conduite et les signaux de progression disponibles.";
@@ -732,10 +793,18 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     }
   } else if (intent === "school_summary" || intent === "general_analysis") {
     title = scopeLabel ? `Résumé pédagogique — ${scopeLabel}` : "Résumé de la situation pédagogique";
-    summary = `Analyse de ${scoped.classes.length} classe${scoped.classes.length > 1 ? "s" : ""} et ${totalStudents} élève${totalStudents > 1 ? "s" : ""}. Indice moyen de préparation : ${avgSuccess == null ? "—" : pct(avgSuccess)}. ${highRisk} élève${highRisk > 1 ? "s" : ""} en suivi prioritaire et ${mediumRisk} en suivi renforcé.`;
+    summary = `Analyse de ${scoped.classes.length} classe${scoped.classes.length > 1 ? "s" : ""} et ${totalStudents} élève${totalStudents > 1 ? "s" : ""}. Indice moyen de préparation : ${avgSuccess == null ? "—" : pct(avgSuccess)}. ${highRisk} élève${highRisk > 1 ? "s" : ""} en suivi prioritaire et ${mediumRisk} en suivi renforcé.${avgTextbookProgression == null ? "" : ` Progression cahier de textes : ${avgTextbookProgression}%.`}`;
   } else if (intent === "council_note") {
     title = scopeLabel ? `Note préparatoire au conseil de classe — ${scopeLabel}` : "Note préparatoire au conseil de classe";
-    council_note = buildCouncilNote({ context, scoped, classesAtRisk, studentsToFollow, blockers: subjectAlerts, avgSuccess });
+    council_note = buildCouncilNote({
+      context,
+      scoped,
+      classesAtRisk,
+      studentsToFollow,
+      blockers: subjectAlerts,
+      avgSuccess,
+      progressions: scopedProgressions,
+    });
     summary = "Voici une note structurée pour préparer le conseil de classe à partir des signaux pédagogiques disponibles.";
     recommendations = [
       "Relire la note avec le professeur principal avant diffusion.",
@@ -879,6 +948,7 @@ function buildCouncilNote(args: {
   studentsToFollow: AiStudentSignal[];
   blockers: AiSubjectSignal[];
   avgSuccess: number | null;
+  progressions: AiProgramProgressionSignal[];
 }): string {
   const scopeLabel = buildScopeLabel(args.scoped) || "Établissement";
   const topClass = args.classesAtRisk[0];
@@ -947,6 +1017,16 @@ function buildCouncilNote(args: {
   const conductLine = conductCount > 0
     ? `La conduite est prise en compte pour ${conductCount}/${args.scoped.students.length} élève(s).`
     : "La conduite n’est pas suffisamment renseignée pour ce périmètre.";
+  const progressionAverage = averageProgressionRate(args.progressions);
+  const weakestProgressionItems = weakestProgressions(args.progressions, 2);
+  const progressionLine = args.progressions.length
+    ? `La progression issue du cahier de textes est disponible pour ${args.progressions.length} progression(s), avec un avancement moyen de ${progressionAverage ?? 0}%.`
+    : "La progression reste à vérifier dans le cahier de textes ou à renseigner manuellement.";
+  const weakestProgressionLine = weakestProgressionItems.length
+    ? `Points de progression à surveiller : ${weakestProgressionItems
+        .map((item) => `${item.subject_name} (${item.class_label}) ${item.completion_rate}%`)
+        .join(" ; ")}.`
+    : "Aucun retard de progression spécifique n’est isolé.";
   const blockingLine = blockingSubjects.length
     ? `${blockingSubjects.length} matière(s) nécessitent une attention particulière avant le conseil.`
     : "Aucune matière bloquante critique n’est isolée.";
@@ -975,11 +1055,13 @@ function buildCouncilNote(args: {
     `- ${bulletinLine}`,
     `- ${attendanceLine}`,
     `- ${conductLine}`,
+    `- ${progressionLine}`,
     `- ${blockingLine}`,
     "",
     "3. POINTS DE VIGILANCE",
     `- ${classRiskLine}`,
     `- ${watchLine}`,
+    `- ${weakestProgressionLine}`,
     "",
     "4. MATIÈRES À TRAITER",
     subjectLines,

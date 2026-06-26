@@ -11,6 +11,7 @@ import {
   getRiskLevel,
   extractLevelHint,
   levelMatches,
+  round1,
   round2,
   summarizeClassReasons,
   type AiClassSignal,
@@ -18,6 +19,7 @@ import {
   type AiDataQualityItem,
   type AiStudentSignal,
   type AiSubjectSignal,
+  type AiProgramProgressionSignal,
   type MonCahierAiContext,
 } from "@/lib/mon-cahier-ai/core";
 
@@ -121,6 +123,12 @@ type SubjectAvailabilityStats = {
   published_evaluations_count: number;
   notes_count: number;
   evaluated_subjects_count: number;
+};
+
+type TextbookProgressionStats = {
+  assignments_count: number;
+  avg_completion_rate: number | null;
+  low_progression_count: number;
 };
 
 type BulletinSubjectAverage = {
@@ -1035,6 +1043,190 @@ async function loadSubjectSignals(args: {
 }
 
 
+function uniqText(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((v) => String(v || "").trim()).filter(Boolean)));
+}
+
+function isActionableTextbookItem(item: any) {
+  const itemType = String(item?.item_type || "").trim();
+  const actionableTypes = new Set([
+    "lesson",
+    "sequence",
+    "session",
+    "evaluation",
+    "remediation",
+    "regulation",
+    "revision",
+    "other",
+  ]);
+  return (
+    actionableTypes.has(itemType) ||
+    Number(item?.planned_duration_minutes || 0) > 0 ||
+    Number(item?.planned_sessions_count || 0) > 0
+  );
+}
+
+function textbookPlannedMinutes(item: any) {
+  const duration = Number(item?.planned_duration_minutes || 0);
+  if (duration > 0) return duration;
+  const sessions = Number(item?.planned_sessions_count || 0);
+  if (sessions > 0) return sessions * 55;
+  return 0;
+}
+
+function textbookPct(done: number, total: number) {
+  if (!total) return 0;
+  return Math.round((done / total) * 1000) / 10;
+}
+
+async function loadTextbookProgressions(args: {
+  srv: any;
+  institution_id: string;
+  classes: ClassRow[];
+  academic_year: string;
+  warnings: string[];
+}): Promise<{ progressions: AiProgramProgressionSignal[]; stats: TextbookProgressionStats }> {
+  const classIds = args.classes.map((cls) => String(cls.id || "")).filter(Boolean);
+  if (!classIds.length) {
+    return { progressions: [], stats: { assignments_count: 0, avg_completion_rate: null, low_progression_count: 0 } };
+  }
+
+  try {
+    const { data: assignmentRows, error: assignmentErr } = await args.srv
+      .from("textbook_progression_class_assignments")
+      .select(`
+        id,
+        class_id,
+        subject_id,
+        institution_subject_id,
+        is_active,
+        classes:class_id(id,label,level),
+        progression:textbook_progression_templates(
+          id,
+          title,
+          academic_year,
+          subject_id,
+          institution_subject_id,
+          subject_name,
+          level,
+          series
+        )
+      `)
+      .eq("institution_id", args.institution_id)
+      .eq("is_active", true)
+      .in("class_id", classIds);
+
+    if (assignmentErr) throw new Error(assignmentErr.message);
+
+    const assignments = ((assignmentRows || []) as any[]).filter((assignment) => {
+      const progression = assignment?.progression || {};
+      return !args.academic_year || String(progression.academic_year || "") === args.academic_year;
+    });
+
+    const assignmentIds = uniqText(assignments.map((assignment) => assignment.id));
+    const progressionIds = uniqText(assignments.map((assignment) => assignment.progression?.id));
+
+    const itemsByProgression = new Map<string, any[]>();
+    if (progressionIds.length) {
+      const { data: items, error: itemsErr } = await args.srv
+        .from("textbook_progression_items")
+        .select("id,progression_id,item_type,planned_duration_minutes,planned_sessions_count")
+        .eq("institution_id", args.institution_id)
+        .in("progression_id", progressionIds);
+
+      if (itemsErr) throw new Error(itemsErr.message);
+      for (const item of (items || []) as any[]) {
+        const key = String(item.progression_id || "");
+        if (!key) continue;
+        if (!itemsByProgression.has(key)) itemsByProgression.set(key, []);
+        itemsByProgression.get(key)!.push(item);
+      }
+    }
+
+    const completedByAssignment = new Map<string, Set<string>>();
+    if (assignmentIds.length) {
+      const { data: completions, error: completionErr } = await args.srv
+        .from("textbook_lesson_completions")
+        .select("assignment_id,item_id,status")
+        .eq("institution_id", args.institution_id)
+        .in("assignment_id", assignmentIds)
+        .eq("status", "completed");
+
+      if (completionErr) throw new Error(completionErr.message);
+      for (const row of (completions || []) as any[]) {
+        const key = String(row.assignment_id || "");
+        if (!key) continue;
+        if (!completedByAssignment.has(key)) completedByAssignment.set(key, new Set());
+        completedByAssignment.get(key)!.add(String(row.item_id || ""));
+      }
+    }
+
+    const sessionStats = new Map<string, number>();
+    if (assignmentIds.length) {
+      const { data: sessions, error: sessionErr } = await args.srv
+        .from("textbook_lesson_sessions")
+        .select("assignment_id")
+        .eq("institution_id", args.institution_id)
+        .in("assignment_id", assignmentIds);
+
+      if (sessionErr) throw new Error(sessionErr.message);
+      for (const row of (sessions || []) as any[]) {
+        const key = String(row.assignment_id || "");
+        if (!key) continue;
+        sessionStats.set(key, (sessionStats.get(key) || 0) + 1);
+      }
+    }
+
+    const progressions: AiProgramProgressionSignal[] = assignments.map((assignment) => {
+      const progression = assignment.progression || {};
+      const allItems = itemsByProgression.get(String(progression.id || "")) || [];
+      const actionable = allItems.filter(isActionableTextbookItem);
+      const expectedItems = actionable.length;
+      const completedSet = completedByAssignment.get(String(assignment.id || "")) || new Set<string>();
+      const completedItems = completedSet.size;
+      const plannedMinutes = actionable.reduce((sum, item) => sum + textbookPlannedMinutes(item), 0);
+      const completedPlannedMinutes = actionable.reduce(
+        (sum, item) => (completedSet.has(String(item.id || "")) ? sum + textbookPlannedMinutes(item) : sum),
+        0,
+      );
+      const completionRate = plannedMinutes
+        ? textbookPct(completedPlannedMinutes, plannedMinutes)
+        : textbookPct(completedItems, expectedItems);
+
+      return {
+        class_id: String(assignment.class_id || ""),
+        class_label: String(assignment.classes?.label || "Classe"),
+        class_level: assignment.classes?.level || progression.level || null,
+        subject_id: progression.subject_id || assignment.subject_id || null,
+        subject_name: String(progression.subject_name || "Matière"),
+        progression_title: progression.title || null,
+        expected_items: expectedItems,
+        completed_items: completedItems,
+        completion_rate: completionRate,
+        sessions_count: sessionStats.get(String(assignment.id || "")) || 0,
+        source: "textbook",
+      };
+    });
+
+    const usable = progressions.filter((item) => Number.isFinite(Number(item.completion_rate)));
+    const avg = usable.length
+      ? round1(usable.reduce((acc, item) => acc + Number(item.completion_rate), 0) / usable.length)
+      : null;
+
+    return {
+      progressions,
+      stats: {
+        assignments_count: progressions.length,
+        avg_completion_rate: avg,
+        low_progression_count: progressions.filter((item) => Number(item.completion_rate) < 50).length,
+      },
+    };
+  } catch (e: any) {
+    args.warnings.push(`Progression cahier de textes indisponible : ${e?.message || "données non accessibles"}`);
+    return { progressions: [], stats: { assignments_count: 0, avg_completion_rate: null, low_progression_count: 0 } };
+  }
+}
+
 function qualityStatus(ratio: number): AiDataQualityItem["status"] {
   if (ratio >= 0.8) return "ok";
   if (ratio >= 0.45) return "partial";
@@ -1066,6 +1258,7 @@ function buildDataQuality(args: {
   officialAverages: Map<string, OfficialBulletinAverage>;
   subjectStats: SubjectAvailabilityStats;
   core_completion_percent: number;
+  textbookProgressionStats?: TextbookProgressionStats;
   model_source: MonCahierAiContext["model_source"];
   warnings: string[];
 }): AiDataQuality {
@@ -1147,9 +1340,13 @@ function buildDataQuality(args: {
     qualityItem({
       key: "progression",
       label: "Progression programme",
-      ratio: clamp(args.core_completion_percent / 100, 0, 1),
+      ratio: args.textbookProgressionStats?.assignments_count
+        ? clamp(Number(args.textbookProgressionStats.avg_completion_rate || 0) / 100, 0, 1)
+        : clamp(args.core_completion_percent / 100, 0, 1),
       weight: 8,
-      details: `Progression déclarée : ${Math.round(args.core_completion_percent)}%.`,
+      details: args.textbookProgressionStats?.assignments_count
+        ? `${args.textbookProgressionStats.assignments_count} progression(s) issue(s) du cahier de textes ; avancement moyen ${args.textbookProgressionStats.avg_completion_rate ?? 0}%.`
+        : `Progression déclarée manuellement : ${Math.round(args.core_completion_percent)}%.`,
     }),
   ];
 
@@ -1170,6 +1367,12 @@ function buildDataQuality(args: {
   if (args.subjectStats.published_evaluations_count === 0 && !hasBulletinSubjectMarks) {
     args.warnings.push("Qualité des données : aucune évaluation publiée ni moyenne matière bulletin trouvée pour le périmètre.");
   }
+  if (!args.textbookProgressionStats?.assignments_count) {
+    args.warnings.push("Progression programme : aucune progression active du cahier de textes n’a été trouvée ; la valeur manuelle reste utilisée.");
+  } else if (Number(args.textbookProgressionStats.avg_completion_rate || 0) < 50) {
+    args.warnings.push("Progression programme : le cahier de textes signale un avancement moyen faible sur le périmètre.");
+  }
+
   if (args.model_source !== "ml_service") {
     args.warnings.push("Modèle ML non entraîné : analyse basée sur le socle explicable intégré.");
   }
@@ -1284,6 +1487,7 @@ async function saveInteraction(args: {
         warnings: args.context.warnings,
         data_quality: args.context.data_quality || null,
         scope_stats: args.context.scope_stats || null,
+        progressions: args.context.progressions || [],
       },
     });
   } catch {
@@ -1562,6 +1766,14 @@ export async function POST(req: NextRequest) {
 
     const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
 
+    const textbookProgressionResult = await loadTextbookProgressions({
+      srv: ctx.srv,
+      institution_id: ctx.institution_id,
+      classes,
+      academic_year,
+      warnings: predictionResult.warnings,
+    });
+
     const dataQuality = buildDataQuality({
       classes,
       predictionRows: predictionResult.rows,
@@ -1569,6 +1781,7 @@ export async function POST(req: NextRequest) {
       officialAverages,
       subjectStats: subjectResult.stats,
       core_completion_percent,
+      textbookProgressionStats: textbookProgressionResult.stats,
       model_source: ml.source,
       warnings: predictionResult.warnings,
     });
@@ -1586,6 +1799,7 @@ export async function POST(req: NextRequest) {
       warnings: predictionResult.warnings,
       data_quality: dataQuality,
       scope_stats: scopeStats,
+      progressions: textbookProgressionResult.progressions,
     };
 
     const answer = buildAiAnswer(aiContext, question);

@@ -356,6 +356,7 @@ export default function MonCahierIaPage() {
   const [noteCopied, setNoteCopied] = useState(false);
   const [history, setHistory] = useState<AiHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -811,68 +812,90 @@ export default function MonCahierIaPage() {
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-lg font-black text-slate-950">
-              <FileText className="h-5 w-5 text-violet-700" />
-              Historique des notes IA
+      <section className="rounded-[24px] border border-violet-100 bg-violet-50/40 p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white text-violet-700 ring-1 ring-violet-100">
+              <FileText className="h-5 w-5" />
             </div>
-            <p className="mt-1 text-sm leading-6 text-slate-500">
-              Retrouver les dernières notes préparatoires générées pour l’année scolaire sélectionnée.
-            </p>
+            <div>
+              <div className="flex flex-wrap items-center gap-2 text-base font-black text-slate-950">
+                Historique des notes IA
+                <span className="rounded-full border border-violet-100 bg-white px-2.5 py-1 text-[11px] font-black text-violet-800">
+                  {history.length} note{history.length > 1 ? "s" : ""}
+                </span>
+              </div>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Section repliée pour garder l’assistant lisible. Ouvre-la seulement quand tu veux reprendre une ancienne note.
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => void loadHistory()}
-            disabled={historyLoading || !academicYear}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-          >
-            {historyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-            Actualiser
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void loadHistory()}
+              disabled={historyLoading || !academicYear}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              {historyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+              Actualiser
+            </button>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((value) => !value)}
+              className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800"
+            >
+              {historyOpen ? "Masquer l’historique" : "Voir l’historique"}
+            </button>
+          </div>
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          {history.length ? (
-            history.map((item) => (
-              <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="text-sm font-black text-slate-950">{item.title}</div>
-                    <div className="mt-1 text-xs font-semibold text-slate-500">
-                      {formatHistoryDate(item.created_at)} · {item.scope_label || "Périmètre non précisé"}
+        {historyOpen ? (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {history.length ? (
+              history.slice(0, 8).map((item) => (
+                <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-sm font-black text-slate-950">{item.title}</div>
+                      <div className="mt-1 text-xs font-semibold text-slate-500">
+                        {formatHistoryDate(item.created_at)} · {item.scope_label || "Périmètre non précisé"}
+                      </div>
                     </div>
+                    <span className="w-fit rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-800">
+                      Note conseil
+                    </span>
                   </div>
-                  <span className="w-fit rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-800">
-                    Note conseil
-                  </span>
+                  <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">{item.preview}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => restoreHistoryItem(item)}
+                      className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800"
+                    >
+                      Ouvrir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuestion(item.question)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                    >
+                      Réutiliser la question
+                    </button>
+                  </div>
                 </div>
-                <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{item.preview}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => restoreHistoryItem(item)}
-                    className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800"
-                  >
-                    Ouvrir
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuestion(item.question)}
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Réutiliser la question
-                  </button>
-                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm font-semibold leading-6 text-slate-500 lg:col-span-2">
+                Aucune note IA enregistrée pour cette année scolaire. Génère une note de conseil de classe pour l’ajouter automatiquement à l’historique.
               </div>
-            ))
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-500 lg:col-span-2">
-              Aucune note IA enregistrée pour cette année scolaire. Génère une note de conseil de classe pour l’ajouter automatiquement à l’historique.
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        ) : history[0] ? (
+          <div className="mt-3 rounded-2xl border border-violet-100 bg-white px-4 py-3 text-sm text-slate-700">
+            Dernière note : <span className="font-black text-slate-950">{history[0].title}</span> · {formatHistoryDate(history[0].created_at)}
+          </div>
+        ) : null}
       </section>
 
       {answer ? (
