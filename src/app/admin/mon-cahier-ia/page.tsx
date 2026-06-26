@@ -7,6 +7,9 @@ import {
   Bot,
   BrainCircuit,
   CheckCircle2,
+  Copy,
+  FileDown,
+  FileText,
   GraduationCap,
   Loader2,
   MessageSquareText,
@@ -265,6 +268,37 @@ function quickStatStyle(tone: QuickStat["tone"] = "neutral") {
   return "border-slate-200 bg-slate-50 text-slate-900";
 }
 
+function sanitizeFilePart(value: string) {
+  return String(value || "document")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .toLowerCase() || "document";
+}
+
+function escapeHtml(value: string) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function downloadBlob(content: BlobPart, filename: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 
 export default function MonCahierIaPage() {
   const [loading, setLoading] = useState(true);
@@ -281,6 +315,7 @@ export default function MonCahierIaPage() {
   const [question, setQuestion] = useState(DEFAULT_PRESETS[0]);
   const [answer, setAnswer] = useState<AiAnswer | null>(null);
   const [meta, setMeta] = useState<AssistantResponse["context_meta"] | null>(null);
+  const [noteCopied, setNoteCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -362,6 +397,7 @@ export default function MonCahierIaPage() {
     setQuestion(q);
     setAsking(true);
     setError(null);
+    setNoteCopied(false);
 
     try {
       const res = await fetch("/api/admin/mon-cahier-ia/assistant", {
@@ -387,6 +423,93 @@ export default function MonCahierIaPage() {
     } finally {
       setAsking(false);
     }
+  }
+
+  function councilNoteFilename(ext: "txt" | "doc") {
+    const scope = selectedClass?.label || effectiveLevel || "etablissement";
+    return `note-conseil-${sanitizeFilePart(scope)}-${sanitizeFilePart(academicYear)}.${ext}`;
+  }
+
+  async function copyCouncilNote() {
+    if (!answer?.council_note) return;
+    try {
+      await navigator.clipboard.writeText(answer.council_note);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = answer.council_note;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    setNoteCopied(true);
+    window.setTimeout(() => setNoteCopied(false), 2200);
+  }
+
+  function downloadCouncilNoteText() {
+    if (!answer?.council_note) return;
+    downloadBlob(answer.council_note, councilNoteFilename("txt"), "text/plain;charset=utf-8");
+  }
+
+  function downloadCouncilNoteWord() {
+    if (!answer?.council_note) return;
+    const title = "Note préparatoire au conseil de classe";
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #0f172a; line-height: 1.55; }
+    h1 { font-size: 18pt; text-align: center; margin-bottom: 22px; }
+    pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11pt; }
+    .footer { margin-top: 24px; font-size: 9pt; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <pre>${escapeHtml(answer.council_note)}</pre>
+  <div class="footer">Document préparé avec Mon Cahier IA — aide à la décision pédagogique.</div>
+</body>
+</html>`;
+    downloadBlob(html, councilNoteFilename("doc"), "application/msword;charset=utf-8");
+  }
+
+  function printCouncilNote() {
+    if (!answer?.council_note) return;
+    const printWindow = window.open("", "_blank", "width=900,height=700");
+    if (!printWindow) return;
+    const title = "Note préparatoire au conseil de classe";
+    printWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    body { font-family: Arial, sans-serif; color: #0f172a; line-height: 1.55; }
+    .header { border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 18px; }
+    .brand { font-size: 10pt; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .08em; }
+    h1 { font-size: 18pt; margin: 6px 0 0; text-align: center; }
+    pre { white-space: pre-wrap; font-family: Arial, sans-serif; font-size: 11pt; }
+    .footer { border-top: 1px solid #cbd5e1; margin-top: 24px; padding-top: 8px; font-size: 9pt; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">Mon Cahier IA</div>
+    <h1>${escapeHtml(title)}</h1>
+  </div>
+  <pre>${escapeHtml(answer.council_note)}</pre>
+  <div class="footer">Cette note est une aide à la préparation du conseil de classe. Les décisions finales relèvent de l’équipe éducative.</div>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => printWindow.print(), 250);
   }
 
   return (
@@ -743,20 +866,56 @@ export default function MonCahierIaPage() {
 
           {answer.council_note ? (
             <div className="rounded-[28px] border border-violet-100 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex items-center gap-2 text-lg font-black text-slate-950">
-                  <GraduationCap className="h-5 w-5 text-violet-700" />
-                  Note préparatoire au conseil de classe
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-lg font-black text-slate-950">
+                    <GraduationCap className="h-5 w-5 text-violet-700" />
+                    Note préparatoire au conseil de classe
+                  </div>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                    Document exploitable par l’administration après relecture de l’équipe éducative.
+                  </p>
                 </div>
-                <span className="rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-800">
-                  Document IA structuré
-                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyCouncilNote()}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    <Copy className="h-4 w-4" />
+                    {noteCopied ? "Copiée" : "Copier"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={printCouncilNote}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-violet-100 bg-violet-50 px-3 py-2 text-xs font-black text-violet-800 shadow-sm transition hover:bg-violet-100"
+                  >
+                    <FileText className="h-4 w-4" />
+                    PDF / Imprimer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadCouncilNoteWord}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-black text-blue-800 shadow-sm transition hover:bg-blue-100"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Word
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadCouncilNoteText}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:bg-slate-100"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Texte
+                  </button>
+                </div>
               </div>
               <pre className="max-h-[620px] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-medium leading-7 text-slate-800">
                 {answer.council_note}
               </pre>
               <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
-                Cette note est conçue pour préparer le conseil : elle doit être relue par l’équipe éducative avant diffusion ou impression.
+                Le bouton PDF ouvre la fenêtre d’impression du navigateur : choisir “Enregistrer au format PDF” pour télécharger le document.
               </p>
             </div>
           ) : null}
