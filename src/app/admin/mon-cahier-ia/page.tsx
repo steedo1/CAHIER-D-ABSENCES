@@ -166,6 +166,30 @@ type AssistantResponse = {
   };
 };
 
+type AiHistoryItem = {
+  id: string;
+  academic_year: string;
+  question: string;
+  intent?: string | null;
+  title: string;
+  preview: string;
+  scope_label?: string | null;
+  has_council_note?: boolean;
+  confidence?: number | null;
+  model_version?: string | null;
+  model_source?: string | null;
+  created_at: string;
+  answer?: AiAnswer;
+  context_meta?: AssistantResponse["context_meta"];
+};
+
+type HistoryResponse = {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  items?: AiHistoryItem[];
+};
+
 const DEFAULT_PRESETS = [
   "Quels élèves doivent être suivis en priorité avant les examens ?",
   "Quelle classe a le plus fort risque de baisse ?",
@@ -299,6 +323,20 @@ function downloadBlob(content: BlobPart, filename: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatHistoryDate(value: string) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return String(value || "").slice(0, 16);
+  }
+}
+
 
 export default function MonCahierIaPage() {
   const [loading, setLoading] = useState(true);
@@ -316,6 +354,8 @@ export default function MonCahierIaPage() {
   const [answer, setAnswer] = useState<AiAnswer | null>(null);
   const [meta, setMeta] = useState<AssistantResponse["context_meta"] | null>(null);
   const [noteCopied, setNoteCopied] = useState(false);
+  const [history, setHistory] = useState<AiHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -390,6 +430,42 @@ export default function MonCahierIaPage() {
     }
   }, [scopePresets, presets, question]);
 
+  async function loadHistory() {
+    if (!academicYear) return;
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({
+        academic_year: academicYear,
+        notes: "1",
+        limit: "8",
+      });
+      const res = await fetch(`/api/admin/mon-cahier-ia/history?${params.toString()}`, { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as HistoryResponse | null;
+      if (res.ok && json?.ok) {
+        setHistory(json.items || []);
+      } else {
+        setHistory([]);
+      }
+    } catch {
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [academicYear]);
+
+  function restoreHistoryItem(item: AiHistoryItem) {
+    if (!item.answer) return;
+    setQuestion(item.question || question);
+    setAnswer(item.answer);
+    setMeta(item.context_meta || null);
+    setNoteCopied(false);
+  }
+
   async function ask(nextQuestion?: string) {
     const q = String(nextQuestion || question || "").trim();
     if (!q) return;
@@ -418,6 +494,7 @@ export default function MonCahierIaPage() {
       }
       setAnswer(json.answer);
       setMeta(json.context_meta || null);
+      void loadHistory();
     } catch (e: any) {
       setError(e?.message || "Analyse impossible.");
     } finally {
@@ -731,6 +808,70 @@ export default function MonCahierIaPage() {
               </p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-lg font-black text-slate-950">
+              <FileText className="h-5 w-5 text-violet-700" />
+              Historique des notes IA
+            </div>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Retrouver les dernières notes préparatoires générées pour l’année scolaire sélectionnée.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadHistory()}
+            disabled={historyLoading || !academicYear}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+          >
+            {historyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            Actualiser
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {history.length ? (
+            history.map((item) => (
+              <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-sm font-black text-slate-950">{item.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-slate-500">
+                      {formatHistoryDate(item.created_at)} · {item.scope_label || "Périmètre non précisé"}
+                    </div>
+                  </div>
+                  <span className="w-fit rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[11px] font-black text-violet-800">
+                    Note conseil
+                  </span>
+                </div>
+                <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">{item.preview}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => restoreHistoryItem(item)}
+                    className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800"
+                  >
+                    Ouvrir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuestion(item.question)}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Réutiliser la question
+                  </button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-semibold leading-6 text-slate-500 lg:col-span-2">
+              Aucune note IA enregistrée pour cette année scolaire. Génère une note de conseil de classe pour l’ajouter automatiquement à l’historique.
+            </div>
+          )}
         </div>
       </section>
 
