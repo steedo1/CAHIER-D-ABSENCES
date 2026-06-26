@@ -85,6 +85,21 @@ type SubjectSignal = {
   blocker_score: number;
 };
 
+type DataQualityItem = {
+  key: string;
+  label: string;
+  status: "ok" | "partial" | "missing";
+  score: number;
+  details: string;
+};
+
+type DataQuality = {
+  score: number;
+  status: "ok" | "partial" | "missing";
+  summary: string;
+  items: DataQualityItem[];
+};
+
 type AiAnswer = {
   intent: string;
   title: string;
@@ -116,6 +131,7 @@ type AssistantResponse = {
     warnings?: string[];
     model_source?: string;
     model_version?: string;
+    data_quality?: DataQuality;
   };
 };
 
@@ -179,6 +195,19 @@ function sourceLabel(source?: string) {
   if (source === "ml_service") return "Modèle ML entraîné";
   if (source === "hybrid") return "Hybride règles + ML";
   return "Socle explicable";
+}
+
+
+function qualityStyle(status: string) {
+  if (status === "ok") return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  if (status === "partial") return "border-amber-200 bg-amber-50 text-amber-900";
+  return "border-red-200 bg-red-50 text-red-900";
+}
+
+function qualityLabel(status: string) {
+  if (status === "ok") return "OK";
+  if (status === "partial") return "Partiel";
+  return "Insuffisant";
 }
 
 function riskStyle(level: string) {
@@ -568,6 +597,34 @@ export default function MonCahierIaPage() {
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
+              </div>
+            ) : null}
+
+            {meta?.data_quality ? (
+              <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-950">
+                      <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                      Diagnostic qualité des données
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">{meta.data_quality.summary}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-black ${qualityStyle(meta.data_quality.status)}`}>
+                    {qualityLabel(meta.data_quality.status)} · {meta.data_quality.score}%
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {meta.data_quality.items.map((item) => (
+                    <div key={item.key} className={`rounded-2xl border p-3 ${qualityStyle(item.status)}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-black">{item.label}</div>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-black">{qualityLabel(item.status)}</span>
+                      </div>
+                      <p className="mt-1 text-xs font-semibold leading-5 opacity-90">{item.details}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
 

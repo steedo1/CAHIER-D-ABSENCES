@@ -13,6 +13,8 @@ import {
   round2,
   summarizeClassReasons,
   type AiClassSignal,
+  type AiDataQuality,
+  type AiDataQualityItem,
   type AiStudentSignal,
   type AiSubjectSignal,
   type MonCahierAiContext,
@@ -103,6 +105,12 @@ type OfficialBulletinAverage = {
     label: string | null;
     code: string | null;
   };
+};
+
+type SubjectAvailabilityStats = {
+  published_evaluations_count: number;
+  notes_count: number;
+  evaluated_subjects_count: number;
 };
 
 const MODEL_KEY = "mon_cahier_ai_pedagogy";
@@ -594,9 +602,13 @@ async function loadSubjectSignals(args: {
   srv: any;
   classSignals: AiClassSignal[];
   academic_year: string;
-}) {
+}): Promise<{ subjects: AiSubjectSignal[]; stats: SubjectAvailabilityStats }> {
+  const empty = {
+    subjects: [] as AiSubjectSignal[],
+    stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
+  };
   const classIds = args.classSignals.map((c) => c.class_id).filter(Boolean);
-  if (!classIds.length) return [] as AiSubjectSignal[];
+  if (!classIds.length) return empty;
 
   const evalRows: EvalRow[] = [];
   for (const part of chunks(classIds, 80)) {
@@ -719,7 +731,157 @@ async function loadSubjectSignals(args: {
     });
   }
 
-  return out.filter((s) => s.blocker_score >= 35).sort((a, b) => b.blocker_score - a.blocker_score);
+  const stats: SubjectAvailabilityStats = {
+    published_evaluations_count: evalRows.length,
+    notes_count: markRows.length,
+    evaluated_subjects_count: subjectIds.length,
+  };
+
+  return {
+    subjects: out.filter((s) => s.blocker_score >= 35).sort((a, b) => b.blocker_score - a.blocker_score),
+    stats,
+  };
+}
+
+
+function qualityStatus(ratio: number): AiDataQualityItem["status"] {
+  if (ratio >= 0.8) return "ok";
+  if (ratio >= 0.45) return "partial";
+  return "missing";
+}
+
+function qualityItem(args: {
+  key: string;
+  label: string;
+  ratio: number;
+  weight: number;
+  details: string;
+}): AiDataQualityItem & { weighted: number } {
+  const ratio = clamp(args.ratio, 0, 1);
+  return {
+    key: args.key,
+    label: args.label,
+    status: qualityStatus(ratio),
+    score: Math.round(ratio * 100),
+    details: args.details,
+    weighted: ratio * args.weight,
+  };
+}
+
+function buildDataQuality(args: {
+  classes: ClassRow[];
+  predictionRows: PredictionRow[];
+  students: AiStudentSignal[];
+  officialAverages: Map<string, OfficialBulletinAverage>;
+  subjectStats: SubjectAvailabilityStats;
+  core_completion_percent: number;
+  model_source: MonCahierAiContext["model_source"];
+  warnings: string[];
+}): AiDataQuality {
+  const totalStudents = args.students.length;
+  const totalRows = args.predictionRows.length;
+  const safeStudents = Math.max(1, totalStudents);
+
+  const officialAvgCount = args.students.filter((s) => s.general_avg_20 != null).length;
+  const predictionCount = args.students.filter((s) => s.p_success != null).length;
+  const assiduityCount = args.students.filter(
+    (s) => s.presence_rate != null || s.total_absent_hours != null || s.nb_lates != null,
+  ).length;
+  const conductCount = args.students.filter((s) => s.conduct_total_20 != null).length;
+
+  const itemsWithWeight = [
+    qualityItem({
+      key: "classes",
+      label: "Périmètre analysé",
+      ratio: args.classes.length > 0 ? 1 : 0,
+      weight: 10,
+      details: `${args.classes.length} classe${args.classes.length > 1 ? "s" : ""} dans le périmètre choisi.`,
+    }),
+    qualityItem({
+      key: "students",
+      label: "Élèves analysés",
+      ratio: totalStudents > 0 ? 1 : 0,
+      weight: 15,
+      details: `${totalStudents} élève${totalStudents > 1 ? "s" : ""} analysé${totalStudents > 1 ? "s" : ""}.`,
+    }),
+    qualityItem({
+      key: "bulletin_averages",
+      label: "Moyennes bulletin",
+      ratio: totalStudents > 0 ? officialAvgCount / safeStudents : 0,
+      weight: 25,
+      details: `${officialAvgCount}/${totalStudents} moyenne${officialAvgCount > 1 ? "s" : ""} officielle${officialAvgCount > 1 ? "s" : ""} retrouvée${officialAvgCount > 1 ? "s" : ""}.`,
+    }),
+    qualityItem({
+      key: "prediction_engine",
+      label: "Moteur prédictif",
+      ratio: totalRows > 0 ? predictionCount / Math.max(1, totalRows) : 0,
+      weight: 12,
+      details: `${predictionCount}/${Math.max(totalRows, totalStudents)} indice${predictionCount > 1 ? "s" : ""} de préparation exploitable${predictionCount > 1 ? "s" : ""}.`,
+    }),
+    qualityItem({
+      key: "marks_subjects",
+      label: "Notes et matières",
+      ratio: args.subjectStats.published_evaluations_count > 0 && args.subjectStats.notes_count > 0 ? 1 : 0,
+      weight: 12,
+      details: `${args.subjectStats.published_evaluations_count} évaluation${args.subjectStats.published_evaluations_count > 1 ? "s" : ""} publiée${args.subjectStats.published_evaluations_count > 1 ? "s" : ""}, ${args.subjectStats.notes_count} note${args.subjectStats.notes_count > 1 ? "s" : ""}, ${args.subjectStats.evaluated_subjects_count} matière${args.subjectStats.evaluated_subjects_count > 1 ? "s" : ""}.`,
+    }),
+    qualityItem({
+      key: "assiduity",
+      label: "Assiduité",
+      ratio: totalStudents > 0 ? assiduityCount / safeStudents : 0,
+      weight: 10,
+      details: `${assiduityCount}/${totalStudents} élève${assiduityCount > 1 ? "s" : ""} avec signaux d’absence/retard exploitables.`,
+    }),
+    qualityItem({
+      key: "conduct",
+      label: "Conduite",
+      ratio: totalStudents > 0 ? conductCount / safeStudents : 0,
+      weight: 8,
+      details: `${conductCount}/${totalStudents} élève${conductCount > 1 ? "s" : ""} avec conduite exploitable.`,
+    }),
+    qualityItem({
+      key: "progression",
+      label: "Progression programme",
+      ratio: clamp(args.core_completion_percent / 100, 0, 1),
+      weight: 8,
+      details: `Progression déclarée : ${Math.round(args.core_completion_percent)}%.`,
+    }),
+  ];
+
+  const weightedScore = Math.round(
+    clamp(
+      itemsWithWeight.reduce((acc, item) => acc + item.weighted, 0),
+      0,
+      100,
+    ),
+  );
+
+  const status: AiDataQuality["status"] = weightedScore >= 75 ? "ok" : weightedScore >= 50 ? "partial" : "missing";
+
+  if (totalStudents === 0) args.warnings.push("Qualité des données : aucun élève analysé dans le périmètre choisi.");
+  if (totalStudents > 0 && officialAvgCount / safeStudents < 0.5) {
+    args.warnings.push("Qualité des données : moins de la moitié des moyennes bulletin officielles ont été retrouvées.");
+  }
+  if (args.subjectStats.published_evaluations_count === 0) {
+    args.warnings.push("Qualité des données : aucune évaluation publiée trouvée pour les matières du périmètre.");
+  }
+  if (args.model_source !== "ml_service") {
+    args.warnings.push("Modèle ML non entraîné : analyse basée sur le socle explicable intégré.");
+  }
+
+  const summary =
+    status === "ok"
+      ? "Les données sont suffisamment complètes pour une analyse pédagogique fiable."
+      : status === "partial"
+        ? "Les données permettent une analyse utile, mais certaines sources doivent être complétées avant une décision forte."
+        : "Les données sont insuffisantes : Mon Cahier IA peut orienter les vérifications, mais ne doit pas être utilisé pour conclure.";
+
+  return {
+    score: weightedScore,
+    status,
+    summary,
+    items: itemsWithWeight.map(({ weighted, ...item }) => item),
+  };
 }
 
 
@@ -815,6 +977,7 @@ async function saveInteraction(args: {
         students_count: args.context.students.length,
         subjects_count: args.context.subjects.length,
         warnings: args.context.warnings,
+        data_quality: args.context.data_quality || null,
       },
     });
   } catch {
@@ -1032,13 +1195,27 @@ export async function POST(req: NextRequest) {
     });
 
     const classSignals = buildClassSignals(classes, students);
-    const subjectSignals = await loadSubjectSignals({
+    const subjectResult = await loadSubjectSignals({
       srv: ctx.srv,
       classSignals,
       academic_year,
     }).catch((err: any) => {
       predictionResult.warnings.push(`Analyse des matières indisponible : ${err?.message || "erreur"}`);
-      return [] as AiSubjectSignal[];
+      return {
+        subjects: [] as AiSubjectSignal[],
+        stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
+      };
+    });
+
+    const dataQuality = buildDataQuality({
+      classes,
+      predictionRows: predictionResult.rows,
+      students,
+      officialAverages,
+      subjectStats: subjectResult.stats,
+      core_completion_percent,
+      model_source: ml.source,
+      warnings: predictionResult.warnings,
     });
 
     const aiContext: MonCahierAiContext = {
@@ -1050,8 +1227,9 @@ export async function POST(req: NextRequest) {
       model_source: ml.source,
       classes: classSignals,
       students,
-      subjects: subjectSignals,
+      subjects: subjectResult.subjects,
       warnings: predictionResult.warnings,
+      data_quality: dataQuality,
     };
 
     const answer = buildAiAnswer(aiContext, question);
@@ -1088,6 +1266,7 @@ export async function POST(req: NextRequest) {
         warnings: aiContext.warnings,
         model_source: aiContext.model_source,
         model_version: aiContext.model_version,
+        data_quality: aiContext.data_quality,
       },
     });
   } catch (e: any) {

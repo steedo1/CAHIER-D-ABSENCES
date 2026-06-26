@@ -55,6 +55,23 @@ export type AiSubjectSignal = {
   blocker_score: number;
 };
 
+export type AiDataQualityStatus = "ok" | "partial" | "missing";
+
+export type AiDataQualityItem = {
+  key: string;
+  label: string;
+  status: AiDataQualityStatus;
+  score: number;
+  details: string;
+};
+
+export type AiDataQuality = {
+  score: number;
+  status: AiDataQualityStatus;
+  summary: string;
+  items: AiDataQualityItem[];
+};
+
 export type MonCahierAiContext = {
   institution_id: string;
   academic_year: string;
@@ -66,6 +83,7 @@ export type MonCahierAiContext = {
   students: AiStudentSignal[];
   subjects: AiSubjectSignal[];
   warnings: string[];
+  data_quality?: AiDataQuality;
 };
 
 export type MonCahierAiAnswer = {
@@ -491,7 +509,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     recommendations = remediation_plan;
   }
 
-  const confidence = computeConfidence(context, scoped.classes.length, totalStudents);
+  const confidence = context.data_quality?.score ?? computeConfidence(context, scoped.classes.length, totalStudents);
 
   return {
     intent,
