@@ -5,6 +5,7 @@ export type MonCahierAiIntent =
   | "school_summary"
   | "council_note"
   | "remediation_plan"
+  | "quick_stats"
   | "general_analysis";
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -72,6 +73,30 @@ export type AiDataQuality = {
   items: AiDataQualityItem[];
 };
 
+export type AiQuickStat = {
+  key: string;
+  label: string;
+  value: string;
+  details?: string;
+  tone?: "neutral" | "good" | "warning" | "danger";
+};
+
+export type AiQuickStats = {
+  scope_label: string;
+  scope_note?: string;
+  cards: AiQuickStat[];
+  breakdown?: Array<{ label: string; value: string; details?: string }>;
+};
+
+export type AiScopeStats = {
+  active_label: string;
+  is_filtered: boolean;
+  selected_class_label?: string | null;
+  selected_level?: string | null;
+  total_classes_count?: number | null;
+  classes_by_level?: Array<{ level: string; count: number }>;
+};
+
 export type MonCahierAiContext = {
   institution_id: string;
   academic_year: string;
@@ -84,6 +109,7 @@ export type MonCahierAiContext = {
   subjects: AiSubjectSignal[];
   warnings: string[];
   data_quality?: AiDataQuality;
+  scope_stats?: AiScopeStats;
 };
 
 export type MonCahierAiAnswer = {
@@ -97,6 +123,7 @@ export type MonCahierAiAnswer = {
   blocking_subjects: AiSubjectSignal[];
   council_note?: string;
   remediation_plan?: string[];
+  quick_stats?: AiQuickStats;
   model: {
     key: string;
     version: string;
@@ -171,10 +198,50 @@ export function cleanText(input: unknown): string {
     .trim();
 }
 
+
+export function isQuickStatsQuestion(cleanedQuestion: string): boolean {
+  const q = cleanText(cleanedQuestion);
+  if (!q) return false;
+
+  const asksCount =
+    q.includes("combien") ||
+    q.includes("nombre") ||
+    q.includes("total") ||
+    q.includes("effectif") ||
+    q.includes("statistique") ||
+    q.includes("statistiques") ||
+    q.includes("repartition") ||
+    q.includes("repartis") ||
+    q.includes("avons nous") ||
+    q.includes("avons-nous");
+
+  if (!asksCount) return false;
+
+  return (
+    q.includes("classe") ||
+    q.includes("classes") ||
+    q.includes("niveau") ||
+    q.includes("niveaux") ||
+    q.includes("eleve") ||
+    q.includes("eleves") ||
+    q.includes("moyenne") ||
+    q.includes("absence") ||
+    q.includes("absences") ||
+    q.includes("donnee") ||
+    q.includes("donnees") ||
+    q.includes("matiere") ||
+    q.includes("matieres")
+  );
+}
+
 export function inferIntent(question: string): MonCahierAiIntent {
   const q = cleanText(question);
 
   if (!q) return "school_summary";
+
+  if (isQuickStatsQuestion(q)) {
+    return "quick_stats";
+  }
 
   if (
     q.includes("conseil") ||
@@ -439,6 +506,113 @@ function buildScopeLabel(scoped: ReturnType<typeof selectContextByQuestion>): st
   return null;
 }
 
+function pluralize(value: number, singular: string, plural = `${singular}s`): string {
+  return `${value} ${value > 1 ? plural : singular}`;
+}
+
+function buildQuickStats(args: {
+  context: MonCahierAiContext;
+  scoped: ReturnType<typeof selectContextByQuestion>;
+  question: string;
+}): AiQuickStats {
+  const q = cleanText(args.question);
+  const classesCount = args.scoped.classes.length;
+  const studentsCount = args.scoped.students.length;
+  const subjectsCount = args.scoped.subjects.length;
+  const classesWithStudents = args.scoped.classes.filter((cls) => cls.students_count > 0).length;
+  const officialAveragesCount = args.scoped.students.filter((student) => student.general_avg_20 != null).length;
+  const highRiskCount = args.scoped.students.filter((student) => student.risk_level === "high").length;
+  const mediumRiskCount = args.scoped.students.filter((student) => student.risk_level === "medium").length;
+  const activeLabel =
+    args.context.scope_stats?.active_label ||
+    buildScopeLabel(args.scoped) ||
+    "périmètre sélectionné";
+
+  const asksClasses = q.includes("classe") || q.includes("classes") || q.includes("niveau") || q.includes("niveaux");
+  const asksStudents = q.includes("eleve") || q.includes("eleves") || q.includes("effectif");
+  const asksMissing = q.includes("sans") || q.includes("manquant") || q.includes("manquante") || q.includes("donnee") || q.includes("donnees");
+
+  const cards: AiQuickStat[] = [];
+
+  if (asksClasses || (!asksStudents && !asksMissing)) {
+    cards.push({
+      key: "scope_classes",
+      label: "Classes dans le périmètre actif",
+      value: String(classesCount),
+      details: `${classesWithStudents} classe${classesWithStudents > 1 ? "s" : ""} avec au moins un élève analysé.`,
+      tone: classesCount ? "good" : "warning",
+    });
+
+    if (args.context.scope_stats?.total_classes_count != null) {
+      cards.push({
+        key: "year_classes",
+        label: `Classes de l'année ${args.context.academic_year}`,
+        value: String(args.context.scope_stats.total_classes_count),
+        details: args.context.scope_stats.is_filtered
+          ? "Le filtre actuel réduit l'analyse affichée. Ce total correspond à l'établissement sur l'année choisie."
+          : "Total des classes chargées pour l'établissement sur l'année choisie.",
+        tone: "neutral",
+      });
+    }
+  }
+
+  if (asksStudents || (!asksClasses && !asksMissing)) {
+    cards.push({
+      key: "scope_students",
+      label: "Élèves analysés",
+      value: String(studentsCount),
+      details: `Dans ${activeLabel}.`,
+      tone: studentsCount ? "good" : "warning",
+    });
+  }
+
+  cards.push({
+    key: "official_averages",
+    label: "Moyennes bulletin trouvées",
+    value: `${officialAveragesCount}/${studentsCount}`,
+    details: studentsCount
+      ? `${Math.round((officialAveragesCount / Math.max(1, studentsCount)) * 100)} % des élèves analysés ont une moyenne bulletin exploitable.`
+      : "Aucun élève dans le périmètre actif.",
+    tone: officialAveragesCount === studentsCount && studentsCount > 0 ? "good" : officialAveragesCount > 0 ? "warning" : "danger",
+  });
+
+  cards.push({
+    key: "subjects",
+    label: "Matières avec signaux",
+    value: String(subjectsCount),
+    details: "Matières détectées à partir des évaluations publiées et exploitables.",
+    tone: subjectsCount ? "good" : "warning",
+  });
+
+  if (highRiskCount || mediumRiskCount) {
+    cards.push({
+      key: "followup",
+      label: "Élèves à surveiller",
+      value: String(highRiskCount + mediumRiskCount),
+      details: `${highRiskCount} en suivi prioritaire et ${mediumRiskCount} en suivi renforcé.`,
+      tone: highRiskCount ? "warning" : "neutral",
+    });
+  }
+
+  const byLevel = args.context.scope_stats?.classes_by_level || [];
+  const breakdown = byLevel.length
+    ? byLevel.map((item) => ({
+        label: item.level,
+        value: String(item.count),
+        details: `${pluralize(item.count, "classe")}.`,
+      }))
+    : undefined;
+
+  return {
+    scope_label: activeLabel,
+    scope_note: args.context.scope_stats?.is_filtered
+      ? "Attention : les filtres actuels limitent le périmètre. Pour obtenir le total général, choisir “Toutes les classes” et “Tous”."
+      : "Périmètre général de l'année scolaire sélectionnée.",
+    cards,
+    breakdown,
+  };
+}
+
 export function buildAiAnswer(context: MonCahierAiContext, question: string): MonCahierAiAnswer {
   const intent = inferIntent(question);
   const scoped = selectContextByQuestion(context, question);
@@ -474,8 +648,14 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
   let recommendations = commonRecs;
   let council_note: string | undefined;
   let remediation_plan: string[] | undefined;
+  let quick_stats: AiQuickStats | undefined;
 
-  if (intent === "students_to_follow") {
+  if (intent === "quick_stats") {
+    quick_stats = buildQuickStats({ context, scoped, question });
+    title = scopeLabel ? `Statistiques rapides — ${scopeLabel}` : "Statistiques rapides";
+    summary = `Mon Cahier IA répond à la question statistique sur ${quick_stats.scope_label}. ${quick_stats.scope_note || ""}`.trim();
+    recommendations = quick_stats.scope_note ? [quick_stats.scope_note] : [];
+  } else if (intent === "students_to_follow") {
     title = scopeLabel ? `Élèves à suivre en ${scopeLabel}` : "Élèves à suivre en priorité";
     summary = studentsToFollow.length
       ? `${studentsToFollow.length} élève${studentsToFollow.length > 1 ? "s" : ""} ressortent en suivi prioritaire. Le classement est basé sur l’indice de réussite, les moyennes, les matières clés, l’assiduité et la conduite.`
@@ -522,6 +702,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     blocking_subjects: blockers,
     council_note,
     remediation_plan,
+    quick_stats,
     model: {
       key: context.model_key,
       version: context.model_version,

@@ -363,6 +363,37 @@ function normalizeScopeLabel(value: string | null | undefined) {
   return text || "le périmètre choisi";
 }
 
+function buildScopeStats(args: {
+  classes: ClassRow[];
+  allClasses: ClassRow[];
+  class_id: string | null;
+  levelHint: string | null;
+  selectedClass: ClassRow | null;
+}) {
+  const active_label = args.selectedClass?.label
+    ? args.selectedClass.label
+    : args.levelHint
+      ? `niveau ${normalizeScopeLabel(args.levelHint)}`
+      : "toutes les classes";
+
+  const byLevel = new Map<string, number>();
+  for (const cls of args.allClasses) {
+    const key = String(cls.level || "Sans niveau").trim() || "Sans niveau";
+    byLevel.set(key, (byLevel.get(key) || 0) + 1);
+  }
+
+  return {
+    active_label,
+    is_filtered: Boolean(args.class_id || args.levelHint),
+    selected_class_label: args.selectedClass?.label || null,
+    selected_level: args.selectedClass?.level || args.levelHint || null,
+    total_classes_count: args.allClasses.length,
+    classes_by_level: Array.from(byLevel.entries())
+      .map(([level, count]) => ({ level, count }))
+      .sort((a, b) => a.level.localeCompare(b.level, "fr", { numeric: true })),
+  };
+}
+
 function buildMlRowsWithOfficialAverages(rows: PredictionRow[], officialAverages: Map<string, OfficialBulletinAverage>): PredictionRow[] {
   return rows.map((row) => {
     const official = chooseOfficialAverage(officialAverages.get(row.student_id));
@@ -978,6 +1009,7 @@ async function saveInteraction(args: {
         subjects_count: args.context.subjects.length,
         warnings: args.context.warnings,
         data_quality: args.context.data_quality || null,
+        scope_stats: args.context.scope_stats || null,
       },
     });
   } catch {
@@ -1085,6 +1117,24 @@ export async function POST(req: NextRequest) {
         },
       });
     }
+
+    const allClassesForYear = class_id || scopeLevelHint
+      ? await loadClasses({
+          srv: ctx.srv,
+          institution_id: ctx.institution_id,
+          academic_year,
+          class_id: null,
+          levelHint: null,
+        })
+      : classes;
+
+    const scopeStats = buildScopeStats({
+      classes,
+      allClasses: allClassesForYear,
+      class_id,
+      levelHint: scopeLevelHint,
+      selectedClass,
+    });
 
     const predictionResult = await loadPredictionRows({
       srv: ctx.srv,
@@ -1230,6 +1280,7 @@ export async function POST(req: NextRequest) {
       subjects: subjectResult.subjects,
       warnings: predictionResult.warnings,
       data_quality: dataQuality,
+      scope_stats: scopeStats,
     };
 
     const answer = buildAiAnswer(aiContext, question);
@@ -1267,6 +1318,7 @@ export async function POST(req: NextRequest) {
         model_source: aiContext.model_source,
         model_version: aiContext.model_version,
         data_quality: aiContext.data_quality,
+        scope_stats: aiContext.scope_stats,
       },
     });
   } catch (e: any) {

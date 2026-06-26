@@ -111,6 +111,7 @@ type AiAnswer = {
   blocking_subjects: SubjectSignal[];
   council_note?: string;
   remediation_plan?: string[];
+  quick_stats?: QuickStats;
   model: {
     key: string;
     version: string;
@@ -166,6 +167,8 @@ function buildScopePresets(args: { classLabel?: string | null; level?: string | 
   const classScope = scope ? `dans ${scope}` : "dans l’établissement";
 
   return [
+    scope ? `Combien d’élèves avons-nous dans ${scope} ?` : "Combien de classes avons-nous ?",
+    scope ? `Combien de classes contient le périmètre ${scope} ?` : "Combien d’élèves avons-nous ?",
     `Quels élèves ${studentScope} doivent être suivis en priorité ${exam} ?`.replace(/\s+/g, " ").trim(),
     scope ? `Quels signaux fragilisent ${scope} ?` : "Quelle classe a le plus fort risque de baisse ?",
     scope ? `Quelles matières bloquent les élèves de ${scope} ?` : "Quelles matières bloquent les élèves ?",
@@ -215,6 +218,13 @@ function riskStyle(level: string) {
   if (level === "medium") return "border-amber-200 bg-amber-50 text-amber-800";
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
+function quickStatStyle(tone: QuickStat["tone"] = "neutral") {
+  if (tone === "good") return "border-emerald-100 bg-emerald-50 text-emerald-900";
+  if (tone === "warning") return "border-amber-100 bg-amber-50 text-amber-900";
+  if (tone === "danger") return "border-red-100 bg-red-50 text-red-900";
+  return "border-slate-200 bg-slate-50 text-slate-900";
+}
+
 
 export default function MonCahierIaPage() {
   const [loading, setLoading] = useState(true);
@@ -632,6 +642,45 @@ export default function MonCahierIaPage() {
               {answer.ethics_notice}
             </div>
           </div>
+
+          {answer.quick_stats?.cards?.length ? (
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-lg font-black text-slate-950">
+                    <BarChart3 className="h-5 w-5 text-blue-700" />
+                    Statistiques rapides
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Périmètre : {answer.quick_stats.scope_label}
+                    {answer.quick_stats.scope_note ? ` · ${answer.quick_stats.scope_note}` : ""}
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {answer.quick_stats.cards.map((stat) => (
+                  <div key={stat.key} className={`rounded-2xl border p-4 ${quickStatStyle(stat.tone)}`}>
+                    <div className="text-xs font-black uppercase tracking-wide opacity-70">{stat.label}</div>
+                    <div className="mt-2 text-3xl font-black">{stat.value}</div>
+                    {stat.details ? <p className="mt-2 text-xs font-semibold leading-5 opacity-80">{stat.details}</p> : null}
+                  </div>
+                ))}
+              </div>
+              {answer.quick_stats.breakdown?.length ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 text-sm font-black text-slate-950">Répartition par niveau</div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {answer.quick_stats.breakdown.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                        <span className="font-bold text-slate-700">{item.label}</span>
+                        <span className="font-black text-slate-950">{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {answer.recommendations?.length ? (
             <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
