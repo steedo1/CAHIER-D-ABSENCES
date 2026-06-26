@@ -1524,13 +1524,21 @@ export async function POST(req: NextRequest) {
     });
 
     const subjectsByKey = new Map<string, AiSubjectSignal>();
-    for (const signal of [...subjectResult.subjects, ...bulletinSubjectSignals]) {
+
+    // Règle métier v16 : quand les moyennes matière officielles du bulletin
+    // existent, elles sont la vérité de référence pour les matières bloquantes.
+    // Les notes brutes publiées peuvent être incomplètes ou porter sur un autre
+    // agrégat ; elles ne doivent donc jamais écraser une moyenne matière bulletin.
+    for (const signal of subjectResult.subjects) {
       const key = `${signal.class_id}::${signal.subject_id}`;
-      const existing = subjectsByKey.get(key);
-      if (!existing || signal.blocker_score > existing.blocker_score) {
-        subjectsByKey.set(key, signal);
-      }
+      subjectsByKey.set(key, signal);
     }
+
+    for (const signal of bulletinSubjectSignals) {
+      const key = `${signal.class_id}::${signal.subject_id}`;
+      subjectsByKey.set(key, signal);
+    }
+
     const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
 
     const dataQuality = buildDataQuality({
