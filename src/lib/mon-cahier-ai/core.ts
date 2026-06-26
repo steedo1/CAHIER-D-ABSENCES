@@ -209,7 +209,9 @@ export function classifySubjectSignal(subject: {
     return { alert_level: "blocking", alert_label: "Bloquante" };
   }
 
-  if (score >= 20 || (avg != null && avg < 13.5) || weak > 0) {
+  // Vigilance seulement s'il existe un vrai signal exploitable :
+  // moyenne proche du seuil, élèves sous 10, ou score construit non nul.
+  if (score >= 20 || (avg != null && avg >= 10 && avg < 13.5) || weak > 0) {
     return { alert_level: "watch", alert_label: "Vigilance" };
   }
 

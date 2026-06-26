@@ -962,15 +962,20 @@ async function loadSubjectSignals(args: {
 
     const avg = acc.weighted_sum / acc.weight_total;
     const weakRatio = acc.weak_students.size / Math.max(1, cls?.students_count || acc.notes_count);
-    const blockerScore = Math.round(
-      clamp(
-        Math.max(0, (12 - avg) / 12) * 65 +
-          weakRatio * 25 +
-          (acc.evaluations.size < 2 ? 10 : 0),
-        0,
-        100,
-      ),
-    );
+
+    // Score pédagogique lisible : une matière de vigilance ne doit pas afficher 0/100.
+    // - < 10/20 : signal critique fort.
+    // - 10 à 13,5/20 : vigilance modérée, utile pour les signaux faibles.
+    // - >= 13,5/20 sans élèves faibles : pas de signal.
+    const avgRiskScore =
+      avg < 10
+        ? 45 + Math.max(0, (10 - avg) / 10) * 30
+        : avg < 13.5
+          ? 20 + Math.max(0, (13.5 - avg) / 3.5) * 15
+          : 0;
+    const weakRiskScore = weakRatio * 25;
+    const lowEvidencePenalty = acc.evaluations.size < 2 && (avgRiskScore > 0 || acc.weak_students.size > 0) ? 5 : 0;
+    const blockerScore = Math.round(clamp(avgRiskScore + weakRiskScore + lowEvidencePenalty, 0, 100));
 
     const avgScore = round2(avg);
     const alert = classifySubjectSignal({
