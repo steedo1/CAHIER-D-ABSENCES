@@ -443,14 +443,15 @@ export default function ClassListPrintPage() {
       const financeChanges =
         Number(financeSync.inserted || 0) +
         Number(financeSync.reactivated || 0) +
-        Number(financeSync.cancelled || 0);
+        Number(financeSync.cancelled || 0) +
+        Number(financeSync.settledPaid || 0);
       const warnings = Array.isArray(json?.finance_warnings) ? json.finance_warnings : [];
 
       setSaveMsg(
         [
           `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`,
           financeChanges > 0
-            ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.cancelled || 0)} annulée(s).`
+            ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.cancelled || 0)} annulée(s), ${Number(financeSync.settledPaid || 0)} dette(s) soldée(s) automatiquement.`
             : "Finance vérifiée : aucune dette à ajuster.",
           Number(financeSync.skippedPaid || 0) > 0
             ? `${Number(financeSync.skippedPaid || 0)} dette(s) déjà encaissée(s) conservée(s).`

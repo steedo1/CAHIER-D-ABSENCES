@@ -69,6 +69,7 @@ type FinanceSyncResult = {
   inserted: number;
   reactivated: number;
   cancelled: number;
+  settledPaid: number;
   skippedPaid: number;
 };
 
@@ -623,6 +624,7 @@ async function reconcileFinanceChargesForStudent(
     inserted: 0,
     reactivated: 0,
     cancelled: 0,
+    settledPaid: 0,
     skippedPaid: 0,
   };
 
@@ -662,7 +664,7 @@ async function reconcileFinanceChargesForStudent(
   const { data: existingCharges, error: existingErr } = await srv
     .schema("finance")
     .from("v_charge_balances")
-    .select("id,fee_schedule_id,paid_amount,computed_status")
+    .select("id,fee_schedule_id,paid_amount,balance_due,computed_status")
     .eq("school_id", institutionId)
     .eq("student_id", studentId)
     .eq("class_id", classId)
@@ -672,7 +674,7 @@ async function reconcileFinanceChargesForStudent(
 
   const existingBySchedule = new Map<
     string,
-    { id: string; paid_amount: number; computed_status: string | null }
+    { id: string; paid_amount: number; balance_due: number; computed_status: string | null }
   >();
 
   for (const charge of existingCharges || []) {
@@ -682,6 +684,7 @@ async function reconcileFinanceChargesForStudent(
     existingBySchedule.set(scheduleId, {
       id: chargeId,
       paid_amount: Number((charge as any).paid_amount || 0),
+      balance_due: Number((charge as any).balance_due || 0),
       computed_status: (charge as any).computed_status ? String((charge as any).computed_status) : null,
     });
   }
@@ -754,15 +757,26 @@ async function reconcileFinanceChargesForStudent(
   }
 
   const obsoleteChargeIds: string[] = [];
+  const obsoletePaidChargeIds: string[] = [];
   let skippedPaid = 0;
 
   for (const [scheduleId, charge] of existingBySchedule.entries()) {
     if (applicableScheduleIds.has(scheduleId)) continue;
     if (charge.computed_status === "cancelled") continue;
+
     if (charge.paid_amount > 0) {
+      // Cas métier important : si un élève passe Interne -> Externe,
+      // on ne doit pas supprimer l'historique des reçus déjà encaissés.
+      // En revanche, le reste dû ne doit plus apparaître dans Encaissements.
+      // On ramène donc la dette au montant déjà payé : solde dû = 0,
+      // historique conservé, aucune nouvelle somme réclamée à tort.
+      if (charge.balance_due > 0) {
+        obsoletePaidChargeIds.push(charge.id);
+      }
       skippedPaid++;
       continue;
     }
+
     obsoleteChargeIds.push(charge.id);
   }
 
@@ -782,7 +796,30 @@ async function reconcileFinanceChargesForStudent(
     cancelled = obsoleteChargeIds.length;
   }
 
-  return { inserted, reactivated, cancelled, skippedPaid };
+  let settledPaid = 0;
+  if (obsoletePaidChargeIds.length > 0) {
+    for (const chargeId of obsoletePaidChargeIds) {
+      const charge = Array.from(existingBySchedule.values()).find((item) => item.id === chargeId);
+      if (!charge) continue;
+
+      const { error: settleErr } = await srv
+        .schema("finance")
+        .from("student_charges")
+        .update({
+          base_amount: charge.paid_amount,
+          status: "paid",
+          notes: "Profil financier modifié depuis la liste de classe : solde restant neutralisé, encaissement déjà reçu conservé.",
+          updated_at: nowIso,
+        } as any)
+        .eq("school_id", institutionId)
+        .eq("id", chargeId);
+
+      if (settleErr) throw new Error(settleErr.message);
+      settledPaid++;
+    }
+  }
+
+  return { inserted, reactivated, cancelled, settledPaid, skippedPaid };
 }
 
 async function ensureFinanceChargesForStudent(
@@ -1042,6 +1079,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     inserted: 0,
     reactivated: 0,
     cancelled: 0,
+    settledPaid: 0,
     skippedPaid: 0,
   };
   const financeWarnings: string[] = [];
@@ -1122,6 +1160,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       financeSync.inserted += result.inserted;
       financeSync.reactivated += result.reactivated;
       financeSync.cancelled += result.cancelled;
+      financeSync.settledPaid += result.settledPaid;
       financeSync.skippedPaid += result.skippedPaid;
     } catch (error) {
       financeWarnings.push(
