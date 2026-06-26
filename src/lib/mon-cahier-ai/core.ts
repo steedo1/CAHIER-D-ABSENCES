@@ -65,6 +65,7 @@ export type AiSubjectSignal = {
   alert_level?: "blocking" | "watch" | "ok";
   alert_label?: string;
   weak_students?: AiSubjectWeakStudent[];
+  remediation_actions?: string[];
 };
 
 export type AiDataQualityStatus = "ok" | "partial" | "missing";
@@ -664,10 +665,17 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     .sort((a, b) => b.risk_index - a.risk_index)
     .slice(0, 12);
   const subjectAlerts = [...scoped.subjects]
-    .map((subject) => ({
-      ...subject,
-      ...classifySubjectSignal(subject),
-    }))
+    .map((subject) => {
+      const alert = classifySubjectSignal(subject);
+      const enrichedSubject: AiSubjectSignal = {
+        ...subject,
+        ...alert,
+      };
+      return {
+        ...enrichedSubject,
+        remediation_actions: buildSubjectRemediationActions(enrichedSubject),
+      };
+    })
     .filter((subject) => subject.alert_level !== "ok")
     .sort((a, b) => b.blocker_score - a.blocker_score)
     .slice(0, 15);
@@ -735,9 +743,17 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
       "Ne jamais utiliser l’indice IA comme sanction automatique : il sert à orienter l’accompagnement.",
     ];
   } else if (intent === "remediation_plan") {
-    title = scopeLabel ? `Plan de remédiation — ${scopeLabel}` : "Plan de remédiation proposé";
+    title = scopeLabel ? `Plan de remédiation ciblé — ${scopeLabel}` : "Plan de remédiation ciblé";
     remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers: subjectAlerts });
-    summary = "Le plan cible d’abord les matières bloquantes ou de vigilance, ensuite les élèves prioritaires, puis l’assiduité et le suivi parents.";
+    if (subjectAlerts.length) {
+      const first = subjectAlerts[0];
+      const weakNames = formatWeakStudentNames(first, 4);
+      summary = weakNames
+        ? `Le plan cible d’abord ${first.subject_name} en ${first.class_label}, avec les élèves concernés : ${weakNames}.`
+        : `Le plan cible d’abord ${first.subject_name} en ${first.class_label}, puis les élèves prioritaires et le suivi de classe.`;
+    } else {
+      summary = "Le plan cible les élèves prioritaires, l’assiduité, la publication des notes et le suivi par l’équipe pédagogique.";
+    }
     recommendations = remediation_plan;
   }
 
@@ -782,6 +798,31 @@ function formatWeakStudentNames(subject: AiSubjectSignal, limit = 4): string {
   const names = weakStudents.map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`);
   const remaining = Math.max(0, (subject.weak_students?.length || 0) - weakStudents.length);
   return `${names.join(", ")}${remaining > 0 ? `, +${remaining} autre${remaining > 1 ? "s" : ""}` : ""}`;
+}
+
+function buildSubjectRemediationActions(subject: AiSubjectSignal): string[] {
+  const actions: string[] = [];
+  const weakNames = formatWeakStudentNames(subject, 6);
+  const isBlocking = subject.alert_level === "blocking";
+  const subjectLabel = `${subject.subject_name} en ${subject.class_label}`;
+
+  if (weakNames) {
+    actions.push(`Prendre en charge d’abord les élèves sous 10 : ${weakNames}.`);
+  } else if (subject.avg_score_20 != null && subject.avg_score_20 < 13.5) {
+    actions.push(`Mettre ${subjectLabel} sous observation sur les deux prochaines évaluations.`);
+  }
+
+  if (isBlocking) {
+    actions.push("Organiser une séance courte de remédiation centrée sur les notions non maîtrisées.");
+    actions.push("Prévoir un exercice diagnostique puis une mini-évaluation de contrôle après la remédiation.");
+  } else {
+    actions.push("Prévoir des exercices courts de consolidation avant le prochain devoir.");
+    actions.push("Comparer les résultats au prochain devoir pour confirmer ou lever la vigilance.");
+  }
+
+  actions.push("Faire valider le suivi par le professeur principal et l’enseignant de la matière.");
+
+  return actions.slice(0, 5);
 }
 
 function buildCommonRecommendations(args: {
@@ -887,39 +928,60 @@ function buildRemediationPlan(args: {
   blockers: AiSubjectSignal[];
 }): string[] {
   const plan: string[] = [];
-  const blockerBySubject = args.blockers.slice(0, 5);
+  const subjectTargets = args.blockers.slice(0, 5);
   const topClasses = args.classesAtRisk.slice(0, 3);
   const topStudents = args.studentsToFollow.slice(0, 10);
 
-  if (blockerBySubject.length) {
-    const first = blockerBySubject[0];
-    const weakNames = formatWeakStudentNames(first, 5);
-    plan.push(
-      `Semaine 1 : lancer une remédiation ou une vigilance renforcée dans les matières signalées (${blockerBySubject
-        .map((b) => `${b.subject_name} / ${b.class_label}`)
-        .join(", ")}).${weakNames ? ` Première liste d’élèves concernés en ${first.subject_name} : ${weakNames}.` : ""}`,
-    );
-  } else {
-    plan.push("Semaine 1 : identifier les chapitres non maîtrisés à partir des dernières évaluations publiées.");
-  }
+  if (subjectTargets.length) {
+    const first = subjectTargets[0];
+    const weakNames = formatWeakStudentNames(first, 6);
+    const alertLabel = first.alert_level === "blocking" ? "matière bloquante" : "matière de vigilance";
 
-  if (topClasses.length) {
     plan.push(
-      `Semaine 1-2 : suivre les classes sensibles (${topClasses
-        .map((c) => c.class_label)
-        .join(", ")}) avec un point rapide professeur principal + éducateur.`,
+      `Priorité 1 : traiter ${first.subject_name} en ${first.class_label} (${alertLabel}, moyenne ${formatAvg(
+        first.avg_score_20,
+      )}, ${first.weak_students_count} élève${first.weak_students_count > 1 ? "s" : ""} sous 10).${
+        weakNames ? ` Élèves concernés : ${weakNames}.` : ""
+      }`,
     );
+
+    for (const action of first.remediation_actions || []) {
+      plan.push(`Action ${first.subject_name} : ${action}`);
+    }
+
+    for (const subject of subjectTargets.slice(1, 4)) {
+      const names = formatWeakStudentNames(subject, 4);
+      plan.push(
+        `Suivi complémentaire : ${subject.subject_name} en ${subject.class_label} — moyenne ${formatAvg(
+          subject.avg_score_20,
+        )}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10.${
+          names ? ` Élèves concernés : ${names}.` : ""
+        }`,
+      );
+    }
+  } else {
+    plan.push("Semaine 1 : aucune matière bloquante claire n’est isolée ; identifier les chapitres non maîtrisés à partir des dernières évaluations publiées.");
   }
 
   if (topStudents.length) {
     plan.push(
-      `Semaine 2 : établir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${topStudents.length > 1 ? "s" : ""}, avec objectif par matière et responsable de suivi.`,
+      `Semaine 1-2 : ouvrir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${
+        topStudents.length > 1 ? "s" : ""
+      }, avec objectif par matière, responsable de suivi et date de vérification.`,
     );
   }
 
-  plan.push("Semaine 2-3 : organiser des exercices courts corrigés immédiatement, plutôt que multiplier seulement les devoirs longs.");
-  plan.push("Semaine 3 : faire un mini-bilan : nouvelles notes, assiduité, retards, participation, évolution par élève.");
-  plan.push("Avant conseil : produire une note de synthèse Mon Cahier IA et valider les conclusions avec l’équipe pédagogique.");
+  if (topClasses.length) {
+    plan.push(
+      `Semaine 2 : organiser un point rapide professeur principal + éducateur pour ${topClasses
+        .map((c) => c.class_label)
+        .join(", ")} afin de suivre les classes sensibles.`,
+    );
+  }
 
-  return plan;
+  plan.push("Semaine 2-3 : privilégier des exercices courts corrigés immédiatement, puis une mini-évaluation de contrôle.");
+  plan.push("Avant le conseil : comparer les nouvelles notes, l’assiduité et la conduite avant toute conclusion définitive.");
+  plan.push("Cadre éthique : utiliser ce plan pour accompagner les élèves, jamais pour sanctionner automatiquement.");
+
+  return plan.slice(0, 10);
 }

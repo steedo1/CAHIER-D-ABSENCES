@@ -94,6 +94,7 @@ type SubjectSignal = {
   alert_level?: "blocking" | "watch" | "ok";
   alert_label?: string;
   weak_students?: SubjectWeakStudent[];
+  remediation_actions?: string[];
 };
 
 type QuickStat = {
@@ -752,6 +753,25 @@ export default function MonCahierIaPage() {
             </div>
           ) : null}
 
+          {answer.remediation_plan?.length && answer.intent === "remediation_plan" ? (
+            <div className="rounded-[28px] border border-cyan-100 bg-cyan-50/40 p-5 shadow-sm">
+              <div className="mb-4 flex items-center gap-2 text-lg font-black text-slate-950">
+                <Sparkles className="h-5 w-5 text-cyan-700" />
+                Plan de remédiation ciblé
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {answer.remediation_plan.map((step, index) => (
+                  <div key={`${step}-${index}`} className="rounded-2xl border border-cyan-100 bg-white p-4 text-sm font-medium leading-6 text-slate-700">
+                    <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-950 text-xs font-black text-white">
+                      {index + 1}
+                    </span>
+                    {step}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="grid gap-5 xl:grid-cols-3">
             <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm xl:col-span-1">
               <div className="mb-4 flex items-center gap-2 text-lg font-black text-slate-950">
@@ -858,6 +878,16 @@ export default function MonCahierIaPage() {
                               </div>
                             ) : null}
                           </div>
+                        </div>
+                      ) : null}
+                      {subject.remediation_actions?.length ? (
+                        <div className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50 p-3">
+                          <div className="text-[11px] font-black uppercase tracking-wide text-cyan-800">Actions proposées</div>
+                          <ul className="mt-2 list-inside list-disc space-y-1 text-xs font-medium leading-5 text-cyan-950">
+                            {subject.remediation_actions.slice(0, 3).map((action) => (
+                              <li key={action}>{action}</li>
+                            ))}
+                          </ul>
                         </div>
                       ) : null}
                     </div>
