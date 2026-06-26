@@ -742,14 +742,22 @@ export default function MonCahierIaPage() {
           ) : null}
 
           {answer.council_note ? (
-            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2 text-lg font-black text-slate-950">
-                <GraduationCap className="h-5 w-5 text-violet-700" />
-                Note de conseil de classe
+            <div className="rounded-[28px] border border-violet-100 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-center gap-2 text-lg font-black text-slate-950">
+                  <GraduationCap className="h-5 w-5 text-violet-700" />
+                  Note préparatoire au conseil de classe
+                </div>
+                <span className="rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-800">
+                  Document IA structuré
+                </span>
               </div>
-              <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-950 p-4 text-sm leading-7 text-slate-100">
+              <pre className="max-h-[620px] overflow-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-medium leading-7 text-slate-800">
                 {answer.council_note}
               </pre>
+              <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">
+                Cette note est conçue pour préparer le conseil : elle doit être relue par l’équipe éducative avant diffusion ou impression.
+              </p>
             </div>
           ) : null}
 

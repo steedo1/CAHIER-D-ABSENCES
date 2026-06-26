@@ -880,43 +880,106 @@ function buildCouncilNote(args: {
   blockers: AiSubjectSignal[];
   avgSuccess: number | null;
 }): string {
+  const scopeLabel = buildScopeLabel(args.scoped) || "Établissement";
   const topClass = args.classesAtRisk[0];
-  const topBlocker = args.blockers[0];
+  const subjectAlerts = args.blockers.slice(0, 5);
+  const blockingSubjects = subjectAlerts.filter((subject) => subject.alert_level === "blocking");
+  const watchSubjects = subjectAlerts.filter((subject) => subject.alert_level === "watch");
   const topStudents = args.studentsToFollow.slice(0, 8);
+  const dataQuality = args.context.data_quality;
+  const avgClass =
+    args.scoped.classes.length === 1
+      ? args.scoped.classes[0]?.avg_general_20
+      : args.scoped.students.length
+        ? args.scoped.students.reduce((acc, student) => acc + (student.general_avg_20 ?? 0), 0) /
+          Math.max(1, args.scoped.students.filter((student) => student.general_avg_20 != null).length)
+        : null;
+  const studentsWithOfficialAvg = args.scoped.students.filter((student) => student.general_avg_20 != null).length;
+  const conductCount = args.scoped.students.filter((student) => student.conduct_total_20 != null).length;
+  const presenceCount = args.scoped.students.filter(
+    (student) => student.presence_rate != null || student.total_absent_hours != null || student.nb_lates != null,
+  ).length;
+  const subjectLines = subjectAlerts.length
+    ? subjectAlerts
+        .map((subject, index) => {
+          const label = subject.alert_level === "blocking" ? "bloquante" : "vigilance";
+          const weakNames = formatWeakStudentNames(subject, 5);
+          return `${index + 1}. ${subject.subject_name} (${subject.class_label}) — ${label}, moyenne ${formatAvg(
+            subject.avg_score_20,
+          )}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10${
+            weakNames ? ` : ${weakNames}` : ""
+          }.`;
+        })
+        .join("\n")
+    : "Aucune matière bloquante ou de vigilance n’est clairement isolée avec les moyennes officielles disponibles.";
+
+  const studentLines = topStudents.length
+    ? topStudents
+        .map(
+          (student, index) =>
+            `${index + 1}. ${student.full_name} (${student.class_label}) — priorité ${student.priority_score}/100 ; moyenne bulletin ${formatAvg(
+              student.general_avg_20,
+            )} ; motifs : ${student.reasons.join(" ; ") || "indicateurs à confirmer"}.`,
+        )
+        .join("\n")
+    : "Aucun élève ne ressort en suivi prioritaire. Les élèves faibles par matière restent à suivre dans les rubriques de remédiation.";
+
+  const topSubjectActions = subjectAlerts[0]?.remediation_actions?.length
+    ? subjectAlerts[0].remediation_actions!.map((action) => `- ${action}`).join("\n")
+    : "- Maintenir une observation pédagogique sur les prochaines évaluations.\n- Vérifier les devoirs publiés avant toute conclusion définitive.";
 
   const lines = [
-    `NOTE PRÉPARATOIRE AU CONSEIL DE CLASSE`,
+    "NOTE PRÉPARATOIRE AU CONSEIL DE CLASSE",
+    "==================================================",
+    `Périmètre : ${scopeLabel}`,
     `Année scolaire : ${args.context.academic_year}`,
+    `Date cible / examen : ${args.context.exam_date || "non renseignée"}`,
     `Date d’analyse : ${new Date().toLocaleDateString("fr-FR")}`,
+    `Version IA : ${args.context.model_version} (${args.context.model_source})`,
     "",
-    `1. Situation générale`,
-    `L’analyse porte sur ${args.scoped.classes.length} classe(s) et ${args.scoped.students.length} élève(s). L’indice moyen de préparation est ${args.avgSuccess == null ? "non disponible" : pct(args.avgSuccess)}. Cette estimation combine les résultats scolaires, les signaux d’assiduité, la conduite et les données d’évaluation disponibles.`,
+    "1. SYNTHÈSE GÉNÉRALE",
+    `- Classes analysées : ${args.scoped.classes.length}`,
+    `- Élèves analysés : ${args.scoped.students.length}`,
+    `- Moyennes bulletin officielles exploitées : ${studentsWithOfficialAvg}/${args.scoped.students.length}`,
+    `- Moyenne générale du périmètre : ${formatAvg(avgClass)}`,
+    `- Indice moyen de préparation : ${args.avgSuccess == null ? "non disponible" : pct(args.avgSuccess)}`,
+    `- Fiabilité des données : ${dataQuality ? `${dataQuality.score}% (${dataQuality.summary})` : "non calculée"}`,
     "",
-    `2. Points d’attention`,
+    "2. POINTS POSITIFS",
+    `- Les moyennes bulletin officielles sont ${studentsWithOfficialAvg === args.scoped.students.length && args.scoped.students.length > 0 ? "complètes" : "partiellement disponibles"} sur le périmètre analysé.`,
+    `- Les signaux d’assiduité sont exploitables pour ${presenceCount}/${args.scoped.students.length} élève(s).`,
+    `- La conduite est exploitable pour ${conductCount}/${args.scoped.students.length} élève(s).`,
+    blockingSubjects.length === 0
+      ? "- Aucune matière bloquante critique n’est isolée avec les seuils actuels."
+      : `- ${blockingSubjects.length} matière(s) ressortent comme bloquantes et doivent être traitées avant le conseil.`,
+    "",
+    "3. POINTS DE VIGILANCE PÉDAGOGIQUE",
     topClass
-      ? `La classe à surveiller en priorité est ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
-      : `Aucune classe prioritaire ne ressort clairement avec les données disponibles.`,
-    topBlocker
-      ? `${topBlocker.alert_level === "blocking" ? "La matière la plus bloquante" : "La principale matière de vigilance"} détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}${formatWeakStudentNames(topBlocker, 5) ? `. Élèves concernés : ${formatWeakStudentNames(topBlocker, 5)}` : ""}.`
-      : `Aucune matière bloquante ou de vigilance n’est clairement isolée.`,
+      ? `- Classe à surveiller : ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
+      : "- Aucune classe sensible ne ressort clairement avec le seuil actuel.",
+    watchSubjects.length
+      ? `- ${watchSubjects.length} matière(s) de vigilance sont à surveiller avant les prochains devoirs.`
+      : "- Aucune matière de vigilance supplémentaire n’est isolée.",
     "",
-    `3. Élèves à suivre`,
-    topStudents.length
-      ? topStudents
-          .map(
-            (s, i) =>
-              `${i + 1}. ${s.full_name} (${s.class_label}) — priorité ${s.priority_score}/100 : ${s.reasons.join(" ; ") || "indicateurs fragiles"}.`,
-          )
-          .join("\n")
-      : `Aucun élève ne ressort en suivi prioritaire.`,
+    "4. MATIÈRES À TRAITER",
+    subjectLines,
     "",
-    `4. Actions proposées`,
-    `- Organiser une remédiation ciblée dans les matières bloquantes.`,
-    `- Confier les cas prioritaires au professeur principal et à l’éducateur de niveau.`,
-    `- Relancer les parents lorsque l’assiduité ou les résultats chutent.`,
-    `- Vérifier la publication des notes avant toute décision définitive.`,
+    "5. ÉLÈVES À SUIVRE",
+    studentLines,
     "",
-    `Observation éthique : cette note est une aide à la décision. Elle ne remplace pas le jugement de l’équipe pédagogique.`,
+    "6. ACTIONS RECOMMANDÉES AVANT LE CONSEIL",
+    topSubjectActions,
+    "- Mettre à jour les notes manquantes ou non publiées avant de figer les conclusions.",
+    "- Valider les cas individuels avec le professeur principal, l’éducateur de niveau et les enseignants concernés.",
+    "- Prévoir une information parent uniquement lorsque le suivi pédagogique le justifie.",
+    "",
+    "7. CONCLUSION PROPOSÉE",
+    subjectAlerts.length
+      ? "La classe ne présente pas nécessairement une difficulté générale, mais certains points de vigilance par matière doivent être traités de façon ciblée."
+      : "La classe ne présente pas de signal pédagogique critique avec les données actuellement disponibles.",
+    "",
+    "CADRE ÉTHIQUE",
+    "Cette note est une aide à la décision. Elle ne remplace pas l’appréciation de l’équipe éducative et ne doit jamais servir à sanctionner automatiquement un élève.",
   ];
 
   return lines.join("\n");
