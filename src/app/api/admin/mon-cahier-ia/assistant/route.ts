@@ -155,6 +155,27 @@ function cleanNumberOrNull(value: unknown, precision = 2): number | null {
   return Number(n.toFixed(precision));
 }
 
+function isOfficialConductSubjectName(value: unknown): boolean {
+  const text = cleanText(value);
+  if (!text) return false;
+
+  // Dans les bulletins, la conduite peut être stockée comme matière "Conduite"
+  // ou comme discipline générale selon les paramétrages d'établissement.
+  return (
+    text === "conduite" ||
+    text.includes("conduite") ||
+    text === "discipline generale" ||
+    text === "discipline"
+  );
+}
+
+function getOfficialConductAverage(avg: OfficialBulletinAverage | undefined): number | null {
+  if (!avg?.subjects?.length) return null;
+
+  const subject = avg.subjects.find((item) => isOfficialConductSubjectName(item.subject_name));
+  return subject?.avg20 == null ? null : round2(Number(subject.avg20));
+}
+
 function inferLevelFromClassLabel(label: unknown, fallbackLevel: unknown) {
   const labelText = cleanText(label);
   const fallbackText = String(fallbackLevel || "").trim();
@@ -439,6 +460,7 @@ function buildAnalysisRowsFromPredictionsAndBulletins(args: {
   for (const avg of args.officialAverages.values()) {
     if (rowsByStudent.has(avg.student_id)) continue;
     const cls = classById.get(avg.class_id);
+    const officialConduct = getOfficialConductAverage(avg);
     rowsByStudent.set(avg.student_id, {
       student_id: avg.student_id,
       first_name: null,
@@ -454,8 +476,8 @@ function buildAnalysisRowsFromPredictionsAndBulletins(args: {
       presence_rate: null,
       total_absent_hours: null,
       nb_lates: null,
-      conduct_total_20: null,
-      conduct_norm: null,
+      conduct_total_20: officialConduct,
+      conduct_norm: officialConduct == null ? null : officialConduct / 20,
       p_success: null,
       risk_level: null,
     });
@@ -569,11 +591,22 @@ async function loadOfficialBulletinAverages(args: {
         const perSubject = Array.isArray(item?.per_subject) ? item.per_subject : [];
         const bulletinSubjects: BulletinSubjectAverage[] = perSubject
           .map((subject: any) => {
-            const subjectId = String(subject?.subject_id || "").trim();
+            const subjectId = String(subject?.subject_id || subject?.id || "").trim();
             if (!subjectId) return null;
+
+            const directSubjectName = String(
+              subject?.subject_name ||
+                subject?.name ||
+                subject?.label ||
+                subject?.code ||
+                subject?.subject?.name ||
+                subject?.subject?.label ||
+                "",
+            ).trim();
+
             return {
               subject_id: subjectId,
-              subject_name: subjectsMeta.get(subjectId) || "Matière",
+              subject_name: directSubjectName || subjectsMeta.get(subjectId) || "Matière",
               avg20: cleanNumberOrNull(subject?.avg20, 4),
             };
           })
@@ -1067,7 +1100,7 @@ function buildDataQuality(args: {
       label: "Conduite",
       ratio: totalStudents > 0 ? conductCount / safeStudents : 0,
       weight: 8,
-      details: `${conductCount}/${totalStudents} élève${conductCount > 1 ? "s" : ""} avec conduite exploitable.`,
+      details: `${conductCount}/${totalStudents} élève${conductCount > 1 ? "s" : ""} avec conduite exploitable, y compris la conduite officielle lue depuis les bulletins.`,
     }),
     qualityItem({
       key: "progression",
@@ -1380,12 +1413,14 @@ export async function POST(req: NextRequest) {
           : round2(Number(row.general_avg_20))
         : round2(officialGeneralAvg);
       const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
-      const conduct_total_20 =
-        row.conduct_total_20 == null
+      const officialConductAvg = getOfficialConductAverage(officialAverage);
+      const conduct_total_20 = officialConductAvg == null
+        ? row.conduct_total_20 == null
           ? row.conduct_norm == null
             ? null
             : round2(Number(row.conduct_norm) * 20)
-          : round2(Number(row.conduct_total_20));
+          : round2(Number(row.conduct_total_20))
+        : officialConductAvg;
       const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
       const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
       const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
