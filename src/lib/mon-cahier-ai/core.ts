@@ -886,7 +886,6 @@ function buildCouncilNote(args: {
   const blockingSubjects = subjectAlerts.filter((subject) => subject.alert_level === "blocking");
   const watchSubjects = subjectAlerts.filter((subject) => subject.alert_level === "watch");
   const topStudents = args.studentsToFollow.slice(0, 8);
-  const dataQuality = args.context.data_quality;
   const avgClass =
     args.scoped.classes.length === 1
       ? args.scoped.classes[0]?.avg_general_20
@@ -928,38 +927,59 @@ function buildCouncilNote(args: {
     ? subjectAlerts[0].remediation_actions!.map((action) => `- ${action}`).join("\n")
     : "- Maintenir une observation pédagogique sur les prochaines évaluations.\n- Vérifier les devoirs publiés avant toute conclusion définitive.";
 
+  const allStudentsHaveAvg = studentsWithOfficialAvg === args.scoped.students.length && args.scoped.students.length > 0;
+  const avgLabel = formatAvg(avgClass);
+  const classCountLabel =
+    args.scoped.classes.length > 1
+      ? `${args.scoped.classes.length} classes`
+      : args.scoped.classes.length === 1
+        ? "1 classe"
+        : "périmètre non précisé";
+  const situationLine = subjectAlerts.length
+    ? "La classe présente un niveau général satisfaisant, avec des points de vigilance à traiter de manière ciblée."
+    : "La classe ne présente pas de difficulté pédagogique majeure avec les données disponibles.";
+  const bulletinLine = allStudentsHaveAvg
+    ? "Les moyennes des bulletins sont disponibles pour tous les élèves du périmètre."
+    : `Les moyennes des bulletins sont disponibles pour ${studentsWithOfficialAvg}/${args.scoped.students.length} élève(s) du périmètre.`;
+  const attendanceLine = presenceCount > 0
+    ? `Les éléments d’assiduité sont disponibles pour ${presenceCount}/${args.scoped.students.length} élève(s).`
+    : "Les éléments d’assiduité ne sont pas suffisamment renseignés pour ce périmètre.";
+  const conductLine = conductCount > 0
+    ? `La conduite est prise en compte pour ${conductCount}/${args.scoped.students.length} élève(s).`
+    : "La conduite n’est pas suffisamment renseignée pour ce périmètre.";
+  const blockingLine = blockingSubjects.length
+    ? `${blockingSubjects.length} matière(s) nécessitent une attention particulière avant le conseil.`
+    : "Aucune matière bloquante critique n’est isolée.";
+  const watchLine = watchSubjects.length
+    ? `${watchSubjects.length} matière(s) méritent une vigilance pédagogique.`
+    : "Aucune matière de vigilance supplémentaire n’est isolée.";
+  const classRiskLine = topClass
+    ? `Une attention particulière peut être portée à ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "signaux pédagogiques à suivre"}).`
+    : "Aucune difficulté collective forte ne ressort dans le périmètre analysé.";
+
   const lines = [
     "NOTE PRÉPARATOIRE AU CONSEIL DE CLASSE",
     "==================================================",
-    `Périmètre : ${scopeLabel}`,
+    `Classe / périmètre : ${scopeLabel}`,
     `Année scolaire : ${args.context.academic_year}`,
-    `Date cible / examen : ${args.context.exam_date || "non renseignée"}`,
-    `Date d’analyse : ${new Date().toLocaleDateString("fr-FR")}`,
-    `Version IA : ${args.context.model_version} (${args.context.model_source})`,
+    `Date de préparation : ${new Date().toLocaleDateString("fr-FR")}`,
     "",
-    "1. SYNTHÈSE GÉNÉRALE",
-    `- Classes analysées : ${args.scoped.classes.length}`,
-    `- Élèves analysés : ${args.scoped.students.length}`,
-    `- Moyennes bulletin officielles exploitées : ${studentsWithOfficialAvg}/${args.scoped.students.length}`,
-    `- Moyenne générale du périmètre : ${formatAvg(avgClass)}`,
-    `- Indice moyen de préparation : ${args.avgSuccess == null ? "non disponible" : pct(args.avgSuccess)}`,
-    `- Fiabilité des données : ${dataQuality ? `${dataQuality.score}% (${dataQuality.summary})` : "non calculée"}`,
+    "1. SITUATION GÉNÉRALE",
+    situationLine,
+    `- Périmètre concerné : ${classCountLabel}.`,
+    `- Effectif concerné : ${args.scoped.students.length} élève(s).`,
+    `- Moyenne générale du périmètre : ${avgLabel}.`,
+    `- ${bulletinLine}`,
     "",
     "2. POINTS POSITIFS",
-    `- Les moyennes bulletin officielles sont ${studentsWithOfficialAvg === args.scoped.students.length && args.scoped.students.length > 0 ? "complètes" : "partiellement disponibles"} sur le périmètre analysé.`,
-    `- Les signaux d’assiduité sont exploitables pour ${presenceCount}/${args.scoped.students.length} élève(s).`,
-    `- La conduite est exploitable pour ${conductCount}/${args.scoped.students.length} élève(s).`,
-    blockingSubjects.length === 0
-      ? "- Aucune matière bloquante critique n’est isolée avec les seuils actuels."
-      : `- ${blockingSubjects.length} matière(s) ressortent comme bloquantes et doivent être traitées avant le conseil.`,
+    `- ${bulletinLine}`,
+    `- ${attendanceLine}`,
+    `- ${conductLine}`,
+    `- ${blockingLine}`,
     "",
-    "3. POINTS DE VIGILANCE PÉDAGOGIQUE",
-    topClass
-      ? `- Classe à surveiller : ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
-      : "- Aucune classe sensible ne ressort clairement avec le seuil actuel.",
-    watchSubjects.length
-      ? `- ${watchSubjects.length} matière(s) de vigilance sont à surveiller avant les prochains devoirs.`
-      : "- Aucune matière de vigilance supplémentaire n’est isolée.",
+    "3. POINTS DE VIGILANCE",
+    `- ${classRiskLine}`,
+    `- ${watchLine}`,
     "",
     "4. MATIÈRES À TRAITER",
     subjectLines,
@@ -967,19 +987,18 @@ function buildCouncilNote(args: {
     "5. ÉLÈVES À SUIVRE",
     studentLines,
     "",
-    "6. ACTIONS RECOMMANDÉES AVANT LE CONSEIL",
+    "6. ACTIONS PÉDAGOGIQUES PROPOSÉES",
     topSubjectActions,
-    "- Mettre à jour les notes manquantes ou non publiées avant de figer les conclusions.",
-    "- Valider les cas individuels avec le professeur principal, l’éducateur de niveau et les enseignants concernés.",
-    "- Prévoir une information parent uniquement lorsque le suivi pédagogique le justifie.",
+    "- Faire un point avec le professeur principal et les enseignants concernés.",
+    "- Suivre les élèves concernés à la prochaine évaluation.",
+    "- Informer les parents uniquement lorsque le suivi pédagogique le justifie.",
     "",
     "7. CONCLUSION PROPOSÉE",
     subjectAlerts.length
-      ? "La classe ne présente pas nécessairement une difficulté générale, mais certains points de vigilance par matière doivent être traités de façon ciblée."
+      ? "La classe ne présente pas nécessairement une difficulté générale, mais certains points de vigilance doivent être traités de manière ciblée."
       : "La classe ne présente pas de signal pédagogique critique avec les données actuellement disponibles.",
     "",
-    "CADRE ÉTHIQUE",
-    "Cette note est une aide à la décision. Elle ne remplace pas l’appréciation de l’équipe éducative et ne doit jamais servir à sanctionner automatiquement un élève.",
+    "NB : Cette note est une aide à la préparation du conseil de classe. Les décisions finales relèvent de l’équipe éducative.",
   ];
 
   return lines.join("\n");
