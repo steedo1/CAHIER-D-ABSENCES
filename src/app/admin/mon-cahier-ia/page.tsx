@@ -72,6 +72,14 @@ type ClassSignal = {
   main_reasons: string[];
 };
 
+type SubjectWeakStudent = {
+  student_id: string;
+  full_name: string;
+  matricule?: string | null;
+  avg_score_20: number | null;
+  general_avg_20?: number | null;
+};
+
 type SubjectSignal = {
   class_id: string;
   class_label: string;
@@ -85,6 +93,7 @@ type SubjectSignal = {
   blocker_score: number;
   alert_level?: "blocking" | "watch" | "ok";
   alert_label?: string;
+  weak_students?: SubjectWeakStudent[];
 };
 
 type QuickStat = {
@@ -831,6 +840,26 @@ export default function MonCahierIaPage() {
                         Moyenne {fmtAvg(subject.avg_score_20)} · {subject.weak_students_count} élève(s) sous 10
                         {subject.alert_level === "watch" ? " · point de vigilance" : subject.alert_level === "blocking" ? " · blocage possible" : ""}
                       </div>
+                      {subject.weak_students?.length ? (
+                        <div className="mt-3 rounded-2xl border border-white/70 bg-white p-3">
+                          <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Élèves concernés</div>
+                          <div className="mt-2 space-y-1.5">
+                            {subject.weak_students.slice(0, 4).map((student) => (
+                              <div key={student.student_id} className="flex items-center justify-between gap-3 text-xs">
+                                <span className="font-bold text-slate-700">{student.full_name}</span>
+                                <span className="rounded-full border border-red-100 bg-red-50 px-2 py-0.5 font-black text-red-700">
+                                  {fmtAvg(student.avg_score_20)}
+                                </span>
+                              </div>
+                            ))}
+                            {subject.weak_students.length > 4 ? (
+                              <div className="text-xs font-semibold text-slate-500">
+                                +{subject.weak_students.length - 4} autre{subject.weak_students.length - 4 > 1 ? "s" : ""} élève{subject.weak_students.length - 4 > 1 ? "s" : ""} concerné{subject.weak_students.length - 4 > 1 ? "s" : ""}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (

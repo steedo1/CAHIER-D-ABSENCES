@@ -43,6 +43,14 @@ export type AiClassSignal = {
   main_reasons: string[];
 };
 
+export type AiSubjectWeakStudent = {
+  student_id: string;
+  full_name: string;
+  matricule?: string | null;
+  avg_score_20: number | null;
+  general_avg_20?: number | null;
+};
+
 export type AiSubjectSignal = {
   class_id: string;
   class_label: string;
@@ -56,6 +64,7 @@ export type AiSubjectSignal = {
   blocker_score: number;
   alert_level?: "blocking" | "watch" | "ok";
   alert_label?: string;
+  weak_students?: AiSubjectWeakStudent[];
 };
 
 export type AiDataQualityStatus = "ok" | "partial" | "missing";
@@ -767,6 +776,14 @@ function computeConfidence(context: MonCahierAiContext, classesCount: number, st
   return clamp(Math.round(score), 20, 95);
 }
 
+function formatWeakStudentNames(subject: AiSubjectSignal, limit = 4): string {
+  const weakStudents = (subject.weak_students || []).slice(0, limit);
+  if (!weakStudents.length) return "";
+  const names = weakStudents.map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`);
+  const remaining = Math.max(0, (subject.weak_students?.length || 0) - weakStudents.length);
+  return `${names.join(", ")}${remaining > 0 ? `, +${remaining} autre${remaining > 1 ? "s" : ""}` : ""}`;
+}
+
 function buildCommonRecommendations(args: {
   studentsToFollow: AiStudentSignal[];
   classesAtRisk: AiClassSignal[];
@@ -786,8 +803,11 @@ function buildCommonRecommendations(args: {
   if (args.blockers.length) {
     const first = args.blockers[0];
     const label = first.alert_level === "blocking" ? "blocage actuel" : "point de vigilance";
+    const weakNames = formatWeakStudentNames(first, 4);
     recs.push(
-      `Organiser un point pédagogique sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme ${label}.`,
+      weakNames
+        ? `Organiser un point pédagogique sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme ${label}. Élèves concernés : ${weakNames}.`
+        : `Organiser un point pédagogique sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme ${label}.`,
     );
   }
 
@@ -836,7 +856,7 @@ function buildCouncilNote(args: {
       ? `La classe à surveiller en priorité est ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
       : `Aucune classe prioritaire ne ressort clairement avec les données disponibles.`,
     topBlocker
-      ? `${topBlocker.alert_level === "blocking" ? "La matière la plus bloquante" : "La principale matière de vigilance"} détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}.`
+      ? `${topBlocker.alert_level === "blocking" ? "La matière la plus bloquante" : "La principale matière de vigilance"} détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}${formatWeakStudentNames(topBlocker, 5) ? `. Élèves concernés : ${formatWeakStudentNames(topBlocker, 5)}` : ""}.`
       : `Aucune matière bloquante ou de vigilance n’est clairement isolée.`,
     "",
     `3. Élèves à suivre`,
@@ -872,10 +892,12 @@ function buildRemediationPlan(args: {
   const topStudents = args.studentsToFollow.slice(0, 10);
 
   if (blockerBySubject.length) {
+    const first = blockerBySubject[0];
+    const weakNames = formatWeakStudentNames(first, 5);
     plan.push(
       `Semaine 1 : lancer une remédiation ou une vigilance renforcée dans les matières signalées (${blockerBySubject
         .map((b) => `${b.subject_name} / ${b.class_label}`)
-        .join(", ")}).`,
+        .join(", ")}).${weakNames ? ` Première liste d’élèves concernés en ${first.subject_name} : ${weakNames}.` : ""}`,
     );
   } else {
     plan.push("Semaine 1 : identifier les chapitres non maîtrisés à partir des dernières évaluations publiées.");

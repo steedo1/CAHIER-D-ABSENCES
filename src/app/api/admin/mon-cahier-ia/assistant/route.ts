@@ -765,6 +765,14 @@ function buildSubjectSignalsFromBulletins(args: {
 }): AiSubjectSignal[] {
   const classMeta = new Map(args.classSignals.map((cls) => [cls.class_id, cls]));
 
+  type WeakStudent = {
+    student_id: string;
+    full_name: string;
+    matricule: string | null;
+    avg_score_20: number | null;
+    general_avg_20: number | null;
+  };
+
   type Acc = {
     class_id: string;
     class_label: string;
@@ -773,7 +781,7 @@ function buildSubjectSignalsFromBulletins(args: {
     subject_name: string;
     notes_count: number;
     sum: number;
-    weak_students: Set<string>;
+    weak_students: Map<string, WeakStudent>;
   };
 
   const accByKey = new Map<string, Acc>();
@@ -795,14 +803,23 @@ function buildSubjectSignalsFromBulletins(args: {
           subject_name: subject.subject_name || "Matière",
           notes_count: 0,
           sum: 0,
-          weak_students: new Set<string>(),
+          weak_students: new Map<string, WeakStudent>(),
         };
         accByKey.set(key, acc);
       }
 
+      const subjectAverage = Number(subject.avg20);
       acc.notes_count += 1;
-      acc.sum += Number(subject.avg20);
-      if (Number(subject.avg20) < 10) acc.weak_students.add(avg.student_id);
+      acc.sum += subjectAverage;
+      if (subjectAverage < 10) {
+        acc.weak_students.set(avg.student_id, {
+          student_id: avg.student_id,
+          full_name: avg.full_name || avg.matricule || "Élève",
+          matricule: avg.matricule || null,
+          avg_score_20: round2(subjectAverage),
+          general_avg_20: chooseOfficialAverage(avg),
+        });
+      }
     }
   }
 
@@ -820,6 +837,9 @@ function buildSubjectSignalsFromBulletins(args: {
     );
 
     const avgScore = avg == null ? null : round2(avg);
+    const weakStudents = Array.from(acc.weak_students.values()).sort(
+      (a, b) => Number(a.avg_score_20 ?? 20) - Number(b.avg_score_20 ?? 20),
+    );
     const alert = classifySubjectSignal({
       avg_score_20: avgScore,
       weak_students_count: acc.weak_students.size,
@@ -837,6 +857,7 @@ function buildSubjectSignalsFromBulletins(args: {
       avg_score_20: avgScore,
       weak_students_count: acc.weak_students.size,
       blocker_score: blockerScore,
+      weak_students: weakStudents,
       ...alert,
     });
   }
