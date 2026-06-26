@@ -54,6 +54,8 @@ export type AiSubjectSignal = {
   avg_score_20: number | null;
   weak_students_count: number;
   blocker_score: number;
+  alert_level?: "blocking" | "watch" | "ok";
+  alert_label?: string;
 };
 
 export type AiDataQualityStatus = "ok" | "partial" | "missing";
@@ -186,6 +188,26 @@ export function scorePct(value: number | null | undefined): string {
 export function formatAvg(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return "—";
   return `${round2(Number(value))?.toString().replace(".", ",")}/20`;
+}
+
+export function classifySubjectSignal(subject: {
+  avg_score_20?: number | null;
+  weak_students_count?: number | null;
+  blocker_score?: number | null;
+}): { alert_level: "blocking" | "watch" | "ok"; alert_label: string } {
+  const avg = subject.avg_score_20 == null ? null : Number(subject.avg_score_20);
+  const weak = subject.weak_students_count == null ? 0 : Number(subject.weak_students_count);
+  const score = subject.blocker_score == null ? 0 : Number(subject.blocker_score);
+
+  if (score >= 45 || (avg != null && avg < 10) || weak >= 3) {
+    return { alert_level: "blocking", alert_label: "Bloquante" };
+  }
+
+  if (score >= 20 || (avg != null && avg < 13.5) || weak > 0) {
+    return { alert_level: "watch", alert_label: "Vigilance" };
+  }
+
+  return { alert_level: "ok", alert_label: "Stable" };
 }
 
 export function cleanText(input: unknown): string {
@@ -624,7 +646,16 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     .filter((c) => c.students_count > 0 && c.risk_index >= 35)
     .sort((a, b) => b.risk_index - a.risk_index)
     .slice(0, 12);
-  const blockers = [...scoped.subjects].sort((a, b) => b.blocker_score - a.blocker_score).slice(0, 15);
+  const subjectAlerts = [...scoped.subjects]
+    .map((subject) => ({
+      ...subject,
+      ...classifySubjectSignal(subject),
+    }))
+    .filter((subject) => subject.alert_level !== "ok")
+    .sort((a, b) => b.blocker_score - a.blocker_score)
+    .slice(0, 15);
+  const blockers = subjectAlerts.filter((subject) => subject.alert_level === "blocking");
+  const watchSubjects = subjectAlerts.filter((subject) => subject.alert_level === "watch");
 
   const totalStudents = scoped.students.length;
   const highRisk = scoped.students.filter((s) => s.risk_level === "high").length;
@@ -637,7 +668,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
   const commonRecs = buildCommonRecommendations({
     studentsToFollow,
     classesAtRisk,
-    blockers,
+    blockers: subjectAlerts,
     totalStudents,
     highRisk,
     mediumRisk,
@@ -666,16 +697,20 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
       ? `La classe la plus sensible est ${classesAtRisk[0].class_label}, avec un indice de risque de ${classesAtRisk[0].risk_index}/100. Les classes suivantes doivent être observées avant les prochains conseils.`
       : "Aucune classe ne ressort comme sensible avec le seuil actuel. Le suivi reste utile, mais les données disponibles ne justifient pas une alerte de risque.";
   } else if (intent === "blocking_subjects") {
-    title = scopeLabel ? `Matières bloquantes — ${scopeLabel}` : "Matières bloquantes";
-    summary = blockers.length
-      ? `Les matières les plus bloquantes sont repérées à partir des moyennes par classe, du nombre d’évaluations et du volume d’élèves faibles. Première alerte : ${blockers[0].subject_name} en ${blockers[0].class_label}.`
-      : "Aucune matière bloquante claire n’a été détectée avec les notes publiées disponibles.";
+    title = scopeLabel ? `Matières bloquantes / vigilance — ${scopeLabel}` : "Matières bloquantes / de vigilance";
+    if (blockers.length) {
+      summary = `Les matières bloquantes sont repérées à partir des moyennes par classe, du nombre d’évaluations et du volume d’élèves faibles. Première alerte critique : ${blockers[0].subject_name} en ${blockers[0].class_label}.`;
+    } else if (watchSubjects.length) {
+      summary = `Aucune matière bloquante critique n’est détectée. Mon Cahier IA signale toutefois ${watchSubjects.length} matière${watchSubjects.length > 1 ? "s" : ""} de vigilance à surveiller avant les prochains devoirs.`;
+    } else {
+      summary = "Aucune matière bloquante ni matière de vigilance claire n’a été détectée avec les notes publiées disponibles.";
+    }
   } else if (intent === "school_summary" || intent === "general_analysis") {
     title = scopeLabel ? `Résumé pédagogique — ${scopeLabel}` : "Résumé de la situation pédagogique";
     summary = `Analyse de ${scoped.classes.length} classe${scoped.classes.length > 1 ? "s" : ""} et ${totalStudents} élève${totalStudents > 1 ? "s" : ""}. Indice moyen de préparation : ${avgSuccess == null ? "—" : pct(avgSuccess)}. ${highRisk} élève${highRisk > 1 ? "s" : ""} en suivi prioritaire et ${mediumRisk} en suivi renforcé.`;
   } else if (intent === "council_note") {
     title = scopeLabel ? `Note préparatoire au conseil de classe — ${scopeLabel}` : "Note préparatoire au conseil de classe";
-    council_note = buildCouncilNote({ context, scoped, classesAtRisk, studentsToFollow, blockers, avgSuccess });
+    council_note = buildCouncilNote({ context, scoped, classesAtRisk, studentsToFollow, blockers: subjectAlerts, avgSuccess });
     summary = "Voici une note structurée pour préparer le conseil de classe à partir des signaux pédagogiques disponibles.";
     recommendations = [
       "Relire la note avec le professeur principal avant diffusion.",
@@ -684,8 +719,8 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     ];
   } else if (intent === "remediation_plan") {
     title = scopeLabel ? `Plan de remédiation — ${scopeLabel}` : "Plan de remédiation proposé";
-    remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers });
-    summary = "Le plan cible d’abord les matières bloquantes, ensuite les élèves prioritaires, puis l’assiduité et le suivi parents.";
+    remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers: subjectAlerts });
+    summary = "Le plan cible d’abord les matières bloquantes ou de vigilance, ensuite les élèves prioritaires, puis l’assiduité et le suivi parents.";
     recommendations = remediation_plan;
   }
 
@@ -699,7 +734,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     recommendations,
     students_to_follow: studentsToFollow,
     classes_at_risk: classesAtRisk,
-    blocking_subjects: blockers,
+    blocking_subjects: subjectAlerts,
     council_note,
     remediation_plan,
     quick_stats,
@@ -742,8 +777,9 @@ function buildCommonRecommendations(args: {
 
   if (args.blockers.length) {
     const first = args.blockers[0];
+    const label = first.alert_level === "blocking" ? "blocage actuel" : "point de vigilance";
     recs.push(
-      `Organiser une remédiation ciblée sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme le premier blocage actuel.`,
+      `Organiser un point pédagogique sur ${first.subject_name} en ${first.class_label}, car cette matière ressort comme ${label}.`,
     );
   }
 
@@ -792,8 +828,8 @@ function buildCouncilNote(args: {
       ? `La classe à surveiller en priorité est ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "indicateurs fragiles"}).`
       : `Aucune classe prioritaire ne ressort clairement avec les données disponibles.`,
     topBlocker
-      ? `La matière la plus bloquante détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}.`
-      : `Aucune matière bloquante n’est clairement isolée.`,
+      ? `${topBlocker.alert_level === "blocking" ? "La matière la plus bloquante" : "La principale matière de vigilance"} détectée est ${topBlocker.subject_name} en ${topBlocker.class_label}, avec une moyenne de ${formatAvg(topBlocker.avg_score_20)}.`
+      : `Aucune matière bloquante ou de vigilance n’est clairement isolée.`,
     "",
     `3. Élèves à suivre`,
     topStudents.length
@@ -829,7 +865,7 @@ function buildRemediationPlan(args: {
 
   if (blockerBySubject.length) {
     plan.push(
-      `Semaine 1 : lancer une remédiation dans les matières bloquantes (${blockerBySubject
+      `Semaine 1 : lancer une remédiation ou une vigilance renforcée dans les matières signalées (${blockerBySubject
         .map((b) => `${b.subject_name} / ${b.class_label}`)
         .join(", ")}).`,
     );

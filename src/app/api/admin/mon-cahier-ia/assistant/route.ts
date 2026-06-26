@@ -5,6 +5,7 @@ import {
   buildAiAnswer,
   buildStudentReasons,
   cleanText,
+  classifySubjectSignal,
   clamp,
   computePriorityScore,
   getRiskLevel,
@@ -776,6 +777,13 @@ function buildSubjectSignalsFromBulletins(args: {
       ),
     );
 
+    const avgScore = avg == null ? null : round2(avg);
+    const alert = classifySubjectSignal({
+      avg_score_20: avgScore,
+      weak_students_count: acc.weak_students.size,
+      blocker_score: blockerScore,
+    });
+
     out.push({
       class_id: acc.class_id,
       class_label: acc.class_label,
@@ -784,13 +792,16 @@ function buildSubjectSignalsFromBulletins(args: {
       subject_name: acc.subject_name,
       evaluations_count: 0,
       notes_count: acc.notes_count,
-      avg_score_20: avg == null ? null : round2(avg),
+      avg_score_20: avgScore,
       weak_students_count: acc.weak_students.size,
       blocker_score: blockerScore,
+      ...alert,
     });
   }
 
-  return out.filter((s) => s.blocker_score >= 35).sort((a, b) => b.blocker_score - a.blocker_score);
+  return out
+    .filter((s) => s.alert_level !== "ok")
+    .sort((a, b) => b.blocker_score - a.blocker_score);
 }
 
 async function loadSubjectSignals(args: {
@@ -912,6 +923,13 @@ async function loadSubjectSignals(args: {
       ),
     );
 
+    const avgScore = avg == null ? null : round2(avg);
+    const alert = classifySubjectSignal({
+      avg_score_20: avgScore,
+      weak_students_count: acc.weak_students.size,
+      blocker_score: blockerScore,
+    });
+
     out.push({
       class_id: acc.class_id,
       class_label: cls?.class_label || "Classe",
@@ -920,9 +938,10 @@ async function loadSubjectSignals(args: {
       subject_name: subjectsById.get(acc.subject_id) || "Matière",
       evaluations_count: acc.evaluations.size,
       notes_count: acc.notes_count,
-      avg_score_20: avg == null ? null : round2(avg),
+      avg_score_20: avgScore,
       weak_students_count: acc.weak_students.size,
       blocker_score: blockerScore,
+      ...alert,
     });
   }
 
@@ -933,7 +952,9 @@ async function loadSubjectSignals(args: {
   };
 
   return {
-    subjects: out.filter((s) => s.blocker_score >= 35).sort((a, b) => b.blocker_score - a.blocker_score),
+    subjects: out
+      .filter((s) => s.alert_level !== "ok")
+      .sort((a, b) => b.blocker_score - a.blocker_score),
     stats,
   };
 }

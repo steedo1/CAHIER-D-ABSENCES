@@ -83,6 +83,23 @@ type SubjectSignal = {
   avg_score_20: number | null;
   weak_students_count: number;
   blocker_score: number;
+  alert_level?: "blocking" | "watch" | "ok";
+  alert_label?: string;
+};
+
+type QuickStat = {
+  key: string;
+  label: string;
+  value: string;
+  details?: string;
+  tone?: "neutral" | "good" | "warning" | "danger";
+};
+
+type QuickStats = {
+  scope_label: string;
+  scope_note?: string;
+  cards: QuickStat[];
+  breakdown?: Array<{ label: string; value: string; details?: string }>;
 };
 
 type DataQualityItem = {
@@ -235,6 +252,19 @@ function riskStyle(level: string) {
   if (level === "high") return "border-red-200 bg-red-50 text-red-800";
   if (level === "medium") return "border-amber-200 bg-amber-50 text-amber-800";
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
+function subjectAlertStyle(level: SubjectSignal["alert_level"] = "watch") {
+  if (level === "blocking") return "border-red-200 bg-red-50 text-red-800";
+  if (level === "ok") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  return "border-amber-200 bg-amber-50 text-amber-800";
+}
+
+function subjectAlertLabel(subject: SubjectSignal) {
+  if (subject.alert_label) return subject.alert_label;
+  if (subject.alert_level === "blocking") return "Bloquante";
+  if (subject.alert_level === "ok") return "Stable";
+  return "Vigilance";
 }
 function quickStatStyle(tone: QuickStat["tone"] = "neutral") {
   if (tone === "good") return "border-emerald-100 bg-emerald-50 text-emerald-900";
@@ -800,7 +830,7 @@ export default function MonCahierIaPage() {
             <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm xl:col-span-1">
               <div className="mb-4 flex items-center gap-2 text-lg font-black text-slate-950">
                 <GraduationCap className="h-5 w-5 text-cyan-700" />
-                Matières bloquantes
+                Matières bloquantes / vigilance
               </div>
               <div className="space-y-3">
                 {answer.blocking_subjects?.length ? (
@@ -811,17 +841,18 @@ export default function MonCahierIaPage() {
                           <div className="font-black text-slate-950">{subject.subject_name}</div>
                           <div className="text-xs font-semibold text-slate-500">{subject.class_label} · {subject.evaluations_count} éval.</div>
                         </div>
-                        <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-black text-cyan-800">
-                          {subject.blocker_score}/100
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${subjectAlertStyle(subject.alert_level)}`}>
+                          {subjectAlertLabel(subject)} · {subject.blocker_score}/100
                         </span>
                       </div>
                       <div className="mt-2 text-xs text-slate-600">
                         Moyenne {fmtAvg(subject.avg_score_20)} · {subject.weak_students_count} élève(s) sous 10
+                        {subject.alert_level === "watch" ? " · point de vigilance" : subject.alert_level === "blocking" ? " · blocage possible" : ""}
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Aucune matière bloquante détectée.</p>
+                  <p className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Aucune matière bloquante ni matière de vigilance détectée.</p>
                 )}
               </div>
             </div>
