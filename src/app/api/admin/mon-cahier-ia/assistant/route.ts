@@ -105,6 +105,7 @@ type OfficialBulletinAverage = {
   rank: number | null;
   annual_rank: number | null;
   status: string | null;
+  conduct_avg_20: number | null;
   subjects: BulletinSubjectAverage[];
   bulletin_subjects_count: number;
   bulletin_subject_scores_count: number;
@@ -170,6 +171,12 @@ function isOfficialConductSubjectName(value: unknown): boolean {
 }
 
 function getOfficialConductAverage(avg: OfficialBulletinAverage | undefined): number | null {
+  // Source prioritaire : le bulletin officiel renvoie déjà `conduct_avg`
+  // quand la conduite est calculée par le module conduite/disciplinaire.
+  // Elle n'apparaît pas toujours dans `per_subject`, donc il ne faut pas
+  // limiter Mon Cahier IA à la recherche d'une matière nommée Conduite.
+  if (avg?.conduct_avg_20 != null) return round2(Number(avg.conduct_avg_20));
+
   if (!avg?.subjects?.length) return null;
 
   const subject = avg.subjects.find((item) => isOfficialConductSubjectName(item.subject_name));
@@ -614,6 +621,7 @@ async function loadOfficialBulletinAverages(args: {
 
         const annualAvg = cleanNumberOrNull(item?.annual_avg, 4);
         const periodAvg = cleanNumberOrNull(item?.general_avg, 4);
+        const conductAvg = cleanNumberOrNull(item?.conduct_avg, 4);
         out.set(studentId, {
           student_id: studentId,
           full_name: String(item?.full_name || "").trim() || null,
@@ -626,6 +634,7 @@ async function loadOfficialBulletinAverages(args: {
           rank: item?.rank == null ? null : Number(item.rank),
           annual_rank: item?.annual_rank == null ? null : Number(item.annual_rank),
           status: String(item?.annual_avg_status || item?.general_avg_status || "").trim() || null,
+          conduct_avg_20: conductAvg,
           subjects: bulletinSubjects,
           bulletin_subjects_count: bulletinSubjects.length,
           bulletin_subject_scores_count: bulletinSubjects.filter((subject) => subject.avg20 != null).length,
