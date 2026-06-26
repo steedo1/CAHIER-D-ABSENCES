@@ -94,11 +94,19 @@ type GradePeriodRow = {
 
 type OfficialBulletinAverage = {
   student_id: string;
+  full_name: string | null;
+  matricule: string | null;
+  class_id: string;
+  class_label: string;
+  class_level: string | null;
   general_avg_20: number | null;
   annual_avg_20: number | null;
   rank: number | null;
   annual_rank: number | null;
   status: string | null;
+  subjects: BulletinSubjectAverage[];
+  bulletin_subjects_count: number;
+  bulletin_subject_scores_count: number;
   source_period: {
     from: string;
     to: string;
@@ -111,6 +119,12 @@ type SubjectAvailabilityStats = {
   published_evaluations_count: number;
   notes_count: number;
   evaluated_subjects_count: number;
+};
+
+type BulletinSubjectAverage = {
+  subject_id: string;
+  subject_name: string;
+  avg20: number | null;
 };
 
 const MODEL_KEY = "mon_cahier_ai_pedagogy";
@@ -406,6 +420,49 @@ function buildMlRowsWithOfficialAverages(rows: PredictionRow[], officialAverages
   });
 }
 
+function buildAnalysisRowsFromPredictionsAndBulletins(args: {
+  classes: ClassRow[];
+  predictionRows: PredictionRow[];
+  officialAverages: Map<string, OfficialBulletinAverage>;
+}): PredictionRow[] {
+  const rowsByStudent = new Map<string, PredictionRow>();
+
+  for (const row of args.predictionRows) {
+    const sid = String(row.student_id || '').trim();
+    if (!sid) continue;
+    rowsByStudent.set(sid, row);
+  }
+
+  const classById = new Map(args.classes.map((cls) => [String(cls.id), cls]));
+
+  for (const avg of args.officialAverages.values()) {
+    if (rowsByStudent.has(avg.student_id)) continue;
+    const cls = classById.get(avg.class_id);
+    rowsByStudent.set(avg.student_id, {
+      student_id: avg.student_id,
+      first_name: null,
+      last_name: avg.full_name,
+      matricule: avg.matricule,
+      academic_year: undefined,
+      class_id: avg.class_id,
+      class_label: avg.class_label || cls?.label || 'Classe',
+      class_level: avg.class_level || cls?.level || null,
+      general_avg_20: chooseOfficialAverage(avg),
+      raw_all_avg_20: chooseOfficialAverage(avg),
+      raw_core_avg_20: null,
+      presence_rate: null,
+      total_absent_hours: null,
+      nb_lates: null,
+      conduct_total_20: null,
+      conduct_norm: null,
+      p_success: null,
+      risk_level: null,
+    });
+  }
+
+  return Array.from(rowsByStudent.values());
+}
+
 async function loadClasses(args: {
   srv: any;
   institution_id: string;
@@ -494,20 +551,50 @@ async function loadOfficialBulletinAverages(args: {
 
       const json = (await res.json().catch(() => null)) as any;
       const items = Array.isArray(json?.items) ? json.items : [];
+      const subjectsMeta = new Map<string, string>();
+      for (const subject of Array.isArray(json?.subjects) ? json.subjects : []) {
+        const subjectId = String(subject?.subject_id || subject?.id || "").trim();
+        if (!subjectId) continue;
+        subjectsMeta.set(
+          subjectId,
+          String(subject?.subject_name || subject?.name || subject?.code || "Matière"),
+        );
+      }
 
       for (const item of items) {
         const studentId = String(item?.student_id || "").trim();
         if (!studentId) continue;
 
+        const perSubject = Array.isArray(item?.per_subject) ? item.per_subject : [];
+        const bulletinSubjects: BulletinSubjectAverage[] = perSubject
+          .map((subject: any) => {
+            const subjectId = String(subject?.subject_id || "").trim();
+            if (!subjectId) return null;
+            return {
+              subject_id: subjectId,
+              subject_name: subjectsMeta.get(subjectId) || "Matière",
+              avg20: cleanNumberOrNull(subject?.avg20, 4),
+            };
+          })
+          .filter(Boolean) as BulletinSubjectAverage[];
+
         const annualAvg = cleanNumberOrNull(item?.annual_avg, 4);
         const periodAvg = cleanNumberOrNull(item?.general_avg, 4);
         out.set(studentId, {
           student_id: studentId,
+          full_name: String(item?.full_name || "").trim() || null,
+          matricule: item?.matricule == null ? null : String(item.matricule),
+          class_id: cls.id,
+          class_label: cls.label || "Classe",
+          class_level: cls.level || null,
           general_avg_20: periodAvg,
           annual_avg_20: annualAvg,
           rank: item?.rank == null ? null : Number(item.rank),
           annual_rank: item?.annual_rank == null ? null : Number(item.annual_rank),
           status: String(item?.annual_avg_status || item?.general_avg_status || "").trim() || null,
+          subjects: bulletinSubjects,
+          bulletin_subjects_count: bulletinSubjects.length,
+          bulletin_subject_scores_count: bulletinSubjects.filter((subject) => subject.avg20 != null).length,
           source_period: {
             from: String(targetPeriod.start_date).slice(0, 10),
             to: String(targetPeriod.end_date).slice(0, 10),
@@ -627,6 +714,83 @@ function buildClassSignals(classes: ClassRow[], students: AiStudentSignal[]): Ai
     signal.main_reasons = summarizeClassReasons(signal);
     return signal;
   });
+}
+
+function buildSubjectSignalsFromBulletins(args: {
+  officialAverages: Map<string, OfficialBulletinAverage>;
+  classSignals: AiClassSignal[];
+}): AiSubjectSignal[] {
+  const classMeta = new Map(args.classSignals.map((cls) => [cls.class_id, cls]));
+
+  type Acc = {
+    class_id: string;
+    class_label: string;
+    class_level: string | null;
+    subject_id: string;
+    subject_name: string;
+    notes_count: number;
+    sum: number;
+    weak_students: Set<string>;
+  };
+
+  const accByKey = new Map<string, Acc>();
+
+  for (const avg of args.officialAverages.values()) {
+    const cls = classMeta.get(avg.class_id);
+    if (!cls) continue;
+
+    for (const subject of avg.subjects || []) {
+      if (subject.avg20 == null) continue;
+      const key = `${avg.class_id}::${subject.subject_id}`;
+      let acc = accByKey.get(key);
+      if (!acc) {
+        acc = {
+          class_id: avg.class_id,
+          class_label: avg.class_label || cls.class_label || "Classe",
+          class_level: avg.class_level || cls.class_level || null,
+          subject_id: subject.subject_id,
+          subject_name: subject.subject_name || "Matière",
+          notes_count: 0,
+          sum: 0,
+          weak_students: new Set<string>(),
+        };
+        accByKey.set(key, acc);
+      }
+
+      acc.notes_count += 1;
+      acc.sum += Number(subject.avg20);
+      if (Number(subject.avg20) < 10) acc.weak_students.add(avg.student_id);
+    }
+  }
+
+  const out: AiSubjectSignal[] = [];
+  for (const acc of accByKey.values()) {
+    const cls = classMeta.get(acc.class_id);
+    const avg = acc.notes_count ? acc.sum / acc.notes_count : null;
+    const weakRatio = acc.weak_students.size / Math.max(1, cls?.students_count || acc.notes_count);
+    const blockerScore = Math.round(
+      clamp(
+        (avg == null ? 25 : Math.max(0, (12 - avg) / 12) * 70) + weakRatio * 30,
+        0,
+        100,
+      ),
+    );
+
+    out.push({
+      class_id: acc.class_id,
+      class_label: acc.class_label,
+      class_level: acc.class_level,
+      subject_id: acc.subject_id,
+      subject_name: acc.subject_name,
+      evaluations_count: 0,
+      notes_count: acc.notes_count,
+      avg_score_20: avg == null ? null : round2(avg),
+      weak_students_count: acc.weak_students.size,
+      blocker_score: blockerScore,
+    });
+  }
+
+  return out.filter((s) => s.blocker_score >= 35).sort((a, b) => b.blocker_score - a.blocker_score);
 }
 
 async function loadSubjectSignals(args: {
@@ -819,6 +983,16 @@ function buildDataQuality(args: {
     (s) => s.presence_rate != null || s.total_absent_hours != null || s.nb_lates != null,
   ).length;
   const conductCount = args.students.filter((s) => s.conduct_total_20 != null).length;
+  const bulletinSubjectCount = Array.from(args.officialAverages.values()).reduce(
+    (acc, avg) => acc + (avg.bulletin_subjects_count || 0),
+    0,
+  );
+  const bulletinSubjectScoreCount = Array.from(args.officialAverages.values()).reduce(
+    (acc, avg) => acc + (avg.bulletin_subject_scores_count || 0),
+    0,
+  );
+  const hasRawMarks = args.subjectStats.published_evaluations_count > 0 && args.subjectStats.notes_count > 0;
+  const hasBulletinSubjectMarks = bulletinSubjectScoreCount > 0;
 
   const itemsWithWeight = [
     qualityItem({
@@ -844,17 +1018,21 @@ function buildDataQuality(args: {
     }),
     qualityItem({
       key: "prediction_engine",
-      label: "Moteur prédictif",
-      ratio: totalRows > 0 ? predictionCount / Math.max(1, totalRows) : 0,
+      label: "Indice de préparation",
+      ratio: totalStudents > 0 ? predictionCount / safeStudents : 0,
       weight: 12,
-      details: `${predictionCount}/${Math.max(totalRows, totalStudents)} indice${predictionCount > 1 ? "s" : ""} de préparation exploitable${predictionCount > 1 ? "s" : ""}.`,
+      details: totalRows > 0
+        ? `${predictionCount}/${totalStudents} indice${predictionCount > 1 ? "s" : ""} de préparation exploitable${predictionCount > 1 ? "s" : ""}.`
+        : `${predictionCount}/${totalStudents} indice${predictionCount > 1 ? "s" : ""} calculé${predictionCount > 1 ? "s" : ""} depuis les moyennes bulletin officielles.`,
     }),
     qualityItem({
       key: "marks_subjects",
       label: "Notes et matières",
-      ratio: args.subjectStats.published_evaluations_count > 0 && args.subjectStats.notes_count > 0 ? 1 : 0,
+      ratio: hasRawMarks || hasBulletinSubjectMarks ? 1 : 0,
       weight: 12,
-      details: `${args.subjectStats.published_evaluations_count} évaluation${args.subjectStats.published_evaluations_count > 1 ? "s" : ""} publiée${args.subjectStats.published_evaluations_count > 1 ? "s" : ""}, ${args.subjectStats.notes_count} note${args.subjectStats.notes_count > 1 ? "s" : ""}, ${args.subjectStats.evaluated_subjects_count} matière${args.subjectStats.evaluated_subjects_count > 1 ? "s" : ""}.`,
+      details: hasRawMarks
+        ? `${args.subjectStats.published_evaluations_count} évaluation${args.subjectStats.published_evaluations_count > 1 ? "s" : ""} publiée${args.subjectStats.published_evaluations_count > 1 ? "s" : ""}, ${args.subjectStats.notes_count} note${args.subjectStats.notes_count > 1 ? "s" : ""}, ${args.subjectStats.evaluated_subjects_count} matière${args.subjectStats.evaluated_subjects_count > 1 ? "s" : ""}.`
+        : `${bulletinSubjectScoreCount}/${bulletinSubjectCount} moyenne${bulletinSubjectScoreCount > 1 ? "s" : ""} matière exploitée${bulletinSubjectScoreCount > 1 ? "s" : ""} depuis les bulletins officiels.`,
     }),
     qualityItem({
       key: "assiduity",
@@ -893,8 +1071,8 @@ function buildDataQuality(args: {
   if (totalStudents > 0 && officialAvgCount / safeStudents < 0.5) {
     args.warnings.push("Qualité des données : moins de la moitié des moyennes bulletin officielles ont été retrouvées.");
   }
-  if (args.subjectStats.published_evaluations_count === 0) {
-    args.warnings.push("Qualité des données : aucune évaluation publiée trouvée pour les matières du périmètre.");
+  if (args.subjectStats.published_evaluations_count === 0 && !hasBulletinSubjectMarks) {
+    args.warnings.push("Qualité des données : aucune évaluation publiée ni moyenne matière bulletin trouvée pour le périmètre.");
   }
   if (args.model_source !== "ml_service") {
     args.warnings.push("Modèle ML non entraîné : analyse basée sur le socle explicable intégré.");
@@ -1155,7 +1333,13 @@ export async function POST(req: NextRequest) {
       warnings: predictionResult.warnings,
     });
 
-    const mlRows = buildMlRowsWithOfficialAverages(predictionResult.rows, officialAverages);
+    const analysisRows = buildAnalysisRowsFromPredictionsAndBulletins({
+      classes,
+      predictionRows: predictionResult.rows,
+      officialAverages,
+    });
+
+    const mlRows = buildMlRowsWithOfficialAverages(analysisRows, officialAverages);
 
     const ml = await callMlService({
       institution_id: ctx.institution_id,
@@ -1165,7 +1349,7 @@ export async function POST(req: NextRequest) {
       rows: mlRows,
     });
 
-    const students: AiStudentSignal[] = predictionResult.rows.map((row) => {
+    const students: AiStudentSignal[] = analysisRows.map((row) => {
       const mlRow = ml.byId.get(row.student_id);
       const officialAverage = officialAverages.get(row.student_id);
       const officialGeneralAvg = chooseOfficialAverage(officialAverage);
@@ -1257,6 +1441,21 @@ export async function POST(req: NextRequest) {
       };
     });
 
+    const bulletinSubjectSignals = buildSubjectSignalsFromBulletins({
+      officialAverages,
+      classSignals,
+    });
+
+    const subjectsByKey = new Map<string, AiSubjectSignal>();
+    for (const signal of [...subjectResult.subjects, ...bulletinSubjectSignals]) {
+      const key = `${signal.class_id}::${signal.subject_id}`;
+      const existing = subjectsByKey.get(key);
+      if (!existing || signal.blocker_score > existing.blocker_score) {
+        subjectsByKey.set(key, signal);
+      }
+    }
+    const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
+
     const dataQuality = buildDataQuality({
       classes,
       predictionRows: predictionResult.rows,
@@ -1277,7 +1476,7 @@ export async function POST(req: NextRequest) {
       model_source: ml.source,
       classes: classSignals,
       students,
-      subjects: subjectResult.subjects,
+      subjects: subjectSignals,
       warnings: predictionResult.warnings,
       data_quality: dataQuality,
       scope_stats: scopeStats,
