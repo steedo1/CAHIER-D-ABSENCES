@@ -199,6 +199,12 @@ export function classifySubjectSignal(subject: {
   const weak = subject.weak_students_count == null ? 0 : Number(subject.weak_students_count);
   const score = subject.blocker_score == null ? 0 : Number(subject.blocker_score);
 
+  // Une matière sans moyenne exploitable ne doit jamais être transformée
+  // automatiquement en vigilance. Absence de donnée ≠ difficulté pédagogique.
+  if (avg == null && weak <= 0) {
+    return { alert_level: "ok", alert_label: "Données insuffisantes" };
+  }
+
   if (score >= 45 || (avg != null && avg < 10) || weak >= 3) {
     return { alert_level: "blocking", alert_label: "Bloquante" };
   }

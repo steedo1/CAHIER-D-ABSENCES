@@ -953,11 +953,18 @@ async function loadSubjectSignals(args: {
 
   for (const acc of accByKey.values()) {
     const cls = classMeta.get(acc.class_id);
-    const avg = acc.weight_total > 0 ? acc.weighted_sum / acc.weight_total : null;
-    const weakRatio = acc.notes_count ? acc.weak_students.size / Math.max(1, cls?.students_count || acc.notes_count) : 0;
+
+    // Une évaluation publiée sans notes exploitables ne prouve pas une difficulté
+    // dans la matière. Elle peut seulement signaler une donnée incomplète.
+    // On l'exclut donc de la liste des matières bloquantes/vigilance pour éviter
+    // les faux signaux du type “Moyenne — · 0 élève sous 10 · vigilance”.
+    if (acc.notes_count <= 0 || acc.weight_total <= 0) continue;
+
+    const avg = acc.weighted_sum / acc.weight_total;
+    const weakRatio = acc.weak_students.size / Math.max(1, cls?.students_count || acc.notes_count);
     const blockerScore = Math.round(
       clamp(
-        (avg == null ? 25 : Math.max(0, (12 - avg) / 12) * 65) +
+        Math.max(0, (12 - avg) / 12) * 65 +
           weakRatio * 25 +
           (acc.evaluations.size < 2 ? 10 : 0),
         0,
@@ -965,7 +972,7 @@ async function loadSubjectSignals(args: {
       ),
     );
 
-    const avgScore = avg == null ? null : round2(avg);
+    const avgScore = round2(avg);
     const alert = classifySubjectSignal({
       avg_score_20: avgScore,
       weak_students_count: acc.weak_students.size,
