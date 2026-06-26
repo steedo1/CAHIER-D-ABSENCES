@@ -100,6 +100,24 @@ type DataQuality = {
   items: DataQualityItem[];
 };
 
+type QuickStat = {
+  key: string;
+  label: string;
+  value: string | number;
+  details?: string;
+  tone?: "neutral" | "good" | "warning" | "danger";
+};
+
+type QuickStats = {
+  scope_label: string;
+  scope_note?: string;
+  cards: QuickStat[];
+  breakdown?: Array<{
+    label: string;
+    value: string | number;
+  }>;
+};
+
 type AiAnswer = {
   intent: string;
   title: string;
