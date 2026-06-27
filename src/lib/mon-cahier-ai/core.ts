@@ -1,4 +1,4 @@
-export type MonCahierAiIntent =
+﻿export type MonCahierAiIntent =
   | "students_to_follow"
   | "class_decline_risk"
   | "blocking_subjects"
@@ -1003,7 +1003,7 @@ function buildCouncilPedagogicalActionLines(args: {
   }
 
   if (args.presenceRatio < 0.8) {
-    lines.push("Compléter les données d’assiduité avant de tirer une conclusion globale sur les absences et retards.");
+    lines.push("Régulariser les appels de classe manquants avant toute conclusion globale sur les absences et retards : les enseignants concernés effectuent l'appel ; l'administration prend le relais si l'enseignant est absent ou empêché ; l'éducateur assure le suivi des alertes.");
   }
 
   if (args.progressionsCount > 0 && args.progressionRatio < 0.8) {
@@ -1300,3 +1300,4 @@ function buildRemediationPlan(args: {
 
   return plan.slice(0, 10);
 }
+
