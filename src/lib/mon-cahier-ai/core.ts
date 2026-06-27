@@ -243,6 +243,32 @@ export function classifySubjectSignal(subject: {
   return { alert_level: "ok", alert_label: "Stable" };
 }
 
+
+function computeSubjectAlertScore(
+  subject: { avg_score_20?: number | null; weak_students_count?: number | null; blocker_score?: number | null },
+  alert: { alert_level: "blocking" | "watch" | "ok" },
+): number {
+  const existing = subject.blocker_score == null ? 0 : Number(subject.blocker_score);
+  const avg = subject.avg_score_20 == null ? null : Number(subject.avg_score_20);
+  const weak = subject.weak_students_count == null ? 0 : Number(subject.weak_students_count);
+
+  if (alert.alert_level === "ok") return Math.max(0, Math.round(existing));
+
+  let computed = Math.max(0, existing);
+
+  if (avg != null && Number.isFinite(avg)) {
+    if (avg < 10) computed = Math.max(computed, 45 + (10 - avg) * 8);
+    else if (avg < 12) computed = Math.max(computed, 12 + (12 - avg) * 8);
+    else if (avg < 13.5) computed = Math.max(computed, 5 + (13.5 - avg) * 4);
+  }
+
+  if (weak > 0) computed = Math.max(computed, 8 + weak * 8);
+
+  if (alert.alert_level === "blocking") return clamp(Math.round(computed), 45, 100);
+  if (alert.alert_level === "watch") return clamp(Math.round(computed), 1, 44);
+  return Math.round(computed);
+}
+
 export function cleanText(input: unknown): string {
   return String(input || "")
     .normalize("NFD")
@@ -614,7 +640,7 @@ function filterActionableSubjectAlerts(
     return (
       subject.alert_level === "blocking" ||
       Number(subject.weak_students_count || 0) > 0 ||
-      (avg != null && avg < 12.5)
+      (avg != null && avg < 12)
     );
   });
 }
@@ -764,6 +790,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
       const enrichedSubject: AiSubjectSignal = {
         ...subject,
         ...alert,
+        blocker_score: computeSubjectAlertScore(subject, alert),
       };
       return {
         ...enrichedSubject,
