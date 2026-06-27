@@ -1,6 +1,6 @@
 -- Réparation / resynchronisation des dettes après modification du profil élève
 -- Exemple : Externe -> Interne ou Interne -> Externe dans Liste des classes.
--- À exécuter dans Supabase SQL Editor après déploiement du correctif applicatif.
+-- À NE PAS exécuter sans contrôle : réparation globale. Préférer le correctif applicatif élève par élève.
 
 WITH active_students AS (
   SELECT
@@ -32,15 +32,23 @@ WITH active_students AS (
     sc.due_date,
     sc.notes,
     CASE
-      WHEN sc.label_key IN (
-        'scolarité - inscription', 'scolarite - inscription',
-        'scolarité - frais généraux', 'scolarite - frais generaux',
-        'scolarité - frais annexes scolarité', 'scolarite - frais annexes scolarite'
-      ) THEN true
-      WHEN sc.label_key IN ('scolarité - écolage affecté', 'scolarite - ecolage affecte') THEN a.is_affecte IS TRUE
-      WHEN sc.label_key IN ('scolarité - écolage non affecté', 'scolarite - ecolage non affecte') THEN a.is_affecte IS FALSE
-      WHEN sc.label_key IN ('internat - pension', 'internat - frais annexes internat') THEN a.is_boarder IS TRUE
-      ELSE true
+      WHEN sc.label_key LIKE 'scolarité - inscription%'
+        OR sc.label_key LIKE 'scolarite - inscription%'
+        OR sc.label_key LIKE 'scolarité - frais généraux%'
+        OR sc.label_key LIKE 'scolarite - frais generaux%'
+        OR sc.label_key LIKE 'scolarité - frais annexes scolarité%'
+        OR sc.label_key LIKE 'scolarite - frais annexes scolarite%'
+        THEN true
+      WHEN sc.label_key LIKE 'scolarité - écolage non affecté%'
+        OR sc.label_key LIKE 'scolarite - ecolage non affecte%'
+        THEN a.is_affecte IS FALSE
+      WHEN sc.label_key LIKE 'scolarité - écolage affecté%'
+        OR sc.label_key LIKE 'scolarite - ecolage affecte%'
+        THEN a.is_affecte IS TRUE
+      WHEN sc.label_key LIKE 'internat - pension%'
+        OR sc.label_key LIKE 'internat - frais annexes internat%'
+        THEN a.is_boarder IS TRUE
+      ELSE NULL
     END AS applies
   FROM active_students a
   JOIN active_schedules sc

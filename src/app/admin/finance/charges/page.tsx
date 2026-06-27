@@ -74,29 +74,50 @@ type ChargeStudentRow = {
   is_boarder: boolean | null;
 };
 
+function normalizeFeeLabel(value: unknown) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function feeLabelStartsWith(label: string, prefix: string) {
+  // Les barèmes créés par niveau ajoutent souvent le nom de la classe :
+  // ex. "Internat - Pension - 6e A". On doit donc reconnaître le début
+  // du libellé au lieu d'exiger une égalité stricte.
+  return label === prefix || label.startsWith(`${prefix} - `);
+}
+
 function scheduleAppliesToStudent(
   schedule: Pick<FeeScheduleRow, "label">,
   student: Pick<ChargeStudentRow, "is_affecte" | "is_boarder">,
 ) {
+  const label = normalizeFeeLabel(schedule.label);
+
   if (
-    schedule.label === "Scolarité - Inscription" ||
-    schedule.label === "Scolarité - Frais généraux" ||
-    schedule.label === "Scolarité - Frais annexes scolarité"
+    feeLabelStartsWith(label, "scolarite - inscription") ||
+    feeLabelStartsWith(label, "scolarite - frais generaux") ||
+    feeLabelStartsWith(label, "scolarite - frais annexes scolarite")
   ) {
     return true;
   }
 
-  if (schedule.label === "Scolarité - Écolage affecté") {
-    return student.is_affecte === true;
-  }
-
-  if (schedule.label === "Scolarité - Écolage non affecté") {
+  if (feeLabelStartsWith(label, "scolarite - ecolage non affecte")) {
     return student.is_affecte === false;
   }
 
+  if (feeLabelStartsWith(label, "scolarite - ecolage affecte")) {
+    return student.is_affecte === true;
+  }
+
   if (
-    schedule.label === "Internat - Pension" ||
-    schedule.label === "Internat - Frais annexes internat"
+    feeLabelStartsWith(label, "internat - pension") ||
+    feeLabelStartsWith(label, "internat - frais annexes internat")
   ) {
     return student.is_boarder === true;
   }

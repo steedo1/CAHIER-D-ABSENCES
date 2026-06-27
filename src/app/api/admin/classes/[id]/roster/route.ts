@@ -98,6 +98,13 @@ function normalizeFinanceLabel(value: unknown) {
     .toLowerCase();
 }
 
+function financeLabelStartsWith(label: string, prefix: string) {
+  // Les barèmes créés par niveau ajoutent souvent le nom de la classe :
+  // ex. "Internat - Pension - 6e A". On doit donc reconnaître le début
+  // du libellé au lieu d'exiger une égalité stricte.
+  return label === prefix || label.startsWith(`${prefix} - `);
+}
+
 function financeScheduleAppliesToStudent(
   schedule: Pick<FinanceScheduleRow, "label">,
   student: FinanceStudentProfile,
@@ -106,23 +113,26 @@ function financeScheduleAppliesToStudent(
 
   // Frais communs à tous les élèves.
   if (
-    label === "scolarite - inscription" ||
-    label === "scolarite - frais generaux" ||
-    label === "scolarite - frais annexes scolarite"
+    financeLabelStartsWith(label, "scolarite - inscription") ||
+    financeLabelStartsWith(label, "scolarite - frais generaux") ||
+    financeLabelStartsWith(label, "scolarite - frais annexes scolarite")
   ) {
     return true;
   }
 
   // L'ordre est volontaire : "non affecté" contient aussi le mot "affecté".
-  if (label === "scolarite - ecolage non affecte") {
+  if (financeLabelStartsWith(label, "scolarite - ecolage non affecte")) {
     return student.is_affecte === false;
   }
 
-  if (label === "scolarite - ecolage affecte") {
+  if (financeLabelStartsWith(label, "scolarite - ecolage affecte")) {
     return student.is_affecte === true;
   }
 
-  if (label === "internat - pension" || label === "internat - frais annexes internat") {
+  if (
+    financeLabelStartsWith(label, "internat - pension") ||
+    financeLabelStartsWith(label, "internat - frais annexes internat")
+  ) {
     return student.is_boarder === true;
   }
 
