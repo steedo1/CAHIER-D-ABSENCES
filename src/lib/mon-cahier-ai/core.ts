@@ -583,6 +583,51 @@ function weakestProgressions(items: AiProgramProgressionSignal[], limit = 3): Ai
     .slice(0, limit);
 }
 
+function isBroadScope(scoped: ReturnType<typeof selectContextByQuestion>): boolean {
+  return scoped.classes.length > 1;
+}
+
+function scopeDisplayName(scoped: ReturnType<typeof selectContextByQuestion>): string {
+  if (scoped.classes.length === 1) return scoped.classes[0].class_label;
+  if (scoped.levelHint) return `niveau ${scoped.levelHint.toUpperCase()}`;
+  return "Établissement";
+}
+
+function scopeSubjectLabel(scoped: ReturnType<typeof selectContextByQuestion>): string {
+  if (scoped.classes.length === 1) return "La classe";
+  if (scoped.levelHint) return "Le niveau";
+  return "L’établissement";
+}
+
+function filterActionableSubjectAlerts(
+  subjects: AiSubjectSignal[],
+  scoped: ReturnType<typeof selectContextByQuestion>,
+): AiSubjectSignal[] {
+  if (!isBroadScope(scoped)) return subjects;
+
+  // En mode établissement/niveau, on évite d’encombrer la note et les cartes
+  // avec de très faibles vigilances : moyenne correcte, aucun élève sous 10.
+  // On garde les vrais signaux pédagogiques : bloquants, élèves faibles,
+  // ou moyenne matière suffisamment proche du seuil pour mériter une action.
+  return subjects.filter((subject) => {
+    const avg = subject.avg_score_20 == null ? null : Number(subject.avg_score_20);
+    return (
+      subject.alert_level === "blocking" ||
+      Number(subject.weak_students_count || 0) > 0 ||
+      (avg != null && avg < 12.5)
+    );
+  });
+}
+
+function progressionCoverage(args: {
+  scoped: ReturnType<typeof selectContextByQuestion>;
+  progressions: AiProgramProgressionSignal[];
+}): number {
+  if (!args.scoped.classes.length) return 0;
+  const classIdsWithProgression = new Set(args.progressions.map((item) => item.class_id));
+  return classIdsWithProgression.size / Math.max(1, args.scoped.classes.length);
+}
+
 function pluralize(value: number, singular: string, plural = `${singular}s`): string {
   return `${value} ${value > 1 ? plural : singular}`;
 }
@@ -713,7 +758,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     .filter((c) => c.students_count > 0 && c.risk_index >= 35)
     .sort((a, b) => b.risk_index - a.risk_index)
     .slice(0, 12);
-  const subjectAlerts = [...scoped.subjects]
+  const allSubjectAlerts = [...scoped.subjects]
     .map((subject) => {
       const alert = classifySubjectSignal(subject);
       const enrichedSubject: AiSubjectSignal = {
@@ -726,8 +771,8 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
       };
     })
     .filter((subject) => subject.alert_level !== "ok")
-    .sort((a, b) => b.blocker_score - a.blocker_score)
-    .slice(0, 15);
+    .sort((a, b) => b.blocker_score - a.blocker_score);
+  const subjectAlerts = filterActionableSubjectAlerts(allSubjectAlerts, scoped).slice(0, 15);
   const blockers = subjectAlerts.filter((subject) => subject.alert_level === "blocking");
   const watchSubjects = subjectAlerts.filter((subject) => subject.alert_level === "watch");
 
@@ -950,12 +995,14 @@ function buildCouncilNote(args: {
   avgSuccess: number | null;
   progressions: AiProgramProgressionSignal[];
 }): string {
-  const scopeLabel = buildScopeLabel(args.scoped) || "Établissement";
+  const scopeLabel = scopeDisplayName(args.scoped);
+  const subjectPrefix = scopeSubjectLabel(args.scoped);
+  const broadScope = isBroadScope(args.scoped);
   const topClass = args.classesAtRisk[0];
-  const subjectAlerts = args.blockers.slice(0, 5);
+  const subjectAlerts = filterActionableSubjectAlerts(args.blockers, args.scoped).slice(0, broadScope ? 6 : 5);
   const blockingSubjects = subjectAlerts.filter((subject) => subject.alert_level === "blocking");
   const watchSubjects = subjectAlerts.filter((subject) => subject.alert_level === "watch");
-  const topStudents = args.studentsToFollow.slice(0, 8);
+  const topStudents = args.studentsToFollow.slice(0, broadScope ? 6 : 8);
   const avgClass =
     args.scoped.classes.length === 1
       ? args.scoped.classes[0]?.avg_general_20
@@ -968,11 +1015,17 @@ function buildCouncilNote(args: {
   const presenceCount = args.scoped.students.filter(
     (student) => student.presence_rate != null || student.total_absent_hours != null || student.nb_lates != null,
   ).length;
+  const presenceRatio = args.scoped.students.length ? presenceCount / args.scoped.students.length : 0;
+  const conductRatio = args.scoped.students.length ? conductCount / args.scoped.students.length : 0;
+  const progressionAverage = averageProgressionRate(args.progressions);
+  const progressionRatio = progressionCoverage({ scoped: args.scoped, progressions: args.progressions });
+  const weakestProgressionItems = weakestProgressions(args.progressions, broadScope ? 3 : 2);
+
   const subjectLines = subjectAlerts.length
     ? subjectAlerts
         .map((subject, index) => {
           const label = subject.alert_level === "blocking" ? "bloquante" : "vigilance";
-          const weakNames = formatWeakStudentNames(subject, 5);
+          const weakNames = formatWeakStudentNames(subject, broadScope ? 4 : 5);
           return `${index + 1}. ${subject.subject_name} (${subject.class_label}) — ${label}, moyenne ${formatAvg(
             subject.avg_score_20,
           )}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10${
@@ -991,7 +1044,7 @@ function buildCouncilNote(args: {
             )} ; motifs : ${student.reasons.join(" ; ") || "indicateurs à confirmer"}.`,
         )
         .join("\n")
-    : "Aucun élève ne ressort en suivi prioritaire. Les élèves faibles par matière restent à suivre dans les rubriques de remédiation.";
+    : "Aucun élève ne ressort en suivi prioritaire global. Les élèves faibles par matière restent à suivre dans les actions ciblées.";
 
   const topSubjectActions = subjectAlerts[0]?.remediation_actions?.length
     ? subjectAlerts[0].remediation_actions!.map((action) => `- ${action}`).join("\n")
@@ -1006,8 +1059,8 @@ function buildCouncilNote(args: {
         ? "1 classe"
         : "périmètre non précisé";
   const situationLine = subjectAlerts.length
-    ? "La classe présente un niveau général satisfaisant, avec des points de vigilance à traiter de manière ciblée."
-    : "La classe ne présente pas de difficulté pédagogique majeure avec les données disponibles.";
+    ? `${subjectPrefix} présente un niveau général satisfaisant, avec des points de vigilance à traiter de manière ciblée.`
+    : `${subjectPrefix} ne présente pas de difficulté pédagogique majeure avec les données disponibles.`;
   const bulletinLine = allStudentsHaveAvg
     ? "Les moyennes des bulletins sont disponibles pour tous les élèves du périmètre."
     : `Les moyennes des bulletins sont disponibles pour ${studentsWithOfficialAvg}/${args.scoped.students.length} élève(s) du périmètre.`;
@@ -1017,16 +1070,18 @@ function buildCouncilNote(args: {
   const conductLine = conductCount > 0
     ? `La conduite est prise en compte pour ${conductCount}/${args.scoped.students.length} élève(s).`
     : "La conduite n’est pas suffisamment renseignée pour ce périmètre.";
-  const progressionAverage = averageProgressionRate(args.progressions);
-  const weakestProgressionItems = weakestProgressions(args.progressions, 2);
   const progressionLine = args.progressions.length
-    ? `La progression issue du cahier de textes est disponible pour ${args.progressions.length} progression(s), avec un avancement moyen de ${progressionAverage ?? 0}%.`
+    ? progressionRatio >= 0.8
+      ? `La progression issue du cahier de textes est disponible sur le périmètre, avec un avancement moyen de ${progressionAverage ?? 0}%.`
+      : `Les données de progression issues du cahier de textes sont partielles (${args.progressions.length} progression(s) exploitée(s), avancement moyen ${progressionAverage ?? 0}%).`
     : "La progression reste à vérifier dans le cahier de textes ou à renseigner manuellement.";
-  const weakestProgressionLine = weakestProgressionItems.length
+  const weakestProgressionLine = args.progressions.length && progressionRatio >= 0.5 && weakestProgressionItems.length
     ? `Points de progression à surveiller : ${weakestProgressionItems
         .map((item) => `${item.subject_name} (${item.class_label}) ${item.completion_rate}%`)
         .join(" ; ")}.`
-    : "Aucun retard de progression spécifique n’est isolé.";
+    : args.progressions.length
+      ? "Les données de progression restent trop partielles pour conclure sur l’ensemble du périmètre."
+      : "La progression pédagogique doit être vérifiée dans le cahier de textes.";
   const blockingLine = blockingSubjects.length
     ? `${blockingSubjects.length} matière(s) nécessitent une attention particulière avant le conseil.`
     : "Aucune matière bloquante critique n’est isolée.";
@@ -1036,6 +1091,27 @@ function buildCouncilNote(args: {
   const classRiskLine = topClass
     ? `Une attention particulière peut être portée à ${topClass.class_label} (${topClass.main_reasons.join(" ; ") || "signaux pédagogiques à suivre"}).`
     : "Aucune difficulté collective forte ne ressort dans le périmètre analysé.";
+
+  const positiveLines = [
+    bulletinLine,
+    conductRatio >= 0.8 ? conductLine : null,
+    presenceRatio >= 0.8 ? attendanceLine : null,
+    progressionRatio >= 0.8 && args.progressions.length ? progressionLine : null,
+    blockingLine,
+  ].filter(Boolean) as string[];
+
+  const vigilanceLines = [
+    classRiskLine,
+    watchLine,
+    presenceRatio < 0.8 ? `Assiduité à compléter : ${attendanceLine}` : null,
+    conductRatio < 0.8 ? `Conduite à compléter : ${conductLine}` : null,
+    progressionRatio < 0.8 ? progressionLine : null,
+    args.progressions.length ? weakestProgressionLine : null,
+  ].filter(Boolean) as string[];
+
+  const conclusion = subjectAlerts.length
+    ? `${subjectPrefix} ne présente pas nécessairement une difficulté générale, mais certains points de vigilance doivent être traités de manière ciblée.`
+    : `${subjectPrefix} ne présente pas de signal pédagogique critique avec les données actuellement disponibles.`;
 
   const lines = [
     "NOTE PRÉPARATOIRE AU CONSEIL DE CLASSE",
@@ -1052,16 +1128,10 @@ function buildCouncilNote(args: {
     `- ${bulletinLine}`,
     "",
     "2. POINTS POSITIFS",
-    `- ${bulletinLine}`,
-    `- ${attendanceLine}`,
-    `- ${conductLine}`,
-    `- ${progressionLine}`,
-    `- ${blockingLine}`,
+    ...positiveLines.map((line) => `- ${line}`),
     "",
     "3. POINTS DE VIGILANCE",
-    `- ${classRiskLine}`,
-    `- ${watchLine}`,
-    `- ${weakestProgressionLine}`,
+    ...vigilanceLines.map((line) => `- ${line}`),
     "",
     "4. MATIÈRES À TRAITER",
     subjectLines,
@@ -1076,9 +1146,7 @@ function buildCouncilNote(args: {
     "- Informer les parents uniquement lorsque le suivi pédagogique le justifie.",
     "",
     "7. CONCLUSION PROPOSÉE",
-    subjectAlerts.length
-      ? "La classe ne présente pas nécessairement une difficulté générale, mais certains points de vigilance doivent être traités de manière ciblée."
-      : "La classe ne présente pas de signal pédagogique critique avec les données actuellement disponibles.",
+    conclusion,
     "",
     "NB : Cette note est une aide à la préparation du conseil de classe. Les décisions finales relèvent de l’équipe éducative.",
   ];
