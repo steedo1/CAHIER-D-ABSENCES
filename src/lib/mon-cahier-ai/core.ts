@@ -966,6 +966,60 @@ function buildSubjectRemediationActions(subject: AiSubjectSignal): string[] {
   return actions.slice(0, 5);
 }
 
+function buildCouncilPedagogicalActionLines(args: {
+  subjectAlerts: AiSubjectSignal[];
+  studentsToFollow: AiStudentSignal[];
+  presenceRatio: number;
+  progressionRatio: number;
+  progressionsCount: number;
+  broadScope: boolean;
+}): string[] {
+  const lines: string[] = [];
+  const subjectsWithWeakStudents = args.subjectAlerts.filter((subject) => Number(subject.weak_students_count || 0) > 0);
+  const observationSubjects = args.subjectAlerts.filter((subject) => Number(subject.weak_students_count || 0) <= 0);
+
+  for (const subject of subjectsWithWeakStudents.slice(0, args.broadScope ? 3 : 4)) {
+    const weakNames = formatWeakStudentNames(subject, args.broadScope ? 4 : 6);
+    const prefix = subject.alert_level === "blocking" ? "Remédiation prioritaire" : "Remédiation ciblée";
+    lines.push(
+      `${prefix} en ${subject.subject_name} (${subject.class_label}) : prendre en charge les élèves sous 10${
+        weakNames ? ` — ${weakNames}` : ""
+      }.`,
+    );
+  }
+
+  for (const subject of observationSubjects.slice(0, args.broadScope ? 2 : 3)) {
+    lines.push(
+      `Observation pédagogique en ${subject.subject_name} (${subject.class_label}) : moyenne ${formatAvg(
+        subject.avg_score_20,
+      )}, aucun élève sous 10 ; vérifier la tendance aux prochaines évaluations avant toute remédiation individuelle.`,
+    );
+  }
+
+  if (args.studentsToFollow.length) {
+    lines.push(
+      `Ouvrir ou actualiser une fiche de suivi pour les élèves prioritaires signalés, avec responsable, matière concernée et date de vérification.`,
+    );
+  }
+
+  if (args.presenceRatio < 0.8) {
+    lines.push("Compléter les données d’assiduité avant de tirer une conclusion globale sur les absences et retards.");
+  }
+
+  if (args.progressionsCount > 0 && args.progressionRatio < 0.8) {
+    lines.push("Compléter les progressions du cahier de textes avant de conclure sur l’avancement du programme.");
+  }
+
+  if (!lines.length) {
+    lines.push("Maintenir une observation pédagogique régulière et vérifier les prochaines évaluations avant le conseil.");
+  }
+
+  lines.push("Faire un point avec le professeur principal et les enseignants concernés.");
+  lines.push("Informer les parents uniquement lorsque le suivi pédagogique le justifie.");
+
+  return Array.from(new Set(lines)).slice(0, args.broadScope ? 8 : 9);
+}
+
 function buildCommonRecommendations(args: {
   studentsToFollow: AiStudentSignal[];
   classesAtRisk: AiClassSignal[];
@@ -1073,9 +1127,14 @@ function buildCouncilNote(args: {
         .join("\n")
     : "Aucun élève ne ressort en suivi prioritaire global. Les élèves faibles par matière restent à suivre dans les actions ciblées.";
 
-  const topSubjectActions = subjectAlerts[0]?.remediation_actions?.length
-    ? subjectAlerts[0].remediation_actions!.map((action) => `- ${action}`).join("\n")
-    : "- Maintenir une observation pédagogique sur les prochaines évaluations.\n- Vérifier les devoirs publiés avant toute conclusion définitive.";
+  const pedagogicalActionLines = buildCouncilPedagogicalActionLines({
+    subjectAlerts,
+    studentsToFollow: topStudents,
+    presenceRatio,
+    progressionRatio,
+    progressionsCount: args.progressions.length,
+    broadScope,
+  });
 
   const allStudentsHaveAvg = studentsWithOfficialAvg === args.scoped.students.length && args.scoped.students.length > 0;
   const avgLabel = formatAvg(avgClass);
@@ -1167,10 +1226,7 @@ function buildCouncilNote(args: {
     studentLines,
     "",
     "6. ACTIONS PÉDAGOGIQUES PROPOSÉES",
-    topSubjectActions,
-    "- Faire un point avec le professeur principal et les enseignants concernés.",
-    "- Suivre les élèves concernés à la prochaine évaluation.",
-    "- Informer les parents uniquement lorsque le suivi pédagogique le justifie.",
+    ...pedagogicalActionLines.map((line) => `- ${line}`),
     "",
     "7. CONCLUSION PROPOSÉE",
     conclusion,
