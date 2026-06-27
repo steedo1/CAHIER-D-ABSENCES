@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -489,9 +489,16 @@ export default function MonCahierIaPage() {
           core_completion_percent: completion,
         }),
       });
-      const json = (await res.json().catch(() => null)) as AssistantResponse | null;
+      const rawText = await res.text();
+      let json: AssistantResponse | null = null;
+      try {
+        json = rawText ? (JSON.parse(rawText) as AssistantResponse) : null;
+      } catch {
+        json = null;
+      }
       if (!res.ok || !json?.ok || !json.answer) {
-        throw new Error(json?.message || json?.error || "Analyse impossible.");
+        const detail = json?.message || json?.error || rawText?.slice(0, 300) || "";
+        throw new Error(detail ? `Analyse impossible : ${detail}` : "Analyse impossible.");
       }
       setAnswer(json.answer);
       setMeta(json.context_meta || null);
@@ -1244,3 +1251,4 @@ export default function MonCahierIaPage() {
     </div>
   );
 }
+

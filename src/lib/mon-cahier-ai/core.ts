@@ -325,16 +325,6 @@ export function inferIntent(question: string): MonCahierAiIntent {
   }
 
   if (
-    q.includes("conseil") ||
-    q.includes("note") ||
-    q.includes("rapport") ||
-    q.includes("preparer") ||
-    q.includes("rediger")
-  ) {
-    return "council_note";
-  }
-
-  if (
     q.includes("remediation") ||
     q.includes("remediat") ||
     q.includes("plan") ||
@@ -342,6 +332,16 @@ export function inferIntent(question: string): MonCahierAiIntent {
     q.includes("accompagnement")
   ) {
     return "remediation_plan";
+  }
+
+  if (
+    q.includes("conseil") ||
+    q.includes("note") ||
+    q.includes("rapport") ||
+    q.includes("preparer") ||
+    q.includes("rediger")
+  ) {
+    return "council_note";
   }
 
   if (
@@ -1300,4 +1300,5 @@ function buildRemediationPlan(args: {
 
   return plan.slice(0, 10);
 }
+
 
