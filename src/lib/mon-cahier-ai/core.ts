@@ -885,7 +885,7 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     ];
   } else if (intent === "remediation_plan") {
     title = scopeLabel ? `Plan de remédiation ciblé — ${scopeLabel}` : "Plan de remédiation ciblé";
-    remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers: subjectAlerts });
+    remediation_plan = buildRemediationPlan({ studentsToFollow, classesAtRisk, blockers: subjectAlerts, allStudents: scoped.students });
     if (subjectAlerts.length) {
       const first = subjectAlerts[0];
       const weakNames = formatWeakStudentNames(first, 4);
@@ -941,17 +941,78 @@ function formatWeakStudentNames(subject: AiSubjectSignal, limit = 4): string {
   return `${names.join(", ")}${remaining > 0 ? `, +${remaining} autre${remaining > 1 ? "s" : ""}` : ""}`;
 }
 
+function getCriticalWeakStudents(subject: AiSubjectSignal, threshold = 8): AiSubjectWeakStudent[] {
+  return (subject.weak_students || []).filter((student) => {
+    const avg = student.avg_score_20 == null ? null : Number(student.avg_score_20);
+    return avg != null && Number.isFinite(avg) && avg < threshold;
+  });
+}
+
+function findStudentSignalForWeakStudent(weakStudent: AiSubjectWeakStudent, students: AiStudentSignal[]): AiStudentSignal | undefined {
+  const byId = students.find((student) => student.student_id === weakStudent.student_id);
+  if (byId) return byId;
+
+  const weakName = cleanText(weakStudent.full_name);
+  return students.find((student) => cleanText(student.full_name) === weakName);
+}
+
+function buildWeakStudentContextLine(subject: AiSubjectSignal, students: AiStudentSignal[]): string | null {
+  const weakStudents = subject.weak_students || [];
+  if (!weakStudents.length) return null;
+
+  const signals: string[] = [];
+
+  for (const weakStudent of weakStudents.slice(0, 6)) {
+    const student = findStudentSignalForWeakStudent(weakStudent, students);
+    if (!student) continue;
+
+    const studentSignals: string[] = [];
+    const conduct = student.conduct_total_20 == null ? null : Number(student.conduct_total_20);
+    const absenceHours = student.total_absent_hours == null ? null : Number(student.total_absent_hours);
+    const lates = student.nb_lates == null ? null : Number(student.nb_lates);
+    const presence = student.presence_rate == null ? null : Number(student.presence_rate);
+
+    if (conduct != null && Number.isFinite(conduct) && conduct < 12) {
+      studentSignals.push(`conduite ${formatAvg(conduct)}`);
+    }
+    if (absenceHours != null && Number.isFinite(absenceHours) && absenceHours >= 5) {
+      studentSignals.push(`${round1(absenceHours)} h d’absence`);
+    }
+    if (lates != null && Number.isFinite(lates) && lates >= 2) {
+      studentSignals.push(`${Math.round(lates)} retard${Math.round(lates) > 1 ? "s" : ""}`);
+    }
+    if (presence != null && Number.isFinite(presence) && presence < 0.9) {
+      studentSignals.push(`assiduité ${pct(presence)}`);
+    }
+
+    if (studentSignals.length) {
+      signals.push(`${weakStudent.full_name} : ${studentSignals.join(", ")}`);
+    }
+  }
+
+  if (!signals.length) return null;
+
+  return `Vérification conduite/absences : signal(s) à examiner pour ${signals.join(" ; ")}.`;
+}
+
 function buildSubjectRemediationActions(subject: AiSubjectSignal): string[] {
   const actions: string[] = [];
   const weakNames = formatWeakStudentNames(subject, 6);
+  const criticalWeakNames = getCriticalWeakStudents(subject)
+    .slice(0, 4)
+    .map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`)
+    .join(", ");
   const isBlocking = subject.alert_level === "blocking";
   const subjectLabel = `${subject.subject_name} en ${subject.class_label}`;
 
   if (weakNames) {
-    actions.push(`Prendre en charge d’abord les élèves sous 10 : ${weakNames}.`);
+    actions.push(`Recevoir les élèves sous 10 avec le professeur concerné et le professeur principal : ${weakNames}.`);
+    actions.push("Vérifier leur conduite et leurs absences/retards ; ne retenir ce point que si un signal défavorable apparaît.");
   } else if (subject.avg_score_20 != null && subject.avg_score_20 < 13.5) {
     actions.push(`Mettre ${subjectLabel} sous observation sur les deux prochaines évaluations.`);
   }
+
+  actions.push("Vérifier que les séances de travaux dirigés ou de consolidation prévues dans la matière sont effectivement réalisées.");
 
   if (isBlocking) {
     actions.push("Organiser une séance courte de remédiation centrée sur les notions non maîtrisées.");
@@ -961,9 +1022,13 @@ function buildSubjectRemediationActions(subject: AiSubjectSignal): string[] {
     actions.push("Comparer les résultats au prochain devoir pour confirmer ou lever la vigilance.");
   }
 
+  if (criticalWeakNames) {
+    actions.push(`Pour les cas les plus préoccupants (${criticalWeakNames}), informer ou convoquer les parents avant le prochain devoir.`);
+  }
+
   actions.push("Faire valider le suivi par le professeur principal et l’enseignant de la matière.");
 
-  return actions.slice(0, 5);
+  return actions.slice(0, 6);
 }
 
 function buildCouncilPedagogicalActionLines(args: {
@@ -1241,6 +1306,7 @@ function buildRemediationPlan(args: {
   studentsToFollow: AiStudentSignal[];
   classesAtRisk: AiClassSignal[];
   blockers: AiSubjectSignal[];
+  allStudents: AiStudentSignal[];
 }): string[] {
   const plan: string[] = [];
   const subjectTargets = args.blockers.slice(0, 5);
@@ -1250,6 +1316,11 @@ function buildRemediationPlan(args: {
   if (subjectTargets.length) {
     const first = subjectTargets[0];
     const weakNames = formatWeakStudentNames(first, 6);
+    const criticalWeakNames = getCriticalWeakStudents(first)
+      .slice(0, 4)
+      .map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`)
+      .join(", ");
+    const weakStudentContextLine = buildWeakStudentContextLine(first, args.allStudents);
     const alertLabel = first.alert_level === "blocking" ? "matière bloquante" : "matière de vigilance";
 
     plan.push(
@@ -1260,9 +1331,35 @@ function buildRemediationPlan(args: {
       }`,
     );
 
-    for (const action of first.remediation_actions || []) {
-      plan.push(`Action ${first.subject_name} : ${action}`);
+    if (weakNames) {
+      plan.push(
+        `Entretien ciblé : faire recevoir ${weakNames} par l’administration pédagogique avec le professeur de ${first.subject_name} et le professeur principal pour comprendre les difficultés avant le prochain devoir.`,
+      );
+      plan.push(
+        `Vérification individuelle : contrôler la conduite et les absences/retards de ces élèves ; si rien n’est défavorable, ne pas en faire un point de conseil.`,
+      );
     }
+
+    if (weakStudentContextLine) {
+      plan.push(weakStudentContextLine);
+    }
+
+    plan.push(
+      `Travaux dirigés : vérifier que les séances de TD, consolidation ou remédiation en ${first.subject_name} sont effectivement réalisées et suivies avant la prochaine évaluation.`,
+    );
+
+    if (criticalWeakNames) {
+      plan.push(
+        `Parents : pour les résultats les plus préoccupants (${criticalWeakNames}), convoquer les parents ou leur demander un suivi renforcé à domicile avant le prochain devoir.`,
+      );
+    } else if (weakNames) {
+      plan.push(
+        `Parents : si les résultats ne progressent pas au prochain devoir, informer les parents et leur demander de suivre le travail à domicile.`,
+      );
+    }
+
+    plan.push("Pédagogie : prévoir des exercices courts corrigés immédiatement, puis une mini-évaluation de contrôle.");
+    plan.push("Évaluation : comparer uniquement les nouvelles notes des élèves concernés après la remédiation pour confirmer ou lever la vigilance.");
 
     for (const subject of subjectTargets.slice(1, 4)) {
       const names = formatWeakStudentNames(subject, 4);
@@ -1270,7 +1367,9 @@ function buildRemediationPlan(args: {
         `Suivi complémentaire : ${subject.subject_name} en ${subject.class_label} — moyenne ${formatAvg(
           subject.avg_score_20,
         )}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10.${
-          names ? ` Élèves concernés : ${names}.` : ""
+          names
+            ? ` Élèves concernés : ${names}. Vérifier TD/remédiation, entretien avec les élèves concernés, puis parents si le niveau reste préoccupant.`
+            : " Observation sur les deux prochaines évaluations avant toute remédiation individuelle."
         }`,
       );
     }
@@ -1280,7 +1379,7 @@ function buildRemediationPlan(args: {
 
   if (topStudents.length) {
     plan.push(
-      `Semaine 1-2 : ouvrir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${
+      `Suivi individuel : ouvrir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${
         topStudents.length > 1 ? "s" : ""
       }, avec objectif par matière, responsable de suivi et date de vérification.`,
     );
@@ -1288,14 +1387,12 @@ function buildRemediationPlan(args: {
 
   if (topClasses.length) {
     plan.push(
-      `Semaine 2 : organiser un point rapide professeur principal + éducateur pour ${topClasses
+      `Coordination : organiser un point professeur principal + éducateur pour ${topClasses
         .map((c) => c.class_label)
-        .join(", ")} afin de suivre les classes sensibles.`,
+        .join(", ")} afin de suivre les classes sensibles sans généraliser les cas individuels.`,
     );
   }
 
-  plan.push("Semaine 2-3 : privilégier des exercices courts corrigés immédiatement, puis une mini-évaluation de contrôle.");
-  plan.push("Avant le conseil : comparer les nouvelles notes, l’assiduité et la conduite avant toute conclusion définitive.");
   plan.push("Cadre éthique : utiliser ce plan pour accompagner les élèves, jamais pour sanctionner automatiquement.");
 
   return plan.slice(0, 10);
