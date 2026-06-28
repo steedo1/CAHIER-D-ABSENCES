@@ -51,10 +51,13 @@ with periods as (
     and gp.end_date is not null
 ),
 students_base as (
+  -- Dans Mon Cahier, la classe courante/historique d'un élève est portée par class_enrollments,
+  -- pas par public.students.class_id.
   select
     s.id as student_id,
     s.institution_id,
-    s.class_id,
+    ce.class_id,
+    ce.id as enrollment_id,
     s.student_person_id,
     s.gender,
     s.is_affecte,
@@ -63,18 +66,21 @@ students_base as (
     c.label as class_label,
     c.level as class_level,
     c.academic_year
-  from public.students s
-  join public.classes c on c.id = s.class_id
-  where s.class_id is not null
+  from public.class_enrollments ce
+  join public.students s on s.id = ce.student_id
+  join public.classes c on c.id = ce.class_id
+  where ce.class_id is not null
+    and (ce.end_date is null or ce.end_date >= current_date)
 ),
 class_sizes as (
   select
-    s.institution_id,
-    s.class_id,
-    count(*)::integer as class_size
-  from public.students s
-  where s.class_id is not null
-  group by s.institution_id, s.class_id
+    ce.institution_id,
+    ce.class_id,
+    count(distinct ce.student_id)::integer as class_size
+  from public.class_enrollments ce
+  where ce.class_id is not null
+    and (ce.end_date is null or ce.end_date >= current_date)
+  group by ce.institution_id, ce.class_id
 ),
 marks_base as (
   select
@@ -257,6 +263,7 @@ select
   sb.class_id,
   sb.student_id,
   sb.student_person_id,
+  sb.enrollment_id,
   sb.class_level,
   cs.class_size,
   spg.evaluations_count,
@@ -399,6 +406,7 @@ select
   s.class_id,
   s.student_id,
   s.student_person_id,
+  s.enrollment_id,
   s.features_json,
   jsonb_build_object(
     'target_kind', 'next_period_or_annual_decision',
@@ -479,6 +487,7 @@ begin
     snapshot_date,
     class_id,
     student_id,
+    enrollment_id,
     model_key,
     features_json,
     label_json,
@@ -498,6 +507,7 @@ begin
     d.snapshot_date,
     d.class_id,
     d.student_id,
+    d.enrollment_id,
     p_model_key,
     d.features_json,
     d.label_json,
