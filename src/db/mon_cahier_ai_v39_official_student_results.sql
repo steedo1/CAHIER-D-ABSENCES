@@ -1,4 +1,4 @@
--- src/db/mon_cahier_ai_v39_official_student_results.sql
+﻿-- src/db/mon_cahier_ai_v39_official_student_results.sql
 -- Mon Cahier IA v39 — Résultats officiels élèves et décisions annuelles persistés
 -- Objectif : ne plus laisser les résultats importants seulement dans le PDF du bulletin.
 -- Principe : T1/T2/T3 sont enregistrés en base, puis la décision annuelle est calculée/persistée
@@ -559,7 +559,7 @@ begin
       spr.institution_id,
       spr.academic_year,
       spr.student_id,
-      max(spr.student_person_id) as student_person_id,
+      (array_agg(spr.student_person_id order by spr.period_order desc nulls last))[1] as student_person_id,
       (array_agg(spr.class_id order by spr.period_order desc nulls last))[1] as current_class_id,
       round(avg(spr.general_avg_20)::numeric, 2) as annual_avg_20,
       count(*) filter (where spr.general_avg_20 is not null)::integer as periods_covered,
@@ -658,3 +658,4 @@ comment on function public.mon_cahier_rebuild_official_student_results(uuid, tex
   'Reconstruit et persiste les résultats officiels T1/T2/T3 et les décisions annuelles depuis les données scolaires existantes, sans charge admin et sans utiliser les actions IA proposées.';
 
 commit;
+
