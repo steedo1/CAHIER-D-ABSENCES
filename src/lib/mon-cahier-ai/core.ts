@@ -1368,6 +1368,7 @@ function buildRemediationPlan(args: {
   studentsToFollow: AiStudentSignal[];
   classesAtRisk: AiClassSignal[];
   blockers: AiSubjectSignal[];
+  allStudents?: AiStudentSignal[];
 }): string[] {
   const rows: string[] = [];
   const subjectTargets = args.blockers.slice(0, 5);
@@ -1498,4 +1499,5 @@ function buildRemediationPlan(args: {
 
   return rows.slice(0, 10);
 }
+
 
