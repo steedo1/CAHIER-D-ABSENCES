@@ -1376,7 +1376,7 @@ function buildRemediationPlan(args: {
   const topStudents = args.studentsToFollow.slice(0, 10);
 
   const pushRow = (action: string, target: string, responsible: string, due: string, status: string) => {
-    rows.push([action, target, responsible, due, status].map((value) => String(value || "â€”").trim()).join(" | "));
+    rows.push([action, target, responsible, due, status].map((value) => String(value || "—").trim()).join(" | "));
   };
 
   if (subjectTargets.length) {
@@ -1386,32 +1386,32 @@ function buildRemediationPlan(args: {
       .slice(0, 4)
       .map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`)
       .join(", ");
-    const alertLabel = first.alert_level === "blocking" ? "matiÃ¨re bloquante" : "matiÃ¨re de vigilance";
+    const alertLabel = first.alert_level === "blocking" ? "matière bloquante" : "matière de vigilance";
     const subjectTarget = `${first.class_label} ${first.subject_name}`;
 
     pushRow(
-      "PrioritÃ© matiÃ¨re",
-      `${subjectTarget} â€” ${alertLabel}, moyenne ${formatAvg(first.avg_score_20)}, ${first.weak_students_count} Ã©lÃ¨ve${first.weak_students_count > 1 ? "s" : ""} sous 10`,
-      "Administration pÃ©dagogique + professeur concernÃ© + professeur principal",
-      "ImmÃ©diat",
-      "Ã€ cadrer",
+      "Priorité matière",
+      `${subjectTarget} — ${alertLabel}, moyenne ${formatAvg(first.avg_score_20)}, ${first.weak_students_count} élève${first.weak_students_count > 1 ? "s" : ""} sous 10`,
+      "Administration pédagogique + professeur concerné + professeur principal",
+      "Immédiat",
+      "À cadrer",
     );
 
     if (weakNames) {
       pushRow(
-        "Entretien ciblÃ©",
+        "Entretien ciblé",
         weakNames,
-        `Administration pÃ©dagogique + professeur de ${first.subject_name} + professeur principal`,
+        `Administration pédagogique + professeur de ${first.subject_name} + professeur principal`,
         "Avant prochain devoir",
-        "Ã€ faire",
+        "À faire",
       );
 
       pushRow(
-        "VÃ©rification conduite / absences",
+        "Vérification conduite / absences",
         weakNames,
-        "Administration pÃ©dagogique + professeur principal",
-        "Avant ou pendant lâ€™entretien",
-        "Ã€ vÃ©rifier",
+        "Administration pédagogique + professeur principal",
+        "Avant ou pendant l'entretien",
+        "À vérifier",
       );
     }
 
@@ -1420,62 +1420,62 @@ function buildRemediationPlan(args: {
       subjectTarget,
       `Professeur de ${first.subject_name}`,
       "Cette semaine",
-      "Ã€ vÃ©rifier",
+      "À vérifier",
     );
 
     pushRow(
-      "Exercices + mini-Ã©valuation",
+      "Exercices + mini-évaluation",
       weakNames || subjectTarget,
       `Professeur de ${first.subject_name}`,
-      "AprÃ¨s remÃ©diation",
-      "Ã€ programmer",
+      "Après remédiation",
+      "À programmer",
     );
 
     if (criticalWeakNames) {
       pushRow(
         "Parents",
         criticalWeakNames,
-        "Administration pÃ©dagogique / professeur principal",
+        "Administration pédagogique / professeur principal",
         "Avant prochain devoir",
-        "Ã€ dÃ©cider",
+        "À décider",
       );
     } else if (weakNames) {
       pushRow(
         "Parents",
-        `${weakNames} si absence, conduite dÃ©favorable ou absence dâ€™amÃ©lioration`,
-        "Administration pÃ©dagogique / professeur principal",
-        "AprÃ¨s entretien ou prochaine Ã©valuation",
-        "Ã€ dÃ©cider",
+        `${weakNames} si absence, conduite défavorable ou absence d'amélioration`,
+        "Administration pédagogique / professeur principal",
+        "Après entretien ou prochaine évaluation",
+        "À décider",
       );
     }
 
     for (const subject of subjectTargets.slice(1, 4)) {
       const names = formatWeakStudentNames(subject, 4);
       pushRow(
-        "Suivi complÃ©mentaire",
-        `${subject.class_label} ${subject.subject_name} â€” moyenne ${formatAvg(subject.avg_score_20)}, ${subject.weak_students_count} Ã©lÃ¨ve${subject.weak_students_count > 1 ? "s" : ""} sous 10${names ? ` : ${names}` : ""}`,
+        "Suivi complémentaire",
+        `${subject.class_label} ${subject.subject_name} — moyenne ${formatAvg(subject.avg_score_20)}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10${names ? ` : ${names}` : ""}`,
         `Professeur de ${subject.subject_name} + professeur principal`,
-        "Deux prochaines Ã©valuations",
-        names ? "Ã€ suivre" : "Observation",
+        "Deux prochaines évaluations",
+        names ? "À suivre" : "Observation",
       );
     }
   } else {
     pushRow(
       "Diagnostic initial",
-      "Aucune matiÃ¨re bloquante claire isolÃ©e",
-      "Administration pÃ©dagogique + professeurs principaux",
+      "Aucune matière bloquante claire isolée",
+      "Administration pédagogique + professeurs principaux",
       "Cette semaine",
-      "Ã€ confirmer",
+      "À confirmer",
     );
   }
 
   if (topStudents.length && !subjectTargets.length) {
     pushRow(
       "Fiches de suivi",
-      `${topStudents.length} Ã©lÃ¨ve${topStudents.length > 1 ? "s" : ""} prioritaire${topStudents.length > 1 ? "s" : ""}`,
-      "Professeur principal + Ã©ducateur de niveau",
+      `${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${topStudents.length > 1 ? "s" : ""}`,
+      "Professeur principal + éducateur de niveau",
       "Avant conseil",
-      "Ã€ ouvrir",
+      "À ouvrir",
     );
   }
 
@@ -1483,21 +1483,22 @@ function buildRemediationPlan(args: {
     pushRow(
       "Coordination classe",
       topClasses.map((c) => c.class_label).join(", "),
-      "Professeur principal + Ã©ducateur de niveau",
+      "Professeur principal + éducateur de niveau",
       "Avant conseil",
-      "Ã€ organiser",
+      "À organiser",
     );
   }
 
   pushRow(
-    "Cadre Ã©thique",
-    "Ã‰lÃ¨ves concernÃ©s",
-    "Ã‰quipe Ã©ducative",
+    "Cadre éthique",
+    "Élèves concernés",
+    "Équipe éducative",
     "Permanent",
-    "Ã€ respecter",
+    "À respecter",
   );
 
   return rows.slice(0, 10);
 }
+
 
 
