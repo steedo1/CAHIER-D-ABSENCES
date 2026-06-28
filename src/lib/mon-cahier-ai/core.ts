@@ -1368,12 +1368,15 @@ function buildRemediationPlan(args: {
   studentsToFollow: AiStudentSignal[];
   classesAtRisk: AiClassSignal[];
   blockers: AiSubjectSignal[];
-  allStudents: AiStudentSignal[];
 }): string[] {
-  const plan: string[] = [];
+  const rows: string[] = [];
   const subjectTargets = args.blockers.slice(0, 5);
   const topClasses = args.classesAtRisk.slice(0, 3);
   const topStudents = args.studentsToFollow.slice(0, 10);
+
+  const pushRow = (action: string, target: string, responsible: string, due: string, status: string) => {
+    rows.push([action, target, responsible, due, status].map((value) => String(value || "â€”").trim()).join(" | "));
+  };
 
   if (subjectTargets.length) {
     const first = subjectTargets[0];
@@ -1382,82 +1385,117 @@ function buildRemediationPlan(args: {
       .slice(0, 4)
       .map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`)
       .join(", ");
-    const weakStudentContextLine = buildWeakStudentContextLine(first, args.allStudents);
-    const alertLabel = first.alert_level === "blocking" ? "matière bloquante" : "matière de vigilance";
+    const alertLabel = first.alert_level === "blocking" ? "matiÃ¨re bloquante" : "matiÃ¨re de vigilance";
+    const subjectTarget = `${first.class_label} ${first.subject_name}`;
 
-    plan.push(
-      `Priorité 1 : traiter ${first.subject_name} en ${first.class_label} (${alertLabel}, moyenne ${formatAvg(
-        first.avg_score_20,
-      )}, ${first.weak_students_count} élève${first.weak_students_count > 1 ? "s" : ""} sous 10).${
-        weakNames ? ` Élèves concernés : ${weakNames}.` : ""
-      }`,
+    pushRow(
+      "PrioritÃ© matiÃ¨re",
+      `${subjectTarget} â€” ${alertLabel}, moyenne ${formatAvg(first.avg_score_20)}, ${first.weak_students_count} Ã©lÃ¨ve${first.weak_students_count > 1 ? "s" : ""} sous 10`,
+      "Administration pÃ©dagogique + professeur concernÃ© + professeur principal",
+      "ImmÃ©diat",
+      "Ã€ cadrer",
     );
 
     if (weakNames) {
-      plan.push(
-        `Entretien ciblé : faire recevoir ${weakNames} par l’administration pédagogique avec le professeur de ${first.subject_name} et le professeur principal pour comprendre les difficultés avant le prochain devoir.`,
+      pushRow(
+        "Entretien ciblÃ©",
+        weakNames,
+        `Administration pÃ©dagogique + professeur de ${first.subject_name} + professeur principal`,
+        "Avant prochain devoir",
+        "Ã€ faire",
       );
-      plan.push(
-        `Vérification individuelle : contrôler la conduite et les absences/retards de ces élèves ; si rien n’est défavorable, ne pas en faire un point de conseil.`,
+
+      pushRow(
+        "VÃ©rification conduite / absences",
+        weakNames,
+        "Administration pÃ©dagogique + professeur principal",
+        "Avant ou pendant lâ€™entretien",
+        "Ã€ vÃ©rifier",
       );
     }
 
-    if (weakStudentContextLine) {
-      plan.push(weakStudentContextLine);
-    }
+    pushRow(
+      "TD / consolidation",
+      subjectTarget,
+      `Professeur de ${first.subject_name}`,
+      "Cette semaine",
+      "Ã€ vÃ©rifier",
+    );
 
-    plan.push(
-      `Travaux dirigés : vérifier que les séances de TD, consolidation ou remédiation en ${first.subject_name} sont effectivement réalisées et suivies avant la prochaine évaluation.`,
+    pushRow(
+      "Exercices + mini-Ã©valuation",
+      weakNames || subjectTarget,
+      `Professeur de ${first.subject_name}`,
+      "AprÃ¨s remÃ©diation",
+      "Ã€ programmer",
     );
 
     if (criticalWeakNames) {
-      plan.push(
-        `Parents : pour les résultats les plus préoccupants (${criticalWeakNames}), convoquer les parents ou leur demander un suivi renforcé à domicile avant le prochain devoir.`,
+      pushRow(
+        "Parents",
+        criticalWeakNames,
+        "Administration pÃ©dagogique / professeur principal",
+        "Avant prochain devoir",
+        "Ã€ dÃ©cider",
       );
     } else if (weakNames) {
-      plan.push(
-        `Parents : si les résultats ne progressent pas au prochain devoir, informer les parents et leur demander de suivre le travail à domicile.`,
+      pushRow(
+        "Parents",
+        `${weakNames} si absence, conduite dÃ©favorable ou absence dâ€™amÃ©lioration`,
+        "Administration pÃ©dagogique / professeur principal",
+        "AprÃ¨s entretien ou prochaine Ã©valuation",
+        "Ã€ dÃ©cider",
       );
     }
-
-    plan.push("Pédagogie : prévoir des exercices courts corrigés immédiatement, puis une mini-évaluation de contrôle.");
-    plan.push("Évaluation : comparer uniquement les nouvelles notes des élèves concernés après la remédiation pour confirmer ou lever la vigilance.");
 
     for (const subject of subjectTargets.slice(1, 4)) {
       const names = formatWeakStudentNames(subject, 4);
-      plan.push(
-        `Suivi complémentaire : ${subject.subject_name} en ${subject.class_label} — moyenne ${formatAvg(
-          subject.avg_score_20,
-        )}, ${subject.weak_students_count} élève${subject.weak_students_count > 1 ? "s" : ""} sous 10.${
-          names
-            ? ` Élèves concernés : ${names}. Vérifier TD/remédiation, entretien avec les élèves concernés, puis parents si le niveau reste préoccupant.`
-            : " Observation sur les deux prochaines évaluations avant toute remédiation individuelle."
-        }`,
+      pushRow(
+        "Suivi complÃ©mentaire",
+        `${subject.class_label} ${subject.subject_name} â€” moyenne ${formatAvg(subject.avg_score_20)}, ${subject.weak_students_count} Ã©lÃ¨ve${subject.weak_students_count > 1 ? "s" : ""} sous 10${names ? ` : ${names}` : ""}`,
+        `Professeur de ${subject.subject_name} + professeur principal`,
+        "Deux prochaines Ã©valuations",
+        names ? "Ã€ suivre" : "Observation",
       );
     }
   } else {
-    plan.push("Semaine 1 : aucune matière bloquante claire n’est isolée ; identifier les chapitres non maîtrisés à partir des dernières évaluations publiées.");
+    pushRow(
+      "Diagnostic initial",
+      "Aucune matiÃ¨re bloquante claire isolÃ©e",
+      "Administration pÃ©dagogique + professeurs principaux",
+      "Cette semaine",
+      "Ã€ confirmer",
+    );
   }
 
-  if (topStudents.length) {
-    plan.push(
-      `Suivi individuel : ouvrir une fiche de suivi pour ${topStudents.length} élève${topStudents.length > 1 ? "s" : ""} prioritaire${
-        topStudents.length > 1 ? "s" : ""
-      }, avec objectif par matière, responsable de suivi et date de vérification.`,
+  if (topStudents.length && !subjectTargets.length) {
+    pushRow(
+      "Fiches de suivi",
+      `${topStudents.length} Ã©lÃ¨ve${topStudents.length > 1 ? "s" : ""} prioritaire${topStudents.length > 1 ? "s" : ""}`,
+      "Professeur principal + Ã©ducateur de niveau",
+      "Avant conseil",
+      "Ã€ ouvrir",
     );
   }
 
   if (topClasses.length) {
-    plan.push(
-      `Coordination : organiser un point professeur principal + éducateur pour ${topClasses
-        .map((c) => c.class_label)
-        .join(", ")} afin de suivre les classes sensibles sans généraliser les cas individuels.`,
+    pushRow(
+      "Coordination classe",
+      topClasses.map((c) => c.class_label).join(", "),
+      "Professeur principal + Ã©ducateur de niveau",
+      "Avant conseil",
+      "Ã€ organiser",
     );
   }
 
-  plan.push("Cadre éthique : utiliser ce plan pour accompagner les élèves, jamais pour sanctionner automatiquement.");
+  pushRow(
+    "Cadre Ã©thique",
+    "Ã‰lÃ¨ves concernÃ©s",
+    "Ã‰quipe Ã©ducative",
+    "Permanent",
+    "Ã€ respecter",
+  );
 
-  return plan.slice(0, 10);
+  return rows.slice(0, 10);
 }
-
 

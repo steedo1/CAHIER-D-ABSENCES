@@ -338,6 +338,31 @@ function formatHistoryDate(value: string) {
 }
 
 
+
+type RemediationTableRow = {
+  action: string;
+  target: string;
+  responsible: string;
+  due: string;
+  status: string;
+};
+
+function parseRemediationTableRow(value: string): RemediationTableRow | null {
+  const parts = String(value || "")
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 5) return null;
+
+  return {
+    action: parts[0],
+    target: parts[1],
+    responsible: parts[2],
+    due: parts[3],
+    status: parts.slice(4).join(" | "),
+  };
+}
 export default function MonCahierIaPage() {
   const [loading, setLoading] = useState(true);
   const [asking, setAsking] = useState(false);
@@ -833,7 +858,7 @@ export default function MonCahierIaPage() {
                 </span>
               </div>
               <p className="mt-1 text-sm leading-6 text-slate-600">
-                Section repliée pour garder l’assistant lisible. Ouvre-la seulement quand tu veux reprendre une ancienne note.
+                Section repliée pour garder l’assistant lisible. Ouvrez-la seulement quand vous voulez reprendre une ancienne note.
               </p>
             </div>
           </div>
@@ -1097,16 +1122,59 @@ export default function MonCahierIaPage() {
                 <Sparkles className="h-5 w-5 text-cyan-700" />
                 Plan de remédiation ciblé
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {answer.remediation_plan.map((step, index) => (
-                  <div key={`${step}-${index}`} className="rounded-2xl border border-cyan-100 bg-white p-4 text-sm font-medium leading-6 text-slate-700">
-                    <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-950 text-xs font-black text-white">
-                      {index + 1}
-                    </span>
-                    {step}
+              {(() => {
+                const tableRows = answer.remediation_plan
+                  .map(parseRemediationTableRow)
+                  .filter((row): row is RemediationTableRow => Boolean(row));
+
+                if (tableRows.length === answer.remediation_plan.length && tableRows.length > 0) {
+                  return (
+                    <div className="overflow-hidden rounded-2xl border border-cyan-100 bg-white">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-cyan-50 text-xs font-black uppercase tracking-wide text-cyan-900">
+                            <tr>
+                              <th className="px-4 py-3">Action</th>
+                              <th className="px-4 py-3">Élèves / classe</th>
+                              <th className="px-4 py-3">Responsable</th>
+                              <th className="px-4 py-3">Échéance</th>
+                              <th className="px-4 py-3">Statut</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-cyan-100">
+                            {tableRows.map((row, index) => (
+                              <tr key={`${row.action}-${index}`} className="align-top text-slate-700">
+                                <td className="px-4 py-3 font-black text-slate-950">{row.action}</td>
+                                <td className="px-4 py-3 font-semibold">{row.target}</td>
+                                <td className="px-4 py-3">{row.responsible}</td>
+                                <td className="px-4 py-3 font-semibold">{row.due}</td>
+                                <td className="px-4 py-3">
+                                  <span className="inline-flex rounded-full border border-cyan-100 bg-cyan-50 px-2.5 py-1 text-xs font-black text-cyan-900">
+                                    {row.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {answer.remediation_plan.map((step, index) => (
+                      <div key={`${step}-${index}`} className="rounded-2xl border border-cyan-100 bg-white p-4 text-sm font-medium leading-6 text-slate-700">
+                        <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-950 text-xs font-black text-white">
+                          {index + 1}
+                        </span>
+                        {step}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </div>
           ) : null}
 
@@ -1251,4 +1319,5 @@ export default function MonCahierIaPage() {
     </div>
   );
 }
+
 
