@@ -895,7 +895,11 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
     } else {
       summary = "Le plan cible les élèves prioritaires, l’assiduité, la publication des notes et le suivi par l’équipe pédagogique.";
     }
-    recommendations = remediation_plan;
+    recommendations = buildRemediationSummaryRecommendations({
+      studentsToFollow,
+      classesAtRisk,
+      blockers: subjectAlerts,
+    });
   }
 
   const confidence = context.data_quality?.score ?? computeConfidence(context, scoped.classes.length, totalStudents);
@@ -1130,6 +1134,64 @@ function buildCommonRecommendations(args: {
   );
 
   return recs.slice(0, 6);
+}
+
+function buildRemediationSummaryRecommendations(args: {
+  studentsToFollow: AiStudentSignal[];
+  classesAtRisk: AiClassSignal[];
+  blockers: AiSubjectSignal[];
+}): string[] {
+  const recs: string[] = [];
+  const first = args.blockers[0];
+
+  if (first) {
+    const weakCount = Number(first.weak_students_count || 0);
+    const weakNames = formatWeakStudentNames(first, 3);
+    const criticalWeakNames = getCriticalWeakStudents(first)
+      .slice(0, 3)
+      .map((student) => `${student.full_name} (${formatAvg(student.avg_score_20)})`)
+      .join(", ");
+
+    recs.push(
+      `Priorité : traiter ${first.subject_name} en ${first.class_label} — moyenne ${formatAvg(first.avg_score_20)}${
+        weakCount ? `, ${weakCount} élève${weakCount > 1 ? "s" : ""} sous 10` : ""
+      }.`
+    );
+
+    if (weakNames) {
+      recs.push(
+        `Élèves concernés : ${weakNames}. Vérifier conduite, absences et retards uniquement si ces données révèlent un signal défavorable.`
+      );
+    }
+
+    recs.push(
+      `Vérifier avec le professeur concerné que les TD, consolidations ou remédiations en ${first.subject_name} sont effectivement réalisés avant le prochain devoir.`
+    );
+
+    if (criticalWeakNames) {
+      recs.push(
+        `Cas les plus préoccupants : ${criticalWeakNames}. Prévoir entretien et information ou convocation des parents avant le prochain devoir.`
+      );
+    } else if (weakNames) {
+      recs.push(
+        "Parents : informer seulement si conduite/absences posent problème ou si aucune amélioration n’apparaît à la prochaine évaluation."
+      );
+    }
+  } else if (args.studentsToFollow.length) {
+    recs.push(
+      `Priorité : suivre ${Math.min(args.studentsToFollow.length, 10)} élève${args.studentsToFollow.length > 1 ? "s" : ""} signalé${args.studentsToFollow.length > 1 ? "s" : ""} par les moyennes et indicateurs disponibles.`
+    );
+    recs.push("Vérifier les matières faibles, la conduite et les absences uniquement pour les élèves concernés.");
+    recs.push("Prévoir entretien, exercices ciblés et contrôle rapide avant la prochaine évaluation.");
+  } else if (args.classesAtRisk.length) {
+    recs.push(`Priorité : observer ${args.classesAtRisk[0].class_label} avant le prochain conseil.`);
+    recs.push("Identifier les matières et élèves réellement concernés avant toute action générale.");
+  } else {
+    recs.push("Aucune remédiation urgente n’est isolée avec les données disponibles.");
+    recs.push("Maintenir une observation pédagogique et attendre les prochaines évaluations avant de conclure.");
+  }
+
+  return recs.slice(0, 4);
 }
 
 function buildCouncilNote(args: {
