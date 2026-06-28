@@ -379,6 +379,7 @@ export default function MonCahierIaPage() {
   const [answer, setAnswer] = useState<AiAnswer | null>(null);
   const [meta, setMeta] = useState<AssistantResponse["context_meta"] | null>(null);
   const [noteCopied, setNoteCopied] = useState(false);
+  const [planCopied, setPlanCopied] = useState(false);
   const [history, setHistory] = useState<AiHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -412,7 +413,163 @@ export default function MonCahierIaPage() {
     }
 
     void load();
-    return () => {
+  
+
+  function remediationPlanFilename(ext: "txt" | "doc") {
+    const scope = selectedClass?.label || effectiveLevel || "etablissement";
+    return `plan-remediation-${sanitizeFilePart(scope)}-${sanitizeFilePart(academicYear)}.${ext}`;
+  }
+
+  function getRemediationTableRows() {
+    const plan = answer?.remediation_plan || [];
+    return plan
+      .map(parseRemediationTableRow)
+      .filter((row): row is RemediationTableRow => Boolean(row));
+  }
+
+  function remediationPlanTextContent() {
+    const plan = answer?.remediation_plan || [];
+    if (!plan.length) return "";
+
+    const rows = getRemediationTableRows();
+    const title = answer?.title || "Plan de remédiation ciblé";
+
+    if (rows.length === plan.length && rows.length > 0) {
+      return [
+        title,
+        "",
+        "Action\tÉlèves / classe\tResponsable\tÉchéance\tStatut",
+        ...rows.map((row) => `${row.action}\t${row.target}\t${row.responsible}\t${row.due}\t${row.status}`),
+      ].join("\n");
+    }
+
+    return [
+      title,
+      "",
+      ...plan.map((step, index) => `${index + 1}. ${step}`),
+    ].join("\n");
+  }
+
+  async function copyRemediationPlan() {
+    const content = remediationPlanTextContent();
+    if (!content) return;
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    setPlanCopied(true);
+    window.setTimeout(() => setPlanCopied(false), 2200);
+  }
+
+  function downloadRemediationPlanText() {
+    const content = remediationPlanTextContent();
+    if (!content) return;
+    downloadBlob(content, remediationPlanFilename("txt"), "text/plain;charset=utf-8");
+  }
+
+  function remediationPlanHtmlBody() {
+    const plan = answer?.remediation_plan || [];
+    const rows = getRemediationTableRows();
+
+    if (rows.length === plan.length && rows.length > 0) {
+      const bodyRows = rows.map((row) => `
+        <tr>
+          <td>${escapeHtml(row.action)}</td>
+          <td>${escapeHtml(row.target)}</td>
+          <td>${escapeHtml(row.responsible)}</td>
+          <td>${escapeHtml(row.due)}</td>
+          <td>${escapeHtml(row.status)}</td>
+        </tr>`).join("");
+
+      return `<table>
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Élèves / classe</th>
+            <th>Responsable</th>
+            <th>Échéance</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+    }
+
+    return `<ol>${plan.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>`;
+  }
+
+  function downloadRemediationPlanWord() {
+    if (!answer?.remediation_plan?.length) return;
+    const title = answer.title || "Plan de remédiation ciblé";
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #0f172a; line-height: 1.45; }
+    h1 { font-size: 18pt; text-align: center; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+    th, td { border: 1px solid #94a3b8; padding: 7px; vertical-align: top; }
+    th { background: #ecfeff; text-transform: uppercase; font-size: 9pt; }
+    .footer { margin-top: 18px; font-size: 9pt; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${remediationPlanHtmlBody()}
+  <div class="footer">Document préparé avec Mon Cahier IA — plan d’action pédagogique à valider par l’équipe éducative.</div>
+</body>
+</html>`;
+    downloadBlob(html, remediationPlanFilename("doc"), "application/msword;charset=utf-8");
+  }
+
+  function printRemediationPlan() {
+    if (!answer?.remediation_plan?.length) return;
+    const printWindow = window.open("", "_blank", "width=1000,height=750");
+    if (!printWindow) return;
+    const title = answer.title || "Plan de remédiation ciblé";
+    printWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4 landscape; margin: 12mm; }
+    body { font-family: Arial, sans-serif; color: #0f172a; line-height: 1.45; }
+    .header { border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 16px; }
+    .brand { font-size: 10pt; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .08em; }
+    h1 { font-size: 18pt; margin: 6px 0 0; text-align: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+    th, td { border: 1px solid #94a3b8; padding: 7px; vertical-align: top; }
+    th { background: #ecfeff; text-transform: uppercase; font-size: 8.5pt; }
+    .footer { border-top: 1px solid #cbd5e1; margin-top: 18px; padding-top: 8px; font-size: 9pt; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">Mon Cahier IA</div>
+    <h1>${escapeHtml(title)}</h1>
+  </div>
+  ${remediationPlanHtmlBody()}
+  <div class="footer">Ce plan est une aide au suivi pédagogique. Les décisions finales relèvent de l’administration et de l’équipe éducative.</div>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => printWindow.print(), 250);
+  }
+
+  return () => {
       cancelled = true;
     };
   }, []);
@@ -490,6 +647,7 @@ export default function MonCahierIaPage() {
     setAnswer(item.answer);
     setMeta(item.context_meta || null);
     setNoteCopied(false);
+    setPlanCopied(false);
   }
 
   async function ask(nextQuestion?: string) {
@@ -500,6 +658,7 @@ export default function MonCahierIaPage() {
     setAsking(true);
     setError(null);
     setNoteCopied(false);
+    setPlanCopied(false);
 
     try {
       const res = await fetch("/api/admin/mon-cahier-ia/assistant", {
@@ -1319,5 +1478,6 @@ export default function MonCahierIaPage() {
     </div>
   );
 }
+
 
 
