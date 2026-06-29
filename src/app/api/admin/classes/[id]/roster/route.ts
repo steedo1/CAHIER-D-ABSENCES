@@ -1033,12 +1033,20 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   const lastName = normalizeNullableText(body?.last_name);
   const firstName = normalizeNullableText(body?.first_name);
   const matricule = normalizeNullableText(body?.matricule);
+  const isAffecte = normalizeBool(body?.is_affecte);
+  const isBoarder = normalizeBool(body?.is_boarder);
 
   if (!lastName) {
     return NextResponse.json({ error: "Le nom de l’élève est obligatoire." }, { status: 400 });
   }
   if (!firstName) {
     return NextResponse.json({ error: "Le prénom de l’élève est obligatoire." }, { status: 400 });
+  }
+  if (isAffecte === null || isBoarder === null) {
+    return NextResponse.json(
+      { error: "Affectation et internat sont obligatoires pour générer une dette fiable." },
+      { status: 400 },
+    );
   }
 
   if (matricule) {
@@ -1066,6 +1074,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       last_name: lastName,
       full_name: `${lastName} ${firstName}`.trim(),
       matricule,
+      is_affecte: isAffecte,
+      is_boarder: isBoarder,
     } as any)
     .select("id")
     .maybeSingle();
@@ -1092,13 +1102,15 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   let chargesCreated = 0;
   let financeWarning: string | null = null;
   try {
-    chargesCreated = await ensureFinanceChargesForStudent(
+    const result = await reconcileFinanceChargesForStudent(
       srv,
       institutionId,
       ctx.user.id,
       String(created.id),
       classId,
+      { is_affecte: isAffecte, is_boarder: isBoarder },
     );
+    chargesCreated = result.inserted + result.reactivated + result.updatedAmount;
   } catch (error) {
     financeWarning =
       error instanceof Error ? error.message : "Génération automatique des frais impossible.";

@@ -289,6 +289,8 @@ export default function ClassListPrintPage() {
     last_name: "",
     first_name: "",
     matricule: "",
+    is_affecte: "",
+    is_boarder: "",
   });
 
   async function load() {
@@ -370,9 +372,15 @@ export default function ClassListPrintPage() {
     const lastName = newStudentForm.last_name.replace(/\s+/g, " ").trim();
     const firstName = newStudentForm.first_name.replace(/\s+/g, " ").trim();
     const matricule = newStudentForm.matricule.replace(/\s+/g, " ").trim();
+    const affectationValue = String(newStudentForm.is_affecte || "").trim();
+    const boardingValue = String(newStudentForm.is_boarder || "").trim();
 
     if (!lastName || !firstName) {
       setNewStudentMsg("Le nom et le prénom sont obligatoires.");
+      return;
+    }
+    if (!affectationValue || !boardingValue) {
+      setNewStudentMsg("Choisis aussi Affecté/Non affecté et Interne/Externe avant d’inscrire l’élève.");
       return;
     }
 
@@ -386,14 +394,20 @@ export default function ClassListPrintPage() {
           last_name: lastName,
           first_name: firstName,
           matricule: matricule || null,
+          is_affecte: affectationValue === "true",
+          is_boarder: boardingValue === "true",
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Impossible d’inscrire l’élève.");
 
-      setNewStudentForm({ last_name: "", first_name: "", matricule: "" });
+      setNewStudentForm({ last_name: "", first_name: "", matricule: "", is_affecte: "", is_boarder: "" });
       setShowNewStudent(false);
-      setNewStudentMsg("Élève inscrit dans la classe. La liste est à jour.");
+      const chargesCreated = Number(json?.charges_created || 0);
+      const financeWarning = json?.finance_warning ? ` Alerte finance : ${json.finance_warning}` : "";
+      setNewStudentMsg(
+        `Élève inscrit dans la classe. ${chargesCreated} dette(s) générée(s). La liste est à jour.${financeWarning}`,
+      );
       await load();
     } catch (e: any) {
       setNewStudentMsg(e?.message || "Erreur pendant l’inscription.");
@@ -817,10 +831,10 @@ export default function ClassListPrintPage() {
           <div className="mb-3">
             <div className="font-semibold">Inscription rapide dans cette classe</div>
             <div className="text-sm text-slate-600">
-              Saisissez seulement les informations minimales. Les autres détails pourront être complétés plus tard dans le dossier élève ou le module Finance.
+              Saisissez l’identité et le profil financier. Sans Affecté/Non affecté et Interne/Externe, les dettes ne peuvent pas être générées correctement.
             </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-[1fr_1fr_0.8fr_auto] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[1fr_1fr_0.8fr_0.75fr_0.75fr_auto] md:items-end">
             <label className="text-sm font-medium text-slate-700">
               Nom
               <input
@@ -849,6 +863,32 @@ export default function ClassListPrintPage() {
                 placeholder="Facultatif"
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               />
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Affecté
+              <select
+                value={newStudentForm.is_affecte}
+                onChange={(e) => setNewStudentForm((prev) => ({ ...prev, is_affecte: e.target.value }))}
+                required
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                <option value="">Choisir</option>
+                <option value="true">Affecté</option>
+                <option value="false">Non affecté</option>
+              </select>
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Internat
+              <select
+                value={newStudentForm.is_boarder}
+                onChange={(e) => setNewStudentForm((prev) => ({ ...prev, is_boarder: e.target.value }))}
+                required
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                <option value="">Choisir</option>
+                <option value="true">Interne</option>
+                <option value="false">EXT</option>
+              </select>
             </label>
             <button
               type="submit"
