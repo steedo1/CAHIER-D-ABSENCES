@@ -77,6 +77,7 @@ type FinanceSyncResult = {
   cancelled: number;
   settledPaid: number;
   skippedPaid: number;
+  updatedAmount: number;
 };
 
 function fullName(row: any) {
@@ -196,6 +197,16 @@ function normalizeGender(value: unknown) {
   if (s.startsWith("f")) return "F";
   if (s.startsWith("m") || s.startsWith("h") || s.startsWith("g")) return "M";
   return cleanText(value).slice(0, 8).toUpperCase();
+}
+
+function amountsDiffer(a: number, b: number) {
+  return Math.abs(Number(a || 0) - Number(b || 0)) > 0.01;
+}
+
+function financeStatusForAmount(expectedAmount: number, paidAmount: number) {
+  if (paidAmount >= expectedAmount - 0.01) return "paid";
+  if (paidAmount > 0) return "partial";
+  return "pending";
 }
 
 function normalizeBool(value: unknown): boolean | null {
@@ -702,6 +713,7 @@ async function reconcileFinanceChargesForStudent(
     cancelled: 0,
     settledPaid: 0,
     skippedPaid: 0,
+    updatedAmount: 0,
   };
 
   const { data: classRow, error: classErr } = await srv
@@ -763,7 +775,7 @@ async function reconcileFinanceChargesForStudent(
   const { data: existingChargeRows, error: existingDirectErr } = await srv
     .schema("finance")
     .from("student_charges")
-    .select("id,fee_schedule_id,status,updated_at")
+    .select("id,fee_schedule_id,status,base_amount,due_date,updated_at")
     .eq("school_id", institutionId)
     .eq("student_id", studentId)
     .eq("class_id", classId)
@@ -800,6 +812,8 @@ async function reconcileFinanceChargesForStudent(
       paid_amount: number;
       balance_due: number;
       computed_status: string | null;
+      base_amount: number;
+      due_date: string | null;
     }
   >();
 
@@ -818,6 +832,8 @@ async function reconcileFinanceChargesForStudent(
         : (charge as any).status
           ? String((charge as any).status)
           : null,
+      base_amount: Number((charge as any).base_amount || 0),
+      due_date: (charge as any).due_date ? String((charge as any).due_date) : null,
     };
 
     const existing = existingBySchedule.get(scheduleId);
@@ -865,32 +881,59 @@ async function reconcileFinanceChargesForStudent(
     inserted = rowsToInsert.length;
   }
 
-  const rowsToReactivate = applicableSchedules
+  const rowsToRefreshApplicable = applicableSchedules
     .map((schedule) => {
       const existing = existingBySchedule.get(String(schedule.id));
-      if (!existing || existing.computed_status !== "cancelled" || existing.paid_amount > 0) {
-        return null;
-      }
-      return { chargeId: existing.id, schedule };
+      if (!existing) return null;
+
+      const expectedAmount = Number(schedule.amount || 0);
+      const expectedDueDate = schedule.due_date || null;
+      const wasCancelled = existing.computed_status === "cancelled";
+      const amountChanged = amountsDiffer(existing.base_amount, expectedAmount);
+      const dueDateChanged = existing.due_date !== expectedDueDate;
+
+      // Cas important : Interne -> Externe avec paiement partiel peut avoir
+      // neutralisé la dette en base_amount = payé et status = paid. Si l'élève
+      // repasse Interne, on doit restaurer le montant complet du barème.
+      if (!wasCancelled && !amountChanged && !dueDateChanged) return null;
+
+      return {
+        chargeId: existing.id,
+        schedule,
+        wasCancelled,
+        amountChanged,
+        nextStatus: financeStatusForAmount(expectedAmount, existing.paid_amount),
+      };
     })
-    .filter(Boolean) as Array<{ chargeId: string; schedule: FinanceScheduleRow }>;
+    .filter(Boolean) as Array<{
+      chargeId: string;
+      schedule: FinanceScheduleRow;
+      wasCancelled: boolean;
+      amountChanged: boolean;
+      nextStatus: string;
+    }>;
 
   let reactivated = 0;
-  for (const row of rowsToReactivate) {
-    const { error: reactivateErr } = await srv
+  let updatedAmount = 0;
+  for (const row of rowsToRefreshApplicable) {
+    const { error: refreshErr } = await srv
       .schema("finance")
       .from("student_charges")
       .update({
         base_amount: Number(row.schedule.amount || 0),
         due_date: row.schedule.due_date || null,
-        status: "pending",
+        status: row.nextStatus,
+        notes: row.wasCancelled
+          ? "Profil financier modifié depuis la liste de classe : dette réactivée selon le barème actif."
+          : "Profil financier modifié depuis la liste de classe : montant restauré selon le barème actif.",
         updated_at: nowIso,
       } as any)
       .eq("id", row.chargeId)
       .eq("school_id", institutionId);
 
-    if (reactivateErr) throw new Error(reactivateErr.message);
-    reactivated++;
+    if (refreshErr) throw new Error(refreshErr.message);
+    if (row.wasCancelled) reactivated++;
+    else if (row.amountChanged) updatedAmount++;
   }
 
   const obsoleteChargeIds: string[] = [];
@@ -956,7 +999,7 @@ async function reconcileFinanceChargesForStudent(
     }
   }
 
-  return { inserted, reactivated, cancelled, settledPaid, skippedPaid };
+  return { inserted, reactivated, cancelled, settledPaid, skippedPaid, updatedAmount };
 }
 
 async function ensureFinanceChargesForStudent(
@@ -1223,6 +1266,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     cancelled: 0,
     settledPaid: 0,
     skippedPaid: 0,
+    updatedAmount: 0,
   };
   const financeWarnings: string[] = [];
 
@@ -1304,6 +1348,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       financeSync.cancelled += result.cancelled;
       financeSync.settledPaid += result.settledPaid;
       financeSync.skippedPaid += result.skippedPaid;
+      financeSync.updatedAmount += result.updatedAmount;
     } catch (error) {
       financeWarnings.push(
         error instanceof Error
@@ -1341,6 +1386,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         financeSync.cancelled += result.cancelled;
         financeSync.settledPaid += result.settledPaid;
         financeSync.skippedPaid += result.skippedPaid;
+        financeSync.updatedAmount += result.updatedAmount;
       }
     } catch (error) {
       financeWarnings.push(

@@ -444,7 +444,8 @@ export default function ClassListPrintPage() {
         Number(financeSync.inserted || 0) +
         Number(financeSync.reactivated || 0) +
         Number(financeSync.cancelled || 0) +
-        Number(financeSync.settledPaid || 0);
+        Number(financeSync.settledPaid || 0) +
+        Number(financeSync.updatedAmount || 0);
       const warnings = Array.isArray(json?.finance_warnings) ? json.finance_warnings : [];
 
       setSaveMsg(
@@ -453,7 +454,7 @@ export default function ClassListPrintPage() {
             ? `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`
             : "Aucune modification d’identité détectée. La finance de la classe a été resynchronisée.",
           financeChanges > 0
-            ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.cancelled || 0)} annulée(s), ${Number(financeSync.settledPaid || 0)} dette(s) soldée(s) automatiquement.`
+            ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.updatedAmount || 0)} montant(s) restauré(s), ${Number(financeSync.cancelled || 0)} annulée(s), ${Number(financeSync.settledPaid || 0)} dette(s) soldée(s) automatiquement.`
             : "Finance vérifiée : aucune dette à ajuster.",
           Number(financeSync.skippedPaid || 0) > 0
             ? `${Number(financeSync.skippedPaid || 0)} dette(s) déjà encaissée(s) conservée(s).`
