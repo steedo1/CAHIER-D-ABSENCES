@@ -60,6 +60,12 @@ type FinanceScheduleRow = {
   notes?: string | null;
 };
 
+type FinanceFeeCategoryRow = {
+  id: string;
+  code: string | null;
+  name: string | null;
+};
+
 type FinanceStudentProfile = {
   is_affecte: boolean | null;
   is_boarder: boolean | null;
@@ -98,42 +104,60 @@ function normalizeFinanceLabel(value: unknown) {
     .toLowerCase();
 }
 
-function financeLabelStartsWith(label: string, prefix: string) {
-  // Les barèmes créés par niveau ajoutent souvent le nom de la classe :
-  // ex. "Internat - Pension - 6e A". On doit donc reconnaître le début
-  // du libellé au lieu d'exiger une égalité stricte.
-  return label === prefix || label.startsWith(`${prefix} - `);
+function financeCategoryKind(category: FinanceFeeCategoryRow | null | undefined) {
+  const text = normalizeFinanceLabel(`${category?.code || ""} ${category?.name || ""}`);
+
+  if (text.includes("internat") || text.includes("pension")) return "internat";
+  if (
+    text.includes("scolarite") ||
+    text.includes("ecolage") ||
+    text.includes("inscription")
+  ) {
+    return "scolarite";
+  }
+  if (text.includes("renforcement")) return "cours_renforcement";
+
+  return null;
 }
 
 function financeScheduleAppliesToStudent(
-  schedule: Pick<FinanceScheduleRow, "label">,
+  schedule: Pick<FinanceScheduleRow, "label" | "fee_category_id">,
   student: FinanceStudentProfile,
+  categoriesById: Map<string, FinanceFeeCategoryRow> = new Map(),
 ) {
   const label = normalizeFinanceLabel(schedule.label);
+  const categoryKind = financeCategoryKind(
+    categoriesById.get(String(schedule.fee_category_id || "")),
+  );
 
-  // Frais communs à tous les élèves.
+  // Plus robuste que le seul libellé : si le barème est rangé dans la
+  // catégorie Internat, il doit suivre le statut interne/externe même si son
+  // libellé exact est "Pension", "Frais annexes", "Internat 6e", etc.
   if (
-    financeLabelStartsWith(label, "scolarite - inscription") ||
-    financeLabelStartsWith(label, "scolarite - frais generaux") ||
-    financeLabelStartsWith(label, "scolarite - frais annexes scolarite")
-  ) {
-    return true;
-  }
-
-  // L'ordre est volontaire : "non affecté" contient aussi le mot "affecté".
-  if (financeLabelStartsWith(label, "scolarite - ecolage non affecte")) {
-    return student.is_affecte === false;
-  }
-
-  if (financeLabelStartsWith(label, "scolarite - ecolage affecte")) {
-    return student.is_affecte === true;
-  }
-
-  if (
-    financeLabelStartsWith(label, "internat - pension") ||
-    financeLabelStartsWith(label, "internat - frais annexes internat")
+    categoryKind === "internat" ||
+    label.includes("internat") ||
+    label.includes("pension") ||
+    label.includes("trousseau")
   ) {
     return student.is_boarder === true;
+  }
+
+  const isNonAffecteFee = label.includes("non affecte") || label.includes("non-affecte");
+  const isEcolageFee = label.includes("ecolage");
+  const isAffecteFee = label.includes("affecte");
+
+  if (
+    categoryKind === "scolarite" ||
+    label.includes("scolarite") ||
+    label.includes("inscription") ||
+    label.includes("frais generaux") ||
+    label.includes("frais annexes scolarite") ||
+    isEcolageFee
+  ) {
+    // L'ordre est volontaire : "non affecté" contient aussi "affecté".
+    if (isNonAffecteFee) return student.is_affecte === false;
+    if (isEcolageFee && isAffecteFee) return student.is_affecte === true;
+    return true;
   }
 
   // Les autres barèmes personnalisés restent appliqués normalement.
@@ -622,6 +646,48 @@ async function getAcademicYearIdForFinance(
   return data?.id ? String(data.id) : null;
 }
 
+async function loadFinanceProfilesForStudents(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  classId: string,
+  studentIds: string[],
+): Promise<Array<{ student_id: string; profile: FinanceStudentProfile }>> {
+  const ids = Array.from(new Set(studentIds.map((id) => cleanText(id)).filter(Boolean)));
+  if (ids.length === 0) return [];
+
+  const { data, error } = await srv
+    .from("class_enrollments")
+    .select(
+      `
+      student_id,
+      students:student_id(is_affecte,is_boarder)
+    `,
+    )
+    .eq("institution_id", institutionId)
+    .eq("class_id", classId)
+    .is("end_date", null)
+    .in("student_id", ids);
+
+  if (error) throw new Error(error.message);
+
+  return (data || [])
+    .map((row: any) => {
+      const student = row.students || {};
+      const studentId = cleanText(row.student_id);
+      if (!studentId) return null;
+      return {
+        student_id: studentId,
+        profile: {
+          is_affecte:
+            typeof student.is_affecte === "boolean" ? student.is_affecte : null,
+          is_boarder:
+            typeof student.is_boarder === "boolean" ? student.is_boarder : null,
+        },
+      };
+    })
+    .filter(Boolean) as Array<{ student_id: string; profile: FinanceStudentProfile }>;
+}
+
 async function reconcileFinanceChargesForStudent(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
@@ -662,6 +728,29 @@ async function reconcileFinanceChargesForStudent(
   if (scheduleRows.length === 0) return empty;
 
   const scheduleIds = scheduleRows.map((row) => String(row.id)).filter(Boolean);
+  const feeCategoryIds = Array.from(
+    new Set(scheduleRows.map((row) => String(row.fee_category_id || "").trim()).filter(Boolean)),
+  );
+
+  let categoriesById = new Map<string, FinanceFeeCategoryRow>();
+  if (feeCategoryIds.length > 0) {
+    const { data: categories, error: categoryErr } = await srv
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name")
+      .eq("school_id", institutionId)
+      .in("id", feeCategoryIds);
+
+    if (categoryErr) throw new Error(categoryErr.message);
+
+    categoriesById = new Map(
+      ((categories || []) as FinanceFeeCategoryRow[]).map((category) => [
+        String(category.id),
+        category,
+      ]),
+    );
+  }
+
   const academicYear = String((classRow as any).academic_year || "").trim() || null;
   const academicYearId = await getAcademicYearIdForFinance(
     srv,
@@ -671,36 +760,74 @@ async function reconcileFinanceChargesForStudent(
   const nowIso = new Date().toISOString();
   const today = nowIso.slice(0, 10);
 
-  const { data: existingCharges, error: existingErr } = await srv
+  const { data: existingChargeRows, error: existingDirectErr } = await srv
     .schema("finance")
-    .from("v_charge_balances")
-    .select("id,fee_schedule_id,paid_amount,balance_due,computed_status")
+    .from("student_charges")
+    .select("id,fee_schedule_id,status,updated_at")
     .eq("school_id", institutionId)
     .eq("student_id", studentId)
     .eq("class_id", classId)
-    .in("fee_schedule_id", scheduleIds);
+    .in("fee_schedule_id", scheduleIds)
+    .order("updated_at", { ascending: false });
+
+  if (existingDirectErr) throw new Error(existingDirectErr.message);
+
+  const existingChargeIds = (existingChargeRows || [])
+    .map((charge: any) => cleanText(charge.id))
+    .filter(Boolean);
+
+  const { data: balanceRows, error: existingErr } = existingChargeIds.length
+    ? await srv
+        .schema("finance")
+        .from("v_charge_balances")
+        .select("id,fee_schedule_id,paid_amount,balance_due,computed_status")
+        .eq("school_id", institutionId)
+        .eq("student_id", studentId)
+        .eq("class_id", classId)
+        .in("id", existingChargeIds)
+    : { data: [], error: null as any };
 
   if (existingErr) throw new Error(existingErr.message);
 
+  const balancesById = new Map<string, any>(
+    (balanceRows || []).map((charge: any) => [String(charge.id), charge]),
+  );
+
   const existingBySchedule = new Map<
     string,
-    { id: string; paid_amount: number; balance_due: number; computed_status: string | null }
+    {
+      id: string;
+      paid_amount: number;
+      balance_due: number;
+      computed_status: string | null;
+    }
   >();
 
-  for (const charge of existingCharges || []) {
+  for (const charge of existingChargeRows || []) {
     const scheduleId = String((charge as any).fee_schedule_id || "").trim();
     const chargeId = String((charge as any).id || "").trim();
     if (!scheduleId || !chargeId) continue;
-    existingBySchedule.set(scheduleId, {
+
+    const balance = balancesById.get(chargeId) || {};
+    const candidate = {
       id: chargeId,
-      paid_amount: Number((charge as any).paid_amount || 0),
-      balance_due: Number((charge as any).balance_due || 0),
-      computed_status: (charge as any).computed_status ? String((charge as any).computed_status) : null,
-    });
+      paid_amount: Number(balance.paid_amount || 0),
+      balance_due: Number(balance.balance_due || 0),
+      computed_status: balance.computed_status
+        ? String(balance.computed_status)
+        : (charge as any).status
+          ? String((charge as any).status)
+          : null,
+    };
+
+    const existing = existingBySchedule.get(scheduleId);
+    if (!existing || (existing.computed_status === "cancelled" && candidate.computed_status !== "cancelled")) {
+      existingBySchedule.set(scheduleId, candidate);
+    }
   }
 
   const applicableSchedules = scheduleRows.filter((schedule) =>
-    financeScheduleAppliesToStudent(schedule, studentProfile),
+    financeScheduleAppliesToStudent(schedule, studentProfile, categoriesById),
   );
   const applicableScheduleIds = new Set(applicableSchedules.map((schedule) => String(schedule.id)));
 
@@ -953,15 +1080,20 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const { srv, institutionId } = ctx;
   const body = await req.json().catch(() => ({}));
   const updates = Array.isArray(body?.updates) ? body.updates : [];
+  const forceFinanceSync = body?.force_finance_sync === true;
+  const syncOnlyIds = Array.isArray(body?.student_ids)
+    ? Array.from(
+        new Set(body.student_ids.map((id: any) => cleanText(id)).filter(Boolean)),
+      )
+    : [];
 
-  if (!updates.length) return NextResponse.json({ ok: true, updated: 0 });
-  if (updates.length > 200) {
+  if (!updates.length && !forceFinanceSync) return NextResponse.json({ ok: true, updated: 0 });
+  if (updates.length > 200 || syncOnlyIds.length > 200) {
     return NextResponse.json({ error: "too_many_updates" }, { status: 400 });
   }
 
-  const requestedIds = Array.from(
-    new Set(updates.map((row: any) => cleanText(row?.student_id)).filter(Boolean)),
-  );
+  const updateIds = updates.map((row: any) => cleanText(row?.student_id)).filter(Boolean);
+  const requestedIds = Array.from(new Set([...updateIds, ...syncOnlyIds]));
 
   if (!requestedIds.length) return NextResponse.json({ ok: true, updated: 0 });
 
@@ -1035,7 +1167,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     throw error;
   }
 
-  if (!rows.length) return NextResponse.json({ ok: true, updated: 0 });
+  if (!rows.length && !forceFinanceSync) return NextResponse.json({ ok: true, updated: 0 });
 
   const matriculesToCheck = rows
     .map((row) => row.matricule)
@@ -1181,6 +1313,42 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     }
 
     updated++;
+  }
+
+  if (forceFinanceSync) {
+    const alreadySynced = new Set(rows.map((row) => row.student_id));
+    const idsToSync = requestedIds.filter((studentId) => allowed.has(studentId) && !alreadySynced.has(studentId));
+
+    try {
+      const profiles = await loadFinanceProfilesForStudents(
+        srv,
+        institutionId,
+        classId,
+        idsToSync,
+      );
+
+      for (const item of profiles) {
+        const result = await reconcileFinanceChargesForStudent(
+          srv,
+          institutionId,
+          ctx.user.id,
+          item.student_id,
+          classId,
+          item.profile,
+        );
+        financeSync.inserted += result.inserted;
+        financeSync.reactivated += result.reactivated;
+        financeSync.cancelled += result.cancelled;
+        financeSync.settledPaid += result.settledPaid;
+        financeSync.skippedPaid += result.skippedPaid;
+      }
+    } catch (error) {
+      financeWarnings.push(
+        error instanceof Error
+          ? error.message
+          : "Resynchronisation finance impossible.",
+      );
+    }
   }
 
   try {

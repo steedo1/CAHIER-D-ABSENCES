@@ -426,15 +426,15 @@ export default function ClassListPrintPage() {
           official_track_code: row.official_track_code || null,
         }));
 
-      if (updates.length === 0) {
-        setSaveMsg("Aucune modification détectée.");
-        return;
-      }
-
+      const forceFinanceSync = updates.length === 0;
       const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ updates }),
+        body: JSON.stringify({
+          updates,
+          force_finance_sync: forceFinanceSync,
+          student_ids: forceFinanceSync ? students.map((student) => student.id) : undefined,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Impossible d’enregistrer les corrections.");
@@ -449,7 +449,9 @@ export default function ClassListPrintPage() {
 
       setSaveMsg(
         [
-          `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`,
+          updates.length > 0
+            ? `Corrections enregistrées (${updates.length} élève(s)). La liste PDF est à jour.`
+            : "Aucune modification d’identité détectée. La finance de la classe a été resynchronisée.",
           financeChanges > 0
             ? `Finance synchronisée : ${Number(financeSync.inserted || 0)} dette(s) créée(s), ${Number(financeSync.reactivated || 0)} réactivée(s), ${Number(financeSync.cancelled || 0)} annulée(s), ${Number(financeSync.settledPaid || 0)} dette(s) soldée(s) automatiquement.`
             : "Finance vérifiée : aucune dette à ajuster.",
