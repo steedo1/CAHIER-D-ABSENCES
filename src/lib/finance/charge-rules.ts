@@ -11,14 +11,26 @@ export type FinanceFeeCategoryLike = {
 };
 
 export type FinanceScheduleLike = {
+  id?: string | null;
   label?: string | null;
   fee_category_id?: string | null;
+  class_id?: string | null;
+  academic_year?: string | null;
+};
+
+export type FinanceClassLike = {
+  id?: string | null;
+  label?: string | null;
+  code?: string | null;
+  level?: string | null;
+  academic_year?: string | null;
 };
 
 export type FinanceScheduleKind =
   | "scolarite"
   | "internat"
   | "cours_renforcement"
+  | "kit_livre"
   | "custom";
 
 export function normalizeFinanceText(value: unknown) {
@@ -35,6 +47,64 @@ export function normalizeFinanceText(value: unknown) {
 
 function textContainsAny(text: string, words: string[]) {
   return words.some((word) => text.includes(word));
+}
+
+function sameNormalizedText(a: unknown, b: unknown) {
+  const left = normalizeFinanceText(a);
+  const right = normalizeFinanceText(b);
+  return !!left && !!right && left === right;
+}
+
+export function financeClassIdentityMatches(
+  targetClass: FinanceClassLike | null | undefined,
+  candidateClass: FinanceClassLike | null | undefined,
+) {
+  if (!targetClass || !candidateClass) return false;
+
+  const targetId = String(targetClass.id || "").trim();
+  const candidateId = String(candidateClass.id || "").trim();
+  if (targetId && candidateId && targetId === candidateId) return true;
+
+  // Garde-fou important : certains barèmes importés peuvent pointer vers une
+  // ancienne ligne de classe ayant le même libellé (ex. 1D) mais un autre id.
+  // La comparaison par libellé/code évite que la finance ignore ces barèmes.
+  if (sameNormalizedText(targetClass.label, candidateClass.label)) return true;
+  if (sameNormalizedText(targetClass.code, candidateClass.code)) return true;
+
+  return false;
+}
+
+export function financeBuildCompatibleClassIds(
+  targetClass: FinanceClassLike,
+  allClasses: FinanceClassLike[] = [],
+) {
+  const ids = new Set<string>();
+  const targetId = String(targetClass.id || "").trim();
+  if (targetId) ids.add(targetId);
+
+  for (const candidate of allClasses) {
+    const candidateId = String(candidate.id || "").trim();
+    if (!candidateId) continue;
+    if (financeClassIdentityMatches(targetClass, candidate)) ids.add(candidateId);
+  }
+
+  return ids;
+}
+
+export function financeScheduleMatchesClassYear(
+  schedule: FinanceScheduleLike,
+  targetClass: FinanceClassLike,
+  compatibleClassIds: Set<string> = financeBuildCompatibleClassIds(targetClass),
+) {
+  const scheduleClassId = String(schedule.class_id || "").trim();
+  const scheduleAcademicYear = String(schedule.academic_year || "").trim();
+  const targetAcademicYear = String(targetClass.academic_year || "").trim();
+
+  const classMatches = !scheduleClassId || compatibleClassIds.has(scheduleClassId);
+  const yearMatches =
+    !targetAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === targetAcademicYear;
+
+  return classMatches && yearMatches;
 }
 
 export function financeCategoryKind(
@@ -55,6 +125,7 @@ export function financeCategoryKind(
     return "scolarite";
   }
   if (textContainsAny(text, ["renforcement"])) return "cours_renforcement";
+  if (textContainsAny(text, ["kit livre", "kit_livre", "livre", "livres"])) return "kit_livre";
 
   return null;
 }
@@ -91,6 +162,10 @@ export function financeScheduleKind(
     return "cours_renforcement";
   }
 
+  if (categoryKind === "kit_livre" || textContainsAny(label, ["kit livre", "livre", "livres"])) {
+    return "kit_livre";
+  }
+
   return "custom";
 }
 
@@ -115,9 +190,9 @@ export function financeScheduleAppliesToStudent(
     return true;
   }
 
-  // Les cours de renforcement et les barèmes personnalisés restent appliqués
-  // automatiquement, comme avant. S'ils ne doivent concerner qu'une partie
-  // des élèves, ils doivent être gérés par un filtre métier plus précis.
+  // Les cours de renforcement, kits et barèmes personnalisés restent appliqués
+  // automatiquement. S'ils ne doivent concerner qu'une partie des élèves, ils
+  // doivent être gérés par un filtre métier plus précis dans le barème.
   return true;
 }
 

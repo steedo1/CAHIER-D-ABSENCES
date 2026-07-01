@@ -5,7 +5,9 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   buildFinanceScheduleCoverageWarning,
+  financeBuildCompatibleClassIds,
   financeScheduleAppliesToStudent,
+  financeScheduleMatchesClassYear,
 } from "@/lib/finance/charge-rules";
 
 export const runtime = "nodejs";
@@ -655,7 +657,7 @@ async function reconcileFinanceChargesForStudent(
 
   const { data: classRow, error: classErr } = await srv
     .from("classes")
-    .select("id,label,level,academic_year,institution_id")
+    .select("id,label,level,code,academic_year,institution_id")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
@@ -664,6 +666,19 @@ async function reconcileFinanceChargesForStudent(
   if (!classRow) throw new Error("Classe introuvable.");
 
   const classAcademicYear = String((classRow as any).academic_year || "").trim() || null;
+
+  const { data: allClassRows, error: allClassErr } = await srv
+    .from("classes")
+    .select("id,label,code,level,academic_year")
+    .eq("institution_id", institutionId)
+    .range(0, 9999);
+
+  if (allClassErr) throw new Error(allClassErr.message);
+
+  const compatibleClassIds = financeBuildCompatibleClassIds(
+    classRow as any,
+    (allClassRows || []) as any[],
+  );
 
   const { data: schedules, error: scheduleErr } = await srv
     .schema("finance")
@@ -676,13 +691,7 @@ async function reconcileFinanceChargesForStudent(
   if (scheduleErr) throw new Error(scheduleErr.message);
 
   const scheduleRows = ((Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[]).filter(
-    (schedule) => {
-      const scheduleClassId = cleanText(schedule.class_id);
-      const scheduleAcademicYear = cleanText(schedule.academic_year);
-      const classMatches = !scheduleClassId || scheduleClassId === classId;
-      const yearMatches = !classAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === classAcademicYear;
-      return classMatches && yearMatches;
-    },
+    (schedule) => financeScheduleMatchesClassYear(schedule, classRow as any, compatibleClassIds),
   );
 
   if (scheduleRows.length === 0) {

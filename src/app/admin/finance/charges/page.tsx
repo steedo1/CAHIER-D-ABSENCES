@@ -11,7 +11,11 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
-import { financeScheduleAppliesToStudent } from "@/lib/finance/charge-rules";
+import {
+  financeBuildCompatibleClassIds,
+  financeScheduleAppliesToStudent,
+  financeScheduleMatchesClassYear,
+} from "@/lib/finance/charge-rules";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -26,6 +30,7 @@ export const dynamic = "force-dynamic";
 type ClassRow = {
   id: string;
   label: string;
+  code?: string | null;
   level: string | null;
   academic_year: string | null;
 };
@@ -135,13 +140,26 @@ async function generateChargesForClassAction(formData: FormData) {
 
   const { data: classRow, error: classErr } = await admin
     .from("classes")
-    .select("id,label,level,academic_year,institution_id")
+    .select("id,label,code,level,academic_year,institution_id")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
 
   if (classErr) throw new Error(classErr.message);
   if (!classRow) throw new Error("Classe introuvable.");
+
+  const { data: allClassRows, error: allClassErr } = await admin
+    .from("classes")
+    .select("id,label,code,level,academic_year")
+    .eq("institution_id", institutionId)
+    .range(0, 9999);
+
+  if (allClassErr) throw new Error(allClassErr.message);
+
+  const compatibleClassIds = financeBuildCompatibleClassIds(
+    classRow as any,
+    (allClassRows || []) as ClassRow[],
+  );
 
   const { data: schedules, error: schErr } = await admin
     .schema("finance")
@@ -155,14 +173,9 @@ async function generateChargesForClassAction(formData: FormData) {
 
   if (schErr) throw new Error(schErr.message);
 
-  const classAcademicYear = String((classRow as any).academic_year || "").trim();
-  const scheduleRows = ((schedules ?? []) as FeeScheduleRow[]).filter((schedule) => {
-    const scheduleClassId = String(schedule.class_id || "").trim();
-    const scheduleAcademicYear = String(schedule.academic_year || "").trim();
-    const classMatches = !scheduleClassId || scheduleClassId === classId;
-    const yearMatches = !classAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === classAcademicYear;
-    return classMatches && yearMatches;
-  });
+  const scheduleRows = ((schedules ?? []) as FeeScheduleRow[]).filter((schedule) =>
+    financeScheduleMatchesClassYear(schedule, classRow as any, compatibleClassIds),
+  );
   const scheduleCategoryIds = Array.from(
     new Set(scheduleRows.map((schedule) => String(schedule.fee_category_id || "").trim()).filter(Boolean)),
   );
@@ -369,7 +382,7 @@ export default async function FinanceChargesPage({
 
   let classesQuery = admin
     .from("classes")
-    .select("id,label,level,academic_year")
+    .select("id,label,code,level,academic_year")
     .eq("institution_id", institutionId);
 
   if (selectedAcademicYearCode) {
@@ -389,6 +402,7 @@ export default async function FinanceChargesPage({
     { data: schedules, error: schErr },
     { data: categories, error: catErr },
     { data: balances, error: balErr },
+    { data: allClassesForMatching, error: allClassesErr },
   ] = await Promise.all([
     admin
       .schema("finance")
@@ -414,25 +428,38 @@ export default async function FinanceChargesPage({
           .then((data) => ({ data, error: null }))
           .catch((error) => ({ data: [], error }))
       : Promise.resolve({ data: [], error: null } as any),
+
+    admin
+      .from("classes")
+      .select("id,label,code,level,academic_year")
+      .eq("institution_id", institutionId)
+      .range(0, 9999),
   ]);
 
   if (schErr) throw new Error(schErr.message);
   if (catErr) throw new Error(catErr.message);
   if (balErr) throw new Error(balErr.message);
+  if (allClassesErr) throw new Error(allClassesErr.message);
+
+  const allClassRows = (allClassesForMatching ?? []) as ClassRow[];
+  const compatibleClassIdsByClass = new Map(
+    classRows.map((cls) => [cls.id, financeBuildCompatibleClassIds(cls, allClassRows)]),
+  );
 
   const classIdSet = new Set(classIds);
   const studentRows = adminStudents.filter((student) =>
     student.class_id ? classIdSet.has(student.class_id) : false,
   );
   const rawScheduleRows = (schedules ?? []) as FeeScheduleRow[];
-  const selectedClassIdSet = new Set(classIds);
-  const scheduleRows = rawScheduleRows.filter((schedule) => {
-    const scheduleClassId = String(schedule.class_id || "").trim();
-    const scheduleAcademicYear = String(schedule.academic_year || "").trim();
-    const classMatches = !scheduleClassId || selectedClassIdSet.has(scheduleClassId);
-    const yearMatches = !selectedAcademicYearCode || !scheduleAcademicYear || scheduleAcademicYear === selectedAcademicYearCode;
-    return classMatches && yearMatches;
-  });
+  const scheduleRows = rawScheduleRows.filter((schedule) =>
+    classRows.some((cls) =>
+      financeScheduleMatchesClassYear(
+        schedule,
+        cls,
+        compatibleClassIdsByClass.get(cls.id) || new Set([cls.id]),
+      ),
+    ),
+  );
   const categoriesById = new Map(
     ((categories ?? []) as FeeCategoryRow[]).map((category) => [String(category.id), category]),
   );
@@ -447,15 +474,6 @@ export default async function FinanceChargesPage({
     },
     {},
   );
-
-  const schedulesByClass = scheduleRows.reduce<
-    Record<string, FeeScheduleRow[]>
-  >((acc, row) => {
-    const key = row.class_id || "none";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(row);
-    return acc;
-  }, {});
 
   const balancesByClass = balanceRows.reduce<
     Record<string, ChargeBalanceRow[]>
@@ -476,10 +494,10 @@ export default async function FinanceChargesPage({
 
   const classSummaries = classRows.map((cls) => {
     const classStudents = studentsByClass[cls.id] || [];
-    const classSchedules = [
-      ...(schedulesByClass[cls.id] || []),
-      ...(schedulesByClass.none || []),
-    ];
+    const compatibleClassIds = compatibleClassIdsByClass.get(cls.id) || new Set([cls.id]);
+    const classSchedules = scheduleRows.filter((schedule) =>
+      financeScheduleMatchesClassYear(schedule, cls, compatibleClassIds),
+    );
     const classBalances = balancesByClass[cls.id] || [];
 
     const theoreticalCount = classStudents.reduce(
