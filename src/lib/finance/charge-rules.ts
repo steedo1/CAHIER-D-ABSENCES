@@ -10,27 +10,29 @@ export type FinanceFeeCategoryLike = {
   is_mandatory?: boolean | null;
 };
 
-export type FinanceScheduleLike = {
-  id?: string | null;
-  label?: string | null;
-  fee_category_id?: string | null;
-  class_id?: string | null;
-  academic_year?: string | null;
-};
-
 export type FinanceClassLike = {
   id?: string | null;
   label?: string | null;
   code?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  official_track_code?: string | null;
+};
+
+export type FinanceScheduleLike = {
+  id?: string | null;
+  label?: string | null;
+  fee_category_id?: string | null;
+  class_id?: string | null;
+  academic_year?: string | null;
+  amount?: number | string | null;
+  due_date?: string | null;
 };
 
 export type FinanceScheduleKind =
   | "scolarite"
   | "internat"
   | "cours_renforcement"
-  | "kit_livre"
   | "custom";
 
 export function normalizeFinanceText(value: unknown) {
@@ -49,63 +51,196 @@ function textContainsAny(text: string, words: string[]) {
   return words.some((word) => text.includes(word));
 }
 
+
+function cleanFinanceId(value: unknown) {
+  return String(value ?? "").trim();
+}
+
 function sameNormalizedText(a: unknown, b: unknown) {
   const left = normalizeFinanceText(a);
   const right = normalizeFinanceText(b);
-  return !!left && !!right && left === right;
+  return Boolean(left && right && left === right);
 }
 
-export function financeClassIdentityMatches(
-  targetClass: FinanceClassLike | null | undefined,
-  candidateClass: FinanceClassLike | null | undefined,
-) {
-  if (!targetClass || !candidateClass) return false;
-
-  const targetId = String(targetClass.id || "").trim();
-  const candidateId = String(candidateClass.id || "").trim();
-  if (targetId && candidateId && targetId === candidateId) return true;
-
-  // Garde-fou important : certains barèmes importés peuvent pointer vers une
-  // ancienne ligne de classe ayant le même libellé (ex. 1D) mais un autre id.
-  // La comparaison par libellé/code évite que la finance ignore ces barèmes.
-  if (sameNormalizedText(targetClass.label, candidateClass.label)) return true;
-  if (sameNormalizedText(targetClass.code, candidateClass.code)) return true;
-
-  return false;
-}
-
-export function financeBuildCompatibleClassIds(
-  targetClass: FinanceClassLike,
-  allClasses: FinanceClassLike[] = [],
-) {
-  const ids = new Set<string>();
-  const targetId = String(targetClass.id || "").trim();
-  if (targetId) ids.add(targetId);
-
-  for (const candidate of allClasses) {
-    const candidateId = String(candidate.id || "").trim();
-    if (!candidateId) continue;
-    if (financeClassIdentityMatches(targetClass, candidate)) ids.add(candidateId);
-  }
-
-  return ids;
-}
-
-export function financeScheduleMatchesClassYear(
+function scheduleYearMatchesClass(
   schedule: FinanceScheduleLike,
   targetClass: FinanceClassLike,
-  compatibleClassIds: Set<string> = financeBuildCompatibleClassIds(targetClass),
 ) {
-  const scheduleClassId = String(schedule.class_id || "").trim();
-  const scheduleAcademicYear = String(schedule.academic_year || "").trim();
-  const targetAcademicYear = String(targetClass.academic_year || "").trim();
-
-  const classMatches = !scheduleClassId || compatibleClassIds.has(scheduleClassId);
-  const yearMatches =
-    !targetAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === targetAcademicYear;
-
-  return classMatches && yearMatches;
+  const scheduleYear = normalizeFinanceText(schedule.academic_year);
+  const classYear = normalizeFinanceText(targetClass.academic_year);
+  return !scheduleYear || !classYear || scheduleYear === classYear;
 }
+
+function financeClassMatchPriority(
+  schedule: FinanceScheduleLike,
+  targetClass: FinanceClassLike,
+  classesById: Map<string, FinanceClassLike>,
+) {
+  const scheduleClassId = cleanFinanceId(schedule.class_id);
+  const targetClassId = cleanFinanceId(targetClass.id);
+
+  if (!scheduleClassId) return 0;
+  if (targetClassId && scheduleClassId === targetClassId) return 0;
+
+  const sourceClass = classesById.get(scheduleClassId);
+  if (!sourceClass) return null;
+
+  if (
+    sameNormalizedText(sourceClass.label, targetClass.label) ||
+    sameNormalizedText(sourceClass.code, targetClass.code)
+  ) {
+    return 1;
+  }
+
+  // Filet de sécurité pour les classes recréées ou dupliquées :
+  // les barèmes existent parfois sur une ancienne classe du même niveau
+  // (ex. 1D), alors que la classe active est 1D1/1D2.
+  if (
+    sameNormalizedText(sourceClass.official_track_code, targetClass.official_track_code) ||
+    sameNormalizedText(sourceClass.level, targetClass.level)
+  ) {
+    return 2;
+  }
+
+  return null;
+}
+
+function stripKnownClassSuffixFromNormalizedLabel(
+  normalizedLabel: string,
+  classLabels: string[],
+) {
+  let result = normalizedLabel;
+  const suffixes = Array.from(
+    new Set(
+      classLabels
+        .map((label) => normalizeFinanceText(label))
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length),
+    ),
+  );
+
+  for (const classLabel of suffixes) {
+    const suffix = ` - ${classLabel}`;
+    if (result.endsWith(suffix)) {
+      result = result.slice(0, -suffix.length).trim();
+      break;
+    }
+  }
+
+  return result || normalizedLabel;
+}
+
+function financeScheduleBusinessKey(
+  schedule: FinanceScheduleLike,
+  targetClass: FinanceClassLike,
+  classesById: Map<string, FinanceClassLike>,
+  categoriesById: Map<string, FinanceFeeCategoryLike>,
+) {
+  const sourceClass = classesById.get(cleanFinanceId(schedule.class_id));
+  const comparableClassLabels = [
+    targetClass.label,
+    targetClass.code,
+    sourceClass?.label,
+    sourceClass?.code,
+    ...Array.from(classesById.values())
+      .filter(
+        (row) =>
+          sameNormalizedText(row.level, targetClass.level) ||
+          sameNormalizedText(row.official_track_code, targetClass.official_track_code),
+      )
+      .flatMap((row) => [row.label, row.code]),
+  ]
+    .map((value) => String(value ?? ""))
+    .filter(Boolean);
+
+  const normalizedLabel = stripKnownClassSuffixFromNormalizedLabel(
+    normalizeFinanceText(schedule.label),
+    comparableClassLabels,
+  );
+
+  const amount = Number(schedule.amount || 0);
+  const amountKey = Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
+
+  return [
+    financeScheduleKind(schedule, categoriesById),
+    cleanFinanceId(schedule.fee_category_id),
+    normalizedLabel,
+    amountKey,
+    cleanFinanceId(schedule.due_date),
+  ].join("|");
+}
+
+export function financeScheduleLabelForClass(
+  schedule: FinanceScheduleLike,
+  targetClass: FinanceClassLike,
+  classesById: Map<string, FinanceClassLike> = new Map(),
+) {
+  const original = String(schedule.label ?? "").trim();
+  const targetLabel = String(targetClass.label ?? targetClass.code ?? "").trim();
+  const sourceClass = classesById.get(cleanFinanceId(schedule.class_id));
+  const sourceLabels = [sourceClass?.label, sourceClass?.code]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  if (!original || !targetLabel || sourceLabels.length === 0) return original;
+
+  for (const sourceLabel of sourceLabels) {
+    const escaped = sourceLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`\\s*-\\s*${escaped}\\s*$`, "i");
+    if (pattern.test(original)) return original.replace(pattern, ` - ${targetLabel}`);
+  }
+
+  return original;
+}
+
+export function selectFinanceSchedulesForClass<T extends FinanceScheduleLike>({
+  schedules,
+  targetClass,
+  classesById = new Map(),
+  categoriesById = new Map(),
+}: {
+  schedules: T[];
+  targetClass: FinanceClassLike;
+  classesById?: Map<string, FinanceClassLike>;
+  categoriesById?: Map<string, FinanceFeeCategoryLike>;
+}) {
+  const candidates = schedules
+    .map((schedule) => {
+      if (!scheduleYearMatchesClass(schedule, targetClass)) return null;
+      const priority = financeClassMatchPriority(schedule, targetClass, classesById);
+      if (priority === null) return null;
+      return { schedule, priority };
+    })
+    .filter(Boolean) as Array<{ schedule: T; priority: number }>;
+
+  candidates.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return normalizeFinanceText(a.schedule.label).localeCompare(
+      normalizeFinanceText(b.schedule.label),
+      "fr",
+      { numeric: true, sensitivity: "base" },
+    );
+  });
+
+  const selectedByKey = new Map<string, { schedule: T; priority: number }>();
+
+  for (const candidate of candidates) {
+    const key = financeScheduleBusinessKey(
+      candidate.schedule,
+      targetClass,
+      classesById,
+      categoriesById,
+    );
+    const existing = selectedByKey.get(key);
+    if (!existing || candidate.priority < existing.priority) {
+      selectedByKey.set(key, candidate);
+    }
+  }
+
+  return Array.from(selectedByKey.values()).map((item) => item.schedule);
+}
+
 
 export function financeCategoryKind(
   category: FinanceFeeCategoryLike | null | undefined,
@@ -125,7 +260,6 @@ export function financeCategoryKind(
     return "scolarite";
   }
   if (textContainsAny(text, ["renforcement"])) return "cours_renforcement";
-  if (textContainsAny(text, ["kit livre", "kit_livre", "livre", "livres"])) return "kit_livre";
 
   return null;
 }
@@ -162,10 +296,6 @@ export function financeScheduleKind(
     return "cours_renforcement";
   }
 
-  if (categoryKind === "kit_livre" || textContainsAny(label, ["kit livre", "livre", "livres"])) {
-    return "kit_livre";
-  }
-
   return "custom";
 }
 
@@ -190,9 +320,9 @@ export function financeScheduleAppliesToStudent(
     return true;
   }
 
-  // Les cours de renforcement, kits et barèmes personnalisés restent appliqués
-  // automatiquement. S'ils ne doivent concerner qu'une partie des élèves, ils
-  // doivent être gérés par un filtre métier plus précis dans le barème.
+  // Les cours de renforcement et les barèmes personnalisés restent appliqués
+  // automatiquement, comme avant. S'ils ne doivent concerner qu'une partie
+  // des élèves, ils doivent être gérés par un filtre métier plus précis.
   return true;
 }
 

@@ -5,9 +5,9 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   buildFinanceScheduleCoverageWarning,
-  financeBuildCompatibleClassIds,
   financeScheduleAppliesToStudent,
-  financeScheduleMatchesClassYear,
+  financeScheduleLabelForClass,
+  selectFinanceSchedulesForClass,
 } from "@/lib/finance/charge-rules";
 
 export const runtime = "nodejs";
@@ -62,6 +62,7 @@ type FinanceScheduleRow = {
   label: string | null;
   amount: number | string | null;
   due_date: string | null;
+  allow_partial?: boolean | null;
   is_active?: boolean | null;
   notes?: string | null;
 };
@@ -657,7 +658,7 @@ async function reconcileFinanceChargesForStudent(
 
   const { data: classRow, error: classErr } = await srv
     .from("classes")
-    .select("id,label,level,code,academic_year,institution_id")
+    .select("id,label,level,code,academic_year,official_track_code,institution_id")
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
@@ -667,32 +668,51 @@ async function reconcileFinanceChargesForStudent(
 
   const classAcademicYear = String((classRow as any).academic_year || "").trim() || null;
 
-  const { data: allClassRows, error: allClassErr } = await srv
-    .from("classes")
-    .select("id,label,code,level,academic_year")
-    .eq("institution_id", institutionId)
-    .range(0, 9999);
-
-  if (allClassErr) throw new Error(allClassErr.message);
-
-  const compatibleClassIds = financeBuildCompatibleClassIds(
-    classRow as any,
-    (allClassRows || []) as any[],
-  );
-
   const { data: schedules, error: scheduleErr } = await srv
     .schema("finance")
     .from("fee_schedules")
-    .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,is_active,notes")
+    .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes")
     .eq("school_id", institutionId)
     .eq("is_active", true)
     .range(0, 9999);
 
   if (scheduleErr) throw new Error(scheduleErr.message);
 
-  const scheduleRows = ((Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[]).filter(
-    (schedule) => financeScheduleMatchesClassYear(schedule, classRow as any, compatibleClassIds),
+  const [{ data: classRowsForFinance, error: classRowsErr }, { data: categories, error: categoryErr }] =
+    await Promise.all([
+      srv
+        .from("classes")
+        .select("id,label,code,level,academic_year,official_track_code")
+        .eq("institution_id", institutionId)
+        .range(0, 9999),
+      srv
+        .schema("finance")
+        .from("fee_categories")
+        .select("id,code,name,is_mandatory")
+        .eq("school_id", institutionId),
+    ]);
+
+  if (classRowsErr) throw new Error(classRowsErr.message);
+  if (categoryErr) throw new Error(categoryErr.message);
+
+  const classesById = new Map(
+    ((classRowsForFinance || []) as any[]).map((row) => [String(row.id), row]),
   );
+  classesById.set(String((classRow as any).id), classRow as any);
+
+  const categoriesById = new Map(
+    ((categories || []) as FinanceFeeCategoryRow[]).map((category) => [
+      String(category.id),
+      category,
+    ]),
+  );
+
+  const scheduleRows = selectFinanceSchedulesForClass({
+    schedules: ((Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[]),
+    targetClass: classRow as any,
+    classesById,
+    categoriesById,
+  });
 
   if (scheduleRows.length === 0) {
     return {
@@ -704,28 +724,6 @@ async function reconcileFinanceChargesForStudent(
   }
 
   const scheduleIds = scheduleRows.map((row) => String(row.id)).filter(Boolean);
-  const feeCategoryIds = Array.from(
-    new Set(scheduleRows.map((row) => String(row.fee_category_id || "").trim()).filter(Boolean)),
-  );
-
-  let categoriesById = new Map<string, FinanceFeeCategoryRow>();
-  if (feeCategoryIds.length > 0) {
-    const { data: categories, error: categoryErr } = await srv
-      .schema("finance")
-      .from("fee_categories")
-      .select("id,code,name,is_mandatory")
-      .eq("school_id", institutionId)
-      .in("id", feeCategoryIds);
-
-    if (categoryErr) throw new Error(categoryErr.message);
-
-    categoriesById = new Map(
-      ((categories || []) as FinanceFeeCategoryRow[]).map((category) => [
-        String(category.id),
-        category,
-      ]),
-    );
-  }
 
   const syncWarnings = buildFinanceScheduleCoverageWarning({
     schedules: scheduleRows,
@@ -828,7 +826,7 @@ async function reconcileFinanceChargesForStudent(
       class_id: classId,
       fee_schedule_id: schedule.id,
       fee_category_id: schedule.fee_category_id,
-      label: schedule.label,
+      label: financeScheduleLabelForClass(schedule, classRow as any, classesById) || schedule.label,
       base_amount: Number(schedule.amount || 0),
       due_date: schedule.due_date || null,
       charge_date: today,
