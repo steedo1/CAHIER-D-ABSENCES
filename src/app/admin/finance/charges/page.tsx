@@ -11,6 +11,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import { fetchFinanceChargeBalancesByClasses } from "@/lib/finance/charge-balances";
+import { financeScheduleAppliesToStudent } from "@/lib/finance/charge-rules";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -45,6 +46,14 @@ type FeeScheduleRow = {
   updated_at: string;
 };
 
+type FeeCategoryRow = {
+  id: string;
+  code: string | null;
+  name: string | null;
+  is_mandatory?: boolean | null;
+};
+
+
 type ChargeBalanceRow = {
   id: string;
   school_id: string;
@@ -73,57 +82,6 @@ type ChargeStudentRow = {
   is_affecte: boolean | null;
   is_boarder: boolean | null;
 };
-
-function normalizeFeeLabel(value: unknown) {
-  return String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/\s*-\s*/g, " - ")
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function feeLabelStartsWith(label: string, prefix: string) {
-  // Les barèmes créés par niveau ajoutent souvent le nom de la classe :
-  // ex. "Internat - Pension - 6e A". On doit donc reconnaître le début
-  // du libellé au lieu d'exiger une égalité stricte.
-  return label === prefix || label.startsWith(`${prefix} - `);
-}
-
-function scheduleAppliesToStudent(
-  schedule: Pick<FeeScheduleRow, "label">,
-  student: Pick<ChargeStudentRow, "is_affecte" | "is_boarder">,
-) {
-  const label = normalizeFeeLabel(schedule.label);
-
-  if (
-    feeLabelStartsWith(label, "scolarite - inscription") ||
-    feeLabelStartsWith(label, "scolarite - frais generaux") ||
-    feeLabelStartsWith(label, "scolarite - frais annexes scolarite")
-  ) {
-    return true;
-  }
-
-  if (feeLabelStartsWith(label, "scolarite - ecolage non affecte")) {
-    return student.is_affecte === false;
-  }
-
-  if (feeLabelStartsWith(label, "scolarite - ecolage affecte")) {
-    return student.is_affecte === true;
-  }
-
-  if (
-    feeLabelStartsWith(label, "internat - pension") ||
-    feeLabelStartsWith(label, "internat - frais annexes internat")
-  ) {
-    return student.is_boarder === true;
-  }
-
-  return true;
-}
 
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
@@ -192,12 +150,37 @@ async function generateChargesForClassAction(formData: FormData) {
       "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
     )
     .eq("school_id", institutionId)
-    .eq("class_id", classId)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .range(0, 9999);
 
   if (schErr) throw new Error(schErr.message);
 
-  const scheduleRows = (schedules ?? []) as FeeScheduleRow[];
+  const classAcademicYear = String((classRow as any).academic_year || "").trim();
+  const scheduleRows = ((schedules ?? []) as FeeScheduleRow[]).filter((schedule) => {
+    const scheduleClassId = String(schedule.class_id || "").trim();
+    const scheduleAcademicYear = String(schedule.academic_year || "").trim();
+    const classMatches = !scheduleClassId || scheduleClassId === classId;
+    const yearMatches = !classAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === classAcademicYear;
+    return classMatches && yearMatches;
+  });
+  const scheduleCategoryIds = Array.from(
+    new Set(scheduleRows.map((schedule) => String(schedule.fee_category_id || "").trim()).filter(Boolean)),
+  );
+
+  let scheduleCategoriesById = new Map<string, FeeCategoryRow>();
+  if (scheduleCategoryIds.length > 0) {
+    const { data: categoryRows, error: categoryErr } = await admin
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name,is_mandatory")
+      .eq("school_id", institutionId)
+      .in("id", scheduleCategoryIds);
+
+    if (categoryErr) throw new Error(categoryErr.message);
+    scheduleCategoriesById = new Map(
+      ((categoryRows ?? []) as FeeCategoryRow[]).map((category) => [String(category.id), category]),
+    );
+  }
 
   if (scheduleRows.length === 0) {
     throw new Error(
@@ -290,7 +273,7 @@ async function generateChargesForClassAction(formData: FormData) {
     scheduleRows
       .filter(
         (schedule) =>
-          scheduleAppliesToStudent(schedule, student) &&
+          financeScheduleAppliesToStudent(schedule, student, scheduleCategoriesById) &&
           !existingSet.has(`${student.id}:${schedule.id}`),
       )
       .map((schedule) => ({
@@ -404,27 +387,24 @@ export default async function FinanceChargesPage({
 
   const [
     { data: schedules, error: schErr },
+    { data: categories, error: catErr },
     { data: balances, error: balErr },
   ] = await Promise.all([
-    (() => {
-      let query = admin
-        .schema("finance")
-        .from("fee_schedules")
-        .select(
-          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
-        )
-        .eq("school_id", institutionId)
-        .eq("is_active", true);
+    admin
+      .schema("finance")
+      .from("fee_schedules")
+      .select(
+        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
+      )
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .range(0, 9999),
 
-      if (selectedAcademicYearCode) {
-        query = query.eq("academic_year", selectedAcademicYearCode);
-      }
-      if (classIds.length > 0) {
-        query = query.in("class_id", classIds);
-      }
-
-      return query.range(0, 9999);
-    })(),
+    admin
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name,is_mandatory")
+      .eq("school_id", institutionId),
 
     classIds.length > 0
       ? fetchFinanceChargeBalancesByClasses({
@@ -437,13 +417,25 @@ export default async function FinanceChargesPage({
   ]);
 
   if (schErr) throw new Error(schErr.message);
+  if (catErr) throw new Error(catErr.message);
   if (balErr) throw new Error(balErr.message);
 
   const classIdSet = new Set(classIds);
   const studentRows = adminStudents.filter((student) =>
     student.class_id ? classIdSet.has(student.class_id) : false,
   );
-  const scheduleRows = (schedules ?? []) as FeeScheduleRow[];
+  const rawScheduleRows = (schedules ?? []) as FeeScheduleRow[];
+  const selectedClassIdSet = new Set(classIds);
+  const scheduleRows = rawScheduleRows.filter((schedule) => {
+    const scheduleClassId = String(schedule.class_id || "").trim();
+    const scheduleAcademicYear = String(schedule.academic_year || "").trim();
+    const classMatches = !scheduleClassId || selectedClassIdSet.has(scheduleClassId);
+    const yearMatches = !selectedAcademicYearCode || !scheduleAcademicYear || scheduleAcademicYear === selectedAcademicYearCode;
+    return classMatches && yearMatches;
+  });
+  const categoriesById = new Map(
+    ((categories ?? []) as FeeCategoryRow[]).map((category) => [String(category.id), category]),
+  );
   const balanceRows = (balances ?? []) as ChargeBalanceRow[];
 
   const studentsByClass = studentRows.reduce<Record<string, AdminStudentRow[]>>(
@@ -484,17 +476,24 @@ export default async function FinanceChargesPage({
 
   const classSummaries = classRows.map((cls) => {
     const classStudents = studentsByClass[cls.id] || [];
-    const classSchedules = schedulesByClass[cls.id] || [];
+    const classSchedules = [
+      ...(schedulesByClass[cls.id] || []),
+      ...(schedulesByClass.none || []),
+    ];
     const classBalances = balancesByClass[cls.id] || [];
 
     const theoreticalCount = classStudents.reduce(
       (total, student) =>
         total +
         classSchedules.filter((schedule) =>
-          scheduleAppliesToStudent(schedule, {
-            is_affecte: student.is_affecte ?? null,
-            is_boarder: student.is_boarder ?? null,
-          }),
+          financeScheduleAppliesToStudent(
+            schedule,
+            {
+              is_affecte: student.is_affecte ?? null,
+              is_boarder: student.is_boarder ?? null,
+            },
+            categoriesById,
+          ),
         ).length,
       0,
     );

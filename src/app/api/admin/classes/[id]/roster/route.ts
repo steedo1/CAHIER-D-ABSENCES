@@ -3,6 +3,10 @@ import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  buildFinanceScheduleCoverageWarning,
+  financeScheduleAppliesToStudent,
+} from "@/lib/finance/charge-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +68,7 @@ type FinanceFeeCategoryRow = {
   id: string;
   code: string | null;
   name: string | null;
+  is_mandatory?: boolean | null;
 };
 
 type FinanceStudentProfile = {
@@ -78,6 +83,7 @@ type FinanceSyncResult = {
   settledPaid: number;
   skippedPaid: number;
   updatedAmount: number;
+  warnings: string[];
 };
 
 function fullName(row: any) {
@@ -93,76 +99,6 @@ function fullName(row: any) {
 
 function cleanText(value: unknown) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function normalizeFinanceLabel(value: unknown) {
-  return cleanText(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/\s*-\s*/g, " - ")
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function financeCategoryKind(category: FinanceFeeCategoryRow | null | undefined) {
-  const text = normalizeFinanceLabel(`${category?.code || ""} ${category?.name || ""}`);
-
-  if (text.includes("internat") || text.includes("pension")) return "internat";
-  if (
-    text.includes("scolarite") ||
-    text.includes("ecolage") ||
-    text.includes("inscription")
-  ) {
-    return "scolarite";
-  }
-  if (text.includes("renforcement")) return "cours_renforcement";
-
-  return null;
-}
-
-function financeScheduleAppliesToStudent(
-  schedule: Pick<FinanceScheduleRow, "label" | "fee_category_id">,
-  student: FinanceStudentProfile,
-  categoriesById: Map<string, FinanceFeeCategoryRow> = new Map(),
-) {
-  const label = normalizeFinanceLabel(schedule.label);
-  const categoryKind = financeCategoryKind(
-    categoriesById.get(String(schedule.fee_category_id || "")),
-  );
-
-  // Plus robuste que le seul libellé : si le barème est rangé dans la
-  // catégorie Internat, il doit suivre le statut interne/externe même si son
-  // libellé exact est "Pension", "Frais annexes", "Internat 6e", etc.
-  if (
-    categoryKind === "internat" ||
-    label.includes("internat") ||
-    label.includes("pension") ||
-    label.includes("trousseau")
-  ) {
-    return student.is_boarder === true;
-  }
-
-  const isNonAffecteFee = label.includes("non affecte") || label.includes("non-affecte");
-  const isEcolageFee = label.includes("ecolage");
-  const isAffecteFee = label.includes("affecte");
-
-  if (
-    categoryKind === "scolarite" ||
-    label.includes("scolarite") ||
-    label.includes("inscription") ||
-    label.includes("frais generaux") ||
-    label.includes("frais annexes scolarite") ||
-    isEcolageFee
-  ) {
-    // L'ordre est volontaire : "non affecté" contient aussi "affecté".
-    if (isNonAffecteFee) return student.is_affecte === false;
-    if (isEcolageFee && isAffecteFee) return student.is_affecte === true;
-    return true;
-  }
-
-  // Les autres barèmes personnalisés restent appliqués normalement.
-  return true;
 }
 
 function normalizeNullableText(value: unknown) {
@@ -714,6 +650,7 @@ async function reconcileFinanceChargesForStudent(
     settledPaid: 0,
     skippedPaid: 0,
     updatedAmount: 0,
+    warnings: [],
   };
 
   const { data: classRow, error: classErr } = await srv
@@ -726,18 +663,36 @@ async function reconcileFinanceChargesForStudent(
   if (classErr) throw new Error(classErr.message);
   if (!classRow) throw new Error("Classe introuvable.");
 
+  const classAcademicYear = String((classRow as any).academic_year || "").trim() || null;
+
   const { data: schedules, error: scheduleErr } = await srv
     .schema("finance")
     .from("fee_schedules")
     .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,is_active,notes")
     .eq("school_id", institutionId)
-    .eq("class_id", classId)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .range(0, 9999);
 
   if (scheduleErr) throw new Error(scheduleErr.message);
 
-  const scheduleRows = (Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[];
-  if (scheduleRows.length === 0) return empty;
+  const scheduleRows = ((Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[]).filter(
+    (schedule) => {
+      const scheduleClassId = cleanText(schedule.class_id);
+      const scheduleAcademicYear = cleanText(schedule.academic_year);
+      const classMatches = !scheduleClassId || scheduleClassId === classId;
+      const yearMatches = !classAcademicYear || !scheduleAcademicYear || scheduleAcademicYear === classAcademicYear;
+      return classMatches && yearMatches;
+    },
+  );
+
+  if (scheduleRows.length === 0) {
+    return {
+      ...empty,
+      warnings: [
+        `Aucun barème actif trouvé pour ${(classRow as any).label || "cette classe"} sur l'année ${classAcademicYear || "courante"}.`,
+      ],
+    };
+  }
 
   const scheduleIds = scheduleRows.map((row) => String(row.id)).filter(Boolean);
   const feeCategoryIds = Array.from(
@@ -749,7 +704,7 @@ async function reconcileFinanceChargesForStudent(
     const { data: categories, error: categoryErr } = await srv
       .schema("finance")
       .from("fee_categories")
-      .select("id,code,name")
+      .select("id,code,name,is_mandatory")
       .eq("school_id", institutionId)
       .in("id", feeCategoryIds);
 
@@ -763,7 +718,14 @@ async function reconcileFinanceChargesForStudent(
     );
   }
 
-  const academicYear = String((classRow as any).academic_year || "").trim() || null;
+  const syncWarnings = buildFinanceScheduleCoverageWarning({
+    schedules: scheduleRows,
+    categoriesById,
+    studentProfile,
+    classLabel: (classRow as any).label || null,
+  });
+
+  const academicYear = classAcademicYear;
   const academicYearId = await getAcademicYearIdForFinance(
     srv,
     institutionId,
@@ -999,7 +961,7 @@ async function reconcileFinanceChargesForStudent(
     }
   }
 
-  return { inserted, reactivated, cancelled, settledPaid, skippedPaid, updatedAmount };
+  return { inserted, reactivated, cancelled, settledPaid, skippedPaid, updatedAmount, warnings: syncWarnings };
 }
 
 async function ensureFinanceChargesForStudent(
@@ -1111,6 +1073,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       { is_affecte: isAffecte, is_boarder: isBoarder },
     );
     chargesCreated = result.inserted + result.reactivated + result.updatedAmount;
+    if (result.warnings.length > 0) financeWarning = result.warnings[0];
   } catch (error) {
     financeWarning =
       error instanceof Error ? error.message : "Génération automatique des frais impossible.";
@@ -1279,6 +1242,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     settledPaid: 0,
     skippedPaid: 0,
     updatedAmount: 0,
+    warnings: [],
   };
   const financeWarnings: string[] = [];
 
@@ -1361,6 +1325,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       financeSync.settledPaid += result.settledPaid;
       financeSync.skippedPaid += result.skippedPaid;
       financeSync.updatedAmount += result.updatedAmount;
+      financeWarnings.push(...result.warnings);
     } catch (error) {
       financeWarnings.push(
         error instanceof Error
@@ -1399,6 +1364,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         financeSync.settledPaid += result.settledPaid;
         financeSync.skippedPaid += result.skippedPaid;
         financeSync.updatedAmount += result.updatedAmount;
+        financeWarnings.push(...result.warnings);
       }
     } catch (error) {
       financeWarnings.push(
