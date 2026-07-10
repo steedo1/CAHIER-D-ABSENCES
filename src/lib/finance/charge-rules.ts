@@ -62,6 +62,41 @@ function sameNormalizedText(a: unknown, b: unknown) {
   return Boolean(left && right && left === right);
 }
 
+type FinanceGradeFamily =
+  | "6eme"
+  | "5eme"
+  | "4eme"
+  | "3eme"
+  | "2nde"
+  | "1ere"
+  | "terminale";
+
+function financeClassGradeFamily(
+  row: FinanceClassLike | null | undefined,
+): FinanceGradeFamily | null {
+  const values = [
+    row?.official_track_code,
+    row?.level,
+    row?.code,
+    row?.label,
+  ];
+
+  for (const value of values) {
+    const compact = normalizeFinanceText(value).replace(/[^a-z0-9]/g, "");
+    if (!compact) continue;
+
+    if (/^(6e|6eme|sixieme)/.test(compact)) return "6eme";
+    if (/^(5e|5eme|cinquieme)/.test(compact)) return "5eme";
+    if (/^(4e|4eme|quatrieme)/.test(compact)) return "4eme";
+    if (/^(3e|3eme|troisieme)/.test(compact)) return "3eme";
+    if (/^(2nde|2de|seconde|2a|2c|2d)/.test(compact)) return "2nde";
+    if (/^(1ere|1re|premiere|1a|1c|1d)/.test(compact)) return "1ere";
+    if (/^(tle|terminale|ta|tc|td)/.test(compact)) return "terminale";
+  }
+
+  return null;
+}
+
 function scheduleYearMatchesClass(
   schedule: FinanceScheduleLike,
   targetClass: FinanceClassLike,
@@ -102,6 +137,16 @@ function financeClassMatchPriority(
     return 2;
   }
 
+  // Dernier filet de sécurité, sans dépendre des catégories d'un établissement :
+  // une classe 1D1 peut reprendre un barème de 1A lorsque les deux appartiennent
+  // clairement à la même famille pédagogique (ici 1ère). La sélection finale
+  // rejettera ce secours si plusieurs montants concurrents existent.
+  const sourceFamily = financeClassGradeFamily(sourceClass);
+  const targetFamily = financeClassGradeFamily(targetClass);
+  if (sourceFamily && targetFamily && sourceFamily === targetFamily) {
+    return 3;
+  }
+
   return null;
 }
 
@@ -130,6 +175,44 @@ function stripKnownClassSuffixFromNormalizedLabel(
   return result || normalizedLabel;
 }
 
+function financeScheduleSemanticKey(
+  schedule: FinanceScheduleLike,
+  targetClass: FinanceClassLike,
+  classesById: Map<string, FinanceClassLike>,
+  categoriesById: Map<string, FinanceFeeCategoryLike>,
+) {
+  const sourceClass = classesById.get(cleanFinanceId(schedule.class_id));
+  const comparableClassLabels = [
+    targetClass.label,
+    targetClass.code,
+    sourceClass?.label,
+    sourceClass?.code,
+    ...Array.from(classesById.values())
+      .filter(
+        (row) =>
+          sameNormalizedText(row.level, targetClass.level) ||
+          sameNormalizedText(row.official_track_code, targetClass.official_track_code) ||
+          (financeClassGradeFamily(row) !== null &&
+            financeClassGradeFamily(row) === financeClassGradeFamily(targetClass)),
+      )
+      .flatMap((row) => [row.label, row.code]),
+  ]
+    .map((value) => String(value ?? ""))
+    .filter(Boolean);
+
+  const normalizedLabel = stripKnownClassSuffixFromNormalizedLabel(
+    normalizeFinanceText(schedule.label),
+    comparableClassLabels,
+  );
+
+  return [
+    financeScheduleKind(schedule, categoriesById),
+    cleanFinanceId(schedule.fee_category_id),
+    normalizedLabel,
+    cleanFinanceId(schedule.due_date),
+  ].join("|");
+}
+
 function financeScheduleBusinessKey(
   schedule: FinanceScheduleLike,
   targetClass: FinanceClassLike,
@@ -146,7 +229,9 @@ function financeScheduleBusinessKey(
       .filter(
         (row) =>
           sameNormalizedText(row.level, targetClass.level) ||
-          sameNormalizedText(row.official_track_code, targetClass.official_track_code),
+          sameNormalizedText(row.official_track_code, targetClass.official_track_code) ||
+          (financeClassGradeFamily(row) !== null &&
+            financeClassGradeFamily(row) === financeClassGradeFamily(targetClass)),
       )
       .flatMap((row) => [row.label, row.code]),
   ]
@@ -223,9 +308,50 @@ export function selectFinanceSchedulesForClass<T extends FinanceScheduleLike>({
     );
   });
 
+  const semanticRows = candidates.map((candidate) => ({
+    ...candidate,
+    semanticKey: financeScheduleSemanticKey(
+      candidate.schedule,
+      targetClass,
+      classesById,
+      categoriesById,
+    ),
+    amountKey: Number(candidate.schedule.amount || 0).toFixed(2),
+  }));
+
+  const bestPriorityBySemanticKey = new Map<string, number>();
+  for (const candidate of semanticRows) {
+    const best = bestPriorityBySemanticKey.get(candidate.semanticKey);
+    if (best === undefined || candidate.priority < best) {
+      bestPriorityBySemanticKey.set(candidate.semanticKey, candidate.priority);
+    }
+  }
+
+  // Un barème directement lié à la classe doit toujours gagner, même si un
+  // barème de secours du même niveau porte un autre montant. Pour les secours
+  // par niveau/famille (priorités 2 et 3), plusieurs montants concurrents sont
+  // considérés comme ambigus : le moteur n'invente alors aucun tarif.
+  const amountsByFallbackSemanticKey = new Map<string, Set<string>>();
+  for (const candidate of semanticRows) {
+    const best = bestPriorityBySemanticKey.get(candidate.semanticKey);
+    if (candidate.priority !== best || candidate.priority < 2) continue;
+    const amounts = amountsByFallbackSemanticKey.get(candidate.semanticKey) || new Set<string>();
+    amounts.add(candidate.amountKey);
+    amountsByFallbackSemanticKey.set(candidate.semanticKey, amounts);
+  }
+
+  const ambiguousFallbackKeys = new Set(
+    Array.from(amountsByFallbackSemanticKey.entries())
+      .filter(([, amounts]) => amounts.size > 1)
+      .map(([key]) => key),
+  );
+
   const selectedByKey = new Map<string, { schedule: T; priority: number }>();
 
-  for (const candidate of candidates) {
+  for (const candidate of semanticRows) {
+    if (candidate.priority !== bestPriorityBySemanticKey.get(candidate.semanticKey)) continue;
+    if (ambiguousFallbackKeys.has(candidate.semanticKey)) continue;
+
     const key = financeScheduleBusinessKey(
       candidate.schedule,
       targetClass,
