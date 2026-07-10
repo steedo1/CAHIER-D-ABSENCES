@@ -425,6 +425,43 @@ export function financeScheduleKind(
   return "custom";
 }
 
+export function financeScheduleProfileVariantKey(
+  schedule: FinanceScheduleLike,
+  categoriesById: Map<string, FinanceFeeCategoryLike> = new Map(),
+) {
+  const kind = financeScheduleKind(schedule, categoriesById);
+  if (kind !== "scolarite") return null;
+
+  const label = normalizeFinanceText(schedule.label);
+  const hasAssignmentVariant =
+    label.includes("non affecte") ||
+    label.includes("non-affecte") ||
+    label.includes("reaffecte") ||
+    label.includes("re-affecte") ||
+    label.includes("affecte");
+
+  if (!hasAssignmentVariant) return null;
+
+  const neutralLabel = label
+    // L'ordre est important : les formes longues doivent être retirées avant
+    // le simple mot « affecté ».
+    .replace(/\bnon\s*-?\s*affecte\b/g, " ")
+    .replace(/\breaffecte\b/g, " ")
+    .replace(/\bre\s*-\s*affecte\b/g, " ")
+    .replace(/\baffecte\b/g, " ")
+    .replace(/\s*-\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!neutralLabel) return null;
+
+  return [
+    kind,
+    cleanFinanceId(schedule.fee_category_id),
+    neutralLabel,
+  ].join("|");
+}
+
 export function financeScheduleAppliesToStudent(
   schedule: FinanceScheduleLike,
   student: FinanceStudentProfileLike,
@@ -437,12 +474,16 @@ export function financeScheduleAppliesToStudent(
 
   if (kind === "scolarite") {
     const isNonAffecteFee = label.includes("non affecte") || label.includes("non-affecte");
-    const isEcolageFee = label.includes("ecolage");
-    const isAffecteFee = label.includes("affecte");
+    const isAffecteFee =
+      label.includes("affecte") ||
+      label.includes("reaffecte") ||
+      label.includes("re-affecte");
 
     // L'ordre est volontaire : "non affecté" contient aussi "affecté".
+    // Toute rubrique explicitement déclinée par statut est pilotée par le
+    // profil de l'élève, sans dépendre du nom d'une catégorie particulière.
     if (isNonAffecteFee) return student.is_affecte === false;
-    if (isEcolageFee && isAffecteFee) return student.is_affecte === true;
+    if (isAffecteFee) return student.is_affecte === true;
     return true;
   }
 

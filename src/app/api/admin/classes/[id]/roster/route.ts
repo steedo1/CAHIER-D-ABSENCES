@@ -7,6 +7,7 @@ import {
   buildFinanceScheduleCoverageWarning,
   financeScheduleAppliesToStudent,
   financeScheduleLabelForClass,
+  financeScheduleProfileVariantKey,
   selectFinanceSchedulesForClass,
 } from "@/lib/finance/charge-rules";
 
@@ -86,6 +87,7 @@ type FinanceSyncResult = {
   settledPaid: number;
   skippedPaid: number;
   updatedAmount: number;
+  retargeted: number;
   warnings: string[];
 };
 
@@ -653,6 +655,7 @@ async function reconcileFinanceChargesForStudent(
     settledPaid: 0,
     skippedPaid: 0,
     updatedAmount: 0,
+    retargeted: 0,
     warnings: [],
   };
 
@@ -815,6 +818,90 @@ async function reconcileFinanceChargesForStudent(
     financeScheduleAppliesToStudent(schedule, studentProfile, categoriesById),
   );
   const applicableScheduleIds = new Set(applicableSchedules.map((schedule) => String(schedule.id)));
+  const schedulesById = new Map(
+    scheduleRows.map((schedule) => [String(schedule.id), schedule] as const),
+  );
+
+  // Affecté <-> Non affecté : les deux barèmes représentent la même rubrique
+  // financière avec un tarif différent. On transforme la dette existante au
+  // lieu d'en créer une deuxième. L'identifiant de la dette reste donc le même
+  // et tous les paiements/reçus déjà liés restent automatiquement déduits du
+  // nouveau montant attendu.
+  let retargeted = 0;
+  for (const targetSchedule of applicableSchedules) {
+    const targetScheduleId = String(targetSchedule.id);
+    if (existingBySchedule.has(targetScheduleId)) continue;
+
+    const targetVariantKey = financeScheduleProfileVariantKey(
+      targetSchedule,
+      categoriesById,
+    );
+    if (!targetVariantKey) continue;
+
+    const sourceCandidates = Array.from(existingBySchedule.entries())
+      .map(([sourceScheduleId, charge]) => ({
+        sourceScheduleId,
+        charge,
+        schedule: schedulesById.get(sourceScheduleId),
+      }))
+      .filter((item) => {
+        if (!item.schedule) return false;
+        if (applicableScheduleIds.has(item.sourceScheduleId)) return false;
+        return (
+          financeScheduleProfileVariantKey(item.schedule, categoriesById) ===
+          targetVariantKey
+        );
+      })
+      .sort((a, b) => {
+        const aCancelled = a.charge.computed_status === "cancelled" ? 1 : 0;
+        const bCancelled = b.charge.computed_status === "cancelled" ? 1 : 0;
+        if (aCancelled !== bCancelled) return aCancelled - bCancelled;
+        return b.charge.paid_amount - a.charge.paid_amount;
+      });
+
+    const source = sourceCandidates[0];
+    if (!source) continue;
+
+    const expectedAmount = Number(targetSchedule.amount || 0);
+    const nextStatus = financeStatusForAmount(
+      expectedAmount,
+      source.charge.paid_amount,
+    );
+
+    const { error: retargetErr } = await srv
+      .schema("finance")
+      .from("student_charges")
+      .update({
+        fee_schedule_id: targetSchedule.id,
+        fee_category_id: targetSchedule.fee_category_id,
+        label:
+          financeScheduleLabelForClass(
+            targetSchedule,
+            classRow as any,
+            classesById,
+          ) || targetSchedule.label,
+        base_amount: expectedAmount,
+        due_date: targetSchedule.due_date || null,
+        status: nextStatus,
+        notes:
+          "Profil financier modifié depuis la liste de classe : dette adaptée au nouveau statut, paiements déjà reçus conservés.",
+        updated_at: nowIso,
+      } as any)
+      .eq("id", source.charge.id)
+      .eq("school_id", institutionId);
+
+    if (retargetErr) throw new Error(retargetErr.message);
+
+    existingBySchedule.delete(source.sourceScheduleId);
+    existingBySchedule.set(targetScheduleId, {
+      ...source.charge,
+      base_amount: expectedAmount,
+      due_date: targetSchedule.due_date || null,
+      computed_status: nextStatus,
+      balance_due: Math.max(0, expectedAmount - source.charge.paid_amount),
+    });
+    retargeted++;
+  }
 
   const rowsToInsert = applicableSchedules
     .filter((schedule) => !existingBySchedule.has(String(schedule.id)))
@@ -968,7 +1055,16 @@ async function reconcileFinanceChargesForStudent(
     }
   }
 
-  return { inserted, reactivated, cancelled, settledPaid, skippedPaid, updatedAmount, warnings: syncWarnings };
+  return {
+    inserted,
+    reactivated,
+    cancelled,
+    settledPaid,
+    skippedPaid,
+    updatedAmount,
+    retargeted,
+    warnings: syncWarnings,
+  };
 }
 
 async function ensureFinanceChargesForStudent(
@@ -1249,6 +1345,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     settledPaid: 0,
     skippedPaid: 0,
     updatedAmount: 0,
+    retargeted: 0,
     warnings: [],
   };
   const financeWarnings: string[] = [];
@@ -1332,6 +1429,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       financeSync.settledPaid += result.settledPaid;
       financeSync.skippedPaid += result.skippedPaid;
       financeSync.updatedAmount += result.updatedAmount;
+      financeSync.retargeted += result.retargeted;
       financeWarnings.push(...result.warnings);
     } catch (error) {
       financeWarnings.push(
@@ -1371,6 +1469,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         financeSync.settledPaid += result.settledPaid;
         financeSync.skippedPaid += result.skippedPaid;
         financeSync.updatedAmount += result.updatedAmount;
+        financeSync.retargeted += result.retargeted;
         financeWarnings.push(...result.warnings);
       }
     } catch (error) {
