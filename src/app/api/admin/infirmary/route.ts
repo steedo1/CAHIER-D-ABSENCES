@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
+import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -320,6 +321,11 @@ async function queueParentInfirmaryNotification(opts: {
 function normalizeVisit(row: any) {
   const student = row?.students || row?.student || {};
   const klass = row?.classes || row?.class || {};
+  const protectedPhotoUrl = buildProtectedStudentPhotoUrl({
+    id: row?.student_id || student?.id,
+    photo_path: student?.photo_path,
+    photo_updated_at: student?.photo_updated_at,
+  });
 
   return {
     id: row.id,
@@ -349,8 +355,8 @@ function normalizeVisit(row: any) {
     updated_at: row.updated_at,
     student_name: studentFullName(student),
     student_matricule: student?.matricule ?? null,
-    photo_url: student?.photo_url ?? null,
-    student_photo_url: student?.photo_url ?? null,
+    photo_url: protectedPhotoUrl,
+    student_photo_url: protectedPhotoUrl,
     class_label: klass?.label ?? null,
     class_level: klass?.level ?? null,
   };
@@ -373,7 +379,7 @@ export async function GET(req: NextRequest) {
     .select(
       `
       *,
-      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, photo_path, photo_updated_at ),
       classes:class_id ( id, label, level )
     `,
     )
@@ -535,7 +541,7 @@ export async function POST(req: NextRequest) {
     .select(
       `
       *,
-      students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
+      students:student_id ( id, first_name, last_name, full_name, matricule, photo_path, photo_updated_at ),
       classes:class_id ( id, label, level )
     `,
     )
@@ -577,7 +583,7 @@ export async function POST(req: NextRequest) {
           .select(
             `
             *,
-            students:student_id ( id, first_name, last_name, full_name, matricule, photo_url ),
+            students:student_id ( id, first_name, last_name, full_name, matricule, photo_path, photo_updated_at ),
             classes:class_id ( id, label, level )
           `,
           )

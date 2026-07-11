@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -376,15 +377,19 @@ export async function POST(req: NextRequest) {
 
         uploaded++;
 
-        const pub = srv.storage.from(bucket).getPublicUrl(path);
-        const publicUrl = pub?.data?.publicUrl || "";
+        const photoUpdatedAt = new Date().toISOString();
+        const protectedPhotoUrl = buildProtectedStudentPhotoUrl({
+          id: s.id,
+          photo_path: path,
+          photo_updated_at: photoUpdatedAt,
+        });
 
         const { error: uerr } = await srv
           .from("students")
           .update({
-            photo_url: publicUrl || null,
+            photo_url: null,
             photo_path: path,
-            photo_updated_at: new Date().toISOString(),
+            photo_updated_at: photoUpdatedAt,
           })
           .eq("id", s.id)
           .eq("institution_id", g.instId);
@@ -412,7 +417,7 @@ export async function POST(req: NextRequest) {
             matricule: s.matricule,
             full_name: s.full_name,
           },
-          photo_url: publicUrl,
+          photo_url: protectedPhotoUrl,
           photo_path: path,
         });
       } catch (e: any) {

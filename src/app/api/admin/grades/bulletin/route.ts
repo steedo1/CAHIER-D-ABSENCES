@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import QRCode from "qrcode";
@@ -77,8 +78,8 @@ type ClassStudentRow = {
         first_name?: string | null;
         matricule?: string | null;
 
-        // ✅ photo (ajouté sans retirer quoi que ce soit)
-        photo_url?: string | null;
+        photo_path?: string | null;
+        photo_updated_at?: string | null;
 
         gender?: string | null;
         birthdate?: string | null;
@@ -1708,7 +1709,8 @@ export async function GET(req: NextRequest) {
         first_name,
         last_name,
         full_name,
-        photo_url,
+        photo_path,
+        photo_updated_at,
         gender,
         birthdate,
         birth_place,
@@ -2135,7 +2137,11 @@ export async function GET(req: NextRequest) {
         student_id: cs.student_id,
         full_name: fullName,
         matricule: stu.matricule || null,
-        photo_url: stu.photo_url || null,
+        photo_url: buildProtectedStudentPhotoUrl({
+          id: cs.student_id,
+          photo_path: stu.photo_path ?? null,
+          photo_updated_at: stu.photo_updated_at ?? null,
+        }),
         gender: stu.gender || null,
         birth_date: stu.birthdate || null,
         birth_place: stu.birth_place || null,
@@ -3198,8 +3204,11 @@ export async function GET(req: NextRequest) {
       full_name: fullName,
       matricule: stu.matricule || null,
 
-      // ✅ photo (ajouté sans retirer quoi que ce soit)
-      photo_url: stu.photo_url || null,
+      photo_url: buildProtectedStudentPhotoUrl({
+        id: cs.student_id,
+        photo_path: stu.photo_path ?? null,
+        photo_updated_at: stu.photo_updated_at ?? null,
+      }),
 
       gender: stu.gender || null,
       birth_date: stu.birthdate || null,

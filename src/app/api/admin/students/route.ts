@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,7 +138,8 @@ export async function GET(req: NextRequest) {
         full_name,
         matricule,
         institution_id,
-        photo_url,
+        photo_path,
+        photo_updated_at,
         birthdate,
         birth_place,
         nationality,
@@ -206,7 +208,11 @@ export async function GET(req: NextRequest) {
       class_label: (c.label ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
-      photo_url: (s.photo_url ?? null) as string | null,
+      photo_url: buildProtectedStudentPhotoUrl({
+        id: sid,
+        photo_path: s.photo_path ?? null,
+        photo_updated_at: s.photo_updated_at ?? null,
+      }),
       birthdate: (s.birthdate ?? null) as string | null,
       birth_date: (s.birthdate ?? null) as string | null,
       birth_place: (s.birth_place ?? null) as string | null,
