@@ -7,6 +7,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const BUCKET = "student-photos";
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+  Pragma: "no-cache",
+  Expires: "0",
+  Vary: "Cookie",
+} as const;
+
+function jsonNoStore(body: Record<string, unknown>, status: number) {
+  return NextResponse.json(body, {
+    status,
+    headers: PRIVATE_NO_STORE_HEADERS,
+  });
+}
+
 const INSTITUTION_ROLES = new Set([
   "admin",
   "super_admin",
@@ -51,7 +65,7 @@ export async function GET(
   const studentId = String(rawStudentId || "").trim();
 
   if (!studentId) {
-    return NextResponse.json({ error: "student_id_required" }, { status: 400 });
+    return jsonNoStore({ error: "student_id_required" }, 400);
   }
 
   const supa = await getSupabaseServerClient();
@@ -62,7 +76,7 @@ export async function GET(
   } = await supa.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return jsonNoStore({ error: "unauthorized" }, 401);
   }
 
   const { data: student, error: studentError } = await srv
@@ -72,21 +86,21 @@ export async function GET(
     .maybeSingle();
 
   if (studentError) {
-    return NextResponse.json({ error: studentError.message }, { status: 400 });
+    return jsonNoStore({ error: studentError.message }, 400);
   }
 
   const institutionId = String((student as any)?.institution_id || "").trim();
   const photoPath = String((student as any)?.photo_path || "").trim();
 
   if (!student || !institutionId || !photoPath) {
-    return NextResponse.json({ error: "photo_not_found" }, { status: 404 });
+    return jsonNoStore({ error: "photo_not_found" }, 404);
   }
 
   // Le chemin est créé sous institution_id/student_id/fichier.ext.
   // Cette vérification empêche qu'une référence incohérente serve un objet tiers.
   const expectedPrefix = `${institutionId}/${studentId}/`;
   if (!photoPath.startsWith(expectedPrefix)) {
-    return NextResponse.json({ error: "photo_path_invalid" }, { status: 404 });
+    return jsonNoStore({ error: "photo_path_invalid" }, 404);
   }
 
   const [{ data: profile }, { data: roleRows, error: roleError }] = await Promise.all([
@@ -102,7 +116,7 @@ export async function GET(
   ]);
 
   if (roleError) {
-    return NextResponse.json({ error: roleError.message }, { status: 400 });
+    return jsonNoStore({ error: roleError.message }, 400);
   }
 
   const profileInstitutionId = String(
@@ -129,14 +143,14 @@ export async function GET(
       .maybeSingle();
 
     if (guardianError) {
-      return NextResponse.json({ error: guardianError.message }, { status: 400 });
+      return jsonNoStore({ error: guardianError.message }, 400);
     }
 
     guardianAccess = Boolean(guardianLink);
   }
 
   if (!institutionalAccess && !guardianAccess) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    return jsonNoStore({ error: "forbidden" }, 403);
   }
 
   const { data: file, error: downloadError } = await srv.storage
@@ -144,7 +158,7 @@ export async function GET(
     .download(photoPath);
 
   if (downloadError || !file) {
-    return NextResponse.json({ error: "photo_not_found" }, { status: 404 });
+    return jsonNoStore({ error: "photo_not_found" }, 404);
   }
 
   const bytes = await file.arrayBuffer();
@@ -155,7 +169,7 @@ export async function GET(
     headers: {
       "Content-Type": contentType,
       "Content-Length": String(bytes.byteLength),
-      "Cache-Control": "private, max-age=300, must-revalidate",
+      ...PRIVATE_NO_STORE_HEADERS,
       "X-Content-Type-Options": "nosniff",
       "Content-Disposition": "inline",
     },
