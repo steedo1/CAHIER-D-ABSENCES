@@ -366,11 +366,11 @@ export function evaluateStudentEligibility(
 ): StudentEligibilityResult {
   const reasons: string[] = [];
   const average =
-    input.average === null || input.average === undefined || input.average === ""
+    input.average == null
       ? Number.NaN
       : Number(input.average);
   const conduct =
-    input.conduct === null || input.conduct === undefined || input.conduct === ""
+    input.conduct == null
       ? Number.NaN
       : Number(input.conduct);
 

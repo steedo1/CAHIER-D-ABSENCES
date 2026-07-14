@@ -115,7 +115,7 @@ function safeText(value: unknown, fallback = "") {
 }
 
 function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value == null) return "—";
   const parsed = Number(value);
   return Number.isFinite(parsed) ? `${parsed.toFixed(1).replace(".", ",")} %` : "—";
 }
