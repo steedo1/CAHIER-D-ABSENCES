@@ -66,6 +66,8 @@ type FinanceScheduleRow = {
   allow_partial?: boolean | null;
   is_active?: boolean | null;
   notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type FinanceFeeCategoryRow = {
@@ -142,6 +144,24 @@ function normalizeGender(value: unknown) {
 
 function amountsDiffer(a: number, b: number) {
   return Math.abs(Number(a || 0) - Number(b || 0)) > 0.01;
+}
+
+function normalizeFinanceLabel(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isInternatAnnexesSchedule(schedule: Pick<FinanceScheduleRow, "label">) {
+  const text = normalizeFinanceLabel(schedule.label);
+  return text.includes("internat") && text.includes("frais") && text.includes("annexe");
+}
+
+function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
+  const text = normalizeFinanceLabel(label);
+  return text.includes("breviaire") || text.includes("bible") || text.includes("convoi");
 }
 
 function financeStatusForAmount(expectedAmount: number, paidAmount: number) {
@@ -659,6 +679,18 @@ async function reconcileFinanceChargesForStudent(
     warnings: [],
   };
 
+  // Une valeur NULL signifie que le profil financier n'est pas renseigné.
+  // Dans ce cas, aucune dette ne doit être créée, annulée ou recalculée :
+  // traiter NULL comme « externe » détruirait les montants d'internat existants.
+  if (studentProfile.is_affecte === null || studentProfile.is_boarder === null) {
+    return {
+      ...empty,
+      warnings: [
+        "Profil financier incomplet : renseignez Affectation et Internat avant toute synchronisation des dettes.",
+      ],
+    };
+  }
+
   const { data: classRow, error: classErr } = await srv
     .from("classes")
     .select("id,label,level,code,academic_year,official_track_code,institution_id")
@@ -674,7 +706,7 @@ async function reconcileFinanceChargesForStudent(
   const { data: schedules, error: scheduleErr } = await srv
     .schema("finance")
     .from("fee_schedules")
-    .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes")
+    .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at")
     .eq("school_id", institutionId)
     .eq("is_active", true)
     .range(0, 9999);
@@ -773,6 +805,69 @@ async function reconcileFinanceChargesForStudent(
 
   if (existingErr) throw new Error(existingErr.message);
 
+  const internatAnnexScheduleIds = Array.from(
+    new Set(
+      scheduleRows
+        .filter((schedule) => isInternatAnnexesSchedule(schedule))
+        .map((schedule) => String(schedule.id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const internatComponentsBySchedule = new Map<
+    string,
+    Array<{ id: string; label: string | null; amount: number }>
+  >();
+  const engagedOptionalComponentIdsByCharge = new Map<string, Set<string>>();
+
+  if (internatAnnexScheduleIds.length > 0) {
+    const { data: componentRows, error: componentErr } = await srv
+      .schema("finance")
+      .from("fee_schedule_components")
+      .select("id,fee_schedule_id,label,amount,is_active")
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .in("fee_schedule_id", internatAnnexScheduleIds);
+
+    if (componentErr) throw new Error(componentErr.message);
+
+    for (const component of (componentRows || []) as any[]) {
+      const scheduleId = String(component.fee_schedule_id || "").trim();
+      if (!scheduleId) continue;
+      if (!internatComponentsBySchedule.has(scheduleId)) {
+        internatComponentsBySchedule.set(scheduleId, []);
+      }
+      internatComponentsBySchedule.get(scheduleId)!.push({
+        id: String(component.id),
+        label: component.label ? String(component.label) : null,
+        amount: Number(component.amount || 0),
+      });
+    }
+  }
+
+  if (existingChargeIds.length > 0) {
+    const { data: paidComponentRows, error: paidComponentErr } = await srv
+      .schema("finance")
+      .from("v_receipt_allocation_components")
+      .select("student_charge_id,fee_schedule_component_id,receipt_status,amount")
+      .eq("school_id", institutionId)
+      .in("student_charge_id", existingChargeIds);
+
+    if (paidComponentErr) throw new Error(paidComponentErr.message);
+
+    for (const paid of (paidComponentRows || []) as any[]) {
+      if (String(paid.receipt_status || "") === "cancelled") continue;
+      if (Number(paid.amount || 0) <= 0) continue;
+      const chargeId = String(paid.student_charge_id || "").trim();
+      const componentId = String(paid.fee_schedule_component_id || "").trim();
+      if (!chargeId || !componentId) continue;
+      if (!engagedOptionalComponentIdsByCharge.has(chargeId)) {
+        engagedOptionalComponentIdsByCharge.set(chargeId, new Set<string>());
+      }
+      engagedOptionalComponentIdsByCharge.get(chargeId)!.add(componentId);
+    }
+  }
+
   const balancesById = new Map<string, any>(
     (balanceRows || []).map((charge: any) => [String(charge.id), charge]),
   );
@@ -813,6 +908,41 @@ async function reconcileFinanceChargesForStudent(
       existingBySchedule.set(scheduleId, candidate);
     }
   }
+
+  const expectedAmountForExistingCharge = (
+    schedule: FinanceScheduleRow,
+    charge: {
+      id: string;
+      paid_amount: number;
+      base_amount: number;
+    },
+  ) => {
+    const scheduleAmount = Number(schedule.amount || 0);
+    if (!isInternatAnnexesSchedule(schedule)) return scheduleAmount;
+
+    const components = internatComponentsBySchedule.get(String(schedule.id)) ?? [];
+    if (components.length === 0) {
+      return Math.max(scheduleAmount, charge.base_amount, charge.paid_amount);
+    }
+
+    const engagedIds = engagedOptionalComponentIdsByCharge.get(charge.id) ?? new Set<string>();
+    const mandatoryBase = components
+      .filter((component) => !isOptionalInternatAnnexeComponent(component.label))
+      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+    const optionalEngagedBase = components
+      .filter(
+        (component) =>
+          isOptionalInternatAnnexeComponent(component.label) && engagedIds.has(component.id),
+      )
+      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+
+    const computedVariableAmount = mandatoryBase + optionalEngagedBase;
+    return Math.max(
+      computedVariableAmount > 0 ? computedVariableAmount : scheduleAmount,
+      charge.base_amount,
+      charge.paid_amount,
+    );
+  };
 
   const applicableSchedules = scheduleRows.filter((schedule) =>
     financeScheduleAppliesToStudent(schedule, studentProfile, categoriesById),
@@ -862,7 +992,7 @@ async function reconcileFinanceChargesForStudent(
     const source = sourceCandidates[0];
     if (!source) continue;
 
-    const expectedAmount = Number(targetSchedule.amount || 0);
+    const expectedAmount = expectedAmountForExistingCharge(targetSchedule, source.charge);
     const nextStatus = financeStatusForAmount(
       expectedAmount,
       source.charge.paid_amount,
@@ -942,7 +1072,7 @@ async function reconcileFinanceChargesForStudent(
       const existing = existingBySchedule.get(String(schedule.id));
       if (!existing) return null;
 
-      const expectedAmount = Number(schedule.amount || 0);
+      const expectedAmount = expectedAmountForExistingCharge(schedule, existing);
       const expectedDueDate = schedule.due_date || null;
       const wasCancelled = existing.computed_status === "cancelled";
       const amountChanged = amountsDiffer(existing.base_amount, expectedAmount);
@@ -958,6 +1088,7 @@ async function reconcileFinanceChargesForStudent(
         schedule,
         wasCancelled,
         amountChanged,
+        expectedAmount,
         nextStatus: financeStatusForAmount(expectedAmount, existing.paid_amount),
       };
     })
@@ -966,6 +1097,7 @@ async function reconcileFinanceChargesForStudent(
       schedule: FinanceScheduleRow;
       wasCancelled: boolean;
       amountChanged: boolean;
+      expectedAmount: number;
       nextStatus: string;
     }>;
 
@@ -976,7 +1108,7 @@ async function reconcileFinanceChargesForStudent(
       .schema("finance")
       .from("student_charges")
       .update({
-        base_amount: Number(row.schedule.amount || 0),
+        base_amount: row.expectedAmount,
         due_date: row.schedule.due_date || null,
         status: row.nextStatus,
         notes: row.wasCancelled
@@ -1002,10 +1134,10 @@ async function reconcileFinanceChargesForStudent(
 
     if (charge.paid_amount > 0) {
       // Cas métier important : si un élève passe Interne -> Externe,
-      // on ne doit pas supprimer l'historique des reçus déjà encaissés.
-      // En revanche, le reste dû ne doit plus apparaître dans Encaissements.
-      // On ramène donc la dette au montant déjà payé : solde dû = 0,
-      // historique conservé, aucune nouvelle somme réclamée à tort.
+      // on conserve la dette et tous les reçus, mais on la suspend avec le
+      // statut cancelled. Le montant d'origine ne doit jamais être remplacé
+      // par le montant déjà payé, sinon un retour Externe -> Interne peut
+      // transformer une pension de 700 000 F en 100 000 F.
       if (charge.balance_due > 0) {
         obsoletePaidChargeIds.push(charge.id);
       }
@@ -1042,9 +1174,8 @@ async function reconcileFinanceChargesForStudent(
         .schema("finance")
         .from("student_charges")
         .update({
-          base_amount: charge.paid_amount,
-          status: "paid",
-          notes: "Profil financier modifié depuis la liste de classe : solde restant neutralisé, encaissement déjà reçu conservé.",
+          status: "cancelled",
+          notes: "Profil financier modifié depuis la liste de classe : dette suspendue, montant initial et encaissement déjà reçu conservés.",
           updated_at: nowIso,
         } as any)
         .eq("school_id", institutionId)
@@ -1247,8 +1378,13 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         const lastName = normalizeNullableText(row?.last_name);
         const matricule = normalizeNullableText(row?.matricule)?.toUpperCase() ?? null;
         const normalizedFullName = [lastName, firstName].filter(Boolean).join(" ").trim();
+        const isAffecte = normalizeBool(row?.is_affecte);
+        const isBoarder = normalizeBool(row?.is_boarder);
 
         if (!normalizedFullName) throw new Error("missing_student_name");
+        if (isAffecte === null || isBoarder === null) {
+          throw new Error("missing_finance_profile");
+        }
 
         return {
           student_id: studentId,
@@ -1262,8 +1398,8 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
             nationality: normalizeNullableText(row?.nationality),
             is_repeater: normalizeBool(row?.is_repeater),
             lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
-            is_affecte: normalizeBool(row?.is_affecte),
-            is_boarder: normalizeBool(row?.is_boarder),
+            is_affecte: isAffecte,
+            is_boarder: isBoarder,
           },
           matricule,
           official_track_code: cleanOfficialTrackCode(row?.official_track_code ?? null),
@@ -1282,6 +1418,15 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if ((error as Error)?.message === "missing_student_name") {
       return NextResponse.json(
         { error: "Le nom complet de chaque élève est obligatoire." },
+        { status: 400 },
+      );
+    }
+    if ((error as Error)?.message === "missing_finance_profile") {
+      return NextResponse.json(
+        {
+          error:
+            "Affectation et internat sont obligatoires. Aucune dette n'a été modifiée.",
+        },
         { status: 400 },
       );
     }
