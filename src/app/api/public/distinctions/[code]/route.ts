@@ -12,10 +12,10 @@ function safeLogo(value: unknown) {
 
 export async function GET(
   _req: NextRequest,
-  context: { params: Promise<{ code: string }> | { code: string } },
+  { params }: { params: Promise<{ code: string }> },
 ) {
-  const params = await Promise.resolve(context.params);
-  const code = String(params?.code || "").trim().toLowerCase();
+  const { code: rawCode } = await params;
+  const code = String(rawCode || "").trim().toLowerCase();
   if (!/^[a-f0-9]{24,64}$/.test(code)) {
     return NextResponse.json({ ok: false, error: "invalid_code" }, { status: 400 });
   }
