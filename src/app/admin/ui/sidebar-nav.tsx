@@ -21,6 +21,10 @@ import {
   FileText,
   MessageSquare,
   HeartPulse,
+  Trophy,
+  Award,
+  History,
+  SlidersHorizontal,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -31,6 +35,7 @@ type NavItem = {
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   badge?: string;
   matchTab?: string;
+  exact?: boolean;
 };
 
 type PendingAbsenceCountResponse =
@@ -84,7 +89,8 @@ function isPathActive(
 ): boolean {
   const hrefPath = getHrefPath(item.href);
   const pathActive =
-    pathname === hrefPath || (pathname?.startsWith(hrefPath + "/") ?? false);
+    pathname === hrefPath ||
+    (!item.exact && (pathname?.startsWith(hrefPath + "/") ?? false));
 
   if (!pathActive) return false;
 
@@ -287,6 +293,33 @@ const CONDUCT_MANAGEMENT_ITEMS: NavItem[] = [
     href: "/admin/conduite",
     label: "Moyenne de conduite",
     Icon: BarChart3,
+  },
+];
+
+/* =========================
+   Groupe : Distinctions
+========================= */
+const DISTINCTION_ITEMS: NavItem[] = [
+  {
+    href: "/admin/distinctions",
+    label: "Palmarès élèves",
+    Icon: Trophy,
+    exact: true,
+  },
+  {
+    href: "/admin/distinctions/enseignants",
+    label: "Distinctions enseignants",
+    Icon: Award,
+  },
+  {
+    href: "/admin/distinctions/regles",
+    label: "Règles d’éligibilité",
+    Icon: SlidersHorizontal,
+  },
+  {
+    href: "/admin/distinctions/historique",
+    label: "Historique",
+    Icon: History,
   },
 ];
 
@@ -1027,6 +1060,14 @@ export default function SidebarNav() {
     [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
+  const distinctionItems = React.useMemo(
+    () =>
+      isEducator || isInfirmier || isFinanceManager || isFinanceOnlyShell
+        ? []
+        : DISTINCTION_ITEMS,
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
   const organisationItems = React.useMemo(() => {
     if (isInfirmier || isFinanceOnlyShell) return [];
     return isFinanceManager
@@ -1096,6 +1137,12 @@ export default function SidebarNav() {
     currentTab,
   );
 
+  const distinctionActive = groupHasActiveItem(
+    pathname,
+    distinctionItems,
+    currentTab,
+  );
+
   const organisationActive = groupHasActiveItem(
     pathname,
     organisationItems,
@@ -1144,6 +1191,9 @@ export default function SidebarNav() {
   const [conductManagementOpen, setConductManagementOpen] =
     React.useState<boolean>(conductManagementActive);
 
+  const [distinctionOpen, setDistinctionOpen] =
+    React.useState<boolean>(distinctionActive);
+
   const [organisationOpen, setOrganisationOpen] =
     React.useState<boolean>(organisationActive);
 
@@ -1175,6 +1225,10 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (conductManagementActive) setConductManagementOpen(true);
   }, [conductManagementActive]);
+
+  React.useEffect(() => {
+    if (distinctionActive) setDistinctionOpen(true);
+  }, [distinctionActive]);
 
   React.useEffect(() => {
     if (organisationActive) setOrganisationOpen(true);
@@ -1318,6 +1372,23 @@ export default function SidebarNav() {
                 accent="amber"
               />
             )}
+
+            {!isEducator &&
+              !isInfirmier &&
+              !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              distinctionItems.length > 0 && (
+                <GroupSection
+                  title="Distinctions"
+                  Icon={Trophy}
+                  items={distinctionItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={distinctionOpen}
+                  onToggle={() => setDistinctionOpen((v) => !v)}
+                  accent="amber"
+                />
+              )}
 
             {!isInfirmier && organisationItems.length > 0 && (
               <GroupSection
