@@ -478,15 +478,15 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
    Groupe : Cahier des absences
 ========================= */
 const ABS_ITEMS: NavItem[] = [
-  { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
+  { href: "/admin/absences", label: "Absences — Matrice", Icon: Ban },
   {
     href: "/admin/assiduite",
-    label: "Assiduité & justifications",
+    label: "Absences — Assiduité & justifications",
     Icon: UserRoundCheck,
   },
   {
     href: "/admin/absences/appel-administratif",
-    label: "Appel administratif",
+    label: "Absences — Appel administratif",
     Icon: Users,
   },
 ];
@@ -495,20 +495,20 @@ const ABS_ITEMS: NavItem[] = [
    Groupe : Cahier de notes
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
-  { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
+  { href: "/admin/notes", label: "Notes — Vue d’ensemble", Icon: NotebookPen },
   {
     href: "/admin/notes/publication-requests",
-    label: "Demandes de publication",
+    label: "Notes — Demandes de publication",
     Icon: FileText,
   },
   {
     href: "/admin/notes/publication-settings",
-    label: "Paramètres de publication",
+    label: "Notes — Paramètres de publication",
     Icon: Settings,
   },
   {
     href: "/admin/notes/evaluations",
-    label: "Stats évaluations",
+    label: "Notes — Statistiques des évaluations",
     Icon: NotebookPen,
   },
 ];
@@ -519,7 +519,7 @@ const NOTES_ITEMS: NavItem[] = [
 const TEXTBOOK_ITEMS: NavItem[] = [
   {
     href: "/admin/cahier-de-texte",
-    label: "Progressions & suivi",
+    label: "Cahier de texte — Progressions & suivi",
     Icon: BookOpen,
   },
 ];
@@ -1093,25 +1093,14 @@ export default function SidebarNav() {
     () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
     [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
-  const absItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
-  const textbookItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : TEXTBOOK_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
-  const notesItems = React.useMemo(
-    () =>
-      NOTES_ITEMS.filter((item) => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
-        if (isEducator && item.href.startsWith("/admin/notes")) return false;
-        return true;
-      }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
+  const pedagogicalAuxiliaryItems = React.useMemo(() => {
+    if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return [];
+    return [
+      ...TEXTBOOK_ITEMS,
+      ...(isEducator ? [] : NOTES_ITEMS),
+      ...ABS_ITEMS,
+    ];
+  }, [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
 
   const settingsItems = React.useMemo(
     () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
@@ -1164,20 +1153,11 @@ export default function SidebarNav() {
     currentTab,
   );
 
-  const absActive = groupHasActiveItem(pathname, absItems, currentTab);
-
-  const textbookActive =
-    !isInfirmier &&
-    !isFinanceManager &&
-    !isFinanceOnlyShell &&
-    groupHasActiveItem(pathname, textbookItems, currentTab);
-
-  const notesActive =
-    !isEducator &&
-    !isInfirmier &&
-    !isFinanceManager &&
-    !isFinanceOnlyShell &&
-    groupHasActiveItem(pathname, notesItems, currentTab);
+  const pedagogicalAuxiliaryActive = groupHasActiveItem(
+    pathname,
+    pedagogicalAuxiliaryItems,
+    currentTab,
+  );
 
   const settingsActive = groupHasActiveItem(
     pathname,
@@ -1208,12 +1188,8 @@ export default function SidebarNav() {
   const [callsControlOpen, setCallsControlOpen] =
     React.useState<boolean>(callsControlActive);
 
-  const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
-
-  const [textbookOpen, setTextbookOpen] =
-    React.useState<boolean>(textbookActive);
-
-  const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
+  const [pedagogicalAuxiliaryOpen, setPedagogicalAuxiliaryOpen] =
+    React.useState<boolean>(pedagogicalAuxiliaryActive);
 
   const [settingsOpen, setSettingsOpen] =
     React.useState<boolean>(settingsActive);
@@ -1251,16 +1227,8 @@ export default function SidebarNav() {
   }, [callsControlActive]);
 
   React.useEffect(() => {
-    if (absActive) setAbsOpen(true);
-  }, [absActive]);
-
-  React.useEffect(() => {
-    if (textbookActive) setTextbookOpen(true);
-  }, [textbookActive]);
-
-  React.useEffect(() => {
-    if (notesActive) setNotesOpen(true);
-  }, [notesActive]);
+    if (pedagogicalAuxiliaryActive) setPedagogicalAuxiliaryOpen(true);
+  }, [pedagogicalAuxiliaryActive]);
 
   React.useEffect(() => {
     if (settingsActive) setSettingsOpen(true);
@@ -1466,53 +1434,22 @@ export default function SidebarNav() {
                 />
               )}
 
-            {!isInfirmier && !isFinanceManager &&
-              !isFinanceOnlyShell &&
-              absItems.length > 0 && (
-                <GroupSection
-                  title="Cahier des absences"
-                  Icon={Ban}
-                  items={absItems}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  open={absOpen}
-                  onToggle={() => setAbsOpen((v) => !v)}
-                  accent="emerald"
-                />
-              )}
-
-            {!isInfirmier && !isFinanceManager &&
-              !isFinanceOnlyShell &&
-              textbookItems.length > 0 && (
-                <GroupSection
-                  title="Cahier de texte"
-                  Icon={BookOpen}
-                  items={textbookItems}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  open={textbookOpen}
-                  onToggle={() => setTextbookOpen((v) => !v)}
-                  accent="sky"
-                />
-              )}
-
-            {!isEducator &&
-              !isFinanceManager &&
-              !isFinanceOnlyShell &&
-              notesItems.length > 0 && (
-                <GroupSection
-                  title="Cahier de notes"
-                  Icon={NotebookPen}
-                  items={notesItems}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  open={notesOpen}
-                  onToggle={() => setNotesOpen((v) => !v)}
-                  accent="violet"
-                  badgeCount={pendingGradePublicationCount}
-                  pendingGradePublicationCount={pendingGradePublicationCount}
-                />
-              )}
+            {pedagogicalAuxiliaryItems.length > 0 && (
+              <GroupSection
+                title="Auxiliaires pédagogiques"
+                Icon={BookOpen}
+                items={pedagogicalAuxiliaryItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={pedagogicalAuxiliaryOpen}
+                onToggle={() => setPedagogicalAuxiliaryOpen((v) => !v)}
+                accent="violet"
+                badgeCount={isEducator ? 0 : pendingGradePublicationCount}
+                pendingGradePublicationCount={
+                  isEducator ? 0 : pendingGradePublicationCount
+                }
+              />
+            )}
 
             {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
