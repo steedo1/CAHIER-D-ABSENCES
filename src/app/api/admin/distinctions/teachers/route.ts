@@ -245,28 +245,110 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const [{ data: profiles }, { data: subjectRows }] = await Promise.all([
-    srv
-      .from("profiles")
-      .select("id,display_name,first_name,last_name,email,phone")
-      .in("id", teacherIds),
-    srv
-      .from("teacher_subjects")
-      .select("profile_id,subject_name")
-      .eq("institution_id", institutionId)
-      .in("profile_id", teacherIds),
-  ]);
+  const [{ data: profiles, error: profilesError }, teacherSubjectsResult, classTeachersResult] =
+    await Promise.all([
+      srv
+        .from("profiles")
+        .select("id,display_name,email,phone")
+        .in("id", teacherIds),
+      srv
+        .from("teacher_subjects")
+        .select("profile_id,subject_id")
+        .eq("institution_id", institutionId)
+        .in("profile_id", teacherIds),
+      srv
+        .from("class_teachers")
+        .select("teacher_id,subject_id")
+        .eq("institution_id", institutionId)
+        .in("teacher_id", teacherIds),
+    ]);
+
+  if (profilesError) {
+    return NextResponse.json({ ok: false, error: profilesError.message }, { status: 400 });
+  }
 
   const names = new Map<string, string>();
-  for (const profile of profiles || []) names.set(String((profile as any).id), niceName(profile));
+  for (const profile of profiles || []) {
+    const id = String((profile as any).id || "");
+    if (id) names.set(id, niceName(profile));
+  }
+
+  const subjectIdsByTeacher = new Map<string, Set<string>>();
+  for (const teacherId of teacherIds) subjectIdsByTeacher.set(teacherId, new Set());
+
+  if (!teacherSubjectsResult.error) {
+    for (const row of teacherSubjectsResult.data || []) {
+      const teacherId = String((row as any).profile_id || "");
+      const subjectId = String((row as any).subject_id || "");
+      if (teacherId && subjectId) subjectIdsByTeacher.get(teacherId)?.add(subjectId);
+    }
+  }
+  if (!classTeachersResult.error) {
+    for (const row of classTeachersResult.data || []) {
+      const teacherId = String((row as any).teacher_id || "");
+      const subjectId = String((row as any).subject_id || "");
+      if (teacherId && subjectId) subjectIdsByTeacher.get(teacherId)?.add(subjectId);
+    }
+  }
+
+  const rawSubjectIds = Array.from(
+    new Set(Array.from(subjectIdsByTeacher.values()).flatMap((set) => Array.from(set))),
+  );
+  const institutionSubjectById = new Map<string, { subjectId: string; customName: string }>();
+  const institutionSubjectByCanonicalId = new Map<string, { subjectId: string; customName: string }>();
+  const canonicalSubjectIds = new Set<string>(rawSubjectIds);
+
+  const { data: institutionSubjectRows } = await srv
+    .from("institution_subjects")
+    .select("id,subject_id,custom_name")
+    .eq("institution_id", institutionId);
+
+  for (const row of institutionSubjectRows || []) {
+    const id = String((row as any).id || "");
+    const subjectId = String((row as any).subject_id || "");
+    const customName = String((row as any).custom_name || "").trim();
+    const normalized = { subjectId, customName };
+    if (id) institutionSubjectById.set(id, normalized);
+    if (subjectId && !institutionSubjectByCanonicalId.has(subjectId)) {
+      institutionSubjectByCanonicalId.set(subjectId, normalized);
+    }
+    if (subjectId) canonicalSubjectIds.add(subjectId);
+  }
+
+  const subjectNameById = new Map<string, string>();
+  if (canonicalSubjectIds.size) {
+    const { data: subjectNameRows } = await srv
+      .from("subjects")
+      .select("id,name")
+      .in("id", Array.from(canonicalSubjectIds));
+    for (const row of subjectNameRows || []) {
+      const id = String((row as any).id || "");
+      const name = String((row as any).name || "").trim();
+      if (id && name) subjectNameById.set(id, name);
+    }
+  }
+
+  const resolveSubjectLabel = (rawId: string) => {
+    const institutionSubject = institutionSubjectById.get(rawId);
+    if (institutionSubject) {
+      return (
+        institutionSubject.customName ||
+        subjectNameById.get(institutionSubject.subjectId) ||
+        subjectNameById.get(rawId) ||
+        ""
+      );
+    }
+    const linked = institutionSubjectByCanonicalId.get(rawId);
+    return linked?.customName || subjectNameById.get(rawId) || "";
+  };
+
   const subjects = new Map<string, string[]>();
-  for (const row of subjectRows || []) {
-    const id = String((row as any).profile_id || "");
-    const name = String((row as any).subject_name || "").trim();
-    if (!id || !name) continue;
-    const current = subjects.get(id) || [];
-    if (!current.includes(name)) current.push(name);
-    subjects.set(id, current);
+  for (const teacherId of teacherIds) {
+    const labels = Array.from(subjectIdsByTeacher.get(teacherId) || [])
+      .map(resolveSubjectLabel)
+      .map((label) => label.trim())
+      .filter(Boolean);
+    subjects.set(teacherId, Array.from(new Set(labels)));
   }
 
   const { fromIso, toIsoExclusive } = toIsoRange(from, to);
@@ -402,7 +484,7 @@ export async function GET(req: NextRequest) {
 
   const { data: evalRows, error: evalError } = await srv
     .from("grade_evaluations")
-    .select("id,teacher_id,is_published,eval_date,eval_kind,class_id,subject_id,classes!inner(institution_id)")
+    .select("id,teacher_id,is_published,eval_date,eval_kind,class_id,subject_id,scale,classes!inner(institution_id)")
     .eq("classes.institution_id", institutionId)
     .in("teacher_id", teacherIds)
     .gte("eval_date", from)
@@ -426,27 +508,72 @@ export async function GET(req: NextRequest) {
     if (evalKind) evaluationKindsByTeacher.get(id)?.add(evalKind);
     const evaluationId = String((row as any).id || "").trim();
     if (evaluationId) evaluationIdsByTeacher.get(id)?.push(evaluationId);
+    const evaluationSubjectId = String((row as any).subject_id || "").trim();
+    const evaluationSubjectLabel = resolveSubjectLabel(evaluationSubjectId);
+    if (evaluationSubjectLabel) {
+      const currentSubjects = subjects.get(id) || [];
+      if (!currentSubjects.includes(evaluationSubjectLabel)) {
+        currentSubjects.push(evaluationSubjectLabel);
+        subjects.set(id, currentSubjects);
+      }
+    }
   }
 
   const evalIds = Array.from(
     new Set((evalRows || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
   );
+  const evaluationById = new Map(
+    (evalRows || []).map((row: any) => [String(row.id || ""), row] as const),
+  );
   const evaluationAverageById = new Map<string, number>();
+  let usableMarksCount = 0;
+
   if (evalIds.length) {
-    const { data: markRows } = await srv
+    const marksByEvaluation = new Map<string, { total: number; count: number }>();
+    const addMark = (evaluationId: string, rawValue: unknown, mark20Value?: unknown) => {
+      if (!evaluationId) return;
+      const evaluation: any = evaluationById.get(evaluationId);
+      const directMark20 = Number(mark20Value);
+      const raw = Number(rawValue);
+      const scale = Number(evaluation?.scale || 20);
+      const mark20 = Number.isFinite(directMark20)
+        ? directMark20
+        : Number.isFinite(raw) && Number.isFinite(scale) && scale > 0
+          ? (raw / scale) * 20
+          : Number.NaN;
+      if (!Number.isFinite(mark20)) return;
+      const current = marksByEvaluation.get(evaluationId) || { total: 0, count: 0 };
+      current.total += Math.min(20, Math.max(0, mark20));
+      current.count += 1;
+      usableMarksCount += 1;
+      marksByEvaluation.set(evaluationId, current);
+    };
+
+    const flatMarksResult = await srv
       .from("grade_flat_marks")
-      .select("evaluation_id,mark_20")
+      .select("evaluation_id,raw_score,mark_20")
       .in("evaluation_id", evalIds);
 
-    const marksByEvaluation = new Map<string, { total: number; count: number }>();
-    for (const row of markRows || []) {
-      const evaluationId = String((row as any).evaluation_id || "");
-      const mark20 = Number((row as any).mark_20);
-      if (!evaluationId || !Number.isFinite(mark20)) continue;
-      const current = marksByEvaluation.get(evaluationId) || { total: 0, count: 0 };
-      current.total += mark20;
-      current.count += 1;
-      marksByEvaluation.set(evaluationId, current);
+    if (!flatMarksResult.error) {
+      for (const row of flatMarksResult.data || []) {
+        addMark(
+          String((row as any).evaluation_id || ""),
+          (row as any).raw_score,
+          (row as any).mark_20,
+        );
+      }
+    }
+
+    if (usableMarksCount === 0) {
+      const officialMarksResult = await srv
+        .from("v_grade_scores_official_for_reports")
+        .select("evaluation_id,score")
+        .in("evaluation_id", evalIds);
+      if (!officialMarksResult.error) {
+        for (const row of officialMarksResult.data || []) {
+          addMark(String((row as any).evaluation_id || ""), (row as any).score);
+        }
+      }
     }
 
     for (const [evaluationId, agg] of marksByEvaluation.entries()) {
@@ -459,17 +586,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const pedagogicalAverageByTeacher = new Map<string, number>();
-  for (const id of teacherIds) {
-    const averages = (evaluationIdsByTeacher.get(id) || [])
-      .map((evaluationId) => evaluationAverageById.get(evaluationId))
-      .filter((value): value is number => Number.isFinite(value));
-    if (!averages.length) {
-      pedagogicalAverageByTeacher.set(id, 0);
+  const pedagogicalAverageByTeacher = new Map<string, number | null>();
+  const pedagogicalGroupsByTeacher = new Map<string, number>();
+  for (const teacherId of teacherIds) {
+    const groupedAverages = new Map<string, number[]>();
+    for (const evaluationId of evaluationIdsByTeacher.get(teacherId) || []) {
+      const evaluation: any = evaluationById.get(evaluationId);
+      const average = evaluationAverageById.get(evaluationId);
+      if (!Number.isFinite(average)) continue;
+      const classId = String(evaluation?.class_id || "classe");
+      const subjectId = String(evaluation?.subject_id || "matiere");
+      const key = `${classId}|${subjectId}`;
+      const current = groupedAverages.get(key) || [];
+      current.push(Number(average));
+      groupedAverages.set(key, current);
+    }
+
+    const classSubjectMeans = Array.from(groupedAverages.values()).map(
+      (values) => values.reduce((sum, value) => sum + value, 0) / values.length,
+    );
+    pedagogicalGroupsByTeacher.set(teacherId, classSubjectMeans.length);
+    if (!classSubjectMeans.length) {
+      pedagogicalAverageByTeacher.set(teacherId, null);
       continue;
     }
-    const avg = averages.reduce((sum, value) => sum + value, 0) / averages.length;
-    pedagogicalAverageByTeacher.set(id, Math.round(avg * 100) / 100);
+    const average =
+      classSubjectMeans.reduce((sum, value) => sum + value, 0) / classSubjectMeans.length;
+    pedagogicalAverageByTeacher.set(teacherId, Math.round(average * 100) / 100);
   }
 
   const textbookMetrics = new Map<
@@ -600,20 +743,41 @@ export async function GET(req: NextRequest) {
     (sum, metric) => sum + metric.assignments,
     0,
   );
-  const maxPermissionRequests = Math.max(0, ...Array.from(permissionCounts.values()));
+  const totalPermissions = Array.from(permissionCounts.values()).reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  const maxEvaluationCount = Math.max(
+    0,
+    ...Array.from(evalMetrics.values()).map((metric) => metric.total),
+  );
+  const maxEvaluationKinds = Math.max(
+    0,
+    ...Array.from(evaluationKindsByTeacher.values()).map((kinds) => kinds.size),
+  );
 
   const attendanceAvailable = totalPlannedSessions > 0;
   const evaluationsAvailable = !evalError && totalEvaluations > 0;
   const textbookAvailable = textbookModuleReadable && totalTextbookAssignments > 0;
   const criteriaWarnings: string[] = [];
+  if ((profiles || []).length < teacherIds.length) {
+    criteriaWarnings.push(
+      `${teacherIds.length - (profiles || []).length} profil(s) enseignant(s) n’ont pas été retrouvés dans profiles.`,
+    );
+  }
   if (!attendanceAvailable) {
     criteriaWarnings.push("Emploi du temps ou séances insuffisants : assiduité et ponctualité neutralisées.");
   }
   if (!evaluationsAvailable) {
     criteriaWarnings.push("Aucune évaluation exploitable sur la période : le critère évaluations/pédagogie est neutralisé.");
+  } else if (usableMarksCount === 0) {
+    criteriaWarnings.push("Des évaluations existent, mais aucune note exploitable n’a été trouvée pour calculer la moyenne des moyennes.");
   }
   if (!textbookAvailable) {
     criteriaWarnings.push("Cahier de texte non exploitable sur la période : ce critère est neutralisé.");
+  }
+  if (teacherSubjectsResult.error && classTeachersResult.error) {
+    criteriaWarnings.push("Les affectations de matières n’ont pas pu être lues.");
   }
 
   const items = teacherIds.map((teacherId) => {
@@ -636,13 +800,12 @@ export async function GET(req: NextRequest) {
     const evaluationPublicationRate = pct(evaluations.published, evaluations.total);
     const textbookRate = pct(textbook.completed, textbook.expected);
     const evaluationTypesCount = evaluationKindsByTeacher.get(teacherId)?.size || 0;
-    const evaluationDiversityRate = pct(evaluationTypesCount, 3);
-    const evaluationVolumeScore = Math.min(
-      100,
-      Math.round(
-        ((evaluations.total / Math.max(1, teacherSettings.minimum_evaluations)) * 100) * 10,
-      ) / 10,
-    );
+    const evaluationDiversityRate =
+      maxEvaluationKinds > 0
+        ? pct(evaluationTypesCount, Math.min(3, maxEvaluationKinds))
+        : 0;
+    const evaluationVolumeScore =
+      maxEvaluationCount > 0 ? pct(evaluations.total, maxEvaluationCount) : 0;
     const evaluationQualityRate =
       evaluations.total > 0
         ? Math.round(
@@ -652,40 +815,21 @@ export async function GET(req: NextRequest) {
               10,
           ) / 10
         : 0;
-    const pedagogicalMean20 = pedagogicalAverageByTeacher.get(teacherId) || 0;
-    const pedagogicalPerformanceRate = Number.isFinite(pedagogicalMean20)
-      ? Math.round(((pedagogicalMean20 / 20) * 100) * 10) / 10
-      : 0;
+    const pedagogicalMean20 = pedagogicalAverageByTeacher.get(teacherId) ?? null;
+    const pedagogicalPerformanceRate =
+      pedagogicalMean20 !== null && Number.isFinite(pedagogicalMean20)
+        ? Math.round(((pedagogicalMean20 / 20) * 100) * 10) / 10
+        : 0;
     const combinedEvaluationRate =
-      evaluations.total > 0
-        ? Math.round(((evaluationQualityRate + pedagogicalPerformanceRate) / 2) * 10) / 10
+      evaluations.total > 0 && pedagogicalMean20 !== null
+        ? Math.round(
+            (evaluationQualityRate * 0.55 + pedagogicalPerformanceRate * 0.45) * 10,
+          ) / 10
         : 0;
     const permissionRequestsCount = permissionCounts.get(teacherId) || 0;
-    const permissionScore =
-      maxPermissionRequests > 0
-        ? Math.round((Math.max(0, 1 - permissionRequestsCount / maxPermissionRequests) * 100) * 10) / 10
-        : 100;
-
-    const engagementComponents: number[] = [];
-    if (attendanceAvailable && sessions.planned > 0) {
-      engagementComponents.push(
-        Math.min(100, (sessions.completed / Math.max(1, teacherSettings.minimum_sessions)) * 100),
-      );
-    }
-    if (evaluationsAvailable && evaluations.total > 0) {
-      engagementComponents.push(evaluationVolumeScore);
-    }
-    if (textbookAvailable && textbook.assignments > 0) {
-      engagementComponents.push(Math.min(100, textbook.assignments * 25));
-    }
-    engagementComponents.push(permissionScore);
-    const digitalEngagementRate = engagementComponents.length
-      ? Math.round(
-          (engagementComponents.reduce((sum, value) => sum + value, 0) /
-            engagementComponents.length) *
-            10,
-        ) / 10
-      : permissionScore;
+    const maxPermissionPenalty = Math.max(0, Number(teacherSettings.weights.digital_engagement || 0));
+    const permissionPenalty = Math.min(maxPermissionPenalty, permissionRequestsCount * 3);
+    const permissionScore = Math.max(0, 100 - permissionPenalty * (100 / Math.max(1, maxPermissionPenalty)));
 
     const effectiveSettings: TeacherDistinctionSettings = {
       ...teacherSettings,
@@ -696,38 +840,47 @@ export async function GET(req: NextRequest) {
         punctuality:
           attendanceAvailable && sessions.completed > 0 ? teacherSettings.weights.punctuality : 0,
         evaluations:
-          evaluationsAvailable && evaluations.total > 0 ? teacherSettings.weights.evaluations : 0,
+          evaluationsAvailable && evaluations.total > 0 && pedagogicalMean20 !== null
+            ? teacherSettings.weights.evaluations
+            : 0,
         textbook:
-          textbookAvailable && textbook.assignments > 0 ? teacherSettings.weights.textbook : 0,
-        digital_engagement: teacherSettings.weights.digital_engagement,
+          textbookAvailable && textbook.assignments > 0 && textbook.expected > 0
+            ? teacherSettings.weights.textbook
+            : 0,
+        digital_engagement: 0,
       },
     };
 
-    const score = computeTeacherScore(
-      {
-        attendance_rate: attendanceRate,
-        punctuality_rate: punctualityRate,
-        evaluation_publication_rate: combinedEvaluationRate,
-        textbook_completion_rate: textbookRate,
-        digital_engagement_rate: digitalEngagementRate,
-      },
-      effectiveSettings,
+    const hasObservableCriterion = Object.values(effectiveSettings.weights).some(
+      (weight) => Number(weight) > 0,
     );
+    const baseScore = hasObservableCriterion
+      ? computeTeacherScore(
+          {
+            attendance_rate: attendanceRate,
+            punctuality_rate: punctualityRate,
+            evaluation_publication_rate: combinedEvaluationRate,
+            textbook_completion_rate: textbookRate,
+            digital_engagement_rate: 0,
+          },
+          effectiveSettings,
+        )
+      : 0;
+    const score = Math.round(Math.max(0, baseScore - permissionPenalty) * 10) / 10;
 
     const reviewReasons: string[] = [];
-    if (attendanceAvailable && sessions.planned < teacherSettings.minimum_sessions) {
+    if (attendanceAvailable && sessions.planned > 0 && sessions.planned < teacherSettings.minimum_sessions) {
       reviewReasons.push(`Seulement ${sessions.planned} séance(s) prévue(s) observable(s)`);
     }
     if (evaluationsAvailable && evaluations.total < teacherSettings.minimum_evaluations) {
       reviewReasons.push(`Seulement ${evaluations.total} évaluation(s) observable(s)`);
     }
+    if (evaluations.total > 0 && pedagogicalMean20 === null) {
+      reviewReasons.push("Évaluations trouvées, mais aucune note exploitable pour calculer la moyenne des moyennes");
+    }
     if (textbookAvailable && textbook.assignments === 0 && teacherSettings.weights.textbook > 0) {
       reviewReasons.push("Aucune progression pédagogique attribuée ou observable");
     }
-
-    const hasObservableCriterion = Object.values(effectiveSettings.weights).some(
-      (weight) => Number(weight) > 0,
-    );
     if (!hasObservableCriterion) {
       reviewReasons.push("Aucune donnée suffisante pour établir une distinction fiable");
     }
@@ -744,7 +897,7 @@ export async function GET(req: NextRequest) {
 
     return {
       teacher_id: teacherId,
-      teacher_name: names.get(teacherId) || "Enseignant",
+      teacher_name: names.get(teacherId) || `Enseignant (${teacherId.slice(0, 6)})`,
       subject_names: (subjects.get(teacherId) || []).sort((a, b) => a.localeCompare(b, "fr")),
       score,
       status,
@@ -768,22 +921,37 @@ export async function GET(req: NextRequest) {
         evaluation_volume_score: evaluationVolumeScore,
         evaluation_quality_rate: evaluationQualityRate,
         pedagogical_mean_20: pedagogicalMean20,
+        pedagogical_groups_count: pedagogicalGroupsByTeacher.get(teacherId) || 0,
         pedagogical_performance_rate: pedagogicalPerformanceRate,
         textbook_assignments: textbook.assignments,
         textbook_expected_items: textbook.expected,
         textbook_completed_items: textbook.completed,
         textbook_completion_rate: textbookRate,
         permission_requests_count: permissionRequestsCount,
-        permission_score: permissionScore,
-        digital_engagement_rate: digitalEngagementRate,
+        permission_score: Math.round(permissionScore * 10) / 10,
+        permission_penalty: permissionPenalty,
+        digital_engagement_rate: 0,
       },
     };
   });
 
-  const ranked = competitionRanks(items, (item) => item.score).map(({ row, rank }) => ({
-    ...row,
-    rank,
-  }));
+  const eligibleRanks = new Map(
+    competitionRanks(
+      items.filter((item) => item.status === "eligible"),
+      (item) => item.score,
+    ).map(({ row, rank }) => [row.teacher_id, rank] as const),
+  );
+  const ranked = items
+    .map((item) => ({
+      ...item,
+      rank: eligibleRanks.get(item.teacher_id) ?? null,
+    }))
+    .sort(
+      (a, b) =>
+        (a.rank ?? 999) - (b.rank ?? 999) ||
+        b.score - a.score ||
+        a.teacher_name.localeCompare(b.teacher_name, "fr"),
+    );
 
   return NextResponse.json({
     ok: true,
@@ -794,6 +962,18 @@ export async function GET(req: NextRequest) {
     requested_to: requestedTo,
     settings: teacherSettings,
     criteria_warnings: criteriaWarnings,
+    data_audit: {
+      teacher_roles: teacherIds.length,
+      profiles_found: (profiles || []).length,
+      subject_assignments:
+        (teacherSubjectsResult.data || []).length + (classTeachersResult.data || []).length,
+      evaluations_found: totalEvaluations,
+      usable_marks_found: usableMarksCount,
+      sessions_found: sessionRows.length,
+      planned_slots_found: plannedSlots.size,
+      textbook_assignments: totalTextbookAssignments,
+      approved_permissions: totalPermissions,
+    },
     items: ranked,
   });
 }
