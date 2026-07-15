@@ -171,9 +171,9 @@ const MODE_LABELS: Record<StudentPalmaresMode, string> = {
 
 const MODE_DESCRIPTIONS: Record<StudentPalmaresMode, string> = {
   individual: "Tous les élèves remplissant automatiquement les règles de mérite et de conduite.",
-  general: "Les élèves classés aux trois premières places et remplissant aussi les règles de conduite, sans réattribuer les rangs.",
-  science: "Les trois premières places scientifiques de chaque classe, validées par la conduite et sans promotion artificielle.",
-  literature: "Les trois premières places littéraires de chaque classe, validées par la conduite et sans promotion artificielle.",
+  general: "Les trois meilleurs élèves de tout le niveau (toutes les classes confondues), validés par la conduite : ce sont les meilleurs de promotion.",
+  science: "Les trois premières places scientifiques de chaque classe, validées par la conduite.",
+  literature: "Les trois premières places littéraires de chaque classe, validées par la conduite.",
 };
 
 function numberOrNull(value: unknown) {
@@ -234,6 +234,28 @@ function tierShortLabel(tier: DistinctionTier | null) {
   if (tier === "excellence") return "Excellence";
   if (tier === "felicitations") return "Félicitations";
   if (tier === "encouragement") return "Encouragement";
+  return "Tableau d’honneur";
+}
+
+function palmaresRankLabel(mode: StudentPalmaresMode, rank: number | null | undefined) {
+  if (mode === "general") {
+    if (rank === 1) return "Major de promotion";
+    if (rank === 2) return "Vice-major de promotion";
+    if (rank === 3) return "3e lauréat de la promotion";
+    return "Lauréat de la promotion";
+  }
+  if (mode === "science") {
+    if (rank === 1) return "Major scientifique de la classe";
+    if (rank === 2) return "Vice-major scientifique de la classe";
+    if (rank === 3) return "3e lauréat scientifique de la classe";
+    return "Lauréat scientifique de la classe";
+  }
+  if (mode === "literature") {
+    if (rank === 1) return "Major littéraire de la classe";
+    if (rank === 2) return "Vice-major littéraire de la classe";
+    if (rank === 3) return "3e lauréat littéraire de la classe";
+    return "Lauréat littéraire de la classe";
+  }
   return "Tableau d’honneur";
 }
 
@@ -379,29 +401,7 @@ function CertificateFrame({
   const distinctionLabel =
     mode === "individual"
       ? tierShortLabel(candidate.tier)
-      : mode === "general"
-        ? candidate.honour_rank === 1
-          ? "1er de promotion"
-          : candidate.honour_rank === 2
-            ? "2e de promotion"
-            : candidate.honour_rank === 3
-              ? "3e de promotion"
-              : "Distinction de promotion"
-        : mode === "science"
-          ? candidate.honour_rank === 1
-            ? "1er de promotion en sciences"
-            : candidate.honour_rank === 2
-              ? "2e de promotion en sciences"
-              : candidate.honour_rank === 3
-                ? "3e de promotion en sciences"
-                : "Distinction en sciences"
-          : candidate.honour_rank === 1
-            ? "1er de promotion en lettres"
-            : candidate.honour_rank === 2
-              ? "2e de promotion en lettres"
-              : candidate.honour_rank === 3
-                ? "3e de promotion en lettres"
-                : "Distinction en lettres";
+      : palmaresRankLabel(mode, candidate.honour_rank);
   const averageLabel = mode === "science" ? "Moy. scientifique" : mode === "literature" ? "Moy. littéraire" : "Moyenne /20";
   const displayedAverage = mode === "individual" ? candidate.general_avg : candidate.ranking_avg;
   return (
@@ -426,7 +426,7 @@ function CertificateFrame({
             {mode === "individual" ? "Tableau d’honneur" : "Distinction d’excellence"}
           </h1>
           <div className="mx-auto mt-3 h-1 w-40 rounded-full bg-gradient-to-r from-transparent via-amber-600 to-transparent" />
-          <p className="mt-3 text-lg font-bold text-amber-800">{mode === "individual" ? distinctionLabel : distinctionLabel}</p>
+          <p className="mt-3 text-lg font-bold text-amber-800">{distinctionLabel}</p>
         </div>
 
         <div className="mt-7 grid grid-cols-[auto_1fr_auto] items-center gap-7 rounded-[32px] border border-amber-200 bg-white/80 px-7 py-6 shadow-sm">
@@ -526,7 +526,8 @@ function PodiumCard({
       <MedalIcon className="mt-3 h-10 w-10 text-amber-600" />
       <div className="mt-3"><StudentPortrait candidate={candidate} size="small" /></div>
       <h3 className="mt-4 text-lg font-black leading-tight text-slate-950">{candidate.full_name}</h3>
-      <p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-500">{tierShortLabel(candidate.tier)}</p>
+      <p className="mt-2 text-xs font-black uppercase tracking-wide text-amber-800">{palmaresRankLabel(mode, candidate.honour_rank)}</p>
+      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{tierShortLabel(candidate.tier)}</p>
       <div className="mt-4 w-full rounded-2xl bg-slate-950 px-4 py-3 text-white">
         <div className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-300">{label}</div>
         <div className="mt-1 text-2xl font-black">{formatAverage(candidate.ranking_avg)} / 20</div>
@@ -576,7 +577,7 @@ function PodiumSheet({
             <Trophy className="h-4 w-4" /> Palmarès d’excellence
           </div>
           <h1 className="mt-3 font-serif text-3xl font-black uppercase tracking-[0.08em] text-slate-950">{MODE_LABELS[mode]}</h1>
-          <p className="mt-1 text-lg font-black text-amber-800">Niveau {classLabel}</p>
+          <p className="mt-1 text-lg font-black text-amber-800">{mode === "general" ? `Niveau ${classLabel}` : `Classe de ${classLabel}`}</p>
           <p className="mt-1 text-xs font-semibold text-slate-500">{safeText(period?.label || period?.short_label, "Période")} · Année scolaire {academicYear}</p>
         </div>
 
@@ -739,9 +740,8 @@ export default function DistinctionsStudentsPage() {
       setClassId("");
       return;
     }
-    if (mode !== "individual" && classId === "all") return;
     if (!levelClasses.some((schoolClass) => schoolClass.id === classId)) setClassId(levelClasses[0].id);
-  }, [levelClasses, classId, mode]);
+  }, [levelClasses, classId]);
 
   const selectedPeriod = useMemo(() => periods.find((period) => period.id === periodId) || null, [periods, periodId]);
 
@@ -795,11 +795,9 @@ export default function DistinctionsStudentsPage() {
     }
 
     const targetClasses =
-      mode === "individual"
-        ? levelClasses.filter((schoolClass) => schoolClass.id === classId)
-        : classId === "all"
-          ? levelClasses
-          : levelClasses.filter((schoolClass) => schoolClass.id === classId);
+      mode === "general"
+        ? levelClasses
+        : levelClasses.filter((schoolClass) => schoolClass.id === classId);
 
     if (!targetClasses.length) {
       setError("Aucune classe ne correspond à cette sélection.");
@@ -887,7 +885,7 @@ export default function DistinctionsStudentsPage() {
 
     const grouped = new Map<string, Candidate[]>();
     for (const candidate of candidates) {
-      const key = safeText(candidate.class_level, "Niveau");
+      const key = mode === "general" ? safeText(candidate.class_level, "Niveau") : candidate.class_id;
       const current = grouped.get(key) || [];
       current.push(candidate);
       grouped.set(key, current);
@@ -938,7 +936,9 @@ export default function DistinctionsStudentsPage() {
       )
       .sort(
         (a, b) =>
-          safeText(a.class_level, "").localeCompare(safeText(b.class_level, ""), "fr", { numeric: true }) ||
+          (mode === "general"
+            ? safeText(a.class_level, "").localeCompare(safeText(b.class_level, ""), "fr", { numeric: true })
+            : a.class_label.localeCompare(b.class_label, "fr", { numeric: true })) ||
           Number(a.honour_rank || 99) - Number(b.honour_rank || 99) ||
           Number(b.ranking_avg || 0) - Number(a.ranking_avg || 0),
       );
@@ -947,21 +947,21 @@ export default function DistinctionsStudentsPage() {
   const winnerGroups = useMemo(() => {
     const groups = new Map<string, Candidate[]>();
     for (const winner of winners) {
-      const key = safeText(winner.class_level, "Niveau");
+      const key = mode === "general" ? safeText(winner.class_level, "Niveau") : winner.class_id;
       const current = groups.get(key) || [];
       current.push(winner);
       groups.set(key, current);
     }
     return Array.from(groups.entries()).map(([id, rows]) => ({
       id,
-      classLabel: rows[0]?.class_level || "Niveau",
+      classLabel: mode === "general" ? rows[0]?.class_level || "Niveau" : rows[0]?.class_label || "Classe",
       rows: rows.sort(
         (a, b) =>
           Number(a.honour_rank || 99) - Number(b.honour_rank || 99) ||
           Number(b.ranking_avg || 0) - Number(a.ranking_avg || 0),
       ),
     }));
-  }, [winners]);
+  }, [mode, winners]);
 
   const winnerPages = useMemo(
     () =>
@@ -1027,7 +1027,7 @@ export default function DistinctionsStudentsPage() {
               award_title:
                 mode === "individual"
                   ? DISTINCTION_TIER_LABELS[winner.tier || "encouragement"]
-                  : `${MODE_LABELS[mode]} · ${winner.honour_rank || "—"}${winner.honour_rank === 1 ? "er" : "e"} rang`,
+                  : palmaresRankLabel(mode, winner.honour_rank),
             })),
           },
         }),
@@ -1125,7 +1125,7 @@ export default function DistinctionsStudentsPage() {
                 onClick={() => {
                   setMode(itemMode);
                   setLoadedClasses([]);
-                  if (itemMode === "individual" && classId === "all") setClassId(levelClasses[0]?.id || "");
+                  if (itemMode !== "general" && !classId) setClassId(levelClasses[0]?.id || "");
                 }}
                 className={`rounded-2xl border p-4 text-left transition ${active ? "border-amber-400 bg-amber-50 shadow-md ring-2 ring-amber-200" : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"}`}
               >
@@ -1161,15 +1161,23 @@ export default function DistinctionsStudentsPage() {
                 {levels.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Classe</span>
-              <select value={classId} onChange={(event) => { setClassId(event.target.value); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
-                {mode !== "individual" ? <option value="all">Toutes les classes du niveau</option> : null}
-                {levelClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.label}</option>)}
-              </select>
-            </label>
+            {mode === "general" ? (
+              <div className="block xl:col-span-1">
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Portée</span>
+                <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 font-semibold text-amber-900">
+                  Toutes les classes du niveau seront prises en compte.
+                </div>
+              </div>
+            ) : (
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Classe</span>
+                <select value={classId} onChange={(event) => { setClassId(event.target.value); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
+                  {levelClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.label}</option>)}
+                </select>
+              </label>
+            )}
             <div className="flex items-end">
-              <button type="button" onClick={generate} disabled={generating || !periodId || !classId} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-black text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="button" onClick={generate} disabled={generating || !periodId || (mode !== "general" && !classId)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-black text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                 {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
                 {generating ? "Analyse en cours…" : "Analyser et générer"}
               </button>
@@ -1243,7 +1251,7 @@ export default function DistinctionsStudentsPage() {
             </section>
 
             <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-3"><FileClock className="h-5 w-5 text-amber-700" /><div><h2 className="font-black text-slate-950">Aperçu d’impression</h2><p className="text-xs text-slate-500">Chaque élève distingué reçoit un carton individuel. Pour les palmarès, le classement est présenté par niveau et le podium collectif reste disponible séparément pour l’administration.</p></div></div>
+              <div className="flex items-center gap-3"><FileClock className="h-5 w-5 text-amber-700" /><div><h2 className="font-black text-slate-950">Aperçu d’impression</h2><p className="text-xs text-slate-500">Chaque élève distingué reçoit un carton individuel. Le Top 3 général est calculé par niveau, tandis que les distinctions scientifiques et littéraires restent calculées par classe.</p></div></div>
               <div className="mt-5 overflow-auto rounded-2xl bg-slate-200 p-4">
                 <div className="origin-top-left scale-[0.48] lg:scale-[0.58]" style={{ width: "210mm", height: "150mm" }}>
                   {winners[0] ? (
