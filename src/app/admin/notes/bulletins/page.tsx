@@ -1968,7 +1968,7 @@ function StudentBulletinCard({
       </div>
 
       {/* IDENTITÉ ÉLÈVE */}
-      <div className="bdr student-identity mb-1 p-1">
+      <div className="bdr student-identity mb-[2px] p-[5px]">
         <div className="grid grid-cols-[1fr_1fr_1fr_86px] gap-2 text-[10px] leading-tight">
           <div className="space-y-[2px]">
             <div>
@@ -2342,14 +2342,14 @@ function StudentBulletinCard({
             <div className="bottom-card-title font-semibold uppercase text-center">
               Appréciations du conseil de classe
             </div>
-            <div className="council-appreciation mt-1 flex h-[50px] items-center justify-center bg-white px-1 bdr">
+            <div className="council-appreciation mt-1 flex h-[64px] items-center justify-center bg-white px-1 bdr">
               <div className="text-center text-[11px] font-bold leading-snug">
                 {councilText || "\u00A0"}
               </div>
             </div>
           </div>
 
-          <div className="bdr visa-card head-visa-card flex min-h-[128px] flex-1 flex-col justify-between p-1">
+          <div className="bdr visa-card head-visa-card flex min-h-[150px] flex-1 flex-col justify-between p-1">
             <div className="font-semibold text-[9px]">{headVisaLabel}</div>
             <div className="flex-1" />
             {institution?.institution_head_name && (
@@ -2923,7 +2923,7 @@ export default function BulletinsPage() {
           background: linear-gradient(90deg, var(--bulletin-navy-soft) 0%, #ffffff 100%);
           border-color: var(--bulletin-muted-border);
           border-left: 4px solid var(--bulletin-navy);
-          min-height: 31mm;
+          min-height: 34mm;
         }
 
         .student-identity .font-semibold {
@@ -2974,15 +2974,15 @@ export default function BulletinsPage() {
         }
 
         .bottom-card {
-          min-height: 23mm;
+          min-height: 26mm;
         }
 
         .council-card {
-          min-height: 31mm;
+          min-height: 35mm;
         }
 
         .visa-card {
-          min-height: 30mm;
+          min-height: 34mm;
         }
 
         .bottom-card,
@@ -3020,7 +3020,7 @@ export default function BulletinsPage() {
           background: #ffffff;
         }
         .council-appreciation {
-          min-height: 58px;
+          min-height: 68px;
         }
 
         .discipline-table th,
@@ -3035,7 +3035,7 @@ export default function BulletinsPage() {
         }
 
         .head-visa-card {
-          min-height: 144px;
+          min-height: 160px;
         }
 
         .bulletin-footer {
@@ -3102,7 +3102,7 @@ export default function BulletinsPage() {
           width: 100%;
           min-height: 297mm;
           height: 297mm;
-          padding: 6mm 7mm 5.5mm;
+          padding: 5mm 6.5mm 4.2mm;
           box-sizing: border-box;
           transform-origin: top left;
         }
@@ -3134,7 +3134,7 @@ export default function BulletinsPage() {
         .preview-overlay .print-page-content {
           height: 289mm;
           min-height: 289mm;
-          padding: 2.6mm 5.5mm 2.6mm;
+          padding: 2.1mm 5mm 1.8mm;
         }
 
         /* L'aperçu A4 reflète les dimensions typographiques de l'impression. */
@@ -3142,7 +3142,7 @@ export default function BulletinsPage() {
         .preview-overlay .discipline-table tr,
         .preview-overlay .discipline-table th,
         .preview-overlay .discipline-table td {
-          font-size: 11.2px !important;
+          font-size: 11.8px !important;
           line-height: 1.18 !important;
         }
 
@@ -3150,29 +3150,29 @@ export default function BulletinsPage() {
         .preview-overlay .bottom-card,
         .preview-overlay .council-card,
         .preview-overlay .visa-card {
-          font-size: 10.9px !important;
+          font-size: 11.4px !important;
           line-height: 1.17 !important;
         }
 
         .preview-overlay .official-block {
-          font-size: 10.9px !important;
+          font-size: 11.4px !important;
         }
 
         .preview-overlay .official-title {
-          font-size: 14.8px !important;
+          font-size: 15.6px !important;
         }
 
         .preview-overlay .official-subtitle {
-          font-size: 12.2px !important;
+          font-size: 12.8px !important;
         }
 
         .preview-overlay .institution-title {
-          font-size: 17px !important;
+          font-size: 18px !important;
         }
 
         .preview-overlay .institution-info,
         .preview-overlay .bulletin-footer {
-          font-size: 10.4px !important;
+          font-size: 10.9px !important;
         }
 
         @supports (zoom: 1) {
@@ -3265,7 +3265,7 @@ export default function BulletinsPage() {
             width: calc(100% / var(--print-fit-scale, 1)) !important;
             height: var(--print-content-height, 289mm) !important;
             min-height: var(--print-content-height, 289mm) !important;
-            padding: 2.4mm 4.8mm 2.2mm !important;
+            padding: 1.8mm 4.3mm 1.6mm !important;
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
             transform-origin: top left !important;
@@ -3276,7 +3276,7 @@ export default function BulletinsPage() {
           .bulletin-print-portal .discipline-table tr,
           .bulletin-print-portal .discipline-table th,
           .bulletin-print-portal .discipline-table td {
-            font-size: 10.8px !important;
+            font-size: 11.3px !important;
             line-height: 1.14 !important;
           }
 
@@ -3284,29 +3284,29 @@ export default function BulletinsPage() {
           .bulletin-print-portal .bottom-card,
           .bulletin-print-portal .council-card,
           .bulletin-print-portal .visa-card {
-            font-size: 10.9px !important;
+            font-size: 11.4px !important;
             line-height: 1.14 !important;
           }
 
           .bulletin-print-portal .official-block {
-            font-size: 10.9px !important;
+            font-size: 11.4px !important;
           }
 
           .bulletin-print-portal .official-title {
-            font-size: 14.8px !important;
+            font-size: 15.6px !important;
           }
 
           .bulletin-print-portal .official-subtitle {
-            font-size: 12.2px !important;
+            font-size: 12.8px !important;
           }
 
           .bulletin-print-portal .institution-title {
-            font-size: 17px !important;
+            font-size: 18px !important;
           }
 
           .bulletin-print-portal .institution-info,
           .bulletin-print-portal .bulletin-footer {
-            font-size: 10.4px !important;
+            font-size: 10.9px !important;
           }
 
           .print-break:last-of-type,
