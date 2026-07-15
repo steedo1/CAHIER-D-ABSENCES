@@ -264,7 +264,11 @@ function TeacherCertificate({
 
 
 function TeacherPodiumSheet({ institution, teachers, periodLabel, academicYear }: { institution: InstitutionMeta; teachers: TeacherItem[]; periodLabel: string; academicYear: string; }) {
-  const ordered = teachers.slice().sort((a, b) => a.rank - b.rank).slice(0, 3);
+  const ordered = teachers
+    .filter((teacher): teacher is TeacherItem & { rank: number } => teacher.rank !== null)
+    .slice()
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 3);
   return (
     <section className="teacher-print-sheet relative mx-auto overflow-hidden bg-white p-[14mm] text-slate-900 shadow-2xl print:shadow-none">
       <div className="absolute inset-[6mm] rounded-[10mm] border-[2px] border-slate-900" />
