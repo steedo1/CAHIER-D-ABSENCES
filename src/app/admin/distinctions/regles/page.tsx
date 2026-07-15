@@ -261,15 +261,15 @@ export default function DistinctionRulesPage() {
         </section>
 
         <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm lg:p-7">
-          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-100 text-blue-800"><Users className="h-6 w-6" /></span><div><h2 className="text-xl font-black text-slate-950">Enseignants · Pondération du mérite professionnel</h2><p className="text-sm text-slate-500">Aucun critère ne repose directement sur les moyennes brutes des élèves.</p></div></div>
+          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-100 text-blue-800"><Users className="h-6 w-6" /></span><div><h2 className="text-xl font-black text-slate-950">Enseignants · Pondération du Top 3</h2><p className="text-sm text-slate-500">Le classement peut combiner évaluations, moyenne des moyennes observées, assiduité, ponctualité, progression et discipline professionnelle.</p></div></div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {([
               ["attendance", "Assiduité"],
               ["punctuality", "Ponctualité"],
-              ["evaluations", "Suivi des évaluations"],
-              ["textbook", "Cahier de texte"],
-              ["digital_engagement", "Engagement numérique"],
+              ["evaluations", "Évaluations & qualité pédagogique"],
+              ["textbook", "Cahier de texte & progression"],
+              ["digital_engagement", "Permissions & discipline professionnelle"],
             ] as const).map(([key, label]) => (
               <label key={key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><span className="text-xs font-black uppercase tracking-wide text-slate-600">{label}</span><div className="mt-2"><NumberField value={settings.teachers.weights[key]} min={0} max={100} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, weights: { ...current.teachers.weights, [key]: value } } }))} /></div><div className="mt-1 text-[10px] font-bold text-slate-400">Poids relatif</div></label>
             ))}

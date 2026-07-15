@@ -45,10 +45,18 @@ type TeacherItem = {
     evaluations_total: number;
     evaluations_published: number;
     evaluation_publication_rate: number;
+    evaluation_types_count: number;
+    evaluation_diversity_rate: number;
+    evaluation_volume_score: number;
+    evaluation_quality_rate: number;
+    pedagogical_mean_20: number;
+    pedagogical_performance_rate: number;
     textbook_assignments: number;
     textbook_expected_items: number;
     textbook_completed_items: number;
     textbook_completion_rate: number;
+    permission_requests_count: number;
+    permission_score: number;
     digital_engagement_rate: number;
   };
 };
@@ -201,15 +209,16 @@ function TeacherCertificate({
         </div>
 
         <div className="mx-auto mt-7 max-w-2xl rounded-[28px] border border-amber-200 bg-white/85 px-8 py-6 text-center shadow-sm">
-          <p className="text-[15px] leading-relaxed text-slate-700">En reconnaissance de son professionnalisme, de sa régularité et de son engagement mesurable dans le suivi pédagogique et numérique des élèves.</p>
+          <p className="text-[15px] leading-relaxed text-slate-700">En reconnaissance de la qualité de son travail sur la période : évaluations réalisées, résultats pédagogiques observés, ponctualité, assiduité, suivi du cahier de texte et discipline professionnelle.</p>
           <div className="mx-auto mt-5 inline-flex items-center gap-3 rounded-2xl bg-slate-950 px-6 py-3 text-white"><Star className="h-6 w-6 text-amber-400" /><div><div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-300">{award.metricLabel}</div><div className="text-2xl font-black">{award.metricValue}</div></div></div>
         </div>
 
-        <div className="mt-7 grid grid-cols-5 gap-3 text-center text-xs">
+        <div className="mt-7 grid grid-cols-3 gap-3 text-center text-xs lg:grid-cols-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{formatPercent(teacher.metrics.attendance_rate)}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Assiduité</div></div>
           <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{formatPercent(teacher.metrics.punctuality_rate)}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Ponctualité</div></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{formatPercent(teacher.metrics.evaluation_publication_rate)}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Évaluations</div></div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{formatPercent(teacher.metrics.textbook_completion_rate)}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Cahier de texte</div></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{teacher.metrics.evaluations_total}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Évaluations</div></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{teacher.metrics.evaluation_types_count}</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Types d’éval.</div></div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{teacher.metrics.pedagogical_mean_20.toFixed(2).replace(".", ",")} /20</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Moyenne des moyennes</div></div>
           <div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="font-black text-slate-950">{teacher.score.toFixed(1)} /100</div><div className="mt-1 text-[9px] font-bold uppercase text-slate-500">Score global</div></div>
         </div>
 
@@ -234,6 +243,47 @@ function TeacherCertificate({
   );
 }
 
+
+function TeacherPodiumSheet({ institution, teachers, periodLabel, academicYear }: { institution: InstitutionMeta; teachers: TeacherItem[]; periodLabel: string; academicYear: string; }) {
+  const ordered = teachers.slice().sort((a, b) => a.rank - b.rank).slice(0, 3);
+  return (
+    <section className="teacher-print-sheet relative mx-auto overflow-hidden bg-white p-[14mm] text-slate-900 shadow-2xl print:shadow-none">
+      <div className="absolute inset-[6mm] rounded-[10mm] border-[2px] border-slate-900" />
+      <div className="absolute inset-[8.5mm] rounded-[8mm] border border-amber-400" />
+      <div className="relative z-10 flex h-full flex-col">
+        <OfficialHeader institution={institution} />
+        <div className="mt-8 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2 text-xs font-black uppercase tracking-[0.22em] text-amber-300"><Trophy className="h-4 w-4" /> Podium administration</div>
+          <h1 className="mt-4 font-serif text-4xl font-black uppercase tracking-[0.06em] text-slate-950">Top 3 des enseignants</h1>
+          <p className="mt-2 text-base font-bold text-slate-600">{periodLabel} · {academicYear}</p>
+        </div>
+        <div className="mt-10 grid flex-1 grid-cols-3 gap-5">
+          {ordered.map((teacher) => (
+            <div key={teacher.teacher_id} className="flex flex-col rounded-[28px] border border-slate-200 bg-gradient-to-b from-white to-amber-50 p-5 text-center shadow-sm">
+              <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-slate-950 text-2xl font-black text-amber-300">{teacher.rank}</div>
+              <div className="mt-4 text-xs font-black uppercase tracking-[0.18em] text-slate-500">{teacher.rank === 1 ? "1er prix" : `${teacher.rank}e prix`}</div>
+              <h2 className="mt-2 text-xl font-black text-slate-950">{teacher.teacher_name}</h2>
+              <p className="mt-2 text-xs font-semibold text-slate-500">{teacher.subject_names.join(" · ") || "Enseignant"}</p>
+              <div className="mt-5 space-y-2 rounded-2xl border border-amber-200 bg-white p-4 text-sm">
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Score global</span><span className="font-black text-slate-950">{teacher.score.toFixed(1)} /100</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Évaluations</span><span className="font-black text-slate-950">{teacher.metrics.evaluations_total}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Moy. des moyennes</span><span className="font-black text-slate-950">{teacher.metrics.pedagogical_mean_20.toFixed(2).replace(".", ",")} /20</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Assiduité</span><span className="font-black text-slate-950">{formatPercent(teacher.metrics.attendance_rate)}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Ponctualité</span><span className="font-black text-slate-950">{formatPercent(teacher.metrics.punctuality_rate)}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-slate-500">Permissions</span><span className="font-black text-slate-950">{teacher.metrics.permission_requests_count}</span></div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-700">
+          <div className="font-black uppercase tracking-wide text-slate-900">Critères retenus</div>
+          <div className="mt-2 leading-relaxed">Nombre et diversité des évaluations, moyenne des moyennes observées, ponctualité, assiduité, progression/cahier de texte et faible recours aux permissions.</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function TeacherDistinctionsPage() {
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -250,6 +300,7 @@ export default function TeacherDistinctionsPage() {
   const [publicationId, setPublicationId] = useState("");
   const [verificationCodes, setVerificationCodes] = useState<Record<string, string>>({});
   const [verificationQrs, setVerificationQrs] = useState<Record<string, string>>({});
+  const [printMode, setPrintMode] = useState<"teachers" | "administration">("teachers");
 
   useEffect(() => {
     let cancelled = false;
@@ -327,70 +378,23 @@ export default function TeacherDistinctionsPage() {
 
   const awards = useMemo<TeacherAward[]>(() => {
     if (!items.length) return [];
-    const result: TeacherAward[] = [];
-
-    overall.forEach((teacher) => {
-      result.push({
-        key: `overall-${teacher.teacher_id}`,
-        title:
-          teacher.rank === 1
-            ? "Enseignant modèle"
-            : `Mérite professionnel · ${teacher.rank}${teacher.rank === 1 ? "er" : "e"} prix`,
-        subtitle: "Palmarès général des enseignants · rang non réattribué",
-        teacher,
-        metricLabel: "Score global",
-        metricValue: `${teacher.score.toFixed(1)} / 100`,
-        icon: teacher.rank === 1 ? "crown" : "digital",
-      });
-    });
-
-    const specials: Array<{
-      key: string;
-      title: string;
-      subtitle: string;
-      metric: (teacher: TeacherItem) => number;
-      label: string;
-      icon: TeacherAward["icon"];
-    }> = [
-      { key: "attendance", title: "Prix de l’assiduité", subtitle: "Présence effective aux séances programmées", metric: (teacher) => teacher.metrics.attendance_rate, label: "Taux d’assiduité", icon: "attendance" },
-      { key: "punctuality", title: "Prix de la ponctualité", subtitle: "Démarrage régulier des appels dans le créneau", metric: (teacher) => teacher.metrics.punctuality_rate, label: "Taux de ponctualité", icon: "punctuality" },
-      { key: "evaluations", title: "Prix du suivi des évaluations", subtitle: "Évaluations publiées et suivi des résultats", metric: (teacher) => teacher.metrics.evaluation_publication_rate, label: "Publication des évaluations", icon: "evaluations" },
-      { key: "textbook", title: "Prix du suivi pédagogique", subtitle: "Régularité du cahier de texte et des progressions", metric: (teacher) => teacher.metrics.textbook_completion_rate, label: "Progression renseignée", icon: "textbook" },
-      { key: "digital", title: "Prix de l’engagement numérique", subtitle: "Utilisation régulière des outils Mon Cahier", metric: (teacher) => teacher.metrics.digital_engagement_rate, label: "Indice d’engagement", icon: "digital" },
-    ];
-
-    for (const special of specials) {
-      const sorted = items
-        .slice()
-        .sort(
-          (a, b) =>
-            special.metric(b) - special.metric(a) ||
-            b.score - a.score ||
-            a.teacher_name.localeCompare(b.teacher_name, "fr"),
-        );
-      const leader = sorted[0];
-      if (!leader || special.metric(leader) <= 0) continue;
-      const topMetric = special.metric(leader);
-      const leaders = sorted.filter(
-        (teacher) => Math.abs(special.metric(teacher) - topMetric) < 0.0001,
-      );
-      const eligibleLeaders = leaders.filter((teacher) => teacher.status === "eligible");
-      for (const teacher of eligibleLeaders) {
-        result.push({
-          key: `${special.key}-${teacher.teacher_id}`,
-          title: special.title,
-          subtitle: `${special.subtitle}${leaders.length > 1 ? " · Ex æquo" : ""}`,
-          teacher,
-          metricLabel: special.label,
-          metricValue: formatPercent(special.metric(teacher)),
-          icon: special.icon,
-        });
-      }
-    }
-    return result;
+    return overall.map((teacher) => ({
+      key: `overall-${teacher.teacher_id}`,
+      title:
+        teacher.rank === 1
+          ? "1er Prix du mérite professionnel"
+          : teacher.rank === 2
+            ? "2e Prix du mérite professionnel"
+            : "3e Prix du mérite professionnel",
+      subtitle: "Carton individuel remis à l’enseignant distingué",
+      teacher,
+      metricLabel: "Score global",
+      metricValue: `${teacher.score.toFixed(1)} / 100`,
+      icon: teacher.rank === 1 ? "crown" : "digital",
+    }));
   }, [items, overall]);
 
-  async function saveHistory() {
+    async function saveHistory() {
     if (!period || !awards.length) return null;
     if (publicationId && Object.keys(verificationCodes).length > 0) {
       return { publicationId, verificationCodes, verificationQrs };
@@ -443,10 +447,11 @@ export default function TeacherDistinctionsPage() {
     }
   }
 
-  async function printSecuredCertificates() {
+  async function printSecuredCertificates(mode: "teachers" | "administration" = "teachers") {
     if (!awards.length) return;
     const result = await saveHistory();
     if (!result) return;
+    setPrintMode(mode);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     window.print();
   }
@@ -469,7 +474,7 @@ export default function TeacherDistinctionsPage() {
       `}</style>
       <div className="mx-auto max-w-7xl">
         <section className="rounded-[32px] bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 px-6 py-7 text-white shadow-xl lg:px-9">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between"><div><div className="inline-flex items-center gap-2 rounded-full bg-amber-400/15 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-amber-300 ring-1 ring-amber-300/20"><ShieldCheck className="h-4 w-4" /> Distinctions enseignants</div><h1 className="mt-4 text-3xl font-black tracking-tight lg:text-4xl">Mérite professionnel & engagement</h1><p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">Le palmarès repose sur des données observables : assiduité, ponctualité, évaluations, cahier de texte et engagement numérique. Les moyennes brutes des élèves ne sont pas utilisées pour éviter les comparaisons injustes.</p></div><div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm"><div className="text-xs font-black uppercase tracking-wide text-slate-400">Principe</div><div className="mt-1 font-bold">Mesurer, expliquer, puis valoriser</div><div className="mt-1 text-xs text-slate-400">Une activité insuffisante est signalée « À vérifier » et les rangs ne sont jamais réattribués.</div></div></div>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between"><div><div className="inline-flex items-center gap-2 rounded-full bg-amber-400/15 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-amber-300 ring-1 ring-amber-300/20"><ShieldCheck className="h-4 w-4" /> Distinctions enseignants</div><h1 className="mt-4 text-3xl font-black tracking-tight lg:text-4xl">Top 3 des enseignants distingués</h1><p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">Le palmarès retient 3 enseignants sur la période choisie en croisant des critères simples et lisibles : nombre et diversité des évaluations, moyenne des moyennes observées, ponctualité, assiduité, progression/cahier de texte et faible recours aux permissions.</p></div><div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm"><div className="text-xs font-black uppercase tracking-wide text-slate-400">Principe</div><div className="mt-1 font-bold">Mesurer, expliquer, puis valoriser</div><div className="mt-1 text-xs text-slate-400">Une activité insuffisante est signalée « À vérifier » et les rangs ne sont jamais réattribués.</div></div></div>
         </section>
 
         <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
@@ -492,12 +497,12 @@ export default function TeacherDistinctionsPage() {
 
         {items.length > 0 ? (
           <>
-            <section className="mt-6 grid gap-4 md:grid-cols-4"><div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><Trophy className="h-5 w-5 text-slate-500" /><div className="mt-2 text-3xl font-black text-slate-950">{items.length}</div><div className="text-xs font-bold uppercase text-slate-500">Enseignants analysés</div></div><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><CheckCircle2 className="h-5 w-5 text-emerald-700" /><div className="mt-2 text-3xl font-black text-emerald-950">{eligible.length}</div><div className="text-xs font-bold uppercase text-emerald-700">Éligibles</div></div><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><AlertTriangle className="h-5 w-5 text-amber-700" /><div className="mt-2 text-3xl font-black text-amber-950">{items.filter((item) => item.status === "review").length}</div><div className="text-xs font-bold uppercase text-amber-700">À vérifier</div></div><div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><Award className="h-5 w-5 text-blue-700" /><div className="mt-2 text-3xl font-black text-blue-950">{awards.length}</div><div className="text-xs font-bold uppercase text-blue-700">Cartons préparés</div></div></section>
+            <section className="mt-6 grid gap-4 md:grid-cols-4"><div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><Trophy className="h-5 w-5 text-slate-500" /><div className="mt-2 text-3xl font-black text-slate-950">{items.length}</div><div className="text-xs font-bold uppercase text-slate-500">Enseignants analysés</div></div><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><CheckCircle2 className="h-5 w-5 text-emerald-700" /><div className="mt-2 text-3xl font-black text-emerald-950">{eligible.length}</div><div className="text-xs font-bold uppercase text-emerald-700">Éligibles</div></div><div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><AlertTriangle className="h-5 w-5 text-amber-700" /><div className="mt-2 text-3xl font-black text-amber-950">{items.filter((item) => item.status === "review").length}</div><div className="text-xs font-bold uppercase text-amber-700">À vérifier</div></div><div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><Award className="h-5 w-5 text-blue-700" /><div className="mt-2 text-3xl font-black text-blue-950">{awards.length}</div><div className="text-xs font-bold uppercase text-blue-700">Enseignants distingués</div></div></section>
 
             <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-black text-slate-950">Palmarès calculé</h2><p className="mt-1 text-sm text-slate-500">Les raisons de vérification restent visibles avant toute impression.</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void saveHistory()} disabled={saving || awards.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-bold text-slate-800 disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Enregistrer</button><button type="button" onClick={() => void printSecuredCertificates()} disabled={saving || awards.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 font-black text-white shadow hover:bg-amber-700 disabled:opacity-50"><Printer className="h-4 w-4" /> Sécuriser et imprimer</button></div></div>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-black text-slate-950">Palmarès calculé</h2><p className="mt-1 text-sm text-slate-500">Les raisons de vérification restent visibles avant toute impression.</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void saveHistory()} disabled={saving || awards.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-bold text-slate-800 disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Enregistrer</button><button type="button" onClick={() => void printSecuredCertificates("teachers")} disabled={saving || awards.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 font-black text-white shadow hover:bg-amber-700 disabled:opacity-50"><Printer className="h-4 w-4" /> Cartons individuels</button><button type="button" onClick={() => void printSecuredCertificates("administration")} disabled={saving || overall.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 font-black text-white shadow hover:bg-slate-800 disabled:opacity-50"><Trophy className="h-4 w-4" /> Podium administration</button></div></div>
 
-              <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-left text-xs font-black uppercase tracking-wide text-slate-600"><tr><th className="px-4 py-3">Rang</th><th className="px-4 py-3">Enseignant</th><th className="px-4 py-3">Score</th><th className="px-4 py-3">Assiduité</th><th className="px-4 py-3">Ponctualité</th><th className="px-4 py-3">Évaluations</th><th className="px-4 py-3">Cahier de texte</th><th className="px-4 py-3">Statut</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((teacher) => <tr key={teacher.teacher_id}><td className="px-4 py-3 font-black text-slate-950">{teacher.rank}</td><td className="px-4 py-3 font-bold text-slate-950">{teacher.teacher_name}<div className="mt-1 text-xs font-normal text-slate-500">{teacher.subject_names.join(" · ")}{teacher.review_reasons.length ? ` — ${teacher.review_reasons.join(" · ")}` : ""}</div></td><td className="px-4 py-3 text-lg font-black text-slate-950">{teacher.score.toFixed(1)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.attendance_rate)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.punctuality_rate)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.evaluation_publication_rate)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.textbook_completion_rate)}</td><td className="px-4 py-3"><StatusBadge status={teacher.status} /></td></tr>)}</tbody></table></div>
+              <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200"><table className="min-w-full text-sm"><thead className="bg-slate-100 text-left text-xs font-black uppercase tracking-wide text-slate-600"><tr><th className="px-4 py-3">Rang</th><th className="px-4 py-3">Enseignant</th><th className="px-4 py-3">Score</th><th className="px-4 py-3">Assiduité</th><th className="px-4 py-3">Ponctualité</th><th className="px-4 py-3">Évaluations</th><th className="px-4 py-3">Types</th><th className="px-4 py-3">Moy. des moyennes</th><th className="px-4 py-3">Cahier / progression</th><th className="px-4 py-3">Permissions</th><th className="px-4 py-3">Statut</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((teacher) => <tr key={teacher.teacher_id}><td className="px-4 py-3 font-black text-slate-950">{teacher.rank}</td><td className="px-4 py-3 font-bold text-slate-950">{teacher.teacher_name}<div className="mt-1 text-xs font-normal text-slate-500">{teacher.subject_names.join(" · ")}{teacher.review_reasons.length ? ` — ${teacher.review_reasons.join(" · ")}` : ""}</div></td><td className="px-4 py-3 text-lg font-black text-slate-950">{teacher.score.toFixed(1)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.attendance_rate)}</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.punctuality_rate)}</td><td className="px-4 py-3 font-bold">{teacher.metrics.evaluations_total}</td><td className="px-4 py-3 font-bold">{teacher.metrics.evaluation_types_count}</td><td className="px-4 py-3 font-bold">{teacher.metrics.pedagogical_mean_20.toFixed(2).replace(".", ",")} /20</td><td className="px-4 py-3 font-bold">{formatPercent(teacher.metrics.textbook_completion_rate)}</td><td className="px-4 py-3 font-bold">{teacher.metrics.permission_requests_count}</td><td className="px-4 py-3"><StatusBadge status={teacher.status} /></td></tr>)}</tbody></table></div>
             </section>
 
             <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{awards.map((award) => <div key={award.key} className="rounded-[26px] border border-amber-200 bg-gradient-to-br from-white to-amber-50 p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-950 text-amber-300"><AwardIcon kind={award.icon} className="h-6 w-6" /></span><div><div className="font-black text-slate-950">{award.title}</div><div className="mt-1 text-xs text-slate-500">{award.subtitle}</div></div></div><div className="mt-4 text-lg font-black text-blue-950">{award.teacher.teacher_name}</div><div className="mt-2 inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">{award.metricLabel} : {award.metricValue}</div></div>)}</section>
@@ -506,20 +511,29 @@ export default function TeacherDistinctionsPage() {
       </div>
 
       <div className="teacher-print-zone">
-        {awards.map((award) => {
-          const verificationKey = teacherVerificationKey(award);
-          return (
-            <TeacherCertificate
-              key={award.key}
-              institution={institution}
-              award={award}
-              periodLabel={safeText(period?.label || period?.short_label, "Période")}
-              academicYear={academicYear}
-              verificationCode={verificationCodes[verificationKey]}
-              verificationQr={verificationQrs[verificationKey]}
-            />
-          );
-        })}
+        {printMode === "administration" ? (
+          <TeacherPodiumSheet
+            institution={institution}
+            teachers={overall}
+            periodLabel={safeText(period?.label || period?.short_label, "Période")}
+            academicYear={academicYear}
+          />
+        ) : (
+          awards.map((award) => {
+            const verificationKey = teacherVerificationKey(award);
+            return (
+              <TeacherCertificate
+                key={award.key}
+                institution={institution}
+                award={award}
+                periodLabel={safeText(period?.label || period?.short_label, "Période")}
+                academicYear={academicYear}
+                verificationCode={verificationCodes[verificationKey]}
+                verificationQr={verificationQrs[verificationKey]}
+              />
+            );
+          })
+        )}
       </div>
     </main>
   );

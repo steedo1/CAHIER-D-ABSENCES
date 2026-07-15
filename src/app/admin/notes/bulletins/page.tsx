@@ -594,7 +594,7 @@ async function generateQrDataUrl(
 
 /* ───────── SIGNATURES : encre + teinte bleue (IMG robuste) ───────── */
 
-const SIGNATURE_BLUE = "#1d4ed8";
+const SIGNATURE_BLUE = "#082f5b";
 
 const __SIG_INK_CACHE = new Map<string, string>();
 const __SIG_INK_PROMISES = new Map<string, Promise<string | null>>();
@@ -1714,12 +1714,14 @@ function StudentBulletinCard({
   ]);
 
   const sigBoxHeightPx = useMemo(() => {
-    if (totalTableRows <= 14) return 26;
-    if (totalTableRows <= 18) return 24;
-    if (totalTableRows <= 22) return 22;
-    if (totalTableRows <= 26) return 20;
-    if (totalTableRows <= 30) return 18;
-    return 16;
+    // Une hauteur légèrement plus généreuse rend les signatures réellement
+    // lisibles, sans élargir excessivement le tableau sur les bulletins chargés.
+    if (totalTableRows <= 14) return 30;
+    if (totalTableRows <= 18) return 28;
+    if (totalTableRows <= 22) return 26;
+    if (totalTableRows <= 26) return 23;
+    if (totalTableRows <= 30) return 21;
+    return 19;
   }, [totalTableRows]);
 
   const renderSignatureLine = (signaturePng?: string | null) => {
@@ -1860,6 +1862,7 @@ function StudentBulletinCard({
       style={{
         ["--sig-box-h" as any]: `${sigBoxHeightPx}px`,
         ["--print-fit-scale" as any]: String(printFitScale),
+        ["--print-content-height" as any]: `${289 / Math.max(printFitScale, 0.55)}mm`,
       }}
     >
       <div ref={contentRef} className="print-page-content bulletin-content relative flex flex-col text-black">
@@ -2835,6 +2838,33 @@ export default function BulletinsPage() {
           color: var(--bulletin-text);
         }
 
+        /* Le bulletin utilise toute la hauteur A4 disponible. Sur les classes
+           ayant peu de lignes, l'espace restant est réparti entre les grands
+           blocs au lieu de rester vide uniquement en bas de page. */
+        .bulletin-content {
+          justify-content: space-between;
+          gap: 1.5mm;
+        }
+
+        .bulletin-sheet::before,
+        .bulletin-sheet::after {
+          content: "";
+          position: absolute;
+          pointer-events: none;
+          inset: 2.2mm;
+          border-radius: 1.5mm;
+          z-index: 2;
+        }
+
+        .bulletin-sheet::before {
+          border: 0.45mm solid var(--bulletin-navy);
+        }
+
+        .bulletin-sheet::after {
+          inset: 3.6mm;
+          border: 0.15mm solid rgba(183, 121, 31, 0.9);
+        }
+
         .bulletin-header {
           border: 1px solid var(--bulletin-muted-border);
           border-top: 5px solid var(--bulletin-navy);
@@ -2893,6 +2923,7 @@ export default function BulletinsPage() {
           background: linear-gradient(90deg, var(--bulletin-navy-soft) 0%, #ffffff 100%);
           border-color: var(--bulletin-muted-border);
           border-left: 4px solid var(--bulletin-navy);
+          min-height: 31mm;
         }
 
         .student-identity .font-semibold {
@@ -2942,6 +2973,18 @@ export default function BulletinsPage() {
           border-color: var(--bulletin-muted-border);
         }
 
+        .bottom-card {
+          min-height: 23mm;
+        }
+
+        .council-card {
+          min-height: 31mm;
+        }
+
+        .visa-card {
+          min-height: 30mm;
+        }
+
         .bottom-card,
         .council-card {
           box-shadow: inset 0 2px 0 rgba(11, 47, 87, 0.08);
@@ -2976,6 +3019,15 @@ export default function BulletinsPage() {
           border-color: var(--bulletin-muted-border);
           background: #ffffff;
         }
+        .council-appreciation {
+          min-height: 58px;
+        }
+
+        .discipline-table th,
+        .discipline-table td {
+          vertical-align: middle;
+        }
+
 
         .visa-card .font-semibold,
         .council-card .font-semibold:not(.bottom-card-title) {
@@ -2983,7 +3035,7 @@ export default function BulletinsPage() {
         }
 
         .head-visa-card {
-          min-height: 132px;
+          min-height: 144px;
         }
 
         .bulletin-footer {
@@ -2997,13 +3049,14 @@ export default function BulletinsPage() {
           display: block;
           background: transparent !important;
           opacity: 1 !important;
+          filter: contrast(1.45) saturate(1.15);
         }
 
         .sig-head,
         .sig-cell {
-          width: 72px;
-          min-width: 72px;
-          max-width: 72px;
+          width: 76px;
+          min-width: 76px;
+          max-width: 76px;
         }
 
         .sig-box {
@@ -3022,10 +3075,12 @@ export default function BulletinsPage() {
           line-height: 0;
         }
         .sig-box .sig-img {
-          height: calc(var(--sig-box-h, 22px) - 2px) !important;
-          max-height: calc(var(--sig-box-h, 22px) - 2px) !important;
-          width: 100% !important;
+          height: calc(var(--sig-box-h, 22px) - 1px) !important;
+          max-height: calc(var(--sig-box-h, 22px) - 1px) !important;
+          width: 104% !important;
+          max-width: 104% !important;
           object-fit: contain !important;
+          object-position: center bottom !important;
         }
         .sig-line {
           width: 100%;
@@ -3046,7 +3101,8 @@ export default function BulletinsPage() {
         .print-page-content {
           width: 100%;
           min-height: 297mm;
-          padding: 8mm;
+          height: 297mm;
+          padding: 6mm 7mm 5.5mm;
           box-sizing: border-box;
           transform-origin: top left;
         }
@@ -3076,8 +3132,47 @@ export default function BulletinsPage() {
         }
 
         .preview-overlay .print-page-content {
+          height: 289mm;
           min-height: 289mm;
-          padding: 2mm 6mm 4mm;
+          padding: 2.6mm 5.5mm 2.6mm;
+        }
+
+        /* L'aperçu A4 reflète les dimensions typographiques de l'impression. */
+        .preview-overlay .discipline-table,
+        .preview-overlay .discipline-table tr,
+        .preview-overlay .discipline-table th,
+        .preview-overlay .discipline-table td {
+          font-size: 11.2px !important;
+          line-height: 1.18 !important;
+        }
+
+        .preview-overlay .student-identity,
+        .preview-overlay .bottom-card,
+        .preview-overlay .council-card,
+        .preview-overlay .visa-card {
+          font-size: 10.9px !important;
+          line-height: 1.17 !important;
+        }
+
+        .preview-overlay .official-block {
+          font-size: 10.9px !important;
+        }
+
+        .preview-overlay .official-title {
+          font-size: 14.8px !important;
+        }
+
+        .preview-overlay .official-subtitle {
+          font-size: 12.2px !important;
+        }
+
+        .preview-overlay .institution-title {
+          font-size: 17px !important;
+        }
+
+        .preview-overlay .institution-info,
+        .preview-overlay .bulletin-footer {
+          font-size: 10.4px !important;
         }
 
         @supports (zoom: 1) {
@@ -3168,8 +3263,9 @@ export default function BulletinsPage() {
 
           .print-page-content {
             width: calc(100% / var(--print-fit-scale, 1)) !important;
-            min-height: auto !important;
-            padding: 1.5mm 5mm 3.5mm !important;
+            height: var(--print-content-height, 289mm) !important;
+            min-height: var(--print-content-height, 289mm) !important;
+            padding: 2.4mm 4.8mm 2.2mm !important;
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
             transform-origin: top left !important;
@@ -3180,37 +3276,37 @@ export default function BulletinsPage() {
           .bulletin-print-portal .discipline-table tr,
           .bulletin-print-portal .discipline-table th,
           .bulletin-print-portal .discipline-table td {
-            font-size: 10.4px !important;
-            line-height: 1.12 !important;
+            font-size: 10.8px !important;
+            line-height: 1.14 !important;
           }
 
           .bulletin-print-portal .student-identity,
           .bulletin-print-portal .bottom-card,
           .bulletin-print-portal .council-card,
           .bulletin-print-portal .visa-card {
-            font-size: 10.2px !important;
-            line-height: 1.12 !important;
+            font-size: 10.9px !important;
+            line-height: 1.14 !important;
           }
 
           .bulletin-print-portal .official-block {
-            font-size: 10.2px !important;
+            font-size: 10.9px !important;
           }
 
           .bulletin-print-portal .official-title {
-            font-size: 13.6px !important;
+            font-size: 14.8px !important;
           }
 
           .bulletin-print-portal .official-subtitle {
-            font-size: 11.4px !important;
+            font-size: 12.2px !important;
           }
 
           .bulletin-print-portal .institution-title {
-            font-size: 15.6px !important;
+            font-size: 17px !important;
           }
 
           .bulletin-print-portal .institution-info,
           .bulletin-print-portal .bulletin-footer {
-            font-size: 9.8px !important;
+            font-size: 10.4px !important;
           }
 
           .print-break:last-of-type,

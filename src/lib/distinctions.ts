@@ -83,11 +83,11 @@ export const DEFAULT_DISTINCTION_SETTINGS: DistinctionSettings = {
   },
   teachers: {
     weights: {
-      attendance: 30,
-      punctuality: 20,
-      evaluations: 20,
+      attendance: 20,
+      punctuality: 15,
+      evaluations: 30,
       textbook: 20,
-      digital_engagement: 10,
+      digital_engagement: 15,
     },
     minimum_sessions: 3,
     minimum_evaluations: 1,

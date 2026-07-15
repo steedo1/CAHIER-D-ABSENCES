@@ -171,9 +171,9 @@ const MODE_LABELS: Record<StudentPalmaresMode, string> = {
 
 const MODE_DESCRIPTIONS: Record<StudentPalmaresMode, string> = {
   individual: "Tous les élèves remplissant automatiquement les règles de mérite et de conduite.",
-  general: "Les trois premiers de chaque classe : un carton individuel par lauréat et un podium séparé pour l’administration.",
-  science: "Les trois premières places scientifiques : un carton individuel par lauréat et un podium séparé pour l’administration.",
-  literature: "Les trois premières places littéraires : un carton individuel par lauréat et un podium séparé pour l’administration.",
+  general: "Les élèves classés aux trois premières places et remplissant aussi les règles de conduite, sans réattribuer les rangs.",
+  science: "Les trois premières places scientifiques de chaque classe, validées par la conduite et sans promotion artificielle.",
+  literature: "Les trois premières places littéraires de chaque classe, validées par la conduite et sans promotion artificielle.",
 };
 
 function numberOrNull(value: unknown) {
@@ -235,52 +235,6 @@ function tierShortLabel(tier: DistinctionTier | null) {
   if (tier === "felicitations") return "Félicitations";
   if (tier === "encouragement") return "Encouragement";
   return "Tableau d’honneur";
-}
-
-function ordinalRank(rank: number | null | undefined) {
-  const parsed = numberOrNull(rank);
-  if (parsed === null) return "—";
-  return `${parsed}${parsed === 1 ? "er" : "e"}`;
-}
-
-function certificateTitle(mode: StudentPalmaresMode) {
-  if (mode === "general") return "Top 3 général";
-  if (mode === "science") return "Excellence scientifique";
-  if (mode === "literature") return "Excellence littéraire";
-  return "Tableau d’honneur";
-}
-
-function certificateMeritLabel(mode: StudentPalmaresMode, candidate: Candidate) {
-  if (mode === "general") return `${ordinalRank(candidate.honour_rank)} de la classe`;
-  if (mode === "science") return `${ordinalRank(candidate.honour_rank)} rang scientifique`;
-  if (mode === "literature") return `${ordinalRank(candidate.honour_rank)} rang littéraire`;
-  return tierShortLabel(candidate.tier);
-}
-
-function certificateAverageLabel(mode: StudentPalmaresMode) {
-  if (mode === "science") return "Moyenne scientifique";
-  if (mode === "literature") return "Moyenne littéraire";
-  return "Moyenne générale";
-}
-
-function certificateRecognitionText(mode: StudentPalmaresMode) {
-  if (mode === "general") {
-    return "En reconnaissance de son classement parmi les trois meilleurs élèves de sa classe, de ses résultats et de sa conduite exemplaire.";
-  }
-  if (mode === "science") {
-    return "En reconnaissance de son excellence dans les disciplines scientifiques, de son sérieux et de sa conduite exemplaire.";
-  }
-  if (mode === "literature") {
-    return "En reconnaissance de son excellence dans les disciplines littéraires, de son sérieux et de sa conduite exemplaire.";
-  }
-  return "En reconnaissance de ses résultats, de sa conduite exemplaire et de son engagement constant au cours de la période.";
-}
-
-function certificateRankLabel(mode: StudentPalmaresMode) {
-  if (mode === "science") return "Rang scientifique";
-  if (mode === "literature") return "Rang littéraire";
-  if (mode === "general") return "Rang du palmarès";
-  return "Rang académique";
 }
 
 function competitionRanks<T>(rows: T[], score: (row: T) => number | null) {
@@ -422,8 +376,18 @@ function CertificateFrame({
   verificationCode?: string;
   verificationQr?: string;
 }) {
+  const distinctionLabel =
+    mode === "individual"
+      ? tierShortLabel(candidate.tier)
+      : candidate.honour_rank === 1
+        ? "1er Prix"
+        : candidate.honour_rank === 2
+          ? "2e Prix"
+          : candidate.honour_rank === 3
+            ? "3e Prix"
+            : `${MODE_LABELS[mode]}`;
+  const averageLabel = mode === "science" ? "Moy. scientifique" : mode === "literature" ? "Moy. littéraire" : "Moyenne /20";
   const displayedAverage = mode === "individual" ? candidate.general_avg : candidate.ranking_avg;
-  const displayedRank = mode === "individual" ? candidate.official_rank : candidate.honour_rank;
   return (
     <section className="print-sheet certificate-sheet relative mx-auto overflow-hidden bg-[#fffdf7] p-[13mm] text-slate-900 shadow-2xl print:shadow-none">
       <div className="absolute inset-[6mm] border-[3px] border-double border-amber-700" />
@@ -440,13 +404,13 @@ function CertificateFrame({
 
         <div className="mt-6 text-center">
           <div className="inline-flex items-center gap-3 rounded-full border border-amber-300 bg-amber-50 px-5 py-2 text-xs font-black uppercase tracking-[0.28em] text-amber-900">
-            <Sparkles className="h-4 w-4" /> Carton individuel <Sparkles className="h-4 w-4" />
+            <Sparkles className="h-4 w-4" /> Distinction scolaire <Sparkles className="h-4 w-4" />
           </div>
           <h1 className="mt-4 font-serif text-4xl font-black uppercase tracking-[0.08em] text-slate-950">
-            {certificateTitle(mode)}
+            {mode === "individual" ? "Tableau d’honneur" : distinctionLabel}
           </h1>
           <div className="mx-auto mt-3 h-1 w-40 rounded-full bg-gradient-to-r from-transparent via-amber-600 to-transparent" />
-          <p className="mt-3 text-lg font-bold text-amber-800">{certificateMeritLabel(mode, candidate)}</p>
+          <p className="mt-3 text-lg font-bold text-amber-800">{mode === "individual" ? distinctionLabel : `${MODE_LABELS[mode]} · ${distinctionLabel}`}</p>
         </div>
 
         <div className="mt-7 grid grid-cols-[auto_1fr_auto] items-center gap-7 rounded-[32px] border border-amber-200 bg-white/80 px-7 py-6 shadow-sm">
@@ -456,14 +420,14 @@ function CertificateFrame({
             <h2 className="mt-2 font-serif text-[32px] font-black leading-tight text-slate-950">{candidate.full_name}</h2>
             <p className="mt-3 text-lg font-bold text-slate-700">Classe de {candidate.class_label}</p>
             <p className="mt-5 text-[15px] leading-relaxed text-slate-600">
-              {certificateRecognitionText(mode)}
+              En reconnaissance de ses résultats, de sa conduite exemplaire et de son engagement constant au cours de la période.
             </p>
           </div>
           <div className="grid h-32 w-32 place-items-center rounded-full border-[7px] border-double border-amber-600 bg-gradient-to-br from-amber-50 to-amber-100 text-center shadow-lg">
             <div>
               <Crown className="mx-auto h-8 w-8 text-amber-700" />
               <div className="mt-1 text-2xl font-black text-slate-950">{formatAverage(displayedAverage)}</div>
-              <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">{certificateAverageLabel(mode)} /20</div>
+              <div className="text-[10px] font-black uppercase tracking-wide text-slate-500">{averageLabel}</div>
             </div>
           </div>
         </div>
@@ -474,8 +438,8 @@ function CertificateFrame({
             <div className="mt-1 text-xl font-black text-slate-950">{formatAverage(candidate.conduct_avg)} / 20</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
-            <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{certificateRankLabel(mode)}</div>
-            <div className="mt-1 text-xl font-black text-slate-950">{ordinalRank(displayedRank)}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">{mode === "individual" ? "Rang académique" : "Rang du palmarès"}</div>
+            <div className="mt-1 text-xl font-black text-slate-950">{mode === "individual" ? (candidate.official_rank ? `${candidate.official_rank}${candidate.official_rank === 1 ? "er" : "e"}` : "—") : (candidate.honour_rank ? `${candidate.honour_rank}${candidate.honour_rank === 1 ? "er" : "e"}` : "—")}</div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
             <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Période</div>
@@ -666,7 +630,7 @@ export default function DistinctionsStudentsPage() {
   const [publicationId, setPublicationId] = useState("");
   const [verificationCodes, setVerificationCodes] = useState<Record<string, string>>({});
   const [verificationQrs, setVerificationQrs] = useState<Record<string, string>>({});
-  const [printLayout, setPrintLayout] = useState<"certificates" | "podiums">("certificates");
+  const [printLayout, setPrintLayout] = useState<"individual" | "podium">("individual");
 
   useEffect(() => {
     let cancelled = false;
@@ -1081,11 +1045,11 @@ export default function DistinctionsStudentsPage() {
     }
   }
 
-  async function printSecuredCertificates(layout: "certificates" | "podiums" = "certificates") {
+  async function printSecuredCertificates(layout: "individual" | "podium" = "individual") {
     if (!winners.length) return;
-    setPrintLayout(mode === "individual" ? "certificates" : layout);
     const result = await saveHistory();
     if (!result) return;
+    setPrintLayout(layout);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     window.print();
   }
@@ -1155,7 +1119,6 @@ export default function DistinctionsStudentsPage() {
                 type="button"
                 onClick={() => {
                   setMode(itemMode);
-                  setPrintLayout("certificates");
                   setLoadedClasses([]);
                   if (itemMode === "individual" && classId === "all") setClassId(levelClasses[0]?.id || "");
                 }}
@@ -1238,14 +1201,14 @@ export default function DistinctionsStudentsPage() {
                   <button type="button" onClick={() => void saveHistory()} disabled={saving || winners.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-50">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Enregistrer
                   </button>
+                  <button type="button" onClick={() => void printSecuredCertificates("individual")} disabled={saving || winners.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 font-black text-white shadow hover:bg-amber-700 disabled:opacity-50">
+                    <Printer className="h-4 w-4" /> Cartons individuels
+                  </button>
                   {mode !== "individual" ? (
-                    <button type="button" onClick={() => void printSecuredCertificates("podiums")} disabled={saving || winners.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                    <button type="button" onClick={() => void printSecuredCertificates("podium")} disabled={saving || winnerPages.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 font-black text-white shadow hover:bg-slate-800 disabled:opacity-50">
                       <Trophy className="h-4 w-4" /> Podium administration
                     </button>
                   ) : null}
-                  <button type="button" onClick={() => void printSecuredCertificates("certificates")} disabled={saving || winners.length === 0} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 font-black text-white shadow hover:bg-amber-700 disabled:opacity-50">
-                    <Printer className="h-4 w-4" /> {mode === "individual" ? "Sécuriser et imprimer" : "Cartons individuels"}
-                  </button>
                 </div>
               </div>
 
@@ -1275,28 +1238,25 @@ export default function DistinctionsStudentsPage() {
             </section>
 
             <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-3"><FileClock className="h-5 w-5 text-amber-700" /><div><h2 className="font-black text-slate-950">Aperçu d’impression</h2><p className="text-xs text-slate-500">Chaque lauréat reçoit un carton individuel A4 portrait. Pour les Top 3, le podium paysage reste une sortie distincte réservée à l’administration.</p></div></div>
-              <div className={`mt-5 grid gap-5 ${mode === "individual" ? "grid-cols-1" : "xl:grid-cols-2"}`}>
-                <div className="overflow-auto rounded-2xl bg-slate-200 p-4">
-                  <div className="mb-3 text-xs font-black uppercase tracking-wide text-slate-600">Carton individuel remis à l’élève</div>
-                  <div className="origin-top-left scale-[0.48] lg:scale-[0.58]" style={{ width: "210mm", height: "150mm" }}>
-                    {winners[0] ? (
-                      <CertificateFrame
-                        institution={institution}
-                        candidate={winners[0]}
-                        period={selectedPeriod}
-                        academicYear={academicYear}
-                        mode={mode}
-                        verificationCode={verificationCodes[studentVerificationKey(mode, winners[0])]}
-                        verificationQr={verificationQrs[studentVerificationKey(mode, winners[0])]}
-                      />
-                    ) : null}
-                  </div>
+              <div className="flex items-center gap-3"><FileClock className="h-5 w-5 text-amber-700" /><div><h2 className="font-black text-slate-950">Aperçu d’impression</h2><p className="text-xs text-slate-500">Chaque élève distingué reçoit un carton individuel. Le podium collectif reste disponible séparément pour l’administration.</p></div></div>
+              <div className="mt-5 overflow-auto rounded-2xl bg-slate-200 p-4">
+                <div className="origin-top-left scale-[0.48] lg:scale-[0.58]" style={{ width: "210mm", height: "150mm" }}>
+                  {winners[0] ? (
+                    <CertificateFrame
+                      institution={institution}
+                      candidate={winners[0]}
+                      period={selectedPeriod}
+                      academicYear={academicYear}
+                      mode={mode}
+                      verificationCode={verificationCodes[studentVerificationKey(mode, winners[0])]}
+                      verificationQr={verificationQrs[studentVerificationKey(mode, winners[0])]}
+                    />
+                  ) : null}
                 </div>
                 {mode !== "individual" && winnerPages[0] ? (
-                  <div className="overflow-auto rounded-2xl bg-slate-200 p-4">
-                    <div className="mb-3 text-xs font-black uppercase tracking-wide text-slate-600">Podium conservé par l’administration</div>
-                    <div className="origin-top-left scale-[0.40] lg:scale-[0.46]" style={{ width: "297mm", height: "122mm" }}>
+                  <div className="mt-6">
+                    <div className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">Podium administration</div>
+                    <div className="origin-top-left scale-[0.4] lg:scale-[0.48]" style={{ width: "297mm", height: "102mm" }}>
                       <PodiumSheet
                         institution={institution}
                         classLabel={winnerPages[0].classLabel}
@@ -1317,21 +1277,8 @@ export default function DistinctionsStudentsPage() {
       </div>
 
       <div className="distinctions-print-zone">
-        {printLayout === "podiums" && mode !== "individual"
-          ? winnerPages.map((group) => (
-              <PodiumSheet
-                key={group.id}
-                institution={institution}
-                classLabel={group.classLabel}
-                candidates={group.rows}
-                period={selectedPeriod}
-                academicYear={academicYear}
-                mode={mode}
-                verificationCodes={verificationCodes}
-                verificationQrs={verificationQrs}
-              />
-            ))
-          : winners.map((candidate) => {
+        {mode === "individual"
+          ? winners.map((candidate) => {
               const verificationKey = studentVerificationKey(mode, candidate);
               return (
                 <CertificateFrame
@@ -1345,7 +1292,20 @@ export default function DistinctionsStudentsPage() {
                   verificationQr={verificationQrs[verificationKey]}
                 />
               );
-            })}
+            })
+          : winnerPages.map((group) => (
+              <PodiumSheet
+                key={group.id}
+                institution={institution}
+                classLabel={group.classLabel}
+                candidates={group.rows}
+                period={selectedPeriod}
+                academicYear={academicYear}
+                mode={mode}
+                verificationCodes={verificationCodes}
+                verificationQrs={verificationQrs}
+              />
+            ))}
       </div>
     </main>
   );

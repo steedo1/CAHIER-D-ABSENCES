@@ -312,6 +312,7 @@ export async function GET(req: NextRequest) {
   );
 
   const absencesByTeacher = new Map<string, Array<{ start: string; end: string }>>();
+  const permissionCounts = new Map<string, number>();
   for (const row of absencesResult.data || []) {
     const teacherId = String((row as any).teacher_profile_id || "");
     const start = String((row as any).start_date || "");
@@ -320,6 +321,7 @@ export async function GET(req: NextRequest) {
     const current = absencesByTeacher.get(teacherId) || [];
     current.push({ start, end });
     absencesByTeacher.set(teacherId, current);
+    permissionCounts.set(teacherId, (permissionCounts.get(teacherId) || 0) + 1);
   }
 
   const now = new Date();
@@ -400,20 +402,74 @@ export async function GET(req: NextRequest) {
 
   const { data: evalRows, error: evalError } = await srv
     .from("grade_evaluations")
-    .select("teacher_id,is_published,eval_date,classes!inner(institution_id)")
+    .select("id,teacher_id,is_published,eval_date,eval_kind,class_id,subject_id,classes!inner(institution_id)")
     .eq("classes.institution_id", institutionId)
     .in("teacher_id", teacherIds)
     .gte("eval_date", from)
     .lte("eval_date", to);
 
   const evalMetrics = new Map<string, { total: number; published: number }>();
-  for (const id of teacherIds) evalMetrics.set(id, { total: 0, published: 0 });
+  const evaluationKindsByTeacher = new Map<string, Set<string>>();
+  const evaluationIdsByTeacher = new Map<string, string[]>();
+  for (const id of teacherIds) {
+    evalMetrics.set(id, { total: 0, published: 0 });
+    evaluationKindsByTeacher.set(id, new Set());
+    evaluationIdsByTeacher.set(id, []);
+  }
   for (const row of evalRows || []) {
     const id = String((row as any).teacher_id || "");
     const metric = evalMetrics.get(id);
     if (!metric) continue;
     metric.total += 1;
     if ((row as any).is_published) metric.published += 1;
+    const evalKind = String((row as any).eval_kind || "").trim();
+    if (evalKind) evaluationKindsByTeacher.get(id)?.add(evalKind);
+    const evaluationId = String((row as any).id || "").trim();
+    if (evaluationId) evaluationIdsByTeacher.get(id)?.push(evaluationId);
+  }
+
+  const evalIds = Array.from(
+    new Set((evalRows || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
+  );
+  const evaluationAverageById = new Map<string, number>();
+  if (evalIds.length) {
+    const { data: markRows } = await srv
+      .from("grade_flat_marks")
+      .select("evaluation_id,mark_20")
+      .in("evaluation_id", evalIds);
+
+    const marksByEvaluation = new Map<string, { total: number; count: number }>();
+    for (const row of markRows || []) {
+      const evaluationId = String((row as any).evaluation_id || "");
+      const mark20 = Number((row as any).mark_20);
+      if (!evaluationId || !Number.isFinite(mark20)) continue;
+      const current = marksByEvaluation.get(evaluationId) || { total: 0, count: 0 };
+      current.total += mark20;
+      current.count += 1;
+      marksByEvaluation.set(evaluationId, current);
+    }
+
+    for (const [evaluationId, agg] of marksByEvaluation.entries()) {
+      if (agg.count > 0) {
+        evaluationAverageById.set(
+          evaluationId,
+          Math.round((agg.total / agg.count) * 100) / 100,
+        );
+      }
+    }
+  }
+
+  const pedagogicalAverageByTeacher = new Map<string, number>();
+  for (const id of teacherIds) {
+    const averages = (evaluationIdsByTeacher.get(id) || [])
+      .map((evaluationId) => evaluationAverageById.get(evaluationId))
+      .filter((value): value is number => Number.isFinite(value));
+    if (!averages.length) {
+      pedagogicalAverageByTeacher.set(id, 0);
+      continue;
+    }
+    const avg = averages.reduce((sum, value) => sum + value, 0) / averages.length;
+    pedagogicalAverageByTeacher.set(id, Math.round(avg * 100) / 100);
   }
 
   const textbookMetrics = new Map<
@@ -544,6 +600,7 @@ export async function GET(req: NextRequest) {
     (sum, metric) => sum + metric.assignments,
     0,
   );
+  const maxPermissionRequests = Math.max(0, ...Array.from(permissionCounts.values()));
 
   const attendanceAvailable = totalPlannedSessions > 0;
   const evaluationsAvailable = !evalError && totalEvaluations > 0;
@@ -553,7 +610,7 @@ export async function GET(req: NextRequest) {
     criteriaWarnings.push("Emploi du temps ou séances insuffisants : assiduité et ponctualité neutralisées.");
   }
   if (!evaluationsAvailable) {
-    criteriaWarnings.push("Aucune évaluation exploitable sur la période : ce critère est neutralisé.");
+    criteriaWarnings.push("Aucune évaluation exploitable sur la période : le critère évaluations/pédagogie est neutralisé.");
   }
   if (!textbookAvailable) {
     criteriaWarnings.push("Cahier de texte non exploitable sur la période : ce critère est neutralisé.");
@@ -576,8 +633,38 @@ export async function GET(req: NextRequest) {
 
     const attendanceRate = pct(sessions.completed, sessions.planned);
     const punctualityRate = pct(sessions.punctual, sessions.completed);
-    const evaluationRate = pct(evaluations.published, evaluations.total);
+    const evaluationPublicationRate = pct(evaluations.published, evaluations.total);
     const textbookRate = pct(textbook.completed, textbook.expected);
+    const evaluationTypesCount = evaluationKindsByTeacher.get(teacherId)?.size || 0;
+    const evaluationDiversityRate = pct(evaluationTypesCount, 3);
+    const evaluationVolumeScore = Math.min(
+      100,
+      Math.round(
+        ((evaluations.total / Math.max(1, teacherSettings.minimum_evaluations)) * 100) * 10,
+      ) / 10,
+    );
+    const evaluationQualityRate =
+      evaluations.total > 0
+        ? Math.round(
+            (evaluationVolumeScore * 0.45 +
+              evaluationDiversityRate * 0.25 +
+              evaluationPublicationRate * 0.3) *
+              10,
+          ) / 10
+        : 0;
+    const pedagogicalMean20 = pedagogicalAverageByTeacher.get(teacherId) || 0;
+    const pedagogicalPerformanceRate = Number.isFinite(pedagogicalMean20)
+      ? Math.round(((pedagogicalMean20 / 20) * 100) * 10) / 10
+      : 0;
+    const combinedEvaluationRate =
+      evaluations.total > 0
+        ? Math.round(((evaluationQualityRate + pedagogicalPerformanceRate) / 2) * 10) / 10
+        : 0;
+    const permissionRequestsCount = permissionCounts.get(teacherId) || 0;
+    const permissionScore =
+      maxPermissionRequests > 0
+        ? Math.round((Math.max(0, 1 - permissionRequestsCount / maxPermissionRequests) * 100) * 10) / 10
+        : 100;
 
     const engagementComponents: number[] = [];
     if (attendanceAvailable && sessions.planned > 0) {
@@ -586,20 +673,19 @@ export async function GET(req: NextRequest) {
       );
     }
     if (evaluationsAvailable && evaluations.total > 0) {
-      engagementComponents.push(
-        Math.min(100, (evaluations.total / Math.max(1, teacherSettings.minimum_evaluations)) * 100),
-      );
+      engagementComponents.push(evaluationVolumeScore);
     }
     if (textbookAvailable && textbook.assignments > 0) {
       engagementComponents.push(Math.min(100, textbook.assignments * 25));
     }
+    engagementComponents.push(permissionScore);
     const digitalEngagementRate = engagementComponents.length
       ? Math.round(
           (engagementComponents.reduce((sum, value) => sum + value, 0) /
             engagementComponents.length) *
             10,
         ) / 10
-      : 0;
+      : permissionScore;
 
     const effectiveSettings: TeacherDistinctionSettings = {
       ...teacherSettings,
@@ -613,8 +699,7 @@ export async function GET(req: NextRequest) {
           evaluationsAvailable && evaluations.total > 0 ? teacherSettings.weights.evaluations : 0,
         textbook:
           textbookAvailable && textbook.assignments > 0 ? teacherSettings.weights.textbook : 0,
-        digital_engagement:
-          engagementComponents.length > 0 ? teacherSettings.weights.digital_engagement : 0,
+        digital_engagement: teacherSettings.weights.digital_engagement,
       },
     };
 
@@ -622,7 +707,7 @@ export async function GET(req: NextRequest) {
       {
         attendance_rate: attendanceRate,
         punctuality_rate: punctualityRate,
-        evaluation_publication_rate: evaluationRate,
+        evaluation_publication_rate: combinedEvaluationRate,
         textbook_completion_rate: textbookRate,
         digital_engagement_rate: digitalEngagementRate,
       },
@@ -677,11 +762,19 @@ export async function GET(req: NextRequest) {
             : 0,
         evaluations_total: evaluations.total,
         evaluations_published: evaluations.published,
-        evaluation_publication_rate: evaluationRate,
+        evaluation_publication_rate: evaluationPublicationRate,
+        evaluation_types_count: evaluationTypesCount,
+        evaluation_diversity_rate: evaluationDiversityRate,
+        evaluation_volume_score: evaluationVolumeScore,
+        evaluation_quality_rate: evaluationQualityRate,
+        pedagogical_mean_20: pedagogicalMean20,
+        pedagogical_performance_rate: pedagogicalPerformanceRate,
         textbook_assignments: textbook.assignments,
         textbook_expected_items: textbook.expected,
         textbook_completed_items: textbook.completed,
         textbook_completion_rate: textbookRate,
+        permission_requests_count: permissionRequestsCount,
+        permission_score: permissionScore,
         digital_engagement_rate: digitalEngagementRate,
       },
     };

@@ -478,15 +478,15 @@ const CALLS_CONTROL_ITEMS: NavItem[] = [
    Groupe : Cahier des absences
 ========================= */
 const ABS_ITEMS: NavItem[] = [
-  { href: "/admin/absences", label: "Absences — Matrice", Icon: Ban },
+  { href: "/admin/absences", label: "Matrice des absences", Icon: Ban },
   {
     href: "/admin/assiduite",
-    label: "Absences — Assiduité & justifications",
+    label: "Assiduité & justifications",
     Icon: UserRoundCheck,
   },
   {
     href: "/admin/absences/appel-administratif",
-    label: "Absences — Appel administratif",
+    label: "Appel administratif",
     Icon: Users,
   },
 ];
@@ -495,20 +495,20 @@ const ABS_ITEMS: NavItem[] = [
    Groupe : Cahier de notes
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
-  { href: "/admin/notes", label: "Notes — Vue d’ensemble", Icon: NotebookPen },
+  { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
   {
     href: "/admin/notes/publication-requests",
-    label: "Notes — Demandes de publication",
+    label: "Demandes de publication",
     Icon: FileText,
   },
   {
     href: "/admin/notes/publication-settings",
-    label: "Notes — Paramètres de publication",
+    label: "Paramètres de publication",
     Icon: Settings,
   },
   {
     href: "/admin/notes/evaluations",
-    label: "Notes — Statistiques des évaluations",
+    label: "Stats évaluations",
     Icon: NotebookPen,
   },
 ];
@@ -519,9 +519,18 @@ const NOTES_ITEMS: NavItem[] = [
 const TEXTBOOK_ITEMS: NavItem[] = [
   {
     href: "/admin/cahier-de-texte",
-    label: "Cahier de texte — Progressions & suivi",
+    label: "Progressions & suivi",
     Icon: BookOpen,
   },
+];
+
+/* =========================
+   Groupe : Auxiliaires pédagogiques
+========================= */
+const AUXILIARY_PEDAGOGICAL_ITEMS: NavItem[] = [
+  ...ABS_ITEMS,
+  ...TEXTBOOK_ITEMS,
+  ...NOTES_ITEMS,
 ];
 
 function NavLinkItem({
@@ -1093,14 +1102,35 @@ export default function SidebarNav() {
     () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
     [isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
-  const pedagogicalAuxiliaryItems = React.useMemo(() => {
-    if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return [];
-    return [
-      ...TEXTBOOK_ITEMS,
-      ...(isEducator ? [] : NOTES_ITEMS),
-      ...ABS_ITEMS,
-    ];
-  }, [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
+  const absItems = React.useMemo(
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
+  const textbookItems = React.useMemo(
+    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : TEXTBOOK_ITEMS),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
+  const notesItems = React.useMemo(
+    () =>
+      NOTES_ITEMS.filter((item) => {
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
+        if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        return true;
+      }),
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
+
+  const auxiliaryPedagogicalItems = React.useMemo(
+    () =>
+      AUXILIARY_PEDAGOGICAL_ITEMS.filter((item) => {
+        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
+        if (isEducator && item.href.startsWith("/admin/notes")) return false;
+        return true;
+      }),
+    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+  );
 
   const settingsItems = React.useMemo(
     () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
@@ -1153,11 +1183,26 @@ export default function SidebarNav() {
     currentTab,
   );
 
-  const pedagogicalAuxiliaryActive = groupHasActiveItem(
-    pathname,
-    pedagogicalAuxiliaryItems,
-    currentTab,
-  );
+  const absActive = groupHasActiveItem(pathname, absItems, currentTab);
+
+  const textbookActive =
+    !isInfirmier &&
+    !isFinanceManager &&
+    !isFinanceOnlyShell &&
+    groupHasActiveItem(pathname, textbookItems, currentTab);
+
+  const notesActive =
+    !isEducator &&
+    !isInfirmier &&
+    !isFinanceManager &&
+    !isFinanceOnlyShell &&
+    groupHasActiveItem(pathname, notesItems, currentTab);
+
+  const auxiliaryPedagogicalActive =
+    !isInfirmier &&
+    !isFinanceManager &&
+    !isFinanceOnlyShell &&
+    groupHasActiveItem(pathname, auxiliaryPedagogicalItems, currentTab);
 
   const settingsActive = groupHasActiveItem(
     pathname,
@@ -1188,8 +1233,15 @@ export default function SidebarNav() {
   const [callsControlOpen, setCallsControlOpen] =
     React.useState<boolean>(callsControlActive);
 
-  const [pedagogicalAuxiliaryOpen, setPedagogicalAuxiliaryOpen] =
-    React.useState<boolean>(pedagogicalAuxiliaryActive);
+  const [absOpen, setAbsOpen] = React.useState<boolean>(absActive);
+
+  const [textbookOpen, setTextbookOpen] =
+    React.useState<boolean>(textbookActive);
+
+  const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
+
+  const [auxiliaryPedagogicalOpen, setAuxiliaryPedagogicalOpen] =
+    React.useState<boolean>(auxiliaryPedagogicalActive);
 
   const [settingsOpen, setSettingsOpen] =
     React.useState<boolean>(settingsActive);
@@ -1227,8 +1279,20 @@ export default function SidebarNav() {
   }, [callsControlActive]);
 
   React.useEffect(() => {
-    if (pedagogicalAuxiliaryActive) setPedagogicalAuxiliaryOpen(true);
-  }, [pedagogicalAuxiliaryActive]);
+    if (absActive) setAbsOpen(true);
+  }, [absActive]);
+
+  React.useEffect(() => {
+    if (textbookActive) setTextbookOpen(true);
+  }, [textbookActive]);
+
+  React.useEffect(() => {
+    if (notesActive) setNotesOpen(true);
+  }, [notesActive]);
+
+  React.useEffect(() => {
+    if (auxiliaryPedagogicalActive) setAuxiliaryPedagogicalOpen(true);
+  }, [auxiliaryPedagogicalActive]);
 
   React.useEffect(() => {
     if (settingsActive) setSettingsOpen(true);
@@ -1434,22 +1498,23 @@ export default function SidebarNav() {
                 />
               )}
 
-            {pedagogicalAuxiliaryItems.length > 0 && (
-              <GroupSection
-                title="Auxiliaires pédagogiques"
-                Icon={BookOpen}
-                items={pedagogicalAuxiliaryItems}
-                pathname={pathname}
-                currentTab={currentTab}
-                open={pedagogicalAuxiliaryOpen}
-                onToggle={() => setPedagogicalAuxiliaryOpen((v) => !v)}
-                accent="violet"
-                badgeCount={isEducator ? 0 : pendingGradePublicationCount}
-                pendingGradePublicationCount={
-                  isEducator ? 0 : pendingGradePublicationCount
-                }
-              />
-            )}
+            {!isInfirmier && !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              auxiliaryPedagogicalItems.length > 0 && (
+                <GroupSection
+                  title="Auxiliaires pédagogiques"
+                  Icon={BookOpen}
+                  items={auxiliaryPedagogicalItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={auxiliaryPedagogicalOpen}
+                  onToggle={() => setAuxiliaryPedagogicalOpen((v) => !v)}
+                  accent="violet"
+                  badgeCount={pendingGradePublicationCount}
+                  pendingAbsenceCount={pendingAbsenceCount}
+                  pendingGradePublicationCount={pendingGradePublicationCount}
+                />
+              )}
 
             {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
