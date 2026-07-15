@@ -9,7 +9,6 @@ import {
   Loader2,
   RefreshCcw,
   Save,
-  Scale,
   Settings2,
   ShieldCheck,
   Users,
@@ -101,10 +100,6 @@ export default function DistinctionRulesPage() {
     void load();
   }, []);
 
-  const teacherWeightTotal = useMemo(
-    () => Object.values(settings.teachers.weights).reduce((sum, value) => sum + Number(value || 0), 0),
-    [settings.teachers.weights],
-  );
   const validationErrors = useMemo(() => validateDistinctionSettings(settings), [settings]);
 
   function updateTier(tier: DistinctionTier, field: "average_min" | "conduct_min", value: number) {
@@ -261,26 +256,48 @@ export default function DistinctionRulesPage() {
         </section>
 
         <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm lg:p-7">
-          <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-100 text-blue-800"><Users className="h-6 w-6" /></span><div><h2 className="text-xl font-black text-slate-950">Enseignants · Pondération du Top 3</h2><p className="text-sm text-slate-500">Le classement peut combiner évaluations, moyenne des moyennes observées, assiduité, ponctualité, progression et discipline professionnelle.</p></div></div>
+          <div className="flex items-center gap-3">
+            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-100 text-blue-800"><Users className="h-6 w-6" /></span>
+            <div>
+              <h2 className="text-xl font-black text-slate-950">Enseignants · Barème strict et non renormalisable</h2>
+              <p className="text-sm text-slate-500">Les poids et les seuils essentiels sont verrouillés pour garantir le même niveau d’exigence dans tous les établissements. Une donnée absente ne transfère jamais ses points aux autres critères.</p>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-relaxed text-blue-950">
+            <div className="font-black">Publication obligatoire des évaluations</div>
+            <p className="mt-1">Une évaluation en brouillon, soumise, refusée ou en attente est totalement exclue. Elle doit être marquée <strong>publiée</strong>, disposer de notes officielles publiées et couvrir au moins <strong>{settings.teachers.minimum_evaluation_note_coverage_rate} %</strong> des élèves actifs de la classe.</p>
+          </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {([
-              ["attendance", "Assiduité"],
-              ["punctuality", "Ponctualité"],
-              ["evaluations", "Évaluations & qualité pédagogique"],
-              ["textbook", "Cahier de texte & progression"],
-              ["digital_engagement", "Permissions & discipline professionnelle"],
-            ] as const).map(([key, label]) => (
-              <label key={key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><span className="text-xs font-black uppercase tracking-wide text-slate-600">{label}</span><div className="mt-2"><NumberField value={settings.teachers.weights[key]} min={0} max={100} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, weights: { ...current.teachers.weights, [key]: value } } }))} /></div><div className="mt-1 text-[10px] font-bold text-slate-400">Poids relatif</div></label>
+            {[
+              ["Évaluations", "25 pts", "15 pts de régularité + 10 pts de couverture des notes"],
+              ["Résultats", "25 pts", "10 pts de moyenne pédagogique + 15 pts de taux de réussite"],
+              ["Enseignant", "20 pts", "12 pts d’assiduité + 8 pts de ponctualité"],
+              ["Cahier", "20 pts", "12 pts de tenue du cahier + 8 pts de progression"],
+              ["Présence élèves", "10 pts", "Taux de présence constaté pendant les cours du professeur"],
+            ].map(([label, points, help]) => (
+              <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</div>
+                <div className="mt-2 text-2xl font-black text-slate-950">{points}</div>
+                <div className="mt-2 text-xs leading-relaxed text-slate-500">{help}</div>
+              </div>
             ))}
           </div>
-          <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-bold ${teacherWeightTotal > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}><Scale className="mr-2 inline h-4 w-4" /> Total des poids : {teacherWeightTotal}. Le moteur les normalise automatiquement.</div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <label><span className="text-xs font-black uppercase tracking-wide text-slate-500">Séances minimales observables</span><div className="mt-2"><NumberField value={settings.teachers.minimum_sessions} min={0} max={1000} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, minimum_sessions: value } }))} /></div></label>
-            <label><span className="text-xs font-black uppercase tracking-wide text-slate-500">Évaluations minimales</span><div className="mt-2"><NumberField value={settings.teachers.minimum_evaluations} min={0} max={500} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, minimum_evaluations: value } }))} /></div></label>
-            <label><span className="text-xs font-black uppercase tracking-wide text-slate-500">Tolérance de ponctualité (min)</span><div className="mt-2"><NumberField value={settings.teachers.punctuality_tolerance_minutes} min={0} max={120} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, punctuality_tolerance_minutes: value } }))} /></div></label>
-            <label><span className="text-xs font-black uppercase tracking-wide text-slate-500">Score minimal /100</span><div className="mt-2"><NumberField value={settings.teachers.minimum_score} min={0} max={100} step={0.5} onChange={(value) => setSettings((current) => ({ ...current, teachers: { ...current.teachers, minimum_score: value } }))} /></div></label>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Objectif évaluations/classe</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.evaluations_target_per_class}</div><p className="mt-1 text-xs text-slate-500">Le maximum du critère est atteint à cinq évaluations publiées valides par classe.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Minimum par classe</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.minimum_published_evaluations_per_class}</div><p className="mt-1 text-xs text-slate-500">Au moins {settings.teachers.minimum_class_evaluation_compliance_rate} % des classes doivent atteindre ce minimum.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Présence enseignant</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.minimum_teacher_attendance_observations} séances</div><p className="mt-1 text-xs text-slate-500">Et au moins {settings.teachers.minimum_teacher_attendance_coverage_rate} % des créneaux prévus contrôlés.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Cahier de texte</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.minimum_textbook_session_coverage_rate} %</div><p className="mt-1 text-xs text-slate-500">Couverture minimale des séances, avec une progression attribuée et exploitable.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Appels élèves</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.minimum_student_attendance_sessions}</div><p className="mt-1 text-xs text-slate-500">Minimum d’appels, couvrant au moins {settings.teachers.minimum_student_attendance_coverage_rate} % des séances prévues.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Tolérance ponctualité</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.punctuality_tolerance_minutes} min</div><p className="mt-1 text-xs text-slate-500">Au-delà, la séance n’est pas considérée comme ponctuelle.</p></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="text-xs font-black uppercase tracking-wide text-slate-500">Score minimal</div><div className="mt-2 text-2xl font-black text-slate-950">{settings.teachers.minimum_score}/100</div><p className="mt-1 text-xs text-slate-500">Toutes les familles doivent d’abord être calculables et tous les minima respectés.</p></div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-black uppercase tracking-wide text-amber-800">Critères exclus</div><div className="mt-2 font-black text-amber-950">Types et permissions</div><p className="mt-1 text-xs text-amber-900">La diversité des types d’évaluations ne donne aucun point. Une permission approuvée n’est ni un bonus ni un malus.</p></div>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-relaxed text-slate-700">
+            <strong>Moyenne pédagogique</strong> : niveau moyen des élèves, calculé équitablement par classe-matière. <strong>Taux de réussite</strong> : proportion d’élèves dont la moyenne atteint au moins 10/20. Les deux indicateurs sont complémentaires et ne doivent jamais être confondus.
           </div>
         </section>
 

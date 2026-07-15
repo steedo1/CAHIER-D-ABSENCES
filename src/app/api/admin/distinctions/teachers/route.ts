@@ -4,7 +4,6 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   computeTeacherScore,
   normalizeDistinctionSettings,
-  type TeacherDistinctionSettings,
 } from "@/lib/distinctions";
 
 export const runtime = "nodejs";
@@ -19,12 +18,25 @@ function pct(value: number, total: number) {
   return Math.round(clamp((value / total) * 100) * 10) / 10;
 }
 
+function round1(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
 function niceName(profile: any) {
   const display = String(profile?.display_name || "").trim();
   const composed = `${profile?.last_name || ""} ${profile?.first_name || ""}`.trim();
   const email = String(profile?.email || "").trim();
   const phone = String(profile?.phone || "").trim();
   return display || composed || (email.includes("@") ? email.split("@")[0] : email) || phone || "Enseignant";
+}
+
+function firstRelation(value: any) {
+  if (Array.isArray(value)) return value[0] || null;
+  return value && typeof value === "object" ? value : null;
 }
 
 function parseYMD(value: string) {
@@ -98,39 +110,32 @@ function toIsoRange(from: string, to: string) {
   };
 }
 
+function plannedKey(teacherId: string, classId: string, date: string, startTime: string) {
+  return `${teacherId}|${classId}|${date}|${startTime}`;
+}
+
 function sessionKey(row: any) {
-  const start = String(row.started_at || "");
-  return `${row.teacher_id || ""}|${start.slice(0, 10)}|${start.slice(11, 16)}`;
+  const start = String(row?.started_at || "");
+  return plannedKey(
+    String(row?.teacher_id || ""),
+    String(row?.class_id || ""),
+    start.slice(0, 10),
+    start.slice(11, 16),
+  );
 }
 
-function plannedKey(teacherId: string, date: string, startTime: string) {
-  return `${teacherId}|${date}|${startTime}`;
+function sessionFallbackKey(row: any) {
+  const start = String(row?.started_at || "");
+  return `${String(row?.teacher_id || "")}|${start.slice(0, 10)}|${start.slice(11, 16)}`;
 }
 
-function isCompletedSession(row: any) {
+function isObservedSession(row: any) {
   if (!row?.actual_call_at || !row?.started_at) return false;
   const start = new Date(row.started_at).getTime();
   const actual = new Date(row.actual_call_at).getTime();
-  const duration = Math.max(1, Number(row.expected_minutes || 60)) * 60_000;
-  return Number.isFinite(start) && Number.isFinite(actual) && actual >= start && actual < start + duration;
-}
-
-function firstRelation(value: any) {
-  if (Array.isArray(value)) return value[0] || null;
-  return value && typeof value === "object" ? value : null;
-}
-
-function competitionRanks<T>(rows: T[], score: (row: T) => number) {
-  const sorted = rows.slice().sort((a, b) => score(b) - score(a));
-  let previousScore: number | null = null;
-  let previousRank = 0;
-  return sorted.map((row, index) => {
-    const value = score(row);
-    const rank = previousScore !== null && Math.abs(value - previousScore) < 0.0001 ? previousRank : index + 1;
-    previousScore = value;
-    previousRank = rank;
-    return { row, rank };
-  });
+  if (!Number.isFinite(start) || !Number.isFinite(actual) || actual < start) return false;
+  const status = String(row?.status || "").toLowerCase();
+  return Boolean(row?.ended_at) || ["submitted", "closed", "completed", "validated"].includes(status);
 }
 
 function dateCoveredByApprovedAbsence(
@@ -140,6 +145,99 @@ function dateCoveredByApprovedAbsence(
 ) {
   return (absencesByTeacher.get(teacherId) || []).some(
     (absence) => date >= absence.start && date <= absence.end,
+  );
+}
+
+function assignmentOverlapsPeriod(row: any, from: string, to: string) {
+  const start = String(row?.start_date || "").slice(0, 10);
+  const end = String(row?.end_date || "").slice(0, 10);
+  if (start && start > to) return false;
+  if (end && end < from) return false;
+  return true;
+}
+
+function enrollmentActiveOn(row: any, date: string) {
+  const start = String(row?.start_date || "").slice(0, 10);
+  const end = String(row?.end_date || "").slice(0, 10);
+  if (start && start > date) return false;
+  if (end && end < date) return false;
+  return true;
+}
+
+function publishedEvaluation(row: any) {
+  return row?.is_published === true || String(row?.publication_status || "").toLowerCase() === "published";
+}
+
+function piecewise(value: number, points: Array<[number, number]>) {
+  if (!Number.isFinite(value) || !points.length) return 0;
+  const sorted = points.slice().sort((a, b) => a[0] - b[0]);
+  if (value < sorted[0][0]) return 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const [x1, y1] = sorted[index - 1];
+    const [x2, y2] = sorted[index];
+    if (value <= x2) {
+      if (x2 === x1) return y2;
+      return y1 + ((value - x1) / (x2 - x1)) * (y2 - y1);
+    }
+  }
+  return sorted[sorted.length - 1][1];
+}
+
+function pedagogicalMeanScoreRate(mean20: number | null) {
+  if (mean20 === null) return 0;
+  const points = piecewise(mean20, [
+    [8, 2],
+    [10, 4],
+    [12, 6],
+    [14, 8],
+    [16, 10],
+  ]);
+  return clamp((points / 10) * 100);
+}
+
+function successScoreRate(successRate: number | null) {
+  if (successRate === null) return 0;
+  const points = piecewise(successRate, [
+    [40, 6],
+    [60, 9],
+    [80, 12],
+    [90, 15],
+  ]);
+  return clamp((points / 15) * 100);
+}
+
+function noteCoverageScoreRate(coverage: number) {
+  const points = piecewise(coverage, [
+    [70, 5],
+    [80, 7],
+    [90, 9],
+    [95, 10],
+  ]);
+  return clamp((points / 10) * 100);
+}
+
+function studentPresenceScoreRate(rate: number | null) {
+  if (rate === null) return 0;
+  const points = piecewise(rate, [
+    [75, 2],
+    [80, 4],
+    [85, 6],
+    [90, 8],
+    [95, 10],
+  ]);
+  return clamp((points / 10) * 100);
+}
+
+function strictTeacherCompare(a: any, b: any) {
+  return (
+    Number(b.score || 0) - Number(a.score || 0) ||
+    Number(b.metrics?.results_points || 0) - Number(a.metrics?.results_points || 0) ||
+    Number(b.metrics?.attendance_rate || 0) - Number(a.metrics?.attendance_rate || 0) ||
+    Number(b.metrics?.textbook_session_coverage_rate || 0) -
+      Number(a.metrics?.textbook_session_coverage_rate || 0) ||
+    Number(b.metrics?.evaluation_regularity_rate || 0) -
+      Number(a.metrics?.evaluation_regularity_rate || 0) ||
+    String(a.teacher_name || "").localeCompare(String(b.teacher_name || ""), "fr")
   );
 }
 
@@ -205,7 +303,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_date_range" }, { status: 400 });
   }
 
-  // Ne jamais pénaliser un enseignant pour des créneaux qui ne sont pas encore passés.
   const today = parseYMD(toYMD(new Date()))!;
   const effectiveToDate = requestedToDate.getTime() > today.getTime() ? today : requestedToDate;
   const to = toYMD(effectiveToDate);
@@ -216,10 +313,9 @@ export async function GET(req: NextRequest) {
     .select("name,settings_json")
     .eq("id", institutionId)
     .maybeSingle();
-  const distinctionSettings = normalizeDistinctionSettings(
+  const teacherSettings = normalizeDistinctionSettings(
     (inst as any)?.settings_json?.distinction_settings,
-  );
-  const teacherSettings = distinctionSettings.teachers;
+  ).teachers;
 
   const { data: roleRows, error: rolesError } = await srv
     .from("user_roles")
@@ -245,47 +341,60 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const [{ data: profiles, error: profilesError }, teacherSubjectsResult, classTeachersResult] =
-    await Promise.all([
-      srv
-        .from("profiles")
-        .select("id,display_name,email,phone")
-        .in("id", teacherIds),
-      srv
-        .from("teacher_subjects")
-        .select("profile_id,subject_id")
-        .eq("institution_id", institutionId)
-        .in("profile_id", teacherIds),
-      srv
-        .from("class_teachers")
-        .select("teacher_id,subject_id")
-        .eq("institution_id", institutionId)
-        .in("teacher_id", teacherIds),
-    ]);
+  const [profilesResult, teacherSubjectsResult, classTeachersResult] = await Promise.all([
+    srv.from("profiles").select("id,display_name,email,phone").in("id", teacherIds),
+    srv
+      .from("teacher_subjects")
+      .select("profile_id,subject_id")
+      .eq("institution_id", institutionId)
+      .in("profile_id", teacherIds),
+    srv
+      .from("class_teachers")
+      .select(
+        "teacher_id,class_id,subject_id,start_date,end_date,classes!inner(id,label,academic_year,institution_id)",
+      )
+      .eq("institution_id", institutionId)
+      .in("teacher_id", teacherIds),
+  ]);
 
-  if (profilesError) {
-    return NextResponse.json({ ok: false, error: profilesError.message }, { status: 400 });
+  if (profilesResult.error) {
+    return NextResponse.json({ ok: false, error: profilesResult.error.message }, { status: 400 });
   }
 
   const names = new Map<string, string>();
-  for (const profile of profiles || []) {
+  for (const profile of profilesResult.data || []) {
     const id = String((profile as any).id || "");
     if (id) names.set(id, niceName(profile));
   }
 
-  const subjectIdsByTeacher = new Map<string, Set<string>>();
-  for (const teacherId of teacherIds) subjectIdsByTeacher.set(teacherId, new Set());
+  const classTeacherRows = (classTeachersResult.data || []).filter((row: any) => {
+    if (!assignmentOverlapsPeriod(row, from, to)) return false;
+    const cls = firstRelation(row?.classes);
+    if (academicYear && String(cls?.academic_year || "") !== academicYear) return false;
+    return true;
+  });
 
+  const assignedClassesByTeacher = new Map<string, Set<string>>();
+  const assignedClassSubjectsByTeacher = new Map<string, Set<string>>();
+  const subjectIdsByTeacher = new Map<string, Set<string>>();
+  for (const teacherId of teacherIds) {
+    assignedClassesByTeacher.set(teacherId, new Set());
+    assignedClassSubjectsByTeacher.set(teacherId, new Set());
+    subjectIdsByTeacher.set(teacherId, new Set());
+  }
+
+  for (const row of classTeacherRows as any[]) {
+    const teacherId = String(row.teacher_id || "");
+    const classId = String(row.class_id || "");
+    const subjectId = String(row.subject_id || "");
+    if (!teacherId || !classId) continue;
+    assignedClassesByTeacher.get(teacherId)?.add(classId);
+    assignedClassSubjectsByTeacher.get(teacherId)?.add(`${classId}|${subjectId || "matiere"}`);
+    if (subjectId) subjectIdsByTeacher.get(teacherId)?.add(subjectId);
+  }
   if (!teacherSubjectsResult.error) {
     for (const row of teacherSubjectsResult.data || []) {
       const teacherId = String((row as any).profile_id || "");
-      const subjectId = String((row as any).subject_id || "");
-      if (teacherId && subjectId) subjectIdsByTeacher.get(teacherId)?.add(subjectId);
-    }
-  }
-  if (!classTeachersResult.error) {
-    for (const row of classTeachersResult.data || []) {
-      const teacherId = String((row as any).teacher_id || "");
       const subjectId = String((row as any).subject_id || "");
       if (teacherId && subjectId) subjectIdsByTeacher.get(teacherId)?.add(subjectId);
     }
@@ -352,31 +461,60 @@ export async function GET(req: NextRequest) {
   }
 
   const { fromIso, toIsoExclusive } = toIsoRange(from, to);
-  const [periodsResult, timetablesResult, absencesResult, sessionsResult] = await Promise.all([
-    srv
-      .from("institution_periods")
-      .select("id,weekday,start_time,end_time")
-      .eq("institution_id", institutionId),
-    srv
-      .from("teacher_timetables")
-      .select("id,teacher_id,weekday,period_id")
-      .eq("institution_id", institutionId)
-      .in("teacher_id", teacherIds),
-    srv
-      .from("teacher_absence_requests")
-      .select("teacher_profile_id,start_date,end_date,status")
-      .eq("institution_id", institutionId)
-      .eq("status", "approved")
-      .lte("start_date", to)
-      .gte("end_date", from),
-    srv
-      .from("teacher_sessions")
-      .select("id,teacher_id,started_at,actual_call_at,expected_minutes")
-      .eq("institution_id", institutionId)
-      .in("teacher_id", teacherIds)
-      .gte("started_at", fromIso)
-      .lt("started_at", new Date(toIsoExclusive).toISOString()),
-  ]);
+  const [periodsResult, timetablesResult, absencesResult, sessionsResult, evaluationsResult] =
+    await Promise.all([
+      srv
+        .from("institution_periods")
+        .select("id,weekday,start_time,end_time")
+        .eq("institution_id", institutionId),
+      srv
+        .from("teacher_timetables")
+        .select("id,teacher_id,class_id,subject_id,weekday,period_id")
+        .eq("institution_id", institutionId)
+        .in("teacher_id", teacherIds),
+      srv
+        .from("teacher_absence_requests")
+        .select("teacher_profile_id,start_date,end_date,status")
+        .eq("institution_id", institutionId)
+        .eq("status", "approved")
+        .lte("start_date", to)
+        .gte("end_date", from),
+      srv
+        .from("teacher_sessions")
+        .select(
+          "id,teacher_id,class_id,subject_id,started_at,actual_call_at,ended_at,status,expected_minutes",
+        )
+        .eq("institution_id", institutionId)
+        .in("teacher_id", teacherIds)
+        .gte("started_at", fromIso)
+        .lt("started_at", new Date(toIsoExclusive).toISOString()),
+      srv
+        .from("grade_evaluations")
+        .select(
+          "id,teacher_id,is_published,publication_status,published_at,eval_date,eval_kind,class_id,subject_id,scale,classes!inner(institution_id,academic_year)",
+        )
+        .eq("classes.institution_id", institutionId)
+        .in("teacher_id", teacherIds)
+        .gte("eval_date", from)
+        .lte("eval_date", to),
+    ]);
+
+  const allEvaluationRows = (evaluationsResult.data || []).filter((row: any) => {
+    if (!academicYear) return true;
+    const cls = firstRelation(row?.classes);
+    return String(cls?.academic_year || "") === academicYear;
+  });
+  const publishedEvaluationRows = allEvaluationRows.filter(publishedEvaluation);
+
+  for (const row of allEvaluationRows as any[]) {
+    const teacherId = String(row.teacher_id || "");
+    const subjectLabel = resolveSubjectLabel(String(row.subject_id || ""));
+    if (teacherId && subjectLabel) {
+      const current = subjects.get(teacherId) || [];
+      if (!current.includes(subjectLabel)) current.push(subjectLabel);
+      subjects.set(teacherId, current);
+    }
+  }
 
   const periods = periodsResult.data || [];
   const timetables = timetablesResult.data || [];
@@ -394,7 +532,6 @@ export async function GET(req: NextRequest) {
   );
 
   const absencesByTeacher = new Map<string, Array<{ start: string; end: string }>>();
-  const permissionCounts = new Map<string, number>();
   for (const row of absencesResult.data || []) {
     const teacherId = String((row as any).teacher_profile_id || "");
     const start = String((row as any).start_date || "");
@@ -403,73 +540,72 @@ export async function GET(req: NextRequest) {
     const current = absencesByTeacher.get(teacherId) || [];
     current.push({ start, end });
     absencesByTeacher.set(teacherId, current);
-    permissionCounts.set(teacherId, (permissionCounts.get(teacherId) || 0) + 1);
   }
 
   const now = new Date();
   const todayYmd = toYMD(now);
   const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const plannedSlots = new Map<string, { teacherId: string; justified: boolean }>();
+  const plannedSlots = new Map<
+    string,
+    { teacherId: string; classId: string; justified: boolean; fallbackKey: string }
+  >();
 
   for (const date of dateRange(from, to)) {
     const ymd = toYMD(date);
     const dbWeekday = jsDayToDbWeekday(date.getUTCDay(), weekdayMode);
-    for (const timetable of timetables) {
-      const teacherId = String((timetable as any).teacher_id || "");
-      const period = periodById.get(String((timetable as any).period_id || ""));
-      if (!teacherId || !period?.startTime) continue;
-      const timetableWeekday =
-        parseWeekday((timetable as any).weekday) ?? period.weekday;
+    for (const timetable of timetables as any[]) {
+      const teacherId = String(timetable.teacher_id || "");
+      const classId = String(timetable.class_id || "");
+      const period = periodById.get(String(timetable.period_id || ""));
+      if (!teacherId || !classId || !period?.startTime) continue;
+      const timetableWeekday = parseWeekday(timetable.weekday) ?? period.weekday;
       if (timetableWeekday !== dbWeekday) continue;
       if (ymd === todayYmd && period.startMinutes > nowMinutes) continue;
-
-      const key = plannedKey(teacherId, ymd, period.startTime);
+      const key = plannedKey(teacherId, classId, ymd, period.startTime);
       if (plannedSlots.has(key)) continue;
       plannedSlots.set(key, {
         teacherId,
+        classId,
         justified: dateCoveredByApprovedAbsence(teacherId, ymd, absencesByTeacher),
+        fallbackKey: `${teacherId}|${ymd}|${period.startTime}`,
       });
     }
   }
 
-  const sessionAgg = new Map<string, any>();
-  for (const row of sessionRows) {
-    const key = sessionKey(row);
-    if (key.startsWith("|")) continue;
-    const existing = sessionAgg.get(key);
-    if (!existing || (!existing.actual_call_at && (row as any).actual_call_at)) {
-      sessionAgg.set(key, row);
+  const sessionByExactKey = new Map<string, any>();
+  const sessionByFallbackKey = new Map<string, any>();
+  for (const row of sessionRows as any[]) {
+    if (!isObservedSession(row)) continue;
+    const exact = sessionKey(row);
+    const fallback = sessionFallbackKey(row);
+    const existing = sessionByExactKey.get(exact);
+    if (!existing || (!existing.ended_at && row.ended_at)) sessionByExactKey.set(exact, row);
+    const existingFallback = sessionByFallbackKey.get(fallback);
+    if (!existingFallback || (!existingFallback.ended_at && row.ended_at)) {
+      sessionByFallbackKey.set(fallback, row);
     }
-  }
-
-  const recordedSessionCountByTeacher = new Map<string, number>();
-  for (const id of teacherIds) recordedSessionCountByTeacher.set(id, 0);
-  for (const row of sessionAgg.values()) {
-    const teacherId = String((row as any).teacher_id || "");
-    if (!teacherId || !recordedSessionCountByTeacher.has(teacherId) || !isCompletedSession(row)) continue;
-    recordedSessionCountByTeacher.set(
-      teacherId,
-      (recordedSessionCountByTeacher.get(teacherId) || 0) + 1,
-    );
   }
 
   const sessionMetrics = new Map<
     string,
-    { planned: number; completed: number; punctual: number; lateness: number; justified: number }
-  >();
-  for (const id of teacherIds) {
-    sessionMetrics.set(id, { planned: 0, completed: 0, punctual: 0, lateness: 0, justified: 0 });
-  }
-
-  // Si aucun emploi du temps exploitable n'est disponible, les séances réellement
-  // enregistrées restent une base minimale d'observation sans inventer des absences.
-  if (plannedSlots.size === 0) {
-    for (const row of sessionAgg.values()) {
-      plannedSlots.set(sessionKey(row), {
-        teacherId: String(row.teacher_id || ""),
-        justified: false,
-      });
+    {
+      planned: number;
+      completed: number;
+      punctual: number;
+      lateness: number;
+      justified: number;
+      observedSessionIds: string[];
     }
+  >();
+  for (const teacherId of teacherIds) {
+    sessionMetrics.set(teacherId, {
+      planned: 0,
+      completed: 0,
+      punctual: 0,
+      lateness: 0,
+      justified: 0,
+      observedSessionIds: [],
+    });
   }
 
   for (const [key, slot] of plannedSlots.entries()) {
@@ -480,9 +616,10 @@ export async function GET(req: NextRequest) {
       continue;
     }
     metric.planned += 1;
-    const row = sessionAgg.get(key);
-    if (!isCompletedSession(row)) continue;
+    const row = sessionByExactKey.get(key) || sessionByFallbackKey.get(slot.fallbackKey);
+    if (!row) continue;
     metric.completed += 1;
+    metric.observedSessionIds.push(String(row.id || ""));
     const lateness = Math.max(
       0,
       Math.round(
@@ -493,147 +630,167 @@ export async function GET(req: NextRequest) {
     if (lateness <= teacherSettings.punctuality_tolerance_minutes) metric.punctual += 1;
   }
 
-  const { data: evalRows, error: evalError } = await srv
-    .from("grade_evaluations")
-    .select("id,teacher_id,is_published,eval_date,eval_kind,class_id,subject_id,scale,classes!inner(institution_id)")
-    .eq("classes.institution_id", institutionId)
-    .in("teacher_id", teacherIds)
-    .gte("eval_date", from)
-    .lte("eval_date", to);
-
-  const evalMetrics = new Map<string, { total: number; published: number }>();
-  const evaluationKindsByTeacher = new Map<string, Set<string>>();
-  const evaluationIdsByTeacher = new Map<string, string[]>();
-  for (const id of teacherIds) {
-    evalMetrics.set(id, { total: 0, published: 0 });
-    evaluationKindsByTeacher.set(id, new Set());
-    evaluationIdsByTeacher.set(id, []);
-  }
-  for (const row of evalRows || []) {
-    const id = String((row as any).teacher_id || "");
-    const metric = evalMetrics.get(id);
-    if (!metric) continue;
-    metric.total += 1;
-    if ((row as any).is_published) metric.published += 1;
-    const evalKind = String((row as any).eval_kind || "").trim();
-    if (evalKind) evaluationKindsByTeacher.get(id)?.add(evalKind);
-    const evaluationId = String((row as any).id || "").trim();
-    if (evaluationId) evaluationIdsByTeacher.get(id)?.push(evaluationId);
-    const evaluationSubjectId = String((row as any).subject_id || "").trim();
-    const evaluationSubjectLabel = resolveSubjectLabel(evaluationSubjectId);
-    if (evaluationSubjectLabel) {
-      const currentSubjects = subjects.get(id) || [];
-      if (!currentSubjects.includes(evaluationSubjectLabel)) {
-        currentSubjects.push(evaluationSubjectLabel);
-        subjects.set(id, currentSubjects);
-      }
-    }
-  }
-
-  const evalIds = Array.from(
-    new Set((evalRows || []).map((row: any) => String(row?.id || "")).filter(Boolean)),
+  const publishedEvalIds = publishedEvaluationRows
+    .map((row: any) => String(row.id || ""))
+    .filter(Boolean);
+  const allRelevantClassIds = Array.from(
+    new Set([
+      ...classTeacherRows.map((row: any) => String(row.class_id || "")),
+      ...allEvaluationRows.map((row: any) => String(row.class_id || "")),
+      ...sessionRows.map((row: any) => String(row.class_id || "")),
+    ].filter(Boolean)),
   );
+
+  const [publishedScoresResult, enrollmentsResult] = await Promise.all([
+    publishedEvalIds.length
+      ? srv
+          .from("grade_published_scores")
+          .select("evaluation_id,student_id,score,scale,is_current")
+          .in("evaluation_id", publishedEvalIds)
+          .eq("is_current", true)
+      : Promise.resolve({ data: [], error: null } as any),
+    allRelevantClassIds.length
+      ? srv
+          .from("class_enrollments")
+          .select("class_id,student_id,start_date,end_date")
+          .eq("institution_id", institutionId)
+          .in("class_id", allRelevantClassIds)
+      : Promise.resolve({ data: [], error: null } as any),
+  ]);
+
+  const enrollmentsByClass = new Map<string, any[]>();
+  for (const row of enrollmentsResult.data || []) {
+    const classId = String((row as any).class_id || "");
+    if (!classId) continue;
+    const current = enrollmentsByClass.get(classId) || [];
+    current.push(row);
+    enrollmentsByClass.set(classId, current);
+  }
+  const rosterCache = new Map<string, Set<string>>();
+  const rosterFor = (classId: string, date: string) => {
+    const key = `${classId}|${date}`;
+    const cached = rosterCache.get(key);
+    if (cached) return cached;
+    const set = new Set<string>();
+    for (const row of enrollmentsByClass.get(classId) || []) {
+      if (!enrollmentActiveOn(row, date)) continue;
+      const studentId = String((row as any).student_id || "");
+      if (studentId) set.add(studentId);
+    }
+    rosterCache.set(key, set);
+    return set;
+  };
+
   const evaluationById = new Map(
-    (evalRows || []).map((row: any) => [String(row.id || ""), row] as const),
+    publishedEvaluationRows.map((row: any) => [String(row.id || ""), row] as const),
   );
-  const evaluationAverageById = new Map<string, number>();
-  let usableMarksCount = 0;
-
-  if (evalIds.length) {
-    const marksByEvaluation = new Map<string, { total: number; count: number }>();
-    const addMark = (evaluationId: string, rawValue: unknown, mark20Value?: unknown) => {
-      if (!evaluationId) return;
-      const evaluation: any = evaluationById.get(evaluationId);
-      const directMark20 = Number(mark20Value);
-      const raw = Number(rawValue);
-      const scale = Number(evaluation?.scale || 20);
-      const mark20 = Number.isFinite(directMark20)
-        ? directMark20
-        : Number.isFinite(raw) && Number.isFinite(scale) && scale > 0
-          ? (raw / scale) * 20
-          : Number.NaN;
-      if (!Number.isFinite(mark20)) return;
-      const current = marksByEvaluation.get(evaluationId) || { total: 0, count: 0 };
-      current.total += Math.min(20, Math.max(0, mark20));
-      current.count += 1;
-      usableMarksCount += 1;
-      marksByEvaluation.set(evaluationId, current);
-    };
-
-    const flatMarksResult = await srv
-      .from("grade_flat_marks")
-      .select("evaluation_id,raw_score,mark_20")
-      .in("evaluation_id", evalIds);
-
-    if (!flatMarksResult.error) {
-      for (const row of flatMarksResult.data || []) {
-        addMark(
-          String((row as any).evaluation_id || ""),
-          (row as any).raw_score,
-          (row as any).mark_20,
-        );
-      }
-    }
-
-    if (usableMarksCount === 0) {
-      const officialMarksResult = await srv
-        .from("v_grade_scores_official_for_reports")
-        .select("evaluation_id,score")
-        .in("evaluation_id", evalIds);
-      if (!officialMarksResult.error) {
-        for (const row of officialMarksResult.data || []) {
-          addMark(String((row as any).evaluation_id || ""), (row as any).score);
-        }
-      }
-    }
-
-    for (const [evaluationId, agg] of marksByEvaluation.entries()) {
-      if (agg.count > 0) {
-        evaluationAverageById.set(
-          evaluationId,
-          Math.round((agg.total / agg.count) * 100) / 100,
-        );
-      }
-    }
-  }
-
-  const pedagogicalAverageByTeacher = new Map<string, number | null>();
-  const pedagogicalGroupsByTeacher = new Map<string, number>();
-  for (const teacherId of teacherIds) {
-    const groupedAverages = new Map<string, number[]>();
-    for (const evaluationId of evaluationIdsByTeacher.get(teacherId) || []) {
-      const evaluation: any = evaluationById.get(evaluationId);
-      const average = evaluationAverageById.get(evaluationId);
-      if (!Number.isFinite(average)) continue;
-      const classId = String(evaluation?.class_id || "classe");
-      const subjectId = String(evaluation?.subject_id || "matiere");
-      const key = `${classId}|${subjectId}`;
-      const current = groupedAverages.get(key) || [];
-      current.push(Number(average));
-      groupedAverages.set(key, current);
-    }
-
-    const classSubjectMeans = Array.from(groupedAverages.values()).map(
-      (values) => values.reduce((sum, value) => sum + value, 0) / values.length,
-    );
-    pedagogicalGroupsByTeacher.set(teacherId, classSubjectMeans.length);
-    if (!classSubjectMeans.length) {
-      pedagogicalAverageByTeacher.set(teacherId, null);
+  const scoresByEvaluation = new Map<string, Map<string, number>>();
+  for (const row of publishedScoresResult.data || []) {
+    const evaluationId = String((row as any).evaluation_id || "");
+    const studentId = String((row as any).student_id || "");
+    const evaluation: any = evaluationById.get(evaluationId);
+    const score = Number((row as any).score);
+    const scale = Number((row as any).scale || evaluation?.scale || 20);
+    if (!evaluationId || !studentId || !Number.isFinite(score) || !Number.isFinite(scale) || scale <= 0) {
       continue;
     }
-    const average =
-      classSubjectMeans.reduce((sum, value) => sum + value, 0) / classSubjectMeans.length;
-    pedagogicalAverageByTeacher.set(teacherId, Math.round(average * 100) / 100);
+    const mark20 = clamp((score / scale) * 20, 0, 20);
+    const current = scoresByEvaluation.get(evaluationId) || new Map<string, number>();
+    current.set(studentId, mark20);
+    scoresByEvaluation.set(evaluationId, current);
+  }
+
+  type EvalTeacherAgg = {
+    publishedTotal: number;
+    validTotal: number;
+    expectedNotes: number;
+    foundNotes: number;
+    invalidCoverage: number;
+    validByClass: Map<string, number>;
+    classSubjectStudents: Map<string, Map<string, number[]>>;
+  };
+  const evalAggByTeacher = new Map<string, EvalTeacherAgg>();
+  for (const teacherId of teacherIds) {
+    evalAggByTeacher.set(teacherId, {
+      publishedTotal: 0,
+      validTotal: 0,
+      expectedNotes: 0,
+      foundNotes: 0,
+      invalidCoverage: 0,
+      validByClass: new Map(),
+      classSubjectStudents: new Map(),
+    });
+  }
+
+  for (const evaluation of publishedEvaluationRows as any[]) {
+    const teacherId = String(evaluation.teacher_id || "");
+    const classId = String(evaluation.class_id || "");
+    const subjectId = String(evaluation.subject_id || "matiere");
+    const evalDate = String(evaluation.eval_date || "").slice(0, 10);
+    const agg = evalAggByTeacher.get(teacherId);
+    if (!agg || !classId || !evalDate) continue;
+    agg.publishedTotal += 1;
+    const roster = rosterFor(classId, evalDate);
+    const scores = scoresByEvaluation.get(String(evaluation.id || "")) || new Map();
+    if (!roster.size) {
+      agg.invalidCoverage += 1;
+      continue;
+    }
+    const usableScores = Array.from(scores.entries()).filter(([studentId]) => roster.has(studentId));
+    agg.expectedNotes += roster.size;
+    agg.foundNotes += usableScores.length;
+    const coverage = pct(usableScores.length, roster.size);
+    if (coverage < teacherSettings.minimum_evaluation_note_coverage_rate) {
+      agg.invalidCoverage += 1;
+      continue;
+    }
+    agg.validTotal += 1;
+    agg.validByClass.set(classId, (agg.validByClass.get(classId) || 0) + 1);
+    const groupKey = `${classId}|${subjectId}`;
+    const students = agg.classSubjectStudents.get(groupKey) || new Map<string, number[]>();
+    for (const [studentId, mark20] of usableScores) {
+      const current = students.get(studentId) || [];
+      current.push(mark20);
+      students.set(studentId, current);
+    }
+    agg.classSubjectStudents.set(groupKey, students);
+  }
+
+  const pedagogicalByTeacher = new Map<
+    string,
+    { mean20: number | null; successRate: number | null; groups: number }
+  >();
+  for (const teacherId of teacherIds) {
+    const agg = evalAggByTeacher.get(teacherId)!;
+    const groupMeans: number[] = [];
+    const groupSuccessRates: number[] = [];
+    for (const students of agg.classSubjectStudents.values()) {
+      const studentMeans = Array.from(students.values())
+        .filter((values) => values.length > 0)
+        .map((values) => values.reduce((sum, value) => sum + value, 0) / values.length);
+      if (!studentMeans.length) continue;
+      groupMeans.push(studentMeans.reduce((sum, value) => sum + value, 0) / studentMeans.length);
+      groupSuccessRates.push(pct(studentMeans.filter((value) => value >= 10).length, studentMeans.length));
+    }
+    pedagogicalByTeacher.set(teacherId, {
+      mean20: groupMeans.length
+        ? round2(groupMeans.reduce((sum, value) => sum + value, 0) / groupMeans.length)
+        : null,
+      successRate: groupSuccessRates.length
+        ? round1(groupSuccessRates.reduce((sum, value) => sum + value, 0) / groupSuccessRates.length)
+        : null,
+      groups: groupMeans.length,
+    });
   }
 
   const textbookMetrics = new Map<
     string,
     { expected: number; completed: number; assignments: number; sessions: number }
   >();
-  for (const id of teacherIds) {
-    textbookMetrics.set(id, { expected: 0, completed: 0, assignments: 0, sessions: 0 });
+  for (const teacherId of teacherIds) {
+    textbookMetrics.set(teacherId, { expected: 0, completed: 0, assignments: 0, sessions: 0 });
   }
-  let textbookModuleReadable = true;
+  let textbookReadable = true;
   let textbookSessionsFound = 0;
   let textbookCompletedItemsFound = 0;
 
@@ -654,7 +811,6 @@ export async function GET(req: NextRequest) {
         .gte("session_date", from)
         .lte("session_date", to),
     ]);
-
     if (assignmentsResult.error) throw assignmentsResult.error;
     if (textbookSessionsResult.error) throw textbookSessionsResult.error;
 
@@ -664,95 +820,48 @@ export async function GET(req: NextRequest) {
       return String(progression?.academic_year || "") === academicYear;
     });
 
-    const seenTextbookSessions = new Set<string>();
-    for (const row of textbookSessionsResult.data || []) {
-      const teacherId = String((row as any).teacher_id || "");
-      const sessionId = String((row as any).id || "");
-      if (!teacherId || !teacherIds.includes(teacherId) || !sessionId || seenTextbookSessions.has(sessionId)) {
-        continue;
-      }
-      seenTextbookSessions.add(sessionId);
-      textbookSessionsFound += 1;
-      const metric = textbookMetrics.get(teacherId);
-      if (metric) metric.sessions += 1;
-    }
-
-    const classIds = Array.from(
-      new Set(assignments.map((row: any) => String(row.class_id || "")).filter(Boolean)),
-    );
     const effectiveTeacher = new Map<string, string>();
-    const classTeachers = new Map<string, Array<{ teacherId: string; subjectId: string }>>();
-
-    if (classIds.length) {
-      const { data: rows, error: classTeacherError } = await srv
-        .from("class_teachers")
-        .select("class_id,teacher_id,subject_id")
-        .eq("institution_id", institutionId)
-        .in("class_id", classIds);
-      if (classTeacherError) throw classTeacherError;
-
-      for (const row of rows || []) {
-        const classId = String((row as any).class_id || "");
-        const teacherId = String((row as any).teacher_id || "");
-        const subjectId = String((row as any).subject_id || "");
-        if (!classId || !teacherId) continue;
-        const current = classTeachers.get(classId) || [];
-        if (!current.some((item) => item.teacherId === teacherId && item.subjectId === subjectId)) {
-          current.push({ teacherId, subjectId });
-        }
-        classTeachers.set(classId, current);
-      }
-    }
-
     for (const assignment of assignments as any[]) {
-      const explicit = String(assignment.teacher_id || "");
-      let teacherId = explicit;
-
+      const assignmentId = String(assignment.id || "");
+      let teacherId = String(assignment.teacher_id || "");
       if (!teacherId) {
-        const progression = firstRelation(assignment?.progression);
+        const classId = String(assignment.class_id || "");
         const subjectCandidates = new Set(
           [
             assignment.subject_id,
             assignment.institution_subject_id,
-            progression?.subject_id,
-            progression?.institution_subject_id,
+            firstRelation(assignment.progression)?.subject_id,
+            firstRelation(assignment.progression)?.institution_subject_id,
           ]
             .map((value) => String(value || ""))
             .filter(Boolean),
         );
-        const candidates = classTeachers.get(String(assignment.class_id || "")) || [];
-        const matchedTeachers = Array.from(
-          new Set(
-            candidates
-              .filter((candidate) => !subjectCandidates.size || subjectCandidates.has(candidate.subjectId))
-              .map((candidate) => candidate.teacherId),
-          ),
+        const candidates = (classTeacherRows as any[]).filter(
+          (row) =>
+            String(row.class_id || "") === classId &&
+            (!subjectCandidates.size || subjectCandidates.has(String(row.subject_id || ""))),
         );
-        if (matchedTeachers.length === 1) teacherId = matchedTeachers[0];
+        const ids = Array.from(new Set(candidates.map((row) => String(row.teacher_id || "")).filter(Boolean)));
+        if (ids.length === 1) teacherId = ids[0];
       }
-
-      if (teacherId && teacherIds.includes(teacherId)) {
-        effectiveTeacher.set(String(assignment.id), teacherId);
-      }
+      if (assignmentId && teacherIds.includes(teacherId)) effectiveTeacher.set(assignmentId, teacherId);
     }
 
-    const assignmentIds = Array.from(effectiveTeacher.keys());
     const progressionIds = Array.from(
       new Set(
         assignments
-          .map((row: any) => String(firstRelation(row?.progression)?.id || ""))
+          .map((row: any) => String(firstRelation(row.progression)?.id || ""))
           .filter(Boolean),
       ),
     );
     const itemCounts = new Map<string, number>();
     if (progressionIds.length) {
-      const { data: itemRows, error: itemError } = await srv
+      const { data: itemRows, error } = await srv
         .from("textbook_progression_items")
         .select("id,progression_id,item_type,planned_duration_minutes,planned_sessions_count")
         .eq("institution_id", institutionId)
         .in("progression_id", progressionIds);
-      if (itemError) throw itemError;
-
+      if (error) throw error;
       for (const row of itemRows || []) {
         const actionable =
           ["lesson", "chapter", "activity", "assessment", "revision"].includes(
@@ -761,36 +870,41 @@ export async function GET(req: NextRequest) {
           Number((row as any).planned_duration_minutes || 0) > 0 ||
           Number((row as any).planned_sessions_count || 0) > 0;
         if (!actionable) continue;
-        const key = String((row as any).progression_id || "");
-        itemCounts.set(key, (itemCounts.get(key) || 0) + 1);
+        const progressionId = String((row as any).progression_id || "");
+        itemCounts.set(progressionId, (itemCounts.get(progressionId) || 0) + 1);
       }
     }
 
-    const completedByAssignment = new Map<string, number>();
+    const completionByAssignment = new Map<string, number>();
+    const assignmentIds = Array.from(effectiveTeacher.keys());
     if (assignmentIds.length) {
-      const { data: completionRows, error: completionError } = await srv
+      const { data: completionRows, error } = await srv
         .from("textbook_lesson_completions")
-        .select("assignment_id,item_id,status")
+        .select("assignment_id,item_id,status,completed_at,updated_at")
         .eq("institution_id", institutionId)
         .in("assignment_id", assignmentIds)
         .in("status", ["completed", "validated"]);
-      if (completionError) throw completionError;
-
+      if (error) throw error;
       const seen = new Set<string>();
+      const progressionCutoff = new Date(toIsoExclusive).getTime();
       for (const row of completionRows || []) {
+        const completedTimestamp = String(
+          (row as any).completed_at || (row as any).updated_at || "",
+        );
+        if (completedTimestamp) {
+          const completedAt = new Date(completedTimestamp).getTime();
+          if (Number.isFinite(completedAt) && completedAt >= progressionCutoff) continue;
+        }
         const assignmentId = String((row as any).assignment_id || "");
         const key = `${assignmentId}|${String((row as any).item_id || "")}`;
         if (!assignmentId || seen.has(key)) continue;
         seen.add(key);
         textbookCompletedItemsFound += 1;
-        completedByAssignment.set(
-          assignmentId,
-          (completedByAssignment.get(assignmentId) || 0) + 1,
-        );
+        completionByAssignment.set(assignmentId, (completionByAssignment.get(assignmentId) || 0) + 1);
       }
     }
 
-    const assignmentById = new Map(assignments.map((row: any) => [String(row.id), row]));
+    const assignmentById = new Map(assignments.map((row: any) => [String(row.id || ""), row]));
     for (const [assignmentId, teacherId] of effectiveTeacher.entries()) {
       const assignment: any = assignmentById.get(assignmentId);
       const progressionId = String(firstRelation(assignment?.progression)?.id || "");
@@ -798,25 +912,85 @@ export async function GET(req: NextRequest) {
       if (!metric) continue;
       metric.assignments += 1;
       metric.expected += itemCounts.get(progressionId) || 0;
-      metric.completed += completedByAssignment.get(assignmentId) || 0;
+      metric.completed += completionByAssignment.get(assignmentId) || 0;
+    }
+
+    const seenSessions = new Set<string>();
+    for (const row of textbookSessionsResult.data || []) {
+      const sessionId = String((row as any).id || "");
+      const teacherId = String((row as any).teacher_id || "");
+      if (!sessionId || !teacherId || seenSessions.has(sessionId)) continue;
+      seenSessions.add(sessionId);
+      textbookSessionsFound += 1;
+      const metric = textbookMetrics.get(teacherId);
+      if (metric) metric.sessions += 1;
     }
   } catch {
-    textbookModuleReadable = false;
+    textbookReadable = false;
   }
 
+  const allObservedSessionIds = Array.from(
+    new Set(
+      Array.from(sessionMetrics.values()).flatMap((metric) => metric.observedSessionIds).filter(Boolean),
+    ),
+  );
+  const attendanceMarksResult = allObservedSessionIds.length
+    ? await srv
+        .from("attendance_marks")
+        .select("session_id,student_id,status")
+        .in("session_id", allObservedSessionIds)
+    : ({ data: [], error: null } as any);
+  const absentStudentsBySession = new Map<string, Set<string>>();
+  for (const row of attendanceMarksResult.data || []) {
+    if (String((row as any).status || "") !== "absent") continue;
+    const sessionId = String((row as any).session_id || "");
+    const studentId = String((row as any).student_id || "");
+    if (!sessionId || !studentId) continue;
+    const current = absentStudentsBySession.get(sessionId) || new Set<string>();
+    current.add(studentId);
+    absentStudentsBySession.set(sessionId, current);
+  }
+
+  const sessionById = new Map(
+    (sessionRows as any[]).map((row) => [String(row.id || ""), row] as const),
+  );
+  const studentPresenceByTeacher = new Map<
+    string,
+    { sessions: number; expected: number; present: number }
+  >();
+  for (const teacherId of teacherIds) {
+    studentPresenceByTeacher.set(teacherId, { sessions: 0, expected: 0, present: 0 });
+  }
+  for (const [teacherId, metric] of sessionMetrics.entries()) {
+    const agg = studentPresenceByTeacher.get(teacherId)!;
+    for (const sessionId of metric.observedSessionIds) {
+      const session: any = sessionById.get(sessionId);
+      const classId = String(session?.class_id || "");
+      const date = String(session?.started_at || "").slice(0, 10);
+      if (!classId || !date) continue;
+      const roster = rosterFor(classId, date);
+      if (!roster.size) continue;
+      const absent = Array.from(absentStudentsBySession.get(sessionId) || []).filter((id) =>
+        roster.has(id),
+      ).length;
+      agg.sessions += 1;
+      agg.expected += roster.size;
+      agg.present += Math.max(0, roster.size - absent);
+    }
+  }
+
+  const criteriaWarnings: string[] = [];
   const totalPlannedSessions = Array.from(sessionMetrics.values()).reduce(
     (sum, metric) => sum + metric.planned,
     0,
   );
-  const totalRecordedSessions = Array.from(recordedSessionCountByTeacher.values()).reduce(
-    (sum, value) => sum + value,
+  const totalObservedSessions = Array.from(sessionMetrics.values()).reduce(
+    (sum, metric) => sum + metric.completed,
     0,
   );
-  const teachersWithAttendanceEvidence = Array.from(recordedSessionCountByTeacher.values()).filter(
-    (value) => value >= teacherSettings.minimum_sessions,
-  ).length;
-  const totalEvaluations = Array.from(evalMetrics.values()).reduce(
-    (sum, metric) => sum + metric.total,
+  const totalPublishedEvaluations = publishedEvaluationRows.length;
+  const totalValidPublishedEvaluations = Array.from(evalAggByTeacher.values()).reduce(
+    (sum, agg) => sum + agg.validTotal,
     0,
   );
   const totalTextbookAssignments = Array.from(textbookMetrics.values()).reduce(
@@ -827,279 +1001,251 @@ export async function GET(req: NextRequest) {
     (sum, metric) => sum + metric.sessions,
     0,
   );
-  const totalTextbookCompletedItems = Array.from(textbookMetrics.values()).reduce(
-    (sum, metric) => sum + metric.completed,
-    0,
-  );
-  const totalPermissions = Array.from(permissionCounts.values()).reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-  const maxEvaluationCount = Math.max(
-    0,
-    ...Array.from(evalMetrics.values()).map((metric) => metric.total),
-  );
-  const maxEvaluationKinds = Math.max(
-    0,
-    ...Array.from(evaluationKindsByTeacher.values()).map((kinds) => kinds.size),
-  );
 
-  // Un emploi du temps complet ne constitue pas une preuve d'assiduité.
-  // Il faut un minimum de séances effectivement enregistrées pour activer ce critère.
-  const attendanceAvailable = teachersWithAttendanceEvidence > 0;
-  const evaluationsAvailable = !evalError && totalEvaluations > 0;
-  const textbookAvailable =
-    textbookModuleReadable &&
-    (totalTextbookAssignments > 0 || totalTextbookSessions > 0 || totalTextbookCompletedItems > 0);
-  const criteriaWarnings: string[] = [];
-  if ((profiles || []).length < teacherIds.length) {
+  if ((profilesResult.data || []).length < teacherIds.length) {
     criteriaWarnings.push(
-      `${teacherIds.length - (profiles || []).length} profil(s) enseignant(s) n’ont pas été retrouvés dans profiles.`,
+      `${teacherIds.length - (profilesResult.data || []).length} profil(s) enseignant(s) n’ont pas été retrouvés.`,
     );
   }
-  if (!attendanceAvailable) {
-    criteriaWarnings.push(
-      `Seulement ${totalRecordedSessions} séance(s) de présence réellement enregistrée(s) sur la période : assiduité et ponctualité neutralisées.`,
-    );
+  if (timetablesResult.error || totalPlannedSessions === 0) {
+    criteriaWarnings.push("Aucun emploi du temps exploitable : assiduité, ponctualité, cahier de texte et présence des élèves ne peuvent pas être certifiés.");
   }
-  if (!evaluationsAvailable) {
-    criteriaWarnings.push(
-      "Aucune évaluation exploitable sur la période : le critère évaluations/résultats pédagogiques est neutralisé.",
-    );
-  } else if (usableMarksCount === 0) {
-    criteriaWarnings.push(
-      "Des évaluations existent, mais aucune note exploitable n’a été trouvée pour calculer la moyenne pédagogique observée.",
-    );
+  if (evaluationsResult.error) {
+    criteriaWarnings.push("Les évaluations n’ont pas pu être lues.");
+  } else if (totalPublishedEvaluations === 0) {
+    criteriaWarnings.push("Aucune évaluation publiée sur la période. Une évaluation non publiée ne compte jamais.");
   }
-  if (!textbookAvailable) {
-    criteriaWarnings.push(
-      "Aucune séance de cahier de texte ni progression exploitable n’a été trouvée sur la période : ce critère est neutralisé.",
-    );
+  if (publishedScoresResult.error) {
+    criteriaWarnings.push("Les notes officielles publiées n’ont pas pu être lues.");
   }
-  if (teacherSubjectsResult.error && classTeachersResult.error) {
-    criteriaWarnings.push("Les affectations de matières n’ont pas pu être lues.");
+  if (enrollmentsResult.error) {
+    criteriaWarnings.push("Les effectifs actifs des classes n’ont pas pu être vérifiés.");
+  }
+  if (!textbookReadable) {
+    criteriaWarnings.push("Le module cahier de texte/progression n’a pas pu être lu.");
+  }
+  if (attendanceMarksResult.error) {
+    criteriaWarnings.push("Les appels élèves n’ont pas pu être lus.");
   }
 
   const items = teacherIds.map((teacherId) => {
-    const sessions = sessionMetrics.get(teacherId) || {
-      planned: 0,
-      completed: 0,
-      punctual: 0,
-      lateness: 0,
-      justified: 0,
-    };
-    const attendanceObservations = recordedSessionCountByTeacher.get(teacherId) || 0;
-    const evaluations = evalMetrics.get(teacherId) || { total: 0, published: 0 };
-    const textbook = textbookMetrics.get(teacherId) || {
-      expected: 0,
-      completed: 0,
-      assignments: 0,
-      sessions: 0,
-    };
+    const sessions = sessionMetrics.get(teacherId)!;
+    const evalAgg = evalAggByTeacher.get(teacherId)!;
+    const pedagogical = pedagogicalByTeacher.get(teacherId)!;
+    const textbook = textbookMetrics.get(teacherId)!;
+    const studentPresence = studentPresenceByTeacher.get(teacherId)!;
+    const assignedClassesCount = assignedClassesByTeacher.get(teacherId)?.size || 0;
+    const assignedClassSubjectsCount = assignedClassSubjectsByTeacher.get(teacherId)?.size || 0;
 
-    const teacherAttendanceAvailable =
-      attendanceAvailable &&
-      attendanceObservations >= teacherSettings.minimum_sessions &&
-      sessions.planned > 0;
-    const attendanceRate = pct(sessions.completed, sessions.planned);
+    const attendanceCoverageRate = pct(sessions.completed, sessions.planned);
+    const attendanceRate = attendanceCoverageRate;
     const punctualityRate = pct(sessions.punctual, sessions.completed);
-    const evaluationPublicationRate = pct(evaluations.published, evaluations.total);
-    const textbookProgressionRate = pct(textbook.completed, textbook.expected);
+    const attendanceDataAvailable =
+      sessions.planned > 0 &&
+      sessions.completed >= teacherSettings.minimum_teacher_attendance_observations &&
+      attendanceCoverageRate >= teacherSettings.minimum_teacher_attendance_coverage_rate;
+
+    const assignedClassIds = Array.from(assignedClassesByTeacher.get(teacherId) || []);
+    const evaluationsPerClass = assignedClassesCount > 0 ? evalAgg.validTotal / assignedClassesCount : 0;
+    const classesMeetingEvaluationMinimum = assignedClassIds.filter(
+      (classId) =>
+        (evalAgg.validByClass.get(classId) || 0) >=
+        teacherSettings.minimum_published_evaluations_per_class,
+    ).length;
+    const classEvaluationComplianceRate = pct(
+      classesMeetingEvaluationMinimum,
+      assignedClassesCount,
+    );
+    const evaluationRegularityRate = clamp(
+      (evaluationsPerClass / teacherSettings.evaluations_target_per_class) * 100,
+    );
+    const noteCoverageRate = pct(evalAgg.foundNotes, evalAgg.expectedNotes);
+    const evaluationDataAvailable =
+      assignedClassesCount > 0 &&
+      !publishedScoresResult.error &&
+      !enrollmentsResult.error;
+    const resultDataAvailable = evalAgg.validTotal > 0 && pedagogical.groups > 0;
+
     const textbookSessionCoverageRate = pct(textbook.sessions, sessions.planned);
-    const hasProgressionEvidence = textbook.expected > 0 || textbook.completed > 0;
-    const hasTextbookSessionEvidence = textbook.sessions > 0;
-    const teacherTextbookAvailable =
-      textbookAvailable && (hasProgressionEvidence || hasTextbookSessionEvidence);
-    const textbookRate =
-      hasProgressionEvidence && hasTextbookSessionEvidence
-        ? Math.round(
-            ((textbookProgressionRate * 0.5 + textbookSessionCoverageRate * 0.5) * 10),
-          ) / 10
-        : hasProgressionEvidence
-          ? textbookProgressionRate
-          : hasTextbookSessionEvidence
-            ? textbookSessionCoverageRate
-            : 0;
-    const evaluationTypesCount = evaluationKindsByTeacher.get(teacherId)?.size || 0;
-    const evaluationDiversityRate =
-      maxEvaluationKinds > 0
-        ? pct(evaluationTypesCount, Math.min(3, maxEvaluationKinds))
-        : 0;
-    const evaluationVolumeScore =
-      maxEvaluationCount > 0 ? pct(evaluations.total, maxEvaluationCount) : 0;
-    const evaluationQualityRate =
-      evaluations.total > 0
-        ? Math.round(
-            (evaluationVolumeScore * 0.45 +
-              evaluationDiversityRate * 0.25 +
-              evaluationPublicationRate * 0.3) *
-              10,
-          ) / 10
-        : 0;
-    const pedagogicalMean20 = pedagogicalAverageByTeacher.get(teacherId) ?? null;
-    const pedagogicalPerformanceRate =
-      pedagogicalMean20 !== null && Number.isFinite(pedagogicalMean20)
-        ? Math.round(((pedagogicalMean20 / 20) * 100) * 10) / 10
-        : 0;
-    const combinedEvaluationRate =
-      evaluations.total > 0 && pedagogicalMean20 !== null
-        ? Math.round(
-            (evaluationQualityRate * 0.55 + pedagogicalPerformanceRate * 0.45) * 10,
-          ) / 10
-        : 0;
-    const evaluationCriterionAvailable =
-      evaluationsAvailable &&
-      evaluations.total >= teacherSettings.minimum_evaluations &&
-      pedagogicalMean20 !== null;
-    const permissionRequestsCount = permissionCounts.get(teacherId) || 0;
-    const maxPermissionPenalty = Math.max(
-      0,
-      Number(teacherSettings.weights.digital_engagement || 0),
-    );
-    const permissionPenalty = Math.min(maxPermissionPenalty, permissionRequestsCount * 3);
-    const permissionScore = Math.max(
-      0,
-      100 - permissionPenalty * (100 / Math.max(1, maxPermissionPenalty)),
-    );
+    const textbookProgressionRate = pct(textbook.completed, textbook.expected);
+    const textbookConfigured = textbookReadable && textbook.assignments > 0 && textbook.expected > 0;
+    const textbookDataAvailable = sessions.planned > 0 && textbookConfigured;
 
-    const effectiveSettings: TeacherDistinctionSettings = {
-      ...teacherSettings,
-      weights: {
-        ...teacherSettings.weights,
-        attendance: teacherAttendanceAvailable ? teacherSettings.weights.attendance : 0,
-        punctuality: teacherAttendanceAvailable && sessions.completed > 0
-          ? teacherSettings.weights.punctuality
-          : 0,
-        evaluations: evaluationCriterionAvailable ? teacherSettings.weights.evaluations : 0,
-        textbook: teacherTextbookAvailable ? teacherSettings.weights.textbook : 0,
-        digital_engagement: 0,
-      },
-    };
+    const studentAttendanceCoverageRate = pct(studentPresence.sessions, sessions.planned);
+    const studentPresenceRate = studentPresence.expected > 0
+      ? pct(studentPresence.present, studentPresence.expected)
+      : null;
+    const studentPresenceDataAvailable =
+      !attendanceMarksResult.error &&
+      studentPresence.sessions >= teacherSettings.minimum_student_attendance_sessions &&
+      studentAttendanceCoverageRate >= teacherSettings.minimum_student_attendance_coverage_rate &&
+      studentPresenceRate !== null;
 
-    const observableFamilies = [
-      teacherAttendanceAvailable,
-      evaluationCriterionAvailable,
-      teacherTextbookAvailable,
-    ].filter(Boolean).length;
-    const hasObservableCriterion = Object.values(effectiveSettings.weights).some(
-      (weight) => Number(weight) > 0,
-    );
-    const baseScore = hasObservableCriterion
+    const allFamiliesAvailable =
+      evaluationDataAvailable &&
+      resultDataAvailable &&
+      attendanceDataAvailable &&
+      textbookDataAvailable &&
+      studentPresenceDataAvailable;
+
+    const score = allFamiliesAvailable
       ? computeTeacherScore(
           {
+            evaluation_regularity_rate: evaluationRegularityRate,
+            note_coverage_rate: noteCoverageScoreRate(noteCoverageRate),
+            pedagogical_mean_score_rate: pedagogicalMeanScoreRate(pedagogical.mean20),
+            success_rate_score_rate: successScoreRate(pedagogical.successRate),
             attendance_rate: attendanceRate,
             punctuality_rate: punctualityRate,
-            evaluation_publication_rate: combinedEvaluationRate,
-            textbook_completion_rate: textbookRate,
-            digital_engagement_rate: 0,
+            textbook_rate: textbookSessionCoverageRate,
+            progression_rate: textbookProgressionRate,
+            student_presence_score_rate: studentPresenceScoreRate(studentPresenceRate),
           },
-          effectiveSettings,
+          teacherSettings,
         )
-      : 0;
-    const score = Math.round(Math.max(0, baseScore - permissionPenalty) * 10) / 10;
+      : null;
 
-    const reviewReasons: string[] = [];
-    if (attendanceAvailable && attendanceObservations < teacherSettings.minimum_sessions) {
-      reviewReasons.push(
-        `Seulement ${attendanceObservations} séance(s) de présence réellement enregistrée(s), minimum ${teacherSettings.minimum_sessions}`,
+    const dataReasons: string[] = [];
+    const failureReasons: string[] = [];
+
+    if (assignedClassesCount === 0) {
+      dataReasons.push("Aucune classe officiellement affectée sur la période");
+    }
+    if (sessions.planned === 0) {
+      dataReasons.push("Aucun créneau prévu exploitable dans l’emploi du temps");
+    } else if (!attendanceDataAvailable) {
+      dataReasons.push(
+        `Présence enseignant insuffisamment observée : ${sessions.completed} séance(s), couverture ${attendanceCoverageRate.toFixed(1)} % ; minimum ${teacherSettings.minimum_teacher_attendance_observations} séances et ${teacherSettings.minimum_teacher_attendance_coverage_rate} %`,
       );
     }
-    if (evaluationsAvailable && evaluations.total < teacherSettings.minimum_evaluations) {
-      reviewReasons.push(
-        `Seulement ${evaluations.total} évaluation(s) observable(s), minimum ${teacherSettings.minimum_evaluations}`,
+    if (!textbookReadable) {
+      dataReasons.push("Cahier de texte indisponible techniquement");
+    } else if (!textbookConfigured) {
+      dataReasons.push("Progression non configurée ou non attribuée par l’établissement");
+    }
+    if (!studentPresenceDataAvailable) {
+      dataReasons.push(
+        `Présence des élèves insuffisamment observable : ${studentPresence.sessions} appel(s), couverture ${studentAttendanceCoverageRate.toFixed(1)} % ; minimum ${teacherSettings.minimum_student_attendance_sessions} appels et ${teacherSettings.minimum_student_attendance_coverage_rate} %`,
       );
     }
-    if (evaluations.total > 0 && pedagogicalMean20 === null) {
-      reviewReasons.push(
-        "Évaluations trouvées, mais aucune note exploitable pour calculer la moyenne pédagogique observée",
+
+    if (evalAgg.publishedTotal === 0) {
+      failureReasons.push("Aucune évaluation publiée : les brouillons et évaluations en attente ne comptent pas");
+    }
+    if (evalAgg.invalidCoverage > 0) {
+      failureReasons.push(
+        `${evalAgg.invalidCoverage} évaluation(s) publiée(s) rejetée(s) car moins de ${teacherSettings.minimum_evaluation_note_coverage_rate} % des élèves actifs ont une note`,
       );
     }
-    if (textbookAvailable && !teacherTextbookAvailable && teacherSettings.weights.textbook > 0) {
-      reviewReasons.push("Aucune saisie de cahier de texte ni progression observable");
-    }
-    if (observableFamilies < 2) {
-      reviewReasons.push(
-        `Seulement ${observableFamilies} famille(s) de critères exploitable(s), minimum 2`,
+    if (assignedClassesCount > 0 && evaluationsPerClass < teacherSettings.minimum_published_evaluations_per_class) {
+      failureReasons.push(
+        `${evaluationsPerClass.toFixed(2)} évaluation(s) publiée(s) valide(s) par classe ; minimum ${teacherSettings.minimum_published_evaluations_per_class}, objectif ${teacherSettings.evaluations_target_per_class}`,
       );
     }
-    if (!hasObservableCriterion) {
-      reviewReasons.push("Aucune donnée suffisante pour établir une distinction fiable");
+    if (
+      assignedClassesCount > 0 &&
+      classEvaluationComplianceRate < teacherSettings.minimum_class_evaluation_compliance_rate
+    ) {
+      failureReasons.push(
+        `${classesMeetingEvaluationMinimum}/${assignedClassesCount} classe(s) atteignent le minimum de ${teacherSettings.minimum_published_evaluations_per_class} évaluation(s) publiée(s) valide(s) ; couverture minimale exigée ${teacherSettings.minimum_class_evaluation_compliance_rate} %`,
+      );
+    }
+    if (evalAgg.validTotal === 0) {
+      failureReasons.push("Aucune évaluation publiée et suffisamment renseignée pour calculer les résultats pédagogiques");
+    }
+    if (textbookDataAvailable && textbookSessionCoverageRate < teacherSettings.minimum_textbook_session_coverage_rate) {
+      failureReasons.push(
+        `Cahier de texte renseigné à ${textbookSessionCoverageRate.toFixed(1)} %, minimum ${teacherSettings.minimum_textbook_session_coverage_rate} %`,
+      );
     }
 
     let status: "eligible" | "review" | "ineligible";
-    if (reviewReasons.length > 0) status = "review";
-    else if (score >= teacherSettings.minimum_score) status = "eligible";
-    else {
+    if (dataReasons.length > 0) {
+      status = "review";
+    } else if (score === null) {
+      status = "review";
+      dataReasons.push("Toutes les familles obligatoires ne sont pas calculables");
+    } else if (failureReasons.length > 0 || score < teacherSettings.minimum_score) {
       status = "ineligible";
-      reviewReasons.push(
-        `Score ${score.toFixed(1)}/100, minimum ${teacherSettings.minimum_score}/100`,
-      );
+      if (score < teacherSettings.minimum_score) {
+        failureReasons.push(
+          `Score ${score.toFixed(1)}/100, minimum ${teacherSettings.minimum_score}/100`,
+        );
+      }
+    } else {
+      status = "eligible";
     }
+
+    const evaluationPoints =
+      (evaluationRegularityRate / 100) * teacherSettings.weights.evaluation_regularity +
+      (noteCoverageScoreRate(noteCoverageRate) / 100) * teacherSettings.weights.note_coverage;
+    const resultsPoints =
+      (pedagogicalMeanScoreRate(pedagogical.mean20) / 100) * teacherSettings.weights.pedagogical_mean +
+      (successScoreRate(pedagogical.successRate) / 100) * teacherSettings.weights.success_rate;
 
     return {
       teacher_id: teacherId,
       teacher_name: names.get(teacherId) || `Enseignant (${teacherId.slice(0, 6)})`,
       subject_names: (subjects.get(teacherId) || []).sort((a, b) => a.localeCompare(b, "fr")),
+      rank: null as number | null,
       score,
       status,
-      review_reasons: reviewReasons,
+      review_reasons: [...dataReasons, ...failureReasons],
       metrics: {
+        assigned_classes_count: assignedClassesCount,
+        assigned_class_subjects_count: assignedClassSubjectsCount,
+        evaluations_total: allEvaluationRows.filter((row: any) => String(row.teacher_id || "") === teacherId).length,
+        evaluations_published: evalAgg.publishedTotal,
+        evaluations_valid: evalAgg.validTotal,
+        evaluations_rejected_coverage: evalAgg.invalidCoverage,
+        evaluations_per_class: round2(evaluationsPerClass),
+        classes_meeting_evaluation_minimum: classesMeetingEvaluationMinimum,
+        class_evaluation_compliance_rate: round1(classEvaluationComplianceRate),
+        evaluation_regularity_rate: round1(evaluationRegularityRate),
+        note_coverage_rate: round1(noteCoverageRate),
+        pedagogical_mean_20: pedagogical.mean20,
+        success_rate: pedagogical.successRate,
+        pedagogical_groups_count: pedagogical.groups,
         planned_sessions: sessions.planned,
         completed_sessions: sessions.completed,
-        attendance_observations: attendanceObservations,
-        attendance_data_available: teacherAttendanceAvailable,
+        attendance_observations: sessions.completed,
+        attendance_coverage_rate: attendanceCoverageRate,
+        attendance_data_available: attendanceDataAvailable,
         justified_absence_sessions: sessions.justified,
         attendance_rate: attendanceRate,
         punctual_sessions: sessions.punctual,
         punctuality_rate: punctualityRate,
         average_lateness_minutes:
-          sessions.completed > 0
-            ? Math.round((sessions.lateness / sessions.completed) * 10) / 10
-            : 0,
-        evaluations_total: evaluations.total,
-        evaluations_published: evaluations.published,
-        evaluation_publication_rate: evaluationPublicationRate,
-        evaluation_types_count: evaluationTypesCount,
-        evaluation_diversity_rate: evaluationDiversityRate,
-        evaluation_volume_score: evaluationVolumeScore,
-        evaluation_quality_rate: evaluationQualityRate,
-        pedagogical_mean_20: pedagogicalMean20,
-        pedagogical_groups_count: pedagogicalGroupsByTeacher.get(teacherId) || 0,
-        pedagogical_performance_rate: pedagogicalPerformanceRate,
+          sessions.completed > 0 ? round1(sessions.lateness / sessions.completed) : null,
         textbook_assignments: textbook.assignments,
         textbook_expected_items: textbook.expected,
         textbook_completed_items: textbook.completed,
         textbook_sessions_count: textbook.sessions,
         textbook_session_coverage_rate: textbookSessionCoverageRate,
         textbook_progression_rate: textbookProgressionRate,
-        textbook_data_available: teacherTextbookAvailable,
-        textbook_completion_rate: textbookRate,
-        observable_criteria_families: observableFamilies,
-        permission_requests_count: permissionRequestsCount,
-        permission_score: Math.round(permissionScore * 10) / 10,
-        permission_penalty: permissionPenalty,
-        digital_engagement_rate: 0,
+        textbook_data_available: textbookDataAvailable,
+        student_attendance_sessions: studentPresence.sessions,
+        student_attendance_coverage_rate: studentAttendanceCoverageRate,
+        student_presence_rate: studentPresenceRate,
+        student_presence_data_available: studentPresenceDataAvailable,
+        evaluation_points: round1(evaluationPoints),
+        results_points: round1(resultsPoints),
       },
     };
   });
 
-  const eligibleRanks = new Map(
-    competitionRanks(
-      items.filter((item) => item.status === "eligible"),
-      (item) => item.score,
-    ).map(({ row, rank }) => [row.teacher_id, rank] as const),
+  const eligible = items.filter((item) => item.status === "eligible" && item.score !== null);
+  eligible.sort(strictTeacherCompare);
+  for (let index = 0; index < eligible.length; index += 1) {
+    eligible[index].rank = index + 1;
+  }
+
+  const ranked = items.sort(
+    (a, b) =>
+      (a.rank ?? 999) - (b.rank ?? 999) ||
+      Number(b.score ?? -1) - Number(a.score ?? -1) ||
+      a.teacher_name.localeCompare(b.teacher_name, "fr"),
   );
-  const ranked = items
-    .map((item) => ({
-      ...item,
-      rank: eligibleRanks.get(item.teacher_id) ?? null,
-    }))
-    .sort(
-      (a, b) =>
-        (a.rank ?? 999) - (b.rank ?? 999) ||
-        b.score - a.score ||
-        a.teacher_name.localeCompare(b.teacher_name, "fr"),
-    );
 
   return NextResponse.json({
     ok: true,
@@ -1112,18 +1258,24 @@ export async function GET(req: NextRequest) {
     criteria_warnings: criteriaWarnings,
     data_audit: {
       teacher_roles: teacherIds.length,
-      profiles_found: (profiles || []).length,
+      profiles_found: (profilesResult.data || []).length,
       subject_assignments:
-        (teacherSubjectsResult.data || []).length + (classTeachersResult.data || []).length,
-      evaluations_found: totalEvaluations,
-      usable_marks_found: usableMarksCount,
-      sessions_found: totalRecordedSessions,
-      planned_slots_found: plannedSlots.size,
-      teachers_with_attendance_evidence: teachersWithAttendanceEvidence,
+        (teacherSubjectsResult.data || []).length + classTeacherRows.length,
+      class_assignments: classTeacherRows.length,
+      evaluations_found: allEvaluationRows.length,
+      evaluations_published: totalPublishedEvaluations,
+      evaluations_valid: totalValidPublishedEvaluations,
+      evaluations_unpublished: allEvaluationRows.length - totalPublishedEvaluations,
+      published_score_rows: (publishedScoresResult.data || []).length,
+      planned_slots_found: totalPlannedSessions,
+      sessions_found: totalObservedSessions,
       textbook_assignments: totalTextbookAssignments,
-      textbook_sessions_found: textbookSessionsFound,
+      textbook_sessions_found: textbookSessionsFound || totalTextbookSessions,
       textbook_completed_items: textbookCompletedItemsFound,
-      approved_permissions: totalPermissions,
+      student_attendance_sessions: Array.from(studentPresenceByTeacher.values()).reduce(
+        (sum, value) => sum + value.sessions,
+        0,
+      ),
     },
     items: ranked,
   });

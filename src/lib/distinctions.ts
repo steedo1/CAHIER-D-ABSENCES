@@ -20,16 +20,39 @@ export type StudentDistinctionSettings = {
 
 export type TeacherDistinctionSettings = {
   weights: {
+    evaluation_regularity: number;
+    note_coverage: number;
+    pedagogical_mean: number;
+    success_rate: number;
     attendance: number;
     punctuality: number;
-    evaluations: number;
     textbook: number;
-    digital_engagement: number;
+    progression: number;
+    student_presence: number;
   };
-  minimum_sessions: number;
-  minimum_evaluations: number;
+  evaluations_target_per_class: number;
+  minimum_published_evaluations_per_class: number;
+  minimum_evaluation_note_coverage_rate: number;
+  minimum_class_evaluation_compliance_rate: number;
+  minimum_teacher_attendance_observations: number;
+  minimum_teacher_attendance_coverage_rate: number;
+  minimum_textbook_session_coverage_rate: number;
+  minimum_student_attendance_sessions: number;
+  minimum_student_attendance_coverage_rate: number;
   punctuality_tolerance_minutes: number;
   minimum_score: number;
+};
+
+export const STRICT_TEACHER_WEIGHTS: TeacherDistinctionSettings["weights"] = {
+  evaluation_regularity: 15,
+  note_coverage: 10,
+  pedagogical_mean: 10,
+  success_rate: 15,
+  attendance: 12,
+  punctuality: 8,
+  textbook: 12,
+  progression: 8,
+  student_presence: 10,
 };
 
 export type DistinctionSettings = {
@@ -82,17 +105,18 @@ export const DEFAULT_DISTINCTION_SETTINGS: DistinctionSettings = {
     ],
   },
   teachers: {
-    weights: {
-      attendance: 20,
-      punctuality: 15,
-      evaluations: 30,
-      textbook: 20,
-      digital_engagement: 15,
-    },
-    minimum_sessions: 3,
-    minimum_evaluations: 1,
+    weights: { ...STRICT_TEACHER_WEIGHTS },
+    evaluations_target_per_class: 5,
+    minimum_published_evaluations_per_class: 3,
+    minimum_evaluation_note_coverage_rate: 70,
+    minimum_class_evaluation_compliance_rate: 80,
+    minimum_teacher_attendance_observations: 10,
+    minimum_teacher_attendance_coverage_rate: 50,
+    minimum_textbook_session_coverage_rate: 60,
+    minimum_student_attendance_sessions: 5,
+    minimum_student_attendance_coverage_rate: 50,
     punctuality_tolerance_minutes: 15,
-    minimum_score: 60,
+    minimum_score: 75,
   },
 };
 
@@ -124,7 +148,6 @@ export function normalizeDistinctionSettings(raw: unknown): DistinctionSettings 
   const students = source.students && typeof source.students === "object" ? source.students : {};
   const tiers = students.tiers && typeof students.tiers === "object" ? students.tiers : {};
   const teachers = source.teachers && typeof source.teachers === "object" ? source.teachers : {};
-  const weights = teachers.weights && typeof teachers.weights === "object" ? teachers.weights : {};
 
   return {
     version: 1,
@@ -209,53 +232,70 @@ export function normalizeDistinctionSettings(raw: unknown): DistinctionSettings 
       ),
     },
     teachers: {
-      weights: {
-        attendance: clampNumber(
-          weights.attendance,
-          0,
-          100,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.weights.attendance,
-        ),
-        punctuality: clampNumber(
-          weights.punctuality,
-          0,
-          100,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.weights.punctuality,
-        ),
-        evaluations: clampNumber(
-          weights.evaluations,
-          0,
-          100,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.weights.evaluations,
-        ),
-        textbook: clampNumber(
-          weights.textbook,
-          0,
-          100,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.weights.textbook,
-        ),
-        digital_engagement: clampNumber(
-          weights.digital_engagement,
-          0,
-          100,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.weights.digital_engagement,
-        ),
-      },
-      minimum_sessions: Math.round(
+      // Les poids enseignants sont volontairement fixes. Une donnée absente n'est
+      // jamais redistribuée vers les autres critères.
+      weights: { ...STRICT_TEACHER_WEIGHTS },
+      evaluations_target_per_class: Math.round(
         clampNumber(
-          teachers.minimum_sessions,
-          0,
-          1000,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_sessions,
+          teachers.evaluations_target_per_class,
+          1,
+          20,
+          DEFAULT_DISTINCTION_SETTINGS.teachers.evaluations_target_per_class,
         ),
       ),
-      minimum_evaluations: Math.round(
+      minimum_published_evaluations_per_class: Math.round(
         clampNumber(
-          teachers.minimum_evaluations,
+          teachers.minimum_published_evaluations_per_class,
           0,
-          500,
-          DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_evaluations,
+          20,
+          DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_published_evaluations_per_class,
         ),
+      ),
+      minimum_evaluation_note_coverage_rate: clampNumber(
+        teachers.minimum_evaluation_note_coverage_rate,
+        0,
+        100,
+        DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_evaluation_note_coverage_rate,
+      ),
+      minimum_class_evaluation_compliance_rate: clampNumber(
+        teachers.minimum_class_evaluation_compliance_rate,
+        0,
+        100,
+        DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_class_evaluation_compliance_rate,
+      ),
+      minimum_teacher_attendance_observations: Math.round(
+        clampNumber(
+          teachers.minimum_teacher_attendance_observations,
+          1,
+          1000,
+          DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_teacher_attendance_observations,
+        ),
+      ),
+      minimum_teacher_attendance_coverage_rate: clampNumber(
+        teachers.minimum_teacher_attendance_coverage_rate,
+        0,
+        100,
+        DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_teacher_attendance_coverage_rate,
+      ),
+      minimum_textbook_session_coverage_rate: clampNumber(
+        teachers.minimum_textbook_session_coverage_rate,
+        0,
+        100,
+        DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_textbook_session_coverage_rate,
+      ),
+      minimum_student_attendance_sessions: Math.round(
+        clampNumber(
+          teachers.minimum_student_attendance_sessions,
+          1,
+          1000,
+          DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_student_attendance_sessions,
+        ),
+      ),
+      minimum_student_attendance_coverage_rate: clampNumber(
+        teachers.minimum_student_attendance_coverage_rate,
+        0,
+        100,
+        DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_student_attendance_coverage_rate,
       ),
       punctuality_tolerance_minutes: Math.round(
         clampNumber(
@@ -267,8 +307,8 @@ export function normalizeDistinctionSettings(raw: unknown): DistinctionSettings 
       ),
       minimum_score: clampNumber(
         teachers.minimum_score,
-        0,
-        100,
+        75,
+        75,
         DEFAULT_DISTINCTION_SETTINGS.teachers.minimum_score,
       ),
     },
@@ -294,8 +334,14 @@ export function validateDistinctionSettings(settings: DistinctionSettings) {
     (sum, value) => sum + Number(value || 0),
     0,
   );
-  if (totalTeacherWeight <= 0) {
-    errors.push("Au moins un critère enseignant doit avoir un poids supérieur à zéro.");
+  if (Math.abs(totalTeacherWeight - 100) > 0.001) {
+    errors.push("Les poids stricts des distinctions enseignants doivent totaliser exactement 100 points.");
+  }
+  if (
+    settings.teachers.minimum_published_evaluations_per_class >
+    settings.teachers.evaluations_target_per_class
+  ) {
+    errors.push("Le minimum d’évaluations publiées par classe ne peut pas dépasser l’objectif maximal.");
   }
   const overlappingSubjectIds = settings.students.science_subject_ids.filter((subjectId) =>
     settings.students.literature_subject_ids.includes(subjectId),
@@ -423,29 +469,43 @@ export function evaluateStudentEligibility(
 }
 
 export type TeacherMetricInput = {
+  evaluation_regularity_rate: number;
+  note_coverage_rate: number;
+  pedagogical_mean_score_rate: number;
+  success_rate_score_rate: number;
   attendance_rate: number;
   punctuality_rate: number;
-  evaluation_publication_rate: number;
-  textbook_completion_rate: number;
-  digital_engagement_rate: number;
+  textbook_rate: number;
+  progression_rate: number;
+  student_presence_score_rate: number;
 };
 
+/**
+ * Calcule un score strict sur 100 sans renormalisation.
+ * Chaque critère conserve son poids fixe, même quand une donnée est absente.
+ * L'appelant ne doit produire un score final que lorsque toutes les familles
+ * obligatoires sont réellement calculables.
+ */
 export function computeTeacherScore(
   metrics: TeacherMetricInput,
   settings: TeacherDistinctionSettings,
 ) {
   const weights = settings.weights;
-  const totalWeight = Object.values(weights).reduce((sum, value) => sum + Number(value || 0), 0);
-  if (totalWeight <= 0) return 0;
+  const points =
+    (clampNumber(metrics.evaluation_regularity_rate, 0, 100, 0) / 100) *
+      weights.evaluation_regularity +
+    (clampNumber(metrics.note_coverage_rate, 0, 100, 0) / 100) * weights.note_coverage +
+    (clampNumber(metrics.pedagogical_mean_score_rate, 0, 100, 0) / 100) *
+      weights.pedagogical_mean +
+    (clampNumber(metrics.success_rate_score_rate, 0, 100, 0) / 100) * weights.success_rate +
+    (clampNumber(metrics.attendance_rate, 0, 100, 0) / 100) * weights.attendance +
+    (clampNumber(metrics.punctuality_rate, 0, 100, 0) / 100) * weights.punctuality +
+    (clampNumber(metrics.textbook_rate, 0, 100, 0) / 100) * weights.textbook +
+    (clampNumber(metrics.progression_rate, 0, 100, 0) / 100) * weights.progression +
+    (clampNumber(metrics.student_presence_score_rate, 0, 100, 0) / 100) *
+      weights.student_presence;
 
-  const weighted =
-    clampNumber(metrics.attendance_rate, 0, 100, 0) * weights.attendance +
-    clampNumber(metrics.punctuality_rate, 0, 100, 0) * weights.punctuality +
-    clampNumber(metrics.evaluation_publication_rate, 0, 100, 0) * weights.evaluations +
-    clampNumber(metrics.textbook_completion_rate, 0, 100, 0) * weights.textbook +
-    clampNumber(metrics.digital_engagement_rate, 0, 100, 0) * weights.digital_engagement;
-
-  return Math.round((weighted / totalWeight) * 10) / 10;
+  return Math.round(points * 10) / 10;
 }
 
 export type DistinctionInstitutionMeta = {
