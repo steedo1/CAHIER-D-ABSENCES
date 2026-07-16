@@ -1290,7 +1290,7 @@ export default function DistinctionsStudentsPage() {
       </div>
 
       <div className="distinctions-print-zone">
-        {mode === "individual"
+        {printLayout === "individual" || mode === "individual"
           ? winners.map((candidate) => {
               const verificationKey = studentVerificationKey(mode, candidate);
               return (

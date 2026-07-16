@@ -91,6 +91,7 @@ type TeacherItem = {
     textbook_session_coverage_rate: number;
     textbook_progression_rate: number;
     textbook_data_available: boolean;
+    textbook_unscoped_assignments?: number;
     student_attendance_sessions: number;
     student_attendance_coverage_rate: number;
     student_presence_rate: number | null;
@@ -115,6 +116,7 @@ type TeacherResponse = {
     subject_assignments: number;
     class_assignments: number;
     evaluations_found: number;
+    evaluations_excluded_unassigned?: number;
     evaluations_published: number;
     evaluations_valid: number;
     evaluations_unpublished: number;
@@ -122,8 +124,11 @@ type TeacherResponse = {
     sessions_found: number;
     planned_slots_found: number;
     textbook_assignments: number;
+    textbook_assignments_excluded_unassigned?: number;
     textbook_sessions_found: number;
     textbook_completed_items: number;
+    textbook_unscoped_assignments?: number;
+    period_term?: 1 | 2 | 3 | null;
     student_attendance_sessions: number;
   };
   items?: TeacherItem[];
@@ -461,7 +466,13 @@ export default function TeacherDistinctionsPage() {
     setDataAudit(null);
     setCriteriaSettings(null);
     try {
-      const params = new URLSearchParams({ academic_year: academicYear, from: period.start_date, to: period.end_date });
+      const params = new URLSearchParams({
+        academic_year: academicYear,
+        from: period.start_date,
+        to: period.end_date,
+        period_code: String(period.code || ""),
+        period_label: String(period.label || period.short_label || ""),
+      });
       const data = await readJson<TeacherResponse>(await fetch(`/api/admin/distinctions/teachers?${params.toString()}`, { cache: "no-store" }));
       setItems(data.items || []);
       setCriteriaWarnings(data.criteria_warnings || []);
@@ -470,7 +481,7 @@ export default function TeacherDistinctionsPage() {
       const audit = data.data_audit;
       setNotice(
         audit
-          ? `${audit.profiles_found}/${audit.teacher_roles} profil(s), ${audit.evaluations_published}/${audit.evaluations_found} évaluation(s) publiée(s), dont ${audit.evaluations_valid} valide(s), et ${audit.published_score_rows} note(s) officielles lues.`
+          ? `${audit.profiles_found}/${audit.teacher_roles} profil(s), ${audit.evaluations_published} évaluation(s) publiée(s) officiellement affectée(s), dont ${audit.evaluations_valid} valide(s), et ${audit.published_score_rows} note(s) officielles lues.`
           : `${data.items?.length || 0} enseignant(s) analysé(s) à partir des données disponibles dans la plateforme.`,
       );
     } catch (err) {
@@ -604,7 +615,8 @@ export default function TeacherDistinctionsPage() {
             <div className="mt-3 grid gap-2 text-xs font-semibold sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl bg-white px-3 py-2">Profils : <strong>{dataAudit.profiles_found}/{dataAudit.teacher_roles}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Affectations classes : <strong>{dataAudit.class_assignments}</strong></div>
-              <div className="rounded-xl bg-white px-3 py-2">Évaluations créées : <strong>{dataAudit.evaluations_found}</strong></div>
+              <div className="rounded-xl bg-white px-3 py-2">Évaluations trouvées : <strong>{dataAudit.evaluations_found}</strong></div>
+              <div className="rounded-xl bg-white px-3 py-2">Hors affectation officielle, exclues : <strong>{dataAudit.evaluations_excluded_unassigned ?? 0}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Évaluations publiées : <strong>{dataAudit.evaluations_published}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Évaluations publiées valides : <strong>{dataAudit.evaluations_valid}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Non publiées, donc exclues : <strong>{dataAudit.evaluations_unpublished}</strong></div>
@@ -612,7 +624,9 @@ export default function TeacherDistinctionsPage() {
               <div className="rounded-xl bg-white px-3 py-2">Créneaux prévus : <strong>{dataAudit.planned_slots_found}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Séances enseignants observées : <strong>{dataAudit.sessions_found}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Séances cahier de texte : <strong>{dataAudit.textbook_sessions_found}</strong></div>
-              <div className="rounded-xl bg-white px-3 py-2">Progressions attribuées : <strong>{dataAudit.textbook_assignments}</strong></div>
+              <div className="rounded-xl bg-white px-3 py-2">Progressions attribuées et valides : <strong>{dataAudit.textbook_assignments}</strong></div>
+              <div className="rounded-xl bg-white px-3 py-2">Attributions hors affectation exclues : <strong>{dataAudit.textbook_assignments_excluded_unassigned ?? 0}</strong></div>
+              <div className="rounded-xl bg-white px-3 py-2">Progressions sans trimestre exploitable : <strong>{dataAudit.textbook_unscoped_assignments ?? 0}</strong></div>
               <div className="rounded-xl bg-white px-3 py-2">Appels élèves exploitables : <strong>{dataAudit.student_attendance_sessions}</strong></div>
             </div>
           </div>
@@ -631,7 +645,7 @@ export default function TeacherDistinctionsPage() {
               <div className="rounded-2xl bg-emerald-50 p-4 text-emerald-950"><div className="font-black">Éligible</div><p className="mt-1 leading-relaxed">Les cinq familles obligatoires sont calculables, tous les minima sont respectés et le score strict atteint <strong>{criteriaSettings.minimum_score}/100</strong>.</p></div>
               <div className="rounded-2xl bg-amber-50 p-4 text-amber-950"><div className="font-black">Données insuffisantes</div><p className="mt-1 leading-relaxed">Un élément institutionnel manque : emploi du temps non exploitable, présence trop peu contrôlée, progression non attribuée ou appels élèves insuffisants. Le score final reste alors « — ».</p></div>
               <div className="rounded-2xl bg-rose-50 p-4 text-rose-950"><div className="font-black">Non éligible</div><p className="mt-1 leading-relaxed">Les données sont calculables, mais une obligation n’est pas respectée ou le score reste inférieur à <strong>{criteriaSettings.minimum_score}/100</strong>.</p></div>
-              <div className="rounded-2xl bg-blue-50 p-4 text-blue-950"><div className="font-black">Publication obligatoire</div><p className="mt-1 leading-relaxed">Une évaluation en brouillon, soumise ou en attente ne compte jamais. Elle doit être <strong>publiée</strong> et couvrir au moins <strong>{criteriaSettings.minimum_evaluation_note_coverage_rate} %</strong> des élèves actifs.</p></div>
+              <div className="rounded-2xl bg-blue-50 p-4 text-blue-950"><div className="font-black">Publication obligatoire</div><p className="mt-1 leading-relaxed">Une évaluation en brouillon, soumise ou en attente ne compte jamais. Elle doit relever d’une affectation officielle, être <strong>publiée</strong> et couvrir au moins <strong>{criteriaSettings.minimum_evaluation_note_coverage_rate} %</strong> des élèves actifs.</p></div>
             </div>
             <div className="mt-4 grid gap-3 text-xs font-semibold leading-relaxed text-slate-700 md:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><strong>Évaluations · 25 pts</strong><br />15 pts pour la moyenne d’évaluations publiées valides par classe, objectif {criteriaSettings.evaluations_target_per_class}. Au moins {criteriaSettings.minimum_class_evaluation_compliance_rate} % des classes doivent atteindre le minimum de {criteriaSettings.minimum_published_evaluations_per_class}. 10 pts pour la couverture réelle des notes.</div>
@@ -641,7 +655,7 @@ export default function TeacherDistinctionsPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><strong>Présence élèves · 10 pts</strong><br />Mesure les absences pendant ses cours. Minimum {criteriaSettings.minimum_student_attendance_sessions} appels et {criteriaSettings.minimum_student_attendance_coverage_rate} % des créneaux.</div>
             </div>
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-relaxed text-amber-950">
-              Aucun point n’est redistribué lorsqu’une famille manque. Le critère « Types d’évaluations » est supprimé. Les permissions approuvées ne donnent ni bonus ni malus : les séances couvertes sont seulement retirées du dénominateur d’assiduité.
+              Aucun point n’est redistribué lorsqu’une famille manque. Le critère « Types d’évaluations » est supprimé. Une évaluation sous le seuil de couverture est exclue du calcul, sans disqualifier à elle seule l’enseignant. Les permissions approuvées ne donnent ni bonus ni malus : les séances couvertes sont seulement retirées du dénominateur d’assiduité.
             </div>
           </section>
         ) : null}

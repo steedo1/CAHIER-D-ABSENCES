@@ -124,11 +124,6 @@ function sessionKey(row: any) {
   );
 }
 
-function sessionFallbackKey(row: any) {
-  const start = String(row?.started_at || "");
-  return `${String(row?.teacher_id || "")}|${start.slice(0, 10)}|${start.slice(11, 16)}`;
-}
-
 function isObservedSession(row: any) {
   if (!row?.actual_call_at || !row?.started_at) return false;
   const start = new Date(row.started_at).getTime();
@@ -154,6 +149,32 @@ function assignmentOverlapsPeriod(row: any, from: string, to: string) {
   if (start && start > to) return false;
   if (end && end < from) return false;
   return true;
+}
+
+function assignmentActiveOn(row: any, date: string) {
+  const start = String(row?.start_date || "").slice(0, 10);
+  const end = String(row?.end_date || "").slice(0, 10);
+  if (start && start > date) return false;
+  if (end && end < date) return false;
+  return true;
+}
+
+function normalizePeriodToken(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function periodTermNumber(...values: unknown[]): 1 | 2 | 3 | null {
+  const token = normalizePeriodToken(values.filter(Boolean).join(" "));
+  if (!token) return null;
+  if (token === "1" || /\b(t1|s1|trimestre 1|trimestre i|1er trimestre|premier trimestre|semestre 1|semestre i|1er semestre|premier semestre|periode 1|term 1|term1)\b/.test(token)) return 1;
+  if (token === "2" || /\b(t2|s2|trimestre 2|trimestre ii|2e trimestre|2eme trimestre|deuxieme trimestre|semestre 2|semestre ii|2e semestre|2eme semestre|deuxieme semestre|periode 2|term 2|term2)\b/.test(token)) return 2;
+  if (token === "3" || /\b(t3|trimestre 3|trimestre iii|3e trimestre|3eme trimestre|troisieme trimestre|periode 3|term 3|term3)\b/.test(token)) return 3;
+  return null;
 }
 
 function enrollmentActiveOn(row: any, date: string) {
@@ -292,6 +313,9 @@ export async function GET(req: NextRequest) {
   const from = String(url.searchParams.get("from") || "").trim();
   const requestedTo = String(url.searchParams.get("to") || "").trim();
   const academicYear = String(url.searchParams.get("academic_year") || "").trim();
+  const periodCode = String(url.searchParams.get("period_code") || "").trim();
+  const periodLabel = String(url.searchParams.get("period_label") || "").trim();
+  const selectedTerm = periodTermNumber(periodCode, periodLabel);
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(requestedTo)) {
     return NextResponse.json({ ok: false, error: "from_and_to_required" }, { status: 400 });
@@ -327,8 +351,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: rolesError.message }, { status: 400 });
   }
 
-  const teacherIds = Array.from(
-    new Set((roleRows || []).map((row: any) => String(row.profile_id || "")).filter(Boolean)),
+  const teacherIds: string[] = Array.from(
+    new Set<string>((roleRows || []).map((row: any) => String(row.profile_id || "")).filter(Boolean)),
   );
 
   if (!teacherIds.length) {
@@ -400,8 +424,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const rawSubjectIds = Array.from(
-    new Set(Array.from(subjectIdsByTeacher.values()).flatMap((set) => Array.from(set))),
+  const rawSubjectIds: string[] = Array.from(
+    new Set<string>(Array.from(subjectIdsByTeacher.values()).flatMap((set) => Array.from(set))),
   );
   const institutionSubjectById = new Map<string, { subjectId: string; customName: string }>();
   const institutionSubjectByCanonicalId = new Map<string, { subjectId: string; customName: string }>();
@@ -449,6 +473,44 @@ export async function GET(req: NextRequest) {
     }
     const linked = institutionSubjectByCanonicalId.get(rawId);
     return linked?.customName || subjectNameById.get(rawId) || "";
+  };
+
+  const canonicalSubjectId = (rawId: unknown) => {
+    const id = String(rawId || "").trim();
+    if (!id) return "";
+    return institutionSubjectById.get(id)?.subjectId || id;
+  };
+
+  const assignmentsByTeacherClass = new Map<string, any[]>();
+  for (const row of classTeacherRows as any[]) {
+    const teacherId = String(row.teacher_id || "");
+    const classId = String(row.class_id || "");
+    if (!teacherId || !classId) continue;
+    const key = `${teacherId}|${classId}`;
+    const current = assignmentsByTeacherClass.get(key) || [];
+    current.push(row);
+    assignmentsByTeacherClass.set(key, current);
+  }
+
+  const teacherAssignedToClassSubjectOn = (
+    teacherId: string,
+    classId: string,
+    subjectId: unknown,
+    date: string,
+  ) => {
+    const activeAssignments = (
+      assignmentsByTeacherClass.get(`${teacherId}|${classId}`) || []
+    ).filter((assignment) => assignmentActiveOn(assignment, date));
+    const expectedSubject = canonicalSubjectId(subjectId);
+    if (expectedSubject) {
+      return activeAssignments.some(
+        (assignment) => canonicalSubjectId(assignment.subject_id) === expectedSubject,
+      );
+    }
+    const activeSubjects = new Set(
+      activeAssignments.map((assignment) => canonicalSubjectId(assignment.subject_id)).filter(Boolean),
+    );
+    return activeSubjects.size === 1;
   };
 
   const subjects = new Map<string, string[]>();
@@ -499,11 +561,20 @@ export async function GET(req: NextRequest) {
         .lte("eval_date", to),
     ]);
 
-  const allEvaluationRows = (evaluationsResult.data || []).filter((row: any) => {
+  const evaluationRowsInYear = (evaluationsResult.data || []).filter((row: any) => {
     if (!academicYear) return true;
     const cls = firstRelation(row?.classes);
     return String(cls?.academic_year || "") === academicYear;
   });
+  const allEvaluationRows = evaluationRowsInYear.filter((row: any) =>
+    teacherAssignedToClassSubjectOn(
+      String(row.teacher_id || ""),
+      String(row.class_id || ""),
+      row.subject_id,
+      String(row.eval_date || "").slice(0, 10),
+    ),
+  );
+  const evaluationsExcludedUnassigned = evaluationRowsInYear.length - allEvaluationRows.length;
   const publishedEvaluationRows = allEvaluationRows.filter(publishedEvaluation);
 
   for (const row of allEvaluationRows as any[]) {
@@ -520,7 +591,10 @@ export async function GET(req: NextRequest) {
   const timetables = timetablesResult.data || [];
   const sessionRows = sessionsResult.data || [];
   const weekdayMode = detectWeekdayMode(periods);
-  const periodById = new Map(
+  const periodById = new Map<
+    string,
+    { weekday: number | null; startTime: string | null; startMinutes: number }
+  >(
     periods.map((period: any) => [
       String(period.id),
       {
@@ -542,12 +616,19 @@ export async function GET(req: NextRequest) {
     absencesByTeacher.set(teacherId, current);
   }
 
+  const attendanceSourcesReadable =
+    !periodsResult.error &&
+    !timetablesResult.error &&
+    !sessionsResult.error &&
+    !absencesResult.error &&
+    !classTeachersResult.error;
+
   const now = new Date();
   const todayYmd = toYMD(now);
   const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
   const plannedSlots = new Map<
     string,
-    { teacherId: string; classId: string; justified: boolean; fallbackKey: string }
+    { teacherId: string; classId: string; justified: boolean }
   >();
 
   for (const date of dateRange(from, to)) {
@@ -558,32 +639,28 @@ export async function GET(req: NextRequest) {
       const classId = String(timetable.class_id || "");
       const period = periodById.get(String(timetable.period_id || ""));
       if (!teacherId || !classId || !period?.startTime) continue;
+      if (!teacherAssignedToClassSubjectOn(teacherId, classId, timetable.subject_id, ymd)) continue;
       const timetableWeekday = parseWeekday(timetable.weekday) ?? period.weekday;
       if (timetableWeekday !== dbWeekday) continue;
       if (ymd === todayYmd && period.startMinutes > nowMinutes) continue;
-      const key = plannedKey(teacherId, classId, ymd, period.startTime);
+      const subjectId = canonicalSubjectId(timetable.subject_id) || "matiere";
+      const key = `${plannedKey(teacherId, classId, ymd, period.startTime)}|${subjectId}`;
       if (plannedSlots.has(key)) continue;
       plannedSlots.set(key, {
         teacherId,
         classId,
         justified: dateCoveredByApprovedAbsence(teacherId, ymd, absencesByTeacher),
-        fallbackKey: `${teacherId}|${ymd}|${period.startTime}`,
       });
     }
   }
 
   const sessionByExactKey = new Map<string, any>();
-  const sessionByFallbackKey = new Map<string, any>();
   for (const row of sessionRows as any[]) {
     if (!isObservedSession(row)) continue;
-    const exact = sessionKey(row);
-    const fallback = sessionFallbackKey(row);
+    const subjectId = canonicalSubjectId(row.subject_id) || "matiere";
+    const exact = `${sessionKey(row)}|${subjectId}`;
     const existing = sessionByExactKey.get(exact);
     if (!existing || (!existing.ended_at && row.ended_at)) sessionByExactKey.set(exact, row);
-    const existingFallback = sessionByFallbackKey.get(fallback);
-    if (!existingFallback || (!existingFallback.ended_at && row.ended_at)) {
-      sessionByFallbackKey.set(fallback, row);
-    }
   }
 
   const sessionMetrics = new Map<
@@ -608,6 +685,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const consumedSessionIds = new Set<string>();
   for (const [key, slot] of plannedSlots.entries()) {
     const metric = sessionMetrics.get(slot.teacherId);
     if (!metric) continue;
@@ -616,10 +694,13 @@ export async function GET(req: NextRequest) {
       continue;
     }
     metric.planned += 1;
-    const row = sessionByExactKey.get(key) || sessionByFallbackKey.get(slot.fallbackKey);
+    const row = sessionByExactKey.get(key);
     if (!row) continue;
+    const sessionId = String(row.id || "");
+    if (!sessionId || consumedSessionIds.has(sessionId)) continue;
+    consumedSessionIds.add(sessionId);
     metric.completed += 1;
-    metric.observedSessionIds.push(String(row.id || ""));
+    metric.observedSessionIds.push(sessionId);
     const lateness = Math.max(
       0,
       Math.round(
@@ -630,11 +711,11 @@ export async function GET(req: NextRequest) {
     if (lateness <= teacherSettings.punctuality_tolerance_minutes) metric.punctual += 1;
   }
 
-  const publishedEvalIds = publishedEvaluationRows
+  const publishedEvalIds: string[] = publishedEvaluationRows
     .map((row: any) => String(row.id || ""))
     .filter(Boolean);
-  const allRelevantClassIds = Array.from(
-    new Set([
+  const allRelevantClassIds: string[] = Array.from(
+    new Set<string>([
       ...classTeacherRows.map((row: any) => String(row.class_id || "")),
       ...allEvaluationRows.map((row: any) => String(row.class_id || "")),
       ...sessionRows.map((row: any) => String(row.class_id || "")),
@@ -725,7 +806,7 @@ export async function GET(req: NextRequest) {
   for (const evaluation of publishedEvaluationRows as any[]) {
     const teacherId = String(evaluation.teacher_id || "");
     const classId = String(evaluation.class_id || "");
-    const subjectId = String(evaluation.subject_id || "matiere");
+    const subjectId = canonicalSubjectId(evaluation.subject_id) || "matiere";
     const evalDate = String(evaluation.eval_date || "").slice(0, 10);
     const agg = evalAggByTeacher.get(teacherId);
     if (!agg || !classId || !evalDate) continue;
@@ -785,14 +866,27 @@ export async function GET(req: NextRequest) {
 
   const textbookMetrics = new Map<
     string,
-    { expected: number; completed: number; assignments: number; sessions: number }
+    {
+      expected: number;
+      completed: number;
+      assignments: number;
+      sessions: number;
+      unscopedAssignments: number;
+    }
   >();
   for (const teacherId of teacherIds) {
-    textbookMetrics.set(teacherId, { expected: 0, completed: 0, assignments: 0, sessions: 0 });
+    textbookMetrics.set(teacherId, {
+      expected: 0,
+      completed: 0,
+      assignments: 0,
+      sessions: 0,
+      unscopedAssignments: 0,
+    });
   }
   let textbookReadable = true;
   let textbookSessionsFound = 0;
   let textbookCompletedItemsFound = 0;
+  let textbookAssignmentsExcludedUnassigned = 0;
 
   try {
     const [assignmentsResult, textbookSessionsResult] = await Promise.all([
@@ -807,7 +901,6 @@ export async function GET(req: NextRequest) {
         .from("textbook_lesson_sessions")
         .select("id,assignment_id,teacher_id,session_date,item_id")
         .eq("institution_id", institutionId)
-        .in("teacher_id", teacherIds)
         .gte("session_date", from)
         .lte("session_date", to),
     ]);
@@ -820,45 +913,60 @@ export async function GET(req: NextRequest) {
       return String(progression?.academic_year || "") === academicYear;
     });
 
+    const progressionAssignmentSubjectId = (assignment: any) =>
+      assignment?.subject_id ||
+      assignment?.institution_subject_id ||
+      firstRelation(assignment?.progression)?.subject_id ||
+      firstRelation(assignment?.progression)?.institution_subject_id ||
+      "";
+
     const effectiveTeacher = new Map<string, string>();
     for (const assignment of assignments as any[]) {
       const assignmentId = String(assignment.id || "");
+      const classId = String(assignment.class_id || "");
+      const subjectCandidates = new Set(
+        [
+          assignment.subject_id,
+          assignment.institution_subject_id,
+          firstRelation(assignment.progression)?.subject_id,
+          firstRelation(assignment.progression)?.institution_subject_id,
+        ]
+          .map(canonicalSubjectId)
+          .filter(Boolean),
+      );
+      const officialCandidates = subjectCandidates.size
+        ? (classTeacherRows as any[]).filter(
+            (row) =>
+              String(row.class_id || "") === classId &&
+              subjectCandidates.has(canonicalSubjectId(row.subject_id)),
+          )
+        : [];
+      const officialTeacherIds = Array.from(
+        new Set(officialCandidates.map((row) => String(row.teacher_id || "")).filter(Boolean)),
+      );
+
       let teacherId = String(assignment.teacher_id || "");
-      if (!teacherId) {
-        const classId = String(assignment.class_id || "");
-        const subjectCandidates = new Set(
-          [
-            assignment.subject_id,
-            assignment.institution_subject_id,
-            firstRelation(assignment.progression)?.subject_id,
-            firstRelation(assignment.progression)?.institution_subject_id,
-          ]
-            .map((value) => String(value || ""))
-            .filter(Boolean),
-        );
-        const candidates = (classTeacherRows as any[]).filter(
-          (row) =>
-            String(row.class_id || "") === classId &&
-            (!subjectCandidates.size || subjectCandidates.has(String(row.subject_id || ""))),
-        );
-        const ids = Array.from(new Set(candidates.map((row) => String(row.teacher_id || "")).filter(Boolean)));
-        if (ids.length === 1) teacherId = ids[0];
+      if (teacherId && !officialTeacherIds.includes(teacherId)) teacherId = "";
+      if (!teacherId && officialTeacherIds.length === 1) teacherId = officialTeacherIds[0];
+      if (assignmentId && teacherIds.includes(teacherId)) {
+        effectiveTeacher.set(assignmentId, teacherId);
+      } else if (assignmentId) {
+        textbookAssignmentsExcludedUnassigned += 1;
       }
-      if (assignmentId && teacherIds.includes(teacherId)) effectiveTeacher.set(assignmentId, teacherId);
     }
 
-    const progressionIds = Array.from(
-      new Set(
+    const progressionIds: string[] = Array.from(
+      new Set<string>(
         assignments
           .map((row: any) => String(firstRelation(row.progression)?.id || ""))
           .filter(Boolean),
       ),
     );
-    const itemCounts = new Map<string, number>();
+    const actionableItemsByProgression = new Map<string, any[]>();
     if (progressionIds.length) {
       const { data: itemRows, error } = await srv
         .from("textbook_progression_items")
-        .select("id,progression_id,item_type,planned_duration_minutes,planned_sessions_count")
+        .select("id,progression_id,item_type,trimester,planned_duration_minutes,planned_sessions_count")
         .eq("institution_id", institutionId)
         .in("progression_id", progressionIds);
       if (error) throw error;
@@ -871,8 +979,51 @@ export async function GET(req: NextRequest) {
           Number((row as any).planned_sessions_count || 0) > 0;
         if (!actionable) continue;
         const progressionId = String((row as any).progression_id || "");
-        itemCounts.set(progressionId, (itemCounts.get(progressionId) || 0) + 1);
+        const current = actionableItemsByProgression.get(progressionId) || [];
+        current.push(row);
+        actionableItemsByProgression.set(progressionId, current);
       }
+    }
+
+    const expectedItemIdsByProgression = new Map<string, Set<string>>();
+    const unscopedProgressionIds = new Set<string>();
+    for (const progressionId of progressionIds) {
+      const rows = actionableItemsByProgression.get(progressionId) || [];
+      const itemTerms = rows.map((row: any) => periodTermNumber(row.trimester));
+      const periodScopeRequested = Boolean(periodCode || periodLabel);
+      const hasUnrecognizedTerms = itemTerms.some((term) => term === null);
+      if (
+        rows.length > 0 &&
+        ((periodScopeRequested && selectedTerm === null) ||
+          (selectedTerm !== null && hasUnrecognizedTerms))
+      ) {
+        unscopedProgressionIds.add(progressionId);
+        expectedItemIdsByProgression.set(progressionId, new Set());
+        continue;
+      }
+      const expectedIds = new Set<string>();
+      for (const row of rows) {
+        const itemId = String((row as any).id || "");
+        if (!itemId) continue;
+        if (selectedTerm === null) {
+          expectedIds.add(itemId);
+          continue;
+        }
+        const itemTerm = periodTermNumber((row as any).trimester);
+        if (itemTerm !== null && itemTerm <= selectedTerm) expectedIds.add(itemId);
+      }
+      expectedItemIdsByProgression.set(progressionId, expectedIds);
+    }
+
+    const assignmentById = new Map(assignments.map((row: any) => [String(row.id || ""), row]));
+    const expectedItemIdsByAssignment = new Map<string, Set<string>>();
+    for (const assignmentId of effectiveTeacher.keys()) {
+      const assignment: any = assignmentById.get(assignmentId);
+      const progressionId = String(firstRelation(assignment?.progression)?.id || "");
+      expectedItemIdsByAssignment.set(
+        assignmentId,
+        expectedItemIdsByProgression.get(progressionId) || new Set<string>(),
+      );
     }
 
     const completionByAssignment = new Map<string, number>();
@@ -896,30 +1047,62 @@ export async function GET(req: NextRequest) {
           if (Number.isFinite(completedAt) && completedAt >= progressionCutoff) continue;
         }
         const assignmentId = String((row as any).assignment_id || "");
-        const key = `${assignmentId}|${String((row as any).item_id || "")}`;
-        if (!assignmentId || seen.has(key)) continue;
+        const itemId = String((row as any).item_id || "");
+        const assignment: any = assignmentById.get(assignmentId);
+        const teacherId = effectiveTeacher.get(assignmentId) || "";
+        const completionDate = completedTimestamp.slice(0, 10);
+        if (
+          completionDate &&
+          !teacherAssignedToClassSubjectOn(
+            teacherId,
+            String(assignment?.class_id || ""),
+            progressionAssignmentSubjectId(assignment),
+            completionDate,
+          )
+        ) {
+          continue;
+        }
+        const expectedIds = expectedItemIdsByAssignment.get(assignmentId);
+        const key = `${assignmentId}|${itemId}`;
+        if (!assignmentId || !itemId || !teacherId || !expectedIds?.has(itemId) || seen.has(key)) continue;
         seen.add(key);
         textbookCompletedItemsFound += 1;
         completionByAssignment.set(assignmentId, (completionByAssignment.get(assignmentId) || 0) + 1);
       }
     }
 
-    const assignmentById = new Map(assignments.map((row: any) => [String(row.id || ""), row]));
     for (const [assignmentId, teacherId] of effectiveTeacher.entries()) {
       const assignment: any = assignmentById.get(assignmentId);
       const progressionId = String(firstRelation(assignment?.progression)?.id || "");
       const metric = textbookMetrics.get(teacherId);
       if (!metric) continue;
       metric.assignments += 1;
-      metric.expected += itemCounts.get(progressionId) || 0;
+      if (unscopedProgressionIds.has(progressionId)) {
+        metric.unscopedAssignments += 1;
+        continue;
+      }
+      metric.expected += expectedItemIdsByProgression.get(progressionId)?.size || 0;
       metric.completed += completionByAssignment.get(assignmentId) || 0;
     }
 
     const seenSessions = new Set<string>();
     for (const row of textbookSessionsResult.data || []) {
       const sessionId = String((row as any).id || "");
-      const teacherId = String((row as any).teacher_id || "");
-      if (!sessionId || !teacherId || seenSessions.has(sessionId)) continue;
+      const assignmentId = String((row as any).assignment_id || "");
+      const teacherId = effectiveTeacher.get(assignmentId) || "";
+      const assignment: any = assignmentById.get(assignmentId);
+      const sessionDate = String((row as any).session_date || "").slice(0, 10);
+      if (!sessionId || !assignmentId || !teacherId || !sessionDate || seenSessions.has(sessionId)) continue;
+      if (
+        !teacherAssignedToClassSubjectOn(
+          teacherId,
+          String(assignment?.class_id || ""),
+          progressionAssignmentSubjectId(assignment),
+          sessionDate,
+        )
+      ) {
+        continue;
+      }
       seenSessions.add(sessionId);
       textbookSessionsFound += 1;
       const metric = textbookMetrics.get(teacherId);
@@ -1001,13 +1184,29 @@ export async function GET(req: NextRequest) {
     (sum, metric) => sum + metric.sessions,
     0,
   );
+  const totalUnscopedTextbookAssignments = Array.from(textbookMetrics.values()).reduce(
+    (sum, metric) => sum + metric.unscopedAssignments,
+    0,
+  );
 
   if ((profilesResult.data || []).length < teacherIds.length) {
     criteriaWarnings.push(
       `${teacherIds.length - (profilesResult.data || []).length} profil(s) enseignant(s) n’ont pas été retrouvés.`,
     );
   }
-  if (timetablesResult.error || totalPlannedSessions === 0) {
+  if (classTeachersResult.error) {
+    criteriaWarnings.push("Les affectations officielles des enseignants n’ont pas pu être lues.");
+  }
+  if (periodsResult.error || timetablesResult.error) {
+    criteriaWarnings.push("Les créneaux de l’emploi du temps n’ont pas pu être lus complètement.");
+  }
+  if (sessionsResult.error) {
+    criteriaWarnings.push("Les séances réellement effectuées par les enseignants n’ont pas pu être lues.");
+  }
+  if (absencesResult.error) {
+    criteriaWarnings.push("Les permissions approuvées n’ont pas pu être vérifiées ; l’assiduité est donc non calculable.");
+  }
+  if (!timetablesResult.error && totalPlannedSessions === 0) {
     criteriaWarnings.push("Aucun emploi du temps exploitable : assiduité, ponctualité, cahier de texte et présence des élèves ne peuvent pas être certifiés.");
   }
   if (evaluationsResult.error) {
@@ -1023,6 +1222,21 @@ export async function GET(req: NextRequest) {
   }
   if (!textbookReadable) {
     criteriaWarnings.push("Le module cahier de texte/progression n’a pas pu être lu.");
+  }
+  if (textbookAssignmentsExcludedUnassigned > 0) {
+    criteriaWarnings.push(
+      `${textbookAssignmentsExcludedUnassigned} attribution(s) de progression ont été exclues car elles ne correspondent pas à une affectation officielle classe-matière sur la période.`,
+    );
+  }
+  if (totalUnscopedTextbookAssignments > 0) {
+    criteriaWarnings.push(
+      `${totalUnscopedTextbookAssignments} progression(s) contiennent des éléments sans trimestre exploitable : leur avancement ne peut pas être comparé honnêtement à la période sélectionnée.`,
+    );
+  }
+  if ((periodCode || periodLabel) && selectedTerm === null) {
+    criteriaWarnings.push(
+      `La période « ${periodLabel || periodCode} » n’a pas pu être reconnue comme T1, T2 ou T3 : vérifiez son code ou son libellé pour fiabiliser le calcul cumulatif de la progression.`,
+    );
   }
   if (attendanceMarksResult.error) {
     criteriaWarnings.push("Les appels élèves n’ont pas pu être lus.");
@@ -1041,6 +1255,7 @@ export async function GET(req: NextRequest) {
     const attendanceRate = attendanceCoverageRate;
     const punctualityRate = pct(sessions.punctual, sessions.completed);
     const attendanceDataAvailable =
+      attendanceSourcesReadable &&
       sessions.planned > 0 &&
       sessions.completed >= teacherSettings.minimum_teacher_attendance_observations &&
       attendanceCoverageRate >= teacherSettings.minimum_teacher_attendance_coverage_rate;
@@ -1062,20 +1277,28 @@ export async function GET(req: NextRequest) {
     const noteCoverageRate = pct(evalAgg.foundNotes, evalAgg.expectedNotes);
     const evaluationDataAvailable =
       assignedClassesCount > 0 &&
+      !classTeachersResult.error &&
+      !evaluationsResult.error &&
       !publishedScoresResult.error &&
       !enrollmentsResult.error;
     const resultDataAvailable = evalAgg.validTotal > 0 && pedagogical.groups > 0;
 
     const textbookSessionCoverageRate = pct(textbook.sessions, sessions.planned);
     const textbookProgressionRate = pct(textbook.completed, textbook.expected);
-    const textbookConfigured = textbookReadable && textbook.assignments > 0 && textbook.expected > 0;
-    const textbookDataAvailable = sessions.planned > 0 && textbookConfigured;
+    const textbookConfigured =
+      textbookReadable &&
+      textbook.assignments > 0 &&
+      textbook.expected > 0 &&
+      textbook.unscopedAssignments === 0;
+    const textbookDataAvailable =
+      attendanceSourcesReadable && sessions.planned > 0 && textbookConfigured;
 
     const studentAttendanceCoverageRate = pct(studentPresence.sessions, sessions.planned);
     const studentPresenceRate = studentPresence.expected > 0
       ? pct(studentPresence.present, studentPresence.expected)
       : null;
     const studentPresenceDataAvailable =
+      attendanceSourcesReadable &&
       !attendanceMarksResult.error &&
       studentPresence.sessions >= teacherSettings.minimum_student_attendance_sessions &&
       studentAttendanceCoverageRate >= teacherSettings.minimum_student_attendance_coverage_rate &&
@@ -1107,6 +1330,7 @@ export async function GET(req: NextRequest) {
 
     const dataReasons: string[] = [];
     const failureReasons: string[] = [];
+    const informationReasons: string[] = [];
 
     if (assignedClassesCount === 0) {
       dataReasons.push("Aucune classe officiellement affectée sur la période");
@@ -1120,6 +1344,10 @@ export async function GET(req: NextRequest) {
     }
     if (!textbookReadable) {
       dataReasons.push("Cahier de texte indisponible techniquement");
+    } else if (textbook.unscopedAssignments > 0) {
+      dataReasons.push(
+        `${textbook.unscopedAssignments} progression(s) sans trimestre exploitable : impossible de calculer l’avancement attendu à la période sélectionnée`,
+      );
     } else if (!textbookConfigured) {
       dataReasons.push("Progression non configurée ou non attribuée par l’établissement");
     }
@@ -1130,16 +1358,11 @@ export async function GET(req: NextRequest) {
     }
 
     if (evalAgg.publishedTotal === 0) {
-      failureReasons.push("Aucune évaluation publiée : les brouillons et évaluations en attente ne comptent pas");
+      dataReasons.push("Aucune évaluation publiée : les brouillons et évaluations en attente ne comptent pas");
     }
     if (evalAgg.invalidCoverage > 0) {
-      failureReasons.push(
+      informationReasons.push(
         `${evalAgg.invalidCoverage} évaluation(s) publiée(s) rejetée(s) car moins de ${teacherSettings.minimum_evaluation_note_coverage_rate} % des élèves actifs ont une note`,
-      );
-    }
-    if (assignedClassesCount > 0 && evaluationsPerClass < teacherSettings.minimum_published_evaluations_per_class) {
-      failureReasons.push(
-        `${evaluationsPerClass.toFixed(2)} évaluation(s) publiée(s) valide(s) par classe ; minimum ${teacherSettings.minimum_published_evaluations_per_class}, objectif ${teacherSettings.evaluations_target_per_class}`,
       );
     }
     if (
@@ -1151,7 +1374,7 @@ export async function GET(req: NextRequest) {
       );
     }
     if (evalAgg.validTotal === 0) {
-      failureReasons.push("Aucune évaluation publiée et suffisamment renseignée pour calculer les résultats pédagogiques");
+      dataReasons.push("Aucune évaluation publiée et suffisamment renseignée pour calculer les résultats pédagogiques");
     }
     if (textbookDataAvailable && textbookSessionCoverageRate < teacherSettings.minimum_textbook_session_coverage_rate) {
       failureReasons.push(
@@ -1190,7 +1413,7 @@ export async function GET(req: NextRequest) {
       rank: null as number | null,
       score,
       status,
-      review_reasons: [...dataReasons, ...failureReasons],
+      review_reasons: [...dataReasons, ...failureReasons, ...informationReasons],
       metrics: {
         assigned_classes_count: assignedClassesCount,
         assigned_class_subjects_count: assignedClassSubjectsCount,
@@ -1224,6 +1447,7 @@ export async function GET(req: NextRequest) {
         textbook_session_coverage_rate: textbookSessionCoverageRate,
         textbook_progression_rate: textbookProgressionRate,
         textbook_data_available: textbookDataAvailable,
+        textbook_unscoped_assignments: textbook.unscopedAssignments,
         student_attendance_sessions: studentPresence.sessions,
         student_attendance_coverage_rate: studentAttendanceCoverageRate,
         student_presence_rate: studentPresenceRate,
@@ -1262,7 +1486,8 @@ export async function GET(req: NextRequest) {
       subject_assignments:
         (teacherSubjectsResult.data || []).length + classTeacherRows.length,
       class_assignments: classTeacherRows.length,
-      evaluations_found: allEvaluationRows.length,
+      evaluations_found: evaluationRowsInYear.length,
+      evaluations_excluded_unassigned: evaluationsExcludedUnassigned,
       evaluations_published: totalPublishedEvaluations,
       evaluations_valid: totalValidPublishedEvaluations,
       evaluations_unpublished: allEvaluationRows.length - totalPublishedEvaluations,
@@ -1270,8 +1495,11 @@ export async function GET(req: NextRequest) {
       planned_slots_found: totalPlannedSessions,
       sessions_found: totalObservedSessions,
       textbook_assignments: totalTextbookAssignments,
+      textbook_assignments_excluded_unassigned: textbookAssignmentsExcludedUnassigned,
       textbook_sessions_found: textbookSessionsFound || totalTextbookSessions,
       textbook_completed_items: textbookCompletedItemsFound,
+      textbook_unscoped_assignments: totalUnscopedTextbookAssignments,
+      period_term: selectedTerm,
       student_attendance_sessions: Array.from(studentPresenceByTeacher.values()).reduce(
         (sum, value) => sum + value.sessions,
         0,
