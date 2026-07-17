@@ -551,8 +551,11 @@ export default function ClassDevicePage() {
   async function syncNow() {
     if (syncing) return;
     setSyncing(true);
+    let result: Awaited<ReturnType<typeof flushOutbox>> | null = null;
     try {
-      await flushOutbox();
+      result = await flushOutbox();
+    } catch (e: any) {
+      setMsg(e?.message || "Synchronisation interrompue. Les données restent conservées.");
     } finally {
       setSyncing(false);
       await refreshPending();
@@ -565,6 +568,23 @@ export default function ClassDevicePage() {
 
       // et si on avait un "end" en attente, on essaie de le rejouer
       await processPendingEnd();
+    }
+
+    if (!result) return;
+    if (result.authRequired) {
+      setMsg(
+        "Synchronisation suspendue : la session doit être renouvelée. Les données restent conservées sur cet appareil."
+      );
+    } else if (result.blocked > 0) {
+      setMsg(
+        `${result.blocked} action(s) protégée(s) nécessitent une vérification. Aucune donnée n’a été supprimée.`
+      );
+    } else if (result.remaining > 0) {
+      setMsg(
+        `Réseau encore instable : ${result.remaining} action(s) restent en attente sur cet appareil.`
+      );
+    } else if (result.flushed > 0) {
+      setMsg(`Synchronisation terminée (${result.flushed} action(s)).`);
     }
   }
 
@@ -822,7 +842,10 @@ export default function ClassDevicePage() {
       const r = await offlineMutateJson(
         "/api/class/penalties/bulk",
         { method: "POST", body: payload },
-        { mergeKey: `penalties:${cid}:${coerceRubric(penRubric)}` }
+        {
+          // Une sanction est un événement : chaque lot doit rester distinct.
+          meta: { operationType: "penalty-batch" },
+        }
       );
 
       if ((r as any).ok) {
@@ -1604,7 +1627,10 @@ export default function ClassDevicePage() {
       const r = await offlineMutateJson(
         "/api/class/sessions/start",
         { method: "POST", body },
-        { mergeKey: `start:${clientSessionId}`, meta: { clientSessionId } }
+        {
+          mergeKey: `start:${clientSessionId}`,
+          meta: { clientSessionId, operationType: "session-start" },
+        }
       );
 
       if ((r as any).ok) {
@@ -1770,6 +1796,33 @@ export default function ClassDevicePage() {
 
   async function logout() {
     if (loggingOut) return;
+
+    let remaining = await outboxCount().catch(() => 0);
+
+    if (remaining > 0 && typeof navigator !== "undefined" && navigator.onLine) {
+      setMsg("Synchronisation des données avant déconnexion…");
+      try {
+        const result = await flushOutbox();
+        remaining = result.remaining;
+        await refreshPending();
+      } catch {
+        remaining = await outboxCount().catch(() => remaining);
+      }
+    }
+
+    if (remaining > 0) {
+      const discard = window.confirm(
+        `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
+          "OK = se déconnecter et supprimer définitivement ces données.\n" +
+          "Annuler = rester connecté et conserver les données (recommandé)."
+      );
+      if (!discard) {
+        setMsg(
+          `${remaining} action(s) conservées sur cet appareil. Reconnectez Internet puis appuyez sur Sync.`
+        );
+        return;
+      }
+    }
 
     setLoggingOut(true);
     clearReminderLoop();

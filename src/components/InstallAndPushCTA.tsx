@@ -2,6 +2,7 @@
 "use client";
 
 import React from "react";
+import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
 type PermissionState = "unsupported" | "default" | "denied" | "granted";
 
@@ -55,7 +56,7 @@ async function waitForServiceWorkerReady(timeoutMs = 12000) {
 
   const existing = await navigator.serviceWorker.getRegistration("/");
   if (!existing) {
-    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
   }
 
   return await withTimeout(

@@ -22,6 +22,11 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function readOperationId(req: NextRequest): string | null {
+  const value = String(req.headers.get("x-mon-cahier-operation-id") || "").trim();
+  return value ? value.slice(0, 128) : null;
+}
+
 function coerceRubric(x: unknown): Rubric {
   let s = String(x ?? "").normalize("NFKC").toLowerCase().trim();
   if (s.includes("moralit")) s = "moralite";
@@ -159,6 +164,7 @@ export async function POST(req: NextRequest) {
     };
 
     const class_id = String(body?.class_id || "").trim();
+    const client_action_id = readOperationId(req);
     const rubric: Rubric = coerceRubric(body?.rubric);
     const items: Item[] = Array.isArray(body?.items) ? body.items : [];
     const subject_any = body?.subject_id ? String(body.subject_id).trim() : null;
@@ -230,33 +236,39 @@ export async function POST(req: NextRequest) {
       author_subject_name: subjectDisplayName ?? null,
       occurred_at: nowIso,
       created_at: nowIso,
+      client_action_id,
     }));
 
     const { data: inserted, error } = await srv
       .from("conduct_penalties")
-      .insert(rows)
+      .upsert(rows, {
+        onConflict: "client_action_id,student_id",
+        ignoreDuplicates: true,
+      })
       .select("id");
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-    const insertedCount = inserted?.length || rows.length;
+    const insertedCount = inserted?.length || 0;
 
-    // Queue des notifs sanctions
-    try {
-      const { queued } = await queuePenaltyNotifications({
-        srv,
-        institution_id: String(cls.institution_id),
-        class_label: cls.label || null,
-        rubric,
-        subject_name: subjectDisplayName || null,
-        items: clean,
-        whenIso: nowIso,
-      });
-      console.log("[class.penalties.bulk] queued_penalty_notifications", { queued });
-    } catch (e: any) {
-      console.warn("[class.penalties.bulk] queue_penalty_notifications_fail", {
-        err: String(e?.message || e),
-      });
+    // Ne pas renvoyer une notification lors du rejeu d'une opération déjà traitée.
+    if (insertedCount > 0) {
+      try {
+        const { queued } = await queuePenaltyNotifications({
+          srv,
+          institution_id: String(cls.institution_id),
+          class_label: cls.label || null,
+          rubric,
+          subject_name: subjectDisplayName || null,
+          items: clean,
+          whenIso: nowIso,
+        });
+        console.log("[class.penalties.bulk] queued_penalty_notifications", { queued });
+      } catch (e: any) {
+        console.warn("[class.penalties.bulk] queue_penalty_notifications_fail", {
+          err: String(e?.message || e),
+        });
+      }
     }
 
     // temps réel — fire-and-forget
@@ -264,7 +276,11 @@ export async function POST(req: NextRequest) {
       await triggerPushDispatch({ req, reason: "class_penalties_bulk" });
     }
 
-    return NextResponse.json({ ok: true, inserted: insertedCount });
+    return NextResponse.json({
+      ok: true,
+      inserted: insertedCount,
+      deduplicated: insertedCount === 0 && !!client_action_id,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "penalties_failed" }, { status: 400 });
   }

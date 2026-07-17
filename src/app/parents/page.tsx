@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
 /* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
@@ -1041,7 +1042,7 @@ async function ensurePushSubscription() {
   let reg = await navigator.serviceWorker.getRegistration();
   if (!reg) {
     try {
-      reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      reg = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
     } catch (e: any) {
       return {
         ok: false,
@@ -4069,5 +4070,4 @@ export default function ParentPage() {
     </div>
   );
 }
-
 

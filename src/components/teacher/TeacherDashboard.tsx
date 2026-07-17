@@ -418,6 +418,7 @@ export default function TeacherDashboard() {
   }
 
   async function syncNow() {
+    if (syncing) return;
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setMsg("Hors connexion : synchronisation impossible.");
       return;
@@ -425,7 +426,7 @@ export default function TeacherDashboard() {
     setSyncing(true);
     setMsg(null);
     try {
-      await flushOutbox();
+      const result = await flushOutbox();
       await refreshPending();
 
       // refresh open session depuis le serveur (si dispo)
@@ -440,7 +441,25 @@ export default function TeacherDashboard() {
         /* ignore */
       }
 
-      setMsg("Synchronisation terminée ✅");
+      if (result.authRequired) {
+        setMsg(
+          "Synchronisation suspendue : votre session doit être renouvelée. Les données restent conservées sur cet appareil."
+        );
+      } else if (result.blocked > 0) {
+        setMsg(
+          `${result.blocked} action(s) protégée(s) nécessitent une vérification. Aucune donnée n’a été supprimée.`
+        );
+      } else if (result.remaining > 0) {
+        setMsg(
+          `Réseau encore instable : ${result.remaining} action(s) restent en attente sur cet appareil.`
+        );
+      } else {
+        setMsg(
+          result.flushed > 0
+            ? `Synchronisation terminée ✅ (${result.flushed} action(s))`
+            : "Toutes les données sont déjà synchronisées ✅"
+        );
+      }
     } catch (e: any) {
       setMsg(e?.message || "Synchronisation échouée");
     } finally {
@@ -1073,7 +1092,10 @@ export default function TeacherDashboard() {
       const r: any = await offlineMutateJson(
         "/api/teacher/sessions/start",
         { method: "POST", body },
-        { mergeKey: `teacher:start:${clientSessionId}`, meta: { clientSessionId } }
+        {
+          mergeKey: `teacher:start:${clientSessionId}`,
+          meta: { clientSessionId, operationType: "session-start" },
+        }
       );
 
       if (r?.ok) {
@@ -1327,10 +1349,6 @@ export default function TeacherDashboard() {
     try {
       const cleanRubric = coerceRubric(penRubric);
 
-      const mergeKey = `teacher:penalties:${sel.class_id}:${sel.subject_id ?? "none"}:${cleanRubric}:${new Date()
-        .toISOString()
-        .slice(0, 10)}`;
-
       const r: any = await offlineMutateJson(
         "/api/teacher/penalties/bulk",
         {
@@ -1342,7 +1360,11 @@ export default function TeacherDashboard() {
             items,
           },
         },
-        { mergeKey }
+        {
+          // Une sanction est un événement : deux enregistrements successifs ne
+          // doivent jamais se remplacer dans la file hors ligne.
+          meta: { operationType: "penalty-batch" },
+        }
       );
 
       if (r?.ok) {
@@ -1367,6 +1389,33 @@ export default function TeacherDashboard() {
 
   /* Déconnexion (avec nettoyage offline) */
   async function logout() {
+    let remaining = await outboxCount().catch(() => 0);
+
+    if (remaining > 0 && typeof navigator !== "undefined" && navigator.onLine) {
+      setMsg("Synchronisation des données avant déconnexion…");
+      try {
+        const result = await flushOutbox();
+        remaining = result.remaining;
+        await refreshPending();
+      } catch {
+        remaining = await outboxCount().catch(() => remaining);
+      }
+    }
+
+    if (remaining > 0) {
+      const discard = window.confirm(
+        `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
+          "OK = se déconnecter et supprimer définitivement ces données.\n" +
+          "Annuler = rester connecté et conserver les données (recommandé)."
+      );
+      if (!discard) {
+        setMsg(
+          `${remaining} action(s) conservées sur cet appareil. Reconnectez Internet puis appuyez sur Sync.`
+        );
+        return;
+      }
+    }
+
     try {
       try {
         const supabase = getSupabaseBrowserClient();

@@ -33,6 +33,11 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function readOperationId(req: NextRequest): string | null {
+  const value = String(req.headers.get("x-mon-cahier-operation-id") || "").trim();
+  return value ? value.slice(0, 128) : null;
+}
+
 /**
  * Résout un identifiant “souple” vers l’ID canonique subjects.id
  * - Cas 1: maybeId est déjà un subjects.id -> {canonicalId=subjects.id, displayName}
@@ -139,6 +144,7 @@ export async function POST(req: NextRequest) {
     }
 
     const class_id = String(body?.class_id || "").trim();
+    const client_action_id = readOperationId(req);
     const requested_subject_id =
       (body?.subject_id ? String(body.subject_id) : null) || null;
     const rubric = coerceRubric(body?.rubric);
@@ -252,6 +258,7 @@ export async function POST(req: NextRequest) {
       author_subject_name,
       occurred_at: nowIso,
       created_at: nowIso,
+      client_action_id,
     }));
 
     console.log("[teacher.penalties.bulk] insert attempt", {
@@ -269,7 +276,10 @@ export async function POST(req: NextRequest) {
 
     const { data: inserted, error: insErr } = await srv
       .from("conduct_penalties")
-      .insert(rows)
+      .upsert(rows, {
+        onConflict: "client_action_id,student_id",
+        ignoreDuplicates: true,
+      })
       .select("id");
 
     if (insErr) {
@@ -293,24 +303,26 @@ export async function POST(req: NextRequest) {
     const count = inserted?.length || 0;
     console.log("[teacher.penalties.bulk] inserted_ok", { count });
 
-    // ✅ QUEUE des notifs sanctions
-    try {
-      const { queued } = await queuePenaltyNotifications({
-        srv,
-        institution_id,
-        class_label: klass.label || null,
-        rubric,
-        subject_name: author_subject_name || null,
-        items, // même shape {student_id, points, reason}
-        whenIso: nowIso,
-      });
-      console.log("[teacher.penalties.bulk] queued_penalty_notifications", {
-        queued,
-      });
-    } catch (e: any) {
-      console.warn("[teacher.penalties.bulk] queue_penalty_notifications_fail", {
-        err: String(e?.message || e),
-      });
+    // Ne pas renvoyer une notification lors du rejeu d'une opération déjà traitée.
+    if (count > 0) {
+      try {
+        const { queued } = await queuePenaltyNotifications({
+          srv,
+          institution_id,
+          class_label: klass.label || null,
+          rubric,
+          subject_name: author_subject_name || null,
+          items, // même shape {student_id, points, reason}
+          whenIso: nowIso,
+        });
+        console.log("[teacher.penalties.bulk] queued_penalty_notifications", {
+          queued,
+        });
+      } catch (e: any) {
+        console.warn("[teacher.penalties.bulk] queue_penalty_notifications_fail", {
+          err: String(e?.message || e),
+        });
+      }
     }
 
     // ✅ temps réel — déclenche immédiatement si on a inséré des sanctions
@@ -318,7 +330,10 @@ export async function POST(req: NextRequest) {
       await triggerPushDispatch({ req, reason: "teacher_penalties_bulk" });
     }
 
-    return NextResponse.json({ ok: true, inserted: count }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, inserted: count, deduplicated: count === 0 && !!client_action_id },
+      { status: 200 }
+    );
   } catch (e: any) {
     console.error("[teacher.penalties.bulk] fatal", e);
     return NextResponse.json(

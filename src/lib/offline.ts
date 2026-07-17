@@ -11,6 +11,7 @@ type KVRow = {
 
 type OutboxRow = {
   id: string;
+  operationId: string;
   url: string;
   method: string;
   body?: JsonValue;
@@ -18,6 +19,11 @@ type OutboxRow = {
   mergeKey?: string;
   createdAt: number;
   meta?: Record<string, any>;
+  state?: "pending" | "blocked";
+  attempts?: number;
+  lastAttemptAt?: number;
+  lastStatus?: number;
+  lastError?: string;
 };
 
 type MutateInit = {
@@ -29,15 +35,44 @@ type MutateInit = {
 type MutateOpts = {
   mergeKey?: string;
   meta?: Record<string, any>;
+  operationId?: string;
 };
 
 export type MutateResult<T = any> =
   | { ok: true; data: T; status: number }
-  | { ok: false; queued: true; offline: true; status: 0 }
+  | {
+      ok: false;
+      queued: true;
+      offline: boolean;
+      status: number;
+      error?: string;
+    }
   | { ok: false; queued: false; offline: false; status: number; error: string; data?: any };
 
+export type OutboxStats = {
+  total: number;
+  pending: number;
+  blocked: number;
+  lastError: string | null;
+  lastStatus: number | null;
+};
+
+export type FlushResult = {
+  flushed: number;
+  remaining: number;
+  blocked: number;
+  authRequired: boolean;
+  retryableFailure: boolean;
+  lastError: string | null;
+  lastStatus: number | null;
+};
+
 const DB_NAME = "moncahier_offline_v1";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+// Conserver la version du /public/sw.js livré avec ce src. Elle sera relevée
+// uniquement après audit du fichier public/sw.js, absent de l'archive reçue.
+const SW_BUILD = "2025-11-05T19:59:59Z";
+export const MON_CAHIER_SW_URL = `/sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -80,6 +115,7 @@ async function openDB(): Promise<IDBDatabase> {
         const out = db.createObjectStore("outbox", { keyPath: "id" });
         out.createIndex("mergeKey", "mergeKey", { unique: false });
         out.createIndex("createdAt", "createdAt", { unique: false });
+        out.createIndex("state", "state", { unique: false });
       } else {
         const out = req.transaction?.objectStore("outbox");
         if (out) {
@@ -87,6 +123,8 @@ async function openDB(): Promise<IDBDatabase> {
             out.createIndex("mergeKey", "mergeKey", { unique: false });
           if (!out.indexNames.contains("createdAt"))
             out.createIndex("createdAt", "createdAt", { unique: false });
+          if (!out.indexNames.contains("state"))
+            out.createIndex("state", "state", { unique: false });
         }
       }
     };
@@ -152,8 +190,10 @@ export async function registerServiceWorker(): Promise<void> {
   if (!("serviceWorker" in navigator)) return;
 
   try {
-    // On enregistre /sw.js (dans /public)
-    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // Une seule URL versionnée pour éviter que plusieurs écrans se remplacent
+    // mutuellement le service worker avec des versions différentes.
+    await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
+    await navigator.serviceWorker.ready;
   } catch {
     // Ne casse rien si SW indisponible
   }
@@ -182,6 +222,26 @@ async function safeJson(res: Response): Promise<any> {
   }
 }
 
+class HttpResponseError extends Error {
+  status: number;
+  allowCache: boolean;
+
+  constructor(message: string, status: number, allowCache: boolean) {
+    super(message);
+    this.name = "HttpResponseError";
+    this.status = status;
+    this.allowCache = allowCache;
+  }
+}
+
+function isRetryableStatus(status: number) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function responseErrorMessage(payload: any, status: number) {
+  return String(payload?.error || payload?.message || `HTTP ${status}`);
+}
+
 /**
  * GET JSON avec fallback cache (kv).
  * - Online OK -> met à jour le cache.
@@ -198,18 +258,26 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
     });
 
     if (!res.ok) {
-      const cached = await cacheGet<T>(cacheKey);
-      if (cached != null) return cached;
-
       const j = await safeJson(res);
-      const msg = j?.error || j?.message || `HTTP ${res.status}`;
-      throw new Error(msg);
+      const msg = responseErrorMessage(j, res.status);
+
+      // Un 401/403/404/422 ne doit jamais être masqué par une ancienne donnée
+      // locale. Le cache n'est toléré que pour une panne serveur temporaire.
+      if (isRetryableStatus(res.status)) {
+        const cached = await cacheGet<T>(cacheKey);
+        if (cached != null) return cached;
+      }
+
+      throw new HttpResponseError(msg, res.status, isRetryableStatus(res.status));
     }
 
     const j = (await safeJson(res)) as T;
     await cacheSet(cacheKey, j);
     return j;
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpResponseError && !error.allowCache) {
+      throw error;
+    }
     const cached = await cacheGet<T>(cacheKey);
     if (cached != null) return cached;
     throw new Error("Hors connexion : aucune donnée en cache pour cette page.");
@@ -241,6 +309,15 @@ async function outboxAdd(row: OutboxRow): Promise<void> {
   await txDone(tx);
 }
 
+async function outboxUpdate(id: string, patch: Partial<OutboxRow>): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction(["outbox"], "readwrite");
+  const store = tx.objectStore("outbox");
+  const current = await reqToPromise<OutboxRow | undefined>(store.get(id));
+  if (current) store.put({ ...current, ...patch });
+  await txDone(tx);
+}
+
 async function outboxAll(): Promise<OutboxRow[]> {
   const db = await openDB();
   const tx = db.transaction(["outbox"], "readonly");
@@ -267,11 +344,28 @@ export async function outboxCount(): Promise<number> {
   return count;
 }
 
+export async function outboxStats(): Promise<OutboxStats> {
+  const rows = await outboxAll();
+  const blocked = rows.filter((row) => row.state === "blocked").length;
+  const lastIssue = [...rows]
+    .reverse()
+    .find((row) => !!row.lastError || typeof row.lastStatus === "number");
+
+  return {
+    total: rows.length,
+    pending: rows.length - blocked,
+    blocked,
+    lastError: lastIssue?.lastError || null,
+    lastStatus:
+      typeof lastIssue?.lastStatus === "number" ? lastIssue.lastStatus : null,
+  };
+}
+
 /**
- * Mutations JSON:
- * - Si online et HTTP ok -> { ok:true, data, status }
- * - Si online et HTTP error -> { ok:false, queued:false, offline:false, status, error, data? } (NE QUEUE PAS)
- * - Si offline/network error -> queue + { ok:false, queued:true, offline:true, status:0 }
+ * Mutations JSON :
+ * - succès serveur -> réponse immédiate ;
+ * - réseau, authentification expirée ou panne temporaire -> mise en attente ;
+ * - validation métier immédiate -> erreur visible, sans mise en attente.
  */
 export async function offlineMutateJson<T = any>(
   url: string,
@@ -280,41 +374,77 @@ export async function offlineMutateJson<T = any>(
 ): Promise<MutateResult<T>> {
   const method = init.method;
   const bodyObj = init.body ?? undefined;
+  const operationId = opts?.operationId || uid();
+  const operationHeaders = {
+    ...init.headers,
+    "X-Mon-Cahier-Operation-Id": operationId,
+  };
+
+  const queueMutation = async (details: {
+    offline: boolean;
+    status: number;
+    error?: string;
+  }): Promise<MutateResult<T>> => {
+    const row: OutboxRow = {
+      id: operationId,
+      operationId,
+      url,
+      method,
+      body: bodyObj,
+      headers: operationHeaders,
+      mergeKey: opts?.mergeKey,
+      createdAt: Date.now(),
+      meta: opts?.meta,
+      state: "pending",
+      attempts: 0,
+      lastStatus: details.status || undefined,
+      lastError: details.error,
+    };
+    await outboxAdd(row);
+    return {
+      ok: false,
+      queued: true,
+      offline: details.offline,
+      status: details.status,
+      error: details.error,
+    };
+  };
 
   try {
     const res = await fetch(url, {
       method,
       credentials: "include",
       cache: "no-store",
-      headers: buildHeaders(init.headers),
+      headers: buildHeaders(operationHeaders),
       body: bodyObj === undefined ? undefined : JSON.stringify(bodyObj),
     });
 
     const status = res.status;
     const j = await safeJson(res);
 
-    // ✅ HTTP error = PAS offline, PAS queued
+    // Les erreurs temporaires sont conservées ; les validations métier restent visibles.
     if (!res.ok) {
-      const msg = j?.error || j?.message || `HTTP ${status}`;
+      const msg = responseErrorMessage(j, status);
+
+      // Auth expirée ou panne temporaire : on conserve l'action au lieu de
+      // demander à l'utilisateur de tout ressaisir.
+      if (status === 401 || isRetryableStatus(status)) {
+        return await queueMutation({ offline: false, status, error: msg });
+      }
+
       return { ok: false, queued: false, offline: false, status, error: msg, data: j };
     }
 
     // ✅ OK
     return { ok: true, data: j as T, status };
-  } catch {
-    // ✅ Network/offline uniquement -> outbox + queued
-    const row: OutboxRow = {
-      id: uid(),
-      url,
-      method,
-      body: bodyObj,
-      headers: init.headers,
-      mergeKey: opts?.mergeKey,
-      createdAt: Date.now(),
-      meta: opts?.meta,
-    };
-    await outboxAdd(row);
-    return { ok: false, queued: true, offline: true, status: 0 };
+  } catch (error: any) {
+    // Erreur réseau : l'identifiant d'opération reste le même, même si le
+    // serveur avait traité la requête avant la coupure de la réponse.
+    return await queueMutation({
+      offline: true,
+      status: 0,
+      error: String(error?.message || "network_error"),
+    });
   }
 }
 
@@ -329,6 +459,15 @@ function rewriteBodyWithSessionMap(body: any, map: Record<string, string>) {
     if (mapped) return { ...body, session_id: mapped };
   }
 
+  // Une fin de séance enseignant peut ne contenir que client_session_id.
+  if (typeof body.client_session_id === "string") {
+    const clientKey = body.client_session_id.startsWith("client:")
+      ? body.client_session_id
+      : `client:${body.client_session_id}`;
+    const mapped = map[clientKey];
+    if (mapped) return { ...body, session_id: mapped };
+  }
+
   return body;
 }
 
@@ -339,7 +478,10 @@ async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any)
 
   if (!clientSessionId || !serverId) return;
 
-  const clientKey = `client:${String(clientSessionId)}`;
+  const rawClientKey = String(clientSessionId);
+  const clientKey = rawClientKey.startsWith("client:")
+    ? rawClientKey
+    : `client:${rawClientKey}`;
   const map = await getSessionIdMap();
   if (map[clientKey] === serverId) return;
 
@@ -347,20 +489,43 @@ async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any)
   await setSessionIdMap(map);
 }
 
+function isSessionStartRow(row: OutboxRow) {
+  if (row?.meta?.operationType === "session-start") return true;
+  return /\/api\/(?:class|teacher)\/sessions\/start(?:[/?]|$)/.test(row.url);
+}
+
 /**
  * Rejoue les actions en attente (dans l'ordre).
  * Stoppe au premier échec réseau (pour éviter de vider l'outbox partiellement).
  */
-export async function flushOutbox(): Promise<{ flushed: number; remaining: number }> {
-  if (!isBrowser()) return { flushed: 0, remaining: 0 };
+async function flushOutboxInternal(): Promise<FlushResult> {
+  const empty: FlushResult = {
+    flushed: 0,
+    remaining: 0,
+    blocked: 0,
+    authRequired: false,
+    retryableFailure: false,
+    lastError: null,
+    lastStatus: null,
+  };
+
+  if (!isBrowser()) return empty;
 
   const rows = await outboxAll();
-  if (rows.length === 0) return { flushed: 0, remaining: 0 };
+  if (rows.length === 0) return empty;
 
   let flushed = 0;
+  let authRequired = false;
+  let retryableFailure = false;
+  let lastError: string | null = null;
+  let lastStatus: number | null = null;
   const map = await getSessionIdMap();
 
   for (const row of rows) {
+    // Une action invalide reste visible et récupérable. Elle ne bloque pas les
+    // autres actions indépendantes de la file.
+    if (row.state === "blocked") continue;
+
     // Prépare body potentiellement réécrit (session_id)
     const body = rewriteBodyWithSessionMap(row.body, map);
 
@@ -374,16 +539,51 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
       });
 
       if (!res.ok) {
-        // si c'est un vrai HTTP error (validation/forbidden), on supprime l'item
-        // pour éviter une boucle infinie.
-        await outboxDelete(row.id);
+        const j = await safeJson(res);
+        const msg = responseErrorMessage(j, res.status);
+        const attempts = Number(row.attempts || 0) + 1;
+        lastError = msg;
+        lastStatus = res.status;
+
+        if (res.status === 401) {
+          authRequired = true;
+          await outboxUpdate(row.id, {
+            state: "pending",
+            attempts,
+            lastAttemptAt: Date.now(),
+            lastStatus: res.status,
+            lastError: msg,
+          });
+          break;
+        }
+
+        if (isRetryableStatus(res.status)) {
+          retryableFailure = true;
+          await outboxUpdate(row.id, {
+            state: "pending",
+            attempts,
+            lastAttemptAt: Date.now(),
+            lastStatus: res.status,
+            lastError: msg,
+          });
+          break;
+        }
+
+        // Validation/conflit : surtout ne pas supprimer silencieusement.
+        await outboxUpdate(row.id, {
+          state: "blocked",
+          attempts,
+          lastAttemptAt: Date.now(),
+          lastStatus: res.status,
+          lastError: msg,
+        });
         continue;
       }
 
       const j = await safeJson(res);
 
       // Si c'était un startSession, on mémorise le mapping client -> server
-      if (row.url.includes("/api/class/sessions/start")) {
+      if (isSessionStartRow(row)) {
         await maybeUpdateSessionMapFromStart(row, j);
         // refresh local map (au cas où)
         const next = await getSessionIdMap();
@@ -392,14 +592,61 @@ export async function flushOutbox(): Promise<{ flushed: number; remaining: numbe
 
       await outboxDelete(row.id);
       flushed += 1;
-    } catch {
+    } catch (error: any) {
       // réseau encore instable : on stoppe et on garde le reste
+      retryableFailure = true;
+      lastStatus = 0;
+      lastError = String(error?.message || "network_error");
+      await outboxUpdate(row.id, {
+        state: "pending",
+        attempts: Number(row.attempts || 0) + 1,
+        lastAttemptAt: Date.now(),
+        lastStatus: 0,
+        lastError,
+      });
       break;
     }
   }
 
-  const remaining = await outboxCount();
-  return { flushed, remaining };
+  const stats = await outboxStats();
+  return {
+    flushed,
+    remaining: stats.total,
+    blocked: stats.blocked,
+    authRequired,
+    retryableFailure,
+    lastError: lastError || stats.lastError,
+    lastStatus: lastStatus ?? stats.lastStatus,
+  };
+}
+
+let _flushPromise: Promise<FlushResult> | null = null;
+
+/**
+ * Un seul rejeu à la fois, même lorsque deux composants (ou deux onglets sur
+ * les navigateurs compatibles) détectent simultanément le retour du réseau.
+ */
+export async function flushOutbox(): Promise<FlushResult> {
+  if (!isBrowser()) return await flushOutboxInternal();
+  if (_flushPromise) return await _flushPromise;
+
+  const locks = (
+    navigator as Navigator & {
+      locks?: {
+        request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+      };
+    }
+  ).locks;
+
+  _flushPromise = locks
+    ? locks.request("moncahier-offline-outbox", () => flushOutboxInternal())
+    : flushOutboxInternal();
+
+  try {
+    return await _flushPromise;
+  } finally {
+    _flushPromise = null;
+  }
 }
 
 /* ───────────────────────── Clear all offline data ───────────────────────── */
