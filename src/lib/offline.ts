@@ -631,9 +631,12 @@ export async function flushOutbox(): Promise<FlushResult> {
   if (_flushPromise) return await _flushPromise;
 
   const locks = (
-    navigator as Navigator & {
+    navigator as unknown as {
       locks?: {
-        request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+        request(
+          name: string,
+          callback: () => Promise<FlushResult>,
+        ): Promise<FlushResult>;
       };
     }
   ).locks;
