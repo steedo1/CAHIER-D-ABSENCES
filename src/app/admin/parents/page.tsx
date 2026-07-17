@@ -1434,7 +1434,37 @@ export default function AdminStudentsByClassPage() {
 
       setAssignOpen(false);
       resetAssign();
-      setMsg(assignMode === "new" ? "Eleve ajoute et inscrit" : "Eleve transfere");
+
+      const financeTransfer = json?.finance_transfer as
+        | {
+            attempted?: boolean;
+            moved_charges?: number;
+            preserved_paid_amount?: number;
+            warnings?: string[];
+          }
+        | undefined;
+
+      if (assignMode === "new") {
+        setMsg("Eleve ajoute et inscrit");
+      } else if (financeTransfer?.attempted) {
+        const moved = Number(financeTransfer.moved_charges || 0);
+        const preserved = Number(financeTransfer.preserved_paid_amount || 0);
+        const warning = financeTransfer.warnings?.[0];
+
+        setMsg(
+          [
+            `Eleve transfere : ${moved} dette${moved > 1 ? "s" : ""} rattachee${moved > 1 ? "s" : ""} a la nouvelle classe`,
+            preserved > 0
+              ? `${preserved.toLocaleString("fr-FR")} F deja encaisses conserves`
+              : null,
+            warning || null,
+          ]
+            .filter(Boolean)
+            .join(" — "),
+        );
+      } else {
+        setMsg("Eleve transfere");
+      }
     } catch (e: any) {
       setMsg(e?.message || "Erreur lors de l'operation");
     } finally {

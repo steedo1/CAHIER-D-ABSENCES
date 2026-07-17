@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  transferStudentFinanceToClass,
+  type AppliedFinanceClassTransfer,
+} from "@/lib/finance/class-transfer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,7 +49,7 @@ export async function POST(req: NextRequest) {
   // Classe valide ?
   const { data: cls, error: clsErr } = await srv
     .from("classes")
-    .select("id,institution_id,academic_year,label")
+    .select("id,institution_id,academic_year,label,code,level,official_track_code")
     .eq("id", class_id)
     .maybeSingle();
   if (clsErr)
@@ -194,8 +198,10 @@ export async function POST(req: NextRequest) {
 
   const today = isoToday();
 
-  // Clôturer les autres classes actives seulement dans la même année scolaire.
-  // Changer d'année ne doit pas effacer l'historique de l'année précédente.
+  // Le transfert de classe et le transfert financier doivent être préparés
+  // avant de fermer l'ancienne inscription. En cas d'anomalie (barème cible
+  // manquant, doublons déjà encaissés, profil financier incomplet), aucune
+  // inscription n'est modifiée.
   let sameYearClassIds: string[] = [];
   const targetAcademicYear = String((cls as any).academic_year || "").trim();
 
@@ -206,61 +212,199 @@ export async function POST(req: NextRequest) {
       .eq("institution_id", inst)
       .eq("academic_year", targetAcademicYear);
 
-    if (sameYearErr)
+    if (sameYearErr) {
       return NextResponse.json({ error: sameYearErr.message }, { status: 400 });
+    }
+
     sameYearClassIds = (sameYearClasses ?? [])
       .map((row: any) => String(row.id))
       .filter(Boolean);
   }
 
-  let closeQuery = srv
+  const sourceEnrollmentQuery = srv
     .from("class_enrollments")
-    .update({ end_date: today })
+    .select("id,class_id,start_date,end_date")
     .eq("institution_id", inst)
     .eq("student_id", studentId)
     .neq("class_id", class_id)
     .is("end_date", null);
 
-  if (targetAcademicYear) {
-    closeQuery = sameYearClassIds.length
-      ? closeQuery.in("class_id", sameYearClassIds)
-      : closeQuery.eq("class_id", "__NO_CLASS__");
+  const { data: sourceEnrollments, error: sourceEnrollmentErr } =
+    targetAcademicYear
+      ? sameYearClassIds.length
+        ? await sourceEnrollmentQuery.in("class_id", sameYearClassIds)
+        : { data: [], error: null as any }
+      : { data: [], error: null as any };
+
+  if (sourceEnrollmentErr) {
+    return NextResponse.json(
+      { error: sourceEnrollmentErr.message },
+      { status: 400 },
+    );
   }
 
-  const { data: oldClosed, error: oldErr } = await closeQuery.select("id");
-  if (oldErr)
-    return NextResponse.json({ error: oldErr.message }, { status: 400 });
-
-  // Réactiver si déjà présent dans la cible
-  const { data: reactivated, error: reacErr } = await srv
+  const { data: targetEnrollmentBefore, error: targetEnrollmentErr } = await srv
     .from("class_enrollments")
-    .update({ end_date: null /*, start_date: today*/ })
+    .select("id,class_id,start_date,end_date")
     .eq("institution_id", inst)
     .eq("student_id", studentId)
     .eq("class_id", class_id)
-    .select("id");
-  if (reacErr)
-    return NextResponse.json({ error: reacErr.message }, { status: 400 });
+    .maybeSingle();
 
-  // Upsert dans la classe cible
-  const row = {
-    class_id,
-    student_id: studentId,
-    institution_id: inst,
-    start_date: today,
-    end_date: null,
+  if (targetEnrollmentErr) {
+    return NextResponse.json(
+      { error: targetEnrollmentErr.message },
+      { status: 400 },
+    );
+  }
+
+  const sourceClassIds = Array.from(
+    new Set(
+      (sourceEnrollments ?? [])
+        .map((row: any) => String(row.class_id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  let financeTransfer: AppliedFinanceClassTransfer;
+
+  try {
+    financeTransfer = await transferStudentFinanceToClass({
+      srv,
+      institutionId: inst,
+      studentId,
+      sourceClassIds,
+      targetClass: {
+        id: String((cls as any).id),
+        label: (cls as any).label ?? null,
+        code: (cls as any).code ?? null,
+        level: (cls as any).level ?? null,
+        academic_year: (cls as any).academic_year ?? null,
+        official_track_code: (cls as any).official_track_code ?? null,
+        institution_id: inst,
+      },
+    });
+  } catch (financeError) {
+    return NextResponse.json(
+      {
+        error:
+          financeError instanceof Error
+            ? financeError.message
+            : "Le transfert financier de l'élève a échoué.",
+        code: "finance_class_transfer_failed",
+      },
+      { status: 409 },
+    );
+  }
+
+  const sourceEnrollmentSnapshots = (sourceEnrollments ?? []).map(
+    (row: any) => ({
+      id: String(row.id),
+      end_date: row.end_date ?? null,
+    }),
+  );
+
+  let targetEnrollmentInserted = false;
+
+  const rollbackEnrollment = async () => {
+    for (const snapshot of sourceEnrollmentSnapshots) {
+      await srv
+        .from("class_enrollments")
+        .update({ end_date: snapshot.end_date })
+        .eq("id", snapshot.id)
+        .eq("institution_id", inst);
+    }
+
+    if (targetEnrollmentBefore?.id) {
+      await srv
+        .from("class_enrollments")
+        .update({
+          start_date: (targetEnrollmentBefore as any).start_date ?? today,
+          end_date: (targetEnrollmentBefore as any).end_date ?? null,
+        })
+        .eq("id", (targetEnrollmentBefore as any).id)
+        .eq("institution_id", inst);
+    } else if (targetEnrollmentInserted) {
+      await srv
+        .from("class_enrollments")
+        .delete()
+        .eq("institution_id", inst)
+        .eq("student_id", studentId)
+        .eq("class_id", class_id);
+    }
   };
-  const { data: inserted, error: insErr } = await srv
-    .from("class_enrollments")
-    .upsert([row], {
-      onConflict: "class_id,student_id",
-      ignoreDuplicates: true,
-    })
-    .select("id");
-  if (insErr)
-    return NextResponse.json({ error: insErr.message }, { status: 400 });
 
-  const insertedCount = (inserted ?? []).length;
+  let closedCount = 0;
+  let reactivatedCount = 0;
+  let insertedCount = 0;
+
+  try {
+    const sourceEnrollmentIds = sourceEnrollmentSnapshots.map((row) => row.id);
+
+    if (sourceEnrollmentIds.length > 0) {
+      const { data: oldClosed, error: oldErr } = await srv
+        .from("class_enrollments")
+        .update({ end_date: today })
+        .eq("institution_id", inst)
+        .in("id", sourceEnrollmentIds)
+        .select("id");
+
+      if (oldErr) throw new Error(oldErr.message);
+      closedCount = (oldClosed ?? []).length;
+    }
+
+    if (targetEnrollmentBefore?.id) {
+      const wasClosed = Boolean((targetEnrollmentBefore as any).end_date);
+      const { data: reactivated, error: reacErr } = await srv
+        .from("class_enrollments")
+        .update({ end_date: null })
+        .eq("id", (targetEnrollmentBefore as any).id)
+        .eq("institution_id", inst)
+        .select("id");
+
+      if (reacErr) throw new Error(reacErr.message);
+      reactivatedCount = wasClosed ? (reactivated ?? []).length : 0;
+    } else {
+      const { data: inserted, error: insErr } = await srv
+        .from("class_enrollments")
+        .insert([
+          {
+            class_id,
+            student_id: studentId,
+            institution_id: inst,
+            start_date: today,
+            end_date: null,
+          },
+        ])
+        .select("id");
+
+      if (insErr) throw new Error(insErr.message);
+      targetEnrollmentInserted = true;
+      insertedCount = (inserted ?? []).length;
+    }
+  } catch (enrollmentError) {
+    const rollbackResults = await Promise.allSettled([
+      rollbackEnrollment(),
+      financeTransfer.rollback(),
+    ]);
+    const rollbackFailed = rollbackResults.some(
+      (result) => result.status === "rejected",
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          enrollmentError instanceof Error
+            ? enrollmentError.message
+            : "Le transfert de classe a échoué.",
+        code: rollbackFailed
+          ? "class_transfer_rollback_incomplete"
+          : "class_transfer_rolled_back",
+      },
+      { status: 409 },
+    );
+  }
+
 
   return NextResponse.json({
     ok: true,
@@ -270,8 +414,9 @@ export async function POST(req: NextRequest) {
       last_name: studentLast,
       matricule: studentMatricule,
     },
-    closed_old_enrollments: (oldClosed ?? []).length,
-    reactivated_in_target: (reactivated ?? []).length,
-    inserted_in_target: (inserted ?? []).length,
+    closed_old_enrollments: closedCount,
+    reactivated_in_target: reactivatedCount,
+    inserted_in_target: insertedCount,
+    finance_transfer: financeTransfer.summary,
   });
 }
