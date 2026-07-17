@@ -249,6 +249,30 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
 
+  const { data: existingCompletion, error: existingCompletionErr } = await srv
+    .from("textbook_lesson_completions")
+    .select("*")
+    .eq("assignment_id", assignmentId)
+    .eq("item_id", itemId)
+    .maybeSingle();
+
+  if (existingCompletionErr) {
+    return NextResponse.json(
+      { ok: false, error: existingCompletionErr.message },
+      { status: 400 },
+    );
+  }
+
+  // Un rejeu après perte de la réponse réseau ne doit ni modifier de nouveau
+  // la date de complétion, ni ajouter une seconde ligne d'historique.
+  if (String((existingCompletion as any)?.status || "") === status) {
+    return NextResponse.json({
+      ok: true,
+      item: existingCompletion,
+      idempotent: true,
+    });
+  }
+
   if (status === "completed") {
     const { count: sessionCount, error: sessionCountErr } = await srv
       .from("textbook_lesson_sessions")

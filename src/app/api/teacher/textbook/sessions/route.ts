@@ -29,6 +29,15 @@ function normalizeHm(value: unknown) {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
+function normalizeClientUuid(value: unknown) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+    normalized,
+  )
+    ? normalized
+    : null;
+}
+
 function minutesBetween(start: string | null, end: string | null) {
   if (!start || !end) return 0;
   const [sh, sm] = start.split(":").map(Number);
@@ -36,6 +45,21 @@ function minutesBetween(start: string | null, end: string | null) {
   let diff = eh * 60 + em - (sh * 60 + sm);
   if (diff <= 0) diff += 24 * 60;
   return diff > 0 && diff <= 24 * 60 ? diff : 0;
+}
+
+function isSameSessionOperation(
+  session: any,
+  institutionId: string,
+  assignmentId: string,
+  itemId: string,
+  teacherId: string,
+) {
+  return (
+    String(session?.institution_id || "") === institutionId &&
+    String(session?.assignment_id || "") === assignmentId &&
+    String(session?.item_id || "") === itemId &&
+    String(session?.teacher_id || "") === teacherId
+  );
 }
 
 async function resolveAssignmentAccess(
@@ -189,10 +213,18 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const assignmentId = cleanUuid(body.assignment_id);
   const itemId = cleanUuid(body.item_id);
+  const rawClientSessionId = String(body.client_session_id || "").trim();
+  const clientSessionId = normalizeClientUuid(rawClientSessionId);
 
   if (!assignmentId || !itemId) {
     return NextResponse.json(
       { ok: false, error: "assignment_and_item_required" },
+      { status: 400 },
+    );
+  }
+  if (rawClientSessionId && !clientSessionId) {
+    return NextResponse.json(
+      { ok: false, error: "bad_client_session_id" },
       { status: 400 },
     );
   }
@@ -257,6 +289,38 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
 
+  if (clientSessionId) {
+    const { data: existingSession, error: existingSessionErr } = await srv
+      .from("textbook_lesson_sessions")
+      .select("*")
+      .eq("id", clientSessionId)
+      .maybeSingle();
+
+    if (existingSessionErr) {
+      return NextResponse.json(
+        { ok: false, error: existingSessionErr.message },
+        { status: 400 },
+      );
+    }
+    if (existingSession) {
+      if (
+        !isSameSessionOperation(
+          existingSession,
+          institutionId,
+          assignmentId,
+          itemId,
+          effectiveTeacherId,
+        )
+      ) {
+        return NextResponse.json(
+          { ok: false, error: "client_session_id_conflict" },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ ok: true, item: existingSession, idempotent: true });
+    }
+  }
+
   const { count } = await srv
     .from("textbook_lesson_sessions")
     .select("id", { count: "exact", head: true })
@@ -278,6 +342,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await srv
     .from("textbook_lesson_sessions")
     .insert({
+      ...(clientSessionId ? { id: clientSessionId } : {}),
       institution_id: institutionId,
       assignment_id: assignmentId,
       progression_id: (assignment as any).progression_id,
@@ -309,6 +374,34 @@ export async function POST(req: NextRequest) {
     })
     .select("*")
     .maybeSingle();
+
+  if (error && clientSessionId && String((error as any)?.code || "") === "23505") {
+    const { data: concurrentSession } = await srv
+      .from("textbook_lesson_sessions")
+      .select("*")
+      .eq("id", clientSessionId)
+      .maybeSingle();
+    if (
+      concurrentSession &&
+      isSameSessionOperation(
+        concurrentSession,
+        institutionId,
+        assignmentId,
+        itemId,
+        effectiveTeacherId,
+      )
+    ) {
+      return NextResponse.json({
+        ok: true,
+        item: concurrentSession,
+        idempotent: true,
+      });
+    }
+    return NextResponse.json(
+      { ok: false, error: "client_session_id_conflict" },
+      { status: 409 },
+    );
+  }
 
   if (error)
     return NextResponse.json(

@@ -14,6 +14,15 @@ import {
   RotateCcw,
   Save,
 } from "lucide-react";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflineSyncBar from "@/components/OfflineSyncBar";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  getTextbookBootstrap,
+  getTextbookSlots,
+  saveTextbookLessonStatus,
+  saveTextbookSession,
+} from "@/lib/offline-textbook";
 
 type Session = {
   id: string;
@@ -77,6 +86,11 @@ type Assignment = {
     } | null;
   } | null;
   progression_items: ProgressionItem[];
+};
+
+type TextbookBootstrapPayload = {
+  mode?: string;
+  items?: Assignment[];
 };
 
 type SessionForm = {
@@ -259,6 +273,7 @@ function humanError(message: string) {
 }
 
 export default function TeacherTextbookPage() {
+  const { isOnline } = useOnlineStatus();
   const [loading, setLoading] = useState(true);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -359,40 +374,27 @@ export default function TeacherTextbookPage() {
     [actionableItems],
   );
 
-  async function fetchJson(url: string, init?: RequestInit) {
-    const response = await fetch(url, {
-      cache: "no-store",
-      credentials: "include",
-      ...init,
-    });
-    const json = await response.json().catch(() => null);
-    if (!response.ok || json?.ok === false) {
-      throw new Error(
-        humanError(
-          json?.error || json?.details || `Erreur HTTP ${response.status}`,
-        ),
-      );
-    }
-    return json;
+  function applyBootstrap(json: TextbookBootstrapPayload) {
+    const items = (json.items || []) as Assignment[];
+    setAccessMode(json.mode === "class_device" ? "class_device" : "teacher");
+    setAssignments(items);
+    setSelectedAssignmentId((current) =>
+      current && items.some((assignment) => assignment.id === current)
+        ? current
+        : items[0]?.id || "",
+    );
   }
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     setError(null);
     try {
-      const json = await fetchJson("/api/teacher/textbook/bootstrap");
-      const items = (json.items || []) as Assignment[];
-      setAccessMode(json.mode === "class_device" ? "class_device" : "teacher");
-      setAssignments(items);
-      setSelectedAssignmentId((current) =>
-        current && items.some((assignment) => assignment.id === current)
-          ? current
-          : items[0]?.id || "",
-      );
+      const json = await getTextbookBootstrap<TextbookBootstrapPayload>();
+      applyBootstrap(json);
     } catch (cause: any) {
       setError(cause?.message || "Chargement impossible");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -428,15 +430,7 @@ export default function TeacherTextbookPage() {
     }
 
     setSlotsLoading(true);
-    fetch(`/api/institution/slots?class_id=${encodeURIComponent(classId)}`, {
-      cache: "no-store",
-      credentials: "include",
-    })
-      .then(async (response) => {
-        const json = await response.json().catch(() => ({ items: [] }));
-        if (!response.ok) throw new Error(json?.error || "Créneaux indisponibles");
-        return json;
-      })
+    getTextbookSlots<{ items?: PeriodSlot[] }>(classId)
       .then((json) => {
         if (!cancelled)
           setPeriodSlots(buildUniquePeriodSlots(json.items || []));
@@ -514,20 +508,23 @@ export default function TeacherTextbookPage() {
     setMessage(null);
     try {
       const previousCount = selectedItem.sessions?.length || 0;
-      await fetchJson("/api/teacher/textbook/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          assignment_id: selectedAssignment.id,
-          item_id: selectedItem.id,
-          ...form,
-          duration_minutes:
-            minutesBetween(form.session_start_time, form.session_end_time) || 55,
-        }),
+      const { mutation, bootstrap } = await saveTextbookSession<TextbookBootstrapPayload>({
+        assignment_id: selectedAssignment.id,
+        item_id: selectedItem.id,
+        ...form,
+        duration_minutes:
+          minutesBetween(form.session_start_time, form.session_end_time) || 55,
       });
-      await load();
+      if (!mutation.ok && !mutation.queued) {
+        throw new Error(humanError(mutation.error || "Enregistrement impossible"));
+      }
+      if (bootstrap) applyBootstrap(bootstrap);
       setForm(emptySessionForm(selectedItem, previousCount + 2));
-      setMessage("Séance enregistrée avec succès.");
+      setMessage(
+        mutation.ok
+          ? "Séance enregistrée avec succès."
+          : "Séance conservée sur cet appareil. Elle sera synchronisée automatiquement.",
+      );
     } catch (cause: any) {
       setError(cause?.message || "Enregistrement impossible");
     } finally {
@@ -546,20 +543,24 @@ export default function TeacherTextbookPage() {
     setError(null);
     setMessage(null);
     try {
-      await fetchJson("/api/teacher/textbook/lesson-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { mutation, bootstrap } =
+        await saveTextbookLessonStatus<TextbookBootstrapPayload>({
           assignment_id: selectedAssignment.id,
           item_id: selectedItem.id,
           status,
-        }),
-      });
-      await load();
+        });
+      if (!mutation.ok && !mutation.queued) {
+        throw new Error(humanError(mutation.error || "Action impossible"));
+      }
+      if (bootstrap) applyBootstrap(bootstrap);
       setMessage(
-        status === "completed"
-          ? "Leçon marquée comme terminée."
-          : "Leçon rouverte pour modification.",
+        mutation.ok
+          ? status === "completed"
+            ? "Leçon marquée comme terminée."
+            : "Leçon rouverte pour modification."
+          : status === "completed"
+            ? "Leçon terminée sur cet appareil. La synchronisation se fera automatiquement."
+            : "Réouverture conservée sur cet appareil. La synchronisation se fera automatiquement.",
       );
     } catch (cause: any) {
       setError(cause?.message || "Action impossible");
@@ -597,7 +598,7 @@ export default function TeacherTextbookPage() {
                 </h1>
               </div>
               <div className="flex items-center gap-2">
-                {selectedAssignment?.progression?.document?.signed_url ? (
+                {isOnline && selectedAssignment?.progression?.document?.signed_url ? (
                   <a
                     href={selectedAssignment.progression.document.signed_url}
                     target="_blank"
@@ -608,10 +609,19 @@ export default function TeacherTextbookPage() {
                     <span className="hidden sm:inline">Progression officielle</span>
                     <span className="sm:hidden">PDF</span>
                   </a>
+                ) : !isOnline && selectedAssignment?.progression?.document?.signed_url ? (
+                  <span
+                    title="La progression PDF nécessite une connexion."
+                    className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-black text-slate-400 sm:text-sm"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span className="hidden sm:inline">PDF disponible en ligne</span>
+                    <span className="sm:hidden">PDF</span>
+                  </span>
                 ) : null}
                 <button
                   type="button"
-                  onClick={load}
+                  onClick={() => void load()}
                   disabled={busy}
                   className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800 disabled:opacity-60 sm:text-sm"
                 >
@@ -694,6 +704,17 @@ export default function TeacherTextbookPage() {
             </div>
           ) : null}
         </header>
+
+        <OfflineSyncBar
+          onMessage={(value) => {
+            setError(null);
+            setMessage(value);
+          }}
+          onSynced={() => load(true)}
+        />
+        <OfflineReadinessCard
+          role={accessMode === "class_device" ? "class-device" : "teacher"}
+        />
 
         {message ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">

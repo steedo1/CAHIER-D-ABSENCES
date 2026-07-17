@@ -12,18 +12,24 @@ import {
   gradesSettingsKey,
   type GradesOfflineRole,
 } from "@/lib/offline-grades";
+import {
+  TEXTBOOK_BOOTSTRAP_KEY,
+  textbookSlotsKey,
+} from "@/lib/offline-textbook";
 
 export type OfflineRole = "teacher" | "class-device";
 
 export type OfflineReadiness = {
-  version: 2;
+  version: 3;
   role: OfflineRole;
   prepared_at: string;
   class_count: number;
   student_count: number;
   slot_count: number;
   evaluation_count: number;
+  textbook_assignment_count: number;
   grades_ready: boolean;
+  textbook_ready: boolean;
   shell_ready: boolean;
 };
 
@@ -57,6 +63,13 @@ type GradePeriod = {
 
 type GradeEvaluation = {
   id?: string | null;
+};
+
+type TextbookBootstrap = {
+  items?: Array<{
+    id?: string | null;
+    class_id?: string | null;
+  }>;
 };
 
 const READINESS_PREFIX = "offline:readiness:";
@@ -296,9 +309,32 @@ async function prepareGrades(
   return { classIds, studentIds, evaluationCount: evaluationList.length };
 }
 
+async function prepareTextbook(
+  onProgress: ProgressCallback,
+): Promise<{ classIds: string[]; assignmentCount: number }> {
+  onProgress("Téléchargement du cahier de texte…");
+  const bootstrap = await fetchAndCache<TextbookBootstrap>(
+    "/api/teacher/textbook/bootstrap",
+    TEXTBOOK_BOOTSTRAP_KEY,
+  );
+  const assignments = Array.isArray(bootstrap?.items) ? bootstrap.items : [];
+  const classIds = uniqueIds(assignments.map((item) => item?.class_id));
+
+  onProgress(`Cahier de texte : téléchargement de ${classIds.length} grille(s) horaire(s)…`);
+  await mapLimit(classIds, 4, async (classId, index) => {
+    onProgress(`Cahier de texte : créneaux ${index + 1}/${classIds.length}…`);
+    await fetchAndCache(
+      `/api/institution/slots?class_id=${encodeURIComponent(classId)}`,
+      textbookSlotsKey(classId),
+    );
+  });
+
+  return { classIds, assignmentCount: assignments.length };
+}
+
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
   const value = await cacheGet<OfflineReadiness>(readinessKey(role));
-  return value?.version === 2 && value.role === role ? value : null;
+  return value?.version === 3 && value.role === role ? value : null;
 }
 
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
@@ -356,19 +392,26 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
 
   const preparedGrades = await prepareGrades("teacher", onProgress);
   for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
+  const preparedTextbook = await prepareTextbook(onProgress);
 
   onProgress("Préparation de l’application…");
-  await warmOfflineShell(["/attendance", "/grades"]);
+  await warmOfflineShell(["/attendance", "/grades", "/enseignant/cahier-de-texte"]);
 
   return {
-    version: 2,
+    version: 3,
     role: "teacher",
     prepared_at: new Date().toISOString(),
-    class_count: uniqueIds([...classIds, ...preparedGrades.classIds]).length,
+    class_count: uniqueIds([
+      ...classIds,
+      ...preparedGrades.classIds,
+      ...preparedTextbook.classIds,
+    ]).length,
     student_count: studentIds.size,
     slot_count: slots.length,
     evaluation_count: preparedGrades.evaluationCount,
+    textbook_assignment_count: preparedTextbook.assignmentCount,
     grades_ready: true,
+    textbook_ready: true,
     shell_ready: true,
   };
 }
@@ -431,19 +474,30 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
 
   const preparedGrades = await prepareGrades("class-device", onProgress);
   for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
+  const preparedTextbook = await prepareTextbook(onProgress);
 
   onProgress("Préparation de l’application…");
-  await warmOfflineShell(["/class", "/grades/class-device"]);
+  await warmOfflineShell([
+    "/class",
+    "/grades/class-device",
+    "/enseignant/cahier-de-texte",
+  ]);
 
   return {
-    version: 2,
+    version: 3,
     role: "class-device",
     prepared_at: new Date().toISOString(),
-    class_count: uniqueIds([...classIds, ...preparedGrades.classIds]).length,
+    class_count: uniqueIds([
+      ...classIds,
+      ...preparedGrades.classIds,
+      ...preparedTextbook.classIds,
+    ]).length,
     student_count: studentIds.size,
     slot_count: periods.length,
     evaluation_count: preparedGrades.evaluationCount,
+    textbook_assignment_count: preparedTextbook.assignmentCount,
     grades_ready: true,
+    textbook_ready: true,
     shell_ready: true,
   };
 }

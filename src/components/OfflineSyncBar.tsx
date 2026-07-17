@@ -6,9 +6,10 @@ import { flushOutbox, outboxCount } from "@/lib/offline";
 
 type Props = {
   onMessage?: (message: string) => void;
+  onSynced?: () => void | Promise<void>;
 };
 
-export default function OfflineSyncBar({ onMessage }: Props) {
+export default function OfflineSyncBar({ onMessage, onSynced }: Props) {
   const [online, setOnline] = useState(true);
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
@@ -30,7 +31,7 @@ export default function OfflineSyncBar({ onMessage }: Props) {
 
       if (result.authRequired) {
         onMessage?.(
-          "Synchronisation suspendue : reconnectez votre session. Les notes restent conservées sur cet appareil."
+          "Synchronisation suspendue : reconnectez votre session. Les données restent conservées sur cet appareil."
         );
       } else if (result.blocked > 0) {
         onMessage?.(
@@ -46,6 +47,14 @@ export default function OfflineSyncBar({ onMessage }: Props) {
             ? `Synchronisation terminée ✅ (${result.flushed} action(s)).`
             : "Toutes les données sont déjà synchronisées ✅"
         );
+      }
+
+      if (result.remaining === 0 && !result.authRequired && result.blocked === 0) {
+        try {
+          await onSynced?.();
+        } catch {
+          // La synchronisation est acquise même si le rafraîchissement visuel échoue.
+        }
       }
     } catch (cause: any) {
       onMessage?.(

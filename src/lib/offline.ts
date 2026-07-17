@@ -69,7 +69,7 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-const SW_BUILD = "2026-07-17-offline-grades-v2";
+const SW_BUILD = "2026-07-17-offline-textbook-v3";
 export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -372,6 +372,14 @@ function uid() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
+let _lastMutationCreatedAt = 0;
+
+function nextMutationCreatedAt() {
+  const now = Date.now();
+  _lastMutationCreatedAt = Math.max(now, _lastMutationCreatedAt + 1);
+  return _lastMutationCreatedAt;
+}
+
 async function outboxAdd(row: OutboxRow): Promise<void> {
   const db = await openDB();
   const tx = db.transaction(["outbox"], "readwrite");
@@ -474,7 +482,7 @@ export async function offlineMutateJson<T = any>(
       body: bodyObj,
       headers: operationHeaders,
       mergeKey: opts?.mergeKey,
-      createdAt: Date.now(),
+      createdAt: nextMutationCreatedAt(),
       meta: opts?.meta,
       state: "pending",
       attempts: 0,
