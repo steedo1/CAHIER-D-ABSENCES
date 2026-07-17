@@ -1,16 +1,29 @@
 "use client";
 
 import { cacheGet, cacheSet, warmOfflineShell } from "@/lib/offline";
+import {
+  gradesClassesKey,
+  gradesComponentsKey,
+  gradesEvaluationsKey,
+  gradesLockKey,
+  gradesPeriodsKey,
+  gradesRosterKey,
+  gradesScoresKey,
+  gradesSettingsKey,
+  type GradesOfflineRole,
+} from "@/lib/offline-grades";
 
 export type OfflineRole = "teacher" | "class-device";
 
 export type OfflineReadiness = {
-  version: 1;
+  version: 2;
   role: OfflineRole;
   prepared_at: string;
   class_count: number;
   student_count: number;
   slot_count: number;
+  evaluation_count: number;
+  grades_ready: boolean;
   shell_ready: boolean;
 };
 
@@ -26,8 +39,24 @@ type TeacherBootstrap = {
   version?: number;
   slots?: Array<{
     key: string;
-    items?: Array<{ class_id?: string | null }>;
+    items?: GradeClass[];
   }>;
+};
+
+type GradeClass = {
+  class_id?: string | null;
+  class_label?: string | null;
+  level?: string | null;
+  subject_id?: string | null;
+  subject_name?: string | null;
+};
+
+type GradePeriod = {
+  id?: string | null;
+};
+
+type GradeEvaluation = {
+  id?: string | null;
 };
 
 const READINESS_PREFIX = "offline:readiness:";
@@ -123,9 +152,153 @@ function uniqueIds(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
+function uniqueGradeClasses(values: GradeClass[]): GradeClass[] {
+  const map = new Map<string, GradeClass>();
+  for (const item of values) {
+    const classId = String(item?.class_id || "").trim();
+    if (!classId) continue;
+    const subjectId = String(item?.subject_id || "").trim() || null;
+    map.set(`${classId}|${subjectId || ""}`, {
+      ...item,
+      class_id: classId,
+      subject_id: subjectId,
+    });
+  }
+  return Array.from(map.values());
+}
+
+async function prepareGrades(
+  role: GradesOfflineRole,
+  onProgress: ProgressCallback
+): Promise<{ classIds: string[]; studentIds: Set<string>; evaluationCount: number }> {
+  onProgress("Téléchargement des classes du cahier de notes…");
+  const classPayload: any = await fetchAndCache(
+    "/api/grades/classes",
+    gradesClassesKey(role)
+  );
+  const gradeClasses = uniqueGradeClasses(
+    Array.isArray(classPayload?.items) ? classPayload.items : []
+  );
+  const classIds = uniqueIds(gradeClasses.map((item) => item.class_id));
+
+  const settingsCandidates = [
+    "/api/teacher/institution/settings",
+    "/api/institution/settings",
+    "/api/admin/institution/settings",
+  ].map((url) => ({ url, key: gradesSettingsKey(role, url) }));
+  try {
+    await fetchFirstAndCache(settingsCandidates);
+  } catch {
+    // Le nom de l'établissement est décoratif ; les notes restent préparables.
+  }
+
+  onProgress("Téléchargement des périodes de notes…");
+  const periodPayload: any = await fetchFirstAndCache(
+    [
+      "/api/admin/institution/grading-periods",
+      "/api/institution/grading-periods",
+      "/api/teacher/institution/grading-periods",
+    ].map((url) => ({ url, key: gradesPeriodsKey(role) })),
+    (payload: any) => Array.isArray(payload?.items)
+  );
+  const periodIds = uniqueIds(
+    (Array.isArray(periodPayload?.items) ? periodPayload.items : []).map(
+      (period: GradePeriod) => period?.id || null
+    )
+  );
+  const periodVariants: Array<string | null> = periodIds.length ? periodIds : [null];
+  const studentIds = new Set<string>();
+
+  onProgress(`Notes : téléchargement de ${classIds.length} liste(s) d’élèves…`);
+  await mapLimit(classIds, 4, async (classId, index) => {
+    onProgress(`Notes : liste d’élèves ${index + 1}/${classIds.length}…`);
+    const rosterUrl =
+      role === "teacher"
+        ? `/api/teacher/roster?class_id=${encodeURIComponent(classId)}`
+        : `/api/grades/roster?class_id=${encodeURIComponent(classId)}`;
+    const roster: any = await fetchAndCache(rosterUrl, gradesRosterKey(role, classId));
+    for (const student of Array.isArray(roster?.items) ? roster.items : []) {
+      const id = String(student?.id || "").trim();
+      if (id) studentIds.add(id);
+    }
+  });
+
+  const componentPairs = gradeClasses.filter(
+    (item) => item.class_id && item.subject_id
+  );
+  await mapLimit(componentPairs, 4, async (item) => {
+    const classId = String(item.class_id);
+    const subjectId = String(item.subject_id);
+    const params = new URLSearchParams({ class_id: classId, subject_id: subjectId });
+    await fetchAndCache(
+      `/api/teacher/grades/components?${params.toString()}`,
+      gradesComponentsKey(role, classId, subjectId)
+    );
+  });
+
+  const evaluationTasks = gradeClasses.flatMap((item) =>
+    periodVariants.map((periodId) => ({ item, periodId }))
+  );
+  const evaluations = new Map<string, GradeEvaluation>();
+
+  onProgress(
+    `Téléchargement de ${evaluationTasks.length} ensemble(s) d’évaluations…`
+  );
+  await mapLimit(evaluationTasks, 4, async ({ item, periodId }, index) => {
+    if (index === 0 || (index + 1) % 5 === 0 || index + 1 === evaluationTasks.length) {
+      onProgress(`Évaluations ${index + 1}/${evaluationTasks.length}…`);
+    }
+
+    const classId = String(item.class_id || "");
+    const subjectId = String(item.subject_id || "").trim() || null;
+    const params = new URLSearchParams({ class_id: classId });
+    if (subjectId) params.set("subject_id", subjectId);
+    if (periodId) params.set("grading_period_id", periodId);
+    const endpoint =
+      role === "teacher"
+        ? `/api/teacher/grades/evaluations?${params.toString()}`
+        : `/api/grades/evaluations?${params.toString()}`;
+    const payload: any = await fetchAndCache(
+      endpoint,
+      gradesEvaluationsKey(role, classId, subjectId, periodId)
+    );
+
+    for (const evaluation of Array.isArray(payload?.items) ? payload.items : []) {
+      const id = String(evaluation?.id || "").trim();
+      if (id) evaluations.set(id, evaluation);
+    }
+  });
+
+  const evaluationList = Array.from(evaluations.values());
+  onProgress(`Téléchargement des notes de ${evaluationList.length} évaluation(s)…`);
+  await mapLimit(evaluationList, 4, async (evaluation, index) => {
+    const evaluationId = String(evaluation.id || "");
+    if (index === 0 || (index + 1) % 10 === 0 || index + 1 === evaluationList.length) {
+      onProgress(`Notes ${index + 1}/${evaluationList.length}…`);
+    }
+    const scoresUrl =
+      role === "teacher"
+        ? `/api/teacher/grades/scores?evaluation_id=${encodeURIComponent(evaluationId)}`
+        : `/api/grades/scores?evaluation_id=${encodeURIComponent(evaluationId)}`;
+    await fetchAndCache(scoresUrl, gradesScoresKey(role, evaluationId));
+
+    const lockUrl =
+      role === "teacher"
+        ? `/api/teacher/grades/locks?evaluation_id=${encodeURIComponent(evaluationId)}`
+        : `/api/grades/locks?evaluation_id=${encodeURIComponent(evaluationId)}`;
+    try {
+      await fetchAndCache(lockUrl, gradesLockKey(role, evaluationId));
+    } catch {
+      // Certaines installations n'activent pas encore le verrouillage par PIN.
+    }
+  });
+
+  return { classIds, studentIds, evaluationCount: evaluationList.length };
+}
+
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
   const value = await cacheGet<OfflineReadiness>(readinessKey(role));
-  return value?.version === 1 && value.role === role ? value : null;
+  return value?.version === 2 && value.role === role ? value : null;
 }
 
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
@@ -181,16 +354,21 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     }
   });
 
+  const preparedGrades = await prepareGrades("teacher", onProgress);
+  for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
+
   onProgress("Préparation de l’application…");
-  await warmOfflineShell(["/attendance"]);
+  await warmOfflineShell(["/attendance", "/grades"]);
 
   return {
-    version: 1,
+    version: 2,
     role: "teacher",
     prepared_at: new Date().toISOString(),
-    class_count: classIds.length,
+    class_count: uniqueIds([...classIds, ...preparedGrades.classIds]).length,
     student_count: studentIds.size,
     slot_count: slots.length,
+    evaluation_count: preparedGrades.evaluationCount,
+    grades_ready: true,
     shell_ready: true,
   };
 }
@@ -251,16 +429,21 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
     );
   });
 
+  const preparedGrades = await prepareGrades("class-device", onProgress);
+  for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
+
   onProgress("Préparation de l’application…");
-  await warmOfflineShell(["/class"]);
+  await warmOfflineShell(["/class", "/grades/class-device"]);
 
   return {
-    version: 1,
+    version: 2,
     role: "class-device",
     prepared_at: new Date().toISOString(),
-    class_count: classIds.length,
+    class_count: uniqueIds([...classIds, ...preparedGrades.classIds]).length,
     student_count: studentIds.size,
     slot_count: periods.length,
+    evaluation_count: preparedGrades.evaluationCount,
+    grades_ready: true,
     shell_ready: true,
   };
 }

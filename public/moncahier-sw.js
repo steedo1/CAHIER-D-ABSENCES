@@ -1,10 +1,15 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-17-offline-ready-v1";
+const VERSION = "2026-07-17-offline-grades-v2";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
-const OFFLINE_PAGE_PATHS = new Set(["/attendance", "/class"]);
+const OFFLINE_PAGE_PATHS = new Set([
+  "/attendance",
+  "/class",
+  "/grades",
+  "/grades/class-device",
+]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -88,7 +93,7 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     // Ne jamais conserver automatiquement les pages parent/admin personnalisées.
-    // Seuls les deux écrans explicitement préparés sont servis hors connexion.
+    // Seuls les écrans pédagogiques explicitement préparés sont servis hors connexion.
     if (OFFLINE_PAGE_PATHS.has(url.pathname)) {
       event.respondWith(navigationResponse(request));
     }

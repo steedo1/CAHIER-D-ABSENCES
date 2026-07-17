@@ -16,6 +16,21 @@ import {
   KeyRound,
   FileText,
 } from "lucide-react";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflineSyncBar from "@/components/OfflineSyncBar";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  gradesClassesKey,
+  gradesComponentsKey,
+  gradesEvaluationsKey,
+  gradesGetJson,
+  gradesLockKey,
+  gradesPeriodsKey,
+  gradesRosterKey,
+  gradesScoresKey,
+  gradesSettingsKey,
+  saveGradesScores,
+} from "@/lib/offline-grades";
 
 /* =========================
    Debug helpers (logs)
@@ -338,6 +353,7 @@ function GhostButton(
 ========================= */
 export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
+  const { isOnline } = useOnlineStatus();
 
   // Nom établissement + année scolaire
   const [institutionName, setInstitutionName] = useState<string | null>(null);
@@ -395,23 +411,10 @@ export default function ClassDeviceNotesPage() {
         // 2) Fallback réseau : teacher/institution/settings, puis institution/settings, puis admin
         async function getJson(url: string) {
           try {
-            const r = await fetch(url, { cache: "no-store" });
-            logInfo(
-              "useEffect[institution] -> fetch",
+            return await gradesGetJson(
               url,
-              "status",
-              r.status
+              gradesSettingsKey("class-device", url)
             );
-            if (!r.ok) return null;
-            const j = await r.json().catch((err) => {
-              logError(
-                "useEffect[institution] -> JSON parse error",
-                url,
-                err
-              );
-              return null;
-            });
-            return j;
           } catch (err) {
             logError("useEffect[institution] -> erreur réseau", url, err);
             return null;
@@ -632,12 +635,10 @@ export default function ClassDeviceNotesPage() {
         "useEffect[classes] -> début chargement des classes pour compte-classe"
       );
       try {
-        const r = await fetch("/api/grades/classes", { cache: "no-store" });
-        logInfo("useEffect[classes] -> /api/grades/classes status", r.status);
-        const j = await r.json().catch((err) => {
-          logError("useEffect[classes] -> erreur parse JSON", err);
-          return { items: [] };
-        });
+        const j: any = await gradesGetJson(
+          "/api/grades/classes",
+          gradesClassesKey("class-device")
+        );
         const arr = (j.items || []) as TeachClass[];
         logInfo("useEffect[classes] -> classes reçues", arr);
         setTeachClasses(arr);
@@ -687,14 +688,10 @@ export default function ClassDeviceNotesPage() {
         for (const url of candidates) {
           try {
             logInfo("useEffect[periods] -> fetch", url);
-            const r = await fetch(url, { cache: "no-store" });
-            logInfo("useEffect[periods] -> status", url, r.status);
-            if (!r.ok) continue;
-
-            const j = await r.json().catch((err) => {
-              logError("useEffect[periods] -> JSON parse error", url, err);
-              return {};
-            });
+            const j: any = await gradesGetJson(
+              url,
+              gradesPeriodsKey("class-device")
+            );
 
             const items = Array.isArray(j?.items) ? (j.items as GradePeriod[]) : [];
             if (items.length) {
@@ -774,12 +771,14 @@ export default function ClassDeviceNotesPage() {
         });
         const url = `/api/teacher/grades/components?${params.toString()}`;
         logInfo("useEffect[components] -> fetch", url);
-        const r = await fetch(url, { cache: "no-store" });
-        logInfo("useEffect[components] -> status", r.status);
-        const j = await r.json().catch((err) => {
-          logError("useEffect[components] -> JSON parse error", err);
-          return { items: [] };
-        });
+        const j: any = await gradesGetJson(
+          url,
+          gradesComponentsKey(
+            "class-device",
+            selected.class_id,
+            selected.subject_id
+          )
+        );
         const arr = (j.items || []) as SubjectComponent[];
         logInfo("useEffect[components] -> sous-rubriques reçues", arr);
         setComponents(arr);
@@ -829,12 +828,10 @@ export default function ClassDeviceNotesPage() {
           selected.class_id
         )}`;
         logInfo("useEffect[data] -> fetch roster", rosterUrl);
-        const rRoster = await fetch(rosterUrl, { cache: "no-store" });
-        logInfo("useEffect[data] -> roster status", rRoster.status);
-        const jRoster = await rRoster.json().catch((err) => {
-          logError("useEffect[data] -> roster JSON parse error", err);
-          return { items: [] };
-        });
+        const jRoster: any = await gradesGetJson(
+          rosterUrl,
+          gradesRosterKey("class-device", selected.class_id)
+        );
         const ros = (jRoster.items || []) as RosterItem[];
         logInfo("useEffect[data] -> roster reçu", ros);
         setRoster(ros);
@@ -850,12 +847,15 @@ export default function ClassDeviceNotesPage() {
 
         const evalsUrl = `/api/grades/evaluations?${evalParams.toString()}`;
         logInfo("useEffect[data] -> fetch evaluations", evalsUrl);
-        const rEvals = await fetch(evalsUrl, { cache: "no-store" });
-        logInfo("useEffect[data] -> evaluations status", rEvals.status);
-        const jEvals = await rEvals.json().catch((err) => {
-          logError("useEffect[data] -> evals JSON parse error", err);
-          return { items: [] };
-        });
+        const jEvals: any = await gradesGetJson(
+          evalsUrl,
+          gradesEvaluationsKey(
+            "class-device",
+            selected.class_id,
+            selected.subject_id,
+            selectedPeriodId || null
+          )
+        );
         const evals = (jEvals.items || []) as Evaluation[];
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
         logInfo("useEffect[data] -> évaluations reçues", evals);
@@ -872,16 +872,10 @@ export default function ClassDeviceNotesPage() {
               eval_id: ev.id,
               url: scoresUrl,
             });
-            const r = await fetch(scoresUrl, { cache: "no-store" });
-            logInfo("useEffect[data] -> scores status", ev.id, r.status);
-            const j = await r.json().catch((err) => {
-              logError(
-                "useEffect[data] -> scores JSON parse error",
-                { eval_id: ev.id },
-                err
-              );
-              return { items: [] };
-            });
+            const j: any = await gradesGetJson(
+              scoresUrl,
+              gradesScoresKey("class-device", ev.id)
+            );
             const items = (j.items || []) as Array<{
               student_id: string;
               score: number | null;
@@ -919,19 +913,10 @@ export default function ClassDeviceNotesPage() {
       const url = `/api/grades/locks?evaluation_id=${encodeURIComponent(
         evaluation_id
       )}`;
-      const r = await fetch(url, { cache: "no-store" });
-      logInfo("refreshLockStatus -> GET", url, "status", r.status);
-
-      if (!r.ok) {
-        // Si l’endpoint n’existe pas / erreur : on cache la feature
-        setLocksSupported(false);
-        return;
-      }
-
-      const j: any = await r.json().catch((err) => {
-        logError("refreshLockStatus -> JSON parse error", err);
-        return null;
-      });
+      const j: any = await gradesGetJson(
+        url,
+        gradesLockKey("class-device", evaluation_id)
+      );
 
       if (!j?.ok) {
         setLocksSupported(false);
@@ -971,6 +956,10 @@ export default function ClassDeviceNotesPage() {
   async function submitLockModal() {
     const evaluation_id = lockModalEvalId;
     if (!evaluation_id) return;
+    if (!isOnline) {
+      setLockErr("Le verrouillage par PIN nécessite une connexion Internet.");
+      return;
+    }
 
     const pin = lockPin.trim();
     if (!isValidPin(pin)) {
@@ -1096,6 +1085,7 @@ export default function ClassDeviceNotesPage() {
     setMsg(null);
 
     const savedEvalIds: string[] = [];
+    const queuedEvalIds: string[] = [];
     const lockedEvalIds: string[] = [];
     const publicationLockedEvalIds: string[] = [];
 
@@ -1126,28 +1116,22 @@ export default function ClassDeviceNotesPage() {
           items,
         });
 
-        const r = await fetch("/api/grades/scores/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const result = await saveGradesScores("class-device", {
             evaluation_id,
             items,
             delete_if_null: true,
-          }),
-        });
+          });
 
-        const raw = await r.text();
-        logInfo("saveAllChanges -> response status", r.status, "body", raw);
-
-        let j: any = {};
-        try {
-          j = raw ? JSON.parse(raw) : {};
-        } catch (err) {
-          logError("saveAllChanges -> JSON parse error", err);
+        if (!result.ok && result.queued) {
+          savedEvalIds.push(evaluation_id);
+          queuedEvalIds.push(evaluation_id);
+          continue;
         }
 
+        const j: any = result.ok ? result.data : result.data || {};
+
         // 🧷 Verrouillage métier publication côté serveur
-        if (r.status === 423 && isPublicationWorkflowLockError(j?.error)) {
+        if (!result.ok && result.status === 423 && isPublicationWorkflowLockError(j?.error)) {
           publicationLockedEvalIds.push(evaluation_id);
           continue;
         }
@@ -1169,7 +1153,10 @@ export default function ClassDeviceNotesPage() {
           continue;
         }
 
-        if (!r.ok || !j?.ok) {
+        if (!result.ok) {
+          throw new Error(j?.error || result.error || "Échec d’enregistrement.");
+        }
+        if (j?.ok === false) {
           throw new Error(j?.error || "Échec d’enregistrement.");
         }
 
@@ -1202,7 +1189,16 @@ export default function ClassDeviceNotesPage() {
         }
       }
 
-      if (publicationLockedEvalIds.length > 0 && savedEvalIds.length > 0) {
+      if (queuedEvalIds.length > 0) {
+        const ignored: string[] = [];
+        if (publicationLockedEvalIds.length > 0) ignored.push("évaluations soumises/publiées ignorées");
+        if (lockedEvalIds.length > 0) ignored.push("évaluations verrouillées ignorées");
+        setMsg(
+          `Notes enregistrées sur cet appareil ✅ — ${queuedEvalIds.length} envoi(s) en attente de synchronisation${
+            ignored.length ? ` (${ignored.join(" ; ")})` : ""
+          }.`
+        );
+      } else if (publicationLockedEvalIds.length > 0 && savedEvalIds.length > 0) {
         setMsg(
           "Notes enregistrées ✅ (certaines évaluations soumises/publiées ont été ignorées)."
         );
@@ -1224,6 +1220,7 @@ export default function ClassDeviceNotesPage() {
 
       logInfo("saveAllChanges -> terminé", {
         savedEvalIds,
+        queuedEvalIds,
         lockedEvalIds,
         publicationLockedEvalIds,
       });
@@ -1239,6 +1236,12 @@ export default function ClassDeviceNotesPage() {
   async function addEvaluation() {
     if (!selected) {
       logInfo("addEvaluation -> aucun selected, on annule.");
+      return;
+    }
+    if (!isOnline) {
+      setMsg(
+        "Hors connexion : vous pouvez saisir les évaluations déjà préparées. La création d’une nouvelle évaluation nécessite Internet."
+      );
       return;
     }
 
@@ -1308,6 +1311,11 @@ export default function ClassDeviceNotesPage() {
   async function togglePublish(ev: Evaluation) {
     setMsg(null);
 
+    if (!isOnline) {
+      setMsg("La publication d’une évaluation nécessite une connexion Internet.");
+      return;
+    }
+
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible de modifier la publication.");
       return;
@@ -1374,6 +1382,11 @@ export default function ClassDeviceNotesPage() {
 
   async function deleteEvaluation(ev: Evaluation) {
     logInfo("deleteEvaluation -> demande de suppression", ev);
+
+    if (!isOnline) {
+      setMsg("La suppression d’une évaluation nécessite une connexion Internet.");
+      return;
+    }
 
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible de supprimer une colonne.");
@@ -1660,6 +1673,12 @@ export default function ClassDeviceNotesPage() {
       logInfo("openAverages -> aucun selected, on annule.");
       return;
     }
+    if (!isOnline) {
+      setMsg(
+        "Le calcul officiel des moyennes nécessite Internet dans cette version. Vos notes hors ligne restent enregistrées sur l’appareil."
+      );
+      return;
+    }
     setMode("moyennes");
     setLoadingAvg(true);
     setMsg(null);
@@ -1706,6 +1725,11 @@ export default function ClassDeviceNotesPage() {
   async function saveBonuses() {
     if (!selected) {
       logInfo("saveBonuses -> aucun selected, on annule.");
+      return;
+    }
+
+    if (!isOnline) {
+      setMsg("L’enregistrement des bonus nécessite une connexion Internet.");
       return;
     }
 
@@ -2553,7 +2577,7 @@ export default function ClassDeviceNotesPage() {
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
               Saisissez les notes rapidement depuis le téléphone de la classe,
-              même sur mobile.
+              même sur mobile. Les évaluations déjà préparées restent saisissables sans Internet.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2584,6 +2608,9 @@ export default function ClassDeviceNotesPage() {
           </div>
         </div>
       </header>
+
+      <OfflineSyncBar onMessage={setMsg} />
+      <OfflineReadinessCard role="class-device" />
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">

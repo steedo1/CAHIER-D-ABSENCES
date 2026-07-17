@@ -102,11 +102,13 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
           {readiness ? (
             <p className="mt-1 text-sm text-slate-700">
               {readiness.class_count} classe(s), {readiness.student_count} élève(s),{" "}
-              {readiness.slot_count} créneau(x) — mis à jour le {formatPreparedAt(readiness.prepared_at)}.
+              {readiness.slot_count} créneau(x), {readiness.evaluation_count} évaluation(s) — mis à jour le{" "}
+              {formatPreparedAt(readiness.prepared_at)}.
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-600">
-              Télécharge l’emploi du temps, les listes d’élèves et l’application sur cet appareil.
+              Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et
+              l’application sur cet appareil.
             </p>
           )}
 

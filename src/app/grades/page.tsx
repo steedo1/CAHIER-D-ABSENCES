@@ -14,6 +14,21 @@ import {
   Lock,
   Unlock,
 } from "lucide-react";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflineSyncBar from "@/components/OfflineSyncBar";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  gradesClassesKey,
+  gradesComponentsKey,
+  gradesEvaluationsKey,
+  gradesGetJson,
+  gradesLockKey,
+  gradesPeriodsKey,
+  gradesRosterKey,
+  gradesScoresKey,
+  gradesSettingsKey,
+  saveGradesScores,
+} from "@/lib/offline-grades";
 
 type PrimaryButtonTone = "emerald" | "amber" | "slate" | "red";
 
@@ -377,6 +392,7 @@ function GhostButton(
 ========================= */
 export default function TeacherNotesPage() {
   const isMobile = useIsMobile();
+  const { isOnline } = useOnlineStatus();
 
   // Nom établissement + année scolaire
   const [institutionName, setInstitutionName] = useState<string | null>(null);
@@ -389,9 +405,7 @@ export default function TeacherNotesPage() {
     async function loadInstitutionFromApi() {
       async function getJson(url: string) {
         try {
-          const r = await fetch(url, { cache: "no-store" });
-          if (!r.ok) return null;
-          return await r.json();
+          return await gradesGetJson(url, gradesSettingsKey("teacher", url));
         } catch {
           return null;
         }
@@ -607,8 +621,10 @@ export default function TeacherNotesPage() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/teacher/classes", { cache: "no-store" });
-        const j = await r.json().catch(() => ({ items: [] }));
+        const j: any = await gradesGetJson(
+          "/api/grades/classes",
+          gradesClassesKey("teacher")
+        );
         const arr = (j.items || []) as TeachClass[];
         setTeachClasses(arr);
         if (!selKey && arr.length) {
@@ -636,8 +652,7 @@ export default function TeacherNotesPage() {
         const url = `/api/admin/institution/grading-periods${
           params.toString() ? `?${params.toString()}` : ""
         }`;
-        const r = await fetch(url, { cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
+        const j: any = await gradesGetJson(url, gradesPeriodsKey("teacher"));
         const arr = (j.items || []) as GradePeriod[];
         if (cancelled) return;
         setGradePeriods(arr);
@@ -676,11 +691,15 @@ export default function TeacherNotesPage() {
         if (selected.subject_id) {
           params.set("subject_id", selected.subject_id);
         }
-        const r = await fetch(
-          `/api/teacher/grades/components?${params.toString()}`,
-          { cache: "no-store" }
+        const url = `/api/teacher/grades/components?${params.toString()}`;
+        const j: any = await gradesGetJson(
+          url,
+          gradesComponentsKey(
+            "teacher",
+            selected.class_id,
+            selected.subject_id
+          )
         );
-        const j = await r.json().catch(() => ({ items: [] }));
         const arr = (j.items || []) as SubjectComponent[];
         setComponents(arr);
         if (arr.length > 0) {
@@ -710,13 +729,13 @@ export default function TeacherNotesPage() {
         setMsg(null);
 
         // 1) Roster
-        const rRoster = await fetch(
-          `/api/teacher/roster?class_id=${selected.class_id}`,
-          {
-            cache: "no-store",
-          }
+        const rosterUrl = `/api/teacher/roster?class_id=${encodeURIComponent(
+          selected.class_id
+        )}`;
+        const jRoster: any = await gradesGetJson(
+          rosterUrl,
+          gradesRosterKey("teacher", selected.class_id)
         );
-        const jRoster = await rRoster.json().catch(() => ({ items: [] }));
         const ros = (jRoster.items || []) as RosterItem[];
         setRoster(ros);
 
@@ -729,11 +748,16 @@ export default function TeacherNotesPage() {
         }
         appendSelectedPeriod(evalParams);
 
-        const rEvals = await fetch(
-          `/api/teacher/grades/evaluations?${evalParams.toString()}`,
-          { cache: "no-store" }
+        const evalsUrl = `/api/teacher/grades/evaluations?${evalParams.toString()}`;
+        const jEvals: any = await gradesGetJson(
+          evalsUrl,
+          gradesEvaluationsKey(
+            "teacher",
+            selected.class_id,
+            selected.subject_id,
+            selectedPeriodId || null
+          )
         );
-        const jEvals = await rEvals.json().catch(() => ({ items: [] }));
         const evals = (jEvals.items || []) as Evaluation[];
         // tri par date croissante (stable)
         evals.sort((a, b) => a.eval_date.localeCompare(b.eval_date));
@@ -743,13 +767,13 @@ export default function TeacherNotesPage() {
         const g: GradesByEval = {};
         await Promise.all(
           evals.map(async (ev) => {
-            const r = await fetch(
-              `/api/teacher/grades/scores?evaluation_id=${ev.id}`,
-              {
-                cache: "no-store",
-              }
+            const scoresUrl = `/api/teacher/grades/scores?evaluation_id=${encodeURIComponent(
+              ev.id
+            )}`;
+            const j: any = await gradesGetJson(
+              scoresUrl,
+              gradesScoresKey("teacher", ev.id)
             );
-            const j = await r.json().catch(() => ({ items: [] }));
             const items = (j.items || []) as Array<{
               student_id: string;
               score: number | null;
@@ -810,9 +834,10 @@ export default function TeacherNotesPage() {
 
     for (const url of urls) {
       try {
-        const r = await fetch(url, { cache: "no-store" });
-        if (!r.ok) continue;
-        const j = await r.json().catch(() => null);
+        const j: any = await gradesGetJson(
+          url,
+          gradesLockKey("teacher", evId)
+        );
         if (!j) continue;
         if (j?.ok === false) continue;
         const lock = normalizeLockResponse(evId, j);
@@ -904,6 +929,10 @@ export default function TeacherNotesPage() {
 
   async function submitLockModal() {
     if (!lockTargetEv) return;
+    if (!isOnline) {
+      setMsg("Le verrouillage par PIN nécessite une connexion Internet.");
+      return;
+    }
     const evId = lockTargetEv.id;
 
     const wanted = lockModalMode;
@@ -1030,28 +1059,31 @@ export default function TeacherNotesPage() {
     setMsg(null);
 
     try {
+      let queuedCount = 0;
       for (const [evaluation_id, per] of perEval) {
         const items = Object.entries(per).map(([student_id, score]) => ({
           student_id,
           score: score == null ? null : Number(score),
         }));
 
-        const r = await fetch("/api/teacher/grades/scores/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const result = await saveGradesScores("teacher", {
             evaluation_id,
             items,
             delete_if_null: true,
             strict: false,
-          }),
-        });
+          });
 
-        const j = await r.json().catch(() => ({}));
-
-        if (!r.ok || !j?.ok) {
-          throw new Error(j?.message || j?.error || "Échec d’enregistrement.");
+        if (!result.ok && !result.queued) {
+          const payload: any = result.data;
+          throw new Error(
+            payload?.message || payload?.error || result.error || "Échec d’enregistrement."
+          );
         }
+        if (result.ok && (result.data as any)?.ok === false) {
+          const payload: any = result.data;
+          throw new Error(payload?.message || payload?.error || "Échec d’enregistrement.");
+        }
+        if (!result.ok && result.queued) queuedCount += 1;
       }
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
@@ -1091,11 +1123,18 @@ export default function TeacherNotesPage() {
         notes.push("certaines colonnes soumises/publiées ont été ignorées");
       }
 
-      setMsg(
-        notes.length > 0
-          ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
-          : "Notes enregistrées ✅"
-      );
+      if (queuedCount > 0) {
+        const suffix = notes.length > 0 ? ` (${notes.join(" ; ")})` : "";
+        setMsg(
+          `Notes enregistrées sur cet appareil ✅ — ${queuedCount} envoi(s) en attente de synchronisation${suffix}.`
+        );
+      } else {
+        setMsg(
+          notes.length > 0
+            ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
+            : "Notes enregistrées ✅"
+        );
+      }
     } catch (e: any) {
       setMsg(e?.message || "Échec d’enregistrement des notes.");
     } finally {
@@ -1105,6 +1144,12 @@ export default function TeacherNotesPage() {
 
   async function addEvaluation() {
     if (!selected) return;
+    if (!isOnline) {
+      setMsg(
+        "Hors connexion : vous pouvez saisir les évaluations déjà préparées. La création d’une nouvelle évaluation nécessite Internet."
+      );
+      return;
+    }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible d’ajouter une nouvelle note.");
       return;
@@ -1158,6 +1203,10 @@ export default function TeacherNotesPage() {
 
   /* -------- Publication (panneau séparé) -------- */
   async function togglePublish(ev: Evaluation) {
+    if (!isOnline) {
+      setMsg("La publication d’une évaluation nécessite une connexion Internet.");
+      return;
+    }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible de modifier la publication.");
       return;
@@ -1223,6 +1272,10 @@ export default function TeacherNotesPage() {
 
   /* -------- Suppression d’une évaluation (colonne) -------- */
   async function deleteEvaluation(ev: Evaluation) {
+    if (!isOnline) {
+      setMsg("La suppression d’une évaluation nécessite une connexion Internet.");
+      return;
+    }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible de supprimer une colonne.");
       return;
@@ -1487,6 +1540,12 @@ export default function TeacherNotesPage() {
 
   async function openAverages() {
     if (!selected) return;
+    if (!isOnline) {
+      setMsg(
+        "Le calcul officiel des moyennes nécessite Internet dans cette version. Vos notes hors ligne restent enregistrées sur l’appareil."
+      );
+      return;
+    }
     setMode("moyennes");
     setLoadingAvg(true);
     setMsg(null);
@@ -1512,6 +1571,10 @@ export default function TeacherNotesPage() {
 
   async function saveBonuses() {
     if (!selected) return;
+    if (!isOnline) {
+      setMsg("L’enregistrement des bonus nécessite une connexion Internet.");
+      return;
+    }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. Impossible de modifier les bonus.");
       return;
@@ -2230,7 +2293,7 @@ export default function TeacherNotesPage() {
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
               Créez vos évaluations et saisissez les notes en quelques gestes,
-              même sur mobile.
+              même sur mobile. Les évaluations déjà préparées restent saisissables sans Internet.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2261,6 +2324,9 @@ export default function TeacherNotesPage() {
           </div>
         </div>
       </header>
+
+      <OfflineSyncBar onMessage={setMsg} />
+      <OfflineReadinessCard role="teacher" />
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-linear-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
