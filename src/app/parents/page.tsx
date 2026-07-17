@@ -1286,7 +1286,7 @@ export default function ParentPage() {
   const [textbookByKid, setTextbookByKid] = useState<Record<string, ParentTextbookProgression[]>>({});
   const [textbookLoading, setTextbookLoading] = useState(false);
   const [textbookMsg, setTextbookMsg] = useState<string | null>(null);
-  const [activeTextbookSubject, setActiveTextbookSubject] = useState<string | "all">("all");
+  const [activeTextbookSubject, setActiveTextbookSubject] = useState<string>("");
 
   // Matière sélectionnée par enfant + détails ouverts dans le cahier de notes
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
@@ -1425,7 +1425,7 @@ export default function ParentPage() {
 
   const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
     home: { breadcrumb: "Accueil", title: "Bienvenue cher parent", tab: "Accueil" },
-    textbook: { breadcrumb: "Cahier de texte", title: "Progression et devoirs", tab: "Cahier de texte" },
+    textbook: { breadcrumb: "Cahier de texte", title: "Cours et progression", tab: "Cahier de texte" },
     conduct: { breadcrumb: "Conduite", title: "Conduite en temps réel", tab: "Conduite" },
     absences: { breadcrumb: "Assiduité", title: "Absences et retards", tab: "Assiduité" },
     notes: { breadcrumb: "Notes", title: "Notes, moyennes et bulletins", tab: "Notes" },
@@ -1953,7 +1953,7 @@ export default function ParentPage() {
   useEffect(() => {
     if (!selectedKid?.id) return;
     loadTextbookForKid(selectedKid.id, true);
-    setActiveTextbookSubject("all");
+    setActiveTextbookSubject("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKid?.id]);
 
@@ -2693,152 +2693,332 @@ export default function ParentPage() {
             <section className="mb-6 space-y-4">
               {(() => {
                 const progressions = selectedKidTextbook;
-                const subjects = Array.from(new Set(progressions.map((p) => p.subject_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr"));
-                const filtered = activeTextbookSubject === "all"
-                  ? progressions
-                  : progressions.filter((p) => p.subject_name === activeTextbookSubject);
-                const allSessions = filtered
-                  .flatMap((prog) => visibleParentSessions(prog.items).map((session) => ({ ...session, subject_name: prog.subject_name, progression_title: prog.progression.title })))
-                  .slice(0, 8);
-                const homeworks = allSessions.filter((session) => String(session.homework || "").trim()).slice(0, 5);
-                const avgProgress = filtered.length
-                  ? Math.round(filtered.reduce((sum, p) => sum + Number(p.progress_percent || 0), 0) / filtered.length)
+                const subjects = Array.from(
+                  new Set(progressions.map((p) => p.subject_name).filter(Boolean)),
+                ).sort((a, b) => a.localeCompare(b, "fr"));
+
+                const selectedSubject = subjects.includes(activeTextbookSubject)
+                  ? activeTextbookSubject
+                  : subjects[0] || "";
+                const selectedProgressions = progressions.filter(
+                  (p) => p.subject_name === selectedSubject,
+                );
+                const primaryProgression = selectedProgressions[0] || null;
+
+                const selectedItems = selectedProgressions.flatMap((prog) =>
+                  prog.items.map((item) => ({
+                    ...item,
+                    assignment_id: prog.assignment_id,
+                    progression_title: prog.progression.title,
+                  })),
+                );
+                const sessions = selectedProgressions
+                  .flatMap((prog) =>
+                    visibleParentSessions(prog.items).map((session) => ({
+                      ...session,
+                      subject_name: prog.subject_name,
+                      progression_title: prog.progression.title,
+                    })),
+                  )
+                  .slice(0, 16);
+
+                const plannedMinutes = selectedProgressions.reduce(
+                  (sum, p) => sum + Number(p.planned_total_minutes || 0),
+                  0,
+                );
+                const completedMinutes = selectedProgressions.reduce(
+                  (sum, p) => sum + Number(p.completed_total_minutes || 0),
+                  0,
+                );
+                const progressPercent = plannedMinutes > 0
+                  ? Math.round((completedMinutes / plannedMinutes) * 100)
                   : 0;
+                const completedItems = selectedItems.filter(
+                  (item) => item.completion?.status === "completed",
+                ).length;
+                const currentItem =
+                  selectedItems.find(
+                    (item) =>
+                      item.completion?.status !== "completed" &&
+                      (item.sessions?.length || 0) > 0,
+                  ) ||
+                  selectedItems.find(
+                    (item) => item.completion?.status !== "completed",
+                  ) ||
+                  null;
 
                 return (
                   <>
-                    <div className="rounded-[32px] border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">Cahier de texte</div>
-                          <h2 className="mt-1 text-2xl font-black text-slate-950">Suivi de la progression</h2>
-                          <p className="mt-1 max-w-2xl text-[14px] font-semibold text-slate-500">
-                            Les leçons vues en classe, le contenu de séance et le travail à faire.
+                    <div className="overflow-hidden rounded-[30px] border border-emerald-100 bg-white shadow-sm">
+                      <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end lg:p-6">
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                            Cahier de texte
+                          </div>
+                          <h2 className="mt-1 text-2xl font-black text-slate-950 sm:text-3xl">
+                            Cours et progression
+                          </h2>
+                          <p className="mt-1 text-[14px] font-semibold text-slate-500">
+                            Choisissez une matière pour consulter le cours réalisé et le travail à faire.
                           </p>
-                        </div>
-                        <div className="min-w-[180px] rounded-3xl bg-emerald-50 p-4 text-center ring-1 ring-emerald-100">
-                          <div className="text-3xl font-black text-emerald-700">{avgProgress}%</div>
-                          <div className="mt-1 text-[12px] font-black uppercase tracking-[0.12em] text-emerald-800">Avancement</div>
-                        </div>
-                      </div>
 
-                      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTextbookSubject("all")}
-                          className={[
-                            "shrink-0 rounded-full px-4 py-2 text-[13px] font-black ring-1 transition",
-                            activeTextbookSubject === "all" ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50",
-                          ].join(" ")}
-                        >
-                          Toutes
-                        </button>
-                        {subjects.map((subject) => (
-                          <button
-                            key={subject}
-                            type="button"
-                            onClick={() => setActiveTextbookSubject(subject)}
-                            className={[
-                              "shrink-0 rounded-full px-4 py-2 text-[13px] font-black ring-1 transition",
-                              activeTextbookSubject === subject ? "bg-emerald-600 text-white ring-emerald-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50",
-                            ].join(" ")}
-                          >
-                            {subject}
-                          </button>
-                        ))}
+                          <label className="mt-5 block max-w-xl">
+                            <span className="mb-2 block text-[12px] font-black uppercase tracking-[0.14em] text-slate-600">
+                              Matière
+                            </span>
+                            <select
+                              value={selectedSubject}
+                              onChange={(event) => setActiveTextbookSubject(event.target.value)}
+                              disabled={!subjects.length}
+                              className="h-13 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] font-black text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              {!subjects.length ? (
+                                <option value="">Aucune matière disponible</option>
+                              ) : null}
+                              {subjects.map((subject) => (
+                                <option key={subject} value={subject}>
+                                  {subject}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        {primaryProgression ? (
+                          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+                            <div className="min-w-[150px] rounded-3xl bg-emerald-50 px-5 py-4 text-center ring-1 ring-emerald-100">
+                              <div className="text-3xl font-black text-emerald-700">
+                                {progressPercent}%
+                              </div>
+                              <div className="mt-1 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-800">
+                                Progression
+                              </div>
+                            </div>
+                            {primaryProgression.progression.document?.signed_url ? (
+                              <a
+                                href={primaryProgression.progression.document.signed_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-12 items-center justify-center rounded-2xl bg-slate-950 px-5 text-[13px] font-black text-white transition hover:bg-slate-800"
+                              >
+                                PDF officiel
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
                     {textbookLoading ? (
-                      <div className="grid gap-3 lg:grid-cols-3">
-                        <Skeleton className="h-40" />
-                        <Skeleton className="h-40" />
-                        <Skeleton className="h-40" />
+                      <div className="space-y-3">
+                        <Skeleton className="h-36" />
+                        <Skeleton className="h-52" />
                       </div>
                     ) : textbookMsg ? (
-                      <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5 text-sm font-bold text-rose-700">{textbookMsg}</div>
-                    ) : !filtered.length ? (
-                      <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-                        <div className="text-xl font-black text-slate-950">Aucune progression disponible</div>
+                      <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5 text-sm font-bold text-rose-700">
+                        {textbookMsg}
+                      </div>
+                    ) : !selectedProgressions.length ? (
+                      <div className="rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+                        <div className="text-xl font-black text-slate-950">
+                          Aucune progression disponible
+                        </div>
                         <p className="mt-2 text-sm font-semibold text-slate-500">
                           L’établissement doit affecter les progressions à la classe de votre enfant.
                         </p>
                       </div>
                     ) : (
                       <>
-                        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                          <div className="space-y-3">
-                            {filtered.map((prog) => {
-                              const completed = prog.items.filter((item) => item.completion?.status === "completed").length;
-                              const total = prog.items.length;
-                              return (
-                                <article key={prog.assignment_id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="rounded-[30px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                            <div>
+                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-[#003766]">
+                                {selectedSubject}
+                              </div>
+                              <h3 className="mt-1 text-2xl font-black text-slate-950">
+                                Cours réalisés et devoirs
+                              </h3>
+                            </div>
+                            <div className="text-[13px] font-bold text-slate-500">
+                              {sessions.length} séance{sessions.length > 1 ? "s" : ""} récente{sessions.length > 1 ? "s" : ""}
+                            </div>
+                          </div>
+
+                          <div className="mt-5 space-y-3">
+                            {sessions.length ? (
+                              sessions.map((session) => (
+                                <article
+                                  key={session.id}
+                                  className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+                                >
                                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="min-w-0">
-                                      <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">{prog.subject_name}</div>
-                                      <h3 className="mt-1 truncate text-xl font-black text-slate-950">{prog.progression.title}</h3>
-                                      <div className="mt-1 text-sm font-semibold text-slate-500">
-                                        {completed}/{total} élément{total > 1 ? "s" : ""} terminé{completed > 1 ? "s" : ""} · {prog.sessions_count} séance{prog.sessions_count > 1 ? "s" : ""}
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge tone="emerald">
+                                          {itemTypeLabel(session.item_type)}
+                                        </Badge>
+                                        <span className="text-[12px] font-black text-slate-500">
+                                          {dateFr(session.session_date)}
+                                          {session.session_period_label
+                                            ? ` · ${session.session_period_label}`
+                                            : ""}
+                                        </span>
                                       </div>
+                                      <h4 className="mt-2 text-lg font-black text-slate-950 sm:text-xl">
+                                        {session.item_title}
+                                      </h4>
+                                      {session.teacher_name ? (
+                                        <div className="mt-1 text-[13px] font-semibold text-slate-500">
+                                          {session.teacher_name}
+                                        </div>
+                                      ) : null}
                                     </div>
-                                    {prog.progression.document?.signed_url ? (
-                                      <a
-                                        href={prog.progression.document.signed_url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-[13px] font-black text-white hover:bg-slate-800"
-                                      >
-                                        PDF officiel
-                                      </a>
-                                    ) : null}
                                   </div>
-                                  <div className="mt-4 h-2 rounded-full bg-slate-100">
-                                    <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, prog.progress_percent || 0))}%` }} />
-                                  </div>
-                                  <div className="mt-3 flex items-center justify-between text-[13px] font-bold text-slate-600">
-                                    <span>{prog.progress_percent || 0}%</span>
-                                    <span>{formatHoursFromMinutes(prog.completed_total_minutes)} / {formatHoursFromMinutes(prog.planned_total_minutes)}</span>
+
+                                  <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)]">
+                                    <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+                                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
+                                        Contenu du cours
+                                      </div>
+                                      <p className="mt-2 whitespace-pre-wrap text-[15px] font-semibold leading-7 text-slate-800">
+                                        {String(session.content || "Aucun contenu détaillé n’a encore été renseigné.")}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
+                                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-amber-700">
+                                        Travail à faire
+                                      </div>
+                                      <p className="mt-2 whitespace-pre-wrap text-[15px] font-bold leading-7 text-amber-950">
+                                        {String(session.homework || "Aucun exercice indiqué pour cette séance.")}
+                                      </p>
+                                    </div>
                                   </div>
                                 </article>
-                              );
-                            })}
+                              ))
+                            ) : (
+                              <div className="rounded-3xl bg-slate-50 p-7 text-center ring-1 ring-slate-200">
+                                <div className="text-lg font-black text-slate-900">
+                                  Aucun cours renseigné pour le moment
+                                </div>
+                                <p className="mt-2 text-sm font-semibold text-slate-500">
+                                  Les séances saisies par l’enseignant apparaîtront ici.
+                                </p>
+                              </div>
+                            )}
                           </div>
+                        </div>
 
-                          <div className="space-y-3">
-                            <div className="rounded-[28px] border border-amber-200 bg-white p-4 shadow-sm">
-                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-amber-700">Travail à faire</div>
-                              <div className="mt-3 space-y-3">
-                                {homeworks.length ? homeworks.map((session) => (
-                                  <div key={session.id} className="rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-100">
-                                    <div className="text-[13px] font-black text-slate-950">{session.subject_name} · {dateFr(session.session_date)}</div>
-                                    <div className="mt-1 text-sm font-semibold text-amber-900">{session.homework}</div>
-                                  </div>
-                                )) : (
-                                  <div className="rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-500">Aucun travail à faire renseigné récemment.</div>
-                                )}
+                        <div className="rounded-[30px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
+                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0">
+                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">
+                                Avancement
+                              </div>
+                              <h3 className="mt-1 text-2xl font-black text-slate-950">
+                                Progression de la classe
+                              </h3>
+                              <p className="mt-1 text-sm font-semibold text-slate-500">
+                                {primaryProgression?.progression.title}
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 sm:min-w-[330px]">
+                              <div className="rounded-2xl bg-slate-50 p-3 text-center ring-1 ring-slate-200">
+                                <div className="text-xl font-black text-slate-950">
+                                  {completedItems}/{selectedItems.length}
+                                </div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
+                                  Étapes terminées
+                                </div>
+                              </div>
+                              <div className="rounded-2xl bg-emerald-50 p-3 text-center ring-1 ring-emerald-100">
+                                <div className="text-xl font-black text-emerald-800">
+                                  {formatHoursFromMinutes(completedMinutes)} / {formatHoursFromMinutes(plannedMinutes)}
+                                </div>
+                                <div className="text-[10px] font-black uppercase tracking-[0.1em] text-emerald-700">
+                                  Volume prévu
+                                </div>
                               </div>
                             </div>
+                          </div>
 
-                            <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-slate-600">Dernières séances</div>
-                              <div className="mt-3 space-y-3">
-                                {allSessions.length ? allSessions.map((session) => (
-                                  <div key={session.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div className="min-w-0">
-                                        <div className="truncate text-[14px] font-black text-slate-950">{session.subject_name} · {session.item_title}</div>
-                                        <div className="mt-1 text-[12px] font-bold text-slate-500">{dateFr(session.session_date)} {session.session_period_label ? `· ${session.session_period_label}` : ""}</div>
+                          <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all"
+                              style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }}
+                            />
+                          </div>
+
+                          {currentItem ? (
+                            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                              <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                                Étape actuelle
+                              </div>
+                              <div className="mt-1 text-[16px] font-black text-emerald-950">
+                                {currentItem.title}
+                              </div>
+                              <div className="mt-1 text-[13px] font-semibold text-emerald-800">
+                                {[currentItem.trimester, currentItem.month_label, currentItem.week_label]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <details className="group mt-4 rounded-2xl border border-slate-200 bg-white">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 text-[14px] font-black text-slate-900">
+                              <span>Voir toute la progression</span>
+                              <span className="text-slate-400 transition group-open:rotate-180">⌄</span>
+                            </summary>
+                            <div className="border-t border-slate-100 p-3 sm:p-4">
+                              <div className="space-y-2">
+                                {selectedItems.map((item, index) => {
+                                  const done = item.completion?.status === "completed";
+                                  const started = (item.sessions?.length || 0) > 0;
+                                  return (
+                                    <div
+                                      key={`${item.assignment_id}-${item.id}`}
+                                      className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3 sm:grid-cols-[42px_minmax(0,1fr)_auto] sm:items-center"
+                                    >
+                                      <div
+                                        className={[
+                                          "grid h-9 w-9 place-items-center rounded-full text-[12px] font-black",
+                                          done
+                                            ? "bg-emerald-600 text-white"
+                                            : started
+                                              ? "bg-amber-100 text-amber-800"
+                                              : "bg-white text-slate-500 ring-1 ring-slate-200",
+                                        ].join(" ")}
+                                      >
+                                        {done ? "✓" : index + 1}
                                       </div>
-                                      <Badge tone="emerald">{itemTypeLabel(session.item_type)}</Badge>
+                                      <div className="min-w-0">
+                                        <div className="text-[14px] font-black text-slate-900">
+                                          {item.title}
+                                        </div>
+                                        <div className="mt-1 text-[12px] font-semibold text-slate-500">
+                                          {[itemTypeLabel(item.item_type), item.trimester, item.week_label]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </div>
+                                      </div>
+                                      <div
+                                        className={[
+                                          "w-fit rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em]",
+                                          done
+                                            ? "bg-emerald-100 text-emerald-800"
+                                            : started
+                                              ? "bg-amber-100 text-amber-800"
+                                              : "bg-slate-200 text-slate-600",
+                                        ].join(" ")}
+                                      >
+                                        {done ? "Terminée" : started ? "En cours" : "À venir"}
+                                      </div>
                                     </div>
-                                    {session.content ? <p className="mt-2 text-sm font-semibold text-slate-700">{session.content}</p> : null}
-                                  </div>
-                                )) : (
-                                  <div className="rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-500">Aucune séance renseignée pour le moment.</div>
-                                )}
+                                  );
+                                })}
                               </div>
                             </div>
-                          </div>
+                          </details>
                         </div>
                       </>
                     )}
