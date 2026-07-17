@@ -404,8 +404,9 @@ export async function GET(req: NextRequest) {
 
     const tz = String(inst?.tz || "Africa/Abidjan");
 
-    // 1) Nouveau système : si un slot est fourni, on essaie le filtrage strict par créneau/EDT.
-    //    Si ça échoue ou que ça ne renvoie rien, on retombera sur l'ancien système.
+    // 1) Si un slot est fourni, le filtrage par emploi du temps est strict.
+    //    Une réponse vide signifie qu'aucun cours n'est prévu : ne jamais exposer
+    //    toutes les matières de la classe dans ce cas.
     if (slotRaw && !slotRaw.startsWith("closed|") && !slotRaw.startsWith("no-config|")) {
       const periodIds = await resolveAutoPeriodIds(srv, institutionId, tz, slotRaw);
 
@@ -434,9 +435,12 @@ export async function GET(req: NextRequest) {
           }
         }
       }
+
+      return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    // 2) Ancien système : matières de la classe (fallback en ligne + mode hors ligne)
+    // 2) Ancien système uniquement sans créneau demandé : utilisé pour constituer
+    //    le cache de secours lors de la préparation hors ligne.
     const legacySubjectIds = await getLegacySubjectIds(srv, class_id, institutionId);
     if (!legacySubjectIds.length) {
       return NextResponse.json({ items: [] as SubjectItem[] });

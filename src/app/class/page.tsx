@@ -19,6 +19,7 @@ import {
   loadClassDeviceSnapshot,
   clearClassDeviceSnapshot,
 } from "@/lib/offlineClassDevice";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -119,6 +120,7 @@ type ConductMax = {
 
 type SubjectLoadMode =
   | "auto"
+  | "auto-offline"
   | "legacy-fallback"
   | "legacy-offline"
   | "closed-online"
@@ -873,7 +875,9 @@ export default function ClassDevicePage() {
       try {
         const [cls, os, localOpenRaw] = await Promise.all([
           offlineGetJson("/api/class/my-classes", "classDevice:my-classes"),
-          offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session"),
+          offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session").catch(
+            () => ({ item: null })
+          ),
           cacheGet("classDevice:local-open"),
         ]);
 
@@ -1329,14 +1333,13 @@ export default function ClassDevicePage() {
     return `${wd}|${activeConfiguredSlot.start_time}|${activeConfiguredSlot.end_time}`;
   }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
 
-  const canUseLegacySubjectFlow = !isOnline;
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
-  const canStartAttendanceNow = canUseLegacySubjectFlow || !!activeConfiguredSlot || subjectLoadMode === "legacy-fallback";
+  const canStartAttendanceNow = !!activeConfiguredSlot;
 
   /* 2) charger les matières selon le mode courant
         - en ligne + créneau actif : nouveau système (slot)
         - en ligne + échec technique auto : fallback ancien système
-        - hors ligne : ancien système pur */
+        - hors ligne : cache strict du créneau, puis ancien cache en dernier recours */
   useEffect(() => {
     if (!classId) {
       setSubjects([]);
@@ -1358,7 +1361,7 @@ export default function ClassDevicePage() {
       const snapSubjectId = pendingSnapshotSubjectRef.current || snap?.state?.subjectId || "";
 
       setSubjectId((prev) => {
-        if (mode === "auto") {
+        if (mode === "auto" || mode === "auto-offline") {
           if (snapSubjectId && list.some((s) => s.id === snapSubjectId)) {
             return snapSubjectId;
           }
@@ -1386,17 +1389,6 @@ export default function ClassDevicePage() {
     };
 
     (async () => {
-      if (!isOnline) {
-        const legacyList = await loadLegacySubjects();
-        applyList(legacyList, legacyList.length ? "legacy-offline" : "empty");
-        return;
-      }
-
-      // IMPORTANT : on préchauffe toujours le cache legacy de la classe quand on est en ligne,
-      // même si l'UI affiche le mode auto. Sinon, en cas de coupure réseau brutale,
-      // le mode hors-ligne peut se retrouver sans aucune discipline en cache.
-      const legacyWarmPromise = loadLegacySubjects();
-
       if (!activeConfiguredSlot) {
         if (cancelled) return;
         setSubjects([]);
@@ -1405,6 +1397,29 @@ export default function ClassDevicePage() {
         pendingSnapshotSubjectRef.current = "";
         return;
       }
+
+      if (!isOnline) {
+        const preparedResp = await offlineGetJson(
+          `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
+          `classDevice:subjects:${classId}:${activeSlotKey}`
+        ).catch(() => null as any);
+
+        // Même une liste vide est une donnée valide : elle signifie qu'aucun cours
+        // n'est prévu. Le cache général n'est utilisé que si ce créneau n'a jamais
+        // été préparé sur l'appareil.
+        if (preparedResp != null) {
+          applyList(((preparedResp?.items || []) as Subject[]) ?? [], "auto-offline");
+          return;
+        }
+
+        const legacyList = await loadLegacySubjects();
+        applyList(legacyList, legacyList.length ? "legacy-offline" : "empty");
+        return;
+      }
+
+      // On préchauffe le cache général comme secours si la préparation complète
+      // n'a pas encore été exécutée sur cet appareil.
+      const legacyWarmPromise = loadLegacySubjects();
 
       const autoResp = await offlineGetJson(
         `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
@@ -1498,9 +1513,13 @@ export default function ClassDevicePage() {
 
   const usingLegacyOfflineMode = !open && subjectLoadMode === "legacy-offline";
   const usingLegacyFallbackMode = !open && subjectLoadMode === "legacy-fallback";
-  const scheduleBlockedOnline = isOnline && !open && !activeConfiguredSlot;
+  const scheduleBlocked = !open && !activeConfiguredSlot;
   const noScheduledSubjectNow =
-    isOnline && !!classId && !!activeConfiguredSlot && !open && subjectLoadMode === "empty" && subjects.length === 0;
+    !!classId &&
+    !!activeConfiguredSlot &&
+    !open &&
+    (subjectLoadMode === "empty" || subjectLoadMode === "auto-offline") &&
+    subjects.length === 0;
 
   const saveButtonLabel = busy && saveUxState === "saving"
     ? "Enregistrement…"
@@ -1588,8 +1607,8 @@ export default function ClassDevicePage() {
       return;
     }
 
-    if (isOnline && !activeConfiguredSlot && subjectLoadMode !== "legacy-fallback") {
-      setMsg("L’appel n’est autorisé en ligne que pendant un créneau ouvert par l’administration.");
+    if (!activeConfiguredSlot) {
+      setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
 
@@ -1598,7 +1617,8 @@ export default function ClassDevicePage() {
 
     try {
       const today = new Date();
-      const useLegacyTiming = !isOnline || subjectLoadMode === "legacy-fallback";
+      const useLegacyTiming =
+        subjectLoadMode === "legacy-offline" || subjectLoadMode === "legacy-fallback";
       const effectiveStart = useLegacyTiming
         ? startTime || activeConfiguredSlot?.start_time || "08:00"
         : activeConfiguredSlot?.start_time || startTime || "08:00";
@@ -1940,6 +1960,8 @@ export default function ClassDevicePage() {
         </div>
       </header>
 
+      <OfflineReadinessCard role="class-device" />
+
       {/* Sélection */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -1970,7 +1992,9 @@ export default function ClassDevicePage() {
                     ? activeConfiguredSlot
                       ? "— Aucune discipline disponible —"
                       : "— Hors créneau —"
-                    : "— Aucune discipline en cache (ouvrez une fois la classe en ligne) —"}
+                    : subjectLoadMode === "auto-offline"
+                      ? "— Aucun cours prévu —"
+                      : "— Aucune discipline en cache (préparez le mode hors ligne) —"}
                 </option>
               ) : null}
               {subjects.map((s) => (
@@ -2016,9 +2040,9 @@ export default function ClassDevicePage() {
           </div>
         </div>
 
-        {scheduleBlockedOnline && (
+        {scheduleBlocked && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-            Hors créneau : en ligne, l’appel reste bloqué tant qu’aucun créneau administratif n’est ouvert.
+            Hors créneau : l’appel reste bloqué tant qu’aucun créneau administratif n’est ouvert.
           </div>
         )}
 

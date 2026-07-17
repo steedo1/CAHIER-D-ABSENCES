@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import {
   registerServiceWorker,
   offlineGetJson,
@@ -522,6 +523,8 @@ export default function TeacherDashboard() {
 
   // données prof
   const [teachClasses, setTeachClasses] = useState<TeachClass[]>([]);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [classesLoadError, setClassesLoadError] = useState(false);
   const options = useMemo(
     () =>
       teachClasses.map((tc) => ({
@@ -581,24 +584,20 @@ export default function TeacherDashboard() {
     [rows]
   );
 
-  /* Chargement initial (classes + open) — OFFLINE OK */
+  /* Chargement initial de la séance ouverte — OFFLINE OK */
   useEffect(() => {
     (async () => {
       try {
-        const [cl, os, localOpen] = await Promise.all([
-          offlineGetJson("/api/teacher/classes", "teacher:classes").catch(() => ({ items: [] })),
+        const [os, localOpen] = await Promise.all([
           offlineGetJson("/api/teacher/sessions/open", "teacher:open").catch(() => ({ item: null })),
           cacheGet("teacher:local-open").catch(() => null),
         ]);
-
-        setTeachClasses(((cl as any)?.items || []) as TeachClass[]);
 
         const openServer = ((os as any)?.item as OpenSession) || null;
         const openLocal = (localOpen as OpenSession) || null;
 
         setOpen(openServer || openLocal || null);
       } catch {
-        setTeachClasses([]);
         try {
           const localOpen = await cacheGet("teacher:local-open");
           setOpen((localOpen as OpenSession) || null);
@@ -915,6 +914,7 @@ export default function TeacherDashboard() {
   }, [periodsByDay, inst?.tz, nowTick]);
 
   const canStartAttendanceNow = !!activeConfiguredSlot;
+  const canSelectClassNow = canStartAttendanceNow && !classesLoading && options.length > 0;
 
   const activeSlotKey = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
@@ -925,16 +925,47 @@ export default function TeacherDashboard() {
   }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
 
   useEffect(() => {
-    if (openRef.current) return;
+    let cancelled = false;
+
+    if (open) {
+      setClassesLoading(false);
+      return;
+    }
+
+    // Une sélection du créneau précédent ne doit jamais rester active.
+    setSelKey("");
+    setTeachClasses([]);
+    setClassesLoadError(false);
+
+    if (!activeConfiguredSlot) {
+      setClassesLoading(false);
+      return;
+    }
+
+    setClassesLoading(true);
+
     (async () => {
       try {
-        const cl = await offlineGetJson("/api/teacher/classes", "teacher:classes").catch(() => ({ items: [] }));
+        const cl = await offlineGetJson(
+          "/api/teacher/classes",
+          `teacher:classes:${activeSlotKey}`
+        );
+        if (cancelled) return;
         setTeachClasses((((cl as any)?.items) || []) as TeachClass[]);
       } catch {
-        // ignore
+        if (cancelled) return;
+        // Sans réponse ni cache pour CE créneau, on garde la sélection verrouillée.
+        setTeachClasses([]);
+        setClassesLoadError(true);
+      } finally {
+        if (!cancelled) setClassesLoading(false);
       }
     })();
-  }, [activeSlotKey]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConfiguredSlot, activeSlotKey, open]);
 
   useEffect(() => {
     if (open) return;
@@ -1119,7 +1150,14 @@ export default function TeacherDashboard() {
         await refreshPending();
       } else {
         const err = extractRespError(r);
-        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
+        if (err === "teacher_not_scheduled_for_slot") {
+          setSelKey("");
+          setTeachClasses([]);
+          setClassesLoadError(false);
+          setMsg("Vous n’avez aucun cours prévu sur ce créneau. La sélection est verrouillée.");
+        } else {
+          setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
+        }
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
@@ -1457,7 +1495,7 @@ export default function TeacherDashboard() {
       <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/95 backdrop-blur md:hidden px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0)+12px)]">
         {!open ? (
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={startSession} disabled={!selKey || busy || !canStartAttendanceNow} aria-label="Démarrer l’appel">
+            <Button onClick={startSession} disabled={!selKey || busy || !canSelectClassNow} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Appel"}
             </Button>
@@ -1558,6 +1596,8 @@ export default function TeacherDashboard() {
         <InstallAndPushCTA />
       </section>
 
+      <OfflineReadinessCard role="teacher" />
+
       {/* Sélection + paramètres horaire */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -1567,8 +1607,21 @@ export default function TeacherDashboard() {
               <Users className="h-3.5 w-3.5" />
               Classe — Discipline
             </div>
-            <Select value={selKey} onChange={(e) => setSelKey(e.target.value)}>
-              <option value="">— Sélectionner —</option>
+            <Select
+              value={selKey}
+              onChange={(e) => setSelKey(e.target.value)}
+              disabled={busy || !!open || !canSelectClassNow}
+              aria-label="Classe et discipline du créneau actuel"
+            >
+              <option value="">
+                {classesLoading
+                  ? "— Vérification du cours… —"
+                  : classesLoadError
+                    ? "— Emploi du temps indisponible —"
+                  : canStartAttendanceNow && options.length === 0
+                    ? "— Aucun cours prévu —"
+                    : "— Sélectionner —"}
+              </option>
               {options.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}
@@ -1622,16 +1675,28 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {canStartAttendanceNow && !open && options.length === 0 && (
+        {canStartAttendanceNow && !open && classesLoading && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Vérification de votre emploi du temps pour ce créneau…
+          </div>
+        )}
+
+        {canStartAttendanceNow && !open && !classesLoading && classesLoadError && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            Impossible de vérifier votre emploi du temps pour ce créneau. Reconnectez-vous puis réessayez.
+          </div>
+        )}
+
+        {canStartAttendanceNow && !open && !classesLoading && !classesLoadError && options.length === 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Aucune classe ne vous est attribuée dans votre emploi du temps pour ce créneau.
+            Vous n’avez aucun cours prévu sur ce créneau. La sélection est verrouillée.
           </div>
         )}
 
         {/* Actions desktop */}
         {!open ? (
           <div className="hidden md:flex items-center gap-2">
-            <Button onClick={startSession} disabled={!selKey || busy || !canStartAttendanceNow} aria-label="Démarrer l’appel">
+            <Button onClick={startSession} disabled={!selKey || busy || !canSelectClassNow} aria-label="Démarrer l’appel">
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>

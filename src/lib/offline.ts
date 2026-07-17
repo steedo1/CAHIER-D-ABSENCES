@@ -69,10 +69,8 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-// Conserver la version du /public/sw.js livré avec ce src. Elle sera relevée
-// uniquement après audit du fichier public/sw.js, absent de l'archive reçue.
-const SW_BUILD = "2025-11-05T19:59:59Z";
-export const MON_CAHIER_SW_URL = `/sw.js?v=${encodeURIComponent(SW_BUILD)}`;
+const SW_BUILD = "2026-07-17-offline-ready-v1";
+export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -185,18 +183,101 @@ async function setSessionIdMap(next: Record<string, string>): Promise<void> {
 
 /* ───────────────────────── Service Worker ───────────────────────── */
 
-export async function registerServiceWorker(): Promise<void> {
-  if (!isBrowser()) return;
-  if (!("serviceWorker" in navigator)) return;
+export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (!isBrowser()) return null;
+  if (!("serviceWorker" in navigator)) return null;
 
   try {
     // Une seule URL versionnée pour éviter que plusieurs écrans se remplacent
     // mutuellement le service worker avec des versions différentes.
-    await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
+    const registration = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
     await navigator.serviceWorker.ready;
+    return registration;
   } catch {
     // Ne casse rien si SW indisponible
+    return null;
   }
+}
+
+async function waitForOfflineWorker(
+  registration: ServiceWorkerRegistration
+): Promise<ServiceWorker | null> {
+  const isExpected = (worker: ServiceWorker | null) =>
+    Boolean(worker?.scriptURL.includes("/moncahier-sw.js"));
+  if (isExpected(registration.active)) return registration.active;
+
+  const candidate = registration.installing || registration.waiting;
+  if (!candidate) return isExpected(registration.active) ? registration.active : null;
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => reject(new Error("Activation hors ligne trop longue.")),
+      15_000
+    );
+    const check = () => {
+      if (candidate.state === "activated") {
+        window.clearTimeout(timeout);
+        resolve();
+      } else if (candidate.state === "redundant") {
+        window.clearTimeout(timeout);
+        reject(new Error("Le service hors ligne n’a pas pu être activé."));
+      }
+    };
+    candidate.addEventListener("statechange", check);
+    check();
+  });
+
+  await navigator.serviceWorker.ready;
+  return isExpected(registration.active) ? registration.active : null;
+}
+
+/**
+ * Demande au service worker de mettre en cache les pages et leurs chunks.
+ * La préparation échoue explicitement si le shell ne peut pas être confirmé.
+ */
+export async function warmOfflineShell(urls: string[]): Promise<void> {
+  if (!isBrowser()) return;
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("Le mode hors ligne n’est pas pris en charge par ce navigateur.");
+  }
+
+  const registration = await registerServiceWorker();
+  if (!registration) throw new Error("Le service hors ligne n’a pas pu être enregistré.");
+  const worker = await waitForOfflineWorker(registration);
+  if (!worker) throw new Error("Le service hors ligne n’est pas encore actif.");
+
+  const normalized = Array.from(
+    new Set(
+      urls
+        .map((url) => String(url || "").trim())
+        .filter((url) => url.startsWith("/"))
+    )
+  );
+  if (!normalized.length) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const channel = new MessageChannel();
+    const timeout = window.setTimeout(() => {
+      channel.port1.close();
+      reject(new Error("La préparation de l’application a expiré."));
+    }, 30_000);
+
+    channel.port1.onmessage = (event) => {
+      window.clearTimeout(timeout);
+      channel.port1.close();
+      if (event.data?.ok) resolve();
+      else {
+        reject(
+          new Error(String(event.data?.error || "Préparation de l’application impossible."))
+        );
+      }
+    };
+
+    worker.postMessage(
+      { type: "MON_CAHIER_WARM_SHELL", urls: normalized },
+      [channel.port2]
+    );
+  });
 }
 
 /* ───────────────────────── Fetch helpers ───────────────────────── */
