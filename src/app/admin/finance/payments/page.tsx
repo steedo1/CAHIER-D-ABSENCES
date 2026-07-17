@@ -27,6 +27,10 @@ import {
 } from "@/lib/admin-students-server";
 import PaymentsComposer from "./PaymentsComposer";
 import { queueFounderFinancePaymentNotification } from "@/lib/push/founder";
+import {
+  financeScheduleAppliesToStudent,
+  selectFinanceSchedulesForClass,
+} from "@/lib/finance/charge-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -153,6 +157,10 @@ export type ChargeOptionRow = {
     id: string;
     label: string;
     amount: number;
+    paid_amount: number;
+    remaining_amount: number;
+    is_optional: boolean;
+    is_engaged: boolean;
     order_index: number;
   }>;
 };
@@ -165,6 +173,10 @@ export type PaymentStudentRow = {
   class_label: string;
   level: string | null;
   academic_year: string | null;
+  is_affecte: boolean | null;
+  is_boarder: boolean | null;
+  profile_complete: boolean;
+  total_expected: number;
   total_due: number;
   total_paid: number;
   open_charges: ChargeOptionRow[];
@@ -229,6 +241,13 @@ function makeReceiptNo() {
 
 function normalize(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function parseRequiredBoolean(value: unknown, label: string) {
+  const normalized = normalize(value).toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new Error(`${label} doit être renseigné.`);
 }
 
 function normalizeSearch(value: unknown) {
@@ -460,34 +479,129 @@ async function ensureChargesForStudent(
 ) {
   const admin = getSupabaseServiceClient();
 
-  const { data: classRow, error: classErr } = await admin
-    .from("classes")
-    .select("id,label,level,academic_year,institution_id")
-    .eq("id", classId)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
+  const [
+    { data: classRow, error: classErr },
+    { data: studentRow, error: studentErr },
+    { data: schedules, error: schErr },
+    { data: allClasses, error: classesErr },
+    { data: categories, error: categoriesErr },
+  ] = await Promise.all([
+    admin
+      .from("classes")
+      .select("id,label,level,academic_year,institution_id")
+      .eq("id", classId)
+      .eq("institution_id", institutionId)
+      .maybeSingle(),
+    admin
+      .from("students")
+      .select("id,is_affecte,is_boarder")
+      .eq("id", studentId)
+      .eq("institution_id", institutionId)
+      .maybeSingle(),
+    admin
+      .schema("finance")
+      .from("fee_schedules")
+      .select(
+        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at",
+      )
+      .eq("school_id", institutionId)
+      .eq("is_active", true)
+      .range(0, 9999),
+    admin
+      .from("classes")
+      .select("id,label,level,academic_year")
+      .eq("institution_id", institutionId)
+      .range(0, 9999),
+    admin
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name,is_mandatory")
+      .eq("school_id", institutionId),
+  ]);
 
   if (classErr) throw new Error(classErr.message);
-  if (!classRow) throw new Error("Classe introuvable.");
-
-  const { data: schedules, error: schErr } = await admin
-    .schema("finance")
-    .from("fee_schedules")
-    .select(
-      "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes",
-    )
-    .eq("school_id", institutionId)
-    .eq("class_id", classId)
-    .eq("is_active", true);
-
+  if (studentErr) throw new Error(studentErr.message);
   if (schErr) throw new Error(schErr.message);
+  if (classesErr) throw new Error(classesErr.message);
+  if (categoriesErr) throw new Error(categoriesErr.message);
+  if (!classRow) throw new Error("Classe introuvable.");
+  if (!studentRow) throw new Error("Élève introuvable.");
 
-  const scheduleRows = (schedules ?? []) as FeeScheduleRow[];
-  if (scheduleRows.length === 0) {
-    return [];
+  const studentProfile = {
+    is_affecte:
+      typeof (studentRow as any).is_affecte === "boolean"
+        ? Boolean((studentRow as any).is_affecte)
+        : null,
+    is_boarder:
+      typeof (studentRow as any).is_boarder === "boolean"
+        ? Boolean((studentRow as any).is_boarder)
+        : null,
+  };
+
+  if (
+    studentProfile.is_affecte === null ||
+    studentProfile.is_boarder === null
+  ) {
+    throw new Error(
+      "Profil financier incomplet : choisissez Affecté/Non affecté et Interne/Externe avant de générer les dettes.",
+    );
   }
 
+  const classesById = new Map(
+    ((allClasses ?? []) as Array<Record<string, unknown>>).map((row) => [
+      String(row.id || ""),
+      row,
+    ]),
+  );
+  classesById.set(String((classRow as any).id), classRow as any);
+
+  const categoriesById = new Map(
+    ((categories ?? []) as Array<Record<string, unknown>>).map((row) => [
+      String(row.id || ""),
+      row,
+    ]),
+  );
+
+  const selectedSchedules = selectFinanceSchedulesForClass({
+    schedules: (schedules ?? []) as FeeScheduleRow[],
+    targetClass: classRow as any,
+    classesById: classesById as any,
+    categoriesById: categoriesById as any,
+  });
+
+  const scheduleRows = selectedSchedules.filter((schedule) =>
+    financeScheduleAppliesToStudent(
+      schedule,
+      studentProfile,
+      categoriesById as any,
+    ),
+  );
+
+  if (scheduleRows.length === 0) return [];
+
   const scheduleIds = scheduleRows.map((row) => row.id);
+  const componentRows = await fetchActiveScheduleComponents(
+    institutionId,
+    scheduleIds,
+  );
+  const componentsBySchedule = new Map<string, FeeScheduleComponentRow[]>();
+  for (const component of componentRows) {
+    if (!componentsBySchedule.has(component.fee_schedule_id)) {
+      componentsBySchedule.set(component.fee_schedule_id, []);
+    }
+    componentsBySchedule.get(component.fee_schedule_id)!.push(component);
+  }
+
+  const initialAmountForSchedule = (schedule: FeeScheduleRow) => {
+    if (!isInternatAnnexesCharge(schedule.label)) {
+      return Number(schedule.amount || 0);
+    }
+
+    const components = componentsBySchedule.get(schedule.id) ?? [];
+    const mandatoryBase = sumMandatoryInternatAnnexes(components);
+    return mandatoryBase > 0 ? mandatoryBase : Number(schedule.amount || 0);
+  };
+
   const { data: existingCharges, error: exErr } = await admin
     .schema("finance")
     .from("student_charges")
@@ -525,7 +639,7 @@ async function ensureChargesForStudent(
       fee_schedule_id: schedule.id,
       fee_category_id: schedule.fee_category_id,
       label: schedule.label,
-      base_amount: Number(schedule.amount || 0),
+      base_amount: initialAmountForSchedule(schedule),
       due_date: schedule.due_date || null,
       charge_date: today,
       status: "pending",
@@ -627,6 +741,8 @@ async function createStudentAndEnroll({
   firstName,
   lastName,
   matricule,
+  isAffecte,
+  isBoarder,
 }: {
   institutionId: string;
   userId: string;
@@ -634,6 +750,8 @@ async function createStudentAndEnroll({
   firstName: string;
   lastName: string;
   matricule: string | null;
+  isAffecte: boolean;
+  isBoarder: boolean;
 }) {
   const admin = getSupabaseServiceClient();
 
@@ -671,6 +789,8 @@ async function createStudentAndEnroll({
       first_name: firstName || null,
       last_name: lastName || null,
       matricule: matricule || null,
+      is_affecte: isAffecte,
+      is_boarder: isBoarder,
     } as any)
     .select("id,first_name,last_name,matricule")
     .maybeSingle();
@@ -698,10 +818,9 @@ async function createStudentAndEnroll({
 
   if (enrollErr) throw new Error(enrollErr.message);
 
-  // Important : on ne change pas la logique d'encaissement de Mon Cahier.
-  // Après l'inscription minimale, on crée simplement les situations ouvertes
-  // à partir des barèmes déjà définis pour la classe, comme le fait la
-  // régularisation financière.
+  // Les profils Affecté/Non affecté et Interne/Externe sont enregistrés
+  // avant la génération. Le moteur applique ensuite uniquement les barèmes
+  // compatibles avec le profil financier de l'élève.
   await ensureChargesForStudent(
     institutionId,
     userId,
@@ -912,10 +1031,71 @@ function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
   );
 }
 
-function sumMandatoryInternatAnnexes(components: Array<{ label: string | null; amount: number | string }>) {
+function sumMandatoryInternatAnnexes(
+  components: Array<{ label: string | null; amount: number | string }>,
+) {
   return components
     .filter((component) => !isOptionalInternatAnnexeComponent(component.label))
     .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+}
+
+function inferEngagedOptionalComponentIds({
+  components,
+  currentExpectedAmount,
+  explicitlyPaidIds = new Set<string>(),
+}: {
+  components: Array<{ id: string; label: string | null; amount: number | string }>;
+  currentExpectedAmount: number;
+  explicitlyPaidIds?: Set<string>;
+}) {
+  const optionalComponents = components.filter((component) =>
+    isOptionalInternatAnnexeComponent(component.label),
+  );
+  const mandatoryBase = sumMandatoryInternatAnnexes(components);
+  const targetOptionalCents = Math.max(
+    Math.round((Number(currentExpectedAmount || 0) - mandatoryBase) * 100),
+    0,
+  );
+
+  const paidIds = new Set(
+    optionalComponents
+      .filter((component) => explicitlyPaidIds.has(component.id))
+      .map((component) => component.id),
+  );
+
+  let best: Set<string> | null = null;
+  let bestScore = -1;
+  const combinations = 1 << optionalComponents.length;
+
+  for (let mask = 0; mask < combinations; mask++) {
+    const ids = new Set<string>();
+    let totalCents = 0;
+
+    for (let index = 0; index < optionalComponents.length; index++) {
+      if ((mask & (1 << index)) === 0) continue;
+      const component = optionalComponents[index];
+      ids.add(component.id);
+      totalCents += Math.round(Number(component.amount || 0) * 100);
+    }
+
+    if (totalCents !== targetOptionalCents) continue;
+    if (Array.from(paidIds).some((id) => !ids.has(id))) continue;
+
+    const score =
+      Array.from(ids).filter((id) => paidIds.has(id)).length * 100 -
+      ids.size;
+    if (score > bestScore) {
+      best = ids;
+      bestScore = score;
+    }
+  }
+
+  if (best) return best;
+
+  // Si une ancienne dette ne correspond pas exactement à une combinaison
+  // connue, on ne devine rien : seules les options prouvées par un reçu
+  // restent engagées.
+  return paidIds;
 }
 
 async function syncVariableAnnexChargeAmounts({
@@ -945,7 +1125,11 @@ async function syncVariableAnnexChargeAmounts({
     if (allocationErr) throw new Error(allocationErr.message);
 
     const receiptIds = Array.from(
-      new Set(((allocationRows ?? []) as any[]).map((row) => row.receipt_id).filter(Boolean)),
+      new Set(
+        ((allocationRows ?? []) as any[])
+          .map((row) => row.receipt_id)
+          .filter(Boolean),
+      ),
     );
     let cancelledReceiptIds = new Set<string>();
 
@@ -974,9 +1158,12 @@ async function syncVariableAnnexChargeAmounts({
       0,
     );
 
-    let componentPaidTotal = 0;
-    let optionalExpectedTotal = 0;
-    let mandatoryBaseTotal = 208500;
+    let mandatoryBaseTotal = 178500;
+    let allComponents: Array<{
+      id: string;
+      label: string | null;
+      amount: number | string;
+    }> = [];
 
     if (item.charge.fee_schedule_id) {
       const { data: allExpectedRows, error: allExpectedErr } = await admin
@@ -989,7 +1176,7 @@ async function syncVariableAnnexChargeAmounts({
 
       if (allExpectedErr) throw new Error(allExpectedErr.message);
 
-      const allComponents = (allExpectedRows ?? []) as Array<{
+      allComponents = (allExpectedRows ?? []) as Array<{
         id: string;
         label: string | null;
         amount: number | string;
@@ -997,6 +1184,8 @@ async function syncVariableAnnexChargeAmounts({
       const computedMandatoryBase = sumMandatoryInternatAnnexes(allComponents);
       if (computedMandatoryBase > 0) mandatoryBaseTotal = computedMandatoryBase;
     }
+
+    const explicitlyEngagedOptionalIds = new Set<string>();
 
     if (activeAllocationIds.length > 0) {
       const { data: componentRows, error: componentErr } = await admin
@@ -1007,45 +1196,55 @@ async function syncVariableAnnexChargeAmounts({
 
       if (componentErr) throw new Error(componentErr.message);
 
-      const componentIds = Array.from(
-        new Set(
-          ((componentRows ?? []) as Array<{ fee_schedule_component_id: string; amount: number | string }>)
-            .filter((row) => Number(row.amount || 0) > 0)
-            .map((row) => row.fee_schedule_component_id),
-        ),
-      );
-
-      componentPaidTotal = ((componentRows ?? []) as Array<{ amount: number | string }>).reduce(
-        (sum, row) => sum + Number(row.amount || 0),
-        0,
-      );
-
-      if (componentIds.length > 0) {
-        const { data: expectedRows, error: expectedErr } = await admin
-          .schema("finance")
-          .from("fee_schedule_components")
-          .select("id,label,amount")
-          .in("id", componentIds)
-          .eq("school_id", institutionId);
-
-        if (expectedErr) throw new Error(expectedErr.message);
-
-        optionalExpectedTotal = ((expectedRows ?? []) as Array<{ label: string | null; amount: number | string }>).reduce(
-          (sum, row) =>
-            isOptionalInternatAnnexeComponent(row.label)
-              ? sum + Number(row.amount || 0)
-              : sum,
-          0,
+      for (const row of (componentRows ?? []) as Array<{
+        fee_schedule_component_id: string;
+        amount: number | string;
+      }>) {
+        if (Number(row.amount || 0) <= 0) continue;
+        const component = allComponents.find(
+          (candidate) => candidate.id === row.fee_schedule_component_id,
         );
+        if (
+          component &&
+          isOptionalInternatAnnexeComponent(component.label)
+        ) {
+          explicitlyEngagedOptionalIds.add(component.id);
+        }
       }
     }
 
-    // Règle finale CSCA : tous les frais annexes restent dus sauf
-    // Bréviaire, Bible Africaine et Convoi internat. Ces éléments
-    // ne s'ajoutent à la dette que s'ils sont réellement engagés/payés.
+    // Une ancienne dette peut déjà contenir une option sans ventilation
+    // détaillée. On la reconstitue à partir du montant brut (ex. 191 500 F =
+    // socle 178 500 F + Bréviaire 13 000 F) afin qu'un nouveau reçu ne fasse
+    // jamais disparaître une option déjà engagée.
+    const engagedOptionalIds = inferEngagedOptionalComponentIds({
+      components: allComponents,
+      currentExpectedAmount: Number(item.charge.net_amount || item.charge.base_amount || 0),
+      explicitlyPaidIds: explicitlyEngagedOptionalIds,
+    });
+
+    for (const id of explicitlyEngagedOptionalIds) {
+      engagedOptionalIds.add(id);
+    }
+
+    const optionalExpectedTotal = allComponents
+      .filter(
+        (component) =>
+          isOptionalInternatAnnexeComponent(component.label) &&
+          engagedOptionalIds.has(component.id),
+      )
+      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+
+    // Règle CSCA : le socle obligatoire reste dû. Bréviaire, Bible Africaine
+    // et Convoi internat entrent intégralement dans la dette dès qu'un montant
+    // positif est saisi sur la sous-rubrique correspondante.
     const confirmedAmount = mandatoryBaseTotal + optionalExpectedTotal;
     const nextStatus =
-      allocationTotal >= confirmedAmount - 0.01 ? "paid" : "partial";
+      allocationTotal >= confirmedAmount - 0.01
+        ? "paid"
+        : allocationTotal > 0
+          ? "partial"
+          : "pending";
 
     const { error: updateErr } = await admin
       .schema("finance")
@@ -1053,9 +1252,8 @@ async function syncVariableAnnexChargeAmounts({
       .update({
         base_amount: confirmedAmount,
         status: nextStatus,
-        notes: item.skippedComponents.length > 0
-          ? "Frais annexes internat ajustés selon les sous-rubriques confirmées au reçu."
-          : "Frais annexes internat ajustés selon les sous-rubriques réglées.",
+        notes:
+          "Frais annexes internat recalculés selon le socle obligatoire et les options réellement engagées.",
         updated_at: new Date().toISOString(),
       } as any)
       .eq("id", item.charge.id)
@@ -1326,6 +1524,50 @@ async function resolveAllocationPlanForPayment({
         amount: item.amount,
       });
 
+      if (isVariableAnnexCharge && charge.fee_schedule_id) {
+        const [allComponents, paidComponents] = await Promise.all([
+          fetchActiveScheduleComponents(institutionId, [charge.fee_schedule_id]),
+          fetchPaidComponentsForCharges(institutionId, [charge.id]),
+        ]);
+        const explicitlyPaidOptionalIds = new Set(
+          paidComponents
+            .filter(
+              (row) =>
+                row.receipt_status !== "cancelled" &&
+                Number(row.amount || 0) > 0,
+            )
+            .map((row) => row.fee_schedule_component_id),
+        );
+        const alreadyEngagedOptionalIds = inferEngagedOptionalComponentIds({
+          components: allComponents.map((component) => ({
+            id: component.id,
+            label: component.label,
+            amount: component.amount,
+          })),
+          currentExpectedAmount: Number(
+            charge.net_amount || charge.base_amount || 0,
+          ),
+          explicitlyPaidIds: explicitlyPaidOptionalIds,
+        });
+        const newOptionalExpectedTotal = selectedComponents
+          .filter(
+            (component) =>
+              isOptionalInternatAnnexeComponent(component.label) &&
+              !alreadyEngagedOptionalIds.has(component.id),
+          )
+          .reduce(
+            (sum, component) => sum + Number(component.amount || 0),
+            0,
+          );
+        const maximumAllowed = balanceDue + newOptionalExpectedTotal;
+
+        if (item.amount > maximumAllowed + 0.01) {
+          throw new Error(
+            `Le montant saisi pour ${charge.label} dépasse le reste actualisé (${formatMoney(maximumAllowed)}).`,
+          );
+        }
+      }
+
       if (item.closeUnselectedComponents && charge.fee_schedule_id) {
         const [activeComponents, alreadyPaidComponents] = await Promise.all([
           fetchActiveScheduleComponents(institutionId, [
@@ -1459,6 +1701,14 @@ async function createPaymentAction(formData: FormData) {
     const lastName = normalize(formData.get("last_name"));
     const firstName = normalize(formData.get("first_name"));
     const matricule = normalize(formData.get("matricule")) || null;
+    const isAffecte = parseRequiredBoolean(
+      formData.get("is_affecte"),
+      "Le statut Affecté/Non affecté",
+    );
+    const isBoarder = parseRequiredBoolean(
+      formData.get("is_boarder"),
+      "Le statut Interne/Externe",
+    );
 
     if (!lastName) throw new Error("Le nom de l’élève est obligatoire.");
     if (!firstName) throw new Error("Le prénom de l’élève est obligatoire.");
@@ -1470,6 +1720,8 @@ async function createPaymentAction(formData: FormData) {
       firstName,
       lastName,
       matricule,
+      isAffecte,
+      isBoarder,
     });
 
     extraNotes.push("Nouvelle inscription depuis le module Finance");
@@ -1760,15 +2012,19 @@ async function createPaymentAction(formData: FormData) {
     allocations: allocationDrafts,
   });
 
-  const remainingDueAfterPayment = allocationDrafts.reduce((sum, item) => {
-    return (
-      sum +
-      Math.max(
-        Number(item.charge.balance_due || 0) - Number(item.amount || 0),
-        0,
-      )
+  // La mise à jour des options d'internat peut augmenter le montant attendu.
+  // On relit donc les soldes réels après synchronisation au lieu de soustraire
+  // le paiement à l'ancien balance_due.
+  let remainingDueAfterPayment = 0;
+  for (const chargeId of Array.from(
+    new Set(allocationDrafts.map((item) => item.charge.id)),
+  )) {
+    const refreshed = await fetchChargeById(chargeId, institutionId);
+    remainingDueAfterPayment += Math.max(
+      Number(refreshed?.balance_due || 0),
+      0,
     );
-  }, 0);
+  }
 
   let studentNameForNotification = payerName || "";
   try {
@@ -2047,15 +2303,14 @@ export default async function FinancePaymentsPage({
     componentsBySchedule.get(component.fee_schedule_id)!.push(component);
   }
 
-  const paidComponentsByCharge = new Map<string, Set<string>>();
+  const paidAmountsByChargeComponent = new Map<string, number>();
   for (const paid of paidComponentRows) {
     if (paid.receipt_status === "cancelled") continue;
-    if (!paidComponentsByCharge.has(paid.student_charge_id)) {
-      paidComponentsByCharge.set(paid.student_charge_id, new Set<string>());
-    }
-    paidComponentsByCharge
-      .get(paid.student_charge_id)!
-      .add(paid.fee_schedule_component_id);
+    const key = `${paid.student_charge_id}:${paid.fee_schedule_component_id}`;
+    paidAmountsByChargeComponent.set(
+      key,
+      (paidAmountsByChargeComponent.get(key) ?? 0) + Number(paid.amount || 0),
+    );
   }
 
   const balancesByStudent = new Map<string, ChargeBalanceRow[]>();
@@ -2073,57 +2328,150 @@ export default async function FinancePaymentsPage({
         if (!student.class_id || !cls) return null;
 
         const studentBalances = balancesByStudent.get(student.id) ?? [];
-        const openCharges = studentBalances
-          .filter((row) => row.class_id === student.class_id)
-          .map((row) => {
-            const paidIds =
-              paidComponentsByCharge.get(row.id) ?? new Set<string>();
-            const allComponents = row.fee_schedule_id
-              ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
-              : [];
-            const category = feeCategoryMap.get(row.fee_category_id);
-            const isInternatCategory = isFinanceInternatCategory(category);
-            const isScolariteCategory = isFinanceScolariteCategory(category);
-            const componentDrivenBalance =
-              isInternatCategory && allComponents.length > 0;
-            const components = componentDrivenBalance
-              ? allComponents
-                  .filter((component) => !paidIds.has(component.id))
-                  .map((component) => ({
-                    id: component.id,
-                    label: component.label,
-                    amount: Number(component.amount || 0),
-                    order_index: Number(component.order_index || 0),
-                  }))
-              : [];
-            const rawBalanceDue = Number(row.balance_due || 0);
+        const classBalances = studentBalances.filter(
+          (row) =>
+            row.class_id === student.class_id &&
+            row.computed_status !== "cancelled",
+        );
+        const openCharges = classBalances.map((row) => {
+          const allComponents = row.fee_schedule_id
+            ? (componentsBySchedule.get(row.fee_schedule_id) ?? [])
+            : [];
+          const category = feeCategoryMap.get(row.fee_category_id);
+          const isInternatCategory = isFinanceInternatCategory(category);
+          const isScolariteCategory = isFinanceScolariteCategory(category);
+          const componentDrivenBalance =
+            isInternatCategory &&
+            isInternatAnnexesCharge(row.label) &&
+            allComponents.length > 0;
 
-            // Les composants servent à détailler le paiement partiel.
-            // Le reste dû officiel vient de la dette, car Bréviaire/Bible/Convoi
-            // peuvent être non facturés alors que les autres composants
-            // restent obligatoires. On ne remplace donc plus le solde par
-            // la somme brute des composants restants.
-            const effectiveBalanceDue = rawBalanceDue;
+          let components: ChargeOptionRow["components"] = [];
 
-            if (effectiveBalanceDue <= 0) return null;
+          if (componentDrivenBalance) {
+            const explicitPaidByComponent = new Map<string, number>();
+            const explicitlyPaidOptionalIds = new Set<string>();
 
-            return {
-              charge_id: row.id,
-              fee_category_id: row.fee_category_id,
-              fee_schedule_id: row.fee_schedule_id,
-              label: row.label,
-              due_date: row.due_date,
-              // Le montant officiel affiché est celui de la dette.
-              // Les composants détaillent uniquement ce que le parent paie
-              // maintenant ; ils ne doivent pas transformer Bible/Bréviaire/Convoi
-              // non saisis en faux « déjà payé ».
-              net_amount: Number(row.net_amount || 0),
-              paid_amount: Number(row.paid_amount || 0),
-              balance_due: effectiveBalanceDue,
-              components: isScolariteCategory ? [] : components,
-            };
-          })
-          .filter((row): row is ChargeOptionRow => Boolean(row));
+            for (const component of allComponents) {
+              const paid = Math.min(
+                paidAmountsByChargeComponent.get(
+                  `${row.id}:${component.id}`,
+                ) ?? 0,
+                Number(component.amount || 0),
+              );
+              explicitPaidByComponent.set(component.id, paid);
+              if (
+                paid > 0 &&
+                isOptionalInternatAnnexeComponent(component.label)
+              ) {
+                explicitlyPaidOptionalIds.add(component.id);
+              }
+            }
+
+            const engagedOptionalIds = inferEngagedOptionalComponentIds({
+              components: allComponents.map((component) => ({
+                id: component.id,
+                label: component.label,
+                amount: component.amount,
+              })),
+              currentExpectedAmount: Number(row.net_amount || row.base_amount || 0),
+              explicitlyPaidIds: explicitlyPaidOptionalIds,
+            });
+
+            const effectivePaidByComponent = new Map(explicitPaidByComponent);
+            const explicitPaidTotal = Array.from(
+              explicitPaidByComponent.values(),
+            ).reduce((sum, value) => sum + value, 0);
+            let unattributedPaid = Math.max(
+              Number(row.paid_amount || 0) - explicitPaidTotal,
+              0,
+            );
+
+            // Les anciens reçus n'ont pas toujours de détail par sous-rubrique.
+            // On affecte d'abord leur montant aux options déjà engagées, puis
+            // au socle obligatoire, sans jamais créditer une option non choisie.
+            const allocationPriority = [...allComponents].sort((a, b) => {
+              const aOptionalEngaged =
+                isOptionalInternatAnnexeComponent(a.label) &&
+                engagedOptionalIds.has(a.id);
+              const bOptionalEngaged =
+                isOptionalInternatAnnexeComponent(b.label) &&
+                engagedOptionalIds.has(b.id);
+              if (aOptionalEngaged !== bOptionalEngaged) {
+                return aOptionalEngaged ? -1 : 1;
+              }
+              return Number(a.order_index || 0) - Number(b.order_index || 0);
+            });
+
+            for (const component of allocationPriority) {
+              const isOptional =
+                isOptionalInternatAnnexeComponent(component.label);
+              const isEngaged = !isOptional || engagedOptionalIds.has(component.id);
+              if (!isEngaged || unattributedPaid <= 0) continue;
+
+              const expected = Number(component.amount || 0);
+              const alreadyAttributed =
+                effectivePaidByComponent.get(component.id) ?? 0;
+              const room = Math.max(expected - alreadyAttributed, 0);
+              const attributed = Math.min(room, unattributedPaid);
+              if (attributed > 0) {
+                effectivePaidByComponent.set(
+                  component.id,
+                  alreadyAttributed + attributed,
+                );
+                unattributedPaid -= attributed;
+              }
+            }
+
+            components = allComponents.map((component) => {
+              const expected = Number(component.amount || 0);
+              const isOptional =
+                isOptionalInternatAnnexeComponent(component.label);
+              const isEngaged =
+                !isOptional || engagedOptionalIds.has(component.id);
+              const paid = Math.min(
+                effectivePaidByComponent.get(component.id) ?? 0,
+                expected,
+              );
+
+              return {
+                id: component.id,
+                label: component.label,
+                amount: expected,
+                paid_amount: paid,
+                remaining_amount: isEngaged
+                  ? Math.max(expected - paid, 0)
+                  : expected,
+                is_optional: isOptional,
+                is_engaged: isEngaged,
+                order_index: Number(component.order_index || 0),
+              };
+            });
+          }
+
+          return {
+            charge_id: row.id,
+            fee_category_id: row.fee_category_id,
+            fee_schedule_id: row.fee_schedule_id,
+            label: row.label,
+            due_date: row.due_date,
+            net_amount: Number(row.net_amount || 0),
+            paid_amount: Number(row.paid_amount || 0),
+            balance_due: Math.max(Number(row.balance_due || 0), 0),
+            // Les dettes soldées restent visibles. C'est indispensable pour
+            // afficher toutes les rubriques d'internat et calculer le vrai
+            // total global, au lieu de confondre total attendu et reste dû.
+            components: isScolariteCategory ? [] : components,
+          };
+        });
+
+        const isAffecte =
+          typeof student.is_affecte === "boolean"
+            ? student.is_affecte
+            : null;
+        const isBoarder =
+          typeof student.is_boarder === "boolean"
+            ? student.is_boarder
+            : null;
 
         return {
           student_id: student.id,
@@ -2133,11 +2481,18 @@ export default async function FinancePaymentsPage({
           class_label: student.class_label || cls.label || "Sans classe",
           level: cls.level,
           academic_year: cls.academic_year,
+          is_affecte: isAffecte,
+          is_boarder: isBoarder,
+          profile_complete: isAffecte !== null && isBoarder !== null,
+          total_expected: openCharges.reduce(
+            (sum, row) => sum + Number(row.net_amount || 0),
+            0,
+          ),
           total_due: openCharges.reduce(
             (sum, row) => sum + Number(row.balance_due || 0),
             0,
           ),
-          total_paid: studentBalances.reduce(
+          total_paid: classBalances.reduce(
             (sum, row) => sum + Number(row.paid_amount || 0),
             0,
           ),

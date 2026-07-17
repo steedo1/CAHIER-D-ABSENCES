@@ -36,6 +36,10 @@ type FeeComponentOption = {
   id: string;
   label: string;
   amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  is_optional: boolean;
+  is_engaged: boolean;
   order_index: number;
 };
 
@@ -71,6 +75,18 @@ function formatMoney(value: number) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
 
+function affectationLabel(value: boolean | null) {
+  if (value === true) return "Affecté";
+  if (value === false) return "Non affecté";
+  return "Affectation non renseignée";
+}
+
+function internatLabel(value: boolean | null) {
+  if (value === true) return "Interne";
+  if (value === false) return "Externe";
+  return "Internat non renseigné";
+}
+
 function componentAmountKey(chargeId: string, componentId: string) {
   return `${chargeId}::${componentId}`;
 }
@@ -93,23 +109,24 @@ function getComponentPaymentInputs(
       componentId: component.id,
       amount: Math.min(
         getComponentAmount(amounts, charge.charge_id, component.id),
-        Number(component.amount || 0),
+        Number(component.remaining_amount || 0),
       ),
     }))
     .filter((item) => item.amount > 0);
 }
 
-function getOptionalInternatAnnexesEnteredTotal(
+function getNewOptionalInternatAnnexesExpectedTotal(
   charge: PaymentStudentRow["open_charges"][number],
   amounts: Record<string, string>,
 ) {
   return charge.components
-    .filter((component) => isOptionalInternatAnnexeComponent(component.label))
-    .reduce(
-      (sum, component) =>
-        sum + getComponentAmount(amounts, charge.charge_id, component.id),
-      0,
-    );
+    .filter(
+      (component) =>
+        component.is_optional &&
+        !component.is_engaged &&
+        getComponentAmount(amounts, charge.charge_id, component.id) > 0,
+    )
+    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
 }
 
 function getComponentDrivenChargeLimit(
@@ -118,13 +135,12 @@ function getComponentDrivenChargeLimit(
 ) {
   if (charge.components.length === 0) return Number(charge.balance_due || 0);
 
-  // Règle CSCA : le solde officiel des frais annexes internat exclut Bible,
-  // Bréviaire et Convoi internat tant qu'ils sont à 0 F. Dès qu'un
-  // montant est saisi dessus, ils deviennent facturés pour ce reçu et
-  // augmentent donc le plafond autorisé.
+  // Une option CSCA devient entièrement due dès qu'un montant positif est
+  // saisi dessus. Le plafond augmente donc du montant attendu complet de
+  // l'option nouvellement engagée, et non du simple montant tapé.
   return (
     Number(charge.balance_due || 0) +
-    getOptionalInternatAnnexesEnteredTotal(charge, amounts)
+    getNewOptionalInternatAnnexesExpectedTotal(charge, amounts)
   );
 }
 
@@ -150,18 +166,29 @@ function isPensionCharge(label: string | null | undefined) {
 function getSelectedComponentsTotal(
   charge: PaymentStudentRow["open_charges"][number],
   componentIdsByCharge: Record<string, string[]>,
+  amounts: Record<string, string>,
 ) {
   const selected = new Set(componentIdsByCharge[charge.charge_id] ?? []);
   return charge.components
     .filter((component) => selected.has(component.id))
-    .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+    .reduce(
+      (sum, component) =>
+        sum + getComponentAmount(amounts, charge.charge_id, component.id),
+      0,
+    );
 }
 
 function getInternatRecoverableTotal(
   charges: PaymentStudentRow["open_charges"],
-  _componentIdsByCharge: Record<string, string[]>,
+  amounts: Record<string, string>,
 ) {
-  return charges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0);
+  return charges.reduce(
+    (sum, charge) =>
+      sum +
+      Number(charge.balance_due || 0) +
+      getNewOptionalInternatAnnexesExpectedTotal(charge, amounts),
+    0,
+  );
 }
 
 function PendingButton({
@@ -453,6 +480,7 @@ export default function PaymentsComposer({
       const componentTotal = getSelectedComponentsTotal(
         charge,
         internatComponentIdsByCharge,
+        internatAmounts,
       );
       const typedAmount = Number(internatAmounts[charge.charge_id] || 0);
       const safeTypedAmount = Number.isFinite(typedAmount)
@@ -584,6 +612,20 @@ export default function PaymentsComposer({
     [unifiedPaymentPlan],
   );
 
+  const newlyEngagedOptionalExpectedTotal = useMemo(
+    () =>
+      internatCharges.reduce(
+        (sum, charge) =>
+          sum +
+          getNewOptionalInternatAnnexesExpectedTotal(
+            charge,
+            internatAmounts,
+          ),
+        0,
+      ),
+    [internatAmounts, internatCharges],
+  );
+
   const unifiedExpectedTotal = useMemo(() => {
     const scolariteTotal = scolariteCharges.reduce(
       (sum, charge) => sum + Number(charge.net_amount || 0),
@@ -597,13 +639,33 @@ export default function PaymentsComposer({
       (sum, charge) => sum + Number(charge.net_amount || 0),
       0,
     );
-    return scolariteTotal + internatTotal + otherTotal;
-  }, [internatCharges, otherCharges, scolariteCharges]);
+    return (
+      scolariteTotal +
+      internatTotal +
+      otherTotal +
+      newlyEngagedOptionalExpectedTotal
+    );
+  }, [
+    internatCharges,
+    newlyEngagedOptionalExpectedTotal,
+    otherCharges,
+    scolariteCharges,
+  ]);
 
   const unifiedRemainingAfterPayment = Math.max(
-    scolariteCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) +
-      internatCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) +
-      otherCharges.reduce((sum, charge) => sum + Number(charge.balance_due || 0), 0) -
+    scolariteCharges.reduce(
+      (sum, charge) => sum + Number(charge.balance_due || 0),
+      0,
+    ) +
+      internatCharges.reduce(
+        (sum, charge) => sum + Number(charge.balance_due || 0),
+        0,
+      ) +
+      otherCharges.reduce(
+        (sum, charge) => sum + Number(charge.balance_due || 0),
+        0,
+      ) +
+      newlyEngagedOptionalExpectedTotal -
       unifiedPaymentTotal,
     0,
   );
@@ -631,12 +693,12 @@ export default function PaymentsComposer({
       selectedCategoryIsInternat
         ? getInternatRecoverableTotal(
             categoryChargeOptions,
-            internatComponentIdsByCharge,
+            internatAmounts,
           )
         : 0,
     [
       categoryChargeOptions,
-      internatComponentIdsByCharge,
+      internatAmounts,
       selectedCategoryIsInternat,
     ],
   );
@@ -680,7 +742,9 @@ export default function PaymentsComposer({
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const canCreatePayment = Boolean(
-    selectedStudent && selectedClassId && unifiedPaymentTotal > 0,
+    selectedStudent?.profile_complete &&
+      selectedClassId &&
+      unifiedPaymentTotal > 0,
   );
 
   if (activeWorkflow === "menu") {
@@ -851,7 +915,9 @@ export default function PaymentsComposer({
             </div>
           ) : selectedStudent ? (
             <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold text-emerald-900">
-              Élève sélectionné : {selectedStudent.student_name}.
+              Élève sélectionné : {selectedStudent.student_name} ·{" "}
+              {affectationLabel(selectedStudent.is_affecte)} ·{" "}
+              {internatLabel(selectedStudent.is_boarder)}.
               <button
                 type="button"
                 onClick={() => {
@@ -904,9 +970,11 @@ export default function PaymentsComposer({
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-2 text-xs font-semibold text-slate-500">
-                          {row.class_label} · {row.open_charges.length} frais
-                          ouvert(s)
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
+                          <span>{row.class_label}</span>
+                          <span>· {affectationLabel(row.is_affecte)}</span>
+                          <span>· {internatLabel(row.is_boarder)}</span>
+                          <span>· {row.open_charges.length} frais</span>
                         </div>
                       </div>
                       <div className="shrink-0 rounded-full bg-rose-50 px-3 py-1.5 text-sm font-black text-rose-700 ring-1 ring-rose-200">
@@ -970,6 +1038,8 @@ export default function PaymentsComposer({
                     </h2>
                     <p className="mt-1 text-sm text-slate-200">
                       {selectedStudent.class_label} ·{" "}
+                      {affectationLabel(selectedStudent.is_affecte)} ·{" "}
+                      {internatLabel(selectedStudent.is_boarder)} ·{" "}
                       {selectedStudent.matricule || "Matricule non renseigné"}
                     </p>
                   </div>
@@ -983,6 +1053,21 @@ export default function PaymentsComposer({
                   </div>
                 </div>
               </div>
+
+              {!selectedStudent.profile_complete ? (
+                <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-semibold text-rose-800">
+                  Profil financier incomplet. Renseignez obligatoirement
+                  Affecté/Non affecté et Interne/Externe dans la liste de classe
+                  avant tout nouvel encaissement. Aucun paiement ne peut être
+                  validé tant que ces deux statuts ne sont pas complets.
+                  <a
+                    href={`/admin/classes/liste/${selectedStudent.class_id}`}
+                    className="ml-2 inline-flex rounded-full bg-white px-3 py-1 text-xs font-black text-rose-700 ring-1 ring-rose-200"
+                  >
+                    Ouvrir la liste de classe
+                  </a>
+                </div>
+              ) : null}
 
               <div className="grid gap-3 rounded-3xl border border-emerald-100 bg-white p-4 sm:grid-cols-3">
                 <div>
@@ -1031,7 +1116,10 @@ export default function PaymentsComposer({
                     (sum, charge) =>
                       sum +
                       Number(charge.net_amount || 0) +
-                      getOptionalInternatAnnexesEnteredTotal(charge, internatAmounts),
+                      getNewOptionalInternatAnnexesExpectedTotal(
+                        charge,
+                        internatAmounts,
+                      ),
                     0,
                   )}
                   onAmountChange={(chargeId, value) =>
@@ -1165,11 +1253,49 @@ export default function PaymentsComposer({
             </select>
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Affectation
+              </label>
+              <select
+                name="is_affecte"
+                required
+                defaultValue=""
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+              >
+                <option value="" disabled>
+                  Choisir le statut
+                </option>
+                <option value="true">Affecté</option>
+                <option value="false">Non affecté</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Régime internat
+              </label>
+              <select
+                name="is_boarder"
+                required
+                defaultValue=""
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
+              >
+                <option value="" disabled>
+                  Choisir le statut
+                </option>
+                <option value="true">Interne</option>
+                <option value="false">Externe</option>
+              </select>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-            Aucun choix de catégorie n’est demandé ici. L’objectif est seulement
-            de créer l’élève et de le rattacher à sa classe. Les frais, barèmes
-            et encaissements se traiteront ensuite depuis l’action
-            « Encaisser un paiement ».
+            Ces deux statuts sont obligatoires avant la génération des dettes.
+            Le système créera uniquement l’écolage Affecté ou Non affecté
+            correspondant, et ajoutera l’internat seulement pour un élève
+            déclaré Interne.
           </div>
 
           <PendingButton
@@ -1231,7 +1357,7 @@ function ScolaritePaymentPlanner({
   if (charges.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50 px-4 py-5 text-sm font-semibold text-amber-800">
-        Aucun frais de scolarité ouvert n’a été trouvé pour cet élève.
+        Aucun frais de scolarité n’a été trouvé pour cet élève.
       </div>
     );
   }
@@ -1298,8 +1424,11 @@ function ScolaritePaymentPlanner({
                     onChange={(e) =>
                       onAmountChange(charge.charge_id, e.target.value)
                     }
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none"
-                    placeholder="0"
+                    disabled={Number(charge.balance_due || 0) <= 0}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                    placeholder={
+                      Number(charge.balance_due || 0) <= 0 ? "Soldé" : "0"
+                    }
                   />
                 </div>
               </div>
@@ -1335,7 +1464,7 @@ function InternatPaymentPlanner({
   if (charges.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50 px-4 py-5 text-sm font-semibold text-amber-800">
-        Aucun frais d’internat ouvert n’a été trouvé pour cet élève.
+        Aucun frais d’internat n’a été trouvé pour cet élève.
       </div>
     );
   }
@@ -1414,9 +1543,16 @@ function InternatPaymentPlanner({
                     {charge.label}
                   </div>
                   <div className="mt-1 text-xs font-semibold text-slate-500">
-                    Attendu : {formatMoney(charge.net_amount)} · Déjà payé :{" "}
-                    {formatMoney(charge.paid_amount)} · Reste :{" "}
-                    {formatMoney(charge.balance_due)}
+                    Attendu actualisé :{" "}
+                    {formatMoney(
+                      Number(charge.net_amount || 0) +
+                        getNewOptionalInternatAnnexesExpectedTotal(
+                          charge,
+                          amounts,
+                        ),
+                    )}{" "}
+                    · Déjà payé : {formatMoney(charge.paid_amount)} · Reste
+                    actualisé : {formatMoney(chargeLimit)}
                   </div>
                   {isPension ? (
                     <div className="mt-1 text-xs font-semibold text-emerald-700">
@@ -1442,8 +1578,11 @@ function InternatPaymentPlanner({
                     onChange={(e) =>
                       onAmountChange(charge.charge_id, e.target.value)
                     }
-                    disabled={charge.components.length > 0}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none disabled:bg-slate-50 disabled:text-slate-500"
+                    disabled={
+                      charge.components.length > 0 ||
+                      Number(charge.balance_due || 0) <= 0
+                    }
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
                   />
                 </div>
               </div>
@@ -1532,54 +1671,84 @@ function ChargeComponentChecklist({
         </div>
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border border-emerald-100 bg-white">
-        <div className="grid grid-cols-[1fr_110px_140px] gap-2 bg-emerald-50 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-800">
-          <div>Sous-rubrique</div>
-          <div className="text-right">Attendu</div>
-          <div className="text-right">Payé maintenant</div>
+      <div className="mt-4 overflow-x-auto rounded-2xl border border-emerald-100 bg-white">
+        <div className="min-w-[760px]">
+          <div className="grid grid-cols-[1fr_110px_110px_140px] gap-2 bg-emerald-50 px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-800">
+            <div>Sous-rubrique</div>
+            <div className="text-right">Attendu</div>
+            <div className="text-right">Déjà payé</div>
+            <div className="text-right">Payé maintenant</div>
+          </div>
+          {components.map((component) => {
+            const value =
+              amounts[componentAmountKey(chargeId, component.id)] ?? "";
+            const settled = Number(component.remaining_amount || 0) <= 0;
+
+            return (
+              <div
+                key={component.id}
+                className="grid grid-cols-[1fr_110px_110px_140px] items-center gap-2 border-t border-emerald-50 px-3 py-2 text-sm"
+              >
+                <div className="min-w-0 font-semibold text-slate-800">
+                  <span>{component.label}</span>
+                  {component.is_optional ? (
+                    <span
+                      className={`ml-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${
+                        component.is_engaged
+                          ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                          : "bg-amber-50 text-amber-700 ring-amber-200"
+                      }`}
+                    >
+                      {component.is_engaged
+                        ? "option engagée"
+                        : "non facturé si 0 F"}
+                    </span>
+                  ) : null}
+                  {settled ? (
+                    <span className="ml-2 inline-flex rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-500 ring-1 ring-slate-200">
+                      soldé
+                    </span>
+                  ) : null}
+                </div>
+                <div className="text-right font-black text-slate-900">
+                  {formatMoney(component.amount)}
+                </div>
+                <div className="text-right font-bold text-emerald-700">
+                  {formatMoney(component.paid_amount)}
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={component.remaining_amount}
+                  step="1"
+                  value={value}
+                  onChange={(e) =>
+                    updateComponent(component.id, e.target.value)
+                  }
+                  disabled={settled}
+                  placeholder={settled ? "Soldé" : "0"}
+                  className="w-full rounded-xl border border-slate-200 px-2 py-1.5 text-right text-sm font-bold text-slate-900 outline-none focus:border-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                />
+              </div>
+            );
+          })}
         </div>
-        {components.map((component) => {
-          const value = amounts[componentAmountKey(chargeId, component.id)] ?? "";
-          return (
-            <div
-              key={component.id}
-              className="grid grid-cols-[1fr_110px_140px] items-center gap-2 border-t border-emerald-50 px-3 py-2 text-sm"
-            >
-              <div className="min-w-0 font-semibold text-slate-800">
-                <span>{component.label}</span>
-                {isOptionalInternatAnnexeComponent(component.label) ? (
-                  <span className="ml-2 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
-                    non facturé si 0 F
-                  </span>
-                ) : null}
-              </div>
-              <div className="text-right font-black text-slate-900">
-                {formatMoney(component.amount)}
-              </div>
-              <input
-                type="number"
-                min="0"
-                max={component.amount}
-                step="1"
-                value={value}
-                onChange={(e) => updateComponent(component.id, e.target.value)}
-                placeholder="0"
-                className="w-full rounded-xl border border-slate-200 px-2 py-1.5 text-right text-sm font-bold text-slate-900 outline-none focus:border-emerald-300"
-              />
-            </div>
-          );
-        })}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-slate-600">
         <button
           type="button"
           onClick={() => {
-            onChange(components.map((component) => component.id));
+            const payableComponents = components.filter(
+              (component) => Number(component.remaining_amount || 0) > 0,
+            );
+            onChange(payableComponents.map((component) => component.id));
             for (const component of components) {
               onAmountChange(
                 componentAmountKey(chargeId, component.id),
-                String(component.amount),
+                Number(component.remaining_amount || 0) > 0
+                  ? String(component.remaining_amount)
+                  : "",
               );
             }
           }}
@@ -1600,8 +1769,8 @@ function ChargeComponentChecklist({
           Vider les montants
         </button>
         <span>
-          Reste dû officiel : {formatMoney(remainingAmount)} · Montant saisi :{" "}
-          {formatMoney(selectedTotal)}
+          Reste avant ce paiement : {formatMoney(remainingAmount)} · Après ce
+          paiement : {formatMoney(Math.max(remainingAmount - selectedTotal, 0))}
         </span>
       </div>
     </div>
@@ -1680,8 +1849,11 @@ function OtherFeesPaymentPlanner({
                     onChange={(e) =>
                       onAmountChange(charge.charge_id, e.target.value)
                     }
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none"
-                    placeholder="0"
+                    disabled={Number(charge.balance_due || 0) <= 0}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-900 outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                    placeholder={
+                      Number(charge.balance_due || 0) <= 0 ? "Soldé" : "0"
+                    }
                   />
                 </div>
               </div>

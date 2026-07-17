@@ -944,6 +944,25 @@ async function reconcileFinanceChargesForStudent(
     );
   };
 
+  const expectedAmountForNewCharge = (schedule: FinanceScheduleRow) => {
+    const scheduleAmount = Number(schedule.amount || 0);
+    if (!isInternatAnnexesSchedule(schedule)) return scheduleAmount;
+
+    const components =
+      internatComponentsBySchedule.get(String(schedule.id)) ?? [];
+    const mandatoryBase = components
+      .filter(
+        (component) =>
+          !isOptionalInternatAnnexeComponent(component.label),
+      )
+      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
+
+    // À la création, aucune option n'est encore engagée. La dette démarre
+    // donc au socle obligatoire. Bréviaire, Bible Africaine et Convoi seront
+    // ajoutés intégralement dès leur première saisie dans l'encaissement.
+    return mandatoryBase > 0 ? mandatoryBase : scheduleAmount;
+  };
+
   const applicableSchedules = scheduleRows.filter((schedule) =>
     financeScheduleAppliesToStudent(schedule, studentProfile, categoriesById),
   );
@@ -1044,7 +1063,7 @@ async function reconcileFinanceChargesForStudent(
       fee_schedule_id: schedule.id,
       fee_category_id: schedule.fee_category_id,
       label: financeScheduleLabelForClass(schedule, classRow as any, classesById) || schedule.label,
-      base_amount: Number(schedule.amount || 0),
+      base_amount: expectedAmountForNewCharge(schedule),
       due_date: schedule.due_date || null,
       charge_date: today,
       status: "pending",
