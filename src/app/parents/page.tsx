@@ -376,6 +376,39 @@ function formatAverage(value?: number | null) {
   return value.toFixed(2).replace(".", ",");
 }
 
+function formatHoursFromMinutes(value?: number | null) {
+  const minutes = Number(value || 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "0h";
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (!h) return `${m} min`;
+  return m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`;
+}
+
+function itemTypeLabel(type?: string | null) {
+  const t = String(type || "").toLowerCase();
+  if (t === "regulation") return "Régulation";
+  if (t === "revision") return "Révision";
+  if (t === "evaluation") return "Évaluation";
+  if (t === "remediation") return "Remédiation";
+  return "Leçon";
+}
+
+function visibleParentSessions(items: ParentTextbookItem[] = []) {
+  return items
+    .flatMap((item) =>
+      (item.sessions || []).map((session) => ({
+        ...session,
+        item_title: item.title,
+        item_type: item.item_type,
+      })),
+    )
+    .sort((a, b) =>
+      String(b.session_date || "").localeCompare(String(a.session_date || "")) ||
+      String(b.created_at || "").localeCompare(String(a.created_at || "")),
+    );
+}
+
 function averageFromBulletin(b?: ParentBulletin | null) {
   if (!b || b.general_avg === null || b.general_avg === undefined) return null;
   const n = Number(b.general_avg);
@@ -486,7 +519,65 @@ type ParentBulletin = {
   created_at: string | null;
 };
 
-type NavSection = "home" | "conduct" | "absences" | "notes" | "notifications";
+type ParentTextbookSession = {
+  id: string;
+  session_title: string | null;
+  session_date: string | null;
+  session_period_label?: string | null;
+  session_start_time?: string | null;
+  session_end_time?: string | null;
+  duration_minutes?: number | null;
+  content?: string | null;
+  homework?: string | null;
+  teacher_name?: string | null;
+  created_at?: string | null;
+};
+
+type ParentTextbookItem = {
+  id: string;
+  item_type: string | null;
+  title: string;
+  description?: string | null;
+  trimester?: string | null;
+  month_label?: string | null;
+  week_label?: string | null;
+  planned_duration_minutes?: number | null;
+  planned_sessions_count?: number | null;
+  sort_order?: number | null;
+  sessions?: ParentTextbookSession[];
+  completion?: { status?: string | null; updated_at?: string | null } | null;
+};
+
+type ParentTextbookProgression = {
+  assignment_id: string;
+  class_id: string;
+  class_label?: string | null;
+  subject_name: string;
+  teacher_name?: string | null;
+  planned_total_minutes: number;
+  completed_total_minutes: number;
+  progress_percent: number;
+  sessions_count: number;
+  latest_session?: ParentTextbookSession | null;
+  progression: {
+    id: string;
+    title: string;
+    academic_year?: string | null;
+    level?: string | null;
+    series?: string | null;
+    document?: { original_name?: string | null; signed_url?: string | null } | null;
+  };
+  items: ParentTextbookItem[];
+};
+
+type ParentTextbookPayload = {
+  ok?: boolean;
+  items?: ParentTextbookProgression[];
+  class_label?: string | null;
+  error?: string;
+};
+
+type NavSection = "home" | "textbook" | "conduct" | "absences" | "notes" | "notifications";
 
 type ParentNotification = {
   id: string;
@@ -1190,9 +1281,12 @@ export default function ParentPage() {
   const [gradeFrom, setGradeFrom] = useState<string>("");
   const [gradeTo, setGradeTo] = useState<string>("");
 
-  // Paiements et bulletins disponibles côté parent
-  const [paymentItems, setPaymentItems] = useState<ParentPaymentChild[]>([]);
+  // Bulletins + cahier de texte visibles côté parent
   const [bulletins, setBulletins] = useState<ParentBulletin[]>([]);
+  const [textbookByKid, setTextbookByKid] = useState<Record<string, ParentTextbookProgression[]>>({});
+  const [textbookLoading, setTextbookLoading] = useState(false);
+  const [textbookMsg, setTextbookMsg] = useState<string | null>(null);
+  const [activeTextbookSubject, setActiveTextbookSubject] = useState<string | "all">("all");
 
   // Matière sélectionnée par enfant + détails ouverts dans le cahier de notes
   const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
@@ -1253,22 +1347,8 @@ export default function ParentPage() {
     return selectedKid ? [selectedKid] : [];
   }, [selectedKid]);
 
-  const hasOnlinePaymentProviders = useMemo(
-    () => paymentItems.some((item) => (item.providers || []).length > 0),
-    [paymentItems],
-  );
-
   const unreadNotificationsCount = useMemo(
     () => notifications.filter((item) => !item.read_at).length,
-    [notifications],
-  );
-
-  const financeReminderCount = useMemo(
-    () =>
-      notifications.filter((item) => {
-        const kind = String(item.payload?.kind || item.payload?.event || item.payload?.type || "").toLowerCase();
-        return kind === "finance_reminder";
-      }).length,
     [notifications],
   );
 
@@ -1285,6 +1365,10 @@ export default function ParentPage() {
     return selectedKid ? bulletinsByKid.get(selectedKid.id) || [] : [];
   }, [bulletinsByKid, selectedKid]);
 
+  const selectedKidTextbook = useMemo(() => {
+    return selectedKid ? textbookByKid[selectedKid.id] || [] : [];
+  }, [textbookByKid, selectedKid]);
+
   const selectedKidPeriods = useMemo(() => {
     if (!selectedKid?.institution_id) return gradePeriods;
     const own = gradePeriods.filter((p) => p.institution_id === selectedKid.institution_id);
@@ -1296,20 +1380,23 @@ export default function ParentPage() {
   }, [selectedKidPeriods, selectedPeriodId]);
 
   const isHome = activeSection === "home";
+  const isTextbook = activeSection === "textbook";
   const isConduct = activeSection === "conduct";
   const isAbsences = activeSection === "absences";
   const isNotes = activeSection === "notes";
   const isNotifications = activeSection === "notifications";
 
+  const showTextbookSection = isTextbook;
   const showConductSection = isConduct;
   const showEventsSection = isAbsences;
   const showNotesSection = isNotes;
 
   const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
     home: { breadcrumb: "Accueil", title: "Bienvenue cher parent", tab: "Accueil" },
-    conduct: { breadcrumb: "Conduite", title: "Conduite et points", tab: "Conduite" },
-    absences: { breadcrumb: "Absences", title: "Cahier d'absences", tab: "Absences" },
-    notes: { breadcrumb: "Notes", title: "Cahier de notes", tab: "Notes" },
+    textbook: { breadcrumb: "Cahier de texte", title: "Progression et devoirs", tab: "Cahier de texte" },
+    conduct: { breadcrumb: "Conduite", title: "Conduite en temps réel", tab: "Conduite" },
+    absences: { breadcrumb: "Assiduité", title: "Absences et retards", tab: "Assiduité" },
+    notes: { breadcrumb: "Notes", title: "Notes, moyennes et bulletins", tab: "Notes" },
     notifications: { breadcrumb: "Notifications", title: "Centre de notifications", tab: "Notifications" },
   };
 
@@ -1321,12 +1408,12 @@ export default function ParentPage() {
     idleClass: string;
   }> = [
     {
-      key: "conduct",
-      label: "Conduite",
-      icon: <IconClipboard />,
+      key: "textbook",
+      label: "Cahier de texte",
+      icon: <IconBook />,
       activeClass:
-        "bg-gradient-to-r from-[#003766] to-[#0057a8] text-white shadow-lg shadow-[#003766]/20",
-      idleClass: "bg-[#e7f0fa] text-[#003766] hover:bg-[#d9e8f7]",
+        "bg-gradient-to-r from-[#006633] to-[#0f9f6e] text-white shadow-lg shadow-emerald-900/20",
+      idleClass: "bg-[#e8f8ef] text-[#166534] hover:bg-[#d7f1e2]",
     },
     {
       key: "absences",
@@ -1341,8 +1428,16 @@ export default function ParentPage() {
       label: "Notes",
       icon: <IconBook />,
       activeClass:
-        "bg-gradient-to-r from-[#166534] to-[#16a34a] text-white shadow-lg shadow-emerald-900/20",
-      idleClass: "bg-[#e8f8ef] text-[#166534] hover:bg-[#d7f1e2]",
+        "bg-gradient-to-r from-[#003766] to-[#0057a8] text-white shadow-lg shadow-[#003766]/20",
+      idleClass: "bg-[#e7f0fa] text-[#003766] hover:bg-[#d9e8f7]",
+    },
+    {
+      key: "conduct",
+      label: "Conduite",
+      icon: <IconShield />,
+      activeClass:
+        "bg-gradient-to-r from-[#5b21b6] to-[#7c3aed] text-white shadow-lg shadow-violet-900/20",
+      idleClass: "bg-[#f3e8ff] text-[#6d28d9] hover:bg-[#ead8ff]",
     },
   ];
 
@@ -1485,19 +1580,6 @@ export default function ParentPage() {
     }
   }
 
-  async function loadPaymentOptions() {
-    try {
-      const res = await fetch("/api/parent/payments/options", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = await res.json().catch(() => ({}));
-      setPaymentItems(Array.isArray(j?.items) ? j.items : []);
-    } catch {
-      setPaymentItems([]);
-    }
-  }
-
   async function loadGradePeriods() {
     try {
       const res = await fetch("/api/parent/grading-periods", {
@@ -1521,6 +1603,30 @@ export default function ParentPage() {
       setBulletins(Array.isArray(j?.items) ? j.items : []);
     } catch {
       setBulletins([]);
+    }
+  }
+
+  async function loadTextbookForKid(studentId: string, silent = false) {
+    if (!studentId) return;
+    if (!silent) setTextbookLoading(true);
+    setTextbookMsg(null);
+    try {
+      const qs = new URLSearchParams({ student_id: studentId });
+      const res = await fetch(`/api/parent/textbook?${qs.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const j = (await res.json().catch(() => ({}))) as ParentTextbookPayload;
+      if (!res.ok || j?.ok === false) throw new Error(j?.error || "Cahier de texte indisponible.");
+      setTextbookByKid((prev) => ({
+        ...prev,
+        [studentId]: Array.isArray(j?.items) ? j.items : [],
+      }));
+    } catch (e: any) {
+      setTextbookMsg(e?.message || "Impossible de charger le cahier de texte.");
+      setTextbookByKid((prev) => ({ ...prev, [studentId]: [] }));
+    } finally {
+      if (!silent) setTextbookLoading(false);
     }
   }
 
@@ -1750,7 +1856,7 @@ export default function ParentPage() {
 
       if (added) {
         setActiveChildId(added.id);
-        setActiveSection("conduct");
+        setActiveSection("textbook");
       }
       setAttachMatricule("");
       setAttachMsg("Enfant ajouté avec succès.");
@@ -1770,7 +1876,6 @@ export default function ParentPage() {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
     loadSmsContacts(true);
-    loadPaymentOptions();
     loadGradePeriods();
     loadBulletins();
     loadParentNotifications(true);
@@ -1803,6 +1908,13 @@ export default function ParentPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeGradePeriod?.id]);
+
+  useEffect(() => {
+    if (!selectedKid?.id) return;
+    loadTextbookForKid(selectedKid.id, true);
+    setActiveTextbookSubject("all");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKid?.id]);
 
   async function enablePush() {
     setMsg(null);
@@ -1869,12 +1981,13 @@ export default function ParentPage() {
   function selectSection(section: NavSection) {
     setActiveSection(section);
     if (section === "notifications") loadParentNotifications(true);
+    if (section === "textbook" && selectedKid) loadTextbookForKid(selectedKid.id, true);
     setMobileNavOpen(false);
     if (typeof window !== "undefined")
       window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function openChildSection(childId: string, section: NavSection = "conduct") {
+  function openChildSection(childId: string, section: NavSection = "textbook") {
     setActiveChildId(childId);
     setActiveSection(section);
     setMobileNavOpen(false);
@@ -1906,7 +2019,7 @@ export default function ParentPage() {
                     Espace parent Mon Cahier
                   </div>
                   <div className="mt-1 truncate text-[11px] text-white/80">
-                    Suivre votre enfant, c’est soutenir sa réussite.
+                    Cahier de texte, assiduité, notes et bulletins.
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
                     <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
@@ -1949,6 +2062,24 @@ export default function ParentPage() {
               </button>
               <button
                 type="button"
+                onClick={() => selectSection("textbook")}
+                className={[
+                  "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                  isTextbook ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
+                    isTextbook ? "bg-[#e8f8ef] text-[#166534]" : "bg-white/15 text-white",
+                  ].join(" ")}
+                >
+                  <IconBook />
+                </span>
+                <span className="min-w-0 flex-1 truncate">Cahier de texte</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => selectSection("notifications")}
                 className={[
                   "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
@@ -1970,17 +2101,6 @@ export default function ParentPage() {
                   </span>
                 ) : null}
               </button>
-              {hasOnlinePaymentProviders ? (
-                <a
-                  href="/parents/payments"
-                  className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-white/15"
-                >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/15 text-white">
-                    <IconShield />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">Frais scolaires</span>
-                </a>
-              ) : null}
             </div>
 
             <div className="border-b border-white/10 px-4 py-3">
@@ -2146,7 +2266,7 @@ export default function ParentPage() {
                   Espace parent Mon Cahier
                 </div>
                 <div className="mt-1 truncate text-[11px] text-white/80">
-                  Suivre votre enfant, c’est soutenir sa réussite.
+                  Cahier de texte, assiduité, notes et bulletins.
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
@@ -2178,13 +2298,31 @@ export default function ParentPage() {
               </span>
               <span>Accueil</span>
             </button>
-              <button
-                type="button"
-                onClick={() => selectSection("notifications")}
+            <button
+              type="button"
+              onClick={() => selectSection("textbook")}
+              className={[
+                "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                isTextbook ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+              ].join(" ")}
+            >
+              <span
                 className={[
-                  "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
-                  isNotifications ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+                  "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
+                  isTextbook ? "bg-[#e8f8ef] text-[#166534]" : "bg-white/15 text-white",
                 ].join(" ")}
+              >
+                <IconBook />
+              </span>
+              <span className="min-w-0 flex-1 truncate">Cahier de texte</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectSection("notifications")}
+              className={[
+                "mt-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-extrabold transition",
+                isNotifications ? "bg-white text-[#003766]" : "bg-white/10 text-white hover:bg-white/15",
+              ].join(" ")}
               >
                 <span
                   className={[
@@ -2201,17 +2339,6 @@ export default function ParentPage() {
                   </span>
                 ) : null}
               </button>
-              {hasOnlinePaymentProviders ? (
-                <a
-                  href="/parents/payments"
-                  className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left text-[14px] font-extrabold text-white transition hover:bg-white/15"
-                >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-white/15 text-white">
-                    <IconShield />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">Frais scolaires</span>
-                </a>
-              ) : null}
           </div>
 
           <div className="border-b border-white/15 px-4 py-3">
@@ -2311,7 +2438,7 @@ export default function ParentPage() {
               </h1>
               <div className="text-[14px] font-semibold text-slate-600">
                 {isHome
-                  ? "Suivre votre enfant, c’est soutenir sa réussite."
+                  ? "Cahier de texte, assiduité, notes et bulletins."
                   : selectedKid?.full_name || "Aucun enfant sélectionné"}
                 {!isHome && selectedKid?.class_label
                   ? ` · ${selectedKid.class_label}`
@@ -2353,17 +2480,24 @@ export default function ParentPage() {
                       isInDateRange(ev.when, conductFrom || undefined, conductTo || undefined),
                     )
                   : [];
+                const conductForKid = k ? conduct[k.id] || null : null;
                 const absencesCount = periodEvents.filter((ev) => ev.type === "absent").length;
                 const latesCount = periodEvents.filter((ev) => ev.type === "late").length;
                 const totalLateMinutes = periodEvents.reduce(
                   (sum, ev) => sum + (ev.type === "late" ? Number(ev.minutes_late || 0) : 0),
                   0,
                 );
-                const paymentForKid = k ? paymentItems.find((item) => item.student_id === k.id) : null;
-                const totalBalance = (paymentForKid?.charges || []).reduce(
-                  (sum, charge) => sum + Number(charge.balance_due || 0),
-                  0,
-                );
+                const kidTextbook = k ? textbookByKid[k.id] || [] : [];
+                const totalProgressions = kidTextbook.length;
+                const averageProgress = totalProgressions
+                  ? Math.round(kidTextbook.reduce((sum, item) => sum + Number(item.progress_percent || 0), 0) / totalProgressions)
+                  : 0;
+                const latestTextbookSession = kidTextbook
+                  .flatMap((item) => visibleParentSessions(item.items).map((session) => ({ ...session, subject_name: item.subject_name })))
+                  .sort((a, b) => String(b.session_date || "").localeCompare(String(a.session_date || "")) || String(b.created_at || "").localeCompare(String(a.created_at || "")))[0] || null;
+                const homeworkCount = kidTextbook
+                  .flatMap((item) => visibleParentSessions(item.items))
+                  .filter((session) => String(session.homework || "").trim()).length;
                 const latestBulletin = bulletinForPeriod || (k ? (bulletinsByKid.get(k.id) || [])[0] || null : null);
 
                 return (
@@ -2395,10 +2529,10 @@ export default function ParentPage() {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={() => openChildSection(k.id, "notes")}
+                                onClick={() => openChildSection(k.id, "textbook")}
                                 className="rounded-2xl bg-white px-4 py-2 text-[13px] font-black text-[#003766] transition hover:bg-white/90"
                               >
-                                Notes
+                                Cahier de texte
                               </button>
                               <button
                                 type="button"
@@ -2433,17 +2567,29 @@ export default function ParentPage() {
                         Aucun enfant lié à votre compte pour l’instant. Ajoutez un enfant avec son matricule depuis le menu.
                       </section>
                     ) : (
-                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         <button
                           type="button"
-                          onClick={() => k && openChildSection(k.id, "notes")}
-                          className="rounded-[28px] border border-emerald-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                          onClick={() => k && openChildSection(k.id, "textbook")}
+                          className="rounded-[28px] border border-emerald-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md xl:col-span-2"
                         >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">Notes</div>
-                          <div className="mt-2 text-2xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{averageCaption}</div>
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">Cahier de texte</div>
+                          <div className="mt-2 flex items-end gap-2">
+                            <span className="text-3xl font-black text-slate-950">{averageProgress}%</span>
+                            <span className="pb-1 text-[13px] font-bold text-slate-500">progression</span>
+                          </div>
+                          <div className="mt-2 h-2 rounded-full bg-slate-100">
+                            <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, averageProgress))}%` }} />
+                          </div>
                           <div className="mt-3 rounded-2xl bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800">
-                            {latestGrade ? `${latestGrade.subject_name || "Matière"} · ${formatGradeScore(latestGrade)}` : "Aucune note publiée"}
+                            {latestTextbookSession
+                              ? `${latestTextbookSession.subject_name || "Matière"} · ${latestTextbookSession.item_title}`
+                              : totalProgressions
+                                ? `${totalProgressions} progression${totalProgressions > 1 ? "s" : ""} suivie${totalProgressions > 1 ? "s" : ""}`
+                                : "Aucune progression affectée"}
+                          </div>
+                          <div className="mt-2 text-[12px] font-semibold text-slate-500">
+                            {homeworkCount} devoir{homeworkCount > 1 ? "s" : ""} / travail à faire renseigné{homeworkCount > 1 ? "s" : ""}
                           </div>
                         </button>
 
@@ -2460,46 +2606,47 @@ export default function ParentPage() {
                           <div className="mt-1 text-[13px] font-semibold text-slate-500">
                             {latesCount} retard{latesCount > 1 ? "s" : ""}{totalLateMinutes ? ` · ${totalLateMinutes} min` : ""}
                           </div>
-                          <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-[13px] font-bold text-amber-800">
-                            {periodEvents[0] ? `${dayLabel(periodEvents[0].when)} · ${periodEvents[0].type === "absent" ? "Absence" : "Retard"}` : "Aucun événement récent"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => k && openChildSection(k.id, "notes")}
+                          className="rounded-[28px] border border-sky-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                        >
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-sky-700">Notes</div>
+                          <div className="mt-2 text-2xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{averageCaption}</div>
+                          <div className="mt-3 rounded-2xl bg-sky-50 px-3 py-2 text-[13px] font-bold text-sky-800">
+                            {latestGrade ? `${latestGrade.subject_name || "Matière"} · ${formatGradeScore(latestGrade)}` : "Aucune note publiée"}
                           </div>
                         </button>
 
-                        <a
-                          href={hasOnlinePaymentProviders ? "/parents/payments" : "#"}
-                          className={[
-                            "rounded-[28px] border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-                            hasOnlinePaymentProviders ? "border-sky-200" : "pointer-events-none border-slate-200 opacity-80",
-                          ].join(" ")}
+                        <button
+                          type="button"
+                          onClick={() => k && openChildSection(k.id, "conduct")}
+                          className="rounded-[28px] border border-violet-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                         >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-sky-700">Frais scolaires</div>
-                          <div className="mt-2 text-2xl font-black text-slate-950">{formatMoney(totalBalance)}</div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">Reste à payer estimé</div>
-                          <div className="mt-3 rounded-2xl bg-sky-50 px-3 py-2 text-[13px] font-bold text-sky-800">
-                            {hasOnlinePaymentProviders ? "Voir les détails et reçus" : "Paiement en ligne non configuré"}
-                          </div>
-                        </a>
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-violet-700">Conduite</div>
+                          <div className="mt-2 text-2xl font-black text-slate-950">{conductForKid ? conductForKid.total.toFixed(2).replace(".", ",") : "—"}</div>
+                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{conductForKid?.appreciation || "Temps réel"}</div>
+                        </button>
 
-                        <div className="rounded-[28px] border border-violet-200 bg-white p-4 text-left shadow-sm">
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-violet-700">Bulletin</div>
+                        <div className="rounded-[28px] border border-slate-200 bg-white p-4 text-left shadow-sm">
+                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-slate-600">Bulletin</div>
                           <div className="mt-2 text-lg font-black text-slate-950">
                             {latestBulletin ? "Disponible" : "Non disponible"}
                           </div>
                           <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                            {latestBulletin?.period_label || "Dernier document trimestriel"}
+                            {latestBulletin?.period_label || "Dernier bulletin publié"}
                           </div>
                           {latestBulletin ? (
                             <a
                               href={latestBulletin.url}
-                              className="mt-3 inline-flex rounded-2xl bg-violet-50 px-3 py-2 text-[13px] font-black text-violet-800 ring-1 ring-violet-200 transition hover:bg-violet-100"
+                              className="mt-3 inline-flex rounded-2xl bg-slate-900 px-3 py-2 text-[13px] font-black text-white transition hover:bg-slate-800"
                             >
-                              Ouvrir le bulletin
+                              Ouvrir
                             </a>
-                          ) : (
-                            <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-[13px] font-bold text-slate-600">
-                              Aucun bulletin publié
-                            </div>
-                          )}
+                          ) : null}
                         </div>
                       </section>
                     )}
@@ -2512,7 +2659,7 @@ export default function ParentPage() {
 
           {selectedKid && !isHome && (
             <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:overflow-visible sm:pb-0">
+              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-4 sm:overflow-visible sm:pb-0">
                 {tabs.map((tab) => {
                   const active = activeSection === tab.key;
                   return (
@@ -2545,6 +2692,165 @@ export default function ParentPage() {
             <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 text-center text-[15px] text-slate-600 shadow-sm">
               Sélectionnez un enfant pour afficher son tableau de bord.
             </div>
+          )}
+
+          {showTextbookSection && selectedKid && (
+            <section className="mb-6 space-y-4">
+              {(() => {
+                const progressions = selectedKidTextbook;
+                const subjects = Array.from(new Set(progressions.map((p) => p.subject_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fr"));
+                const filtered = activeTextbookSubject === "all"
+                  ? progressions
+                  : progressions.filter((p) => p.subject_name === activeTextbookSubject);
+                const allSessions = filtered
+                  .flatMap((prog) => visibleParentSessions(prog.items).map((session) => ({ ...session, subject_name: prog.subject_name, progression_title: prog.progression.title })))
+                  .slice(0, 8);
+                const homeworks = allSessions.filter((session) => String(session.homework || "").trim()).slice(0, 5);
+                const avgProgress = filtered.length
+                  ? Math.round(filtered.reduce((sum, p) => sum + Number(p.progress_percent || 0), 0) / filtered.length)
+                  : 0;
+
+                return (
+                  <>
+                    <div className="rounded-[32px] border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">Cahier de texte</div>
+                          <h2 className="mt-1 text-2xl font-black text-slate-950">Suivi de la progression</h2>
+                          <p className="mt-1 max-w-2xl text-[14px] font-semibold text-slate-500">
+                            Les leçons vues en classe, le contenu de séance et le travail à faire.
+                          </p>
+                        </div>
+                        <div className="min-w-[180px] rounded-3xl bg-emerald-50 p-4 text-center ring-1 ring-emerald-100">
+                          <div className="text-3xl font-black text-emerald-700">{avgProgress}%</div>
+                          <div className="mt-1 text-[12px] font-black uppercase tracking-[0.12em] text-emerald-800">Avancement</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTextbookSubject("all")}
+                          className={[
+                            "shrink-0 rounded-full px-4 py-2 text-[13px] font-black ring-1 transition",
+                            activeTextbookSubject === "all" ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50",
+                          ].join(" ")}
+                        >
+                          Toutes
+                        </button>
+                        {subjects.map((subject) => (
+                          <button
+                            key={subject}
+                            type="button"
+                            onClick={() => setActiveTextbookSubject(subject)}
+                            className={[
+                              "shrink-0 rounded-full px-4 py-2 text-[13px] font-black ring-1 transition",
+                              activeTextbookSubject === subject ? "bg-emerald-600 text-white ring-emerald-600" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50",
+                            ].join(" ")}
+                          >
+                            {subject}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {textbookLoading ? (
+                      <div className="grid gap-3 lg:grid-cols-3">
+                        <Skeleton className="h-40" />
+                        <Skeleton className="h-40" />
+                        <Skeleton className="h-40" />
+                      </div>
+                    ) : textbookMsg ? (
+                      <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5 text-sm font-bold text-rose-700">{textbookMsg}</div>
+                    ) : !filtered.length ? (
+                      <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                        <div className="text-xl font-black text-slate-950">Aucune progression disponible</div>
+                        <p className="mt-2 text-sm font-semibold text-slate-500">
+                          L’établissement doit affecter les progressions à la classe de votre enfant.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                          <div className="space-y-3">
+                            {filtered.map((prog) => {
+                              const completed = prog.items.filter((item) => item.completion?.status === "completed").length;
+                              const total = prog.items.length;
+                              return (
+                                <article key={prog.assignment_id} className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">{prog.subject_name}</div>
+                                      <h3 className="mt-1 truncate text-xl font-black text-slate-950">{prog.progression.title}</h3>
+                                      <div className="mt-1 text-sm font-semibold text-slate-500">
+                                        {completed}/{total} élément{total > 1 ? "s" : ""} terminé{completed > 1 ? "s" : ""} · {prog.sessions_count} séance{prog.sessions_count > 1 ? "s" : ""}
+                                      </div>
+                                    </div>
+                                    {prog.progression.document?.signed_url ? (
+                                      <a
+                                        href={prog.progression.document.signed_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-slate-900 px-4 py-2 text-[13px] font-black text-white hover:bg-slate-800"
+                                      >
+                                        PDF officiel
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                  <div className="mt-4 h-2 rounded-full bg-slate-100">
+                                    <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, prog.progress_percent || 0))}%` }} />
+                                  </div>
+                                  <div className="mt-3 flex items-center justify-between text-[13px] font-bold text-slate-600">
+                                    <span>{prog.progress_percent || 0}%</span>
+                                    <span>{formatHoursFromMinutes(prog.completed_total_minutes)} / {formatHoursFromMinutes(prog.planned_total_minutes)}</span>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="rounded-[28px] border border-amber-200 bg-white p-4 shadow-sm">
+                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-amber-700">Travail à faire</div>
+                              <div className="mt-3 space-y-3">
+                                {homeworks.length ? homeworks.map((session) => (
+                                  <div key={session.id} className="rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-100">
+                                    <div className="text-[13px] font-black text-slate-950">{session.subject_name} · {dateFr(session.session_date)}</div>
+                                    <div className="mt-1 text-sm font-semibold text-amber-900">{session.homework}</div>
+                                  </div>
+                                )) : (
+                                  <div className="rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-500">Aucun travail à faire renseigné récemment.</div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-slate-600">Dernières séances</div>
+                              <div className="mt-3 space-y-3">
+                                {allSessions.length ? allSessions.map((session) => (
+                                  <div key={session.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="truncate text-[14px] font-black text-slate-950">{session.subject_name} · {session.item_title}</div>
+                                        <div className="mt-1 text-[12px] font-bold text-slate-500">{dateFr(session.session_date)} {session.session_period_label ? `· ${session.session_period_label}` : ""}</div>
+                                      </div>
+                                      <Badge tone="emerald">{itemTypeLabel(session.item_type)}</Badge>
+                                    </div>
+                                    {session.content ? <p className="mt-2 text-sm font-semibold text-slate-700">{session.content}</p> : null}
+                                  </div>
+                                )) : (
+                                  <div className="rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-500">Aucune séance renseignée pour le moment.</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </section>
           )}
 
           {isNotifications && (
