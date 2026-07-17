@@ -110,6 +110,11 @@ type PaymentAllocationPlanItem = {
   includeOnReceipt: boolean;
 };
 
+type InternatOptionSelectionPlanItem = {
+  chargeId: string;
+  componentIds: string[];
+};
+
 type ResolvedPaymentAllocation = {
   charge: ChargeBalanceRow;
   amount: number;
@@ -1561,6 +1566,74 @@ function parsePaymentAllocationPlan(
   );
 }
 
+function parseInternatOptionSelectionPlan(
+  raw: FormDataEntryValue | null,
+): InternatOptionSelectionPlanItem[] {
+  const text = String(raw ?? "").trim();
+  if (!text) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("La sélection des options d'internat est invalide.");
+  }
+
+  if (!Array.isArray(parsed) || parsed.length > 20) {
+    throw new Error("La sélection des options d'internat est invalide.");
+  }
+
+  return parsed
+    .map((item: any) => ({
+      chargeId: normalize(item?.chargeId),
+      componentIds: Array.isArray(item?.componentIds)
+        ? Array.from(
+            new Set<string>(
+              item.componentIds
+                .map((id: unknown) => normalize(id))
+                .filter((id: string) => id.length > 0),
+            ),
+          )
+        : [],
+    }))
+    .filter((item) => Boolean(item.chargeId));
+}
+
+async function persistInternatOptionSelectionPlan({
+  institutionId,
+  userId,
+  studentId,
+  classId,
+  plan,
+}: {
+  institutionId: string;
+  userId: string;
+  studentId: string;
+  classId: string;
+  plan: InternatOptionSelectionPlanItem[];
+}) {
+  for (const item of plan) {
+    const charge = await fetchChargeById(item.chargeId, institutionId);
+    if (
+      !charge ||
+      charge.student_id !== studentId ||
+      charge.class_id !== classId
+    ) {
+      throw new Error(
+        "Une dette d'internat ne correspond pas à l'élève et à la classe sélectionnés.",
+      );
+    }
+
+    await setStudentChargeOptionalComponents({
+      institutionId,
+      userId,
+      studentId,
+      chargeId: item.chargeId,
+      selectedComponentIds: item.componentIds,
+    });
+  }
+}
+
 async function resolveAllocationPlanForPayment({
   institutionId,
   studentId,
@@ -1754,6 +1827,9 @@ async function createPaymentAction(formData: FormData) {
   const allocationPlan = parsePaymentAllocationPlan(
     formData.get("allocation_plan"),
   );
+  const optionSelectionPlan = parseInternatOptionSelectionPlan(
+    formData.get("option_selection_plan"),
+  );
   const paymentDate = normalize(formData.get("payment_date"));
   const notes = normalize(formData.get("notes"));
   const parentPhone = normalize(formData.get("parent_phone"));
@@ -1900,9 +1976,18 @@ async function createPaymentAction(formData: FormData) {
     allocationDrafts = [{ charge, amount, selectedComponents, skippedComponents: [] }];
   }
 
-  // Les options sont enregistrées avant la création du reçu. Ainsi, une erreur
-  // de paramétrage ne peut jamais laisser un reçu posté alors que le recalcul de
-  // la dette a échoué.
+  // Les cases cochées font partie du profil financier, même lorsqu'aucun
+  // montant n'est saisi sur l'option. Elles sont donc persistées avant le reçu.
+  await persistInternatOptionSelectionPlan({
+    institutionId,
+    userId,
+    studentId,
+    classId,
+    plan: optionSelectionPlan,
+  });
+
+  // Les options payées sont confirmées avant la création du reçu. Une erreur
+  // de paramétrage ne peut ainsi jamais laisser un reçu posté sans recalcul.
   await syncVariableAnnexChargeAmounts({
     institutionId,
     userId,
@@ -2222,34 +2307,14 @@ async function updateInternatOptionsAction(formData: FormData) {
     throw new Error("Élève, classe et options d'internat sont obligatoires.");
   }
 
-  let plan: Array<{ chargeId: string; componentIds: string[] }> = [];
-  try {
-    const parsed = JSON.parse(rawPlan);
-    if (!Array.isArray(parsed) || parsed.length > 20) throw new Error("bad_plan");
-    plan = parsed.map((item: any) => ({
-      chargeId: normalize(item?.chargeId),
-      componentIds: Array.isArray(item?.componentIds)
-        ? Array.from(
-            new Set(
-              item.componentIds.map((id: unknown) => normalize(id)).filter(Boolean),
-            ),
-          )
-        : [],
-    }));
-  } catch {
-    throw new Error("La sélection des options d'internat est invalide.");
-  }
-
-  for (const item of plan) {
-    if (!item.chargeId) continue;
-    await setStudentChargeOptionalComponents({
-      institutionId,
-      userId,
-      studentId,
-      chargeId: item.chargeId,
-      selectedComponentIds: item.componentIds,
-    });
-  }
+  const plan = parseInternatOptionSelectionPlan(rawPlan);
+  await persistInternatOptionSelectionPlan({
+    institutionId,
+    userId,
+    studentId,
+    classId,
+    plan,
+  });
 
   revalidatePath("/admin/finance");
   revalidatePath("/admin/finance/payments");

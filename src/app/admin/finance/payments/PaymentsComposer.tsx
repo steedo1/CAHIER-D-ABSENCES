@@ -101,30 +101,30 @@ function getComponentPaymentInputs(
 
 function getNewOptionalInternatAnnexesExpectedTotal(
   charge: PaymentStudentRow["open_charges"][number],
-  amounts: Record<string, string>,
+  selectedComponentIds: string[],
 ) {
+  const selectedIds = new Set(selectedComponentIds);
   return charge.components
     .filter(
       (component) =>
         component.is_optional &&
         !component.is_engaged &&
-        getComponentAmount(amounts, charge.charge_id, component.id) > 0,
+        selectedIds.has(component.id),
     )
     .reduce((sum, component) => sum + Number(component.amount || 0), 0);
 }
 
 function getComponentDrivenChargeLimit(
   charge: PaymentStudentRow["open_charges"][number],
-  amounts: Record<string, string>,
+  selectedComponentIds: string[],
 ) {
   if (charge.components.length === 0) return Number(charge.balance_due || 0);
 
-  // Une option CSCA devient entièrement due dès qu'un montant positif est
-  // saisi dessus. Le plafond augmente donc du montant attendu complet de
-  // l'option nouvellement engagée, et non du simple montant tapé.
+  // Une option devient entièrement due dès qu'elle est retenue, même si aucun
+  // paiement n'est encore saisi. Le plafond vient exclusivement du barème.
   return (
     Number(charge.balance_due || 0) +
-    getNewOptionalInternatAnnexesExpectedTotal(charge, amounts)
+    getNewOptionalInternatAnnexesExpectedTotal(charge, selectedComponentIds)
   );
 }
 
@@ -164,13 +164,16 @@ function getSelectedComponentsTotal(
 
 function getInternatRecoverableTotal(
   charges: PaymentStudentRow["open_charges"],
-  amounts: Record<string, string>,
+  componentIdsByCharge: Record<string, string[]>,
 ) {
   return charges.reduce(
     (sum, charge) =>
       sum +
       Number(charge.balance_due || 0) +
-      getNewOptionalInternatAnnexesExpectedTotal(charge, amounts),
+      getNewOptionalInternatAnnexesExpectedTotal(
+        charge,
+        componentIdsByCharge[charge.charge_id] ?? [],
+      ),
     0,
   );
 }
@@ -646,11 +649,11 @@ export default function PaymentsComposer({
           sum +
           getNewOptionalInternatAnnexesExpectedTotal(
             charge,
-            internatAmounts,
+            internatComponentIdsByCharge[charge.charge_id] ?? [],
           ),
         0,
       ),
-    [internatAmounts, internatCharges],
+    [internatCharges, internatComponentIdsByCharge],
   );
 
   const unifiedExpectedTotal = useMemo(() => {
@@ -720,12 +723,12 @@ export default function PaymentsComposer({
       selectedCategoryIsInternat
         ? getInternatRecoverableTotal(
             categoryChargeOptions,
-            internatAmounts,
+            internatComponentIdsByCharge,
           )
         : 0,
     [
       categoryChargeOptions,
-      internatAmounts,
+      internatComponentIdsByCharge,
       selectedCategoryIsInternat,
     ],
   );
@@ -1150,7 +1153,7 @@ export default function PaymentsComposer({
                       Number(charge.net_amount || 0) +
                       getNewOptionalInternatAnnexesExpectedTotal(
                         charge,
-                        internatAmounts,
+                        internatComponentIdsByCharge[charge.charge_id] ?? [],
                       ),
                     0,
                   )}
@@ -1203,7 +1206,7 @@ export default function PaymentsComposer({
                     disabled={!selectedStudent.profile_complete}
                     className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                   >
-                    Enregistrer les options d'internat
+                    Enregistrer les options et recalculer la dette
                   </button>
                 ) : null}
                 <PendingButton
@@ -1528,6 +1531,19 @@ function InternatPaymentPlanner({
     return sum + Number(amounts[charge.charge_id] || 0);
   }, 0);
 
+  const retainedAnnexesTotal = charges
+    .filter((charge) => charge.components.length > 0)
+    .reduce(
+      (sum, charge) =>
+        sum +
+        Number(charge.net_amount || 0) +
+        getNewOptionalInternatAnnexesExpectedTotal(
+          charge,
+          componentIdsByCharge[charge.charge_id] ?? [],
+        ),
+      0,
+    );
+
   return (
     <div className="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1542,10 +1558,18 @@ function InternatPaymentPlanner({
             sous-rubrique.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
             <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-              Barème retenu
+              Annexes retenues
+            </div>
+            <div className="mt-1 text-lg font-black text-slate-900">
+              {formatMoney(retainedAnnexesTotal)}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+              Total internat
             </div>
             <div className="mt-1 text-lg font-black text-slate-900">
               {formatMoney(recoverableTotal)}
@@ -1574,7 +1598,10 @@ function InternatPaymentPlanner({
             charge.components.length > 0
               ? componentTotal
               : Number(amounts[charge.charge_id] || 0);
-          const chargeLimit = getComponentDrivenChargeLimit(charge, amounts);
+          const chargeLimit = getComponentDrivenChargeLimit(
+            charge,
+            selectedIds,
+          );
           const isPension = isPensionCharge(charge.label);
 
           return (
@@ -1593,7 +1620,7 @@ function InternatPaymentPlanner({
                       Number(charge.net_amount || 0) +
                         getNewOptionalInternatAnnexesExpectedTotal(
                           charge,
-                          amounts,
+                          selectedIds,
                         ),
                     )}{" "}
                     · Déjà payé : {formatMoney(charge.paid_amount)} · Reste
