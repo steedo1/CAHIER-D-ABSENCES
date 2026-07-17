@@ -4,12 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
-  buildFinanceScheduleCoverageWarning,
-  financeScheduleAppliesToStudent,
-  financeScheduleLabelForClass,
-  financeScheduleProfileVariantKey,
-  selectFinanceSchedulesForClass,
-} from "@/lib/finance/charge-rules";
+  applyStudentFinanceReconciliation,
+  reconcileFinanceChargesForStudent,
+  type FinanceSyncResult,
+} from "@/lib/finance/student-finance-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,43 +52,9 @@ const OFFICIAL_TRACK_CODES = new Set<string>([
   "tleD",
 ]);
 
-type FinanceScheduleRow = {
-  id: string;
-  school_id: string;
-  academic_year: string | null;
-  class_id: string | null;
-  fee_category_id: string;
-  label: string | null;
-  amount: number | string | null;
-  due_date: string | null;
-  allow_partial?: boolean | null;
-  is_active?: boolean | null;
-  notes?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
-type FinanceFeeCategoryRow = {
-  id: string;
-  code: string | null;
-  name: string | null;
-  is_mandatory?: boolean | null;
-};
-
 type FinanceStudentProfile = {
   is_affecte: boolean | null;
   is_boarder: boolean | null;
-};
-
-type FinanceSyncResult = {
-  inserted: number;
-  reactivated: number;
-  cancelled: number;
-  settledPaid: number;
-  skippedPaid: number;
-  updatedAmount: number;
-  retargeted: number;
-  warnings: string[];
 };
 
 function fullName(row: any) {
@@ -142,33 +106,6 @@ function normalizeGender(value: unknown) {
   return cleanText(value).slice(0, 8).toUpperCase();
 }
 
-function amountsDiffer(a: number, b: number) {
-  return Math.abs(Number(a || 0) - Number(b || 0)) > 0.01;
-}
-
-function normalizeFinanceLabel(value: string | null | undefined) {
-  return String(value ?? "")
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function isInternatAnnexesSchedule(schedule: Pick<FinanceScheduleRow, "label">) {
-  const text = normalizeFinanceLabel(schedule.label);
-  return text.includes("internat") && text.includes("frais") && text.includes("annexe");
-}
-
-function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
-  const text = normalizeFinanceLabel(label);
-  return text.includes("breviaire") || text.includes("bible") || text.includes("convoi");
-}
-
-function financeStatusForAmount(expectedAmount: number, paidAmount: number) {
-  if (paidAmount >= expectedAmount - 0.01) return "paid";
-  if (paidAmount > 0) return "partial";
-  return "pending";
-}
 
 function normalizeBool(value: unknown): boolean | null {
   if (typeof value === "boolean") return value;
@@ -600,24 +537,6 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   });
 }
 
-async function getAcademicYearIdForFinance(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
-  academicYear: string | null,
-) {
-  if (!academicYear) return null;
-
-  const { data, error } = await srv
-    .from("academic_years")
-    .select("id")
-    .eq("institution_id", institutionId)
-    .eq("code", academicYear)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data?.id ? String(data.id) : null;
-}
-
 async function loadFinanceProfilesForStudents(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
@@ -629,12 +548,10 @@ async function loadFinanceProfilesForStudents(
 
   const { data, error } = await srv
     .from("class_enrollments")
-    .select(
-      `
+    .select(`
       student_id,
       students:student_id(is_affecte,is_boarder)
-    `,
-    )
+    `)
     .eq("institution_id", institutionId)
     .eq("class_id", classId)
     .is("end_date", null)
@@ -658,581 +575,6 @@ async function loadFinanceProfilesForStudents(
       };
     })
     .filter(Boolean) as Array<{ student_id: string; profile: FinanceStudentProfile }>;
-}
-
-async function reconcileFinanceChargesForStudent(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
-  userId: string,
-  studentId: string,
-  classId: string,
-  studentProfile: FinanceStudentProfile,
-): Promise<FinanceSyncResult> {
-  const empty: FinanceSyncResult = {
-    inserted: 0,
-    reactivated: 0,
-    cancelled: 0,
-    settledPaid: 0,
-    skippedPaid: 0,
-    updatedAmount: 0,
-    retargeted: 0,
-    warnings: [],
-  };
-
-  // Une valeur NULL signifie que le profil financier n'est pas renseigné.
-  // Dans ce cas, aucune dette ne doit être créée, annulée ou recalculée :
-  // traiter NULL comme « externe » détruirait les montants d'internat existants.
-  if (studentProfile.is_affecte === null || studentProfile.is_boarder === null) {
-    return {
-      ...empty,
-      warnings: [
-        "Profil financier incomplet : renseignez Affectation et Internat avant toute synchronisation des dettes.",
-      ],
-    };
-  }
-
-  const { data: classRow, error: classErr } = await srv
-    .from("classes")
-    .select("id,label,level,code,academic_year,official_track_code,institution_id")
-    .eq("id", classId)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-
-  if (classErr) throw new Error(classErr.message);
-  if (!classRow) throw new Error("Classe introuvable.");
-
-  const classAcademicYear = String((classRow as any).academic_year || "").trim() || null;
-
-  const { data: schedules, error: scheduleErr } = await srv
-    .schema("finance")
-    .from("fee_schedules")
-    .select("id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,allow_partial,is_active,notes,created_at,updated_at")
-    .eq("school_id", institutionId)
-    .eq("is_active", true)
-    .range(0, 9999);
-
-  if (scheduleErr) throw new Error(scheduleErr.message);
-
-  const [{ data: classRowsForFinance, error: classRowsErr }, { data: categories, error: categoryErr }] =
-    await Promise.all([
-      srv
-        .from("classes")
-        .select("id,label,code,level,academic_year,official_track_code")
-        .eq("institution_id", institutionId)
-        .range(0, 9999),
-      srv
-        .schema("finance")
-        .from("fee_categories")
-        .select("id,code,name,is_mandatory")
-        .eq("school_id", institutionId),
-    ]);
-
-  if (classRowsErr) throw new Error(classRowsErr.message);
-  if (categoryErr) throw new Error(categoryErr.message);
-
-  const classesById = new Map(
-    ((classRowsForFinance || []) as any[]).map((row) => [String(row.id), row]),
-  );
-  classesById.set(String((classRow as any).id), classRow as any);
-
-  const categoriesById = new Map(
-    ((categories || []) as FinanceFeeCategoryRow[]).map((category) => [
-      String(category.id),
-      category,
-    ]),
-  );
-
-  const scheduleRows = selectFinanceSchedulesForClass({
-    schedules: ((Array.isArray(schedules) ? schedules : []) as FinanceScheduleRow[]),
-    targetClass: classRow as any,
-    classesById,
-    categoriesById,
-  });
-
-  if (scheduleRows.length === 0) {
-    return {
-      ...empty,
-      warnings: [
-        `Aucun barème actif trouvé pour ${(classRow as any).label || "cette classe"} sur l'année ${classAcademicYear || "courante"}.`,
-      ],
-    };
-  }
-
-  const scheduleIds = scheduleRows.map((row) => String(row.id)).filter(Boolean);
-
-  const syncWarnings = buildFinanceScheduleCoverageWarning({
-    schedules: scheduleRows,
-    categoriesById,
-    studentProfile,
-    classLabel: (classRow as any).label || null,
-  });
-
-  const academicYear = classAcademicYear;
-  const academicYearId = await getAcademicYearIdForFinance(
-    srv,
-    institutionId,
-    academicYear,
-  );
-  const nowIso = new Date().toISOString();
-  const today = nowIso.slice(0, 10);
-
-  const { data: existingChargeRows, error: existingDirectErr } = await srv
-    .schema("finance")
-    .from("student_charges")
-    .select("id,fee_schedule_id,status,base_amount,due_date,updated_at")
-    .eq("school_id", institutionId)
-    .eq("student_id", studentId)
-    .eq("class_id", classId)
-    .in("fee_schedule_id", scheduleIds)
-    .order("updated_at", { ascending: false });
-
-  if (existingDirectErr) throw new Error(existingDirectErr.message);
-
-  const existingChargeIds = (existingChargeRows || [])
-    .map((charge: any) => cleanText(charge.id))
-    .filter(Boolean);
-
-  const { data: balanceRows, error: existingErr } = existingChargeIds.length
-    ? await srv
-        .schema("finance")
-        .from("v_charge_balances")
-        .select("id,fee_schedule_id,paid_amount,balance_due,computed_status")
-        .eq("school_id", institutionId)
-        .eq("student_id", studentId)
-        .eq("class_id", classId)
-        .in("id", existingChargeIds)
-    : { data: [], error: null as any };
-
-  if (existingErr) throw new Error(existingErr.message);
-
-  const internatAnnexScheduleIds = Array.from(
-    new Set(
-      scheduleRows
-        .filter((schedule) => isInternatAnnexesSchedule(schedule))
-        .map((schedule) => String(schedule.id || "").trim())
-        .filter(Boolean),
-    ),
-  );
-
-  const internatComponentsBySchedule = new Map<
-    string,
-    Array<{ id: string; label: string | null; amount: number }>
-  >();
-  const engagedOptionalComponentIdsByCharge = new Map<string, Set<string>>();
-
-  if (internatAnnexScheduleIds.length > 0) {
-    const { data: componentRows, error: componentErr } = await srv
-      .schema("finance")
-      .from("fee_schedule_components")
-      .select("id,fee_schedule_id,label,amount,is_active")
-      .eq("school_id", institutionId)
-      .eq("is_active", true)
-      .in("fee_schedule_id", internatAnnexScheduleIds);
-
-    if (componentErr) throw new Error(componentErr.message);
-
-    for (const component of (componentRows || []) as any[]) {
-      const scheduleId = String(component.fee_schedule_id || "").trim();
-      if (!scheduleId) continue;
-      if (!internatComponentsBySchedule.has(scheduleId)) {
-        internatComponentsBySchedule.set(scheduleId, []);
-      }
-      internatComponentsBySchedule.get(scheduleId)!.push({
-        id: String(component.id),
-        label: component.label ? String(component.label) : null,
-        amount: Number(component.amount || 0),
-      });
-    }
-  }
-
-  if (existingChargeIds.length > 0) {
-    const { data: paidComponentRows, error: paidComponentErr } = await srv
-      .schema("finance")
-      .from("v_receipt_allocation_components")
-      .select("student_charge_id,fee_schedule_component_id,receipt_status,amount")
-      .eq("school_id", institutionId)
-      .in("student_charge_id", existingChargeIds);
-
-    if (paidComponentErr) throw new Error(paidComponentErr.message);
-
-    for (const paid of (paidComponentRows || []) as any[]) {
-      if (String(paid.receipt_status || "") === "cancelled") continue;
-      if (Number(paid.amount || 0) <= 0) continue;
-      const chargeId = String(paid.student_charge_id || "").trim();
-      const componentId = String(paid.fee_schedule_component_id || "").trim();
-      if (!chargeId || !componentId) continue;
-      if (!engagedOptionalComponentIdsByCharge.has(chargeId)) {
-        engagedOptionalComponentIdsByCharge.set(chargeId, new Set<string>());
-      }
-      engagedOptionalComponentIdsByCharge.get(chargeId)!.add(componentId);
-    }
-  }
-
-  const balancesById = new Map<string, any>(
-    (balanceRows || []).map((charge: any) => [String(charge.id), charge]),
-  );
-
-  const existingBySchedule = new Map<
-    string,
-    {
-      id: string;
-      paid_amount: number;
-      balance_due: number;
-      computed_status: string | null;
-      base_amount: number;
-      due_date: string | null;
-    }
-  >();
-
-  for (const charge of existingChargeRows || []) {
-    const scheduleId = String((charge as any).fee_schedule_id || "").trim();
-    const chargeId = String((charge as any).id || "").trim();
-    if (!scheduleId || !chargeId) continue;
-
-    const balance = balancesById.get(chargeId) || {};
-    const candidate = {
-      id: chargeId,
-      paid_amount: Number(balance.paid_amount || 0),
-      balance_due: Number(balance.balance_due || 0),
-      computed_status: balance.computed_status
-        ? String(balance.computed_status)
-        : (charge as any).status
-          ? String((charge as any).status)
-          : null,
-      base_amount: Number((charge as any).base_amount || 0),
-      due_date: (charge as any).due_date ? String((charge as any).due_date) : null,
-    };
-
-    const existing = existingBySchedule.get(scheduleId);
-    if (!existing || (existing.computed_status === "cancelled" && candidate.computed_status !== "cancelled")) {
-      existingBySchedule.set(scheduleId, candidate);
-    }
-  }
-
-  const expectedAmountForExistingCharge = (
-    schedule: FinanceScheduleRow,
-    charge: {
-      id: string;
-      paid_amount: number;
-      base_amount: number;
-    },
-  ) => {
-    const scheduleAmount = Number(schedule.amount || 0);
-    if (!isInternatAnnexesSchedule(schedule)) return scheduleAmount;
-
-    const components = internatComponentsBySchedule.get(String(schedule.id)) ?? [];
-    if (components.length === 0) {
-      return Math.max(scheduleAmount, charge.base_amount, charge.paid_amount);
-    }
-
-    const engagedIds = engagedOptionalComponentIdsByCharge.get(charge.id) ?? new Set<string>();
-    const mandatoryBase = components
-      .filter((component) => !isOptionalInternatAnnexeComponent(component.label))
-      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
-    const optionalEngagedBase = components
-      .filter(
-        (component) =>
-          isOptionalInternatAnnexeComponent(component.label) && engagedIds.has(component.id),
-      )
-      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
-
-    const computedVariableAmount = mandatoryBase + optionalEngagedBase;
-    return Math.max(
-      computedVariableAmount > 0 ? computedVariableAmount : scheduleAmount,
-      charge.base_amount,
-      charge.paid_amount,
-    );
-  };
-
-  const expectedAmountForNewCharge = (schedule: FinanceScheduleRow) => {
-    const scheduleAmount = Number(schedule.amount || 0);
-    if (!isInternatAnnexesSchedule(schedule)) return scheduleAmount;
-
-    const components =
-      internatComponentsBySchedule.get(String(schedule.id)) ?? [];
-    const mandatoryBase = components
-      .filter(
-        (component) =>
-          !isOptionalInternatAnnexeComponent(component.label),
-      )
-      .reduce((sum, component) => sum + Number(component.amount || 0), 0);
-
-    // À la création, aucune option n'est encore engagée. La dette démarre
-    // donc au socle obligatoire. Bréviaire, Bible Africaine et Convoi seront
-    // ajoutés intégralement dès leur première saisie dans l'encaissement.
-    return mandatoryBase > 0 ? mandatoryBase : scheduleAmount;
-  };
-
-  const applicableSchedules = scheduleRows.filter((schedule) =>
-    financeScheduleAppliesToStudent(schedule, studentProfile, categoriesById),
-  );
-  const applicableScheduleIds = new Set(applicableSchedules.map((schedule) => String(schedule.id)));
-  const schedulesById = new Map(
-    scheduleRows.map((schedule) => [String(schedule.id), schedule] as const),
-  );
-
-  // Affecté <-> Non affecté : les deux barèmes représentent la même rubrique
-  // financière avec un tarif différent. On transforme la dette existante au
-  // lieu d'en créer une deuxième. L'identifiant de la dette reste donc le même
-  // et tous les paiements/reçus déjà liés restent automatiquement déduits du
-  // nouveau montant attendu.
-  let retargeted = 0;
-  for (const targetSchedule of applicableSchedules) {
-    const targetScheduleId = String(targetSchedule.id);
-    if (existingBySchedule.has(targetScheduleId)) continue;
-
-    const targetVariantKey = financeScheduleProfileVariantKey(
-      targetSchedule,
-      categoriesById,
-    );
-    if (!targetVariantKey) continue;
-
-    const sourceCandidates = Array.from(existingBySchedule.entries())
-      .map(([sourceScheduleId, charge]) => ({
-        sourceScheduleId,
-        charge,
-        schedule: schedulesById.get(sourceScheduleId),
-      }))
-      .filter((item) => {
-        if (!item.schedule) return false;
-        if (applicableScheduleIds.has(item.sourceScheduleId)) return false;
-        return (
-          financeScheduleProfileVariantKey(item.schedule, categoriesById) ===
-          targetVariantKey
-        );
-      })
-      .sort((a, b) => {
-        const aCancelled = a.charge.computed_status === "cancelled" ? 1 : 0;
-        const bCancelled = b.charge.computed_status === "cancelled" ? 1 : 0;
-        if (aCancelled !== bCancelled) return aCancelled - bCancelled;
-        return b.charge.paid_amount - a.charge.paid_amount;
-      });
-
-    const source = sourceCandidates[0];
-    if (!source) continue;
-
-    const expectedAmount = expectedAmountForExistingCharge(targetSchedule, source.charge);
-    const nextStatus = financeStatusForAmount(
-      expectedAmount,
-      source.charge.paid_amount,
-    );
-
-    const { error: retargetErr } = await srv
-      .schema("finance")
-      .from("student_charges")
-      .update({
-        fee_schedule_id: targetSchedule.id,
-        fee_category_id: targetSchedule.fee_category_id,
-        label:
-          financeScheduleLabelForClass(
-            targetSchedule,
-            classRow as any,
-            classesById,
-          ) || targetSchedule.label,
-        base_amount: expectedAmount,
-        due_date: targetSchedule.due_date || null,
-        status: nextStatus,
-        notes:
-          "Profil financier modifié depuis la liste de classe : dette adaptée au nouveau statut, paiements déjà reçus conservés.",
-        updated_at: nowIso,
-      } as any)
-      .eq("id", source.charge.id)
-      .eq("school_id", institutionId);
-
-    if (retargetErr) throw new Error(retargetErr.message);
-
-    existingBySchedule.delete(source.sourceScheduleId);
-    existingBySchedule.set(targetScheduleId, {
-      ...source.charge,
-      base_amount: expectedAmount,
-      due_date: targetSchedule.due_date || null,
-      computed_status: nextStatus,
-      balance_due: Math.max(0, expectedAmount - source.charge.paid_amount),
-    });
-    retargeted++;
-  }
-
-  const rowsToInsert = applicableSchedules
-    .filter((schedule) => !existingBySchedule.has(String(schedule.id)))
-    .map((schedule) => ({
-      school_id: institutionId,
-      academic_year_id: academicYearId,
-      academic_year: schedule.academic_year || academicYear,
-      student_id: studentId,
-      class_id: classId,
-      fee_schedule_id: schedule.id,
-      fee_category_id: schedule.fee_category_id,
-      label: financeScheduleLabelForClass(schedule, classRow as any, classesById) || schedule.label,
-      base_amount: expectedAmountForNewCharge(schedule),
-      due_date: schedule.due_date || null,
-      charge_date: today,
-      status: "pending",
-      notes:
-        schedule.notes ||
-        "Situation créée automatiquement après correction de la liste de classe.",
-      created_by: userId,
-      created_at: nowIso,
-      updated_at: nowIso,
-    }));
-
-  let inserted = 0;
-  if (rowsToInsert.length > 0) {
-    const { error: insertErr } = await srv
-      .schema("finance")
-      .from("student_charges")
-      .insert(rowsToInsert as any[]);
-
-    if (insertErr) throw new Error(insertErr.message);
-    inserted = rowsToInsert.length;
-  }
-
-  const rowsToRefreshApplicable = applicableSchedules
-    .map((schedule) => {
-      const existing = existingBySchedule.get(String(schedule.id));
-      if (!existing) return null;
-
-      const expectedAmount = expectedAmountForExistingCharge(schedule, existing);
-      const expectedDueDate = schedule.due_date || null;
-      const wasCancelled = existing.computed_status === "cancelled";
-      const amountChanged = amountsDiffer(existing.base_amount, expectedAmount);
-      const dueDateChanged = existing.due_date !== expectedDueDate;
-
-      // Cas important : Interne -> Externe avec paiement partiel peut avoir
-      // neutralisé la dette en base_amount = payé et status = paid. Si l'élève
-      // repasse Interne, on doit restaurer le montant complet du barème.
-      if (!wasCancelled && !amountChanged && !dueDateChanged) return null;
-
-      return {
-        chargeId: existing.id,
-        schedule,
-        wasCancelled,
-        amountChanged,
-        expectedAmount,
-        nextStatus: financeStatusForAmount(expectedAmount, existing.paid_amount),
-      };
-    })
-    .filter(Boolean) as Array<{
-      chargeId: string;
-      schedule: FinanceScheduleRow;
-      wasCancelled: boolean;
-      amountChanged: boolean;
-      expectedAmount: number;
-      nextStatus: string;
-    }>;
-
-  let reactivated = 0;
-  let updatedAmount = 0;
-  for (const row of rowsToRefreshApplicable) {
-    const { error: refreshErr } = await srv
-      .schema("finance")
-      .from("student_charges")
-      .update({
-        base_amount: row.expectedAmount,
-        due_date: row.schedule.due_date || null,
-        status: row.nextStatus,
-        notes: row.wasCancelled
-          ? "Profil financier modifié depuis la liste de classe : dette réactivée selon le barème actif."
-          : "Profil financier modifié depuis la liste de classe : montant restauré selon le barème actif.",
-        updated_at: nowIso,
-      } as any)
-      .eq("id", row.chargeId)
-      .eq("school_id", institutionId);
-
-    if (refreshErr) throw new Error(refreshErr.message);
-    if (row.wasCancelled) reactivated++;
-    else if (row.amountChanged) updatedAmount++;
-  }
-
-  const obsoleteChargeIds: string[] = [];
-  const obsoletePaidChargeIds: string[] = [];
-  let skippedPaid = 0;
-
-  for (const [scheduleId, charge] of existingBySchedule.entries()) {
-    if (applicableScheduleIds.has(scheduleId)) continue;
-    if (charge.computed_status === "cancelled") continue;
-
-    if (charge.paid_amount > 0) {
-      // Cas métier important : si un élève passe Interne -> Externe,
-      // on conserve la dette et tous les reçus, mais on la suspend avec le
-      // statut cancelled. Le montant d'origine ne doit jamais être remplacé
-      // par le montant déjà payé, sinon un retour Externe -> Interne peut
-      // transformer une pension de 700 000 F en 100 000 F.
-      if (charge.balance_due > 0) {
-        obsoletePaidChargeIds.push(charge.id);
-      }
-      skippedPaid++;
-      continue;
-    }
-
-    obsoleteChargeIds.push(charge.id);
-  }
-
-  let cancelled = 0;
-  if (obsoleteChargeIds.length > 0) {
-    const { error: cancelErr } = await srv
-      .schema("finance")
-      .from("student_charges")
-      .update({
-        status: "cancelled",
-        updated_at: nowIso,
-      } as any)
-      .eq("school_id", institutionId)
-      .in("id", obsoleteChargeIds);
-
-    if (cancelErr) throw new Error(cancelErr.message);
-    cancelled = obsoleteChargeIds.length;
-  }
-
-  let settledPaid = 0;
-  if (obsoletePaidChargeIds.length > 0) {
-    for (const chargeId of obsoletePaidChargeIds) {
-      const charge = Array.from(existingBySchedule.values()).find((item) => item.id === chargeId);
-      if (!charge) continue;
-
-      const { error: settleErr } = await srv
-        .schema("finance")
-        .from("student_charges")
-        .update({
-          status: "cancelled",
-          notes: "Profil financier modifié depuis la liste de classe : dette suspendue, montant initial et encaissement déjà reçu conservés.",
-          updated_at: nowIso,
-        } as any)
-        .eq("school_id", institutionId)
-        .eq("id", chargeId);
-
-      if (settleErr) throw new Error(settleErr.message);
-      settledPaid++;
-    }
-  }
-
-  return {
-    inserted,
-    reactivated,
-    cancelled,
-    settledPaid,
-    skippedPaid,
-    updatedAmount,
-    retargeted,
-    warnings: syncWarnings,
-  };
-}
-
-async function ensureFinanceChargesForStudent(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
-  userId: string,
-  studentId: string,
-  classId: string,
-) {
-  const result = await reconcileFinanceChargesForStudent(
-    srv,
-    institutionId,
-    userId,
-    studentId,
-    classId,
-    { is_affecte: null, is_boarder: null },
-  );
-  return result.inserted + result.reactivated;
 }
 
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -1312,10 +654,17 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     { onConflict: "class_id,student_id", ignoreDuplicates: true },
   );
 
-  if (enrollErr) return NextResponse.json({ error: enrollErr.message }, { status: 400 });
+  if (enrollErr) {
+    await srv
+      .from("students")
+      .delete()
+      .eq("id", created.id)
+      .eq("institution_id", institutionId);
+    return NextResponse.json({ error: enrollErr.message }, { status: 400 });
+  }
 
   let chargesCreated = 0;
-  let financeWarning: string | null = null;
+  let financeWarnings: string[] = [];
   try {
     const result = await reconcileFinanceChargesForStudent(
       srv,
@@ -1325,18 +674,39 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       classId,
       { is_affecte: isAffecte, is_boarder: isBoarder },
     );
-    chargesCreated = result.inserted + result.reactivated + result.updatedAmount;
-    if (result.warnings.length > 0) financeWarning = result.warnings[0];
+    chargesCreated = result.inserted + result.reactivated + result.updated_amount;
+    financeWarnings = result.warnings;
   } catch (error) {
-    financeWarning =
-      error instanceof Error ? error.message : "Génération automatique des frais impossible.";
+    await srv
+      .from("class_enrollments")
+      .delete()
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .eq("student_id", created.id);
+    await srv
+      .from("students")
+      .delete()
+      .eq("id", created.id)
+      .eq("institution_id", institutionId);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Génération automatique des frais impossible.",
+        details:
+          "Création annulée : aucune fiche élève sans synchronisation financière n'a été conservée.",
+      },
+      { status: 409 },
+    );
   }
 
   return NextResponse.json({
     ok: true,
     student_id: created.id,
     charges_created: chargesCreated,
-    finance_warning: financeWarning,
+    finance_warning: financeWarnings[0] || null,
+    finance_warnings: financeWarnings,
   });
 }
 
@@ -1501,20 +871,98 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     }
   }
 
+  const [studentSnapshotsResult, enrollmentSnapshotsResult] = await Promise.all([
+    rows.length > 0
+      ? srv
+          .from("students")
+          .select(
+            "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,nationality,is_repeater,lv2,is_affecte,is_boarder",
+          )
+          .in("id", rows.map((row) => row.student_id))
+      : Promise.resolve({ data: [], error: null } as any),
+    rows.length > 0
+      ? srv
+          .from("class_enrollments")
+          .select("student_id,official_track_code")
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .is("end_date", null)
+          .in("student_id", rows.map((row) => row.student_id))
+      : Promise.resolve({ data: [], error: null } as any),
+  ]);
+
+  if (studentSnapshotsResult.error) {
+    return NextResponse.json(
+      { error: studentSnapshotsResult.error.message },
+      { status: 400 },
+    );
+  }
+  if (enrollmentSnapshotsResult.error) {
+    return NextResponse.json(
+      {
+        error: isMissingOfficialTrackColumn(enrollmentSnapshotsResult.error)
+          ? "La colonne class_enrollments.official_track_code est absente. Exécutez src/db/class_enrollments_student_series_v1.sql dans Supabase, puis réessayez."
+          : enrollmentSnapshotsResult.error.message,
+      },
+      { status: 400 },
+    );
+  }
+
+  const studentSnapshots = new Map(
+    (studentSnapshotsResult.data || []).map((snapshot: any) => [
+      String(snapshot.id),
+      snapshot,
+    ]),
+  );
+  const enrollmentSnapshots = new Map(
+    (enrollmentSnapshotsResult.data || []).map((snapshot: any) => [
+      String(snapshot.student_id),
+      snapshot,
+    ]),
+  );
+
+  async function restoreSchoolProfile(studentId: string) {
+    const studentSnapshot: any = studentSnapshots.get(studentId);
+    const enrollmentSnapshot: any = enrollmentSnapshots.get(studentId);
+    if (!studentSnapshot || !enrollmentSnapshot) return;
+
+    const studentPatch = { ...studentSnapshot };
+    delete studentPatch.id;
+    await srv.from("students").update(studentPatch).eq("id", studentId);
+    await srv
+      .from("class_enrollments")
+      .update({ official_track_code: enrollmentSnapshot.official_track_code })
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .eq("student_id", studentId)
+      .is("end_date", null);
+  }
+
   let updated = 0;
   const financeSync: FinanceSyncResult = {
     inserted: 0,
     reactivated: 0,
     cancelled: 0,
-    settledPaid: 0,
-    skippedPaid: 0,
-    updatedAmount: 0,
+    cancelled_duplicates: 0,
+    preserved_paid_amount: 0,
+    updated_amount: 0,
     retargeted: 0,
+    option_links_created: 0,
     warnings: [],
   };
   const financeWarnings: string[] = [];
 
   for (const row of rows) {
+    if (!studentSnapshots.has(row.student_id) || !enrollmentSnapshots.has(row.student_id)) {
+      return NextResponse.json(
+        {
+          error:
+            "Modification annulée : l'état initial de l'élève n'a pas pu être sécurisé.",
+        },
+        { status: 409 },
+      );
+    }
+
     const { data: updatedStudent, error } = await srv
       .from("students")
       .update({
@@ -1562,6 +1010,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       .is("end_date", null);
 
     if (enrollmentErr) {
+      await restoreSchoolProfile(row.student_id);
       return NextResponse.json(
         {
           error: isMissingOfficialTrackColumn(enrollmentErr)
@@ -1574,32 +1023,41 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     }
 
     try {
-      const result = await reconcileFinanceChargesForStudent(
+      const applied = await applyStudentFinanceReconciliation({
         srv,
         institutionId,
-        ctx.user.id,
-        row.student_id,
+        userId: ctx.user.id,
+        studentId: row.student_id,
         classId,
-        {
+        studentProfile: {
           is_affecte:
             typeof row.patch.is_affecte === "boolean" ? row.patch.is_affecte : null,
           is_boarder:
             typeof row.patch.is_boarder === "boolean" ? row.patch.is_boarder : null,
         },
-      );
+      });
+      const result = applied.summary;
       financeSync.inserted += result.inserted;
       financeSync.reactivated += result.reactivated;
       financeSync.cancelled += result.cancelled;
-      financeSync.settledPaid += result.settledPaid;
-      financeSync.skippedPaid += result.skippedPaid;
-      financeSync.updatedAmount += result.updatedAmount;
+      financeSync.cancelled_duplicates += result.cancelled_duplicates;
+      financeSync.preserved_paid_amount += result.preserved_paid_amount;
+      financeSync.updated_amount += result.updated_amount;
       financeSync.retargeted += result.retargeted;
+      financeSync.option_links_created += result.option_links_created;
       financeWarnings.push(...result.warnings);
     } catch (error) {
-      financeWarnings.push(
-        error instanceof Error
-          ? error.message
-          : "Synchronisation finance impossible pour un élève.",
+      await restoreSchoolProfile(row.student_id);
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Synchronisation finance impossible pour un élève.",
+          details:
+            "Modification annulée : le profil scolaire et financier précédent a été restauré.",
+        },
+        { status: 409 },
       );
     }
 
@@ -1630,10 +1088,11 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         financeSync.inserted += result.inserted;
         financeSync.reactivated += result.reactivated;
         financeSync.cancelled += result.cancelled;
-        financeSync.settledPaid += result.settledPaid;
-        financeSync.skippedPaid += result.skippedPaid;
-        financeSync.updatedAmount += result.updatedAmount;
+        financeSync.cancelled_duplicates += result.cancelled_duplicates;
+        financeSync.preserved_paid_amount += result.preserved_paid_amount;
+        financeSync.updated_amount += result.updated_amount;
         financeSync.retargeted += result.retargeted;
+        financeSync.option_links_created += result.option_links_created;
         financeWarnings.push(...result.warnings);
       }
     } catch (error) {

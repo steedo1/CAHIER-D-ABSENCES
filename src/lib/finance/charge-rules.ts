@@ -27,6 +27,20 @@ export type FinanceScheduleLike = {
   academic_year?: string | null;
   amount?: number | string | null;
   due_date?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  applies_when_affecte?: boolean | null;
+  applies_when_boarder?: boolean | null;
+  amount_mode?: "fixed" | "components" | null;
+  profile_group_key?: string | null;
+};
+
+export type FinanceScheduleComponentLike = {
+  id?: string | null;
+  label?: string | null;
+  amount?: number | string | null;
+  is_optional?: boolean | null;
+  is_active?: boolean | null;
 };
 
 export type FinanceScheduleKind =
@@ -213,47 +227,6 @@ function financeScheduleSemanticKey(
   ].join("|");
 }
 
-function financeScheduleBusinessKey(
-  schedule: FinanceScheduleLike,
-  targetClass: FinanceClassLike,
-  classesById: Map<string, FinanceClassLike>,
-  categoriesById: Map<string, FinanceFeeCategoryLike>,
-) {
-  const sourceClass = classesById.get(cleanFinanceId(schedule.class_id));
-  const comparableClassLabels = [
-    targetClass.label,
-    targetClass.code,
-    sourceClass?.label,
-    sourceClass?.code,
-    ...Array.from(classesById.values())
-      .filter(
-        (row) =>
-          sameNormalizedText(row.level, targetClass.level) ||
-          sameNormalizedText(row.official_track_code, targetClass.official_track_code) ||
-          (financeClassGradeFamily(row) !== null &&
-            financeClassGradeFamily(row) === financeClassGradeFamily(targetClass)),
-      )
-      .flatMap((row) => [row.label, row.code]),
-  ]
-    .map((value) => String(value ?? ""))
-    .filter(Boolean);
-
-  const normalizedLabel = stripKnownClassSuffixFromNormalizedLabel(
-    normalizeFinanceText(schedule.label),
-    comparableClassLabels,
-  );
-
-  const amount = Number(schedule.amount || 0);
-  const amountKey = Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
-
-  return [
-    financeScheduleKind(schedule, categoriesById),
-    cleanFinanceId(schedule.fee_category_id),
-    normalizedLabel,
-    amountKey,
-    cleanFinanceId(schedule.due_date),
-  ].join("|");
-}
 
 export function financeScheduleLabelForClass(
   schedule: FinanceScheduleLike,
@@ -301,11 +274,23 @@ export function selectFinanceSchedulesForClass<T extends FinanceScheduleLike>({
 
   candidates.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
-    return normalizeFinanceText(a.schedule.label).localeCompare(
+
+    const labelCompare = normalizeFinanceText(a.schedule.label).localeCompare(
       normalizeFinanceText(b.schedule.label),
       "fr",
       { numeric: true, sensitivity: "base" },
     );
+    if (labelCompare !== 0) return labelCompare;
+
+    // En cas de doublons actifs pour la même rubrique, le barème modifié le
+    // plus récemment gagne. Cela évite de générer deux dettes concurrentes
+    // uniquement parce que leurs montants diffèrent.
+    const updatedCompare = String(b.schedule.updated_at || b.schedule.created_at || "").localeCompare(
+      String(a.schedule.updated_at || a.schedule.created_at || ""),
+    );
+    if (updatedCompare !== 0) return updatedCompare;
+
+    return cleanFinanceId(a.schedule.id).localeCompare(cleanFinanceId(b.schedule.id));
   });
 
   const semanticRows = candidates.map((candidate) => ({
@@ -352,15 +337,11 @@ export function selectFinanceSchedulesForClass<T extends FinanceScheduleLike>({
     if (candidate.priority !== bestPriorityBySemanticKey.get(candidate.semanticKey)) continue;
     if (ambiguousFallbackKeys.has(candidate.semanticKey)) continue;
 
-    const key = financeScheduleBusinessKey(
-      candidate.schedule,
-      targetClass,
-      classesById,
-      categoriesById,
-    );
-    const existing = selectedByKey.get(key);
-    if (!existing || candidate.priority < existing.priority) {
-      selectedByKey.set(key, candidate);
+    // La clé sémantique exclut volontairement le montant : deux barèmes actifs
+    // portant la même rubrique, la même échéance et la même catégorie ne doivent
+    // jamais produire deux dettes. L'ordre ci-dessus choisit le plus récent.
+    if (!selectedByKey.has(candidate.semanticKey)) {
+      selectedByKey.set(candidate.semanticKey, candidate);
     }
   }
 
@@ -432,6 +413,15 @@ export function financeScheduleProfileVariantKey(
   const kind = financeScheduleKind(schedule, categoriesById);
   if (kind !== "scolarite") return null;
 
+  const explicitGroupKey = cleanFinanceId(schedule.profile_group_key);
+  if (explicitGroupKey) {
+    return [
+      kind,
+      cleanFinanceId(schedule.fee_category_id),
+      normalizeFinanceText(explicitGroupKey),
+    ].join("|");
+  }
+
   const label = normalizeFinanceText(schedule.label);
   const hasAssignmentVariant =
     label.includes("non affecte") ||
@@ -470,6 +460,28 @@ export function financeScheduleAppliesToStudent(
   const label = normalizeFinanceText(schedule.label);
   const kind = financeScheduleKind(schedule, categoriesById);
 
+  // Les champs explicites sont la règle générique. Ils permettent à chaque
+  // établissement de paramétrer ses propres frais sans dépendre d'un libellé
+  // CSCA ou d'un montant écrit dans le code.
+  if (
+    typeof schedule.applies_when_affecte === "boolean" &&
+    student.is_affecte !== schedule.applies_when_affecte
+  ) {
+    return false;
+  }
+  if (
+    typeof schedule.applies_when_boarder === "boolean" &&
+    student.is_boarder !== schedule.applies_when_boarder
+  ) {
+    return false;
+  }
+  if (
+    typeof schedule.applies_when_affecte === "boolean" ||
+    typeof schedule.applies_when_boarder === "boolean"
+  ) {
+    return true;
+  }
+
   if (kind === "internat") return student.is_boarder === true;
 
   if (kind === "scolarite") {
@@ -491,6 +503,98 @@ export function financeScheduleAppliesToStudent(
   // automatiquement, comme avant. S'ils ne doivent concerner qu'une partie
   // des élèves, ils doivent être gérés par un filtre métier plus précis.
   return true;
+}
+
+export function financeComponentIsOptional(
+  component: FinanceScheduleComponentLike | null | undefined,
+) {
+  if (typeof component?.is_optional === "boolean") {
+    return component.is_optional;
+  }
+
+  // Compatibilité temporaire avec les anciennes bases. La migration définit
+  // désormais is_optional explicitement ; ce secours peut ensuite disparaître.
+  const text = normalizeFinanceText(component?.label);
+  return (
+    text.includes("breviaire") ||
+    text.includes("bible") ||
+    text.includes("convoi")
+  );
+}
+
+export function inferFinanceOptionalComponentIds({
+  components,
+  expectedAmount,
+  requiredIds = new Set<string>(),
+}: {
+  components: FinanceScheduleComponentLike[];
+  expectedAmount: number;
+  requiredIds?: Set<string>;
+}) {
+  const active = components.filter((row) => row.is_active !== false);
+  const mandatoryTotal = active
+    .filter((row) => !financeComponentIsOptional(row))
+    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const optional = active.filter((row) => financeComponentIsOptional(row));
+  const targetOptionalCents = Math.max(
+    Math.round((Number(expectedAmount || 0) - mandatoryTotal) * 100),
+    0,
+  );
+
+  if (optional.length > 18) return null;
+
+  const matches: Set<string>[] = [];
+  const limit = 1 << optional.length;
+
+  for (let mask = 0; mask < limit; mask++) {
+    let totalCents = 0;
+    const ids = new Set<string>();
+
+    for (let index = 0; index < optional.length; index++) {
+      if ((mask & (1 << index)) === 0) continue;
+      const component = optional[index];
+      const id = String(component.id || "").trim();
+      if (!id) continue;
+      ids.add(id);
+      totalCents += Math.round(Number(component.amount || 0) * 100);
+    }
+
+    if (totalCents !== targetOptionalCents) continue;
+    if (Array.from(requiredIds).some((id) => !ids.has(id))) continue;
+    matches.push(ids);
+  }
+
+  if (matches.length !== 1) return null;
+  return matches[0];
+}
+
+export function financeExpectedAmountFromComponents({
+  scheduleAmount,
+  amountMode,
+  components,
+  selectedOptionalIds = new Set<string>(),
+  paidAmount = 0,
+}: {
+  scheduleAmount: number;
+  amountMode?: string | null;
+  components: FinanceScheduleComponentLike[];
+  selectedOptionalIds?: Set<string>;
+  paidAmount?: number;
+}) {
+  const active = components.filter((row) => row.is_active !== false);
+  if (amountMode !== "components" || active.length === 0) {
+    return Math.max(Number(scheduleAmount || 0), Number(paidAmount || 0));
+  }
+
+  const expected = active.reduce((sum, component) => {
+    const id = String(component.id || "").trim();
+    if (financeComponentIsOptional(component) && !selectedOptionalIds.has(id)) {
+      return sum;
+    }
+    return sum + Number(component.amount || 0);
+  }, 0);
+
+  return Math.max(expected, Number(paidAmount || 0));
 }
 
 export function buildFinanceScheduleCoverageWarning({

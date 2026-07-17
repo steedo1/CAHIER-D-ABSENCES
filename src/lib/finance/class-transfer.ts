@@ -1,5 +1,6 @@
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
+  financeComponentIsOptional,
   financeScheduleAppliesToStudent,
   financeScheduleKind,
   financeScheduleLabelForClass,
@@ -37,6 +38,7 @@ type ChargeRow = {
   class_id: string | null;
   fee_schedule_id: string | null;
   fee_category_id: string;
+  sync_key: string | null;
   label: string;
   base_amount: number | string;
   due_date: string | null;
@@ -59,6 +61,17 @@ type ComponentRow = {
   amount: number | string;
   order_index: number | null;
   is_active: boolean;
+  is_optional?: boolean | null;
+};
+
+type SelectionRow = {
+  school_id: string;
+  student_charge_id: string;
+  fee_schedule_component_id: string;
+  selected_by: string | null;
+  selected_at: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type AllocationComponentRow = {
@@ -98,6 +111,13 @@ type ComponentUpdate = {
   targetOrderIndex: number;
 };
 
+type SelectionUpdate = {
+  chargeId: string;
+  sourceComponentId: string;
+  targetComponentId: string;
+  snapshot: SelectionRow;
+};
+
 export type FinanceClassTransferSummary = {
   attempted: boolean;
   source_class_ids: string[];
@@ -106,6 +126,7 @@ export type FinanceClassTransferSummary = {
   cancelled_duplicates: number;
   preserved_paid_amount: number;
   component_links_moved: number;
+  option_links_moved: number;
   warnings: string[];
 };
 
@@ -128,8 +149,7 @@ function amountsDiffer(a: unknown, b: unknown) {
 }
 
 function isOptionalInternatComponent(label: string | null | undefined) {
-  const text = normalizeFinanceText(label);
-  return text.includes("breviaire") || text.includes("bible") || text.includes("convoi");
+  return financeComponentIsOptional({ label });
 }
 
 function statusForAmount(expectedAmount: number, paidAmount: number) {
@@ -296,10 +316,10 @@ function engagedOptionalLabels({
   }
 
   const mandatoryTotal = sourceComponents
-    .filter((component) => !isOptionalInternatComponent(component.label))
+    .filter((component) => !financeComponentIsOptional(component))
     .reduce((sum, component) => sum + numberValue(component.amount), 0);
   const optionalComponents = sourceComponents.filter((component) =>
-    isOptionalInternatComponent(component.label),
+    financeComponentIsOptional(component),
   );
   const optionTotalInDebt = Math.max(
     numberValue(sourceCharge.base_amount) - mandatoryTotal,
@@ -357,7 +377,7 @@ function targetAmountForCharge({
   });
 
   const targetMandatory = targetComponents
-    .filter((component) => !isOptionalInternatComponent(component.label))
+    .filter((component) => !financeComponentIsOptional(component))
     .reduce((sum, component) => sum + numberValue(component.amount), 0);
 
   let targetOptions = 0;
@@ -400,6 +420,7 @@ async function restoreChargeSnapshots(
         class_id: row.class_id,
         fee_schedule_id: row.fee_schedule_id,
         fee_category_id: row.fee_category_id,
+        sync_key: row.sync_key,
         label: row.label,
         base_amount: row.base_amount,
         due_date: row.due_date,
@@ -429,6 +450,25 @@ async function restoreComponentSnapshots(
   }
 }
 
+async function restoreSelectionSnapshots(
+  srv: ServiceClient,
+  chargeIds: string[],
+  snapshots: SelectionRow[],
+) {
+  if (chargeIds.length === 0) return;
+  await srv
+    .schema("finance")
+    .from("student_charge_component_selections")
+    .delete()
+    .in("student_charge_id", chargeIds);
+  if (snapshots.length > 0) {
+    await srv
+      .schema("finance")
+      .from("student_charge_component_selections")
+      .insert(snapshots as any[]);
+  }
+}
+
 export async function transferStudentFinanceToClass({
   srv,
   institutionId,
@@ -454,6 +494,7 @@ export async function transferStudentFinanceToClass({
     cancelled_duplicates: 0,
     preserved_paid_amount: 0,
     component_links_moved: 0,
+    option_links_moved: 0,
     warnings: [],
   };
 
@@ -484,7 +525,7 @@ export async function transferStudentFinanceToClass({
         .schema("finance")
         .from("student_charges")
         .select(
-          "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,due_date,status,notes,updated_at",
+          "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,sync_key,label,base_amount,due_date,status,notes,updated_at",
         )
         .eq("school_id", institutionId)
         .eq("student_id", studentId)
@@ -495,7 +536,7 @@ export async function transferStudentFinanceToClass({
         .schema("finance")
         .from("student_charges")
         .select(
-          "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,label,base_amount,due_date,status,notes,updated_at",
+          "id,school_id,academic_year_id,academic_year,student_id,class_id,fee_schedule_id,fee_category_id,sync_key,label,base_amount,due_date,status,notes,updated_at",
         )
         .eq("school_id", institutionId)
         .eq("student_id", studentId)
@@ -548,7 +589,7 @@ export async function transferStudentFinanceToClass({
         .schema("finance")
         .from("fee_schedules")
         .select(
-          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,is_active,created_at,updated_at",
+          "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,is_active,created_at,updated_at,applies_when_affecte,applies_when_boarder,amount_mode,profile_group_key",
         )
         .eq("school_id", institutionId)
         .range(0, 9999),
@@ -624,13 +665,17 @@ export async function transferStudentFinanceToClass({
     new Set([...sourceScheduleIds, ...targetScheduleIds]),
   );
 
-  const [{ data: componentsRaw, error: componentsErr }, { data: allocationComponentsRaw, error: allocationComponentsErr }] =
+  const [
+    { data: componentsRaw, error: componentsErr },
+    { data: allocationComponentsRaw, error: allocationComponentsErr },
+    { data: selectionsRaw, error: selectionsErr },
+  ] =
     await Promise.all([
       componentScheduleIds.length
         ? srv
             .schema("finance")
             .from("fee_schedule_components")
-            .select("id,fee_schedule_id,label,amount,order_index,is_active")
+            .select("id,fee_schedule_id,label,amount,order_index,is_active,is_optional")
             .eq("school_id", institutionId)
             .in("fee_schedule_id", componentScheduleIds)
         : Promise.resolve({ data: [], error: null } as any),
@@ -644,20 +689,36 @@ export async function transferStudentFinanceToClass({
             .eq("school_id", institutionId)
             .in("student_charge_id", allChargeIds)
         : Promise.resolve({ data: [], error: null } as any),
+      allChargeIds.length
+        ? srv
+            .schema("finance")
+            .from("student_charge_component_selections")
+            .select(
+              "school_id,student_charge_id,fee_schedule_component_id,selected_by,selected_at,created_at,updated_at",
+            )
+            .eq("school_id", institutionId)
+            .in("student_charge_id", allChargeIds)
+        : Promise.resolve({ data: [], error: null } as any),
     ]);
 
   if (componentsErr) throw new Error(componentsErr.message);
   if (allocationComponentsErr) throw new Error(allocationComponentsErr.message);
+  if (selectionsErr) throw new Error(selectionsErr.message);
 
   const components = (componentsRaw ?? []) as ComponentRow[];
   const allocationComponents =
     (allocationComponentsRaw ?? []) as AllocationComponentRow[];
+  const selections = (selectionsRaw ?? []) as SelectionRow[];
   const componentsBySchedule = groupByKey(
     components,
     (row) => row.fee_schedule_id,
   );
   const allocationsByCharge = groupByKey(
     allocationComponents,
+    (row) => row.student_charge_id,
+  );
+  const selectionsByCharge = groupByKey(
+    selections,
     (row) => row.student_charge_id,
   );
 
@@ -764,6 +825,11 @@ export async function transferStudentFinanceToClass({
 
     const canonical =
       paidCandidates[0] ??
+      candidates.find(
+        (candidate) =>
+          candidate.origin === "source" &&
+          (selectionsByCharge.get(candidate.charge.id) ?? []).length > 0,
+      ) ??
       candidates.find((candidate) => candidate.origin === "target") ??
       [...candidates].sort((a, b) =>
         String(b.charge.updated_at || "").localeCompare(
@@ -851,6 +917,8 @@ export async function transferStudentFinanceToClass({
   }
 
   const componentUpdates: ComponentUpdate[] = [];
+  const selectionUpdates: SelectionUpdate[] = [];
+  const componentsById = new Map(components.map((row) => [row.id, row]));
 
   for (const item of canonicalSourceUpdates) {
     if (!item.sourceSchedule || !item.targetSchedule) continue;
@@ -899,6 +967,34 @@ export async function transferStudentFinanceToClass({
         targetOrderIndex: numberValue(targetComponent.order_index),
       });
     }
+
+    for (const selection of selectionsByCharge.get(item.charge.id) ?? []) {
+      const sourceComponent = componentsById.get(
+        selection.fee_schedule_component_id,
+      );
+      if (!sourceComponent) {
+        throw new Error(
+          "Transfert financier bloqué : une option d’internat sélectionnée ne correspond plus au barème source.",
+        );
+      }
+
+      const targetComponent = targetByLabel.get(
+        normalizeFinanceText(sourceComponent.label),
+      );
+      if (!targetComponent || !financeComponentIsOptional(targetComponent)) {
+        throw new Error(
+          `Transfert financier bloqué : l’option « ${sourceComponent.label} » n’existe pas comme option dans le barème cible.`,
+        );
+      }
+
+      if (sourceComponent.id === targetComponent.id) continue;
+      selectionUpdates.push({
+        chargeId: item.charge.id,
+        sourceComponentId: sourceComponent.id,
+        targetComponentId: targetComponent.id,
+        snapshot: selection,
+      });
+    }
   }
 
   const chargeSnapshotIds = Array.from(
@@ -916,12 +1012,23 @@ export async function transferStudentFinanceToClass({
   const componentSnapshots = allocationComponents.filter((row) =>
     componentSnapshotIds.has(row.id),
   );
+  const selectionChargeIds = Array.from(
+    new Set(selectionUpdates.map((row) => row.chargeId)),
+  );
+  const selectionSnapshots = selections.filter((row) =>
+    selectionChargeIds.includes(row.student_charge_id),
+  );
 
   let rolledBack = false;
   const rollback = async () => {
     if (rolledBack) return;
     await restoreComponentSnapshots(srv, componentSnapshots);
     await restoreChargeSnapshots(srv, chargeSnapshots);
+    await restoreSelectionSnapshots(
+      srv,
+      selectionChargeIds,
+      selectionSnapshots,
+    );
     rolledBack = true;
   };
 
@@ -950,6 +1057,7 @@ export async function transferStudentFinanceToClass({
           class_id: update.targetClassId,
           fee_schedule_id: update.targetScheduleId,
           fee_category_id: update.targetCategoryId,
+          sync_key: update.targetScheduleId,
           label: update.targetLabel,
           base_amount: update.targetAmount,
           due_date: update.targetDueDate,
@@ -976,6 +1084,34 @@ export async function transferStudentFinanceToClass({
 
       if (error) throw new Error(error.message);
     }
+
+    for (const update of selectionUpdates) {
+      const { error: upsertError } = await srv
+        .schema("finance")
+        .from("student_charge_component_selections")
+        .upsert(
+          {
+            ...update.snapshot,
+            student_charge_id: update.chargeId,
+            fee_schedule_component_id: update.targetComponentId,
+            updated_at: new Date().toISOString(),
+          } as any,
+          {
+            onConflict: "student_charge_id,fee_schedule_component_id",
+          },
+        );
+
+      if (upsertError) throw new Error(upsertError.message);
+
+      const { error: deleteError } = await srv
+        .schema("finance")
+        .from("student_charge_component_selections")
+        .delete()
+        .eq("student_charge_id", update.chargeId)
+        .eq("fee_schedule_component_id", update.sourceComponentId);
+
+      if (deleteError) throw new Error(deleteError.message);
+    }
   } catch (error) {
     await rollback();
     throw error;
@@ -997,6 +1133,7 @@ export async function transferStudentFinanceToClass({
       cancelled_duplicates: duplicateChargeIds.size,
       preserved_paid_amount: preservedPaidAmount,
       component_links_moved: componentUpdates.length,
+      option_links_moved: selectionUpdates.length,
       warnings: Array.from(new Set(warnings)),
     },
     rollback,

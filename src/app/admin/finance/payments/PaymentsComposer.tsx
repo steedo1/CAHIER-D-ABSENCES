@@ -25,6 +25,7 @@ type Props = {
   rows: PaymentStudentRow[];
   feeCategories: FeeCategoryRow[];
   action: (formData: FormData) => void | Promise<void>;
+  optionsAction: (formData: FormData) => void | Promise<void>;
   initialClassId?: string;
   initialStudentId?: string;
   correctionNotice?: string;
@@ -52,23 +53,6 @@ function normalize(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
     .toLowerCase();
-}
-
-function normalizeNoAccent(value: string | null | undefined) {
-  return String(value ?? "")
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function isOptionalInternatAnnexeComponent(label: string | null | undefined) {
-  const text = normalizeNoAccent(label);
-  return (
-    text.includes("bible") ||
-    text.includes("breviaire") ||
-    text.includes("convoi")
-  );
 }
 
 function formatMoney(value: number) {
@@ -220,6 +204,7 @@ export default function PaymentsComposer({
   rows,
   feeCategories,
   action,
+  optionsAction,
   initialClassId = "",
   initialStudentId = "",
   correctionNotice = "",
@@ -420,6 +405,48 @@ export default function PaymentsComposer({
       isInternatCategory(categoryById.get(charge.fee_category_id)),
     );
   }, [categoryById, selectedStudent]);
+
+  useEffect(() => {
+    if (!selectedStudent) {
+      setInternatComponentIdsByCharge({});
+      return;
+    }
+    setInternatComponentIdsByCharge(
+      Object.fromEntries(
+        internatCharges.map((charge) => [
+          charge.charge_id,
+          charge.components
+            .filter((component) => component.is_optional && component.is_engaged)
+            .map((component) => component.id),
+        ]),
+      ),
+    );
+  }, [internatCharges, selectedStudent]);
+
+  const optionSelectionPlan = useMemo(
+    () =>
+      internatCharges
+        .filter((charge) =>
+          charge.components.some((component) => component.is_optional),
+        )
+        .map((charge) => {
+          const allowedIds = new Set(
+            charge.components
+              .filter((component) => component.is_optional)
+              .map((component) => component.id),
+          );
+          const fallback = charge.components
+            .filter((component) => component.is_optional && component.is_engaged)
+            .map((component) => component.id);
+          return {
+            chargeId: charge.charge_id,
+            componentIds: (
+              internatComponentIdsByCharge[charge.charge_id] ?? fallback
+            ).filter((id) => allowedIds.has(id)),
+          };
+        }),
+    [internatCharges, internatComponentIdsByCharge],
+  );
 
   const otherCharges = useMemo(() => {
     if (!selectedStudent) return [];
@@ -1011,6 +1038,11 @@ export default function PaymentsComposer({
             name="allocation_plan"
             value={JSON.stringify(unifiedPaymentPlan)}
           />
+          <input
+            type="hidden"
+            name="option_selection_plan"
+            value={JSON.stringify(optionSelectionPlan)}
+          />
           {selectedComponentIds.map((componentId) => (
             <input
               key={componentId}
@@ -1162,12 +1194,25 @@ export default function PaymentsComposer({
                 amountLocked={true}
               />
 
-              <PendingButton
-                icon={<CreditCard className="h-4 w-4" />}
-                label="Enregistrer le paiement"
-                pendingLabel="Enregistrement en cours..."
-                disabled={!canCreatePayment}
-              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                {optionSelectionPlan.length > 0 ? (
+                  <button
+                    type="submit"
+                    formAction={optionsAction}
+                    formNoValidate
+                    disabled={!selectedStudent.profile_complete}
+                    className="inline-flex w-full items-center justify-center rounded-2xl border border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                  >
+                    Enregistrer les options d'internat
+                  </button>
+                ) : null}
+                <PendingButton
+                  icon={<CreditCard className="h-4 w-4" />}
+                  label="Enregistrer le paiement"
+                  pendingLabel="Enregistrement en cours..."
+                  disabled={!canCreatePayment}
+                />
+              </div>
             </div>
           )}
         </form>
@@ -1491,10 +1536,10 @@ function InternatPaymentPlanner({
             Encaissement internat
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            La pension reste fixe. Les frais annexes restent dus, sauf Bible
-            Africaine, Bréviaire et Convoi internat qui ne sont pas facturés
-            si aucun montant n’est saisi dessus. Paiement partiel possible
-            par sous-rubrique.
+            La pension reste fixe. Le socle des frais annexes est obligatoire ;
+            les options cochées sont ajoutées au montant attendu, même si elles
+            ne sont pas payées immédiatement. Paiement partiel possible par
+            sous-rubrique.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1642,10 +1687,22 @@ function ChargeComponentChecklist({
   function updateComponent(componentId: string, value: string) {
     const numeric = Number(value || 0);
     const nextIds = new Set(selectedComponentIds);
+    const component = components.find((item) => item.id === componentId);
     if (Number.isFinite(numeric) && numeric > 0) nextIds.add(componentId);
-    else nextIds.delete(componentId);
+    else if (!component?.is_optional) nextIds.delete(componentId);
     onChange(Array.from(nextIds));
     onAmountChange(componentAmountKey(chargeId, componentId), value);
+  }
+
+  function toggleOptionalComponent(component: FeeComponentOption, checked: boolean) {
+    const nextIds = new Set(selectedComponentIds);
+    if (checked) nextIds.add(component.id);
+    else {
+      if (component.paid_amount > 0) return;
+      nextIds.delete(component.id);
+      onAmountChange(componentAmountKey(chargeId, component.id), "");
+    }
+    onChange(Array.from(nextIds));
   }
 
   return (
@@ -1656,9 +1713,9 @@ function ChargeComponentChecklist({
             Détail des frais annexes
           </div>
           <p className="mt-1 text-sm text-emerald-900/80">
-            Saisissez le montant payé maintenant pour chaque sous-rubrique. Bible
-            Africaine, Bréviaire et Convoi internat restent non facturés si
-            vous laissez 0 F.
+            Cochez les options réellement retenues, puis saisissez séparément le
+            montant payé maintenant. Une option cochée peut donc être facturée
+            avec un paiement actuel de 0 F.
           </p>
         </div>
         <div className="rounded-2xl bg-white px-3 py-2 text-right ring-1 ring-emerald-200">
@@ -1683,6 +1740,7 @@ function ChargeComponentChecklist({
             const value =
               amounts[componentAmountKey(chargeId, component.id)] ?? "";
             const settled = Number(component.remaining_amount || 0) <= 0;
+            const selected = selectedComponentIds.includes(component.id);
 
             return (
               <div
@@ -1690,18 +1748,28 @@ function ChargeComponentChecklist({
                 className="grid grid-cols-[1fr_110px_110px_140px] items-center gap-2 border-t border-emerald-50 px-3 py-2 text-sm"
               >
                 <div className="min-w-0 font-semibold text-slate-800">
+                  {component.is_optional ? (
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={component.paid_amount > 0}
+                      onChange={(event) =>
+                        toggleOptionalComponent(component, event.target.checked)
+                      }
+                      className="mr-2 h-4 w-4 rounded border-slate-300 align-middle accent-emerald-600"
+                      aria-label={`Facturer l'option ${component.label}`}
+                    />
+                  ) : null}
                   <span>{component.label}</span>
                   {component.is_optional ? (
                     <span
                       className={`ml-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${
-                        component.is_engaged
+                        selected
                           ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
                           : "bg-amber-50 text-amber-700 ring-amber-200"
                       }`}
                     >
-                      {component.is_engaged
-                        ? "option engagée"
-                        : "non facturé si 0 F"}
+                      {selected ? "option engagée" : "option non retenue"}
                     </span>
                   ) : null}
                   {settled ? (
@@ -1759,7 +1827,16 @@ function ChargeComponentChecklist({
         <button
           type="button"
           onClick={() => {
-            onChange([]);
+            onChange(
+              components
+                .filter(
+                  (component) =>
+                    component.is_optional &&
+                    (selectedComponentIds.includes(component.id) ||
+                      component.paid_amount > 0),
+                )
+                .map((component) => component.id),
+            );
             for (const component of components) {
               onAmountChange(componentAmountKey(chargeId, component.id), "");
             }

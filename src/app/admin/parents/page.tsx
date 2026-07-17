@@ -811,6 +811,8 @@ export default function AdminStudentsByClassPage() {
     new_last_name: "",
     new_first_name: "",
     new_matricule: "",
+    new_is_affecte: "",
+    new_is_boarder: "",
     transfer_matricule: "",
   });
 
@@ -852,6 +854,8 @@ export default function AdminStudentsByClassPage() {
       new_last_name: "",
       new_first_name: "",
       new_matricule: "",
+      new_is_affecte: "",
+      new_is_boarder: "",
       transfer_matricule: "",
     });
     setSearchQ("");
@@ -1328,6 +1332,11 @@ export default function AdminStudentsByClassPage() {
         const first_name = form.new_first_name.trim();
         const last_name = form.new_last_name.trim();
         const matricule = form.new_matricule.trim();
+        if (!form.new_is_affecte || !form.new_is_boarder) {
+          throw new Error(
+            "Renseignez Affecte/Non affecte et Interne/Externe avant l'inscription.",
+          );
+        }
 
         if (!first_name && !last_name) {
           throw new Error("Renseignez au moins le nom ou les prenoms.");
@@ -1339,6 +1348,8 @@ export default function AdminStudentsByClassPage() {
           first_name: first_name || null,
           last_name: last_name || null,
           matricule: matricule || null,
+          is_affecte: form.new_is_affecte === "true",
+          is_boarder: form.new_is_boarder === "true",
         };
       } else {
         if (selectedStu?.id && !form.transfer_matricule.trim()) {
@@ -1932,6 +1943,44 @@ export default function AdminStudentsByClassPage() {
                       }
                       placeholder="Ex : 20166309J"
                     />
+                  </div>
+
+                  <div>
+                    <div className="mb-1 text-xs text-slate-600">
+                      Statut de scolarite
+                    </div>
+                    <Select
+                      value={form.new_is_affecte}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          new_is_affecte: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Choisir...</option>
+                      <option value="true">Affecte</option>
+                      <option value="false">Non affecte</option>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <div className="mb-1 text-xs text-slate-600">
+                      Statut d'internat
+                    </div>
+                    <Select
+                      value={form.new_is_boarder}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          new_is_boarder: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Choisir...</option>
+                      <option value="true">Interne</option>
+                      <option value="false">Externe</option>
+                    </Select>
                   </div>
                 </div>
               ) : (

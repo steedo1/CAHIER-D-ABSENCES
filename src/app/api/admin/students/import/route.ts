@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  synchronizeStudentFinance,
+  type AppliedStudentFinanceSynchronization,
+  type FinanceSyncResult,
+} from "@/lib/finance/student-finance-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -386,12 +391,20 @@ export async function POST(req: NextRequest) {
   // Classe dans mon établissement ?
   const { data: cls } = await srv
     .from("classes")
-    .select("id,institution_id,academic_year,label")
+    .select(
+      "id,institution_id,academic_year,label,code,level,official_track_code",
+    )
     .eq("id", class_id)
     .maybeSingle();
 
   if (!cls || (cls as any).institution_id !== inst) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
+  }
+  if (!String((cls as any).academic_year || "").trim()) {
+    return NextResponse.json(
+      { error: "La classe cible n'a pas d'année scolaire." },
+      { status: 400 },
+    );
   }
 
   // 1) Matricules (distincts, non vides)
@@ -412,6 +425,7 @@ export async function POST(req: NextRequest) {
   type ExistingStudent = {
     id: string;
     matricule: string | null;
+    full_name: string | null;
     full_name_key: string | null;
     first_name: string | null;
     last_name: string | null;
@@ -434,7 +448,7 @@ export async function POST(req: NextRequest) {
     const { data: existing, error: exErr } = await srv
       .from("students")
       .select(
-        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
+        "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
       .in("matricule", wantedMatr);
@@ -449,6 +463,7 @@ export async function POST(req: NextRequest) {
       existingByMat[m] = {
         id: String(row.id),
         matricule: row.matricule ?? null,
+        full_name: row.full_name ?? null,
         full_name_key: row.full_name_key ?? null,
         first_name: row.first_name ?? null,
         last_name: row.last_name ?? null,
@@ -473,7 +488,7 @@ export async function POST(req: NextRequest) {
     const { data: existing2, error: exErr2 } = await srv
       .from("students")
       .select(
-        "id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
+        "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
       .in("full_name_key", wantedNameKeys);
@@ -489,6 +504,7 @@ export async function POST(req: NextRequest) {
       const st: ExistingStudent = {
         id: String(row.id),
         matricule: row.matricule ?? null,
+        full_name: row.full_name ?? null,
         full_name_key: row.full_name_key ?? null,
         first_name: row.first_name ?? null,
         last_name: row.last_name ?? null,
@@ -509,6 +525,40 @@ export async function POST(req: NextRequest) {
       arr.push(st);
       existingByNameKey.set(k, arr);
     }
+  }
+
+  const incompleteFinanceRows = parsed
+    .filter((row) => {
+      const matricule = String(row.matricule || "").trim();
+      const byMatricule = matricule ? existingByMat[matricule] : null;
+      const byName = !matricule
+        ? (existingByNameKey.get(String(row.full_name_key || "").trim()) || [])
+        : [];
+      const existing = byMatricule || (byName.length === 1 ? byName[0] : null);
+      const willBeImported = Boolean(matricule || existing);
+      if (!willBeImported) return false;
+
+      const finalAffecte =
+        typeof row.is_affecte === "boolean"
+          ? row.is_affecte
+          : existing?.is_affecte;
+      const finalBoarder =
+        typeof row.is_boarder === "boolean"
+          ? row.is_boarder
+          : existing?.is_boarder;
+      return typeof finalAffecte !== "boolean" || typeof finalBoarder !== "boolean";
+    })
+    .map((row) => row._row + 2);
+
+  if (incompleteFinanceRows.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Import annulé : Affecté/Non affecté et Interne/Externe sont obligatoires pour chaque élève.",
+        rows: incompleteFinanceRows.slice(0, 25),
+      },
+      { status: 400 },
+    );
   }
 
   // 3) Créer les élèves manquants (UNIQUEMENT si matricule présent)
@@ -536,12 +586,13 @@ export async function POST(req: NextRequest) {
     }));
 
   let createdCount = 0;
+  const createdStudentIds = new Set<string>();
 
   if (toInsert.length) {
     const { data: createdRows, error: e1 } = await srv
       .from("students")
       .insert(toInsert)
-      .select("id, matricule, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url");
+      .select("id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url");
 
     if (e1) return NextResponse.json({ error: e1.message }, { status: 400 });
 
@@ -551,9 +602,11 @@ export async function POST(req: NextRequest) {
       const row = s as any;
       const m = String(row.matricule || "").trim();
       if (!m) continue;
+      createdStudentIds.add(String(row.id));
       existingByMat[m] = {
         id: String(row.id),
         matricule: row.matricule ?? null,
+        full_name: row.full_name ?? null,
         full_name_key: row.full_name_key ?? null,
         first_name: row.first_name ?? null,
         last_name: row.last_name ?? null,
@@ -612,6 +665,46 @@ export async function POST(req: NextRequest) {
   let updatedCount = 0;
   let updatedByName = 0;
   let ambiguousName = 0;
+  const studentUpdateSnapshots = new Map<string, Record<string, unknown>>();
+
+  function rememberStudentSnapshot(student: ExistingStudent) {
+    if (createdStudentIds.has(student.id) || studentUpdateSnapshots.has(student.id)) {
+      return;
+    }
+    studentUpdateSnapshots.set(student.id, {
+      first_name: student.first_name,
+      last_name: student.last_name,
+      full_name: student.full_name,
+      full_name_key: student.full_name_key,
+      gender: student.gender,
+      birthdate: student.birthdate,
+      birth_place: student.birth_place,
+      nationality: student.nationality,
+      lv2: student.lv2,
+      regime: student.regime,
+      is_repeater: student.is_repeater,
+      is_boarder: student.is_boarder,
+      is_affecte: student.is_affecte,
+      photo_url: student.photo_url,
+    });
+  }
+
+  async function rollbackStudentMutations() {
+    for (const [studentId, snapshot] of studentUpdateSnapshots) {
+      await srv
+        .from("students")
+        .update(snapshot as any)
+        .eq("id", studentId)
+        .eq("institution_id", inst);
+    }
+    if (createdStudentIds.size > 0) {
+      await srv
+        .from("students")
+        .delete()
+        .eq("institution_id", inst)
+        .in("id", Array.from(createdStudentIds));
+    }
+  }
 
   // 4a) updates par matricule
   for (const r of parsed) {
@@ -623,9 +716,12 @@ export async function POST(req: NextRequest) {
     const patch = buildPatch(r, cur);
     if (!Object.keys(patch).length) continue;
 
+    rememberStudentSnapshot(cur);
     const { error } = await srv.from("students").update(patch).eq("id", cur.id);
-    if (error)
+    if (error) {
+      await rollbackStudentMutations();
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
 
     updatedCount++;
   }
@@ -649,9 +745,12 @@ export async function POST(req: NextRequest) {
     const patch = buildPatch(r, cur);
     if (!Object.keys(patch).length) continue;
 
+    rememberStudentSnapshot(cur);
     const { error } = await srv.from("students").update(patch).eq("id", cur.id);
-    if (error)
+    if (error) {
+      await rollbackStudentMutations();
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
 
     updatedByName++;
   }
@@ -687,90 +786,239 @@ export async function POST(req: NextRequest) {
 
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const idsArr = Array.from(allStudentIds);
+  const targetAcademicYear = String((cls as any).academic_year || "").trim();
+  const { data: sameYearClasses, error: sameYearErr } = await srv
+    .from("classes")
+    .select("id")
+    .eq("institution_id", inst)
+    .eq("academic_year", targetAcademicYear);
+  if (sameYearErr) {
+    await rollbackStudentMutations();
+    return NextResponse.json({ error: sameYearErr.message }, { status: 400 });
+  }
+  const sameYearClassIds = (sameYearClasses ?? [])
+    .map((row: any) => String(row.id))
+    .filter(Boolean);
 
-  // 6) Clôturer les autres inscriptions actives seulement dans la même année scolaire.
-  // Une nouvelle année scolaire doit créer de nouvelles classes sans fermer l'historique précédent.
-  let closedOld = 0;
-  {
-    const targetAcademicYear = String((cls as any).academic_year || "").trim();
-    let sameYearClassIds: string[] = [];
+  const { data: enrollmentSnapshotRows, error: enrollmentSnapshotError } =
+    await srv
+      .from("class_enrollments")
+      .select("id,institution_id,class_id,student_id,start_date,end_date")
+      .eq("institution_id", inst)
+      .in("student_id", idsArr)
+      .in("class_id", sameYearClassIds);
+  if (enrollmentSnapshotError) {
+    await rollbackStudentMutations();
+    return NextResponse.json(
+      { error: enrollmentSnapshotError.message },
+      { status: 400 },
+    );
+  }
 
-    if (targetAcademicYear) {
-      const { data: sameYearClasses, error: sameYearErr } = await srv
-        .from("classes")
-        .select("id")
-        .eq("institution_id", inst)
-        .eq("academic_year", targetAcademicYear);
+  const enrollmentSnapshots = (enrollmentSnapshotRows || []) as Array<{
+    id: string;
+    institution_id: string;
+    class_id: string;
+    student_id: string;
+    start_date: string;
+    end_date: string | null;
+  }>;
+  const enrollmentSnapshotIds = new Set(
+    enrollmentSnapshots.map((row) => String(row.id)),
+  );
+  const financeApplications: AppliedStudentFinanceSynchronization[] = [];
+  const financeSync: FinanceSyncResult = {
+    inserted: 0,
+    reactivated: 0,
+    cancelled: 0,
+    cancelled_duplicates: 0,
+    preserved_paid_amount: 0,
+    updated_amount: 0,
+    retargeted: 0,
+    option_links_created: 0,
+    warnings: [],
+  };
+  const financeTransfer = {
+    moved_charges: 0,
+    retargeted_charges: 0,
+    cancelled_duplicates: 0,
+    preserved_paid_amount: 0,
+    component_links_moved: 0,
+    option_links_moved: 0,
+    warnings: [] as string[],
+  };
 
-      if (sameYearErr)
-        return NextResponse.json(
-          { error: sameYearErr.message },
-          { status: 400 },
-        );
-      sameYearClassIds = (sameYearClasses ?? [])
-        .map((row: any) => String(row.id))
-        .filter(Boolean);
+  async function rollbackFinanceApplications() {
+    for (const applied of [...financeApplications].reverse()) {
+      await applied.rollback();
+    }
+  }
+
+  try {
+    for (const studentId of idsArr) {
+      const sourceClassIds = enrollmentSnapshots
+        .filter(
+          (row) =>
+            row.student_id === studentId &&
+            row.class_id !== class_id &&
+            row.end_date === null,
+        )
+        .map((row) => row.class_id);
+      const applied = await synchronizeStudentFinance({
+        srv: srv as any,
+        institutionId: inst,
+        userId: g.userId,
+        studentId,
+        sourceClassIds,
+        targetClass: {
+          id: String((cls as any).id),
+          institution_id: inst,
+          academic_year: targetAcademicYear,
+          label: (cls as any).label ?? null,
+          code: (cls as any).code ?? null,
+          level: (cls as any).level ?? null,
+          official_track_code: (cls as any).official_track_code ?? null,
+        },
+      });
+      financeApplications.push(applied);
+
+      for (const key of [
+        "inserted",
+        "reactivated",
+        "cancelled",
+        "cancelled_duplicates",
+        "preserved_paid_amount",
+        "updated_amount",
+        "retargeted",
+        "option_links_created",
+      ] as const) {
+        financeSync[key] += applied.reconciliation[key];
+      }
+      financeSync.warnings.push(...applied.reconciliation.warnings);
+      financeTransfer.moved_charges += applied.transfer.moved_charges;
+      financeTransfer.retargeted_charges += applied.transfer.retargeted_charges;
+      financeTransfer.cancelled_duplicates +=
+        applied.transfer.cancelled_duplicates;
+      financeTransfer.preserved_paid_amount +=
+        applied.transfer.preserved_paid_amount;
+      financeTransfer.component_links_moved +=
+        applied.transfer.component_links_moved;
+      financeTransfer.option_links_moved += applied.transfer.option_links_moved;
+      financeTransfer.warnings.push(...applied.transfer.warnings);
+    }
+  } catch (error) {
+    await Promise.allSettled([rollbackFinanceApplications()]);
+    await Promise.allSettled([rollbackStudentMutations()]);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "La synchronisation financière de l'import a échoué.",
+        details: "Import annulé avant le changement des inscriptions.",
+      },
+      { status: 409 },
+    );
+  }
+
+  async function rollbackEnrollmentMutations() {
+    for (const snapshot of enrollmentSnapshots) {
+      await srv
+        .from("class_enrollments")
+        .update({
+          start_date: snapshot.start_date,
+          end_date: snapshot.end_date,
+        })
+        .eq("id", snapshot.id)
+        .eq("institution_id", inst);
     }
 
-    let closeQuery = srv
+    const { data: currentTargets } = await srv
+      .from("class_enrollments")
+      .select("id")
+      .eq("institution_id", inst)
+      .eq("class_id", class_id)
+      .in("student_id", idsArr);
+    const insertedIds = (currentTargets || [])
+      .map((row: any) => String(row.id))
+      .filter((id) => !enrollmentSnapshotIds.has(id));
+    if (insertedIds.length > 0) {
+      await srv
+        .from("class_enrollments")
+        .delete()
+        .eq("institution_id", inst)
+        .in("id", insertedIds);
+    }
+  }
+
+  let closedOld = 0;
+  let reactivated = 0;
+  let insertedTarget = 0;
+
+  try {
+    const { data: closedRows, error: closeError } = await srv
       .from("class_enrollments")
       .update({ end_date: today })
       .in("student_id", idsArr)
       .neq("class_id", class_id)
       .eq("institution_id", inst)
-      .is("end_date", null);
+      .is("end_date", null)
+      .in("class_id", sameYearClassIds)
+      .select("id");
+    if (closeError) throw new Error(closeError.message);
+    closedOld = (closedRows ?? []).length;
 
-    if (targetAcademicYear) {
-      closeQuery = sameYearClassIds.length
-        ? closeQuery.in("class_id", sameYearClassIds)
-        : closeQuery.eq("class_id", "__NO_CLASS__");
-    }
-
-    const { data, error } = await closeQuery.select("id");
-
-    if (error)
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    closedOld = (data ?? []).length;
-  }
-
-  // 7) Réactiver si une inscription cible existe déjà
-  let reactivated = 0;
-  {
-    const { data, error } = await srv
+    const { data: reactivatedRows, error: reactivateError } = await srv
       .from("class_enrollments")
       .update({ end_date: null })
       .in("student_id", idsArr)
       .eq("class_id", class_id)
       .eq("institution_id", inst)
       .select("id");
+    if (reactivateError) throw new Error(reactivateError.message);
+    reactivated = (reactivatedRows ?? []).length;
 
-    if (error)
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    reactivated = (data ?? []).length;
-  }
-
-  // 8) Insérer celles qui n’existent pas encore
-  let insertedTarget = 0;
-  {
-    const enrollRows = idsArr.map((sid) => ({
-      class_id,
-      student_id: sid,
-      institution_id: inst,
-      start_date: today,
-      end_date: null,
-    }));
-
-    const { data, error } = await srv
+    const { data: insertedRows, error: insertEnrollmentError } = await srv
       .from("class_enrollments")
-      .upsert(enrollRows, {
-        onConflict: "class_id,student_id",
-        ignoreDuplicates: true,
-      })
+      .upsert(
+        idsArr.map((studentId) => ({
+          class_id,
+          student_id: studentId,
+          institution_id: inst,
+          start_date: today,
+          end_date: null,
+        })),
+        {
+          onConflict: "class_id,student_id",
+          ignoreDuplicates: true,
+        },
+      )
       .select("id");
-
-    if (error)
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    insertedTarget = (data ?? []).length;
+    if (insertEnrollmentError) throw new Error(insertEnrollmentError.message);
+    insertedTarget = (insertedRows ?? []).length;
+  } catch (error) {
+    const rollbackResults = [];
+    rollbackResults.push(
+      ...(await Promise.allSettled([rollbackEnrollmentMutations()])),
+    );
+    rollbackResults.push(
+      ...(await Promise.allSettled([rollbackFinanceApplications()])),
+    );
+    rollbackResults.push(
+      ...(await Promise.allSettled([rollbackStudentMutations()])),
+    );
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "La mise à jour des inscriptions a échoué.",
+        rollback_incomplete: rollbackResults.some(
+          (result) => result.status === "rejected",
+        ),
+      },
+      { status: 409 },
+    );
   }
 
   // 9) Les champs officiels élève (sexe, naissance, nationalité, redoublant, LV2)
@@ -802,5 +1050,13 @@ export async function POST(req: NextRequest) {
     reactivated_in_target: reactivated,
     inserted_in_target: insertedTarget,
     student_fields_updated: studentFieldsUpdated,
+    finance_sync: {
+      ...financeSync,
+      warnings: Array.from(new Set(financeSync.warnings)),
+    },
+    finance_transfer: {
+      ...financeTransfer,
+      warnings: Array.from(new Set(financeTransfer.warnings)),
+    },
   });
 }

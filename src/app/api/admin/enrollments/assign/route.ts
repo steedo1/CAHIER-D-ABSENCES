@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
-  transferStudentFinanceToClass,
-  type AppliedFinanceClassTransfer,
-} from "@/lib/finance/class-transfer";
+  synchronizeStudentFinance,
+  type AppliedStudentFinanceSynchronization,
+} from "@/lib/finance/student-finance-sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +14,10 @@ type Action = "create_and_assign" | "assign";
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function requiredBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 export async function POST(req: NextRequest) {
@@ -62,6 +66,8 @@ export async function POST(req: NextRequest) {
   let studentFirst: string | null = null;
   let studentLast: string | null = null;
   let studentMatricule: string | null = null;
+  let createdStudent = false;
+  let studentPreparationSnapshot: Record<string, unknown> | null = null;
 
   if (action === "create_and_assign") {
     const first_name: string | null =
@@ -70,11 +76,23 @@ export async function POST(req: NextRequest) {
       body?.last_name ?? null ? String(body.last_name).trim() : null;
     const matricule: string | null =
       body?.matricule ?? null ? String(body.matricule).trim() : null;
+    const isAffecte = requiredBoolean(body?.is_affecte);
+    const isBoarder = requiredBoolean(body?.is_boarder);
+
+    if (isAffecte === null || isBoarder === null) {
+      return NextResponse.json(
+        {
+          error:
+            "Affecte/Non affecte et Interne/Externe sont obligatoires avant l'inscription.",
+        },
+        { status: 400 },
+      );
+    }
 
     if (matricule) {
       const { data: exist, error: exErr } = await srv
         .from("students")
-        .select("id,first_name,last_name,matricule")
+        .select("id,first_name,last_name,matricule,is_affecte,is_boarder")
         .eq("institution_id", inst)
         .eq("matricule", matricule)
         .maybeSingle();
@@ -82,6 +100,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: exErr.message }, { status: 400 });
 
       if (exist) {
+        studentPreparationSnapshot = {
+          first_name: (exist as any).first_name ?? null,
+          last_name: (exist as any).last_name ?? null,
+          is_affecte: (exist as any).is_affecte ?? null,
+          is_boarder: (exist as any).is_boarder ?? null,
+        };
         studentId = (exist as any).id;
         studentFirst = (exist as any).first_name ?? null;
         studentLast = (exist as any).last_name ?? null;
@@ -92,6 +116,8 @@ export async function POST(req: NextRequest) {
           patch.first_name = first_name;
         if (last_name && last_name !== (studentLast ?? ""))
           patch.last_name = last_name;
+        patch.is_affecte = isAffecte;
+        patch.is_boarder = isBoarder;
 
         if (Object.keys(patch).length > 0) {
           const { error: upErr } = await srv
@@ -106,7 +132,16 @@ export async function POST(req: NextRequest) {
       } else {
         const { data: created, error: cErr } = await srv
           .from("students")
-          .insert([{ institution_id: inst, first_name, last_name, matricule }])
+          .insert([
+            {
+              institution_id: inst,
+              first_name,
+              last_name,
+              matricule,
+              is_affecte: isAffecte,
+              is_boarder: isBoarder,
+            },
+          ])
           .select("id,first_name,last_name,matricule")
           .maybeSingle();
         if (cErr)
@@ -116,12 +151,20 @@ export async function POST(req: NextRequest) {
         studentFirst = (created as any).first_name ?? null;
         studentLast = (created as any).last_name ?? null;
         studentMatricule = (created as any).matricule ?? null;
+        createdStudent = true;
       }
     } else {
       const { data: created, error: cErr } = await srv
         .from("students")
         .insert([
-          { institution_id: inst, first_name, last_name, matricule: null },
+          {
+            institution_id: inst,
+            first_name,
+            last_name,
+            matricule: null,
+            is_affecte: isAffecte,
+            is_boarder: isBoarder,
+          },
         ])
         .select("id,first_name,last_name,matricule")
         .maybeSingle();
@@ -132,6 +175,7 @@ export async function POST(req: NextRequest) {
       studentFirst = (created as any).first_name ?? null;
       studentLast = (created as any).last_name ?? null;
       studentMatricule = (created as any).matricule ?? null;
+      createdStudent = true;
     }
   } else {
     // assign (par matricule OU par student_id)
@@ -196,6 +240,25 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
 
+  const rollbackPreparedStudent = async () => {
+    if (!studentId) return;
+    if (createdStudent) {
+      await srv
+        .from("students")
+        .delete()
+        .eq("id", studentId)
+        .eq("institution_id", inst);
+      return;
+    }
+    if (studentPreparationSnapshot) {
+      await srv
+        .from("students")
+        .update(studentPreparationSnapshot as any)
+        .eq("id", studentId)
+        .eq("institution_id", inst);
+    }
+  };
+
   const today = isoToday();
 
   // Le transfert de classe et le transfert financier doivent être préparés
@@ -213,6 +276,7 @@ export async function POST(req: NextRequest) {
       .eq("academic_year", targetAcademicYear);
 
     if (sameYearErr) {
+      await rollbackPreparedStudent();
       return NextResponse.json({ error: sameYearErr.message }, { status: 400 });
     }
 
@@ -237,6 +301,7 @@ export async function POST(req: NextRequest) {
       : { data: [], error: null as any };
 
   if (sourceEnrollmentErr) {
+    await rollbackPreparedStudent();
     return NextResponse.json(
       { error: sourceEnrollmentErr.message },
       { status: 400 },
@@ -252,6 +317,7 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   if (targetEnrollmentErr) {
+    await rollbackPreparedStudent();
     return NextResponse.json(
       { error: targetEnrollmentErr.message },
       { status: 400 },
@@ -266,12 +332,13 @@ export async function POST(req: NextRequest) {
     ),
   );
 
-  let financeTransfer: AppliedFinanceClassTransfer;
+  let financeTransfer: AppliedStudentFinanceSynchronization;
 
   try {
-    financeTransfer = await transferStudentFinanceToClass({
+    financeTransfer = await synchronizeStudentFinance({
       srv,
       institutionId: inst,
+      userId: user.id,
       studentId,
       sourceClassIds,
       targetClass: {
@@ -285,6 +352,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (financeError) {
+    await rollbackPreparedStudent();
     return NextResponse.json(
       {
         error:
@@ -387,9 +455,12 @@ export async function POST(req: NextRequest) {
       rollbackEnrollment(),
       financeTransfer.rollback(),
     ]);
+    const studentRollbackResult = await Promise.allSettled([
+      rollbackPreparedStudent(),
+    ]);
     const rollbackFailed = rollbackResults.some(
       (result) => result.status === "rejected",
-    );
+    ) || studentRollbackResult.some((result) => result.status === "rejected");
 
     return NextResponse.json(
       {
@@ -417,6 +488,7 @@ export async function POST(req: NextRequest) {
     closed_old_enrollments: closedCount,
     reactivated_in_target: reactivatedCount,
     inserted_in_target: insertedCount,
-    finance_transfer: financeTransfer.summary,
+    finance_transfer: financeTransfer.transfer,
+    finance_sync: financeTransfer.reconciliation,
   });
 }
