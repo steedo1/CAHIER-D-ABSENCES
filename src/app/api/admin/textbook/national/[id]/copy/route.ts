@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanText, requireTextbookManager } from "@/lib/textbook/context";
+import { resolveTextbookSubjectForInstitution } from "@/lib/textbook/subject-matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,8 @@ function levelAliases(level: unknown) {
   const aliases = new Set<string>();
   if (normalized) aliases.add(normalized);
 
-  const secondAorC = normalized.match(/^(2nde|seconde)\s+a\s*c$/) ||
+  const secondAorC =
+    normalized.match(/^(2nde|seconde)\s+a\s*c$/) ||
     normalized.match(/^(2nde|seconde)\s+a\s+c$/) ||
     normalized.match(/^(2nde|seconde)\s+a\s*[-/]\s*c$/);
   if (secondAorC) {
@@ -48,7 +50,9 @@ function classMatchesLevel(row: any, level: unknown) {
   if (!aliases.length) return false;
   const classLevel = normalizeLabel(row?.level);
   const classLabel = normalizeLabel(row?.label || row?.name);
-  return aliases.some((alias) => classLevel === alias || classLabel.includes(alias));
+  return aliases.some(
+    (alias) => classLevel === alias || classLabel.includes(alias),
+  );
 }
 
 async function autoAssignCompatibleClasses(
@@ -122,7 +126,11 @@ async function autoAssignCompatibleClasses(
     if ((existing as any)?.id) {
       const { data: updated, error: updateErr } = await srv
         .from("textbook_progression_class_assignments")
-        .update({ is_active: true, updated_by: userId, updated_at: new Date().toISOString() })
+        .update({
+          is_active: true,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", (existing as any).id)
         .select("id")
         .maybeSingle();
@@ -142,7 +150,12 @@ async function autoAssignCompatibleClasses(
   return { count: touched.length, skipped: null };
 }
 
-function cloneItem(raw: any, newProgressionId: string, schoolInstitutionId: string, idMap: Map<string, string>) {
+function cloneItem(
+  raw: any,
+  newProgressionId: string,
+  schoolInstitutionId: string,
+  idMap: Map<string, string>,
+) {
   const newId = crypto.randomUUID();
   const oldId = String(raw.id || "");
   if (oldId) idMap.set(oldId, newId);
@@ -165,13 +178,17 @@ function cloneItem(raw: any, newProgressionId: string, schoolInstitutionId: stri
     planned_sessions_count: raw.planned_sessions_count || null,
     sort_order: raw.sort_order || 0,
     indent_level: raw.indent_level || 0,
-    metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
+    metadata:
+      raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
     source_national_item_id: oldId || null,
     is_customized: false,
   };
 }
 
-export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
   const { id } = await context.params;
   const auth = await requireTextbookManager();
   if (!auth.ok) return auth.response;
@@ -204,15 +221,54 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .eq("scope", "national")
     .maybeSingle();
 
-  if (nationalErr) return NextResponse.json({ ok: false, error: nationalErr.message }, { status: 400 });
-  if (!national) return NextResponse.json({ ok: false, error: "national_progression_not_found" }, { status: 404 });
+  if (nationalErr)
+    return NextResponse.json(
+      { ok: false, error: nationalErr.message },
+      { status: 400 },
+    );
+  if (!national)
+    return NextResponse.json(
+      { ok: false, error: "national_progression_not_found" },
+      { status: 404 },
+    );
   if ((national as any).status !== "active") {
-    return NextResponse.json({ ok: false, error: "national_progression_not_published" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "national_progression_not_published" },
+      { status: 400 },
+    );
   }
+
+  let resolvedSubject;
+  try {
+    resolvedSubject = await resolveTextbookSubjectForInstitution(
+      srv,
+      institutionId,
+      {
+        subject_id: (national as any).subject_id,
+        institution_subject_id: (national as any).institution_subject_id,
+        subject_name: (national as any).subject_name,
+      },
+    );
+  } catch (error: any) {
+    return NextResponse.json(
+      { ok: false, error: error?.message || "subject_resolution_failed" },
+      { status: 400 },
+    );
+  }
+
+  const effectiveNational = {
+    ...(national as any),
+    subject_id: resolvedSubject.subject_id,
+    institution_subject_id: resolvedSubject.institution_subject_id,
+    subject_name:
+      resolvedSubject.subject_name || (national as any).subject_name,
+  };
 
   const { data: existing } = await srv
     .from("textbook_progression_templates")
-    .select("id,title,academic_year,subject_name,level,series,status,source_national_template_id")
+    .select(
+      "id,title,academic_year,subject_id,institution_subject_id,subject_name,level,series,status,source_national_template_id",
+    )
     .eq("institution_id", institutionId)
     .eq("scope", "school")
     .eq("source_national_template_id", id)
@@ -221,12 +277,46 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .maybeSingle();
 
   if ((existing as any)?.id) {
+    const repairPayload = {
+      subject_id: effectiveNational.subject_id || null,
+      institution_subject_id: effectiveNational.institution_subject_id || null,
+      subject_name: effectiveNational.subject_name || null,
+      updated_by: userId,
+      updated_at: new Date().toISOString(),
+    };
+
+    await srv
+      .from("textbook_progression_templates")
+      .update(repairPayload)
+      .eq("id", (existing as any).id)
+      .eq("institution_id", institutionId);
+
+    await srv
+      .from("textbook_progression_class_assignments")
+      .update({
+        subject_id: repairPayload.subject_id,
+        institution_subject_id: repairPayload.institution_subject_id,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("progression_id", (existing as any).id)
+      .eq("institution_id", institutionId);
+
     let autoAssigned = { count: 0, skipped: null as string | null };
     if (shouldAutoAssign) {
       try {
-        autoAssigned = await autoAssignCompatibleClasses(srv, institutionId, userId, national, (existing as any).id);
+        autoAssigned = await autoAssignCompatibleClasses(
+          srv,
+          institutionId,
+          userId,
+          effectiveNational,
+          (existing as any).id,
+        );
       } catch (e: any) {
-        return NextResponse.json({ ok: false, error: e?.message || "auto_assign_failed" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: e?.message || "auto_assign_failed" },
+          { status: 400 },
+        );
       }
     }
     return NextResponse.json({
@@ -239,19 +329,6 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     });
   }
 
-  let schoolInstitutionSubjectId: string | null = null;
-  if ((national as any).subject_id) {
-    const { data: instSubject } = await srv
-      .from("institution_subjects")
-      .select("id")
-      .eq("institution_id", institutionId)
-      .eq("subject_id", (national as any).subject_id)
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
-    schoolInstitutionSubjectId = (instSubject as any)?.id || null;
-  }
-
   const newProgressionId = crypto.randomUUID();
   const { data: created, error: createErr } = await srv
     .from("textbook_progression_templates")
@@ -260,9 +337,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       institution_id: institutionId,
       academic_year: (national as any).academic_year,
       document_id: (national as any).document_id || null,
-      subject_id: (national as any).subject_id || null,
-      institution_subject_id: schoolInstitutionSubjectId,
-      subject_name: (national as any).subject_name || null,
+      subject_id: effectiveNational.subject_id || null,
+      institution_subject_id: effectiveNational.institution_subject_id || null,
+      subject_name: effectiveNational.subject_name || null,
       level: (national as any).level,
       series: (national as any).series || null,
       title: titleOverride || (national as any).title,
@@ -281,7 +358,11 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .select("*")
     .maybeSingle();
 
-  if (createErr) return NextResponse.json({ ok: false, error: createErr.message }, { status: 400 });
+  if (createErr)
+    return NextResponse.json(
+      { ok: false, error: createErr.message },
+      { status: 400 },
+    );
 
   const { data: nationalItems, error: itemsErr } = await srv
     .from("textbook_progression_items")
@@ -290,7 +371,11 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
 
-  if (itemsErr) return NextResponse.json({ ok: false, error: itemsErr.message }, { status: 400 });
+  if (itemsErr)
+    return NextResponse.json(
+      { ok: false, error: itemsErr.message },
+      { status: 400 },
+    );
 
   const idMap = new Map<string, string>();
   const rows = ((nationalItems || []) as any[]).map((item) =>
@@ -301,31 +386,52 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     // Deuxième passe pour rattacher les parents dont le parent apparaît après l'enfant.
     for (const index in rows) {
       const source = (nationalItems || [])[Number(index)] as any;
-      if (source?.parent_id) rows[index].parent_id = idMap.get(String(source.parent_id)) || null;
+      if (source?.parent_id)
+        rows[index].parent_id = idMap.get(String(source.parent_id)) || null;
     }
 
-    const { error: insertItemsErr } = await srv.from("textbook_progression_items").insert(rows);
+    const { error: insertItemsErr } = await srv
+      .from("textbook_progression_items")
+      .insert(rows);
     if (insertItemsErr) {
-      await srv.from("textbook_progression_templates").delete().eq("id", newProgressionId);
-      return NextResponse.json({ ok: false, error: insertItemsErr.message }, { status: 400 });
+      await srv
+        .from("textbook_progression_templates")
+        .delete()
+        .eq("id", newProgressionId);
+      return NextResponse.json(
+        { ok: false, error: insertItemsErr.message },
+        { status: 400 },
+      );
     }
   }
 
   let autoAssigned = { count: 0, skipped: null as string | null };
   if (shouldAutoAssign) {
     try {
-      autoAssigned = await autoAssignCompatibleClasses(srv, institutionId, userId, national, newProgressionId);
+      autoAssigned = await autoAssignCompatibleClasses(
+        srv,
+        institutionId,
+        userId,
+        effectiveNational,
+        newProgressionId,
+      );
     } catch (e: any) {
-      return NextResponse.json({ ok: false, error: e?.message || "auto_assign_failed" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: e?.message || "auto_assign_failed" },
+        { status: 400 },
+      );
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    item: created,
-    already_exists: false,
-    copied_items: rows.length,
-    auto_assigned_classes: autoAssigned.count,
-    auto_assign_skipped: autoAssigned.skipped,
-  }, { status: 201 });
+  return NextResponse.json(
+    {
+      ok: true,
+      item: created,
+      already_exists: false,
+      copied_items: rows.length,
+      auto_assigned_classes: autoAssigned.count,
+      auto_assign_skipped: autoAssigned.skipped,
+    },
+    { status: 201 },
+  );
 }

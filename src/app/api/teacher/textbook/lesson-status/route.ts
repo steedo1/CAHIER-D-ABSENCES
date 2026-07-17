@@ -6,6 +6,12 @@ import {
   findTextbookClassDevice,
   requireTeacherTextbook,
 } from "@/lib/textbook/context";
+import {
+  buildTextbookSubjectCatalog,
+  findTextbookTeacherForAssignment,
+  resolveTextbookAssignmentSubject,
+  textbookAssignmentMatchesClassTeacherRows,
+} from "@/lib/textbook/subject-matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,50 +23,6 @@ const ALLOWED_STATUS = new Set([
   "reopened",
 ]);
 
-function uniq(values: Array<string | null | undefined>) {
-  return Array.from(
-    new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
-  );
-}
-
-function assignmentSubjectTokens(assignment: any) {
-  return uniq([
-    assignment.subject_id,
-    assignment.institution_subject_id,
-    assignment.progression?.subject_id,
-    assignment.progression?.institution_subject_id,
-  ]);
-}
-
-function subjectMatches(assignment: any, rows: any[]) {
-  const tokens = assignmentSubjectTokens(assignment);
-  if (!tokens.length) return Array.isArray(rows) && rows.length > 0;
-  return ((rows || []) as any[]).some((row) =>
-    tokens.includes(String(row.subject_id || "")),
-  );
-}
-
-
-async function findTeacherForClassSubject(srv: any, assignment: any) {
-  const { data: rows } = await srv
-    .from("class_teachers")
-    .select("teacher_id,subject_id")
-    .eq("class_id", assignment.class_id);
-
-  const explicit = String(assignment.teacher_id || "").trim();
-  if (explicit) return explicit;
-
-  const tokens = assignmentSubjectTokens(assignment);
-  const matched = ((rows || []) as any[]).find((row) => {
-    const teacherId = String(row.teacher_id || "").trim();
-    if (!teacherId) return false;
-    if (!tokens.length) return true;
-    return tokens.includes(String(row.subject_id || ""));
-  });
-
-  return String(matched?.teacher_id || "").trim() || null;
-}
-
 async function resolveAssignmentAccess(
   srv: any,
   userId: string,
@@ -71,7 +33,11 @@ async function resolveAssignmentAccess(
   const isClassDevice = roles.has("class_device");
 
   if (isClassDevice) {
-    const classDevice = await findTextbookClassDevice(srv, userId, institutionId);
+    const classDevice = await findTextbookClassDevice(
+      srv,
+      userId,
+      institutionId,
+    );
     if (
       !classDevice ||
       String(classDevice.id || "") !== String(assignment.class_id || "")
@@ -79,48 +45,125 @@ async function resolveAssignmentAccess(
       return {
         allowed: false,
         effectiveTeacherId: null,
+        subject: null,
         error: "forbidden_not_class_device",
       };
     }
 
-    const effectiveTeacherId = await findTeacherForClassSubject(
+    const { data: rows } = await srv
+      .from("class_teachers")
+      .select("class_id,teacher_id,subject_id")
+      .eq("institution_id", institutionId)
+      .eq("class_id", assignment.class_id)
+      .is("end_date", null);
+
+    const subjectCatalog = await buildTextbookSubjectCatalog(
       srv,
-      assignment,
+      institutionId,
+      [
+        assignment?.subject_id,
+        assignment?.institution_subject_id,
+        assignment?.progression?.subject_id,
+        assignment?.progression?.institution_subject_id,
+        ...((rows || []) as any[]).map((row) => row?.subject_id),
+      ],
     );
-    if (!effectiveTeacherId) {
+    const subject = resolveTextbookAssignmentSubject(
+      assignment,
+      subjectCatalog,
+    );
+    const effectiveTeacherId = findTextbookTeacherForAssignment(
+      assignment,
+      rows || [],
+      subjectCatalog,
+    );
+
+    if (!subject || !effectiveTeacherId) {
       return {
         allowed: false,
         effectiveTeacherId: null,
-        error: "teacher_not_found_for_class_subject",
+        subject,
+        error: !subject
+          ? "subject_not_resolved_for_assignment"
+          : "teacher_not_found_for_class_subject",
       };
     }
 
-    return { allowed: true, effectiveTeacherId, error: null };
+    return { allowed: true, effectiveTeacherId, subject, error: null };
   }
 
   if (canManageTextbook(roles)) {
+    const subjectCatalog = await buildTextbookSubjectCatalog(
+      srv,
+      institutionId,
+      [
+        assignment?.subject_id,
+        assignment?.institution_subject_id,
+        assignment?.progression?.subject_id,
+        assignment?.progression?.institution_subject_id,
+      ],
+    );
     return {
       allowed: true,
       effectiveTeacherId: String(assignment.teacher_id || userId),
+      subject: resolveTextbookAssignmentSubject(assignment, subjectCatalog),
       error: null,
     };
   }
 
   if (String(assignment.teacher_id || "") === userId) {
-    return { allowed: true, effectiveTeacherId: userId, error: null };
+    const subjectCatalog = await buildTextbookSubjectCatalog(
+      srv,
+      institutionId,
+      [
+        assignment?.subject_id,
+        assignment?.institution_subject_id,
+        assignment?.progression?.subject_id,
+        assignment?.progression?.institution_subject_id,
+      ],
+    );
+    return {
+      allowed: true,
+      effectiveTeacherId: userId,
+      subject: resolveTextbookAssignmentSubject(assignment, subjectCatalog),
+      error: null,
+    };
   }
 
   const { data: rows } = await srv
     .from("class_teachers")
-    .select("class_id,subject_id")
+    .select("class_id,teacher_id,subject_id")
+    .eq("institution_id", institutionId)
     .eq("teacher_id", userId)
-    .eq("class_id", assignment.class_id);
+    .eq("class_id", assignment.class_id)
+    .is("end_date", null);
 
-  if (subjectMatches(assignment, rows || [])) {
-    return { allowed: true, effectiveTeacherId: userId, error: null };
+  const subjectCatalog = await buildTextbookSubjectCatalog(srv, institutionId, [
+    assignment?.subject_id,
+    assignment?.institution_subject_id,
+    assignment?.progression?.subject_id,
+    assignment?.progression?.institution_subject_id,
+    ...((rows || []) as any[]).map((row) => row?.subject_id),
+  ]);
+  const subject = resolveTextbookAssignmentSubject(assignment, subjectCatalog);
+
+  if (
+    subject &&
+    textbookAssignmentMatchesClassTeacherRows(
+      assignment,
+      rows || [],
+      subjectCatalog,
+    )
+  ) {
+    return { allowed: true, effectiveTeacherId: userId, subject, error: null };
   }
 
-  return { allowed: false, effectiveTeacherId: null, error: "forbidden" };
+  return {
+    allowed: false,
+    effectiveTeacherId: null,
+    subject,
+    error: subject ? "forbidden" : "subject_not_resolved_for_assignment",
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -149,7 +192,7 @@ export async function POST(req: NextRequest) {
   const { data: assignment, error: assignmentErr } = await srv
     .from("textbook_progression_class_assignments")
     .select(
-      "*,progression:textbook_progression_templates(id,subject_id,institution_subject_id)",
+      "*,progression:textbook_progression_templates(id,subject_id,institution_subject_id,subject_name)",
     )
     .eq("id", assignmentId)
     .eq("institution_id", institutionId)
@@ -185,6 +228,7 @@ export async function POST(req: NextRequest) {
   }
 
   const effectiveTeacherId = access.effectiveTeacherId as string;
+  const resolvedSubject = access.subject;
 
   const { data: item, error: itemErr } = await srv
     .from("textbook_progression_items")
@@ -240,10 +284,12 @@ export async function POST(req: NextRequest) {
     subject_id:
       (assignment as any).subject_id ||
       (assignment as any).progression?.subject_id ||
+      resolvedSubject?.globalSubjectId ||
       null,
     institution_subject_id:
       (assignment as any).institution_subject_id ||
       (assignment as any).progression?.institution_subject_id ||
+      resolvedSubject?.institutionSubjectId ||
       null,
     teacher_id: effectiveTeacherId,
     status,

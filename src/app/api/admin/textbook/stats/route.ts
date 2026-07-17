@@ -5,6 +5,11 @@ import {
   getCurrentAcademicYearCode,
   requireTextbookManager,
 } from "@/lib/textbook/context";
+import {
+  buildTextbookSubjectCatalog,
+  findTextbookTeacherForAssignment,
+  resolveTextbookAssignmentSubject,
+} from "@/lib/textbook/subject-matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,30 +29,6 @@ function uniq(values: Array<string | null | undefined>) {
   return Array.from(
     new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
   );
-}
-
-function assignmentSubjectTokens(assignment: any) {
-  return uniq([
-    assignment.subject_id,
-    assignment.institution_subject_id,
-    assignment.progression?.subject_id,
-    assignment.progression?.institution_subject_id,
-  ]);
-}
-
-function findEffectiveTeacherId(assignment: any, classTeacherRows: any[]) {
-  const explicit = String(assignment.teacher_id || "").trim();
-  if (explicit) return explicit;
-
-  const tokens = assignmentSubjectTokens(assignment);
-  const matched = classTeacherRows.find((row) => {
-    const teacherId = String(row.teacher_id || "").trim();
-    if (!teacherId) return false;
-    if (!tokens.length) return true;
-    return tokens.includes(String(row.subject_id || ""));
-  });
-
-  return String(matched?.teacher_id || "").trim() || null;
 }
 
 function isActionableItem(item: any) {
@@ -136,7 +117,9 @@ export async function GET(req: NextRequest) {
     const { data: classTeachers } = await srv
       .from("class_teachers")
       .select("class_id,teacher_id,subject_id")
-      .in("class_id", classIds);
+      .eq("institution_id", institutionId)
+      .in("class_id", classIds)
+      .is("end_date", null);
 
     for (const row of (classTeachers || []) as any[]) {
       const key = String(row.class_id || "");
@@ -146,13 +129,38 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  let subjectCatalog;
+  try {
+    subjectCatalog = await buildTextbookSubjectCatalog(srv, institutionId, [
+      ...assignments.flatMap((assignment) => [
+        assignment?.subject_id,
+        assignment?.institution_subject_id,
+        assignment?.progression?.subject_id,
+        assignment?.progression?.institution_subject_id,
+      ]),
+      ...Array.from(classTeachersByClass.values())
+        .flat()
+        .map((row) => row?.subject_id),
+    ]);
+  } catch (error: any) {
+    return NextResponse.json(
+      { ok: false, error: error?.message || "subject_catalog_error" },
+      { status: 400 },
+    );
+  }
+
   const effectiveTeacherByAssignment = new Map<string, string | null>();
+  const resolvedSubjectByAssignment = new Map<string, any>();
   for (const assignment of assignments) {
     const rows =
       classTeachersByClass.get(String(assignment.class_id || "")) || [];
     effectiveTeacherByAssignment.set(
       String(assignment.id),
-      findEffectiveTeacherId(assignment, rows),
+      findTextbookTeacherForAssignment(assignment, rows, subjectCatalog),
+    );
+    resolvedSubjectByAssignment.set(
+      String(assignment.id),
+      resolveTextbookAssignmentSubject(assignment, subjectCatalog),
     );
   }
 
@@ -248,7 +256,8 @@ export async function GET(req: NextRequest) {
     const allItems = itemsByProgression.get(String(progression.id || "")) || [];
     const actionable = allItems.filter(isActionableItem);
     const expected = actionable.length;
-    const completedSet = completedByAssignment.get(String(assignment.id)) || new Set<string>();
+    const completedSet =
+      completedByAssignment.get(String(assignment.id)) || new Set<string>();
     const done = completedSet.size;
     const planned_minutes = actionable.reduce(
       (sum, item) => sum + plannedMinutes(item),
@@ -274,7 +283,12 @@ export async function GET(req: NextRequest) {
       class_id: assignment.class_id,
       class_label: assignment.classes?.label || "Classe",
       level: assignment.classes?.level || progression.level || null,
-      subject_id: progression.subject_id || assignment.subject_id || null,
+      subject_id:
+        progression.subject_id ||
+        assignment.subject_id ||
+        resolvedSubjectByAssignment.get(String(assignment.id))
+          ?.globalSubjectId ||
+        null,
       subject_name: progression.subject_name || "Matière",
       teacher_id:
         effectiveTeacherByAssignment.get(String(assignment.id)) || null,

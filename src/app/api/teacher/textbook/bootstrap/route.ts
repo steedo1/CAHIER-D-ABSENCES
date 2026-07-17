@@ -4,6 +4,12 @@ import {
   findTextbookClassDevice,
   requireTeacherTextbook,
 } from "@/lib/textbook/context";
+import {
+  buildTextbookSubjectCatalog,
+  findTextbookTeacherForAssignment,
+  resolveTextbookAssignmentSubject,
+  textbookAssignmentMatchesClassTeacherRows,
+} from "@/lib/textbook/subject-matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,44 +19,6 @@ function uniq(values: Array<string | null | undefined>) {
     new Set(values.map((v) => String(v || "").trim()).filter(Boolean)),
   );
 }
-
-function assignmentSubjectTokens(assignment: any) {
-  return uniq([
-    assignment.subject_id,
-    assignment.institution_subject_id,
-    assignment.progression?.subject_id,
-    assignment.progression?.institution_subject_id,
-  ]);
-}
-
-function subjectMatches(assignment: any, classTeacherRows: any[]) {
-  if (!classTeacherRows.length) return false;
-
-  const assignmentTokens = assignmentSubjectTokens(assignment);
-  if (!assignmentTokens.length) return true;
-
-  return classTeacherRows.some((row) => {
-    const token = String(row.subject_id || "").trim();
-    return token && assignmentTokens.includes(token);
-  });
-}
-
-function findEffectiveTeacherId(assignment: any, classTeacherRows: any[]) {
-  const explicit = String(assignment.teacher_id || "").trim();
-  if (explicit) return explicit;
-
-  const assignmentTokens = assignmentSubjectTokens(assignment);
-  const matched = classTeacherRows.find((row) => {
-    const teacherId = String(row.teacher_id || "").trim();
-    if (!teacherId) return false;
-    if (!assignmentTokens.length) return true;
-    const subjectId = String(row.subject_id || "").trim();
-    return subjectId && assignmentTokens.includes(subjectId);
-  });
-
-  return String(matched?.teacher_id || "").trim() || null;
-}
-
 
 async function decorateDocuments(srv: any, assignments: any[]) {
   for (const assignment of assignments) {
@@ -95,7 +63,9 @@ export async function GET() {
 
   let classTeachersQuery = srv
     .from("class_teachers")
-    .select("class_id,teacher_id,subject_id");
+    .select("class_id,teacher_id,subject_id")
+    .eq("institution_id", institutionId)
+    .is("end_date", null);
   if (isClassDevice) {
     classTeachersQuery = classTeachersQuery.eq("class_id", classDevice.id);
   } else {
@@ -158,6 +128,24 @@ export async function GET() {
       { status: 400 },
     );
 
+  let subjectCatalog;
+  try {
+    subjectCatalog = await buildTextbookSubjectCatalog(srv, institutionId, [
+      ...((classTeachers || []) as any[]).map((row) => row?.subject_id),
+      ...((assignmentRows || []) as any[]).flatMap((assignment) => [
+        assignment?.subject_id,
+        assignment?.institution_subject_id,
+        assignment?.progression?.subject_id,
+        assignment?.progression?.institution_subject_id,
+      ]),
+    ]);
+  } catch (error: any) {
+    return NextResponse.json(
+      { ok: false, error: error?.message || "subject_catalog_error" },
+      { status: 400 },
+    );
+  }
+
   let assignments = ((assignmentRows || []) as any[]).filter((assignment) => {
     if (!assignment?.progression || assignment.progression.status !== "active")
       return false;
@@ -170,7 +158,11 @@ export async function GET() {
     if (String(assignment.teacher_id || "") === userId) return true;
 
     const rows = classRowsByClass.get(String(assignment.class_id || "")) || [];
-    return subjectMatches(assignment, rows);
+    return textbookAssignmentMatchesClassTeacherRows(
+      assignment,
+      rows,
+      subjectCatalog,
+    );
   });
 
   const sourceIdsMissingDocument = uniq(
@@ -247,9 +239,23 @@ export async function GET() {
 
   const assignmentsWithTeacher = assignments.map((assignment) => {
     const rows = classRowsByClass.get(String(assignment.class_id || "")) || [];
-    const effectiveTeacherId = findEffectiveTeacherId(assignment, rows);
+    const effectiveTeacherId = findTextbookTeacherForAssignment(
+      assignment,
+      rows,
+      subjectCatalog,
+    );
+    const resolvedSubject = resolveTextbookAssignmentSubject(
+      assignment,
+      subjectCatalog,
+    );
     return {
       ...assignment,
+      subject_id:
+        assignment.subject_id || resolvedSubject?.globalSubjectId || null,
+      institution_subject_id:
+        assignment.institution_subject_id ||
+        resolvedSubject?.institutionSubjectId ||
+        null,
       effective_teacher_id: effectiveTeacherId,
       effective_teacher_name: effectiveTeacherId
         ? teacherNames.get(effectiveTeacherId) || "Enseignant"
