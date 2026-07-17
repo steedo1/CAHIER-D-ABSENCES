@@ -10,6 +10,16 @@ import React, {
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflineSyncBar from "@/components/OfflineSyncBar";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  getAdminBulletin,
+  getAdminBulletinClasses,
+  getAdminBulletinConduct,
+  getAdminBulletinPeriods,
+  getAdminBulletinSettings,
+} from "@/lib/offline-bulletins";
 
 /* ───────── Types ───────── */
 
@@ -2553,6 +2563,7 @@ function StudentBulletinCard({
 /* ───────── Page principale ───────── */
 
 export default function BulletinsPage() {
+  const { isOnline } = useOnlineStatus();
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
@@ -2607,9 +2618,7 @@ export default function BulletinsPage() {
     const run = async () => {
       try {
         setClassesLoading(true);
-        const res = await fetch("/api/admin/classes");
-        if (!res.ok) throw new Error(`Erreur classes: ${res.status}`);
-        const json = await res.json();
+        const json: any = await getAdminBulletinClasses();
         const items: ClassRow[] = Array.isArray(json)
           ? json
           : Array.isArray(json.items)
@@ -2642,9 +2651,7 @@ export default function BulletinsPage() {
     const run = async () => {
       try {
         setInstitutionLoading(true);
-        const res = await fetch("/api/admin/institution/settings");
-        if (!res.ok) return;
-        const json = await res.json();
+        const json: any = await getAdminBulletinSettings();
         const inst = json as InstitutionSettings;
         setInstitution(inst);
 
@@ -2667,20 +2674,7 @@ export default function BulletinsPage() {
       try {
         setPeriodsLoading(true);
 
-        const params = new URLSearchParams();
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
-
-        const qs = params.toString();
-        const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
-
-        const res = await fetch(url);
-        if (!res.ok) {
-          console.warn("[Bulletins] grading-periods non disponible", res.status);
-          setPeriods([]);
-          return;
-        }
-
-        const json = await res.json();
+        const json: any = await getAdminBulletinPeriods(selectedAcademicYear);
         const items: GradePeriod[] = Array.isArray(json)
           ? json
           : Array.isArray(json.items)
@@ -2760,21 +2754,10 @@ export default function BulletinsPage() {
         params.set("period_code", effectivePeriodCode);
       }
 
-      const [resBulletin, resConduct] = await Promise.all([
-        fetch(`/api/admin/grades/bulletin?${params.toString()}`),
-        fetch(`/api/admin/conduite/averages?${params.toString()}`),
+      const [json, conductJson] = await Promise.all([
+        getAdminBulletin<BulletinResponse>(params),
+        getAdminBulletinConduct<ConductSummaryResponse>(params).catch(() => null),
       ]);
-
-      if (!resBulletin.ok) {
-        const txt = await resBulletin.text();
-        throw new Error(
-          `Erreur bulletin (${resBulletin.status}) : ${
-            txt || "Impossible de générer le bulletin."
-          }`
-        );
-      }
-
-      const json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
 
       const sigFromApi =
@@ -2788,20 +2771,8 @@ export default function BulletinsPage() {
       // depuis public.bulletin_nc_overrides.
       setBulletinRaw(json);
 
-      if (resConduct.ok) {
-        try {
-          const conductJson = (await resConduct.json()) as ConductSummaryResponse;
-          if (conductJson && Array.isArray(conductJson.items))
-            setConductSummary(conductJson);
-        } catch (err) {
-          console.warn("[Bulletins] Impossible de lire le résumé de conduite", err);
-        }
-      } else {
-        console.warn(
-          "[Bulletins] /api/admin/conduite/averages a renvoyé",
-          resConduct.status
-        );
-      }
+      if (conductJson && Array.isArray(conductJson.items))
+        setConductSummary(conductJson);
 
       setPreviewOpen(true);
     } catch (e: any) {
@@ -2817,6 +2788,11 @@ export default function BulletinsPage() {
   const handleToggleSignatures = async () => {
     try {
       setErrorMsg(null);
+      if (!isOnline) {
+        throw new Error(
+          "Reconnectez Internet pour modifier le réglage des signatures. Les bulletins déjà préparés restent consultables."
+        );
+      }
       setSignaturesToggling(true);
 
       const current = !!signaturesEnabled;
@@ -3482,6 +3458,9 @@ export default function BulletinsPage() {
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
+              <p className={`mt-1 text-xs font-semibold ${isOnline ? "text-emerald-700" : "text-amber-700"}`}>
+                {isOnline ? "En ligne" : "Hors connexion — bulletins préparés disponibles"}
+              </p>
             </div>
 
             <div className="flex flex-col items-stretch gap-2 sm:items-end">
@@ -3507,7 +3486,7 @@ export default function BulletinsPage() {
                   type="button"
                   variant="ghost"
                   onClick={handleToggleSignatures}
-                  disabled={signaturesToggling}
+                  disabled={signaturesToggling || !isOnline}
                 >
                   {signaturesToggling
                     ? "Mise à jour…"
@@ -3539,6 +3518,9 @@ export default function BulletinsPage() {
               </div>
             </div>
           </div>
+
+          <OfflineSyncBar onMessage={setErrorMsg} />
+          <OfflineReadinessCard role="admin" />
 
           <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm print:hidden md:grid-cols-6">
             <div className="md:col-span-2">

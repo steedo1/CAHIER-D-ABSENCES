@@ -25,6 +25,37 @@ function safeText(value: unknown, max: number) {
   return s(value).replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+function normalizeClientUuid(value: unknown) {
+  const normalized = s(value).toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+    normalized,
+  )
+    ? normalized
+    : null;
+}
+
+function idempotentCampaignResponse(campaign: any) {
+  return NextResponse.json({
+    ok: true,
+    campaign_id: String(campaign?.id || ""),
+    target_label: campaign?.target_label || null,
+    summary: {
+      recipient_count: Number(campaign?.recipient_count || 0),
+      push_ready_count: Number(campaign?.push_queued_count || 0),
+      sms_ready_count: Number(campaign?.sms_queued_count || 0),
+    },
+    queued: {
+      notifications:
+        Number(campaign?.push_queued_count || 0) +
+        Number(campaign?.sms_queued_count || 0),
+      push: Number(campaign?.push_queued_count || 0),
+      sms: Number(campaign?.sms_queued_count || 0),
+    },
+    status: campaign?.status || "queued",
+    idempotent: true,
+  });
+}
+
 function buildSignedCommunicationBody(message: string, senderName: string) {
   const cleanMessage = s(message);
   const cleanSender = s(senderName) || "Mon Cahier";
@@ -59,6 +90,8 @@ export async function POST(req: NextRequest) {
     const channel = s(body?.channel) as CommunicationChannel;
     const title = safeText(body?.title, 120);
     const messageBody = safeText(body?.body, 900);
+    const rawClientOperationId = s(body?.client_operation_id);
+    const clientOperationId = normalizeClientUuid(rawClientOperationId);
 
     if (!["parents", "staff"].includes(audienceType)) {
       return NextResponse.json({ ok: false, error: "audience_type_invalid" }, { status: 400 });
@@ -71,6 +104,39 @@ export async function POST(req: NextRequest) {
     }
     if (!title || !messageBody) {
       return NextResponse.json({ ok: false, error: "title_and_body_required" }, { status: 400 });
+    }
+    if (rawClientOperationId && !clientOperationId) {
+      return NextResponse.json(
+        { ok: false, error: "bad_client_operation_id" },
+        { status: 400 },
+      );
+    }
+
+    if (clientOperationId) {
+      const { data: existingCampaign, error: existingCampaignErr } = await ctx.srv
+        .from("communication_campaigns")
+        .select(
+          "id,institution_id,created_by,target_label,status,recipient_count,push_queued_count,sms_queued_count",
+        )
+        .eq("id", clientOperationId)
+        .eq("institution_id", ctx.institutionId)
+        .maybeSingle();
+
+      if (existingCampaignErr) {
+        return NextResponse.json(
+          { ok: false, error: existingCampaignErr.message },
+          { status: 400 },
+        );
+      }
+      if (existingCampaign) {
+        if (String(existingCampaign.created_by || "") !== ctx.userId) {
+          return NextResponse.json(
+            { ok: false, error: "client_operation_id_conflict" },
+            { status: 409 },
+          );
+        }
+        return idempotentCampaignResponse(existingCampaign);
+      }
     }
 
     const [channels, institution] = await Promise.all([
@@ -124,6 +190,7 @@ export async function POST(req: NextRequest) {
     const nowIso = new Date().toISOString();
 
     const campaignPayload = {
+      ...(clientOperationId ? { id: clientOperationId } : {}),
       institution_id: ctx.institutionId,
       academic_year: ctx.academicYear,
       created_by: ctx.userId,
@@ -149,6 +216,7 @@ export async function POST(req: NextRequest) {
         signature: `— ${senderName}`,
         original_title: title,
         original_body: messageBody,
+        client_operation_id: clientOperationId,
       },
       sent_at: nowIso,
     } as any;
@@ -158,6 +226,31 @@ export async function POST(req: NextRequest) {
       .insert(campaignPayload)
       .select("id")
       .single();
+
+    if (
+      campaignErr &&
+      clientOperationId &&
+      String((campaignErr as any)?.code || "") === "23505"
+    ) {
+      const { data: concurrentCampaign } = await ctx.srv
+        .from("communication_campaigns")
+        .select(
+          "id,institution_id,created_by,target_label,status,recipient_count,push_queued_count,sms_queued_count",
+        )
+        .eq("id", clientOperationId)
+        .eq("institution_id", ctx.institutionId)
+        .maybeSingle();
+      if (
+        concurrentCampaign &&
+        String(concurrentCampaign.created_by || "") === ctx.userId
+      ) {
+        return idempotentCampaignResponse(concurrentCampaign);
+      }
+      return NextResponse.json(
+        { ok: false, error: "client_operation_id_conflict" },
+        { status: 409 },
+      );
+    }
 
     if (campaignErr) {
       return NextResponse.json(

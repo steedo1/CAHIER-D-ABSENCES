@@ -3,6 +3,20 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  clearParentOfflineData,
+  getParentBulletins,
+  getParentChildren,
+  getParentConduct,
+  getParentEvents,
+  getParentGradePeriods,
+  getParentGrades,
+  getParentNotifications,
+  getParentPenalties,
+  getParentTextbook,
+} from "@/lib/offline-parent";
 
 /* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
@@ -1132,66 +1146,6 @@ function groupByDay(events: Ev[]): DayGroup[] {
 }
 
 /* ————————— fetch helpers (notes robustes) ————————— */
-async function fetchJsonSafe(
-  url: string,
-  init?: RequestInit,
-): Promise<{ ok: boolean; status: number; json: any; errorText?: string }> {
-  try {
-    const res = await fetch(url, init);
-    const status = res.status;
-    let json: any = null;
-    try {
-      json = await res.json();
-    } catch {
-      try {
-        const t = await res.text();
-        return {
-          ok: res.ok,
-          status,
-          json: null,
-          errorText: t?.slice(0, 200) || "non-json",
-        };
-      } catch {
-        return { ok: res.ok, status, json: null, errorText: "non-json" };
-      }
-    }
-    return { ok: res.ok, status, json };
-  } catch (e: any) {
-    return {
-      ok: false,
-      status: 0,
-      json: null,
-      errorText: e?.message || "fetch_failed",
-    };
-  }
-}
-
-async function firstOkItems(
-  urls: string[],
-  init?: RequestInit,
-): Promise<
-  | { ok: true; items: any[]; usedUrl: string }
-  | { ok: false; err: string }
-> {
-  for (const u of urls) {
-    const r = await fetchJsonSafe(u, init);
-    if (!r.ok) continue;
-    const j = r.json;
-    const items =
-      (Array.isArray(j?.items) ? j.items : null) ??
-      (Array.isArray(j?.data) ? j.data : null) ??
-      (Array.isArray(j) ? j : null) ??
-      [];
-    if (Array.isArray(items)) return { ok: true, items, usedUrl: u };
-  }
-  const last = await fetchJsonSafe(urls[0], init);
-  const err = `API grades: ${last.status || "?"} ${
-    (last.json?.error && String(last.json.error)) ||
-    (last.errorText ? String(last.errorText) : "no_items")
-  }`;
-  return { ok: false, err };
-}
-
 /* ————————— Jauge verticale par rubrique (mobile) ————————— */
 function VerticalGauge({
   label,
@@ -1249,6 +1203,7 @@ function VerticalGauge({
 
 /* ————————— component ————————— */
 export default function ParentPage() {
+  const { isOnline } = useOnlineStatus();
   const [kids, setKids] = useState<Kid[]>([]);
   const [feed, setFeed] = useState<Record<string, Ev[]>>({});
   const [kidPenalties, setKidPenalties] = useState<
@@ -1561,18 +1516,7 @@ export default function ParentPage() {
     try {
       const condEntries: Array<[string, Conduct]> = [];
       for (const k of kidsList) {
-        const qs = new URLSearchParams({ student_id: k.id });
-        if (from) qs.set("from", from);
-        if (to) qs.set("to", to);
-        const c = await fetch(
-          `/api/parent/children/conduct?${qs.toString()}`,
-          {
-            cache: "no-store",
-            credentials: "include",
-          },
-        )
-          .then((r) => r.json())
-          .catch(() => ({}));
+        const c = await getParentConduct<any>(k.id, from, to).catch(() => ({}));
         if (c && (c as any).total != null) condEntries.push([k.id, c as Conduct]);
       }
       setConduct(Object.fromEntries(condEntries));
@@ -1624,11 +1568,7 @@ export default function ParentPage() {
 
   async function loadGradePeriods() {
     try {
-      const res = await fetch("/api/parent/grading-periods", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = await res.json().catch(() => ({}));
+      const j: any = await getParentGradePeriods();
       setGradePeriods(Array.isArray(j?.items) ? j.items : []);
     } catch {
       setGradePeriods([]);
@@ -1637,11 +1577,7 @@ export default function ParentPage() {
 
   async function loadBulletins() {
     try {
-      const res = await fetch("/api/parent/bulletins", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = await res.json().catch(() => ({}));
+      const j: any = await getParentBulletins();
       setBulletins(Array.isArray(j?.items) ? j.items : []);
     } catch {
       setBulletins([]);
@@ -1653,13 +1589,8 @@ export default function ParentPage() {
     if (!silent) setTextbookLoading(true);
     setTextbookMsg(null);
     try {
-      const qs = new URLSearchParams({ student_id: studentId });
-      const res = await fetch(`/api/parent/textbook?${qs.toString()}`, {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = (await res.json().catch(() => ({}))) as ParentTextbookPayload;
-      if (!res.ok || j?.ok === false) throw new Error(j?.error || "Cahier de texte indisponible.");
+      const j = await getParentTextbook<ParentTextbookPayload>(studentId);
+      if (j?.ok === false) throw new Error(j?.error || "Cahier de texte indisponible.");
       setTextbookByKid((prev) => ({
         ...prev,
         [studentId]: Array.isArray(j?.items) ? j.items : [],
@@ -1677,12 +1608,7 @@ export default function ParentPage() {
     if (!silent) setNotificationsLoading(true);
     setNotificationsMsg(null);
     try {
-      const res = await fetch("/api/parent/notifications?limit=80", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error || "Impossible de charger les notifications.");
+      const j: any = await getParentNotifications();
       setNotifications(Array.isArray(j?.items) ? j.items : []);
     } catch (e: any) {
       setNotificationsMsg(e?.message || "Notifications indisponibles.");
@@ -1711,6 +1637,10 @@ export default function ParentPage() {
   }
 
   async function saveSmsContact() {
+    if (!isOnline) {
+      setSmsMsg("Reconnectez Internet pour modifier le numéro SMS.");
+      return;
+    }
     setSmsSaving(true);
     setSmsMsg(null);
 
@@ -1751,6 +1681,10 @@ export default function ParentPage() {
 
   async function removeSmsContact() {
     if (!smsPrimaryContact?.id) return;
+    if (!isOnline) {
+      setSmsMsg("Reconnectez Internet pour supprimer le contact SMS.");
+      return;
+    }
 
     setSmsSaving(true);
     setSmsMsg(null);
@@ -1782,10 +1716,7 @@ export default function ParentPage() {
     setLoadingKids(true);
     setMsg(null);
     try {
-      const j = await fetch("/api/parent/children", {
-        cache: "no-store",
-        credentials: "include",
-      }).then((r) => r.json());
+      const j: any = await getParentChildren();
       const ks = (j.items || []) as Kid[];
       setKids(ks);
 
@@ -1801,41 +1732,18 @@ export default function ParentPage() {
       const gradeErrs: Record<string, string> = {};
 
       for (const k of ks) {
-        const f = await fetch(
-          `/api/parent/children/events?student_id=${encodeURIComponent(
-            k.id,
-          )}&limit=50`,
-          { cache: "no-store", credentials: "include" },
-        ).then((r) => r.json());
+        const f: any = await getParentEvents(k.id);
         feedEntries.push([k.id, (f.items || []) as Ev[]]);
 
-        const p = await fetch(
-          `/api/parent/children/penalties?student_id=${encodeURIComponent(
-            k.id,
-          )}&limit=20`,
-          { cache: "no-store", credentials: "include" },
-        )
-          .then((r) => r.json())
-          .catch(() => ({ items: [] }));
+        const p: any = await getParentPenalties(k.id).catch(() => ({ items: [] }));
         penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
 
-        const sid = encodeURIComponent(k.id);
-        const gradeUrls = [
-          `/api/parent/children/grades?student_id=${sid}&limit=200`,
-          `/api/parents/children/grades?student_id=${sid}&limit=200`,
-          `/api/parent/children/grades/published?student_id=${sid}&limit=200`,
-        ];
-
-        const gRes = await firstOkItems(gradeUrls, {
-          cache: "no-store",
-          credentials: "include",
-        });
-
-        if (gRes.ok) {
-          gradeEntries.push([k.id, (gRes.items || []) as KidGradeRow[]]);
-        } else {
+        try {
+          const gRes: any = await getParentGrades(k.id);
+          gradeEntries.push([k.id, (gRes?.items || []) as KidGradeRow[]]);
+        } catch (cause: any) {
           gradeEntries.push([k.id, []]);
-          gradeErrs[k.id] = "err" in gRes ? gRes.err : "Notes indisponibles.";
+          gradeErrs[k.id] = cause?.message || "Notes indisponibles.";
         }
       }
 
@@ -1868,6 +1776,10 @@ export default function ParentPage() {
     e?.preventDefault?.();
     const cleanMatricule = attachMatricule.trim().toUpperCase();
     if (!cleanMatricule) return;
+    if (!isOnline) {
+      setAttachMsg("Reconnectez Internet pour ajouter un enfant.");
+      return;
+    }
 
     setAttachBusy(true);
     setAttachMsg(null);
@@ -1917,15 +1829,17 @@ export default function ParentPage() {
   useEffect(() => {
     if (!conductFrom || !conductTo) return;
     loadKids(conductFrom, conductTo);
-    loadSmsContacts(true);
     loadGradePeriods();
     loadBulletins();
     loadParentNotifications(true);
-    ensurePushSubscription().then((r) => {
-      if (r.ok) setGranted(true);
-    });
+    if (isOnline) {
+      loadSmsContacts(true);
+      ensurePushSubscription().then((r) => {
+        if (r.ok) setGranted(true);
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conductFrom, conductTo]);
+  }, [conductFrom, conductTo, isOnline]);
 
   useEffect(() => {
     if (!selectedKidPeriods.length) return;
@@ -1960,6 +1874,10 @@ export default function ParentPage() {
 
   async function enablePush() {
     setMsg(null);
+    if (!isOnline) {
+      setMsg("Reconnectez Internet pour activer les notifications push.");
+      return;
+    }
     const r = await ensurePushSubscription();
     if (r.ok) {
       setGranted(true);
@@ -2011,6 +1929,11 @@ export default function ParentPage() {
         });
       } catch {}
     } finally {
+      await clearParentOfflineData();
+      if (!isOnline) {
+        window.location.replace("/moncahier-offline.html");
+        return;
+      }
       window.location.assign(LOGOUT_PARENTS);
       setTimeout(() => {
         if (document.visibilityState === "visible") {
@@ -2063,9 +1986,9 @@ export default function ParentPage() {
                   <div className="mt-1 truncate text-[11px] text-white/80">
                     Cahier de texte, assiduité, notes et bulletins.
                   </div>
-                  <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                    <span>En ligne</span>
+                  <div className={`mt-1 flex items-center gap-2 text-[12px] ${isOnline ? "text-emerald-200" : "text-amber-200"}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`} />
+                    <span>{isOnline ? "En ligne" : "Hors connexion"}</span>
                   </div>
                 </div>
               </div>
@@ -2287,9 +2210,9 @@ export default function ParentPage() {
                 <div className="mt-1 truncate text-[11px] text-white/80">
                   Cahier de texte, assiduité, notes et bulletins.
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-[12px] text-emerald-200">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                  <span>En ligne</span>
+                <div className={`mt-1 flex items-center gap-2 text-[12px] ${isOnline ? "text-emerald-200" : "text-amber-200"}`}>
+                  <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`} />
+                  <span>{isOnline ? "En ligne" : "Hors connexion"}</span>
                 </div>
               </div>
             </div>
@@ -2424,6 +2347,8 @@ export default function ParentPage() {
 
         {/* Contenu principal */}
         <main className="min-w-0 px-3 py-5 pb-8 sm:px-4 lg:px-0 lg:py-6">
+          <OfflineReadinessCard role="parent" className="mb-5" />
+
           <div className="mb-5 flex flex-col gap-2 rounded-[28px] border border-slate-200 bg-white/95 px-4 py-4 shadow-sm ring-1 ring-white/60 lg:px-5">
             <div className="text-[12px] text-slate-500">
               Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
@@ -4070,4 +3995,3 @@ export default function ParentPage() {
     </div>
   );
 }
-

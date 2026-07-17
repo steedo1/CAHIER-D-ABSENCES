@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-17-offline-textbook-v3";
+const VERSION = "2026-07-17-offline-consultation-v4";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
@@ -10,7 +10,14 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/grades",
   "/grades/class-device",
   "/enseignant/cahier-de-texte",
+  "/parents",
+  "/admin/bulletins",
+  "/admin/communication",
 ]);
+
+function isOfflinePagePath(pathname) {
+  return OFFLINE_PAGE_PATHS.has(pathname) || /^\/v\/[^/]+$/.test(pathname);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -93,9 +100,8 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
-    // Ne jamais conserver automatiquement les pages parent/admin personnalisées.
-    // Seuls les écrans pédagogiques explicitement préparés sont servis hors connexion.
-    if (OFFLINE_PAGE_PATHS.has(url.pathname)) {
+    // Seuls les écrans explicitement préparés sont servis hors connexion.
+    if (isOfflinePagePath(url.pathname)) {
       event.respondWith(navigationResponse(request));
     }
     return;
@@ -113,7 +119,7 @@ self.addEventListener("fetch", (event) => {
 async function warmDocument(rawUrl) {
   const url = new URL(rawUrl, self.location.origin);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
-  if (!OFFLINE_PAGE_PATHS.has(url.pathname)) {
+  if (!isOfflinePagePath(url.pathname)) {
     throw new Error(`Page non autorisée dans le cache hors ligne : ${url.pathname}`);
   }
 
@@ -172,6 +178,24 @@ async function warmDocument(rawUrl) {
 }
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "MON_CAHIER_PURGE_PARENT") {
+    event.waitUntil(
+      (async () => {
+        const cache = await caches.open(SHELL_CACHE);
+        const requests = await cache.keys();
+        await Promise.all(
+          requests.map((request) => {
+            const pathname = new URL(request.url).pathname;
+            return pathname === "/parents" || /^\/v\/[^/]+$/.test(pathname)
+              ? cache.delete(request)
+              : Promise.resolve(false);
+          })
+        );
+      })()
+    );
+    return;
+  }
+
   if (event.data?.type !== "MON_CAHIER_WARM_SHELL") return;
   const port = event.ports?.[0];
   const urls = Array.isArray(event.data.urls) ? event.data.urls : [];

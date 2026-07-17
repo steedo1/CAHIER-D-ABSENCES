@@ -1,6 +1,14 @@
 "use client";
 
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
+import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflineSyncBar from "@/components/OfflineSyncBar";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  getCommunicationHistory,
+  getCommunicationMeta,
+  saveCommunication,
+} from "@/lib/offline-communication";
 import {
   useEffect,
   useMemo,
@@ -192,6 +200,7 @@ function channelLabel(channel: Channel) {
 }
 
 export default function AdminCommunicationPage() {
+  const { isOnline } = useOnlineStatus();
   const [meta, setMeta] = useState<MetaResponse | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -237,13 +246,10 @@ export default function AdminCommunicationPage() {
       setLoading(true);
       setError(null);
       try {
-        const [metaRes, historyRes] = await Promise.all([
-          fetch("/api/admin/communication/meta", { cache: "no-store" }),
-          fetch("/api/admin/communication/campaigns", { cache: "no-store" }),
+        const [metaJson, historyJson] = await Promise.all([
+          getCommunicationMeta<MetaResponse>(),
+          getCommunicationHistory<any>(),
         ]);
-
-        const metaJson = (await metaRes.json().catch(() => null)) as MetaResponse | null;
-        const historyJson = await historyRes.json().catch(() => null);
 
         if (cancelled) return;
 
@@ -283,8 +289,7 @@ export default function AdminCommunicationPage() {
   }, [meta, channel]);
 
   async function refreshHistory() {
-    const res = await fetch("/api/admin/communication/campaigns", { cache: "no-store" });
-    const json = await res.json().catch(() => null);
+    const json: any = await getCommunicationHistory();
     setCampaigns(Array.isArray(json?.items) ? json.items : []);
   }
 
@@ -294,6 +299,11 @@ export default function AdminCommunicationPage() {
     setSuccess(null);
 
     try {
+      if (!isOnline) {
+        throw new Error(
+          "L’aperçu des destinataires nécessite Internet. Vous pouvez toutefois conserver le message pour l’envoyer à la reconnexion."
+        );
+      }
       const res = await fetch("/api/admin/communication/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -329,31 +339,44 @@ export default function AdminCommunicationPage() {
         throw new Error("Choisis une classe avant l’envoi.");
       }
 
-      const res = await fetch("/api/admin/communication/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audience_type: audienceType,
-          target_type: selectedTarget.target_type,
-          target_value: selectedTarget.target_value,
-          channel,
-          title,
-          body,
-        }),
+      const fallbackTargetLabel =
+        audienceType === "staff"
+          ? staffTargetType === "teachers"
+            ? "Enseignants"
+            : staffTargetType === "head_teachers"
+              ? "Professeurs principaux"
+              : "Tout le personnel"
+          : parentTargetType === "cycle"
+            ? cycle === "first_cycle" ? "Parents — premier cycle" : "Parents — second cycle"
+            : parentTargetType === "level"
+              ? `Parents — niveau ${level}`
+              : parentTargetType === "class"
+                ? `Parents — ${classesForSelect.find((item) => item.id === classId)?.label || "classe"}`
+                : "Tous les parents";
+
+      const { mutation, history } = await saveCommunication({
+        audience_type: audienceType,
+        target_type: selectedTarget.target_type,
+        target_value: selectedTarget.target_value,
+        target_label: preview?.target_label || fallbackTargetLabel,
+        channel,
+        title: title.trim(),
+        body: body.trim(),
+        sender_name: meta?.institution_name || "Mon Cahier",
       });
 
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || "Envoi impossible.");
+      if (!mutation.ok && !mutation.queued) {
+        throw new Error(mutation.error || "Envoi impossible.");
       }
 
-      setSuccess(
-        `Message mis en file pour ${json.summary?.recipient_count ?? 0} destinataire(s) — push: ${json.queued?.push ?? 0}, SMS: ${json.queued?.sms ?? 0}.`
-      );
+      setSuccess(mutation.ok
+        ? `Message mis en file pour ${mutation.data?.summary?.recipient_count ?? 0} destinataire(s) — push: ${mutation.data?.queued?.push ?? 0}, SMS: ${mutation.data?.queued?.sms ?? 0}.`
+        : "Message conservé sur cet appareil. Il sera envoyé automatiquement après la reconnexion.");
       setPreview(null);
       setTitle("");
       setBody("");
-      await refreshHistory();
+      if (Array.isArray(history?.items)) setCampaigns(history.items);
+      else await refreshHistory();
     } catch (e: any) {
       setError(e?.message || "Erreur envoi.");
     } finally {
@@ -396,6 +419,9 @@ export default function AdminCommunicationPage() {
           </div>
         </div>
       </section>
+
+      <OfflineSyncBar onMessage={setSuccess} onSynced={refreshHistory} />
+      <OfflineReadinessCard role="admin" />
 
       {loading ? (
         <Card>
@@ -541,11 +567,11 @@ export default function AdminCommunicationPage() {
             </div>
 
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <Button type="button" tone="white" onClick={handlePreview} disabled={busy}>
+              <Button type="button" tone="white" onClick={handlePreview} disabled={busy || !isOnline}>
                 <Users className="h-4 w-4" /> Aperçu destinataires
               </Button>
               <Button type="button" onClick={handleSend} disabled={busy || !title.trim() || !body.trim()}>
-                <Send className="h-4 w-4" /> Envoyer
+                <Send className="h-4 w-4" /> {isOnline ? "Envoyer" : "Conserver pour envoi"}
               </Button>
             </div>
           </Card>
@@ -650,6 +676,11 @@ export default function AdminCommunicationPage() {
                   <div className="min-w-0">
                     <div className="truncate font-black text-slate-950">{item.title}</div>
                     <div className="mt-1 line-clamp-1 text-xs font-medium text-slate-500">{item.body}</div>
+                    {item.status === "local_pending" ? (
+                      <div className="mt-1 text-[11px] font-black text-amber-700">
+                        En attente de connexion
+                      </div>
+                    ) : null}
                   </div>
                   <div className="font-bold text-slate-700">{item.target_label || "—"}</div>
                   <div>

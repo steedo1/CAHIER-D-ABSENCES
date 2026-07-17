@@ -69,7 +69,7 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-const SW_BUILD = "2026-07-17-offline-textbook-v3";
+const SW_BUILD = "2026-07-17-offline-consultation-v4";
 export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -151,6 +151,27 @@ export async function cacheSet(key: string, value: any): Promise<void> {
   const store = tx.objectStore("kv");
   const row: KVRow = { key, value, updatedAt: Date.now() };
   store.put(row);
+  await txDone(tx);
+}
+
+export async function cacheDeleteByPrefixes(prefixes: string[]): Promise<void> {
+  const normalized = Array.from(
+    new Set(prefixes.map((value) => String(value || "").trim()).filter(Boolean)),
+  );
+  if (!normalized.length) return;
+
+  const db = await openDB();
+  const tx = db.transaction(["kv"], "readwrite");
+  const store = tx.objectStore("kv");
+  const keys = await reqToPromise<IDBValidKey[]>(store.getAllKeys());
+  for (const key of keys) {
+    if (
+      typeof key === "string" &&
+      normalized.some((prefix) => key.startsWith(prefix))
+    ) {
+      store.delete(key);
+    }
+  }
   await txDone(tx);
 }
 

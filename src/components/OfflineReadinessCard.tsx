@@ -67,6 +67,21 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
     }
   }
 
+  const preparedSummary = readiness
+    ? role === "admin"
+      ? `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.bulletin_count} bulletin(s) et historique des communications`
+      : role === "parent"
+        ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
+        : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.slot_count} créneau(x), ${readiness.evaluation_count} évaluation(s), ${readiness.textbook_assignment_count} progression(s)`
+    : "";
+
+  const preparationDescription =
+    role === "admin"
+      ? "Télécharge les bulletins officiels, leurs images et l’historique des communications sur cet appareil."
+      : role === "parent"
+        ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
+        : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
+
   return (
     <section
       className={[
@@ -101,15 +116,12 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
 
           {readiness ? (
             <p className="mt-1 text-sm text-slate-700">
-              {readiness.class_count} classe(s), {readiness.student_count} élève(s),{" "}
-              {readiness.slot_count} créneau(x), {readiness.evaluation_count} évaluation(s),{" "}
-              {readiness.textbook_assignment_count} progression(s) — mis à jour le{" "}
+              {preparedSummary} — mis à jour le{" "}
               {formatPreparedAt(readiness.prepared_at)}.
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-600">
-              Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et
-              le cahier de texte sur cet appareil.
+              {preparationDescription}
             </p>
           )}
 
