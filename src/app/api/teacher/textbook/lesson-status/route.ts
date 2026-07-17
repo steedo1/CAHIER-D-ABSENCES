@@ -205,6 +205,30 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
 
+  if (status === "completed") {
+    const { count: sessionCount, error: sessionCountErr } = await srv
+      .from("textbook_lesson_sessions")
+      .select("id", { count: "exact", head: true })
+      .eq("institution_id", institutionId)
+      .eq("assignment_id", assignmentId)
+      .eq("item_id", itemId)
+      .eq("teacher_id", effectiveTeacherId);
+
+    if (sessionCountErr) {
+      return NextResponse.json(
+        { ok: false, error: sessionCountErr.message },
+        { status: 400 },
+      );
+    }
+
+    if (!sessionCount) {
+      return NextResponse.json(
+        { ok: false, error: "lesson_requires_session" },
+        { status: 400 },
+      );
+    }
+  }
+
   const completedAt = status === "completed" ? new Date().toISOString() : null;
 
   const payload = {

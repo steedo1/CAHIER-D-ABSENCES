@@ -3,12 +3,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
+  CalendarDays,
   CheckCircle2,
-  ChevronRight,
+  ChevronDown,
   Clock3,
   FileText,
+  GraduationCap,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Save,
 } from "lucide-react";
 
@@ -21,6 +24,7 @@ type Session = {
   session_end_time?: string | null;
   session_period_label?: string | null;
   content?: string | null;
+  homework?: string | null;
 };
 
 type PeriodSlot = {
@@ -73,6 +77,18 @@ type Assignment = {
     } | null;
   } | null;
   progression_items: ProgressionItem[];
+};
+
+type SessionForm = {
+  session_title: string;
+  session_date: string;
+  session_period_id: string;
+  session_period_label: string;
+  session_start_time: string;
+  session_end_time: string;
+  content: string;
+  homework: string;
+  observations: string;
 };
 
 const ACTIONABLE_TYPES = new Set([
@@ -149,9 +165,9 @@ function plannedMinutes(item: ProgressionItem) {
 }
 
 function formatHours(minutes: number) {
-  if (!minutes) return "0h";
+  if (!minutes) return "0 h";
   const hours = minutes / 60;
-  return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+  return Number.isInteger(hours) ? `${hours} h` : `${hours.toFixed(1)} h`;
 }
 
 function buildUniquePeriodSlots(slots: PeriodSlot[]) {
@@ -184,11 +200,15 @@ function formatDate(value?: string | null) {
   if (!value) return "—";
   const d = new Date(`${value}T00:00:00`);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("fr-FR");
+  return d.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
-function classLabel(a: Assignment | null) {
-  return a?.classes?.label || "Classe";
+function classLabel(assignment: Assignment | null) {
+  return assignment?.classes?.label || "Classe";
 }
 
 function typeLabel(type: string) {
@@ -210,8 +230,37 @@ function typeLabel(type: string) {
   return labels[type] || type;
 }
 
+function emptySessionForm(item: ProgressionItem | null, nextIndex?: number): SessionForm {
+  const index = nextIndex || (item?.sessions?.length || 0) + 1;
+  return {
+    session_title: `Séance ${index}`,
+    session_date: todayIso(),
+    session_period_id: "",
+    session_period_label: "",
+    session_start_time: "",
+    session_end_time: "",
+    content: "",
+    homework: "",
+    observations: "",
+  };
+}
+
+function humanError(message: string) {
+  const labels: Record<string, string> = {
+    lesson_requires_session:
+      "Enregistrez au moins une séance avant de terminer cette leçon.",
+    teacher_not_found_for_class_subject:
+      "Aucun enseignant n’est affecté à cette matière dans la classe.",
+    forbidden_not_class_device:
+      "Ce compte classe n’est pas correctement rattaché à une classe.",
+    forbidden: "Vous n’avez pas accès à cette progression.",
+  };
+  return labels[message] || message;
+}
+
 export default function TeacherTextbookPage() {
   const [loading, setLoading] = useState(true);
+  const [slotsLoading, setSlotsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -222,20 +271,7 @@ export default function TeacherTextbookPage() {
   );
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [screen, setScreen] = useState<"list" | "progression" | "session">(
-    "list",
-  );
-  const [form, setForm] = useState({
-    session_title: "",
-    session_date: todayIso(),
-    session_period_id: "",
-    session_period_label: "",
-    session_start_time: "",
-    session_end_time: "",
-    content: "",
-    homework: "",
-    observations: "",
-  });
+  const [form, setForm] = useState<SessionForm>(emptySessionForm(null));
 
   const selectedAssignment = useMemo(
     () => assignments.find((a) => a.id === selectedAssignmentId) || null,
@@ -245,27 +281,59 @@ export default function TeacherTextbookPage() {
   const selectedItem = useMemo(
     () =>
       selectedAssignment?.progression_items?.find(
-        (it) => it.id === selectedItemId,
+        (item) => item.id === selectedItemId,
       ) || null,
     [selectedAssignment, selectedItemId],
   );
 
+  const classOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return assignments
+      .filter((assignment) => {
+        if (!assignment.class_id || seen.has(assignment.class_id)) return false;
+        seen.add(assignment.class_id);
+        return true;
+      })
+      .map((assignment) => ({
+        id: assignment.class_id,
+        label: classLabel(assignment),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  }, [assignments]);
+
+  const subjectAssignments = useMemo(() => {
+    if (!selectedAssignment?.class_id) return [];
+    return assignments
+      .filter((assignment) => assignment.class_id === selectedAssignment.class_id)
+      .sort((a, b) =>
+        String(a.progression?.subject_name || "").localeCompare(
+          String(b.progression?.subject_name || ""),
+          "fr",
+        ),
+      );
+  }, [assignments, selectedAssignment?.class_id]);
+
+  const actionableItems = useMemo(
+    () =>
+      (selectedAssignment?.progression_items || []).filter(isActionableItem),
+    [selectedAssignment],
+  );
+
   const progressStats = useMemo(() => {
-    const items = selectedAssignment?.progression_items || [];
-    const actionable = items.filter(isActionableItem);
+    const actionable = actionableItems;
     const completed = actionable.filter(
-      (it) => it.completion?.status === "completed",
+      (item) => item.completion?.status === "completed",
     );
     const plannedTotal = actionable.reduce(
-      (sum, it) => sum + plannedMinutes(it),
+      (sum, item) => sum + plannedMinutes(item),
       0,
     );
     const completedPlanned = completed.reduce(
-      (sum, it) => sum + plannedMinutes(it),
+      (sum, item) => sum + plannedMinutes(item),
       0,
     );
-    const sessions = items.reduce(
-      (sum, it) => sum + (it.sessions?.length || 0),
+    const sessions = actionable.reduce(
+      (sum, item) => sum + (item.sessions?.length || 0),
       0,
     );
     const rate = plannedTotal
@@ -281,19 +349,30 @@ export default function TeacherTextbookPage() {
       rate,
       sessions,
     };
-  }, [selectedAssignment]);
+  }, [actionableItems]);
+
+  const nextItem = useMemo(
+    () =>
+      actionableItems.find(
+        (item) => item.completion?.status !== "completed",
+      ) || actionableItems[0] || null,
+    [actionableItems],
+  );
 
   async function fetchJson(url: string, init?: RequestInit) {
-    const res = await fetch(url, {
+    const response = await fetch(url, {
       cache: "no-store",
       credentials: "include",
       ...init,
     });
-    const json = await res.json().catch(() => null);
-    if (!res.ok || json?.ok === false)
+    const json = await response.json().catch(() => null);
+    if (!response.ok || json?.ok === false) {
       throw new Error(
-        json?.error || json?.details || `Erreur HTTP ${res.status}`,
+        humanError(
+          json?.error || json?.details || `Erreur HTTP ${response.status}`,
+        ),
       );
+    }
     return json;
   }
 
@@ -301,19 +380,17 @@ export default function TeacherTextbookPage() {
     setLoading(true);
     setError(null);
     try {
-      const [json, slotsJson] = await Promise.all([
-        fetchJson("/api/teacher/textbook/bootstrap"),
-        fetchJson("/api/institution/slots").catch(() => ({ items: [] })),
-      ]);
-      const items = json.items || [];
+      const json = await fetchJson("/api/teacher/textbook/bootstrap");
+      const items = (json.items || []) as Assignment[];
       setAccessMode(json.mode === "class_device" ? "class_device" : "teacher");
       setAssignments(items);
-      setPeriodSlots(buildUniquePeriodSlots(slotsJson.items || []));
       setSelectedAssignmentId((current) =>
-        current && items.some((a: Assignment) => a.id === current) ? current : "",
+        current && items.some((assignment) => assignment.id === current)
+          ? current
+          : items[0]?.id || "",
       );
-    } catch (e: any) {
-      setError(e?.message || "Chargement impossible");
+    } catch (cause: any) {
+      setError(cause?.message || "Chargement impossible");
     } finally {
       setLoading(false);
     }
@@ -324,67 +401,94 @@ export default function TeacherTextbookPage() {
   }, []);
 
   useEffect(() => {
-    setSelectedItemId("");
-  }, [selectedAssignmentId]);
+    if (!selectedAssignment) {
+      setSelectedItemId("");
+      return;
+    }
 
-  function openAssignment(assignment: Assignment) {
-    setSelectedAssignmentId(assignment.id);
-    setSelectedItemId("");
-    setScreen("progression");
+    const currentExists = actionableItems.some(
+      (item) => item.id === selectedItemId,
+    );
+    if (!currentExists) setSelectedItemId(nextItem?.id || "");
+  }, [selectedAssignment, actionableItems, nextItem, selectedItemId]);
+
+  useEffect(() => {
+    setForm(emptySessionForm(selectedItem));
+    setMessage(null);
+    setError(null);
+  }, [selectedAssignmentId, selectedItemId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const classId = selectedAssignment?.class_id || "";
+
+    if (!classId) {
+      setPeriodSlots([]);
+      return;
+    }
+
+    setSlotsLoading(true);
+    fetch(`/api/institution/slots?class_id=${encodeURIComponent(classId)}`, {
+      cache: "no-store",
+      credentials: "include",
+    })
+      .then(async (response) => {
+        const json = await response.json().catch(() => ({ items: [] }));
+        if (!response.ok) throw new Error(json?.error || "Créneaux indisponibles");
+        return json;
+      })
+      .then((json) => {
+        if (!cancelled)
+          setPeriodSlots(buildUniquePeriodSlots(json.items || []));
+      })
+      .catch(() => {
+        if (!cancelled) setPeriodSlots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSlotsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAssignment?.class_id]);
+
+  function handleClassChange(classId: string) {
+    const assignment = assignments.find((item) => item.class_id === classId);
+    setSelectedAssignmentId(assignment?.id || "");
   }
 
-  function backToList() {
-    setSelectedItemId("");
-    setSelectedAssignmentId("");
-    setScreen("list");
-  }
-
-  function backToProgression() {
-    setSelectedItemId("");
-    setScreen("progression");
-  }
-
-  function openItem(item: ProgressionItem) {
-    if (!isActionableItem(item)) return;
-    const nextIndex = (item.sessions?.length || 0) + 1;
-    const defaultSlot = periodSlots[0] || null;
-    const start = defaultSlot?.start_hm || "";
-    const end = defaultSlot
-      ? addMinutes(defaultSlot.start_hm, defaultSlot.duration_minutes)
-      : "";
-    setSelectedItemId(item.id);
-    setScreen("session");
-    setForm({
-      session_title: `Séance ${nextIndex}`,
-      session_date: todayIso(),
-      session_period_id: defaultSlot?.id || "",
-      session_period_label: defaultSlot
-        ? `${defaultSlot.label} · ${formatTimeRange(start, end)}`
-        : "",
-      session_start_time: start,
-      session_end_time: end,
-      content: "",
-      homework: "",
-      observations: "",
-    });
+  function selectItem(itemId: string) {
+    if (!actionableItems.some((item) => item.id === itemId)) return;
+    setSelectedItemId(itemId);
   }
 
   function handlePeriodChange(periodId: string) {
     if (periodId === "custom") {
-      setForm((f) => ({
-        ...f,
+      setForm((current) => ({
+        ...current,
         session_period_id: "",
         session_period_label: "Plage personnalisée",
       }));
       return;
     }
 
-    const slot = periodSlots.find((s) => s.id === periodId) || null;
-    if (!slot) return;
+    const slot = periodSlots.find((item) => item.id === periodId) || null;
+    if (!slot) {
+      setForm((current) => ({
+        ...current,
+        session_period_id: "",
+        session_period_label: "",
+        session_start_time: "",
+        session_end_time: "",
+      }));
+      return;
+    }
+
     const start = normalizeHm(slot.start_hm);
     const end = addMinutes(start, slot.duration_minutes);
-    setForm((f) => ({
-      ...f,
+    setForm((current) => ({
+      ...current,
       session_period_id: slot.id,
       session_period_label: `${slot.label} · ${formatTimeRange(start, end)}`,
       session_start_time: start,
@@ -392,13 +496,24 @@ export default function TeacherTextbookPage() {
     }));
   }
 
-  async function saveSession(e: React.FormEvent) {
-    e.preventDefault();
+  async function saveSession(event: React.FormEvent) {
+    event.preventDefault();
     if (!selectedAssignment || !selectedItem) return;
+
+    if (!form.content.trim()) {
+      setError("Renseignez le contenu réalisé pendant la séance.");
+      return;
+    }
+    if (!form.session_start_time || !form.session_end_time) {
+      setError("Choisissez un créneau ou saisissez une plage horaire.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
+      const previousCount = selectedItem.sessions?.length || 0;
       await fetchJson("/api/teacher/textbook/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -410,17 +525,23 @@ export default function TeacherTextbookPage() {
             minutesBetween(form.session_start_time, form.session_end_time) || 55,
         }),
       });
-      setMessage("Séance enregistrée dans le cahier de texte.");
       await load();
-    } catch (e: any) {
-      setError(e?.message || "Enregistrement impossible");
+      setForm(emptySessionForm(selectedItem, previousCount + 2));
+      setMessage("Séance enregistrée avec succès.");
+    } catch (cause: any) {
+      setError(cause?.message || "Enregistrement impossible");
     } finally {
       setBusy(false);
     }
   }
 
-  async function markCompleted() {
+  async function updateLessonStatus(status: "completed" | "reopened") {
     if (!selectedAssignment || !selectedItem) return;
+    if (status === "completed" && !(selectedItem.sessions?.length || 0)) {
+      setError("Enregistrez au moins une séance avant de terminer cette leçon.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -431,42 +552,147 @@ export default function TeacherTextbookPage() {
         body: JSON.stringify({
           assignment_id: selectedAssignment.id,
           item_id: selectedItem.id,
-          status: "completed",
+          status,
         }),
       });
-      setMessage("Leçon marquée comme terminée.");
       await load();
-    } catch (e: any) {
-      setError(e?.message || "Action impossible");
+      setMessage(
+        status === "completed"
+          ? "Leçon marquée comme terminée."
+          : "Leçon rouverte pour modification.",
+      );
+    } catch (cause: any) {
+      setError(cause?.message || "Action impossible");
     } finally {
       setBusy(false);
     }
   }
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900">
+        <div className="mx-auto flex max-w-7xl items-center gap-3 rounded-3xl border border-slate-200 bg-white p-6 text-sm font-bold text-slate-600 shadow-sm">
+          <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+          Chargement du cahier de texte…
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-slate-50 px-3 py-4 text-slate-900 md:px-6 md:py-6">
-      <div className="mx-auto max-w-6xl space-y-4">
-        <header className="rounded-[24px] border border-slate-200 bg-white/95 p-4 shadow-sm md:p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700 ring-1 ring-emerald-100">
-                <BookOpen className="h-3.5 w-3.5" />
-                {accessMode === "class_device" ? "Compte classe" : "Espace enseignant"}
+    <main className="min-h-screen bg-slate-50 px-3 py-4 text-slate-900 sm:px-5 lg:px-7 lg:py-6">
+      <div className="mx-auto max-w-[1500px] space-y-4">
+        <header className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-4 py-4 sm:px-6 lg:px-7">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700 ring-1 ring-emerald-100">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  {accessMode === "class_device"
+                    ? "Compte classe"
+                    : "Espace enseignant"}
+                </div>
+                <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
+                  Cahier de texte
+                </h1>
               </div>
-              <h1 className="mt-2 text-xl font-black tracking-tight text-slate-950 md:text-3xl">
-                Cahier de texte
-              </h1>
-              <p className="mt-1 hidden max-w-2xl text-sm font-semibold text-slate-500 md:block">
-                Sélectionnez une progression, puis une leçon à renseigner.
-              </p>
+              <div className="flex items-center gap-2">
+                {selectedAssignment?.progression?.document?.signed_url ? (
+                  <a
+                    href={selectedAssignment.progression.document.signed_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-50 sm:text-sm"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span className="hidden sm:inline">Progression officielle</span>
+                    <span className="sm:hidden">PDF</span>
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={load}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800 disabled:opacity-60 sm:text-sm"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  <span className="hidden sm:inline">Actualiser</span>
+                </button>
+              </div>
             </div>
-            <button
-              onClick={load}
-              className="inline-flex shrink-0 items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 shadow-sm transition hover:bg-emerald-100 md:px-4 md:text-sm"
-            >
-              <RefreshCw className="h-4 w-4" /> Actualiser
-            </button>
           </div>
+
+          {assignments.length ? (
+            <div className="grid gap-3 px-4 py-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-[minmax(220px,0.8fr)_minmax(280px,1fr)_minmax(300px,1.2fr)] lg:px-7">
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                  Classe
+                </span>
+                <div className="relative">
+                  <GraduationCap className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    value={selectedAssignment?.class_id || ""}
+                    onChange={(event) => handleClassChange(event.target.value)}
+                    disabled={accessMode === "class_device" || classOptions.length <= 1}
+                    className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-9 text-sm font-black text-slate-900 outline-none transition focus:border-emerald-400 disabled:cursor-default disabled:opacity-80"
+                  >
+                    {classOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                  Matière
+                </span>
+                <div className="relative">
+                  <BookOpen className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    value={selectedAssignmentId}
+                    onChange={(event) => setSelectedAssignmentId(event.target.value)}
+                    className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-9 text-sm font-black text-slate-900 outline-none transition focus:border-emerald-400"
+                  >
+                    {subjectAssignments.map((assignment) => (
+                      <option key={assignment.id} value={assignment.id}>
+                        {assignment.progression?.subject_name || "Matière"}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                </div>
+              </label>
+
+              <div className="rounded-2xl bg-emerald-50 px-4 py-3 sm:col-span-2 lg:col-span-1">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                      Avancement
+                    </div>
+                    <div className="mt-1 text-2xl font-black text-emerald-950">
+                      {progressStats.rate}%
+                    </div>
+                  </div>
+                  <div className="text-right text-xs font-bold text-emerald-800">
+                    <div>
+                      {progressStats.completed}/{progressStats.total} étapes
+                    </div>
+                    <div>{progressStats.sessions} séance(s)</div>
+                  </div>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                  <div
+                    className="h-full rounded-full bg-emerald-600 transition-all"
+                    style={{ width: `${Math.min(100, progressStats.rate)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </header>
 
         {message ? (
@@ -480,440 +706,446 @@ export default function TeacherTextbookPage() {
           </div>
         ) : null}
 
-        {loading ? (
-          <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white p-6 text-sm font-bold text-slate-600 shadow-sm">
-            <Loader2 className="h-5 w-5 animate-spin" /> Chargement du cahier de
-            texte…
-          </div>
-        ) : !assignments.length ? (
-          <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+        {!assignments.length ? (
+          <section className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
             <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">
               <FileText className="h-7 w-7" />
             </div>
-            <h2 className="mt-4 text-xl font-black">
-              Aucune progression affectée
-            </h2>
-            <p className="mt-2 text-sm font-medium text-slate-500">
-              L’administration doit d’abord créer une progression et l’affecter
-              à la classe et à la discipline concernées.
+            <h2 className="mt-4 text-xl font-black">Aucune progression affectée</h2>
+            <p className="mx-auto mt-2 max-w-xl text-sm font-medium text-slate-500">
+              L’administration doit affecter une progression à la classe et à la matière concernées.
             </p>
-          </div>
-        ) : screen === "list" ? (
-          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-6">
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                  {accessMode === "class_device"
-                    ? "Progressions de la classe"
-                    : "Mes progressions"}
-                </div>
-                <h2 className="mt-1 text-2xl font-black text-slate-950">
-                  Choisir une progression
-                </h2>
-              </div>
-              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
-                {assignments.length}
-              </div>
+          </section>
+        ) : selectedAssignment ? (
+          <>
+            <div className="lg:hidden">
+              <label className="block rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+                  Leçon ou activité
+                </span>
+                <select
+                  value={selectedItemId}
+                  onChange={(event) => selectItem(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-black outline-none focus:border-emerald-400"
+                >
+                  {actionableItems.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.completion?.status === "completed" ? "✓ " : ""}
+                      {typeLabel(item.item_type)} — {item.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {assignments.map((a) => {
-                const actionable = (a.progression_items || []).filter(isActionableItem);
-                const completed = actionable.filter(
-                  (it) => it.completion?.status === "completed",
-                );
-                const rate = actionable.length
-                  ? Math.round((completed.length / actionable.length) * 100)
-                  : 0;
-                return (
-                  <button
-                    key={a.id}
-                    onClick={() => openAssignment(a)}
-                    className="group relative min-h-[132px] overflow-hidden rounded-[24px] border-2 border-emerald-100 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-                  >
-                    <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-emerald-500 to-sky-500" />
-                    <div className="flex items-start justify-between gap-3 pl-2">
-                      <div className="min-w-0">
-                        <div className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">
-                          {a.progression?.subject_name || "Matière"}
-                        </div>
-                        <h3 className="mt-3 text-lg font-black text-slate-950">
-                          {classLabel(a)}
-                        </h3>
-                        <p className="mt-1 line-clamp-2 text-xs font-bold leading-5 text-slate-500">
-                          {a.progression?.title || "Progression"}
-                          {a.effective_teacher_name
-                            ? ` · ${a.effective_teacher_name}`
-                            : ""}
-                        </p>
-                      </div>
-                      <div className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-slate-50 text-emerald-700 transition group-hover:bg-emerald-50">
-                        <ChevronRight className="h-5 w-5" />
-                      </div>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between gap-3 pl-2 text-xs font-black text-slate-500">
-                      <span>{completed.length}/{actionable.length} terminé(s)</span>
-                      <span className="text-emerald-700">{rate}%</span>
-                    </div>
-                    <div className="mt-2 ml-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-emerald-600"
-                        style={{ width: `${Math.min(100, rate)}%` }}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ) : screen === "progression" && selectedAssignment ? (
-          <section className="space-y-4">
-            <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <button
-                    type="button"
-                    onClick={backToList}
-                    className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-200"
-                  >
-                    <ChevronRight className="h-4 w-4 rotate-180" /> Mes progressions
-                  </button>
-                  <div className="mt-4 text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                    {classLabel(selectedAssignment)}
+            <div className="grid items-start gap-4 lg:grid-cols-[minmax(300px,0.82fr)_minmax(0,1.55fr)]">
+              <aside className="hidden overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm lg:sticky lg:top-5 lg:block">
+                <div className="border-b border-slate-100 px-5 py-4">
+                  <div className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                    Progression
                   </div>
-                  <h2 className="mt-1 text-2xl font-black text-slate-950 md:text-3xl">
+                  <h2 className="mt-1 line-clamp-2 text-lg font-black text-slate-950">
                     {selectedAssignment.progression?.title || "Progression"}
                   </h2>
-                  <p className="mt-1 text-sm font-bold text-slate-500">
-                    {selectedAssignment.progression?.subject_name || "Matière"} · {selectedAssignment.progression?.academic_year}
-                    {selectedAssignment.effective_teacher_name
-                      ? ` · ${selectedAssignment.effective_teacher_name}`
-                      : ""}
-                  </p>
-                </div>
-                <div className="w-full rounded-2xl bg-emerald-50 p-4 md:w-auto md:min-w-[210px]">
-                  <div className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700">
-                    Avancement
-                  </div>
-                  <div className="mt-1 text-3xl font-black text-emerald-950">
-                    {progressStats.rate}%
-                  </div>
-                  <div className="mt-1 text-xs font-bold text-emerald-800">
-                    {progressStats.completed}/{progressStats.total} élément(s)
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                    <div
-                      className="h-full rounded-full bg-emerald-600"
-                      style={{ width: `${Math.min(100, progressStats.rate)}%` }}
-                    />
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold text-slate-500">
+                    <span>{selectedAssignment.progression?.academic_year}</span>
+                    <span>·</span>
+                    <span>{formatHours(progressStats.completedPlanned)} / {formatHours(progressStats.plannedTotal)}</span>
                   </div>
                 </div>
-              </div>
-              {selectedAssignment.progression?.document?.signed_url ? (
-                <a
-                  href={selectedAssignment.progression.document.signed_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-700"
-                >
-                  <FileText className="h-4 w-4" /> Progression officielle
-                </a>
-              ) : null}
-            </div>
 
-            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 md:px-5">
-                <div>
-                  <h3 className="text-lg font-black text-slate-950">
-                    Tableau de progression
-                  </h3>
-                  <p className="mt-1 text-xs font-bold text-slate-500">
-                    Cliquez sur une leçon pour renseigner la séance.
-                  </p>
-                </div>
-                <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
-                  {progressStats.sessions} séance(s)
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">
-                    <tr>
-                      <th className="px-4 py-3">Type</th>
-                      <th className="px-4 py-3">Élément</th>
-                      <th className="px-4 py-3">Période</th>
-                      <th className="px-4 py-3">Temps</th>
-                      <th className="px-4 py-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selectedAssignment.progression_items.map((item) => {
+                <div className="max-h-[calc(100vh-260px)] overflow-y-auto p-3">
+                  <div className="space-y-2">
+                    {(selectedAssignment.progression_items || []).map((item) => {
                       const actionable = isActionableItem(item);
+                      const selected = item.id === selectedItemId;
                       const complete = item.completion?.status === "completed";
                       return (
-                        <tr
+                        <button
                           key={item.id}
-                          onClick={actionable ? () => openItem(item) : undefined}
+                          type="button"
+                          disabled={!actionable}
+                          onClick={() => selectItem(item.id)}
                           className={classNames(
-                            "transition",
-                            actionable
-                              ? "cursor-pointer hover:bg-emerald-50/70"
-                              : "bg-slate-50/60 text-slate-500",
+                            "w-full rounded-2xl border px-3 py-3 text-left transition",
+                            !actionable &&
+                              "cursor-default border-transparent bg-slate-50 text-slate-500",
+                            actionable &&
+                              !selected &&
+                              "border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/50",
+                            selected &&
+                              "border-emerald-300 bg-emerald-50 shadow-sm ring-1 ring-emerald-100",
+                          )}
+                          style={{
+                            paddingLeft: `${12 + Math.min(2, item.indent_level || 0) * 12}px`,
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
+                                {typeLabel(item.item_type)}
+                              </div>
+                              <div
+                                className={classNames(
+                                  "mt-1 text-sm font-black leading-5",
+                                  selected ? "text-emerald-950" : "text-slate-900",
+                                )}
+                              >
+                                {item.title}
+                              </div>
+                              {actionable ? (
+                                <div className="mt-1 text-[11px] font-bold text-slate-500">
+                                  {plannedMinutes(item)
+                                    ? formatHours(plannedMinutes(item))
+                                    : "Durée non définie"}
+                                  {item.sessions?.length
+                                    ? ` · ${item.sessions.length} séance(s)`
+                                    : ""}
+                                </div>
+                              ) : null}
+                            </div>
+                            {complete ? (
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                            ) : actionable ? (
+                              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" />
+                            ) : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </aside>
+
+              <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                {selectedItem ? (
+                  <form onSubmit={saveSession}>
+                    <div className="border-b border-slate-100 px-4 py-4 sm:px-6">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-slate-600">
+                            {typeLabel(selectedItem.item_type)}
+                          </div>
+                          <h2 className="mt-2 text-xl font-black leading-tight text-slate-950 sm:text-2xl">
+                            {selectedItem.title}
+                          </h2>
+                          <p className="mt-1 text-xs font-bold text-slate-500 sm:text-sm">
+                            {classLabel(selectedAssignment)} · {selectedAssignment.progression?.subject_name || "Matière"}
+                            {selectedAssignment.effective_teacher_name
+                              ? ` · ${selectedAssignment.effective_teacher_name}`
+                              : ""}
+                          </p>
+                        </div>
+                        <div
+                          className={classNames(
+                            "rounded-full px-3 py-1.5 text-[10px] font-black uppercase",
+                            selectedItem.completion?.status === "completed"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : selectedItem.sessions?.length
+                                ? "bg-sky-50 text-sky-700"
+                                : "bg-amber-50 text-amber-700",
                           )}
                         >
-                          <td className="whitespace-nowrap px-4 py-3 align-top">
-                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase text-slate-600">
-                              {typeLabel(item.item_type)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <div
-                              className="font-black text-slate-950"
-                              style={{ paddingLeft: `${(item.indent_level || 0) * 18}px` }}
-                            >
-                              {item.title}
-                            </div>
-                            <div className="mt-1 text-xs font-semibold text-slate-500">
-                              {item.theme || item.rubric || ""}
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 align-top text-xs font-bold text-slate-600">
-                            {item.trimester || "—"}
-                            {item.week_label ? (
-                              <span className="block text-slate-400">{item.week_label}</span>
-                            ) : null}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 align-top text-xs font-bold text-slate-600">
-                            {plannedMinutes(item) ? formatHours(plannedMinutes(item)) : "—"}
-                            {item.sessions?.length ? (
-                              <span className="block text-sky-700">
-                                {item.sessions.length} séance(s)
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="px-4 py-3 text-right align-top">
-                            {complete ? (
-                              <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-700">
-                                Terminé
-                              </span>
-                            ) : actionable ? (
-                              <span className="inline-flex items-center justify-end gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-black text-white">
-                                Saisir <ChevronRight className="h-3.5 w-3.5" />
-                              </span>
-                            ) : (
-                              <span className="text-xs font-bold text-slate-400">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </section>
-        ) : screen === "session" && selectedAssignment && selectedItem ? (
-          <section className="space-y-4">
-            <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
-              <button
-                type="button"
-                onClick={backToProgression}
-                className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-slate-200"
-              >
-                <ChevronRight className="h-4 w-4 rotate-180" /> Retour au tableau
-              </button>
-              <div className="mt-4 rounded-2xl bg-emerald-50 p-4">
-                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                  Séance réalisée
-                </div>
-                <h2 className="mt-1 text-xl font-black text-emerald-950 md:text-2xl">
-                  {selectedItem.title}
-                </h2>
-                <p className="mt-1 text-xs font-bold text-emerald-800">
-                  {classLabel(selectedAssignment)} · {selectedAssignment.progression?.subject_name || "Matière"}
-                </p>
-              </div>
-            </div>
-
-            <form
-              onSubmit={saveSession}
-              className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-6"
-            >
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400 md:col-span-2"
-                  value={form.session_title}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      session_title: e.target.value,
-                    }))
-                  }
-                  placeholder="Séance 1"
-                />
-                <input
-                  type="date"
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                  value={form.session_date}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      session_date: e.target.value,
-                    }))
-                  }
-                />
-
-                <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 md:col-span-2">
-                  <label className="text-xs font-black uppercase tracking-wide text-slate-500">
-                    Plage horaire de la séance
-                  </label>
-                  <select
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
-                    value={form.session_period_id || "custom"}
-                    onChange={(e) => handlePeriodChange(e.target.value)}
-                  >
-                    {periodSlots.map((slot) => {
-                      const start = normalizeHm(slot.start_hm);
-                      const end = addMinutes(start, slot.duration_minutes);
-                      return (
-                        <option key={slot.id} value={slot.id}>
-                          {slot.label} — {formatTimeRange(start, end)}
-                        </option>
-                      );
-                    })}
-                    <option value="custom">Plage personnalisée</option>
-                  </select>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="time"
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
-                      value={form.session_start_time}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          session_period_id: "",
-                          session_period_label: "Plage personnalisée",
-                          session_start_time: e.target.value,
-                        }))
-                      }
-                    />
-                    <input
-                      type="time"
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-emerald-400"
-                      value={form.session_end_time}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          session_period_id: "",
-                          session_period_label: "Plage personnalisée",
-                          session_end_time: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="text-xs font-bold text-slate-500">
-                    Durée calculée : {minutesBetween(form.session_start_time, form.session_end_time) || 55} min
-                  </div>
-                </div>
-
-                <textarea
-                  className="min-h-32 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 md:col-span-2"
-                  value={form.content}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      content: e.target.value,
-                    }))
-                  }
-                  placeholder="Contenu réalisé en classe"
-                />
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400"
-                  value={form.homework}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      homework: e.target.value,
-                    }))
-                  }
-                  placeholder="Travail à faire"
-                />
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400"
-                  value={form.observations}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      observations: e.target.value,
-                    }))
-                  }
-                  placeholder="Observations"
-                />
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <button
-                  disabled={busy}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
-                >
-                  {busy ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  Enregistrer la séance
-                </button>
-
-                <button
-                  type="button"
-                  onClick={markCompleted}
-                  disabled={busy || selectedItem.completion?.status === "completed"}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 disabled:opacity-60"
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Marquer la leçon terminée
-                </button>
-              </div>
-
-              {selectedItem.sessions?.length ? (
-                <div className="mt-5 rounded-2xl border border-slate-200 p-3">
-                  <div className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">
-                    Historique récent
-                  </div>
-                  <div className="space-y-2">
-                    {selectedItem.sessions.slice(0, 4).map((s) => (
-                      <div
-                        key={s.id}
-                        className="rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Clock3 className="h-3.5 w-3.5" /> {formatDate(s.session_date)} · {formatTimeRange(s.session_start_time, s.session_end_time) || `${s.duration_minutes} min`} · {s.session_title}
+                          {selectedItem.completion?.status === "completed"
+                            ? "Terminée"
+                            : selectedItem.sessions?.length
+                              ? "En cours"
+                              : "À commencer"}
                         </div>
-                        {s.content ? (
-                          <div className="mt-1 font-medium text-slate-500">
-                            {s.content}
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-3 gap-2">
+                        <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                          <div className="text-[9px] font-black uppercase text-slate-400">Prévu</div>
+                          <div className="mt-1 text-sm font-black text-slate-900">
+                            {plannedMinutes(selectedItem)
+                              ? formatHours(plannedMinutes(selectedItem))
+                              : "—"}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                          <div className="text-[9px] font-black uppercase text-slate-400">Séances</div>
+                          <div className="mt-1 text-sm font-black text-slate-900">
+                            {selectedItem.sessions?.length || 0}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 px-3 py-2.5">
+                          <div className="text-[9px] font-black uppercase text-slate-400">Période</div>
+                          <div className="mt-1 truncate text-sm font-black text-slate-900">
+                            {selectedItem.week_label || selectedItem.trimester || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-5 p-4 sm:p-6">
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+                        <label className="space-y-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                            Titre de la séance
+                          </span>
+                          <input
+                            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50"
+                            value={form.session_title}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                session_title: event.target.value,
+                              }))
+                            }
+                            placeholder="Séance 1"
+                          />
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                            Date
+                          </span>
+                          <div className="relative">
+                            <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <input
+                              type="date"
+                              className="w-full rounded-2xl border border-slate-200 py-3 pl-10 pr-3 text-sm font-bold outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50"
+                              value={form.session_date}
+                              onChange={(event) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  session_date: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </label>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                            Créneau de la séance
+                          </label>
+                          {slotsLoading ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400">
+                              <Loader2 className="h-3 w-3 animate-spin" /> Chargement
+                            </span>
+                          ) : null}
+                        </div>
+                        <select
+                          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-bold outline-none transition focus:border-emerald-400"
+                          value={
+                            form.session_period_id ||
+                            (form.session_period_label === "Plage personnalisée"
+                              ? "custom"
+                              : "")
+                          }
+                          onChange={(event) => handlePeriodChange(event.target.value)}
+                        >
+                          <option value="">Choisir un créneau</option>
+                          {periodSlots.map((slot) => {
+                            const start = normalizeHm(slot.start_hm);
+                            const end = addMinutes(start, slot.duration_minutes);
+                            return (
+                              <option key={slot.id} value={slot.id}>
+                                {slot.label} — {formatTimeRange(start, end)}
+                              </option>
+                            );
+                          })}
+                          <option value="custom">Saisir une plage personnalisée</option>
+                        </select>
+
+                        {!periodSlots.length && !slotsLoading ? (
+                          <p className="mt-2 text-xs font-semibold text-amber-700">
+                            Aucun créneau établissement trouvé. Utilisez une plage personnalisée.
+                          </p>
+                        ) : null}
+
+                        {form.session_period_label === "Plage personnalisée" ? (
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <label className="space-y-1">
+                              <span className="text-[10px] font-bold text-slate-500">Début</span>
+                              <input
+                                type="time"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
+                                value={form.session_start_time}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    session_start_time: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[10px] font-bold text-slate-500">Fin</span>
+                              <input
+                                type="time"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
+                                value={form.session_end_time}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    session_end_time: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+
+                        {form.session_start_time && form.session_end_time ? (
+                          <div className="mt-2 text-xs font-bold text-slate-500">
+                            {formatTimeRange(form.session_start_time, form.session_end_time)} · {minutesBetween(form.session_start_time, form.session_end_time)} min
                           </div>
                         ) : null}
                       </div>
-                    ))}
+
+                      <label className="block space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                          Contenu réalisé en classe
+                        </span>
+                        <textarea
+                          required
+                          className="min-h-48 w-full resize-y rounded-2xl border border-slate-200 px-4 py-3 text-sm leading-6 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50 sm:min-h-56"
+                          value={form.content}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              content: event.target.value,
+                            }))
+                          }
+                          placeholder="Décrivez clairement les notions, activités et exercices traités pendant la séance."
+                        />
+                      </label>
+
+                      <label className="block space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                          Travail à faire
+                        </span>
+                        <textarea
+                          className="min-h-28 w-full resize-y rounded-2xl border border-slate-200 px-4 py-3 text-sm leading-6 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-50"
+                          value={form.homework}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              homework: event.target.value,
+                            }))
+                          }
+                          placeholder="Exercices, leçon à apprendre ou préparation demandée aux élèves."
+                        />
+                      </label>
+
+                      <details className="rounded-2xl border border-slate-200 bg-slate-50">
+                        <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-700">
+                          Ajouter une observation interne
+                        </summary>
+                        <div className="border-t border-slate-200 p-3">
+                          <textarea
+                            className="min-h-24 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none focus:border-emerald-400"
+                            value={form.observations}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                observations: event.target.value,
+                              }))
+                            }
+                            placeholder="Observation réservée à l’enseignant et à l’administration."
+                          />
+                        </div>
+                      </details>
+
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <button
+                          disabled={busy}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3.5 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {busy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                          Enregistrer la séance
+                        </button>
+
+                        {selectedItem.completion?.status === "completed" ? (
+                          <button
+                            type="button"
+                            onClick={() => updateLessonStatus("reopened")}
+                            disabled={busy}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            <RotateCcw className="h-4 w-4" /> Réouvrir
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => updateLessonStatus("completed")}
+                            disabled={busy || !(selectedItem.sessions?.length || 0)}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-black text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={
+                              selectedItem.sessions?.length
+                                ? "Marquer la leçon comme terminée"
+                                : "Enregistrez d’abord une séance"
+                            }
+                          >
+                            <CheckCircle2 className="h-4 w-4" /> Terminer la leçon
+                          </button>
+                        )}
+                      </div>
+
+                      {selectedItem.sessions?.length ? (
+                        <details className="rounded-2xl border border-slate-200">
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-700">
+                            Historique des séances ({selectedItem.sessions.length})
+                          </summary>
+                          <div className="space-y-2 border-t border-slate-100 p-3">
+                            {selectedItem.sessions.slice(0, 6).map((session) => (
+                              <div
+                                key={session.id}
+                                className="rounded-xl bg-slate-50 px-3 py-3 text-xs text-slate-600"
+                              >
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-black text-slate-700">
+                                  <Clock3 className="h-3.5 w-3.5" />
+                                  <span>{formatDate(session.session_date)}</span>
+                                  <span>·</span>
+                                  <span>
+                                    {formatTimeRange(
+                                      session.session_start_time,
+                                      session.session_end_time,
+                                    ) || `${session.duration_minutes} min`}
+                                  </span>
+                                  <span>·</span>
+                                  <span>{session.session_title}</span>
+                                </div>
+                                {session.content ? (
+                                  <p className="mt-2 line-clamp-3 font-medium leading-5 text-slate-500">
+                                    {session.content}
+                                  </p>
+                                ) : null}
+                                {session.homework ? (
+                                  <p className="mt-2 rounded-lg bg-white px-2.5 py-2 font-semibold text-sky-700">
+                                    Travail : {session.homework}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
+                    </div>
+                  </form>
+                ) : (
+                  <div className="p-8 text-center">
+                    <FileText className="mx-auto h-8 w-8 text-slate-300" />
+                    <h2 className="mt-3 text-lg font-black text-slate-900">
+                      Aucune leçon disponible
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Vérifiez les lignes de cette progression côté administration.
+                    </p>
                   </div>
-                </div>
-              ) : null}
-            </form>
-          </section>
-        ) : (
-          <div className="rounded-[28px] border border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="text-sm font-bold text-slate-600">
-              Sélectionnez une progression pour continuer.
-            </p>
-            <button
-              type="button"
-              onClick={backToList}
-              className="mt-4 inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-black text-white"
-            >
-              Voir mes progressions
-            </button>
-          </div>
-        )}
+                )}
+              </section>
+            </div>
+          </>
+        ) : null}
       </div>
     </main>
   );
