@@ -539,11 +539,21 @@ async function ensureChargesForStudent(
       .eq("school_id", institutionId),
   ]);
 
-  if (classErr) throw new Error(classErr.message);
-  if (studentErr) throw new Error(studentErr.message);
-  if (schErr) throw new Error(schErr.message);
-  if (classesErr) throw new Error(classesErr.message);
-  if (categoriesErr) throw new Error(categoriesErr.message);
+  if (classErr) {
+    throw new Error(classErr?.message || "Impossible de charger la classe.");
+  }
+  if (studentErr) {
+    throw new Error(studentErr?.message || "Impossible de charger l’élève.");
+  }
+  if (schErr) {
+    throw new Error(schErr?.message || "Impossible de charger les barèmes financiers.");
+  }
+  if (classesErr) {
+    throw new Error(classesErr?.message || "Impossible de charger les classes.");
+  }
+  if (categoriesErr) {
+    throw new Error(categoriesErr?.message || "Impossible de charger les catégories financières.");
+  }
   if (!classRow) throw new Error("Classe introuvable.");
   if (!studentRow) throw new Error("Élève introuvable.");
 
@@ -631,7 +641,7 @@ async function ensureChargesForStudent(
     .eq("class_id", classId)
     .in("fee_schedule_id", scheduleIds);
 
-  if (exErr) throw new Error(exErr.message);
+  if (exErr) throw new Error(exErr?.message || "Impossible de lire les dettes existantes.");
 
   const existingSet = new Set(
     ((existingCharges ?? []) as Array<{ fee_schedule_id: string | null }>).map(
@@ -677,7 +687,7 @@ async function ensureChargesForStudent(
       .from("student_charges")
       .insert(inserts as any[]);
 
-    if (insErr) throw new Error(insErr.message);
+    if (insErr) throw new Error(insErr?.message || "Impossible de créer les dettes manquantes.");
   }
 
   return fetchOpenChargesForStudent(institutionId, studentId, classId);
@@ -1212,7 +1222,7 @@ async function syncVariableAnnexChargeAmounts({
       .select("id,receipt_id,amount")
       .eq("student_charge_id", item.charge.id);
 
-    if (allocationErr) throw new Error(allocationErr.message);
+    if (allocationErr) throw new Error(allocationErr?.message || "Impossible de lire les ventilations du reçu.");
 
     const receiptIds = Array.from(
       new Set(
@@ -1230,7 +1240,7 @@ async function syncVariableAnnexChargeAmounts({
         .select("id,receipt_status")
         .in("id", receiptIds);
 
-      if (receiptErr) throw new Error(receiptErr.message);
+      if (receiptErr) throw new Error(receiptErr?.message || "Impossible de lire les reçus.");
 
       cancelledReceiptIds = new Set(
         ((receiptRows ?? []) as Array<{ id: string; receipt_status: string }>)
@@ -1264,7 +1274,7 @@ async function syncVariableAnnexChargeAmounts({
         .eq("fee_schedule_id", item.charge.fee_schedule_id)
         .eq("is_active", true);
 
-      if (allExpectedErr) throw new Error(allExpectedErr.message);
+      if (allExpectedErr) throw new Error(allExpectedErr?.message || "Impossible de lire les sous-rubriques attendues.");
 
       allComponents = (allExpectedRows ?? []) as Array<{
         id: string;
@@ -1284,7 +1294,7 @@ async function syncVariableAnnexChargeAmounts({
         .select("fee_schedule_component_id,amount")
         .in("receipt_allocation_id", activeAllocationIds);
 
-      if (componentErr) throw new Error(componentErr.message);
+      if (componentErr) throw new Error(componentErr?.message || "Impossible de lire les sous-rubriques encaissées.");
 
       for (const row of (componentRows ?? []) as Array<{
         fee_schedule_component_id: string;
@@ -1298,7 +1308,7 @@ async function syncVariableAnnexChargeAmounts({
           component &&
           isOptionalInternatAnnexeComponent(component)
         ) {
-          explicitlyEngagedOptionalIds.add(component.id);
+          explicitlyEngagedOptionalIds.add(component!.id);
         }
       }
     }
@@ -1349,7 +1359,7 @@ async function syncVariableAnnexChargeAmounts({
       .eq("id", item.charge.id)
       .eq("school_id", institutionId);
 
-    if (updateErr) throw new Error(updateErr.message);
+    if (updateErr) throw new Error(updateErr?.message || "Impossible de mettre à jour la dette d’internat.");
   }
 }
 
