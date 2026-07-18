@@ -72,6 +72,7 @@ export type RelayStatus = {
   pending_operations: number;
   blocked_operations: number;
   unresolved_conflicts: number;
+  materialization_failures: number;
   last_cloud_sync_at: string | null;
 };
 

@@ -1,10 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { adminDashboard } from "./admin-dashboard.mjs";
 import { attendanceMonitor } from "./attendance-monitor.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 
 export function createRelayServer(config: RelayConfig, store: RelayStore) {
   return createServer(async (request, response) => {
@@ -29,6 +31,9 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       if (request.method === "POST" && url.pathname === "/v1/sync/apply") {
         return json(response, 200, store.applyRemote(await readJson(request)));
       }
+      if (request.method === "POST" && url.pathname === "/v1/sync/bootstrap") {
+        return json(response, 200, store.bootstrap(await readJson(request, MAX_BOOTSTRAP_BODY_BYTES)));
+      }
       if (request.method === "POST" && url.pathname.startsWith("/v1/sync/conflicts/")) {
         const id = decodeURIComponent(url.pathname.slice("/v1/sync/conflicts/".length));
         const body = await readJson(request) as Record<string, unknown>;
@@ -38,6 +43,11 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
         }
         const resolvedBy = String(body.resolved_by || "local_admin").trim();
         return json(response, 200, store.resolveConflict(id, resolution, resolvedBy));
+      }
+      if (request.method === "GET" && url.pathname === "/v1/admin/dashboard") {
+        const institutionId = requiredParam(url, "institution_id");
+        const date = requiredParam(url, "date");
+        return json(response, 200, adminDashboard(store.db, { institutionId, date }));
       }
       if (request.method === "GET" && url.pathname === "/v1/admin/attendance/monitor") {
         const institutionId = requiredParam(url, "institution_id");
@@ -71,13 +81,16 @@ function authorized(request: IncomingMessage, token: string | null) {
   return timingSafeEqual(expectedHash, suppliedHash);
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(
+  request: IncomingMessage,
+  maxBodyBytes = MAX_BODY_BYTES,
+): Promise<unknown> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += bytes.length;
-    if (total > MAX_BODY_BYTES) throw new HttpError(413, "request_body_too_large");
+    if (total > maxBodyBytes) throw new HttpError(413, "request_body_too_large");
     chunks.push(bytes);
   }
   if (chunks.length === 0) throw new HttpError(400, "request_body_required");

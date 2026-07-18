@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { adminDashboard } from "../src/admin-dashboard.mjs";
 import { attendanceMonitor } from "../src/attendance-monitor.mjs";
 import { loadRelayConfig } from "../src/config.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
+import { createRelayServer } from "../src/server.mjs";
 import { RelayStore } from "../src/store.mjs";
 import { SYNC_PROTOCOL_VERSION } from "../src/types.mjs";
 
@@ -16,6 +18,8 @@ test("la migration crée le domaine pédagogique sans finance", () => {
   assert.ok(tables.includes("student_grades"));
   assert.ok(tables.includes("textbook_sessions"));
   assert.ok(tables.includes("sync_outbox"));
+  assert.ok(tables.includes("sync_bootstrap_runs"));
+  assert.ok(tables.includes("sync_materialization_failures"));
   assert.equal(tables.some((name) => /finance|payment|payroll|cash/i.test(name)), false);
   assert.equal(Number(db.pragma("foreign_keys", { simple: true })), 1);
   db.close();
@@ -191,3 +195,236 @@ test("une écoute LAN est refusée sans jeton", () => {
     "0.0.0.0",
   );
 });
+
+
+test("le bootstrap Cloud peuple SQLite et le dashboard Admin local", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const snapshot = bootstrapFixture("snapshot-1", "Mme Cloud");
+
+  const result = store.bootstrap(snapshot);
+  assert.equal(result.status, "applied");
+  assert.equal(result.imported_entities, 9);
+  assert.deepEqual(store.bootstrap(snapshot), { ...result, status: "duplicate" });
+
+  const dashboard = adminDashboard(db, {
+    institutionId: "inst-1",
+    date: "2026-07-13",
+    now: new Date("2026-07-13T12:00:00.000Z"),
+  });
+  assert.equal(dashboard.source, "relay");
+  assert.equal(dashboard.institution.name, "Collège local");
+  assert.equal(dashboard.counts.classes, 1);
+  assert.equal(dashboard.counts.teachers, 1);
+  assert.equal(dashboard.attendance.late, 1);
+  assert.equal(dashboard.attendance_rows[0]?.teacher_name, "Mme Cloud");
+  assert.equal(dashboard.sync.last_cloud_sync_at, "2026-07-13T12:00:00.000Z");
+  db.close();
+});
+
+test("un événement distant met réellement à jour la table pédagogique", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  store.bootstrap(bootstrapFixture("snapshot-1", "Mme Initiale"));
+
+  store.applyRemote({
+    protocol_version: SYNC_PROTOCOL_VERSION,
+    event_id: "profile-event-2",
+    institution_id: "inst-1",
+    entity_type: "profile",
+    entity_id: "teacher-1",
+    action: "upsert",
+    server_version: 2,
+    occurred_at: "2026-07-13T12:05:00.000Z",
+    payload: {
+      display_name: "Mme Synchronisée",
+      email: "teacher@example.test",
+      phone: null,
+      is_active: true,
+    },
+  });
+
+  const row = db.prepare("SELECT display_name, server_version FROM profiles WHERE id = 'teacher-1'")
+    .get() as { display_name: string; server_version: number };
+  assert.deepEqual(row, { display_name: "Mme Synchronisée", server_version: 2 });
+  assert.equal(store.status().materialization_failures, 0);
+  db.close();
+});
+
+test("un bootstrap ultérieur protège les modifications locales en attente", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  store.bootstrap(bootstrapFixture("snapshot-1", "Mme Cloud"));
+  store.enqueue({
+    protocol_version: SYNC_PROTOCOL_VERSION,
+    operation_id: "profile-local-1",
+    institution_id: "inst-1",
+    device_id: "relay-1",
+    actor_profile_id: "admin-1",
+    entity_type: "profile",
+    entity_id: "teacher-1",
+    action: "upsert",
+    base_server_version: 1,
+    occurred_at: "2026-07-13T12:10:00.000Z",
+    payload: {
+      display_name: "Mme Locale",
+      email: "teacher@example.test",
+      phone: null,
+      is_active: true,
+    },
+  });
+
+  const second = store.bootstrap(bootstrapFixture("snapshot-2", "Mme Cloud Nouvelle", 2));
+  assert.equal(second.preserved_local_entities, 1);
+  const row = db.prepare("SELECT display_name FROM profiles WHERE id = 'teacher-1'")
+    .get() as { display_name: string };
+  assert.equal(row.display_name, "Mme Locale");
+  assert.equal(store.status().pending_operations, 1);
+  db.close();
+});
+
+test("le bootstrap refuse explicitement toute collection financière", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const snapshot = bootstrapFixture("snapshot-finance", "Mme Cloud") as any;
+  snapshot.entities.finance_receipts = [];
+  assert.throws(() => store.bootstrap(snapshot), /forbidden_collection:finance_receipts/);
+  db.close();
+});
+
+
+test("l'API locale expose le dashboard Admin protégé par le jeton", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  store.bootstrap(bootstrapFixture("snapshot-api", "Mme API"));
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "secret-local",
+  }, store);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const url = `http://127.0.0.1:${address.port}/v1/admin/dashboard?institution_id=inst-1&date=2026-07-13`;
+    const unauthorized = await fetch(url);
+    assert.equal(unauthorized.status, 401);
+    const response = await fetch(url, {
+      headers: { Authorization: "Bearer secret-local" },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.source, "relay");
+    assert.equal(body.counts.teachers, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});
+
+function bootstrapFixture(snapshotId: string, teacherName: string, version = 1) {
+  const generatedAt = "2026-07-13T12:00:00.000Z";
+  return {
+    protocol_version: SYNC_PROTOCOL_VERSION,
+    snapshot_id: snapshotId,
+    institution_id: "inst-1",
+    generated_at: generatedAt,
+    cursor: `cursor-${snapshotId}`,
+    institution: {
+      id: "inst-1",
+      name: "Collège local",
+      code: "LOCAL",
+      timezone: "Africa/Abidjan",
+      settings_json: {},
+      server_version: version,
+      updated_at: generatedAt,
+    },
+    entities: {
+      academic_years: [{
+        id: "year-1",
+        institution_id: "inst-1",
+        code: "2026-2027",
+        label: "2026-2027",
+        start_date: "2026-09-01",
+        end_date: "2027-07-31",
+        is_current: true,
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      profiles: [{
+        id: "teacher-1",
+        institution_id: "inst-1",
+        display_name: teacherName,
+        email: "teacher@example.test",
+        phone: null,
+        is_active: true,
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      user_roles: [{
+        id: "role-1",
+        institution_id: "inst-1",
+        profile_id: "teacher-1",
+        role: "teacher",
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      classes: [{
+        id: "class-1",
+        institution_id: "inst-1",
+        academic_year: "2026-2027",
+        label: "4e A",
+        level: "4e",
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      subjects: [{
+        id: "subject-1",
+        institution_id: "inst-1",
+        base_subject_id: null,
+        name: "Mathématiques",
+        short_name: "MATH",
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      institution_periods: [{
+        id: "period-1",
+        institution_id: "inst-1",
+        weekday: 1,
+        label: "Cours 1",
+        start_time: "08:00:00",
+        end_time: "09:00:00",
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      teacher_timetables: [{
+        id: "timetable-1",
+        institution_id: "inst-1",
+        academic_year: "2026-2027",
+        class_id: "class-1",
+        subject_id: "subject-1",
+        teacher_id: "teacher-1",
+        period_id: "period-1",
+        weekday: 1,
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+      teacher_sessions: [{
+        id: "session-1",
+        institution_id: "inst-1",
+        client_session_id: "client-session-1",
+        class_id: "class-1",
+        subject_id: "subject-1",
+        teacher_id: "teacher-1",
+        period_id: "period-1",
+        started_at: "2026-07-13T08:20:00.000Z",
+        actual_call_at: "2026-07-13T08:20:00.000Z",
+        ended_at: null,
+        origin: "teacher",
+        server_version: version,
+        updated_at: generatedAt,
+      }],
+    },
+  } as const;
+}

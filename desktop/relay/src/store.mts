@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { applyBootstrap, type BootstrapResult } from "./bootstrap.mjs";
 import type { RelayDatabase } from "./db.mjs";
 import { getMeta, schemaVersion, setMeta } from "./db.mjs";
+import { materializeTracked, retryMaterializationFailures } from "./entity-materializer.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import type {
   ApplyRemoteResult,
   EnqueueResult,
   RelayStatus,
   RemoteEvent,
+  SyncEntityType,
   SyncOperation,
 } from "./types.mjs";
 import { parseRemoteEvent, parseSyncOperation } from "./validation.mjs";
@@ -106,6 +109,16 @@ export class RelayStore {
         operation.action === "delete" ? operation.occurred_at : null,
         operation.occurred_at,
       );
+      materializeTracked(this.db, {
+        institutionId: operation.institution_id,
+        entityType: operation.entity_type,
+        entityId: operation.entity_id,
+        action: operation.action,
+        payload: operation.payload,
+        serverVersion: operation.base_server_version,
+        occurredAt: operation.occurred_at,
+      });
+      retryMaterializationFailures(this.db, operation.institution_id);
       this.audit(operation.institution_id, "sync.operation_enqueued", operation);
       return { operation_id: operation.operation_id, inserted: true };
     })();
@@ -203,8 +216,18 @@ export class RelayStore {
           event.action === "delete" ? event.occurred_at : null,
           event.occurred_at,
         );
+        materializeTracked(this.db, {
+          institutionId: event.institution_id,
+          entityType: event.entity_type,
+          entityId: event.entity_id,
+          action: event.action,
+          payload: event.payload,
+          serverVersion: event.server_version,
+          occurredAt: event.occurred_at,
+        });
       }
 
+      retryMaterializationFailures(this.db, event.institution_id);
       this.recordInbox(event, remotePayload);
       this.audit(event.institution_id, "sync.remote_event_applied", event);
       return { event_id: event.event_id, status: "applied" } as const;
@@ -254,6 +277,15 @@ export class RelayStore {
           conflict.remote_action === "delete" ? now : null,
           now,
         );
+        materializeTracked(this.db, {
+          institutionId: conflict.institution_id,
+          entityType: conflict.entity_type as SyncEntityType,
+          entityId: conflict.entity_id,
+          action: conflict.remote_action,
+          payload: parseStoredJson<Record<string, unknown>>(conflict.remote_payload_json),
+          serverVersion: conflict.remote_server_version,
+          occurredAt: now,
+        });
         if (conflict.operation_id) {
           this.db.prepare("DELETE FROM sync_outbox WHERE operation_id = ?").run(conflict.operation_id);
         }
@@ -265,6 +297,7 @@ export class RelayStore {
         `).run(conflict.remote_server_version, conflict.operation_id);
       }
 
+      retryMaterializationFailures(this.db, conflict.institution_id);
       this.db.prepare(`
         UPDATE sync_conflicts SET resolution = ?, resolved_at = ?, resolved_by = ? WHERE id = ?
       `).run(resolution, now, resolvedBy, conflictId);
@@ -274,6 +307,10 @@ export class RelayStore {
       });
       return { conflict_id: conflictId, resolution };
     })();
+  }
+
+  bootstrap(raw: unknown): BootstrapResult {
+    return applyBootstrap(this.db, raw);
   }
 
   status(): RelayStatus {
@@ -286,6 +323,7 @@ export class RelayStore {
       pending_operations: count("SELECT COUNT(*) AS count FROM sync_outbox WHERE state IN ('pending', 'sending')"),
       blocked_operations: count("SELECT COUNT(*) AS count FROM sync_outbox WHERE state = 'blocked'"),
       unresolved_conflicts: count("SELECT COUNT(*) AS count FROM sync_conflicts WHERE resolved_at IS NULL"),
+      materialization_failures: count("SELECT COUNT(*) AS count FROM sync_materialization_failures"),
       last_cloud_sync_at: getMeta(this.db, "last_cloud_sync_at"),
     };
   }

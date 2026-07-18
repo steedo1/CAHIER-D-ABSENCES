@@ -3,7 +3,10 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MIGRATIONS = [{ version: 1, name: "core", file: "0001_core.sql" }] as const;
+const MIGRATIONS = [
+  { version: 1, name: "core", file: "0001_core.sql" },
+  { version: 2, name: "bootstrap_dashboard", file: "0002_bootstrap_dashboard.sql" },
+] as const;
 
 export type RelayDatabase = Database.Database;
 
