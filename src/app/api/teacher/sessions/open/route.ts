@@ -19,7 +19,8 @@ export async function GET() {
   const { data, error } = await supa
     .from("teacher_sessions")
     .select(`
-      id, class_id, subject_id, started_at, expected_minutes,
+      id, class_id, subject_id, started_at, actual_call_at, expected_minutes,
+      presence_method, presence_distance_m,
       cls:class_id(label),
       subj:subject_id(custom_name)
     `)
@@ -40,10 +41,12 @@ export async function GET() {
     subject_id: (data.subject_id as string) ?? null,
     subject_name: (data as any).subj?.custom_name ?? null,
     started_at: data.started_at as string,
+    actual_call_at: (data as any).actual_call_at as string | null,
     expected_minutes: (data.expected_minutes as number) ?? null,
+    presence_method: (data as any).presence_method as string | null,
+    presence_distance_m: (data as any).presence_distance_m as number | null,
   };
 
   return NextResponse.json({ item });
 }
-
 

@@ -67,6 +67,17 @@ Toutes les routes `/v1/*` utilisent le jeton du relais lorsqu'il est configuré.
 - `GET /v1/admin/attendance/monitor?institution_id=...&from=...&to=...` :
   réponse compatible avec la vue actuelle de contrôle des appels ;
 - `GET /v1/status` : santé globale du relais.
+- `POST /v1/attendance/presence-proof` : preuve signée et brève qu'un compte
+  enseignant a joint le relais depuis le réseau local de son établissement.
+  Cette route utilise un accès enseignant signé par le Cloud et ne communique
+  jamais le jeton administrateur du relais au téléphone.
+
+Pour les téléphones, l'administration renseigne dans Mon Cahier l'adresse LAN
+du PC relais (par exemple `http://192.168.1.20:4317`). Le navigateur obtient
+automatiquement un accès limité à l'enseignant connecté. Le PC relais doit être
+lancé avec `MONCAHIER_RELAY_HOST=0.0.0.0` et un `MONCAHIER_RELAY_TOKEN` réservé
+aux fonctions Admin/synchronisation. Ce jeton Admin ne doit pas être partagé
+avec les enseignants.
 
 Le bootstrap accepte un objet de cette forme :
 

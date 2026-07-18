@@ -6,7 +6,6 @@ import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SECURE = process.env.NODE_ENV === "production";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
@@ -47,11 +46,21 @@ function withNoStore(res: NextResponse) {
   return res;
 }
 
-function setAuthCookies(res: NextResponse, accessToken: string, refreshToken: string) {
+function requestUsesHttps(req: NextRequest) {
+  const forwarded = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  return (forwarded || req.nextUrl.protocol.replace(":", "")) === "https";
+}
+
+function setAuthCookies(
+  res: NextResponse,
+  accessToken: string,
+  refreshToken: string,
+  secure: boolean,
+) {
   const common = {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: SECURE,
+    secure,
     path: "/",
   };
 
@@ -182,7 +191,12 @@ export async function POST(req: NextRequest) {
       { status: 200 }
     );
 
-    setAuthCookies(res, session.access_token, session.refresh_token);
+    setAuthCookies(
+      res,
+      session.access_token,
+      session.refresh_token,
+      requestUsesHttps(req),
+    );
     return withNoStore(res);
   } catch (e: any) {
     return jsonError(e?.message ?? "UNKNOWN_ERROR", 500);

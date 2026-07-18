@@ -8,6 +8,7 @@ import {
   buildGeneralSecondaryCoefficientPreview,
   type GeneralSecondaryCoeffPresetPreviewItem,
 } from "@/lib/default-general-secondary-coefficients-ci";
+import AttendancePresenceSettings from "@/components/admin/AttendancePresenceSettings";
 
 /* =========================
    Types
@@ -3143,6 +3144,8 @@ export default function AdminSettingsPage() {
                   )}
                 </div>
               </SubSection>
+
+              <AttendancePresenceSettings />
 
               <SubSection
                 title="Créneaux par jour"

@@ -16,6 +16,13 @@ import {
   cacheSet,
   clearOfflineAll,
 } from "@/lib/offline";
+import {
+  checkGpsInsideZones,
+  getFreshGpsEvidence,
+  type AttendancePresenceEvidence,
+  type AttendancePresencePolicy,
+} from "@/lib/attendance-presence";
+import { requestRelayAttendancePresenceProof } from "@/lib/local-relay";
 
 /* ─────────────────────────────────────────
    Types
@@ -39,6 +46,8 @@ type OpenSession = {
 
   // ✅ Heure effective du clic "Démarrer l’appel" (offline-friendly)
   actual_call_at?: string | null;
+  presence_method?: string | null;
+  presence_distance_m?: number | null;
 };
 
 type InstCfg = {
@@ -47,6 +56,9 @@ type InstCfg = {
   auto_lateness: boolean;
   institution_name?: string | null;
   academic_year_label?: string | null;
+  institution_id?: string | null;
+  actor_profile_id?: string | null;
+  attendance_presence?: AttendancePresencePolicy;
 };
 type Period = { weekday: number; label: string; start_time: string; end_time: string };
 
@@ -546,6 +558,17 @@ export default function TeacherDashboard() {
     auto_lateness: true,
     institution_name: DEFAULT_INSTITUTION_NAME,
     academic_year_label: null,
+    institution_id: null,
+    actor_profile_id: null,
+    attendance_presence: {
+      enabled: false,
+      teacher_accounts_only: true,
+      allow_local_relay: true,
+      allow_gps_fallback: true,
+      max_gps_accuracy_m: 60,
+      gps_grace_m: 25,
+      zones: [],
+    },
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
   const [slotLabel, setSlotLabel] = useState<string>(
@@ -650,6 +673,9 @@ export default function TeacherDashboard() {
         auto_lateness: !!(c as any)?.auto_lateness,
         institution_name: name,
         academic_year_label: year,
+        institution_id: safeStr((c as any)?.institution_id) || null,
+        actor_profile_id: safeStr((c as any)?.actor_profile_id) || null,
+        attendance_presence: (c as any)?.attendance_presence,
         periods: Array.isArray((p as any)?.periods) ? (p as any).periods : [],
       };
     }
@@ -661,6 +687,17 @@ export default function TeacherDashboard() {
         auto_lateness: true,
         institution_name: null,
         academic_year_label: null,
+        institution_id: null,
+        actor_profile_id: null,
+        attendance_presence: {
+          enabled: false,
+          teacher_accounts_only: true,
+          allow_local_relay: true,
+          allow_gps_fallback: true,
+          max_gps_accuracy_m: 60,
+          gps_grace_m: 25,
+          zones: [],
+        },
         periods: [],
       };
     }
@@ -700,6 +737,9 @@ export default function TeacherDashboard() {
       institution_name:
         safeStr(basics!.institution_name) || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: safeStr(basics!.academic_year_label) || prev.academic_year_label || null,
+      institution_id: safeStr(basics!.institution_id) || prev.institution_id || null,
+      actor_profile_id: safeStr(basics!.actor_profile_id) || prev.actor_profile_id || null,
+      attendance_presence: basics!.attendance_presence || prev.attendance_presence,
     }));
     setPeriodsByDay(grouped);
 
@@ -1070,6 +1110,59 @@ export default function TeacherDashboard() {
   }
 
   /* Actions (séance) — OFFLINE OK */
+  async function preparePresenceEvidence(clientSessionId: string): Promise<{
+    evidence: AttendancePresenceEvidence | null;
+    actualCallAt: string;
+    label: string;
+  }> {
+    const policy = inst.attendance_presence;
+    if (!policy?.enabled) {
+      return { evidence: null, actualCallAt: new Date().toISOString(), label: "non requis" };
+    }
+
+    if (
+      policy.allow_local_relay &&
+      policy.relay_local_url &&
+      policy.relay_access_token &&
+      inst.institution_id &&
+      inst.actor_profile_id
+    ) {
+      setMsg("Vérification de votre présence par le réseau local de l'école…");
+      try {
+        const relay = await requestRelayAttendancePresenceProof({
+          institutionId: inst.institution_id,
+          actorProfileId: inst.actor_profile_id,
+          clientSessionId,
+          baseUrl: policy.relay_local_url,
+          accessToken: policy.relay_access_token,
+        });
+        return {
+          evidence: { method: "local_relay", proof: relay.proof },
+          actualCallAt: relay.issued_at,
+          label: "réseau local",
+        };
+      } catch {
+        // Le téléphone peut être dans l'école avec les données mobiles : GPS ci-dessous.
+      }
+    }
+
+    if (!policy.allow_gps_fallback) {
+      throw new Error(
+        "Le relais local de l'école est inaccessible. Connectez ce téléphone au réseau local autorisé.",
+      );
+    }
+
+    setMsg("Réseau local non détecté : vérification ponctuelle de votre position GPS…");
+    const evidence = await getFreshGpsEvidence(policy.max_gps_accuracy_m);
+    const localCheck = checkGpsInsideZones(evidence.position, policy);
+    if (!localCheck.ok) throw new Error(localCheck.message);
+    return {
+      evidence,
+      actualCallAt: evidence.position.captured_at,
+      label: `GPS • ${localCheck.distance_m} m de ${localCheck.zone.name}`,
+    };
+  }
+
   async function startSession() {
     if (!sel) {
       setMsg(
@@ -1107,9 +1200,9 @@ export default function TeacherDashboard() {
       const [hhS, mmS] = effectiveStart.split(":").map((x) => +x);
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hhS, mmS, 0, 0);
 
-      const actualCallAt = new Date().toISOString();
-
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
+      const presence = await preparePresenceEvidence(clientSessionId);
+      const actualCallAt = presence.actualCallAt;
 
       const body = {
         class_id: sel.class_id,
@@ -1118,6 +1211,7 @@ export default function TeacherDashboard() {
         actual_call_at: actualCallAt,
         expected_minutes: effectiveDuration,
         client_session_id: clientSessionId,
+        presence: presence.evidence,
       };
 
       const r: any = await offlineMutateJson(
@@ -1132,7 +1226,7 @@ export default function TeacherDashboard() {
       if (r?.ok) {
         setOpen(r.data.item as OpenSession);
         await cacheSet("teacher:local-open", null);
-        setMsg("Séance démarrée ✅");
+        setMsg(`Séance démarrée ✅ • présence confirmée par ${presence.label}`);
       } else if (shouldTreatAsOffline(r)) {
         const localOpen: OpenSession = {
           id: `client:${clientSessionId}`,
@@ -1143,10 +1237,11 @@ export default function TeacherDashboard() {
           started_at: started.toISOString(),
           actual_call_at: actualCallAt,
           expected_minutes: effectiveDuration,
+          presence_method: presence.evidence?.method || "not_required",
         };
         setOpen(localOpen);
         await cacheSet("teacher:local-open", localOpen);
-        setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
+        setMsg(`Hors connexion : séance sécurisée par ${presence.label} et mise en attente de synchronisation.`);
         await refreshPending();
       } else {
         const err = extractRespError(r);
@@ -1556,6 +1651,9 @@ export default function TeacherDashboard() {
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Chip tone={isOnline ? "emerald" : "amber"}>{isOnline ? "En ligne" : "Hors ligne"}</Chip>
+              {inst.attendance_presence?.enabled && (
+                <Chip tone="emerald">Appel protégé par périmètre</Chip>
+              )}
               {pending > 0 && <Chip tone="amber">{pending} en attente</Chip>}
               <GhostButton
                 tone="emerald"
@@ -1898,6 +1996,12 @@ export default function TeacherDashboard() {
                   {actualCallAt && actualCallAt !== plannedStartIso && (
                     <div className="text-xs text-slate-500">
                       Appel lancé à {new Date(actualCallAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                  )}
+                  {open.presence_method && open.presence_method !== "not_required" && (
+                    <div className="text-xs font-medium text-emerald-700">
+                      Présence confirmée par {open.presence_method === "local_relay" ? "le réseau local" : "GPS"}
+                      {typeof open.presence_distance_m === "number" ? ` • ${open.presence_distance_m} m` : ""}
                     </div>
                   )}
                 </div>

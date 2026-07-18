@@ -98,7 +98,8 @@ export async function GET(request: NextRequest) {
   try {
     const generatedAt = new Date().toISOString();
     const [institution, academicYears, profiles, userRoles, classes, subjectRows, teacherSubjects,
-      students, enrollments, periods, timetables, absenceRequests, sessions] = await Promise.all([
+      students, enrollments, periods, timetables, absenceRequests, sessions,
+      attendancePolicy, attendanceZones] = await Promise.all([
       srv.from("institutions").select("id,name,code,code_unique,tz,settings_json").eq("id", institutionId).maybeSingle(),
       selectRows(srv.from("academic_years").select("id,institution_id,code,label,start_date,end_date,is_current").eq("institution_id", institutionId), "academic_years"),
       selectRows(srv.from("profiles").select("id,institution_id,display_name,email,phone").eq("institution_id", institutionId), "profiles"),
@@ -108,15 +109,46 @@ export async function GET(request: NextRequest) {
       selectRows(srv.from("teacher_subjects").select("profile_id,subject_id,institution_id").eq("institution_id", institutionId), "teacher_subjects"),
       selectRows(srv.from("students").select("id,institution_id,matricule,first_name,last_name,full_name,gender").eq("institution_id", institutionId), "students"),
       selectRows(srv.from("class_enrollments").select("institution_id,class_id,student_id,start_date,end_date").eq("institution_id", institutionId), "class_enrollments"),
-      selectRows(srv.from("institution_periods").select("id,institution_id,weekday,label,start_time,end_time,is_active").eq("institution_id", institutionId).eq("is_active", true), "institution_periods"),
+      selectRows(srv.from("institution_periods").select("id,institution_id,weekday,label,start_time,end_time").eq("institution_id", institutionId), "institution_periods"),
       selectRows(srv.from("teacher_timetables").select("id,institution_id,class_id,subject_id,teacher_id,period_id,weekday").eq("institution_id", institutionId), "teacher_timetables"),
       selectRows(srv.from("teacher_absence_requests").select("id,institution_id,teacher_profile_id,start_date,end_date,reason_label,status,admin_comment").eq("institution_id", institutionId), "teacher_absence_requests"),
       selectRows(srv.from("teacher_sessions").select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin").eq("institution_id", institutionId), "teacher_sessions"),
+      srv.from("institution_attendance_policies")
+        .select("enabled,allow_local_relay,relay_presence_secret,relay_proof_ttl_seconds")
+        .eq("institution_id", institutionId)
+        .maybeSingle(),
+      srv.from("institution_attendance_zones")
+        .select("id,name,latitude,longitude,radius_m,is_active")
+        .eq("institution_id", institutionId)
+        .eq("is_active", true),
     ]);
 
     if (institution.error || !institution.data) {
       throw new Error(`institution:${institution.error?.message || "not_found"}`);
     }
+
+    const optionalMigrationMissing =
+      (attendancePolicy.error as any)?.code === "42P01" ||
+      (attendanceZones.error as any)?.code === "42P01";
+    if (!optionalMigrationMissing && (attendancePolicy.error || attendanceZones.error)) {
+      throw new Error(
+        `attendance_presence:${attendancePolicy.error?.message || attendanceZones.error?.message}`,
+      );
+    }
+    const cloudSettings =
+      (institution.data as any).settings_json &&
+      typeof (institution.data as any).settings_json === "object"
+        ? (institution.data as any).settings_json
+        : {};
+    const relayPresenceSettings = optionalMigrationMissing
+      ? { enabled: false }
+      : {
+          enabled: attendancePolicy.data?.enabled === true,
+          allow_local_relay: attendancePolicy.data?.allow_local_relay !== false,
+          relay_presence_secret: attendancePolicy.data?.relay_presence_secret || null,
+          relay_proof_ttl_seconds: Number(attendancePolicy.data?.relay_proof_ttl_seconds || 180),
+          zones: attendanceZones.data || [],
+        };
 
     const snapshot = {
       protocol_version: 1,
@@ -129,7 +161,10 @@ export async function GET(request: NextRequest) {
         name: text((institution.data as any).name) || "Établissement",
         code: text((institution.data as any).code_unique) || text((institution.data as any).code) || null,
         timezone: text((institution.data as any).tz) || "Africa/Abidjan",
-        settings_json: (institution.data as any).settings_json || {},
+        settings_json: {
+          ...cloudSettings,
+          attendance_presence: relayPresenceSettings,
+        },
       }, generatedAt),
       entities: {
         academic_years: academicYears.map((row) => withMeta(row, generatedAt)),

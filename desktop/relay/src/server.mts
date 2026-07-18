@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { adminDashboard } from "./admin-dashboard.mjs";
 import { attendanceMonitor } from "./attendance-monitor.mjs";
 import { founderAttendanceSlots } from "./attendance-slots.mjs";
+import { issueAttendancePresenceProof } from "./presence-proof.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
@@ -22,6 +23,9 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       if (request.method === "GET" && url.pathname === "/health") {
         return json(response, 200, { ok: true });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {
+        return json(response, 200, issueAttendancePresenceProof(store.db, await readJson(request)));
       }
       if (!authorized(request, config.token)) return json(response, 401, { error: "unauthorized" });
 

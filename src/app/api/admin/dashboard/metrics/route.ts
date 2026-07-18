@@ -87,7 +87,11 @@ function uniqStrings(values: unknown[]): string[] {
   );
 }
 
-function chunks<T>(items: T[], size = 500): T[][] {
+// Les filtres PostgREST `.in(...)` sont transportés dans l'URL.
+// Avec plusieurs centaines d'UUID, une tranche de 500 produit une URL trop
+// longue et Undici/Node remonte seulement `TypeError: fetch failed`.
+// 100 UUID restent largement sous les limites usuelles des proxies HTTP.
+function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
@@ -157,14 +161,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "UNAUTHENTICATED" }, { status: 401 });
   }
 
-  const { data: me, error: meErr } = await supa
+  // L'identité vient de la session utilisateur vérifiée ci-dessus.
+  // La lecture du profil passe ensuite par le client serveur afin d'éviter
+  // qu'un problème de transport/RLS du client de session bloque le dashboard.
+  const { data: me, error: meErr } = await srv
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
   if (meErr) {
-    return NextResponse.json({ ok: false, error: meErr.message }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: meErr.message, stage: "profiles.service" },
+      { status: 400 },
+    );
   }
 
   const institution_id = me?.institution_id as string | null;
@@ -191,7 +201,10 @@ export async function GET(req: NextRequest) {
     .limit(10000);
 
   if (classesErr) {
-    return NextResponse.json({ ok: false, error: classesErr.message }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: classesErr.message, stage: "classes" },
+      { status: 400 },
+    );
   }
 
   const classIds = uniqStrings((classRows ?? []).map((row: any) => row.id));
@@ -209,7 +222,10 @@ export async function GET(req: NextRequest) {
         .limit(10000);
 
       if (enrollErr) {
-        return NextResponse.json({ ok: false, error: enrollErr.message }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: enrollErr.message, stage: "class_enrollments" },
+          { status: 400 },
+        );
       }
 
       for (const row of enrollRows ?? []) {
@@ -235,7 +251,10 @@ export async function GET(req: NextRequest) {
         .limit(10000);
 
       if (studentErr) {
-        return NextResponse.json({ ok: false, error: studentErr.message }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: studentErr.message, stage: "students" },
+          { status: 400 },
+        );
       }
 
       for (const row of studentRows ?? []) {
@@ -266,7 +285,10 @@ export async function GET(req: NextRequest) {
         .limit(10000);
 
       if (teacherErr) {
-        return NextResponse.json({ ok: false, error: teacherErr.message }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: teacherErr.message, stage: "class_teachers" },
+          { status: 400 },
+        );
       }
 
       for (const row of teacherRows ?? []) {
@@ -288,7 +310,10 @@ export async function GET(req: NextRequest) {
         .limit(10000);
 
       if (guardianErr) {
-        return NextResponse.json({ ok: false, error: guardianErr.message }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: guardianErr.message, stage: "student_guardians" },
+          { status: 400 },
+        );
       }
 
       for (const row of guardianRows ?? []) {
@@ -342,7 +367,12 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      { ok: false, error: error?.message || "DASHBOARD_METRICS_ERROR" },
+      {
+        ok: false,
+        error: error?.message || "DASHBOARD_METRICS_ERROR",
+        stage: "v_mark_minutes",
+        cause: error?.cause?.message || error?.cause?.code || null,
+      },
       { status: 400 },
     );
   }

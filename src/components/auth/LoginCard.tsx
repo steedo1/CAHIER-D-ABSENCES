@@ -15,6 +15,7 @@ type LoginCardProps = {
 type LoginResponse = {
   ok?: boolean;
   error?: string;
+  user?: { id?: string } | null;
   session?: {
     access_token?: string;
     refresh_token?: string;
@@ -29,6 +30,9 @@ function humanError(error?: string | null) {
   if (value === "PASSWORD_REQUIRED") return "Mot de passe obligatoire.";
   if (value === "EMAIL_OR_PHONE_REQUIRED") return "Email ou téléphone obligatoire.";
   if (value === "PHONE_INVALID") return "Numéro de téléphone invalide.";
+  if (value === "SERVER_SESSION_NOT_PERSISTED") {
+    return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
+  }
   if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
     return "Identifiants incorrects. Vérifie le compte et le mot de passe.";
   }
@@ -99,6 +103,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
         const key = window.localStorage.key(i);
         if (!key) continue;
         if (
+          key === "mca-auth-v1" ||
           key.startsWith("sb-") ||
           key.includes("supabase.auth.token") ||
           key.includes("auth-token")
@@ -117,6 +122,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
         const key = window.sessionStorage.key(i);
         if (!key) continue;
         if (
+          key === "mca-auth-v1" ||
           key.startsWith("sb-") ||
           key.includes("supabase.auth.token") ||
           key.includes("auth-token")
@@ -130,32 +136,68 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     }
   }
 
-  async function syncBrowserSession(accessToken?: string, refreshToken?: string) {
-    if (!accessToken || !refreshToken) return;
-
-    try {
-      const supabase = getSupabaseBrowserClient();
-      await supabase.auth.setSession({
+  async function writeServerSession(accessToken: string, refreshToken: string) {
+    const response = await fetch("/api/auth/sync", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
         access_token: accessToken,
         refresh_token: refreshToken,
-      });
-    } catch {
-      // Le cookie serveur suffit pour /redirect ; on reste tolérant.
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("SERVER_SESSION_NOT_PERSISTED");
+    }
+  }
+
+  async function syncBrowserSession(
+    accessToken?: string,
+    refreshToken?: string,
+    expectedUserId?: string,
+  ) {
+    if (!accessToken || !refreshToken) {
+      throw new Error("SERVER_SESSION_NOT_PERSISTED");
     }
 
-    try {
-      await fetch("/api/auth/sync", {
-        method: "POST",
+    const supabase = getSupabaseBrowserClient();
+    const { error: sessionError } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (sessionError) throw sessionError;
+
+    await writeServerSession(accessToken, refreshToken);
+
+    // Vérification réelle : la requête suivante doit relire les cookies HttpOnly
+    // et retrouver exactement le compte qui vient de se connecter.
+    async function readServerSession() {
+      const response = await fetch("/api/auth/role", {
         cache: "no-store",
         credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        }),
       });
-    } catch {
-      // L'API /auth/login a déjà posé les cookies ; ceci est une double sécurité.
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    }
+
+    let checked = await readServerSession();
+    const wrongUser =
+      !!expectedUserId && String(checked.payload?.user_id || "") !== expectedUserId;
+
+    if (checked.response.status === 401 || wrongUser) {
+      // Une seconde écriture couvre les navigateurs qui appliquent les cookies
+      // à la fin du premier cycle de requête ou une ancienne session résiduelle.
+      await writeServerSession(accessToken, refreshToken);
+      checked = await readServerSession();
+    }
+
+    if (
+      checked.response.status === 401 ||
+      (!!expectedUserId && String(checked.payload?.user_id || "") !== expectedUserId)
+    ) {
+      throw new Error("SERVER_SESSION_NOT_PERSISTED");
     }
   }
 
@@ -194,7 +236,11 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
       }
 
       setStatusText("Ouverture de votre espace…");
-      await syncBrowserSession(json.session?.access_token, json.session?.refresh_token);
+      await syncBrowserSession(
+        json.session?.access_token,
+        json.session?.refresh_token,
+        json.user?.id,
+      );
 
       // ✅ Navigation complète volontaire : évite les caches client/RSC et la course avec /redirect.
       window.location.assign(redirectTo || "/redirect");

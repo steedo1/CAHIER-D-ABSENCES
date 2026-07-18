@@ -109,24 +109,33 @@ async function safeJson(response: Response) {
   }
 }
 
-async function relayJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function relayJson<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { baseUrl?: string; includeConfiguredToken?: boolean } = {},
+): Promise<T> {
   if (!browser()) throw new Error("relay_browser_only");
   const config = getRelayConfig();
   const merged = mergeSignals(init.signal || undefined);
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
-  if (config.token) headers.set("Authorization", `Bearer ${config.token}`);
+  if (options.includeConfiguredToken !== false && config.token) {
+    headers.set("Authorization", `Bearer ${config.token}`);
+  }
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
   try {
-    const response = await fetch(`${config.baseUrl}${path}`, {
+    const relayRequest: RequestInit & { targetAddressSpace?: "local" } = {
       ...init,
       headers,
       signal: merged.signal,
       cache: "no-store",
       credentials: "omit",
       mode: "cors",
-    });
+      targetAddressSpace: "local",
+    };
+    const baseUrl = normalizeBaseUrl(options.baseUrl || config.baseUrl);
+    const response = await fetch(`${baseUrl}${path}`, relayRequest as RequestInit);
     const payload = await safeJson(response);
     if (!response.ok) throw new Error(String(payload?.error || `RELAY_HTTP_${response.status}`));
     return payload as T;
@@ -256,8 +265,18 @@ export async function fetchDashboardMetrics<T extends Record<string, any>>(
             ...(previous?.counts || {}),
             classes: Number(relay?.counts?.classes || 0),
             teachers: Number(relay?.counts?.teachers || 0),
+            parents: Number(previous?.counts?.parents || 0),
             students: Number(relay?.counts?.students || 0),
             students_total: Number(relay?.counts?.students || 0),
+            assigned_students: Number(previous?.counts?.assigned_students || 0),
+            not_assigned_students: Number(previous?.counts?.not_assigned_students || 0),
+            assignment_unknown: Number(previous?.counts?.assignment_unknown || 0),
+            boarder_students: Number(previous?.counts?.boarder_students || 0),
+            not_boarder_students: Number(previous?.counts?.not_boarder_students || 0),
+            boarding_unknown: Number(previous?.counts?.boarding_unknown || 0),
+            boys: Number(previous?.counts?.boys || 0),
+            girls: Number(previous?.counts?.girls || 0),
+            gender_unknown: Number(previous?.counts?.gender_unknown || 0),
           },
           kpis: previous?.kpis || { absences: 0, retards: 0 },
           meta: {
@@ -380,4 +399,31 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
   })();
 
   return bootstrapInFlight;
+}
+
+export async function requestRelayAttendancePresenceProof(input: {
+  institutionId: string;
+  actorProfileId: string;
+  clientSessionId: string;
+  baseUrl: string;
+  accessToken: string;
+}) {
+  return await relayJson<{
+    ok: true;
+    proof: string;
+    issued_at: string;
+    expires_at: string;
+    method: "local_relay";
+  }>("/v1/attendance/presence-proof", {
+    method: "POST",
+    body: JSON.stringify({
+      institution_id: input.institutionId,
+      actor_profile_id: input.actorProfileId,
+      client_session_id: input.clientSessionId,
+      access_token: input.accessToken,
+    }),
+  }, {
+    baseUrl: input.baseUrl,
+    includeConfiguredToken: false,
+  });
 }

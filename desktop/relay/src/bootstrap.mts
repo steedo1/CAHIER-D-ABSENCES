@@ -11,6 +11,8 @@ export type BootstrapResult = {
   imported_entities: number;
   preserved_local_entities: number;
   collections: Record<string, number>;
+  source_skipped_entities: number;
+  source_diagnostics: Record<string, unknown>;
   completed_at: string;
 };
 
@@ -22,14 +24,78 @@ type BootstrapSnapshot = {
   cursor: string | null;
   institution: Record<string, unknown>;
   entities: Record<string, Record<string, unknown>[]>;
+  diagnostics: Record<string, unknown>;
+};
+
+type DependencyRule = {
+  field: string;
+  collection: string;
+  optional?: boolean;
+};
+
+const DEPENDENCY_RULES: Record<string, readonly DependencyRule[]> = {
+  user_roles: [{ field: "profile_id", collection: "profiles" }],
+  teacher_subjects: [
+    { field: "teacher_id", collection: "profiles" },
+    { field: "subject_id", collection: "subjects" },
+  ],
+  class_enrollments: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+  ],
+  teacher_timetables: [
+    { field: "class_id", collection: "classes" },
+    { field: "subject_id", collection: "subjects" },
+    { field: "teacher_id", collection: "profiles" },
+    { field: "period_id", collection: "institution_periods" },
+  ],
+  teacher_absence_requests: [{ field: "teacher_id", collection: "profiles" }],
+  teacher_sessions: [
+    { field: "class_id", collection: "classes" },
+    { field: "subject_id", collection: "subjects" },
+    { field: "teacher_id", collection: "profiles" },
+    { field: "period_id", collection: "institution_periods", optional: true },
+  ],
+  attendance_marks: [
+    { field: "session_id", collection: "teacher_sessions" },
+    { field: "student_id", collection: "students" },
+  ],
+  grade_evaluations: [
+    { field: "class_id", collection: "classes" },
+    { field: "subject_id", collection: "subjects" },
+    { field: "teacher_id", collection: "profiles", optional: true },
+    { field: "grade_period_id", collection: "grade_periods", optional: true },
+  ],
+  student_grades: [
+    { field: "evaluation_id", collection: "grade_evaluations" },
+    { field: "student_id", collection: "students" },
+  ],
+  textbook_assignments: [
+    { field: "class_id", collection: "classes" },
+    { field: "subject_id", collection: "subjects" },
+    { field: "teacher_id", collection: "profiles", optional: true },
+  ],
+  textbook_items: [{ field: "assignment_id", collection: "textbook_assignments" }],
+  textbook_sessions: [
+    { field: "assignment_id", collection: "textbook_assignments" },
+    { field: "item_id", collection: "textbook_items" },
+    { field: "teacher_id", collection: "profiles", optional: true },
+    { field: "period_id", collection: "institution_periods", optional: true },
+  ],
+  textbook_completions: [
+    { field: "assignment_id", collection: "textbook_assignments" },
+    { field: "item_id", collection: "textbook_items" },
+  ],
 };
 
 const FORBIDDEN_COLLECTION = /finance|payment|receipt|cash|payroll|expense|budget|charge|debt/i;
 
 export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult {
   const snapshot = parseBootstrapSnapshot(raw);
+  validateBootstrapDependencies(snapshot);
   const existing = db.prepare(`
-    SELECT completed_at, imported_entities, preserved_local_entities, collections_json
+    SELECT completed_at, imported_entities, preserved_local_entities, collections_json,
+           source_skipped_entities, source_diagnostics_json
     FROM sync_bootstrap_runs
     WHERE snapshot_id = ? AND institution_id = ? AND status = 'completed'
   `).get(snapshot.snapshot_id, snapshot.institution_id) as
@@ -38,6 +104,8 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         imported_entities: number;
         preserved_local_entities: number;
         collections_json: string;
+        source_skipped_entities: number;
+        source_diagnostics_json: string;
       }
     | undefined;
   if (existing) {
@@ -48,6 +116,8 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       imported_entities: Number(existing.imported_entities || 0),
       preserved_local_entities: Number(existing.preserved_local_entities || 0),
       collections: JSON.parse(existing.collections_json) as Record<string, number>,
+      source_skipped_entities: Number(existing.source_skipped_entities || 0),
+      source_diagnostics: JSON.parse(existing.source_diagnostics_json) as Record<string, unknown>,
       completed_at: existing.completed_at,
     };
   }
@@ -57,6 +127,10 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     let imported = 0;
     let preserved = 0;
     const collectionCounts: Record<string, number> = {};
+    const sourceSkippedEntities = nonNegativeInteger(
+      snapshot.diagnostics.skipped_count ?? 0,
+      "diagnostics.skipped_count",
+    );
 
     const institutionPayload = {
       ...snapshot.institution,
@@ -88,9 +162,17 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     db.prepare(`
       INSERT INTO sync_bootstrap_runs(
         snapshot_id, institution_id, generated_at, started_at, status,
-        imported_entities, preserved_local_entities, collections_json
-      ) VALUES (?, ?, ?, ?, 'running', 0, 0, '{}')
-    `).run(snapshot.snapshot_id, snapshot.institution_id, snapshot.generated_at, startedAt);
+        imported_entities, preserved_local_entities, collections_json,
+        source_skipped_entities, source_diagnostics_json
+      ) VALUES (?, ?, ?, ?, 'running', 0, 0, '{}', ?, ?)
+    `).run(
+      snapshot.snapshot_id,
+      snapshot.institution_id,
+      snapshot.generated_at,
+      startedAt,
+      sourceSkippedEntities,
+      canonicalJson(snapshot.diagnostics),
+    );
 
     for (const spec of ENTITY_SPECS) {
       if (spec.entityType === "institution") continue;
@@ -115,15 +197,20 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
 
         const serverVersion = nonNegativeInteger(row.server_version ?? 0, `${spec.collection}.server_version`);
         const occurredAt = isoText(row.updated_at ?? snapshot.generated_at, `${spec.collection}.updated_at`);
-        materializeEntity(db, {
-          institutionId: snapshot.institution_id,
-          entityType: spec.entityType,
-          entityId,
-          action: "upsert",
-          payload: row,
-          serverVersion,
-          occurredAt,
-        });
+        try {
+          materializeEntity(db, {
+            institutionId: snapshot.institution_id,
+            entityType: spec.entityType,
+            entityId,
+            action: "upsert",
+            payload: row,
+            serverVersion,
+            occurredAt,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "materialization_failed";
+          throw new Error(`bootstrap_materialization_failed:${spec.collection}:${entityId}:${message}`);
+        }
         writeSyncRecord(
           db,
           snapshot.institution_id,
@@ -154,13 +241,16 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     db.prepare(`
       UPDATE sync_bootstrap_runs
       SET status = 'completed', completed_at = ?, imported_entities = ?,
-          preserved_local_entities = ?, collections_json = ?
+          preserved_local_entities = ?, collections_json = ?,
+          source_skipped_entities = ?, source_diagnostics_json = ?
       WHERE snapshot_id = ? AND institution_id = ?
     `).run(
       completedAt,
       imported,
       preserved,
       canonicalJson(collectionCounts),
+      sourceSkippedEntities,
+      canonicalJson(snapshot.diagnostics),
       snapshot.snapshot_id,
       snapshot.institution_id,
     );
@@ -174,6 +264,8 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         imported_entities: imported,
         preserved_local_entities: preserved,
         collections: collectionCounts,
+        source_skipped_entities: sourceSkippedEntities,
+        source_diagnostics: snapshot.diagnostics,
       }),
       completedAt,
     );
@@ -185,9 +277,39 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       imported_entities: imported,
       preserved_local_entities: preserved,
       collections: collectionCounts,
+      source_skipped_entities: sourceSkippedEntities,
+      source_diagnostics: snapshot.diagnostics,
       completed_at: completedAt,
     };
   })();
+}
+
+function validateBootstrapDependencies(snapshot: BootstrapSnapshot) {
+  const idsByCollection = new Map<string, Set<string>>();
+  for (const spec of ENTITY_SPECS) {
+    if (spec.entityType === "institution") continue;
+    const ids = new Set<string>();
+    for (const row of snapshot.entities[spec.collection] ?? []) {
+      const id = String(row.id ?? "").trim();
+      if (id) ids.add(id);
+    }
+    idsByCollection.set(spec.collection, ids);
+  }
+
+  for (const [collection, rules] of Object.entries(DEPENDENCY_RULES)) {
+    for (const row of snapshot.entities[collection] ?? []) {
+      const entityId = requiredText(row.id, `${collection}.id`);
+      for (const rule of rules) {
+        const foreignId = String(row[rule.field] ?? "").trim();
+        if (!foreignId && rule.optional) continue;
+        if (!foreignId || !idsByCollection.get(rule.collection)?.has(foreignId)) {
+          throw new Error(
+            `bootstrap_dependency_missing:${collection}:${entityId}:${rule.field}:${foreignId || "null"}`,
+          );
+        }
+      }
+    }
+  }
 }
 
 function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
@@ -206,6 +328,9 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     throw new Error("institution.id_mismatch");
   }
   const rawEntities = record(root.entities ?? {}, "entities");
+  const diagnostics = root.diagnostics === undefined
+    ? {}
+    : record(root.diagnostics, "diagnostics");
   const entities: Record<string, Record<string, unknown>[]> = {};
 
   for (const [collection, value] of Object.entries(rawEntities)) {
@@ -226,6 +351,7 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     cursor,
     institution,
     entities,
+    diagnostics,
   };
 }
 

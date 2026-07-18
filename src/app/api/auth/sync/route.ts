@@ -1,7 +1,6 @@
 // src/app/api/auth/sync/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-const SECURE = process.env.NODE_ENV === "production";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -12,16 +11,26 @@ function projectRefFromUrl(url?: string | null) {
 
 type Body = { access_token?: string; refresh_token?: string };
 
+function requestUsesHttps(req: NextRequest) {
+  const forwarded = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  return (forwarded || req.nextUrl.protocol.replace(":", "")) === "https";
+}
+
 function withNoStore(res: NextResponse) {
   res.headers.set("Cache-Control", "no-store, max-age=0");
   return res;
 }
 
-function setAuthCookies(res: NextResponse, accessToken: string, refreshToken: string) {
+function setAuthCookies(
+  res: NextResponse,
+  accessToken: string,
+  refreshToken: string,
+  secure: boolean,
+) {
   const common = {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: SECURE,
+    secure,
     path: "/",
   };
 
@@ -55,25 +64,25 @@ function setAuthCookies(res: NextResponse, accessToken: string, refreshToken: st
   }
 }
 
-function clearCookie(res: NextResponse, name: string) {
+function clearCookie(res: NextResponse, name: string, secure: boolean) {
   res.cookies.set({
     name,
     value: "",
     httpOnly: true,
     sameSite: "lax",
-    secure: SECURE,
+    secure,
     path: "/",
     maxAge: 0,
   });
 }
 
-function clearReadableCookie(res: NextResponse, name: string) {
+function clearReadableCookie(res: NextResponse, name: string, secure: boolean) {
   res.cookies.set({
     name,
     value: "",
     httpOnly: false,
     sameSite: "lax",
-    secure: SECURE,
+    secure,
     path: "/",
     maxAge: 0,
   });
@@ -97,23 +106,24 @@ export async function POST(req: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true }, { status: 200 });
-  setAuthCookies(res, access_token, refresh_token);
+  setAuthCookies(res, access_token, refresh_token, requestUsesHttps(req));
   return withNoStore(res);
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
   const res = NextResponse.json({ ok: true }, { status: 200 });
+  const secure = requestUsesHttps(req);
 
-  clearCookie(res, "sb-access-token");
-  clearCookie(res, "sb-refresh-token");
+  clearCookie(res, "sb-access-token", secure);
+  clearCookie(res, "sb-refresh-token", secure);
 
   const projectRef = projectRefFromUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  if (projectRef) clearCookie(res, `sb-${projectRef}-auth-token`);
+  if (projectRef) clearCookie(res, `sb-${projectRef}-auth-token`, secure);
 
   // Évite qu'une ancienne destination lisible côté client perturbe une reconnexion.
-  clearReadableCookie(res, "mc_last_dest");
-  clearReadableCookie(res, "mc_last_dest_attendance");
-  clearReadableCookie(res, "mc_last_dest_grades");
+  clearReadableCookie(res, "mc_last_dest", secure);
+  clearReadableCookie(res, "mc_last_dest_attendance", secure);
+  clearReadableCookie(res, "mc_last_dest_grades", secure);
 
   return withNoStore(res);
 }

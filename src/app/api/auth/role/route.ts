@@ -36,6 +36,7 @@ export async function GET() {
     null;
 
   return NextResponse.json({
+    user_id: user.id,
     role: primary,
     institution_id: primaryRow?.institution_id ? String(primaryRow.institution_id) : null,
   });

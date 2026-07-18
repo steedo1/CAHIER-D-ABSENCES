@@ -2,6 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  PresenceVerificationError,
+  verifyAttendancePresence,
+} from "@/lib/attendance-presence-server";
+import type { AttendancePresenceEvidence } from "@/lib/attendance-presence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +25,7 @@ type Body = {
 
   // optionnels (debug / compat)
   client_session_id?: string | null;
+  presence?: AttendancePresenceEvidence | null;
 };
 
 async function getAuthUser() {
@@ -225,7 +231,7 @@ export async function POST(req: NextRequest) {
     }
     const started_at_in = startedDate.toISOString();
     const nowISO = new Date().toISOString();
-    const effectiveCallAt = pickEffectiveCallAt(body, started_at_in, nowISO);
+    let effectiveCallAt = pickEffectiveCallAt(body, started_at_in, nowISO);
 
     const svc = getSupabaseServiceClient();
 
@@ -241,6 +247,27 @@ export async function POST(req: NextRequest) {
         { error: "Classe introuvable pour démarrer la séance." },
         { status: 400 }
       );
+    }
+
+    let presence;
+    try {
+      presence = await verifyAttendancePresence({
+        service: svc,
+        institutionId: String(cls.institution_id),
+        actorProfileId: user.id,
+        clientSessionId: String(body.client_session_id || "").trim(),
+        evidence: body.presence,
+        now: new Date(nowISO),
+      });
+      if (presence.effective_call_at) effectiveCallAt = presence.effective_call_at;
+    } catch (error) {
+      if (error instanceof PresenceVerificationError) {
+        return NextResponse.json(
+          { error: error.code, message: error.message, details: error.details || null },
+          { status: error.status },
+        );
+      }
+      throw error;
     }
 
     /* 2) Résoudre subject_id → institution_subjects.id (instSubjectId) */
@@ -434,6 +461,12 @@ export async function POST(req: NextRequest) {
           subject_id,
           started_at,
           actual_call_at,
+          presence_verified,
+          presence_method,
+          presence_zone_id,
+          presence_distance_m,
+          presence_accuracy_m,
+          presence_checked_at,
           expected_minutes,
           classes!inner ( label ),
           institution_subjects!teacher_sessions_subject_id_fkey (
@@ -460,6 +493,12 @@ export async function POST(req: NextRequest) {
         subject_id: instSubjectId,
         started_at, // canonique (= début de créneau)
         expected_minutes: resolved_expected_minutes,
+        presence_verified: presence.verified,
+        presence_method: presence.method,
+        presence_zone_id: presence.zone_id,
+        presence_distance_m: presence.distance_m,
+        presence_accuracy_m: presence.accuracy_m,
+        presence_checked_at: presence.checked_at,
       };
       if (!best.actual_call_at) patch.actual_call_at = effectiveCallAt;
 
@@ -490,6 +529,8 @@ export async function POST(req: NextRequest) {
           null,
         started_at: session.started_at as string, // début de créneau
         actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
+        presence_method: (session as any).presence_method as string | null,
+        presence_distance_m: (session as any).presence_distance_m as number | null,
         expected_minutes: session.expected_minutes as number | null,
       };
 
@@ -508,6 +549,12 @@ export async function POST(req: NextRequest) {
         started_at, // début de créneau
         expected_minutes: resolved_expected_minutes,
         actual_call_at: effectiveCallAt, // ✅ heure effective (offline-friendly)
+        presence_verified: presence.verified,
+        presence_method: presence.method,
+        presence_zone_id: presence.zone_id,
+        presence_distance_m: presence.distance_m,
+        presence_accuracy_m: presence.accuracy_m,
+        presence_checked_at: presence.checked_at,
       })
       .select(
         `
@@ -516,6 +563,12 @@ export async function POST(req: NextRequest) {
         subject_id,
         started_at,
         actual_call_at,
+        presence_verified,
+        presence_method,
+        presence_zone_id,
+        presence_distance_m,
+        presence_accuracy_m,
+        presence_checked_at,
         expected_minutes,
         classes!inner ( label ),
         institution_subjects!teacher_sessions_subject_id_fkey (
@@ -589,6 +642,8 @@ export async function POST(req: NextRequest) {
         null,
       started_at: session.started_at as string, // créneau
       actual_call_at: (session as any).actual_call_at as string | null, // ✅ heure effective
+      presence_method: (session as any).presence_method as string | null,
+      presence_distance_m: (session as any).presence_distance_m as number | null,
       expected_minutes: session.expected_minutes as number | null,
     };
 

@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import { adminDashboard } from "../src/admin-dashboard.mjs";
 import { attendanceMonitor } from "../src/attendance-monitor.mjs";
 import { founderAttendanceSlots } from "../src/attendance-slots.mjs";
+import { issueAttendancePresenceProof } from "../src/presence-proof.mjs";
 import { loadRelayConfig } from "../src/config.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
 import { createRelayServer } from "../src/server.mjs";
 import { RelayStore } from "../src/store.mjs";
 import { SYNC_PROTOCOL_VERSION } from "../src/types.mjs";
+
+function attendanceRelayAccessToken(secret: string, actorProfileId: string, now: Date) {
+  const payload = {
+    v: 1,
+    purpose: "attendance_relay_access",
+    institution_id: "inst-1",
+    actor_profile_id: actorProfileId,
+    issued_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return `${encoded}.${createHmac("sha256", secret).update(encoded).digest("base64url")}`;
+}
 
 test("la migration crée le domaine pédagogique sans finance", () => {
   const db = openRelayDatabase(":memory:");
@@ -197,6 +212,62 @@ test("une écoute LAN est refusée sans jeton", () => {
   );
 });
 
+test("le relais signe une preuve de présence liée au compte enseignant et à la séance", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const snapshot = bootstrapFixture("snapshot-presence", "Mme Présente") as any;
+  const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const now = new Date("2026-07-13T08:05:00.000Z");
+  snapshot.institution.settings_json = {
+    attendance_presence: {
+      enabled: true,
+      allow_local_relay: true,
+      relay_presence_secret: secret,
+      relay_proof_ttl_seconds: 180,
+    },
+  };
+  store.bootstrap(snapshot);
+
+  const result = issueAttendancePresenceProof(
+    db,
+    {
+      institution_id: "inst-1",
+      actor_profile_id: "teacher-1",
+      client_session_id: "class-1_math_2026-07-13T08:00:00.000Z",
+      access_token: attendanceRelayAccessToken(secret, "teacher-1", now),
+    },
+    now,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.method, "local_relay");
+  assert.equal(result.proof.split(".").length, 2);
+  const payload = JSON.parse(
+    Buffer.from(result.proof.split(".")[0] || "", "base64url").toString("utf8"),
+  ) as any;
+  assert.equal(payload.institution_id, "inst-1");
+  assert.equal(payload.actor_profile_id, "teacher-1");
+  assert.equal(payload.client_session_id, "class-1_math_2026-07-13T08:00:00.000Z");
+  assert.throws(
+    () => issueAttendancePresenceProof(db, {
+      institution_id: "inst-1",
+      actor_profile_id: "teacher-inconnu",
+      client_session_id: "session-2",
+      access_token: attendanceRelayAccessToken(secret, "teacher-inconnu", now),
+    }, now),
+    /teacher_not_paired_with_relay/,
+  );
+  assert.throws(
+    () => issueAttendancePresenceProof(db, {
+      institution_id: "inst-1",
+      actor_profile_id: "teacher-1",
+      client_session_id: "session-3",
+      access_token: `${attendanceRelayAccessToken(secret, "teacher-1", now)}corrompu`,
+    }, now),
+    /relay_access_token_signature_invalid/,
+  );
+  db.close();
+});
+
 
 test("le bootstrap Cloud peuple SQLite et le dashboard Admin local", () => {
   const db = openRelayDatabase(":memory:");
@@ -335,6 +406,62 @@ test("le relais autorise le prévol navigateur et l'accès réseau local", async
     assert.equal(response.status, 204);
     assert.equal(response.headers.get("access-control-allow-origin"), "https://mon-cahier.com");
     assert.equal(response.headers.get("access-control-allow-private-network"), "true");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});
+
+test("l'API de présence accepte uniquement l'accès enseignant signé sans exposer le jeton Admin", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const secret = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  const snapshot = bootstrapFixture("snapshot-presence-api", "Mme API Présence") as any;
+  snapshot.institution.settings_json = {
+    attendance_presence: {
+      enabled: true,
+      allow_local_relay: true,
+      relay_presence_secret: secret,
+      relay_proof_ttl_seconds: 180,
+    },
+  };
+  store.bootstrap(snapshot);
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "secret-admin-local",
+  }, store);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const now = new Date();
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/attendance/presence-proof`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        institution_id: "inst-1",
+        actor_profile_id: "teacher-1",
+        client_session_id: "session-api-1",
+        access_token: attendanceRelayAccessToken(secret, "teacher-1", now),
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.method, "local_relay");
+
+    const refused = await fetch(`http://127.0.0.1:${address.port}/v1/attendance/presence-proof`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        institution_id: "inst-1",
+        actor_profile_id: "teacher-1",
+        client_session_id: "session-api-2",
+        access_token: "jeton-invalide",
+      }),
+    });
+    assert.equal(refused.status, 400);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     db.close();

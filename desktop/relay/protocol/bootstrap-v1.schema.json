@@ -19,6 +19,27 @@
     "generated_at": { "type": "string", "format": "date-time" },
     "cursor": { "type": ["string", "null"] },
     "institution": { "$ref": "#/$defs/entity" },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "skipped_count": { "type": "integer", "minimum": 0 },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["collection", "entity_id", "field", "reference_id"],
+            "properties": {
+              "collection": { "type": "string" },
+              "entity_id": { "type": "string" },
+              "field": { "type": "string" },
+              "reference_id": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
     "entities": {
       "type": "object",
       "additionalProperties": false,

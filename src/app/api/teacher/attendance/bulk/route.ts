@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
   // 1) Charger la séance (+ started_at pour cohérence)
   const { data: sess, error: sErr } = await srv
     .from("teacher_sessions")
-    .select("id, class_id, teacher_id, expected_minutes, actual_call_at, started_at")
+    .select("id, class_id, teacher_id, expected_minutes, actual_call_at, started_at, presence_verified, presence_method")
     .eq("id", session_id)
     .maybeSingle();
 
@@ -145,10 +145,13 @@ export async function POST(req: NextRequest) {
     expected_minutes: number | null;
     actual_call_at: string | null;
     started_at: string | null;
+    presence_verified: boolean | null;
+    presence_method: string | null;
   };
 
   // 2) Autorisation (prof de la séance ou téléphone de classe)
   let allowed = session.teacher_id === user.id;
+  let classDeviceAuthorized = false;
 
   if (!allowed) {
     let phone = String((user as any).phone || "").trim();
@@ -174,6 +177,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       allowed = !!cls;
+      classDeviceAuthorized = !!cls;
     }
   }
 
@@ -195,6 +199,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "class_institution_missing" },
       { status: 400 }
+    );
+  }
+
+  const { data: presencePolicy, error: presencePolicyError } = await srv
+    .from("institution_attendance_policies")
+    .select("enabled,teacher_accounts_only")
+    .eq("institution_id", clsRow.institution_id)
+    .maybeSingle();
+  const presenceMigrationMissing = (presencePolicyError as any)?.code === "42P01";
+  if (presencePolicyError && !presenceMigrationMissing) {
+    return NextResponse.json({ error: presencePolicyError.message }, { status: 500 });
+  }
+  if (
+    presencePolicy?.enabled === true &&
+    presencePolicy.teacher_accounts_only !== false &&
+    !classDeviceAuthorized &&
+    session.presence_verified !== true
+  ) {
+    return NextResponse.json(
+      {
+        error: "attendance_presence_not_verified",
+        message: "Enregistrement refusé : la présence dans l'établissement n'a pas été vérifiée pour cette séance.",
+      },
+      { status: 403 },
     );
   }
 
