@@ -1,0 +1,27 @@
+{
+  "name": "@moncahier/desktop-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Relais local SQLite pour Mon Cahier Desktop",
+  "engines": {
+    "node": ">=20 <27"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "verify": "npm run typecheck && npm test",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/src/cli.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.11.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.13.3",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moncahier.app/schemas/relay-sync-v1.schema.json",
+  "title": "Mon Cahier Relay Sync v1",
+  "oneOf": [
+    { "$ref": "#/$defs/localOperation" },
+    { "$ref": "#/$defs/remoteEvent" }
+  ],
+  "$defs": {
+    "entityType": {
+      "type": "string",
+      "enum": [
+        "institution",
+        "academic_year",
+        "profile",
+        "user_role",
+        "class",
+        "subject",
+        "teacher_subject",
+        "student",
+        "class_enrollment",
+        "institution_period",
+        "teacher_timetable",
+        "teacher_absence_request",
+        "teacher_session",
+        "attendance_mark",
+        "grade_period",
+        "grade_evaluation",
+        "student_grade",
+        "textbook_assignment",
+        "textbook_item",
+        "textbook_session",
+        "textbook_completion",
+        "offline_document"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "enum": ["upsert", "delete"]
+    },
+    "payload": {
+      "oneOf": [
+        { "type": "object" },
+        { "type": "null" }
+      ]
+    },
+    "localOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "operation_id",
+        "institution_id",
+        "device_id",
+        "entity_type",
+        "entity_id",
+        "action",
+        "base_server_version",
+        "occurred_at",
+        "payload"
+      ],
+      "properties": {
+        "protocol_version": { "const": 1 },
+        "operation_id": { "type": "string", "minLength": 1 },
+        "institution_id": { "type": "string", "minLength": 1 },
+        "device_id": { "type": "string", "minLength": 1 },
+        "actor_profile_id": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "entity_type": { "$ref": "#/$defs/entityType" },
+        "entity_id": { "type": "string", "minLength": 1 },
+        "action": { "$ref": "#/$defs/action" },
+        "base_server_version": { "type": "integer", "minimum": 0 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "delete" } } },
+          "then": { "properties": { "payload": { "type": "null" } } },
+          "else": { "properties": { "payload": { "type": "object" } } }
+        }
+      ]
+    },
+    "remoteEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "event_id",
+        "institution_id",
+        "entity_type",
+        "entity_id",
+        "action",
+        "server_version",
+        "occurred_at",
+        "payload"
+      ],
+      "properties": {
+        "protocol_version": { "const": 1 },
+        "event_id": { "type": "string", "minLength": 1 },
+        "caused_by_operation_id": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "institution_id": { "type": "string", "minLength": 1 },
+        "entity_type": { "$ref": "#/$defs/entityType" },
+        "entity_id": { "type": "string", "minLength": 1 },
+        "action": { "$ref": "#/$defs/action" },
+        "server_version": { "type": "integer", "minimum": 0 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "payload": { "$ref": "#/$defs/payload" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "delete" } } },
+          "then": { "properties": { "payload": { "type": "null" } } },
+          "else": { "properties": { "payload": { "type": "object" } } }
+        }
+      ]
+    }
+  }
+}
