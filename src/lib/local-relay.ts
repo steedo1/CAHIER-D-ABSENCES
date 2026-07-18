@@ -24,7 +24,10 @@ const RELAY_TOKEN_KEY = "moncahier:relay:token";
 const INSTITUTION_ID_KEY = "moncahier:relay:institution-id";
 const LAST_BOOTSTRAP_KEY = "moncahier:relay:last-bootstrap-at";
 const BOOTSTRAP_THROTTLE_MS = 5 * 60 * 1000;
-const RELAY_TIMEOUT_MS = 2_500;
+const RELAY_TIMEOUT_MS = 5_000;
+const RELAY_PERMISSION_TIMEOUT_MS = 15_000;
+const RELAY_BOOTSTRAP_TIMEOUT_MS = 60_000;
+const RELAY_PRESENCE_TIMEOUT_MS = 5_000;
 let bootstrapInFlight: Promise<any> | null = null;
 
 function browser() {
@@ -43,6 +46,19 @@ function normalizeBaseUrl(raw: string) {
   } catch {
     return fallback;
   }
+}
+
+type RelayTargetAddressSpace = "local" | "loopback";
+
+function relayTargetAddressSpace(baseUrl: string): RelayTargetAddressSpace {
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  const loopback =
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    /^127(?:\.|$)/.test(hostname);
+  return loopback ? "loopback" : "local";
 }
 
 export function getRelayConfig(): RelayConfig {
@@ -87,7 +103,10 @@ export async function clearRelayUserState() {
 
 function mergeSignals(external?: AbortSignal, timeoutMs = RELAY_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort("relay_timeout"), timeoutMs);
+  const timeout = window.setTimeout(
+    () => controller.abort(new Error("Le relais local n'a pas répondu dans le délai prévu.")),
+    timeoutMs,
+  );
   const onAbort = () => controller.abort(external?.reason || "aborted");
   external?.addEventListener("abort", onAbort, { once: true });
   return {
@@ -112,11 +131,16 @@ async function safeJson(response: Response) {
 async function relayJson<T>(
   path: string,
   init: RequestInit = {},
-  options: { baseUrl?: string; includeConfiguredToken?: boolean } = {},
+  options: {
+    baseUrl?: string;
+    includeConfiguredToken?: boolean;
+    timeoutMs?: number;
+  } = {},
 ): Promise<T> {
   if (!browser()) throw new Error("relay_browser_only");
   const config = getRelayConfig();
-  const merged = mergeSignals(init.signal || undefined);
+  const baseUrl = normalizeBaseUrl(options.baseUrl || config.baseUrl);
+  const merged = mergeSignals(init.signal || undefined, options.timeoutMs);
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
   if (options.includeConfiguredToken !== false && config.token) {
@@ -125,16 +149,15 @@ async function relayJson<T>(
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
   try {
-    const relayRequest: RequestInit & { targetAddressSpace?: "local" } = {
+    const relayRequest: RequestInit & { targetAddressSpace?: RelayTargetAddressSpace } = {
       ...init,
       headers,
       signal: merged.signal,
       cache: "no-store",
       credentials: "omit",
       mode: "cors",
-      targetAddressSpace: "local",
+      targetAddressSpace: relayTargetAddressSpace(baseUrl),
     };
-    const baseUrl = normalizeBaseUrl(options.baseUrl || config.baseUrl);
     const response = await fetch(`${baseUrl}${path}`, relayRequest as RequestInit);
     const payload = await safeJson(response);
     if (!response.ok) throw new Error(String(payload?.error || `RELAY_HTTP_${response.status}`));
@@ -382,12 +405,16 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
 
   bootstrapInFlight = (async () => {
     try {
-      await relayJson<{ ok: boolean }>("/health");
+      await relayJson<{ ok: boolean }>("/health", {}, {
+        timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
+      });
       const snapshot = await cloudJson<any>("/api/admin/offline/bootstrap");
       rememberRelayInstitution(snapshot?.institution_id);
       const result = await relayJson<any>("/v1/sync/bootstrap", {
         method: "POST",
         body: JSON.stringify(snapshot),
+      }, {
+        timeoutMs: RELAY_BOOTSTRAP_TIMEOUT_MS,
       });
       window.localStorage.setItem(LAST_BOOTSTRAP_KEY, String(Date.now()));
       return { ok: true, result };
@@ -425,5 +452,6 @@ export async function requestRelayAttendancePresenceProof(input: {
   }, {
     baseUrl: input.baseUrl,
     includeConfiguredToken: false,
+    timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
   });
 }
