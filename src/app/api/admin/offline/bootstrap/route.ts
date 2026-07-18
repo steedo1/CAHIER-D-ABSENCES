@@ -143,17 +143,22 @@ export async function GET(request: NextRequest) {
       throw new Error(`institution:${institution.error?.message || "not_found"}`);
     }
 
-    // Un administrateur/fondateur peut intervenir dans l'établissement via
-    // user_roles tout en gardant un autre institution_id principal sur son
-    // profil. Le relais exige que chaque rôle arrive avec son profil dans le
-    // même bootstrap : on complète donc explicitement les profils référencés.
+    // Un profil peut être rattaché à l'établissement par une table pédagogique
+    // tout en gardant un autre institution_id principal. Le relais exige que
+    // chaque référence enseignante arrive avec son profil dans le même
+    // bootstrap : on complète donc toute la fermeture des dépendances profils.
     const knownProfileIds = new Set(profiles.map((row) => text(row.id)).filter(Boolean));
-    const missingRoleProfileIds = Array.from(new Set(
-      userRoles
-        .map((row) => text(row.profile_id))
-        .filter((profileId) => profileId && !knownProfileIds.has(profileId)),
+    const referencedProfileIds = [
+      ...userRoles.map((row) => text(row.profile_id)),
+      ...teacherSubjects.map((row) => text(row.profile_id)),
+      ...timetables.map((row) => text(row.teacher_id)),
+      ...absenceRequests.map((row) => text(row.teacher_profile_id)),
+      ...sessions.map((row) => text(row.teacher_id)),
+    ].filter(Boolean);
+    const missingProfileIds = Array.from(new Set(
+      referencedProfileIds.filter((profileId) => !knownProfileIds.has(profileId)),
     ));
-    const roleProfiles = await selectProfilesByIds(srv, missingRoleProfileIds);
+    const roleProfiles = await selectProfilesByIds(srv, missingProfileIds);
     const relayProfiles = Array.from(
       new Map(
         [...profiles, ...roleProfiles].map((row) => [text(row.id), {
