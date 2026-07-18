@@ -7,6 +7,17 @@ import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-serv
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type AttendancePresencePolicyRow = {
+  enabled?: boolean | null;
+  teacher_accounts_only?: boolean | null;
+  allow_local_relay?: boolean | null;
+  allow_gps_fallback?: boolean | null;
+  relay_local_url?: string | null;
+  max_gps_accuracy_m?: number | null;
+  gps_grace_m?: number | null;
+  relay_presence_secret?: string | null;
+};
+
 export async function GET() {
   // ✅ IMPORTANT : attendre le client
   const supabase = await getSupabaseServerClient();
@@ -96,7 +107,7 @@ export async function GET() {
     return NextResponse.json({ error: rolesResult.error.message }, { status: 500 });
   }
 
-  const presencePolicy = policyResult.data || {};
+  const presencePolicy = (policyResult.data || {}) as AttendancePresencePolicyRow;
   const isTeacher =
     String((prof as any)?.role || "") === "teacher" ||
     (rolesResult.data || []).some((row: any) => String(row.role || "") === "teacher");
