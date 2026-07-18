@@ -69,7 +69,7 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-const SW_BUILD = "2026-07-17-offline-consultation-v4";
+const SW_BUILD = "2026-07-18-relay-fallback-v1";
 export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { adminDashboard } from "../src/admin-dashboard.mjs";
 import { attendanceMonitor } from "../src/attendance-monitor.mjs";
+import { founderAttendanceSlots } from "../src/attendance-slots.mjs";
 import { loadRelayConfig } from "../src/config.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
 import { createRelayServer } from "../src/server.mjs";
@@ -292,6 +293,53 @@ test("le bootstrap refuse explicitement toute collection financière", () => {
   db.close();
 });
 
+
+
+test("la vue Founder locale classe le créneau courant depuis SQLite", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  store.bootstrap(bootstrapFixture("snapshot-founder", "Mme Locale"));
+  const payload = founderAttendanceSlots(db, {
+    institutionId: "inst-1",
+    now: new Date("2026-07-13T08:30:00.000Z"),
+  });
+  assert.equal(payload.source, "relay");
+  assert.equal(payload.totals.activeSchools, 1);
+  assert.equal(payload.totals.expected, 1);
+  assert.equal(payload.totals.present, 1);
+  assert.equal(payload.rows[0]?.periodState, "current");
+  db.close();
+});
+
+test("le relais autorise le prévol navigateur et l'accès réseau local", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "secret-local",
+  }, store);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/status`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://mon-cahier.com",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Private-Network": "true",
+      },
+    });
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get("access-control-allow-origin"), "https://mon-cahier.com");
+    assert.equal(response.headers.get("access-control-allow-private-network"), "true");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});
 
 test("l'API locale expose le dashboard Admin protégé par le jeton", async () => {
   const db = openRelayDatabase(":memory:");

@@ -20,7 +20,7 @@ export async function GET() {
 
   const { data: rows, error: rolesErr } = await supabase
     .from("user_roles")
-    .select("role")
+    .select("role,institution_id")
     .eq("profile_id", user.id);
 
   if (rolesErr) {
@@ -30,6 +30,13 @@ export async function GET() {
 
   const roles = (rows ?? []).map((r: any) => r.role as AppRole);
   const primary = ROLE_PRIORITY.find((r) => roles.includes(r)) ?? roles[0] ?? null;
+  const primaryRow =
+    (rows ?? []).find((row: any) => row.role === primary && row.institution_id) ||
+    (rows ?? []).find((row: any) => row.institution_id) ||
+    null;
 
-  return NextResponse.json({ role: primary });
+  return NextResponse.json({
+    role: primary,
+    institution_id: primaryRow?.institution_id ? String(primaryRow.institution_id) : null,
+  });
 }

@@ -11,6 +11,7 @@ import {
   Hourglass,
   Loader2,
 } from "lucide-react";
+import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
 
 type MonitorStatus =
   | "missing"
@@ -170,6 +171,7 @@ export default function AppelsMatricePage() {
     error: null,
     data: null,
   });
+  const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
 
   const [now, setNow] = useState<Date>(() => new Date());
   const today = useMemo(() => toLocalDateInputValue(now), [now]);
@@ -193,25 +195,16 @@ export default function AppelsMatricePage() {
     }));
 
     try {
-      const qs = new URLSearchParams({ from: today, to: today });
-      const res = await fetch(`/api/admin/attendance/monitor?${qs.toString()}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        throw new Error(
-          `API /api/admin/attendance/monitor non disponible (HTTP ${res.status}).`
-        );
-      }
-
-      const json = await res.json().catch(() => null);
-      const rows = (json?.rows || []) as MonitorRow[];
-
+      const result = await fetchAdminAttendanceMonitor<MonitorRow>(
+        today,
+        today,
+        controller.signal,
+      );
+      setDataSource(result.source);
       setRowsState({
         loading: false,
         error: null,
-        data: rows,
+        data: result.data.rows || [],
       });
     } catch (e: any) {
       if (e?.name === "AbortError") {
@@ -435,6 +428,15 @@ export default function AppelsMatricePage() {
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
               Vue panoramique
             </p>
+            <div className={`mb-2 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold ${
+              dataSource === "cloud"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : dataSource === "relay"
+                ? "border-sky-200 bg-sky-50 text-sky-700"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+            }`}>
+              {dataSource === "cloud" ? "Cloud" : dataSource === "relay" ? "Relais local" : "Dernière vue locale"}
+            </div>
             <h1 className="mt-1 text-2xl font-semibold text-slate-900">
               Appels par créneau — Tableau de classes
             </h1>

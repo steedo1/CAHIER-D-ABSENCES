@@ -119,3 +119,35 @@ Le Cloud conserve `operation_id` et le renvoie dans
 `caused_by_operation_id` : le relais reconnaît ainsi un accusé de réception même
 si la réponse HTTP initiale a été perdue. Toute modification concurrente
 différente devient un conflit visible et n'est jamais écrasée silencieusement.
+
+## Raccordement navigateur au relais
+
+Le navigateur Admin contacte directement le relais local lorsqu'une lecture Cloud
+échoue. L'ordre de lecture est : Cloud, relais SQLite, puis dernière réponse mise
+en cache dans la PWA. Quand le Cloud répond, le navigateur transmet aussi un
+bootstrap pédagogique au relais afin de garder SQLite à jour.
+
+Routes supplémentaires :
+
+- `GET /v1/founder/attendance-slots?institution_id=...` : vue par créneau de
+  l'établissement local, compatible avec l'écran Founder ;
+- `OPTIONS /*` : prévol CORS pour l'accès depuis l'application web ou Tauri.
+
+Origines autorisées par défaut :
+
+- `https://mon-cahier.com` ;
+- `https://www.mon-cahier.com` ;
+- `http://localhost:3000` ;
+- `http://127.0.0.1:3000` ;
+- `http://tauri.localhost` ;
+- `tauri://localhost`.
+
+Pour une autre adresse de déploiement, définir une liste séparée par des virgules :
+
+```powershell
+$env:MONCAHIER_RELAY_ALLOWED_ORIGINS = "https://votre-domaine.ci,http://localhost:3000"
+```
+
+Dans le navigateur, l'URL et le jeton du relais sont enregistrés localement sous
+les clés `moncahier:relay:url` et `moncahier:relay:token`. Le jeton n'est jamais
+envoyé au Cloud : il sert uniquement aux requêtes directes vers le PC relais.

@@ -22,6 +22,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  fetchDashboardMetrics,
+  fetchInstitutionSettings,
+  syncRelayBootstrap,
+  type LocalDataSource,
+} from "@/lib/local-relay";
 
 /* ─────────────────────────────
    Types d'API
@@ -276,6 +282,7 @@ export default function AdminDashboardClient() {
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
   const [role, setRole] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
@@ -283,11 +290,11 @@ export default function AdminDashboardClient() {
   async function load(d: DaysRange = days) {
     try {
       setRefreshing(true);
-      const r = await fetch(`/api/admin/dashboard/metrics?days=${d}`, { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || `HTTP_${r.status}`);
-      setData(j);
-      setUpdatedAt(new Date());
+      const result = await fetchDashboardMetrics<MetricsOk | MetricsErr>(d);
+      setData(result.data);
+      setDataSource(result.source);
+      setUpdatedAt(new Date(result.saved_at));
+      if (result.source === "cloud") void syncRelayBootstrap();
     } catch (e: any) {
       setData({ ok: false, error: e?.message ?? "NETWORK_ERROR" });
     } finally {
@@ -321,36 +328,29 @@ export default function AdminDashboardClient() {
 
     (async () => {
       try {
-        const [rMetrics, rInst] = await Promise.all([
-          fetch(`/api/admin/dashboard/metrics?days=${days}`, { cache: "no-store" }),
-          fetch(`/api/admin/institution/settings`, { cache: "no-store" }),
+        const [metricsResult, institutionResult] = await Promise.all([
+          fetchDashboardMetrics<MetricsOk | MetricsErr>(days),
+          fetchInstitutionSettings<Record<string, any>>(),
         ]);
-
-        const metricsJson = await rMetrics.json().catch(() => ({}));
-        const instJson = await rInst.json().catch(() => ({}));
 
         if (!alive) return;
 
-        if (!rMetrics.ok) {
-          throw new Error(metricsJson?.error || `HTTP_${rMetrics.status}`);
-        }
+        setData(metricsResult.data);
+        setDataSource(metricsResult.source);
+        setUpdatedAt(new Date(metricsResult.saved_at));
 
-        setData(metricsJson as MetricsOk | MetricsErr);
-        setUpdatedAt(new Date());
+        const instJson = institutionResult.data;
+        const name = String(instJson?.institution_name || "").trim();
+        const logo =
+          typeof instJson?.institution_logo_url === "string"
+            ? instJson.institution_logo_url
+            : "";
+        setInstitution({
+          name: name || "Votre établissement",
+          logo_url: logo || null,
+        });
 
-        if (rInst.ok) {
-          const name = String(instJson?.institution_name || "").trim();
-          const logo =
-            typeof instJson?.institution_logo_url === "string"
-              ? instJson.institution_logo_url
-              : "";
-          setInstitution({
-            name: name || "Votre établissement",
-            logo_url: logo || null,
-          });
-        } else {
-          setInstitution(null);
-        }
+        if (metricsResult.source === "cloud") void syncRelayBootstrap();
       } catch (e: any) {
         if (!alive) return;
         setData({ ok: false, error: e?.message ?? "NETWORK_ERROR" });
@@ -474,6 +474,23 @@ export default function AdminDashboardClient() {
               </Button>
             </div>
           </div>
+        </div>
+
+        <div className="relative z-10 mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold">
+          <span className={`rounded-full border px-3 py-1 ${
+            dataSource === "cloud"
+              ? "border-white/40 bg-white/20 text-white"
+              : dataSource === "relay"
+              ? "border-sky-100 bg-sky-50 text-sky-800"
+              : "border-amber-100 bg-amber-50 text-amber-900"
+          }`}>
+            {dataSource === "cloud"
+              ? "Cloud connecté"
+              : dataSource === "relay"
+              ? "Relais local actif"
+              : "Dernière vue locale connue"}
+          </span>
+          {updatedAt && <span className="text-white/90">Actualisé à {updatedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>}
         </div>
 
         {/* État d'erreur */}

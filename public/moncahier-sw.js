@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-17-offline-consultation-v4";
+const VERSION = "2026-07-18-relay-fallback-v1";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
@@ -13,6 +13,10 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/parents",
   "/admin/bulletins",
   "/admin/communication",
+  "/admin/dashboard",
+  "/admin/absences/appels",
+  "/admin/absences/appels-matrice",
+  "/founder/attendance-slots",
 ]);
 
 function isOfflinePagePath(pathname) {
@@ -65,6 +69,7 @@ async function navigationResponse(request) {
   const cache = await caches.open(SHELL_CACHE);
   try {
     const response = await fetchWithTimeout(request);
+    if (response.status >= 500) throw new Error(`HTTP_${response.status}`);
     if (isCacheable(response)) await cache.put(request, response.clone());
     return response;
   } catch {
@@ -178,6 +183,29 @@ async function warmDocument(rawUrl) {
 }
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "MON_CAHIER_PURGE_ADMIN_LOCAL") {
+    event.waitUntil(
+      (async () => {
+        const cache = await caches.open(SHELL_CACHE);
+        const requests = await cache.keys();
+        const protectedPaths = new Set([
+          "/admin/dashboard",
+          "/admin/absences/appels",
+          "/admin/absences/appels-matrice",
+          "/founder/attendance-slots",
+        ]);
+        await Promise.all(
+          requests.map((request) =>
+            protectedPaths.has(new URL(request.url).pathname)
+              ? cache.delete(request)
+              : Promise.resolve(false)
+          )
+        );
+      })()
+    );
+    return;
+  }
+
   if (event.data?.type === "MON_CAHIER_PURGE_PARENT") {
     event.waitUntil(
       (async () => {

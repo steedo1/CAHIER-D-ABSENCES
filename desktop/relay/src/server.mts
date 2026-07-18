@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { adminDashboard } from "./admin-dashboard.mjs";
 import { attendanceMonitor } from "./attendance-monitor.mjs";
+import { founderAttendanceSlots } from "./attendance-slots.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
@@ -11,6 +12,12 @@ const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 export function createRelayServer(config: RelayConfig, store: RelayStore) {
   return createServer(async (request, response) => {
     secureHeaders(response);
+    applyCors(request, response);
+    if (request.method === "OPTIONS") {
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     try {
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       if (request.method === "GET" && url.pathname === "/health") {
@@ -57,6 +64,10 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
           rows: attendanceMonitor(store.db, { institutionId, from, to }),
         });
       }
+      if (request.method === "GET" && url.pathname === "/v1/founder/attendance-slots") {
+        const institutionId = requiredParam(url, "institution_id");
+        return json(response, 200, founderAttendanceSlots(store.db, { institutionId }));
+      }
       return json(response, 404, { error: "not_found" });
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 400;
@@ -98,6 +109,33 @@ async function readJson(
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     throw new HttpError(400, "invalid_json");
+  }
+}
+
+function applyCors(request: IncomingMessage, response: ServerResponse) {
+  const origin = String(request.headers.origin || "").trim();
+  if (!origin) return;
+  const configured = String(process.env.MONCAHIER_RELAY_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const defaults = [
+    "https://mon-cahier.com",
+    "https://www.mon-cahier.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://tauri.localhost",
+    "tauri://localhost",
+  ];
+  const allowed = new Set(configured.length ? configured : defaults);
+  if (!allowed.has(origin)) return;
+  response.setHeader("Access-Control-Allow-Origin", origin);
+  response.setHeader("Vary", "Origin");
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,Accept");
+  response.setHeader("Access-Control-Max-Age", "600");
+  if (String(request.headers["access-control-request-private-network"] || "") === "true") {
+    response.setHeader("Access-Control-Allow-Private-Network", "true");
   }
 }
 
