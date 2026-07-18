@@ -59,6 +59,22 @@ async function selectRows(query: any, label: string) {
   return (data || []) as any[];
 }
 
+async function selectProfilesByIds(srv: any, ids: string[]) {
+  const result: any[] = [];
+  for (let index = 0; index < ids.length; index += 500) {
+    const batch = ids.slice(index, index + 500);
+    if (!batch.length) continue;
+    result.push(...await selectRows(
+      srv
+        .from("profiles")
+        .select("id,institution_id,display_name,email,phone")
+        .in("id", batch),
+      "profiles_by_role",
+    ));
+  }
+  return result;
+}
+
 export async function GET(request: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -127,6 +143,26 @@ export async function GET(request: NextRequest) {
       throw new Error(`institution:${institution.error?.message || "not_found"}`);
     }
 
+    // Un administrateur/fondateur peut intervenir dans l'établissement via
+    // user_roles tout en gardant un autre institution_id principal sur son
+    // profil. Le relais exige que chaque rôle arrive avec son profil dans le
+    // même bootstrap : on complète donc explicitement les profils référencés.
+    const knownProfileIds = new Set(profiles.map((row) => text(row.id)).filter(Boolean));
+    const missingRoleProfileIds = Array.from(new Set(
+      userRoles
+        .map((row) => text(row.profile_id))
+        .filter((profileId) => profileId && !knownProfileIds.has(profileId)),
+    ));
+    const roleProfiles = await selectProfilesByIds(srv, missingRoleProfileIds);
+    const relayProfiles = Array.from(
+      new Map(
+        [...profiles, ...roleProfiles].map((row) => [text(row.id), {
+          ...row,
+          institution_id: institutionId,
+        }]),
+      ).values(),
+    );
+
     const optionalMigrationMissing =
       (attendancePolicy.error as any)?.code === "42P01" ||
       (attendanceZones.error as any)?.code === "42P01";
@@ -168,7 +204,7 @@ export async function GET(request: NextRequest) {
       }, generatedAt),
       entities: {
         academic_years: academicYears.map((row) => withMeta(row, generatedAt)),
-        profiles: profiles.map((row) => withMeta({ ...row, is_active: true }, generatedAt)),
+        profiles: relayProfiles.map((row) => withMeta({ ...row, is_active: true }, generatedAt)),
         user_roles: relayUserRoles(userRoles, institutionId, generatedAt),
         classes: classes.map((row) => withMeta(row, generatedAt)),
         subjects: subjectRows.map((row) => {
