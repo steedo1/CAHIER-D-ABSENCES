@@ -3,28 +3,21 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 type ItemOut = {
   class_id: string;
   class_label: string;
   level: string;
-  subject_id: string | null;   // id canonique subjects.id si possible
+  subject_id: string | null;
   subject_name: string | null;
-};
-
-type ClassTeacherRaw = {
-  class_id: string;
-  subject_id: string | null; // parfois institution_subjects.id, parfois subjects.id
-  classes: {
-    label?: string | null;
-    level?: string | null;
-    institution_id?: string | null;
-  } | null;
 };
 
 type TimetableRow = {
   institution_id?: string | null;
   class_id?: string | null;
-  subject_id?: string | null; // parfois institution_subjects.id, parfois subjects.id
+  subject_id?: string | null;
   period_id?: string | null;
 };
 
@@ -38,33 +31,34 @@ function uniqStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(
     new Set(
       values
-        .map((v) => String(v || "").trim())
-        .filter((v) => v.length > 0)
-    )
+        .map((value) => String(value || "").trim())
+        .filter((value) => value.length > 0),
+    ),
   );
 }
 
 function hmsToMin(hms: string | null | undefined) {
-  const s = String(hms || "00:00:00").slice(0, 8);
-  const [h, m] = s.split(":").map((n) => parseInt(n, 10));
-  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+  const value = String(hms || "00:00:00").slice(0, 8);
+  const [hours, minutes] = value.split(":").map((part) => parseInt(part, 10));
+  return (Number.isFinite(hours) ? hours : 0) * 60 +
+    (Number.isFinite(minutes) ? minutes : 0);
 }
 
-function hmInTZ(d: Date, tz: string): string {
+function hmInTZ(date: Date, tz: string): string {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: tz,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(d);
+  }).format(date);
 }
 
-function weekdayInTZ1to7(d: Date, tz: string): number {
-  const w = new Intl.DateTimeFormat("en-US", {
+function weekdayInTZ1to7(date: Date, tz: string): number {
+  const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     weekday: "short",
   })
-    .format(d)
+    .format(date)
     .toLowerCase();
 
   const map: Record<string, number> = {
@@ -77,88 +71,84 @@ function weekdayInTZ1to7(d: Date, tz: string): number {
     sat: 6,
   };
 
-  return map[w] ?? 7;
+  return map[weekday] ?? 7;
 }
 
 async function buildSubjectLookup(
-  srv: any,
-  ids: Array<string | null | undefined>
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  ids: Array<string | null | undefined>,
 ): Promise<Map<string, SubjectLookup>> {
-  const map = new Map<string, SubjectLookup>();
-  const uniqIds = uniqStrings(ids);
+  const lookup = new Map<string, SubjectLookup>();
+  const uniqueIds = uniqStrings(ids);
+  if (!uniqueIds.length) return lookup;
 
-  if (!uniqIds.length) return map;
-
-  const orExpr = uniqIds
+  const orExpression = uniqueIds
     .flatMap((id) => [`id.eq.${id}`, `subject_id.eq.${id}`])
     .join(",");
 
   const { data, error } = await srv
     .from("institution_subjects")
-    .select("id, subject_id, custom_name, subjects:subject_id(id,name)")
-    .or(orExpr);
+    .select("id,subject_id,custom_name,subjects:subject_id(id,name)")
+    .or(orExpression);
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   for (const row of (data || []) as any[]) {
     const instSubjectId = String(row?.id || "").trim() || null;
-    const subj = (row?.subjects as any) || {};
+    const subject = Array.isArray(row?.subjects)
+      ? row.subjects[0] || {}
+      : row?.subjects || {};
     const canonicalSubjectId =
-      String(subj?.id || row?.subject_id || instSubjectId || "").trim() || null;
-
+      String(subject?.id || row?.subject_id || instSubjectId || "").trim() || null;
     const subjectName =
-      (row?.custom_name as string | null) ??
-      (subj?.name as string | null) ??
-      null;
+      String(row?.custom_name || subject?.name || "").trim() || null;
 
-    const lookup: SubjectLookup = {
+    const value: SubjectLookup = {
       instSubjectId,
       canonicalSubjectId,
       subjectName,
     };
 
-    const keys = uniqStrings([
+    for (const key of uniqStrings([
       instSubjectId,
       row?.subject_id ? String(row.subject_id) : null,
       canonicalSubjectId,
-    ]);
-
-    for (const key of keys) {
-      map.set(key, lookup);
+    ])) {
+      lookup.set(key, value);
     }
   }
 
-  return map;
-}
-
-function subjectTokens(
-  subjectId: string | null | undefined,
-  lookup: Map<string, SubjectLookup>
-): string[] {
-  const raw = String(subjectId || "").trim();
-  if (!raw) return [];
-
-  const ref = lookup.get(raw);
-  if (!ref) return uniqStrings([raw]);
-
-  return uniqStrings([raw, ref.instSubjectId, ref.canonicalSubjectId]);
+  return lookup;
 }
 
 function dedupeAndSort(items: ItemOut[]): ItemOut[] {
   const seen = new Set<string>();
 
   return items
-    .filter((it) => {
-      const k = `${it.class_id}|${it.subject_id || ""}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
+    .filter((item) => {
+      const key = `${item.class_id}|${item.subject_id || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     })
-    .sort((a, b) =>
-      a.class_label.localeCompare(b.class_label, undefined, { numeric: true })
-    );
+    .sort((a, b) => {
+      const byClass = a.class_label.localeCompare(b.class_label, "fr", {
+        numeric: true,
+      });
+      return (
+        byClass ||
+        String(a.subject_name || "").localeCompare(
+          String(b.subject_name || ""),
+          "fr",
+        )
+      );
+    });
+}
+
+function noStoreJson(body: unknown, status = 200) {
+  const response = NextResponse.json(body, { status });
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  return response;
 }
 
 export async function GET() {
@@ -171,193 +161,130 @@ export async function GET() {
     } = await supa.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+      return noStoreJson({ error: "unauthorized" }, 401);
     }
 
-    // 1) Affectations réelles du prof
-    const { data, error } = await srv
-      .from("class_teachers")
-      .select("class_id, subject_id, classes:class_id(label,level,institution_id)")
-      .eq("teacher_id", user.id);
+    const { data: profile, error: profileError } = await srv
+      .from("profiles")
+      .select("institution_id")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (profileError) {
+      return noStoreJson({ error: profileError.message }, 400);
     }
 
-    const rawRows = ((data || []) as any[]).filter(Boolean) as ClassTeacherRaw[];
-
-    if (!rawRows.length) {
-      return NextResponse.json({ items: [] });
+    const institutionId = String(profile?.institution_id || "").trim();
+    if (!institutionId) {
+      return noStoreJson({ items: [], source: "teacher_timetables" });
     }
 
-    const institutionIds = uniqStrings(
-      rawRows.map((r) => r?.classes?.institution_id || null)
+    const { data: institution, error: institutionError } = await srv
+      .from("institutions")
+      .select("id,tz")
+      .eq("id", institutionId)
+      .maybeSingle();
+
+    if (institutionError) {
+      return noStoreJson({ error: institutionError.message }, 400);
+    }
+
+    const tz = String(institution?.tz || "Africa/Abidjan");
+    const now = new Date();
+    const isoWeekday = weekdayInTZ1to7(now, tz);
+    const weekdayValues = uniqStrings([
+      String(isoWeekday),
+      isoWeekday === 7 ? "0" : String(isoWeekday),
+    ]).map(Number);
+    const nowMinutes = hmsToMin(`${hmInTZ(now, tz)}:00`);
+
+    const { data: periods, error: periodsError } = await srv
+      .from("institution_periods")
+      .select("id,start_time,end_time,period_no")
+      .eq("institution_id", institutionId)
+      .in("weekday", weekdayValues)
+      .order("period_no", { ascending: true });
+
+    if (periodsError) {
+      return noStoreJson({ error: periodsError.message }, 400);
+    }
+
+    const activePeriod = ((periods || []) as any[]).find((period) => {
+      const start = hmsToMin(period?.start_time);
+      const end = hmsToMin(period?.end_time);
+      return nowMinutes >= start && nowMinutes < end;
+    });
+
+    if (!activePeriod?.id) {
+      return noStoreJson({ items: [], source: "teacher_timetables" });
+    }
+
+    const { data: timetableData, error: timetableError } = await srv
+      .from("teacher_timetables")
+      .select("institution_id,class_id,subject_id,period_id")
+      .eq("institution_id", institutionId)
+      .eq("teacher_id", user.id)
+      .eq("period_id", String(activePeriod.id));
+
+    if (timetableError) {
+      return noStoreJson({ error: timetableError.message }, 400);
+    }
+
+    const timetables = ((timetableData || []) as any[]).filter(
+      (row) => row?.class_id,
+    ) as TimetableRow[];
+
+    if (!timetables.length) {
+      return noStoreJson({ items: [], source: "teacher_timetables" });
+    }
+
+    const classIds = uniqStrings(timetables.map((row) => row.class_id));
+    const { data: classes, error: classesError } = await srv
+      .from("classes")
+      .select("id,label,level,institution_id")
+      .eq("institution_id", institutionId)
+      .in("id", classIds);
+
+    if (classesError) {
+      return noStoreJson({ error: classesError.message }, 400);
+    }
+
+    const classById = new Map(
+      ((classes || []) as any[]).map((row) => [String(row.id), row]),
+    );
+    const subjectLookup = await buildSubjectLookup(
+      srv,
+      timetables.map((row) => row.subject_id),
     );
 
-    // 2) Déterminer le créneau actif par établissement
-    const now = new Date();
-    const activePeriodIdByInstitution = new Map<string, string>();
+    const items = timetables
+      .map((row): ItemOut | null => {
+        const classId = String(row.class_id || "").trim();
+        const classRow = classById.get(classId);
+        if (!classRow) return null;
 
-    if (institutionIds.length > 0) {
-      const { data: institutions, error: instErr } = await srv
-        .from("institutions")
-        .select("id,tz")
-        .in("id", institutionIds);
+        const rawSubjectId = String(row.subject_id || "").trim() || null;
+        const subject = rawSubjectId ? subjectLookup.get(rawSubjectId) : null;
 
-      if (instErr) {
-        return NextResponse.json({ error: instErr.message }, { status: 400 });
-      }
+        return {
+          class_id: classId,
+          class_label: String(classRow.label || "Classe"),
+          level: String(classRow.level || ""),
+          subject_id: subject?.canonicalSubjectId || rawSubjectId,
+          subject_name: subject?.subjectName || null,
+        };
+      })
+      .filter((item): item is ItemOut => Boolean(item));
 
-      for (const inst of (institutions || []) as Array<{ id: string; tz?: string | null }>) {
-        const tz = String(inst.tz || "Africa/Abidjan");
-        const weekday = weekdayInTZ1to7(now, tz);
-        const hm = hmInTZ(now, tz);
-        const nowMin = hmsToMin(`${hm}:00`);
-
-        const { data: periods, error: perErr } = await srv
-          .from("institution_periods")
-          .select("id,start_time,end_time")
-          .eq("institution_id", inst.id)
-          .eq("weekday", weekday)
-          .order("period_no", { ascending: true });
-
-        if (perErr) {
-          return NextResponse.json({ error: perErr.message }, { status: 400 });
-        }
-
-        const active = ((periods || []) as any[]).find((p) => {
-          const startMin = hmsToMin(p?.start_time);
-          const endMin = hmsToMin(p?.end_time);
-          return nowMin >= startMin && nowMin < endMin;
-        });
-
-        if (active?.id) {
-          activePeriodIdByInstitution.set(String(inst.id), String(active.id));
-        }
-      }
-    }
-
-    const activePeriodIds = uniqStrings([...activePeriodIdByInstitution.values()]);
-
-    // 3) Emploi du temps du prof sur les créneaux actifs
-    let ttRows: TimetableRow[] = [];
-    if (activePeriodIds.length > 0) {
-      const { data: ttData, error: ttErr } = await srv
-        .from("teacher_timetables")
-        .select("institution_id,class_id,subject_id,period_id")
-        .eq("teacher_id", user.id)
-        .in("period_id", activePeriodIds);
-
-      if (ttErr) {
-        return NextResponse.json({ error: ttErr.message }, { status: 400 });
-      }
-
-      ttRows = ((ttData || []) as any[]).filter(Boolean) as TimetableRow[];
-    }
-
-    // 4) Normaliser les IDs de matière des deux côtés
-    const subjectLookup = await buildSubjectLookup(srv, [
-      ...rawRows.map((r) => r.subject_id),
-      ...ttRows.map((r) => r.subject_id || null),
-    ]);
-
-    // Map: institution|class|period -> set de tokens matière acceptés
-    const allowedNow = new Map<string, Set<string>>();
-
-    for (const row of ttRows) {
-      const institutionId = String(row.institution_id || "").trim();
-      const classId = String(row.class_id || "").trim();
-      const periodId = String(row.period_id || "").trim();
-
-      if (!institutionId || !classId || !periodId) continue;
-
-      const baseKey = `${institutionId}|${classId}|${periodId}`;
-
-      if (!allowedNow.has(baseKey)) {
-        allowedNow.set(baseKey, new Set<string>());
-      }
-
-      const bucket = allowedNow.get(baseKey)!;
-      const tokens = subjectTokens(row.subject_id || null, subjectLookup);
-
-      if (tokens.length > 0) {
-        for (const token of tokens) bucket.add(token);
-      } else {
-        bucket.add("__ANY_SUBJECT__");
-      }
-    }
-
-    const fallbackItems: ItemOut[] = [];
-    const strictItems: ItemOut[] = [];
-
-    for (const raw of rawRows) {
-      const cls = raw.classes as any;
-      if (!cls) continue;
-
-      const institutionId = String(cls.institution_id || "").trim();
-      const classId = String(raw.class_id || "").trim();
-      const rawSubjectId = String(raw.subject_id || "").trim() || null;
-
-      const ref = rawSubjectId ? subjectLookup.get(rawSubjectId) : null;
-
-      const item: ItemOut = {
-        class_id: classId,
-        class_label: String(cls.label ?? " "),
-        level: String(cls.level ?? " "),
-        subject_id: ref?.canonicalSubjectId ?? rawSubjectId,
-        subject_name: ref?.subjectName ?? null,
-      };
-
-      // Toujours garder la base des affectations réelles
-      fallbackItems.push(item);
-
-      const activePeriodId = activePeriodIdByInstitution.get(institutionId) || null;
-
-      // Pas de créneau actif trouvé pour cet établissement => on ne bloque pas
-      if (!activePeriodId) {
-        strictItems.push(item);
-        continue;
-      }
-
-      const slotKey = `${institutionId}|${classId}|${activePeriodId}`;
-      const allowedSubjects = allowedNow.get(slotKey);
-
-      // Créneau actif connu mais rien trouvé dans l'EDT pour cette classe :
-      // on laisse le filtre strict échouer ici, mais un fallback global évitera
-      // de bloquer complètement le prof.
-      if (!allowedSubjects || allowedSubjects.size === 0) {
-        continue;
-      }
-
-      // Si aucune matière côté affectation, on autorise la classe
-      if (!rawSubjectId) {
-        strictItems.push(item);
-        continue;
-      }
-
-      const rawTokens = subjectTokens(rawSubjectId, subjectLookup);
-      const matches =
-        rawTokens.some((token) => allowedSubjects.has(token)) ||
-        allowedSubjects.has("__ANY_SUBJECT__");
-
-      if (matches) {
-        strictItems.push(item);
-      }
-    }
-
-    // 5) Comportement sûr :
-    //    - si le filtrage strict marche, on l'utilise ;
-    //    - sinon, on retombe sur les vraies affectations du prof.
-    const finalItems =
-      strictItems.length > 0
-        ? dedupeAndSort(strictItems)
-        : dedupeAndSort(fallbackItems);
-
-    return NextResponse.json({ items: finalItems });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "classes_failed" },
-      { status: 400 }
+    return noStoreJson({
+      items: dedupeAndSort(items),
+      source: "teacher_timetables",
+      period_id: String(activePeriod.id),
+    });
+  } catch (error: any) {
+    return noStoreJson(
+      { error: error?.message || "classes_failed" },
+      500,
     );
   }
 }

@@ -5,16 +5,6 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type RawAssignment = {
-  class_id: string;
-  subject_id: string | null;
-  classes: {
-    label?: string | null;
-    level?: string | null;
-    institution_id?: string | null;
-  } | null;
-};
-
 type TimetableRow = {
   institution_id?: string | null;
   class_id?: string | null;
@@ -30,6 +20,13 @@ type PeriodRow = {
   start_time?: string | null;
   end_time?: string | null;
   period_no?: number | null;
+};
+
+type ClassRow = {
+  id?: string | null;
+  institution_id?: string | null;
+  label?: string | null;
+  level?: string | null;
 };
 
 type SubjectLookup = {
@@ -48,7 +45,7 @@ type ClassItem = {
 
 function uniqStrings(values: Array<string | null | undefined>): string[] {
   return Array.from(
-    new Set(values.map((value) => String(value || "").trim()).filter(Boolean))
+    new Set(values.map((value) => String(value || "").trim()).filter(Boolean)),
   );
 }
 
@@ -65,7 +62,7 @@ function hm(value: unknown, fallback: string): string {
 
 async function buildSubjectLookup(
   srv: ReturnType<typeof getSupabaseServiceClient>,
-  ids: Array<string | null | undefined>
+  ids: Array<string | null | undefined>,
 ): Promise<Map<string, SubjectLookup>> {
   const map = new Map<string, SubjectLookup>();
   const uniqueIds = uniqStrings(ids);
@@ -84,29 +81,29 @@ async function buildSubjectLookup(
 
   for (const row of (data || []) as any[]) {
     const instSubjectId = String(row?.id || "").trim() || null;
+    const subject = Array.isArray(row?.subjects)
+      ? row.subjects[0] || {}
+      : row?.subjects || {};
     const canonicalSubjectId =
-      String(row?.subjects?.id || row?.subject_id || instSubjectId || "").trim() || null;
-    const subjectName = String(row?.custom_name || row?.subjects?.name || "").trim() || null;
-    const lookup: SubjectLookup = { instSubjectId, canonicalSubjectId, subjectName };
+      String(subject?.id || row?.subject_id || instSubjectId || "").trim() || null;
+    const subjectName =
+      String(row?.custom_name || subject?.name || "").trim() || null;
+    const lookup: SubjectLookup = {
+      instSubjectId,
+      canonicalSubjectId,
+      subjectName,
+    };
 
-    for (const key of uniqStrings([instSubjectId, row?.subject_id, canonicalSubjectId])) {
+    for (const key of uniqStrings([
+      instSubjectId,
+      row?.subject_id ? String(row.subject_id) : null,
+      canonicalSubjectId,
+    ])) {
       map.set(key, lookup);
     }
   }
 
   return map;
-}
-
-function subjectTokens(
-  subjectId: string | null | undefined,
-  lookup: Map<string, SubjectLookup>
-): string[] {
-  const raw = String(subjectId || "").trim();
-  if (!raw) return [];
-  const ref = lookup.get(raw);
-  return ref
-    ? uniqStrings([raw, ref.instSubjectId, ref.canonicalSubjectId])
-    : [raw];
 }
 
 function dedupeItems(items: ClassItem[]): ClassItem[] {
@@ -115,8 +112,16 @@ function dedupeItems(items: ClassItem[]): ClassItem[] {
     map.set(`${item.class_id}|${item.subject_id || ""}`, item);
   }
   return Array.from(map.values()).sort((a, b) => {
-    const byClass = a.class_label.localeCompare(b.class_label, "fr", { numeric: true });
-    return byClass || String(a.subject_name || "").localeCompare(String(b.subject_name || ""), "fr");
+    const byClass = a.class_label.localeCompare(b.class_label, "fr", {
+      numeric: true,
+    });
+    return (
+      byClass ||
+      String(a.subject_name || "").localeCompare(
+        String(b.subject_name || ""),
+        "fr",
+      )
+    );
   });
 }
 
@@ -136,90 +141,103 @@ export async function GET() {
 
     if (!user) return noStoreJson({ error: "unauthorized" }, 401);
 
-    const { data: assignmentData, error: assignmentError } = await srv
-      .from("class_teachers")
-      .select("class_id,subject_id,classes:class_id(label,level,institution_id)")
-      .eq("teacher_id", user.id);
+    const { data: profile, error: profileError } = await srv
+      .from("profiles")
+      .select("institution_id")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (assignmentError) return noStoreJson({ error: assignmentError.message }, 400);
+    if (profileError) return noStoreJson({ error: profileError.message }, 400);
 
-    const assignments = ((assignmentData || []) as any[]).filter(
-      (row) => row?.class_id && row?.classes?.institution_id
-    ) as RawAssignment[];
-
-    if (!assignments.length) {
+    const institutionId = String(profile?.institution_id || "").trim();
+    if (!institutionId) {
       return noStoreJson({
         version: 1,
         generated_at: new Date().toISOString(),
+        source: "teacher_timetables",
         slots: [],
         class_count: 0,
         slot_count: 0,
       });
     }
 
-    const institutionIds = uniqStrings(
-      assignments.map((row) => row.classes?.institution_id || null)
-    );
-
-    const [periodResult, timetableResult] = await Promise.all([
+    const [periodResult, timetableResult, classResult] = await Promise.all([
       srv
         .from("institution_periods")
         .select("id,institution_id,weekday,label,start_time,end_time,period_no")
-        .in("institution_id", institutionIds)
+        .eq("institution_id", institutionId)
         .order("weekday", { ascending: true })
         .order("period_no", { ascending: true }),
       srv
         .from("teacher_timetables")
         .select("institution_id,class_id,subject_id,period_id")
         .eq("teacher_id", user.id)
-        .in("institution_id", institutionIds),
+        .eq("institution_id", institutionId),
+      srv
+        .from("classes")
+        .select("id,institution_id,label,level")
+        .eq("institution_id", institutionId),
     ]);
 
-    if (periodResult.error) return noStoreJson({ error: periodResult.error.message }, 400);
-    if (timetableResult.error) return noStoreJson({ error: timetableResult.error.message }, 400);
+    if (periodResult.error) {
+      return noStoreJson({ error: periodResult.error.message }, 400);
+    }
+    if (timetableResult.error) {
+      return noStoreJson({ error: timetableResult.error.message }, 400);
+    }
+    if (classResult.error) {
+      return noStoreJson({ error: classResult.error.message }, 400);
+    }
 
     const periods = ((periodResult.data || []) as any[]).filter(Boolean) as PeriodRow[];
-    const timetables = ((timetableResult.data || []) as any[]).filter(Boolean) as TimetableRow[];
-    const lookup = await buildSubjectLookup(srv, [
-      ...assignments.map((row) => row.subject_id),
-      ...timetables.map((row) => row.subject_id),
-    ]);
+    const timetables = ((timetableResult.data || []) as any[]).filter(
+      (row) => row?.class_id && row?.period_id,
+    ) as TimetableRow[];
+    const classes = ((classResult.data || []) as any[]).filter(Boolean) as ClassRow[];
+
+    const subjectLookup = await buildSubjectLookup(
+      srv,
+      timetables.map((row) => row.subject_id),
+    );
 
     const periodById = new Map(
       periods
         .map((period) => [String(period.id || "").trim(), period] as const)
-        .filter(([id]) => Boolean(id))
+        .filter(([id]) => Boolean(id)),
     );
-    const assignmentsByClass = new Map<string, RawAssignment[]>();
-    for (const assignment of assignments) {
-      const list = assignmentsByClass.get(assignment.class_id) || [];
-      list.push(assignment);
-      assignmentsByClass.set(assignment.class_id, list);
-    }
+    const classById = new Map(
+      classes
+        .map((classRow) => [String(classRow.id || "").trim(), classRow] as const)
+        .filter(([id]) => Boolean(id)),
+    );
 
     const grouped = new Map<
       string,
-      { key: string; weekday: number; label: string; start_time: string; end_time: string; items: ClassItem[] }
+      {
+        key: string;
+        weekday: number;
+        label: string;
+        start_time: string;
+        end_time: string;
+        items: ClassItem[];
+      }
     >();
 
     for (const timetable of timetables) {
       const period = periodById.get(String(timetable.period_id || "").trim());
       const classId = String(timetable.class_id || "").trim();
-      if (!period || !classId) continue;
+      const classRow = classById.get(classId);
+      if (!period || !classId || !classRow) continue;
 
-      const candidates = assignmentsByClass.get(classId) || [];
-      const timetableTokens = subjectTokens(timetable.subject_id, lookup);
-      const assignment = candidates.find((candidate) => {
-        const candidateInstitution = String(candidate.classes?.institution_id || "").trim();
-        if (candidateInstitution !== String(timetable.institution_id || "").trim()) return false;
-        const assignmentTokens = subjectTokens(candidate.subject_id, lookup);
-        if (!assignmentTokens.length || !timetableTokens.length) return true;
-        return assignmentTokens.some((token) => timetableTokens.includes(token));
-      });
-      if (!assignment?.classes) continue;
+      if (
+        String(timetable.institution_id || "").trim() !== institutionId ||
+        String(classRow.institution_id || "").trim() !== institutionId
+      ) {
+        continue;
+      }
 
-      const rawSubjectId = String(timetable.subject_id || assignment.subject_id || "").trim() || null;
-      const subject = rawSubjectId ? lookup.get(rawSubjectId) : null;
+      const rawSubjectId = String(timetable.subject_id || "").trim() || null;
+      const subject = rawSubjectId ? subjectLookup.get(rawSubjectId) : null;
       const weekday = normalizeWeekday(period.weekday);
       const startTime = hm(period.start_time, "08:00");
       const endTime = hm(period.end_time, "09:00");
@@ -238,8 +256,8 @@ export async function GET() {
 
       grouped.get(key)!.items.push({
         class_id: classId,
-        class_label: String(assignment.classes.label || "Classe"),
-        level: String(assignment.classes.level || ""),
+        class_label: String(classRow.label || "Classe"),
+        level: String(classRow.level || ""),
         subject_id: subject?.canonicalSubjectId || rawSubjectId,
         subject_name: subject?.subjectName || null,
       });
@@ -247,17 +265,26 @@ export async function GET() {
 
     const slots = Array.from(grouped.values())
       .map((slot) => ({ ...slot, items: dedupeItems(slot.items) }))
-      .sort((a, b) => a.weekday - b.weekday || a.start_time.localeCompare(b.start_time));
-    const classIds = new Set(slots.flatMap((slot) => slot.items.map((item) => item.class_id)));
+      .sort(
+        (a, b) =>
+          a.weekday - b.weekday || a.start_time.localeCompare(b.start_time),
+      );
+    const classIds = new Set(
+      slots.flatMap((slot) => slot.items.map((item) => item.class_id)),
+    );
 
     return noStoreJson({
       version: 1,
       generated_at: new Date().toISOString(),
+      source: "teacher_timetables",
       slots,
       class_count: classIds.size,
       slot_count: slots.length,
     });
   } catch (error: any) {
-    return noStoreJson({ error: error?.message || "teacher_offline_bootstrap_failed" }, 500);
+    return noStoreJson(
+      { error: error?.message || "teacher_offline_bootstrap_failed" },
+      500,
+    );
   }
 }

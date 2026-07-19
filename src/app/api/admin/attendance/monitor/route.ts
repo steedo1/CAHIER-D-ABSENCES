@@ -227,7 +227,6 @@ export async function GET(req: NextRequest) {
     { data: classes, error: cErr },
     { data: subjects, error: sErr },
     { data: teachers, error: tErr },
-    { data: teacherSubjects, error: tsErr },
   ] = await Promise.all([
     srv
       .from("institution_periods")
@@ -245,10 +244,6 @@ export async function GET(req: NextRequest) {
     srv
       .from("profiles")
       .select("id,display_name,email,phone")
-      .eq("institution_id", institution_id),
-    srv
-      .from("teacher_subjects")
-      .select("profile_id,subject_id,institution_id")
       .eq("institution_id", institution_id),
   ]);
 
@@ -272,10 +267,6 @@ export async function GET(req: NextRequest) {
     console.error("[attendance/monitor] teachers_err", { error: tErr.message });
     return NextResponse.json({ error: tErr.message }, { status: 400 });
   }
-  if (tsErr) {
-    console.error("[attendance/monitor] teacher_subjects_err", { error: tsErr.message });
-  }
-
   const dateMinIso = new Date(fromDate.getTime());
   dateMinIso.setUTCHours(0, 0, 0, 0);
   const dateMaxIso = new Date(toDate.getTime());
@@ -398,33 +389,6 @@ export async function GET(req: NextRequest) {
     if (phone.trim()) {
       teacherPhoneById.set(id, phone.trim());
     }
-  });
-
-  const teacherHasSubjects = new Set<string>();
-  const allowedByTeacher = new Map<string, Set<string>>();
-
-  (teacherSubjects || []).forEach((ts: any) => {
-    const teacherId = String(ts.profile_id);
-    const rawSubjId = ts.subject_id ? String(ts.subject_id) : "";
-    if (!rawSubjId) return;
-
-    teacherHasSubjects.add(teacherId);
-
-    let instIds: string[] = [];
-    if (subjectNameById.has(rawSubjId)) {
-      instIds = [rawSubjId];
-    } else {
-      instIds = instSubjectIdsByBaseId.get(rawSubjId) || [];
-    }
-
-    if (!instIds.length) return;
-
-    let set = allowedByTeacher.get(teacherId);
-    if (!set) {
-      set = new Set<string>();
-      allowedByTeacher.set(teacherId, set);
-    }
-    instIds.forEach((id) => set!.add(id));
   });
 
   type SessIndexItem = {
@@ -551,23 +515,6 @@ export async function GET(req: NextRequest) {
     const classId = String(tt.class_id);
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
-
-    if (subjectId && teacherHasSubjects.has(teacherId)) {
-      const allowed = allowedByTeacher.get(teacherId);
-
-      if (allowed && allowed.size > 0) {
-        let ok = allowed.has(subjectId);
-
-        if (!ok) {
-          const mappedInst = instSubjectIdsByBaseId.get(subjectId) || [];
-          ok = mappedInst.some((instId) => allowed.has(instId));
-        }
-
-        if (!ok) {
-          return;
-        }
-      }
-    }
 
     const classLabel = classLabelById.get(classId) || "";
 
@@ -715,7 +662,6 @@ export async function GET(req: NextRequest) {
           periods: (periods || []).length,
           tts: (tts || []).length,
           sessions: (sessions || []).length,
-          teacherSubjects: (teacherSubjects || []).length,
           absenceRequests: (absenceRequests || []).length,
           rows: rows.length,
         },
