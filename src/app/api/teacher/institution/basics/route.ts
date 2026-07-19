@@ -32,7 +32,7 @@ export async function GET() {
   // 2) Institution du profil
   const { data: prof, error: perr } = await supabase
     .from("profiles")
-    .select("institution_id,role")
+    .select("institution_id")
     .eq("id", me.user.id)
     .maybeSingle();
 
@@ -108,9 +108,9 @@ export async function GET() {
   }
 
   const presencePolicy = (policyResult.data || {}) as AttendancePresencePolicyRow;
-  const isTeacher =
-    String((prof as any)?.role || "") === "teacher" ||
-    (rolesResult.data || []).some((row: any) => String(row.role || "") === "teacher");
+  const isTeacher = (rolesResult.data || []).some(
+    (row: any) => String(row.role || "") === "teacher",
+  );
   const relayEnabled =
     !migrationMissing &&
     isTeacher &&
