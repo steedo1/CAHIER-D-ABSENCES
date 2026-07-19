@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { adminDashboard } from "../src/admin-dashboard.mjs";
 import { attendanceMonitor } from "../src/attendance-monitor.mjs";
@@ -8,6 +11,7 @@ import { issueAttendancePresenceProof } from "../src/presence-proof.mjs";
 import { loadRelayConfig } from "../src/config.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
 import { createRelayServer } from "../src/server.mjs";
+import { configureRelay } from "../src/setup.mjs";
 import { RelayStore } from "../src/store.mjs";
 import { SYNC_PROTOCOL_VERSION } from "../src/types.mjs";
 
@@ -212,6 +216,87 @@ test("une écoute LAN est refusée sans jeton", () => {
   );
 });
 
+test("l'assistant conserve l'école unique ou ajoute explicitement un groupe scolaire", () => {
+  const root = mkdtempSync(join(tmpdir(), "moncahier-relay-setup-"));
+  const configPath = join(root, "MonCahier", "Relay", "config.json");
+  try {
+    const first = configureRelay({
+      institutionCode: "LMA-000101",
+      institutionName: "COLLEGE NOTRE-DAME",
+      configPath,
+      env: {},
+    });
+    assert.equal(first.token.length >= 32, true);
+    assert.equal(first.token_reused, false);
+    assert.match(first.database_path, /lma-000101\.db$/);
+
+    const loaded = loadRelayConfig({ MONCAHIER_RELAY_CONFIG: configPath });
+    assert.equal(loaded.host, "0.0.0.0");
+    assert.equal(loaded.port, 4317);
+    assert.equal(loaded.token, first.token);
+    assert.equal(loaded.institutionCode, "LMA-000101");
+    assert.equal(loaded.institutionName, "COLLEGE NOTRE-DAME");
+    assert.deepEqual(loaded.institutionCodes, ["LMA-000101"]);
+    assert.equal(loaded.databasePath, first.database_path);
+    assert.deepEqual(loaded.allowedOrigins?.slice(0, 2), [
+      "https://mon-cahier.com",
+      "https://www.mon-cahier.com",
+    ]);
+
+    const second = configureRelay({
+      institutionCode: "LMA-000101",
+      institutionName: "COLLEGE NOTRE-DAME",
+      configPath,
+      env: {},
+    });
+    assert.equal(second.token_reused, true);
+    assert.equal(second.token, first.token);
+    assert.equal(second.database_path, first.database_path);
+
+    const schoolGroup = configureRelay({
+      institutionCode: "PRI-000202",
+      institutionName: "ECOLE PRIMAIRE NOTRE-DAME",
+      configPath,
+      addInstitution: true,
+      env: {},
+    });
+    assert.equal(schoolGroup.mode, "school_group");
+    assert.equal(schoolGroup.token_reused, false);
+    assert.notEqual(schoolGroup.token, first.token);
+    assert.equal(schoolGroup.database_path, first.database_path);
+    assert.deepEqual(
+      schoolGroup.institutions.map((item) => item.code),
+      ["LMA-000101", "PRI-000202"],
+    );
+
+    const loadedGroup = loadRelayConfig({ MONCAHIER_RELAY_CONFIG: configPath });
+    assert.deepEqual(loadedGroup.institutionCodes, ["LMA-000101", "PRI-000202"]);
+    assert.notEqual(loadedGroup.token, first.token);
+    assert.notEqual(loadedGroup.token, schoolGroup.token);
+    assert.equal(loadedGroup.institutions?.[0]?.admin_token, first.token);
+    assert.equal(loadedGroup.institutions?.[1]?.admin_token, schoolGroup.token);
+
+    const otherSchool = configureRelay({
+      institutionCode: "TEST-000002",
+      institutionName: "Autre établissement",
+      configPath,
+      env: {},
+    });
+    assert.equal(otherSchool.token_reused, false);
+    assert.notEqual(otherSchool.token, first.token);
+    assert.match(otherSchool.database_path, /test-000002\.db$/);
+    assert.notEqual(otherSchool.database_path, first.database_path);
+
+    const file = JSON.parse(readFileSync(configPath, "utf8")) as any;
+    assert.equal(file.version, 2);
+    assert.equal(file.institution_code, "TEST-000002");
+    assert.deepEqual(file.institutions.map((item: any) => item.code), ["TEST-000002"]);
+    assert.equal(file.database_path, otherSchool.database_path);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("le relais signe une preuve de présence liée au compte enseignant et à la séance", () => {
   const db = openRelayDatabase(":memory:");
   const store = new RelayStore(db);
@@ -364,6 +449,42 @@ test("le bootstrap refuse explicitement toute collection financière", () => {
   db.close();
 });
 
+test("le bootstrap multi-écoles refuse une dépendance orpheline et conserve son diagnostic source", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const invalid = bootstrapFixture("snapshot-orphan", "Mme Orpheline") as any;
+  invalid.entities.teacher_timetables[0].subject_id = "subject-from-another-school";
+
+  assert.throws(
+    () => store.bootstrap(invalid),
+    /bootstrap_dependency_missing:teacher_timetables:timetable-1:subject_id:subject-from-another-school/,
+  );
+  assert.equal(store.status().institution_count, 0);
+
+  const valid = bootstrapFixture("snapshot-diagnostic", "Mme Diagnostiquée") as any;
+  valid.diagnostics = {
+    skipped_count: 1,
+    skipped: [{
+      collection: "teacher_sessions",
+      entity_id: "session-externe",
+      field: "subject_id",
+      reference_id: "subject-from-another-school",
+    }],
+  };
+  const result = store.bootstrap(valid);
+  assert.equal(result.source_skipped_entities, 1);
+  assert.deepEqual(result.source_diagnostics, valid.diagnostics);
+
+  const run = db.prepare(`
+    SELECT source_skipped_entities, source_diagnostics_json
+    FROM sync_bootstrap_runs
+    WHERE snapshot_id = 'snapshot-diagnostic'
+  `).get() as { source_skipped_entities: number; source_diagnostics_json: string };
+  assert.equal(run.source_skipped_entities, 1);
+  assert.deepEqual(JSON.parse(run.source_diagnostics_json), valid.diagnostics);
+  db.close();
+});
+
 
 
 test("la vue Founder locale classe le créneau courant depuis SQLite", () => {
@@ -406,6 +527,176 @@ test("le relais autorise le prévol navigateur et l'accès réseau local", async
     assert.equal(response.status, 204);
     assert.equal(response.headers.get("access-control-allow-origin"), "https://mon-cahier.com");
     assert.equal(response.headers.get("access-control-allow-private-network"), "true");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});
+
+test("un relais Notre Dame refuse un bootstrap provenant d'un autre établissement", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "secret-local",
+    institutionCode: "LMA-000101",
+  }, store);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const wrongSchool = bootstrapFixture("snapshot-wrong-school", "Mme CSCA") as any;
+    wrongSchool.institution.code = "CSK-000657";
+    const refused = await fetch(`http://127.0.0.1:${address.port}/v1/sync/bootstrap`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-local",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(wrongSchool),
+    });
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { error: "bootstrap_institution_code_mismatch" });
+    assert.equal(store.status().institution_count, 0);
+
+    const notreDame = bootstrapFixture("snapshot-notre-dame", "M. KOUADIO") as any;
+    notreDame.institution.code = "LMA-000101";
+    const accepted = await fetch(`http://127.0.0.1:${address.port}/v1/sync/bootstrap`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-local",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(notreDame),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(store.status().institution_count, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    db.close();
+  }
+});
+
+test("un relais de groupe accepte deux écoles autorisées et garde leurs états isolés", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "secret-maitre-groupe",
+    institutions: [
+      { code: "SEC-000101", name: "Secondaire", admin_token: "secret-secondaire" },
+      { code: "PRI-000202", name: "Primaire", admin_token: "secret-primaire" },
+    ],
+    institutionCodes: ["SEC-000101", "PRI-000202"],
+  }, store);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const relayUrl = `http://127.0.0.1:${address.port}`;
+    const send = (snapshot: unknown, token: string) => fetch(`${relayUrl}/v1/sync/bootstrap`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(snapshot),
+    });
+
+    const secondary = bootstrapFixture("snapshot-secondary", "Mme Secondaire") as any;
+    secondary.institution.code = "SEC-000101";
+    const primary = bootstrapFixtureForSchool({
+      snapshotId: "snapshot-primary",
+      teacherName: "M. Primaire",
+      institutionId: "inst-2",
+      institutionName: "École primaire locale",
+      institutionCode: "PRI-000202",
+      idSuffix: "2",
+    });
+
+    assert.equal((await send(secondary, "secret-secondaire")).status, 200);
+    assert.equal((await send(primary, "secret-secondaire")).status, 401);
+    assert.equal((await send(primary, "secret-primaire")).status, 200);
+
+    const unlisted = bootstrapFixtureForSchool({
+      snapshotId: "snapshot-unlisted",
+      teacherName: "Mme Externe",
+      institutionId: "inst-3",
+      institutionName: "École externe",
+      institutionCode: "EXT-000303",
+      idSuffix: "3",
+    });
+    const refused = await send(unlisted, "secret-maitre-groupe");
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { error: "bootstrap_institution_code_mismatch" });
+
+    store.enqueue({
+      protocol_version: SYNC_PROTOCOL_VERSION,
+      operation_id: "group-operation-1",
+      institution_id: "inst-1",
+      device_id: "relay-group-1",
+      actor_profile_id: "teacher-1",
+      entity_type: "profile",
+      entity_id: "teacher-1",
+      action: "upsert",
+      base_server_version: 1,
+      occurred_at: "2026-07-13T12:10:00.000Z",
+      payload: {
+        display_name: "Mme Secondaire locale",
+        email: "teacher@example.test",
+        phone: null,
+        is_active: true,
+      },
+    });
+
+    const status = store.status();
+    assert.equal(status.institution_count, 2);
+    assert.equal(status.institutions.length, 2);
+    assert.equal(
+      status.institutions.find((item) => item.institution_id === "inst-1")?.pending_operations,
+      1,
+    );
+    assert.equal(
+      status.institutions.find((item) => item.institution_id === "inst-2")?.pending_operations,
+      0,
+    );
+    const secondaryDevice = store.getOrCreateRelayDevice("inst-1");
+    const primaryDevice = store.getOrCreateRelayDevice("inst-2");
+    assert.notEqual(secondaryDevice, primaryDevice);
+    assert.equal(store.getOrCreateRelayDevice("inst-1"), secondaryDevice);
+    assert.equal(store.getOrCreateRelayDevice("inst-2"), primaryDevice);
+
+    const primaryDashboardUrl =
+      `${relayUrl}/v1/admin/dashboard?institution_id=inst-2&date=2026-07-13`;
+    const crossSchoolRead = await fetch(primaryDashboardUrl, {
+      headers: { Authorization: "Bearer secret-secondaire" },
+    });
+    assert.equal(crossSchoolRead.status, 401);
+    const ownSchoolRead = await fetch(primaryDashboardUrl, {
+      headers: { Authorization: "Bearer secret-primaire" },
+    });
+    assert.equal(ownSchoolRead.status, 200);
+
+    const schoolCannotReadGlobalStatus = await fetch(`${relayUrl}/v1/status`, {
+      headers: { Authorization: "Bearer secret-primaire" },
+    });
+    assert.equal(schoolCannotReadGlobalStatus.status, 401);
+    const groupStatus = await fetch(`${relayUrl}/v1/status`, {
+      headers: { Authorization: "Bearer secret-maitre-groupe" },
+    });
+    assert.equal(groupStatus.status, 200);
+    assert.equal(
+      adminDashboard(db, { institutionId: "inst-1", date: "2026-07-13" }).counts.teachers,
+      1,
+    );
+    assert.equal(
+      adminDashboard(db, { institutionId: "inst-2", date: "2026-07-13" }).counts.teachers,
+      1,
+    );
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     db.close();
@@ -602,4 +893,41 @@ function bootstrapFixture(snapshotId: string, teacherName: string, version = 1) 
       }],
     },
   } as const;
+}
+
+function bootstrapFixtureForSchool(input: {
+  snapshotId: string;
+  teacherName: string;
+  institutionId: string;
+  institutionName: string;
+  institutionCode: string;
+  idSuffix: string;
+}) {
+  const replacements = new Map<string, string>([
+    ["inst-1", input.institutionId],
+    ["year-1", `year-${input.idSuffix}`],
+    ["teacher-1", `teacher-${input.idSuffix}`],
+    ["role-1", `role-${input.idSuffix}`],
+    ["class-1", `class-${input.idSuffix}`],
+    ["subject-1", `subject-${input.idSuffix}`],
+    ["period-1", `period-${input.idSuffix}`],
+    ["timetable-1", `timetable-${input.idSuffix}`],
+    ["session-1", `session-${input.idSuffix}`],
+    ["client-session-1", `client-session-${input.idSuffix}`],
+  ]);
+  const rewrite = (value: unknown): any => {
+    if (typeof value === "string") return replacements.get(value) || value;
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .map(([key, item]) => [key, rewrite(item)]),
+      );
+    }
+    return value;
+  };
+  const snapshot = rewrite(bootstrapFixture(input.snapshotId, input.teacherName));
+  snapshot.institution.name = input.institutionName;
+  snapshot.institution.code = input.institutionCode;
+  return snapshot;
 }

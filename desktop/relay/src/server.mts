@@ -13,7 +13,7 @@ const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 export function createRelayServer(config: RelayConfig, store: RelayStore) {
   return createServer(async (request, response) => {
     secureHeaders(response);
-    applyCors(request, response);
+    applyCors(request, response, config);
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
       response.end();
@@ -27,6 +27,42 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {
         return json(response, 200, issueAttendancePresenceProof(store.db, await readJson(request)));
       }
+
+      if (request.method === "POST" && url.pathname === "/v1/sync/bootstrap") {
+        const body = await readJson(request, MAX_BOOTSTRAP_BODY_BYTES);
+        const institutionCode = assertBootstrapMatchesConfiguredInstitution(body, config);
+        if (!authorizedForInstitutionCode(request, config, institutionCode)) {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        return json(response, 200, store.bootstrap(body));
+      }
+      if (request.method === "GET" && url.pathname === "/v1/admin/dashboard") {
+        const institutionId = requiredParam(url, "institution_id");
+        if (!authorizedForInstitutionId(request, config, store, institutionId)) {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        const date = requiredParam(url, "date");
+        return json(response, 200, adminDashboard(store.db, { institutionId, date }));
+      }
+      if (request.method === "GET" && url.pathname === "/v1/admin/attendance/monitor") {
+        const institutionId = requiredParam(url, "institution_id");
+        if (!authorizedForInstitutionId(request, config, store, institutionId)) {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        const from = requiredParam(url, "from");
+        const to = requiredParam(url, "to");
+        return json(response, 200, {
+          rows: attendanceMonitor(store.db, { institutionId, from, to }),
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/v1/founder/attendance-slots") {
+        const institutionId = requiredParam(url, "institution_id");
+        if (!authorizedForInstitutionId(request, config, store, institutionId)) {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        return json(response, 200, founderAttendanceSlots(store.db, { institutionId }));
+      }
+
       if (!authorized(request, config.token)) return json(response, 401, { error: "unauthorized" });
 
       if (request.method === "GET" && url.pathname === "/v1/status") {
@@ -42,9 +78,6 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       if (request.method === "POST" && url.pathname === "/v1/sync/apply") {
         return json(response, 200, store.applyRemote(await readJson(request)));
       }
-      if (request.method === "POST" && url.pathname === "/v1/sync/bootstrap") {
-        return json(response, 200, store.bootstrap(await readJson(request, MAX_BOOTSTRAP_BODY_BYTES)));
-      }
       if (request.method === "POST" && url.pathname.startsWith("/v1/sync/conflicts/")) {
         const id = decodeURIComponent(url.pathname.slice("/v1/sync/conflicts/".length));
         const body = await readJson(request) as Record<string, unknown>;
@@ -55,23 +88,6 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
         const resolvedBy = String(body.resolved_by || "local_admin").trim();
         return json(response, 200, store.resolveConflict(id, resolution, resolvedBy));
       }
-      if (request.method === "GET" && url.pathname === "/v1/admin/dashboard") {
-        const institutionId = requiredParam(url, "institution_id");
-        const date = requiredParam(url, "date");
-        return json(response, 200, adminDashboard(store.db, { institutionId, date }));
-      }
-      if (request.method === "GET" && url.pathname === "/v1/admin/attendance/monitor") {
-        const institutionId = requiredParam(url, "institution_id");
-        const from = requiredParam(url, "from");
-        const to = requiredParam(url, "to");
-        return json(response, 200, {
-          rows: attendanceMonitor(store.db, { institutionId, from, to }),
-        });
-      }
-      if (request.method === "GET" && url.pathname === "/v1/founder/attendance-slots") {
-        const institutionId = requiredParam(url, "institution_id");
-        return json(response, 200, founderAttendanceSlots(store.db, { institutionId }));
-      }
       return json(response, 404, { error: "not_found" });
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 400;
@@ -79,6 +95,63 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       return json(response, status, { error: message });
     }
   });
+}
+
+function normalizedInstitutionCode(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function assertBootstrapMatchesConfiguredInstitution(raw: unknown, config: RelayConfig) {
+  const expectedCodes = new Set(
+    [...(config.institutionCodes || []), config.institutionCode]
+      .map(normalizedInstitutionCode)
+      .filter(Boolean),
+  );
+  const snapshot = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const institution = snapshot.institution && typeof snapshot.institution === "object" &&
+      !Array.isArray(snapshot.institution)
+    ? snapshot.institution as Record<string, unknown>
+    : {};
+  const suppliedCode = normalizedInstitutionCode(
+    institution.code_unique || institution.code || institution.acronym,
+  );
+  if (!suppliedCode) throw new HttpError(409, "bootstrap_institution_code_missing");
+  if (expectedCodes.size > 0 && !expectedCodes.has(suppliedCode)) {
+    throw new HttpError(409, "bootstrap_institution_code_mismatch");
+  }
+  return suppliedCode;
+}
+
+function authorizedForInstitutionCode(
+  request: IncomingMessage,
+  config: RelayConfig,
+  institutionCode: string,
+) {
+  const configured = (config.institutions || []).find(
+    (item) => normalizedInstitutionCode(item.code) === normalizedInstitutionCode(institutionCode),
+  );
+  const schoolToken = String(configured?.admin_token || "").trim();
+  if (schoolToken) return authorized(request, schoolToken);
+  if ((config.institutions?.length || 0) > 1) return false;
+  return authorized(request, config.token);
+}
+
+function authorizedForInstitutionId(
+  request: IncomingMessage,
+  config: RelayConfig,
+  store: RelayStore,
+  institutionId: string,
+) {
+  const institution = store.db.prepare(`
+    SELECT code FROM institutions WHERE id = ? AND deleted_at IS NULL
+  `).get(institutionId) as { code: string | null } | undefined;
+  if (!institution) return false;
+  return authorizedForInstitutionCode(request, config, String(institution.code || ""));
 }
 
 function requiredParam(url: URL, name: string) {
@@ -116,13 +189,9 @@ async function readJson(
   }
 }
 
-function applyCors(request: IncomingMessage, response: ServerResponse) {
+function applyCors(request: IncomingMessage, response: ServerResponse, config: RelayConfig) {
   const origin = String(request.headers.origin || "").trim();
   if (!origin) return;
-  const configured = String(process.env.MONCAHIER_RELAY_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
   const defaults = [
     "https://mon-cahier.com",
     "https://www.mon-cahier.com",
@@ -131,7 +200,7 @@ function applyCors(request: IncomingMessage, response: ServerResponse) {
     "http://tauri.localhost",
     "tauri://localhost",
   ];
-  const allowed = new Set(configured.length ? configured : defaults);
+  const allowed = new Set(config.allowedOrigins?.length ? config.allowedOrigins : defaults);
   if (!allowed.has(origin)) return;
   response.setHeader("Access-Control-Allow-Origin", origin);
   response.setHeader("Vary", "Origin");

@@ -24,6 +24,34 @@ function withMeta<T extends Record<string, any>>(row: T, generatedAt: string) {
   };
 }
 
+type BootstrapSkip = {
+  collection: string;
+  entity_id: string;
+  field: string;
+  reference_id: string;
+};
+
+function indexSubjects(rows: any[]) {
+  const result = new Map<string, string>();
+  for (const row of rows) {
+    const localId = text(row.id);
+    if (!localId) continue;
+    result.set(localId, localId);
+    const baseId = text(row.subject_id);
+    if (baseId && !result.has(baseId)) result.set(baseId, localId);
+  }
+  return result;
+}
+
+function uniqueById(rows: any[]) {
+  const result = new Map<string, any>();
+  for (const row of rows) {
+    const id = text(row.id);
+    if (id) result.set(id, row);
+  }
+  return Array.from(result.values());
+}
+
 
 function relayRole(value: unknown) {
   const role = text(value);
@@ -148,25 +176,114 @@ export async function GET(request: NextRequest) {
     // chaque référence enseignante arrive avec son profil dans le même
     // bootstrap : on complète donc toute la fermeture des dépendances profils.
     const knownProfileIds = new Set(profiles.map((row) => text(row.id)).filter(Boolean));
-    const referencedProfileIds = [
+    const referencedProfileIds = new Set([
       ...userRoles.map((row) => text(row.profile_id)),
       ...teacherSubjects.map((row) => text(row.profile_id)),
       ...timetables.map((row) => text(row.teacher_id)),
       ...absenceRequests.map((row) => text(row.teacher_profile_id)),
       ...sessions.map((row) => text(row.teacher_id)),
-    ].filter(Boolean);
-    const missingProfileIds = Array.from(new Set(
-      referencedProfileIds.filter((profileId) => !knownProfileIds.has(profileId)),
-    ));
-    const roleProfiles = await selectProfilesByIds(srv, missingProfileIds);
-    const relayProfiles = Array.from(
-      new Map(
-        [...profiles, ...roleProfiles].map((row) => [text(row.id), {
-          ...row,
-          institution_id: institutionId,
-        }]),
-      ).values(),
-    );
+    ].filter(Boolean));
+    const missingProfileIds = Array.from(referencedProfileIds)
+      .filter((profileId) => !knownProfileIds.has(profileId));
+    const referencedProfiles = await selectProfilesByIds(srv, missingProfileIds);
+    const relayProfiles = uniqueById([...profiles, ...referencedProfiles]).map((row) => ({
+      ...row,
+      institution_id: institutionId,
+    }));
+    const profileIds = new Set(relayProfiles.map((row) => text(row.id)).filter(Boolean));
+    const classIds = new Set(classes.map((row) => text(row.id)).filter(Boolean));
+    const studentIds = new Set(students.map((row) => text(row.id)).filter(Boolean));
+    const periodIds = new Set(periods.map((row) => text(row.id)).filter(Boolean));
+    const subjectIdMap = indexSubjects(subjectRows);
+    const skipped: BootstrapSkip[] = [];
+    const missing = (collection: string, row: any, field: string, reference: unknown) => {
+      skipped.push({
+        collection,
+        entity_id:
+          text(row.id) ||
+          entityId(collection, row.class_id, row.teacher_id, row.profile_id, row.student_id),
+        field,
+        reference_id: text(reference) || "null",
+      });
+    };
+
+    const normalizedUserRoles = userRoles.filter((row) => {
+      if (profileIds.has(text(row.profile_id))) return true;
+      missing("user_roles", row, "profile_id", row.profile_id);
+      return false;
+    });
+    const normalizedTeacherSubjects = teacherSubjects.flatMap((row) => {
+      const teacherId = text(row.profile_id);
+      const localSubjectId = subjectIdMap.get(text(row.subject_id));
+      if (!profileIds.has(teacherId)) {
+        missing("teacher_subjects", row, "teacher_id", teacherId);
+        return [];
+      }
+      if (!localSubjectId) {
+        missing("teacher_subjects", row, "subject_id", row.subject_id);
+        return [];
+      }
+      return [{ ...row, teacher_id: teacherId, subject_id: localSubjectId }];
+    });
+    const normalizedEnrollments = enrollments.flatMap((row) => {
+      if (!classIds.has(text(row.class_id))) {
+        missing("class_enrollments", row, "class_id", row.class_id);
+        return [];
+      }
+      if (!studentIds.has(text(row.student_id))) {
+        missing("class_enrollments", row, "student_id", row.student_id);
+        return [];
+      }
+      return [row];
+    });
+    const normalizedTimetables = timetables.flatMap((row) => {
+      const localSubjectId = subjectIdMap.get(text(row.subject_id));
+      if (!classIds.has(text(row.class_id))) {
+        missing("teacher_timetables", row, "class_id", row.class_id);
+        return [];
+      }
+      if (!localSubjectId) {
+        missing("teacher_timetables", row, "subject_id", row.subject_id);
+        return [];
+      }
+      if (!profileIds.has(text(row.teacher_id))) {
+        missing("teacher_timetables", row, "teacher_id", row.teacher_id);
+        return [];
+      }
+      if (!periodIds.has(text(row.period_id))) {
+        missing("teacher_timetables", row, "period_id", row.period_id);
+        return [];
+      }
+      return [{ ...row, subject_id: localSubjectId }];
+    });
+    const normalizedAbsenceRequests = absenceRequests.flatMap((row) => {
+      const teacherId = text(row.teacher_profile_id);
+      if (!profileIds.has(teacherId)) {
+        missing("teacher_absence_requests", row, "teacher_id", teacherId);
+        return [];
+      }
+      if (!["pending", "approved", "rejected", "cancelled"].includes(text(row.status))) {
+        missing("teacher_absence_requests", row, "status", row.status);
+        return [];
+      }
+      return [{ ...row, teacher_id: teacherId }];
+    });
+    const normalizedSessions = sessions.flatMap((row) => {
+      const localSubjectId = subjectIdMap.get(text(row.subject_id));
+      if (!classIds.has(text(row.class_id))) {
+        missing("teacher_sessions", row, "class_id", row.class_id);
+        return [];
+      }
+      if (!localSubjectId) {
+        missing("teacher_sessions", row, "subject_id", row.subject_id);
+        return [];
+      }
+      if (!profileIds.has(text(row.teacher_id))) {
+        missing("teacher_sessions", row, "teacher_id", row.teacher_id);
+        return [];
+      }
+      return [{ ...row, subject_id: localSubjectId }];
+    });
 
     const optionalMigrationMissing =
       (attendancePolicy.error as any)?.code === "42P01" ||
@@ -210,7 +327,7 @@ export async function GET(request: NextRequest) {
       entities: {
         academic_years: academicYears.map((row) => withMeta(row, generatedAt)),
         profiles: relayProfiles.map((row) => withMeta({ ...row, is_active: true }, generatedAt)),
-        user_roles: relayUserRoles(userRoles, institutionId, generatedAt),
+        user_roles: relayUserRoles(normalizedUserRoles, institutionId, generatedAt),
         classes: classes.map((row) => withMeta(row, generatedAt)),
         subjects: subjectRows.map((row) => {
           const linked = Array.isArray(row.subjects) ? row.subjects[0] : row.subjects;
@@ -222,19 +339,14 @@ export async function GET(request: NextRequest) {
             short_name: text(linked?.code) || null,
           }, generatedAt);
         }),
-        teacher_subjects: teacherSubjects.flatMap((row) => {
-          const subjectId = text(row.subject_id);
-          const localSubject = subjectRows.find((subject) =>
-            text(subject.id) === subjectId || text(subject.subject_id) === subjectId
-          );
-          if (!localSubject?.id || !row.profile_id) return [];
-          return [withMeta({
-            id: entityId(institutionId, row.profile_id, localSubject.id),
+        teacher_subjects: normalizedTeacherSubjects.map((row) =>
+          withMeta({
+            id: entityId(institutionId, row.teacher_id, row.subject_id),
             institution_id: institutionId,
-            teacher_id: row.profile_id,
-            subject_id: localSubject.id,
-          }, generatedAt)];
-        }),
+            teacher_id: row.teacher_id,
+            subject_id: row.subject_id,
+          }, generatedAt)
+        ),
         students: students.map((row) => withMeta({
           id: row.id,
           institution_id: institutionId,
@@ -245,7 +357,7 @@ export async function GET(request: NextRequest) {
           gender: row.gender || null,
           is_active: true,
         }, generatedAt)),
-        class_enrollments: enrollments.map((row) => withMeta({
+        class_enrollments: normalizedEnrollments.map((row) => withMeta({
           id: entityId(institutionId, row.class_id, row.student_id, row.start_date || "active"),
           institution_id: institutionId,
           class_id: row.class_id,
@@ -254,12 +366,13 @@ export async function GET(request: NextRequest) {
           end_date: row.end_date || null,
         }, generatedAt)),
         institution_periods: periods.map((row) => withMeta(row, generatedAt)),
-        teacher_timetables: timetables.map((row) => withMeta({ ...row, academic_year: null }, generatedAt)),
-        teacher_absence_requests: absenceRequests.map((row) => withMeta({
-          ...row,
-          teacher_id: row.teacher_profile_id,
-        }, generatedAt)),
-        teacher_sessions: sessions.map((row) => withMeta({
+        teacher_timetables: normalizedTimetables.map((row) =>
+          withMeta({ ...row, academic_year: null }, generatedAt)
+        ),
+        teacher_absence_requests: normalizedAbsenceRequests.map((row) =>
+          withMeta(row, generatedAt)
+        ),
+        teacher_sessions: normalizedSessions.map((row) => withMeta({
           ...row,
           client_session_id: row.id,
           period_id: null,
@@ -277,6 +390,12 @@ export async function GET(request: NextRequest) {
         textbook_sessions: [],
         textbook_completions: [],
         offline_documents: [],
+      },
+      diagnostics: {
+        skipped_count: skipped.length,
+        skipped,
+        missing_profiles_requested: missingProfileIds.length,
+        missing_profiles_found: referencedProfiles.length,
       },
     };
 

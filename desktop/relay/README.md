@@ -11,7 +11,10 @@ ligne.
 
 ## Garanties
 
-- une base par installation, partitionnée par `institution_id` ;
+- un établissement indépendant par défaut, ou plusieurs établissements
+  explicitement autorisés lorsqu'un groupe scolaire partage le même relais ;
+- isolation de toutes les données, files d'attente, curseurs et conflits par
+  `institution_id`, y compris dans une base de groupe scolaire ;
 - clés étrangères, mode WAL et attente en cas d'accès concurrent ;
 - identifiant d'opération unique contre les doubles appels, doubles notes et
   doubles séances après un rejeu réseau ;
@@ -55,9 +58,64 @@ Le relais n'est pas encore l'application Windows finale. L'enveloppe Tauri et
 l'appairage Wi-Fi/LAN arriveront dans les lots suivants sans modifier le contrat
 posé ici.
 
+## Installation Windows sans commande à saisir
+
+Le dossier `windows` fournit désormais un assistant destiné au poste relais de
+l'établissement. L'administrateur double-clique sur
+`windows/Installer-Mon-Cahier.cmd`, renseigne le code unique et le nom de
+l'établissement, puis accepte l'autorisation Windows.
+
+L'assistant effectue automatiquement les opérations suivantes :
+
+- vérification de Node.js et construction du relais ;
+- création d'une configuration protégée dans
+  `%LOCALAPPDATA%\MonCahier\Relay\config.json` ;
+- génération du jeton Admin de l'école et création de sa base SQLite ;
+- suppression des anciennes variables utilisateur susceptibles de forcer la
+  base d'un autre établissement ;
+- autorisation du port 4317 uniquement sur les réseaux Windows privés ;
+- proposition explicite avant de classer le réseau courant comme privé ;
+- installation du démarrage silencieux à l'ouverture de session ;
+- démarrage immédiat, contrôle `/health`, copie du jeton dans le presse-papiers
+  et ouverture de la page de paramétrage Mon Cahier.
+
+Le jeton existant est conservé lors d'une réinstallation pour le même code
+établissement. Il est renouvelé automatiquement si le poste est basculé vers
+un autre établissement, dont la base locale est également séparée.
+Si le PC possède déjà un relais, l'assistant demande explicitement si le nouvel
+établissement appartient au même groupe scolaire. Une réponse positive ajoute
+le code à la liste autorisée, conserve la base partagée et active le mode
+`school_group`. Chaque école reçoit alors son propre jeton Admin : le jeton
+d'une école ne permet pas de consulter les données locales d'une autre école.
+Une réponse négative conserve le comportement isolé : la
+configuration active bascule vers une nouvelle base et un nouveau jeton, sans
+supprimer l'ancienne base.
+Le relais compare en plus le code unique reçu lors du bootstrap Cloud avec le
+ou les codes configurés localement et refuse toute synchronisation provenant
+d'un établissement non autorisé avant la première écriture SQLite.
+
+Dans un groupe scolaire, partager le PC ne signifie jamais partager les données
+entre écoles. Chaque requête locale reste limitée à son `institution_id` et le
+diagnostic expose séparément l'état de synchronisation de chaque établissement.
+Le groupe peut aussi choisir un PC relais distinct par école ; chaque
+installation possède alors sa propre configuration, sa propre base et son
+propre réseau local.
+
+Deux raccourcis de dépannage ne nécessitent aucune commande manuelle :
+
+- `windows/Diagnostic-Mon-Cahier.cmd` vérifie la configuration, la base et si
+  le service répond ;
+- `windows/Copier-Jeton-Admin.cmd` remet le jeton Admin dans le presse-papiers ;
+  en mode groupe, il demande le code de l'école concernée.
+
+Le jeton Admin reste réservé au navigateur d'administration. Il n'est jamais
+communiqué aux enseignants et n'intervient pas dans leur preuve de présence.
+
 ## API locale du lot 6.2
 
-Toutes les routes `/v1/*` utilisent le jeton du relais lorsqu'il est configuré.
+Les routes Admin et bootstrap utilisent le jeton propre à l'école concernée.
+Les routes techniques de synchronisation utilisent un jeton maître interne qui
+n'est pas affiché dans l'assistant et ne doit pas être copié dans le navigateur.
 
 - `POST /v1/sync/bootstrap` : copie initiale complète Cloud → SQLite ;
 - `POST /v1/sync/apply` : application d'un événement Cloud incrémental ;
@@ -75,9 +133,9 @@ Toutes les routes `/v1/*` utilisent le jeton du relais lorsqu'il est configuré.
 Pour les téléphones, l'administration renseigne dans Mon Cahier l'adresse LAN
 du PC relais (par exemple `http://192.168.1.20:4317`). Le navigateur obtient
 automatiquement un accès limité à l'enseignant connecté. Le PC relais doit être
-lancé avec `MONCAHIER_RELAY_HOST=0.0.0.0` et un `MONCAHIER_RELAY_TOKEN` réservé
-aux fonctions Admin/synchronisation. Ce jeton Admin ne doit pas être partagé
-avec les enseignants.
+lancé avec `MONCAHIER_RELAY_HOST=0.0.0.0` et une configuration protégée. Le
+jeton Admin propre à chaque école ne doit jamais être partagé avec les
+enseignants.
 
 Le bootstrap accepte un objet de cette forme :
 

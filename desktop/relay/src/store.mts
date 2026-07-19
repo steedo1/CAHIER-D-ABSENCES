@@ -41,8 +41,19 @@ export class RelayStore {
   }
 
   getOrCreateRelayDevice(institutionId: string) {
-    const existing = getMeta(this.db, "relay_device_id");
+    const scopedKey = `relay_device_id:${institutionId}`;
+    const existing = getMeta(this.db, scopedKey);
     if (existing) return existing;
+    const legacy = getMeta(this.db, "relay_device_id");
+    if (legacy) {
+      const belongsToInstitution = this.db.prepare(`
+        SELECT 1 FROM relay_devices WHERE id = ? AND institution_id = ?
+      `).get(legacy, institutionId);
+      if (belongsToInstitution) {
+        setMeta(this.db, scopedKey, legacy);
+        return legacy;
+      }
+    }
     const deviceId = randomUUID();
     const now = new Date().toISOString();
     const create = this.db.transaction(() => {
@@ -50,7 +61,8 @@ export class RelayStore {
         INSERT INTO relay_devices(id, institution_id, label, kind, paired_at, last_seen_at)
         VALUES (?, ?, 'Relais principal', 'relay', ?, ?)
       `).run(deviceId, institutionId, now, now);
-      setMeta(this.db, "relay_device_id", deviceId);
+      setMeta(this.db, scopedKey, deviceId);
+      if (!legacy) setMeta(this.db, "relay_device_id", deviceId);
     });
     create();
     return deviceId;
@@ -316,6 +328,14 @@ export class RelayStore {
   status(): RelayStatus {
     const count = (sql: string) =>
       Number((this.db.prepare(sql).get() as { count: number }).count || 0);
+    const institutions = this.db.prepare(`
+      SELECT id, name, code
+      FROM institutions
+      WHERE deleted_at IS NULL
+      ORDER BY name, id
+    `).all() as Array<{ id: string; name: string; code: string | null }>;
+    const scopedCount = (sql: string, institutionId: string) =>
+      Number((this.db.prepare(sql).get(institutionId) as { count: number }).count || 0);
     return {
       ok: true,
       schema_version: schemaVersion(this.db),
@@ -325,6 +345,28 @@ export class RelayStore {
       unresolved_conflicts: count("SELECT COUNT(*) AS count FROM sync_conflicts WHERE resolved_at IS NULL"),
       materialization_failures: count("SELECT COUNT(*) AS count FROM sync_materialization_failures"),
       last_cloud_sync_at: getMeta(this.db, "last_cloud_sync_at"),
+      institutions: institutions.map((institution) => ({
+        institution_id: institution.id,
+        name: institution.name,
+        code: institution.code,
+        last_cloud_sync_at: getMeta(this.db, `last_cloud_sync_at:${institution.id}`),
+        pending_operations: scopedCount(
+          "SELECT COUNT(*) AS count FROM sync_outbox WHERE institution_id = ? AND state IN ('pending', 'sending')",
+          institution.id,
+        ),
+        blocked_operations: scopedCount(
+          "SELECT COUNT(*) AS count FROM sync_outbox WHERE institution_id = ? AND state = 'blocked'",
+          institution.id,
+        ),
+        unresolved_conflicts: scopedCount(
+          "SELECT COUNT(*) AS count FROM sync_conflicts WHERE institution_id = ? AND resolved_at IS NULL",
+          institution.id,
+        ),
+        materialization_failures: scopedCount(
+          "SELECT COUNT(*) AS count FROM sync_materialization_failures WHERE institution_id = ?",
+          institution.id,
+        ),
+      })),
     };
   }
 

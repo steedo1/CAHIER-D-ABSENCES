@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node scripts/run-tests.mjs",
     "verify": "npm run typecheck && npm test",
-    "dev": "tsx src/cli.ts",
+    "dev": "tsx src/cli.mts",
     "start": "node dist/src/cli.mjs"
   },
   "dependencies": {
