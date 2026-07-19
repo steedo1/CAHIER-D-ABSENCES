@@ -524,15 +524,6 @@ const TEXTBOOK_ITEMS: NavItem[] = [
   },
 ];
 
-/* =========================
-   Groupe : Auxiliaires pédagogiques
-========================= */
-const AUXILIARY_PEDAGOGICAL_ITEMS: NavItem[] = [
-  ...ABS_ITEMS,
-  ...TEXTBOOK_ITEMS,
-  ...NOTES_ITEMS,
-];
-
 function NavLinkItem({
   item,
   pathname,
@@ -1122,16 +1113,6 @@ export default function SidebarNav() {
     [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
-  const auxiliaryPedagogicalItems = React.useMemo(
-    () =>
-      AUXILIARY_PEDAGOGICAL_ITEMS.filter((item) => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
-        if (isEducator && item.href.startsWith("/admin/notes")) return false;
-        return true;
-      }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
   const settingsItems = React.useMemo(
     () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
     [isInfirmier, isFinanceManager, isFinanceOnlyShell],
@@ -1198,12 +1179,6 @@ export default function SidebarNav() {
     !isFinanceOnlyShell &&
     groupHasActiveItem(pathname, notesItems, currentTab);
 
-  const auxiliaryPedagogicalActive =
-    !isInfirmier &&
-    !isFinanceManager &&
-    !isFinanceOnlyShell &&
-    groupHasActiveItem(pathname, auxiliaryPedagogicalItems, currentTab);
-
   const settingsActive = groupHasActiveItem(
     pathname,
     settingsItems,
@@ -1239,9 +1214,6 @@ export default function SidebarNav() {
     React.useState<boolean>(textbookActive);
 
   const [notesOpen, setNotesOpen] = React.useState<boolean>(notesActive);
-
-  const [auxiliaryPedagogicalOpen, setAuxiliaryPedagogicalOpen] =
-    React.useState<boolean>(auxiliaryPedagogicalActive);
 
   const [settingsOpen, setSettingsOpen] =
     React.useState<boolean>(settingsActive);
@@ -1289,10 +1261,6 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (notesActive) setNotesOpen(true);
   }, [notesActive]);
-
-  React.useEffect(() => {
-    if (auxiliaryPedagogicalActive) setAuxiliaryPedagogicalOpen(true);
-  }, [auxiliaryPedagogicalActive]);
 
   React.useEffect(() => {
     if (settingsActive) setSettingsOpen(true);
@@ -1500,17 +1468,51 @@ export default function SidebarNav() {
 
             {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
-              auxiliaryPedagogicalItems.length > 0 && (
+              absItems.length > 0 && (
                 <GroupSection
-                  title="Auxiliaires pédagogiques"
-                  Icon={BookOpen}
-                  items={auxiliaryPedagogicalItems}
+                  title="Cahier des absences"
+                  Icon={Ban}
+                  items={absItems}
                   pathname={pathname}
                   currentTab={currentTab}
-                  open={auxiliaryPedagogicalOpen}
-                  onToggle={() => setAuxiliaryPedagogicalOpen((v) => !v)}
+                  open={absOpen}
+                  onToggle={() => setAbsOpen((v) => !v)}
+                  accent="cyan"
+                  pendingAbsenceCount={pendingAbsenceCount}
+                  pendingGradePublicationCount={pendingGradePublicationCount}
+                />
+              )}
+
+            {!isInfirmier && !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              notesItems.length > 0 && (
+                <GroupSection
+                  title="Cahier de notes"
+                  Icon={NotebookPen}
+                  items={notesItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={notesOpen}
+                  onToggle={() => setNotesOpen((v) => !v)}
                   accent="violet"
                   badgeCount={pendingGradePublicationCount}
+                  pendingAbsenceCount={pendingAbsenceCount}
+                  pendingGradePublicationCount={pendingGradePublicationCount}
+                />
+              )}
+
+            {!isInfirmier && !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              textbookItems.length > 0 && (
+                <GroupSection
+                  title="Cahier de texte"
+                  Icon={BookOpen}
+                  items={textbookItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={textbookOpen}
+                  onToggle={() => setTextbookOpen((v) => !v)}
+                  accent="emerald"
                   pendingAbsenceCount={pendingAbsenceCount}
                   pendingGradePublicationCount={pendingGradePublicationCount}
                 />
