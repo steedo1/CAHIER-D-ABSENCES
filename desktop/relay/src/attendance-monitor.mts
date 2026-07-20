@@ -76,9 +76,18 @@ export function attendanceMonitor(
                     NULLIF(TRIM(p.phone), ''), 'Enseignant') AS teacher_name,
            p.phone AS teacher_phone
     FROM teacher_timetables tt
-    JOIN classes c ON c.id = tt.class_id AND c.deleted_at IS NULL
-    JOIN subjects s ON s.id = tt.subject_id AND s.deleted_at IS NULL
-    JOIN profiles p ON p.id = tt.teacher_id AND p.deleted_at IS NULL
+    JOIN classes c
+      ON c.institution_id = tt.institution_id
+     AND c.id = tt.class_id
+     AND c.deleted_at IS NULL
+    JOIN subjects s
+      ON s.institution_id = tt.institution_id
+     AND s.id = tt.subject_id
+     AND s.deleted_at IS NULL
+    JOIN profiles p
+      ON p.institution_id = tt.institution_id
+     AND p.id = tt.teacher_id
+     AND p.deleted_at IS NULL
     WHERE tt.institution_id = ? AND tt.deleted_at IS NULL
   `).all(options.institutionId) as TimetableRow[];
 

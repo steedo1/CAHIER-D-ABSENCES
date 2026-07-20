@@ -1,6 +1,6 @@
 import { attendanceMonitor } from "./attendance-monitor.mjs";
 import type { RelayDatabase } from "./db.mjs";
-import { getMeta } from "./db.mjs";
+import { getInstitutionMeta } from "./db.mjs";
 
 export function adminDashboard(
   db: RelayDatabase,
@@ -83,8 +83,11 @@ export function adminDashboard(
         "SELECT COUNT(*) AS count FROM sync_materialization_failures WHERE institution_id = ?",
         options.institutionId,
       ),
-      last_cloud_sync_at: getMeta(db, `last_cloud_sync_at:${options.institutionId}`)
-        ?? getMeta(db, "last_cloud_sync_at"),
+      last_cloud_sync_at: getInstitutionMeta(
+        db,
+        options.institutionId,
+        "last_cloud_sync_at",
+      ),
     },
   };
 }

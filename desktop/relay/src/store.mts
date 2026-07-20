@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { applyBootstrap, type BootstrapResult } from "./bootstrap.mjs";
 import type { RelayDatabase } from "./db.mjs";
-import { getMeta, schemaVersion, setMeta } from "./db.mjs";
+import {
+  getInstitutionMeta,
+  latestInstitutionMeta,
+  schemaVersion,
+  setInstitutionMeta,
+} from "./db.mjs";
 import { materializeTracked, retryMaterializationFailures } from "./entity-materializer.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import type {
@@ -41,18 +46,12 @@ export class RelayStore {
   }
 
   getOrCreateRelayDevice(institutionId: string) {
-    const scopedKey = `relay_device_id:${institutionId}`;
-    const existing = getMeta(this.db, scopedKey);
-    if (existing) return existing;
-    const legacy = getMeta(this.db, "relay_device_id");
-    if (legacy) {
+    const existing = getInstitutionMeta(this.db, institutionId, "relay_device_id");
+    if (existing) {
       const belongsToInstitution = this.db.prepare(`
-        SELECT 1 FROM relay_devices WHERE id = ? AND institution_id = ?
-      `).get(legacy, institutionId);
-      if (belongsToInstitution) {
-        setMeta(this.db, scopedKey, legacy);
-        return legacy;
-      }
+        SELECT 1 FROM relay_devices WHERE institution_id = ? AND id = ?
+      `).get(institutionId, existing);
+      if (belongsToInstitution) return existing;
     }
     const deviceId = randomUUID();
     const now = new Date().toISOString();
@@ -61,8 +60,7 @@ export class RelayStore {
         INSERT INTO relay_devices(id, institution_id, label, kind, paired_at, last_seen_at)
         VALUES (?, ?, 'Relais principal', 'relay', ?, ?)
       `).run(deviceId, institutionId, now, now);
-      setMeta(this.db, scopedKey, deviceId);
-      if (!legacy) setMeta(this.db, "relay_device_id", deviceId);
+      setInstitutionMeta(this.db, institutionId, "relay_device_id", deviceId);
     });
     create();
     return deviceId;
@@ -75,8 +73,8 @@ export class RelayStore {
 
     return this.db.transaction(() => {
       const existing = this.db
-        .prepare("SELECT * FROM sync_outbox WHERE operation_id = ?")
-        .get(operation.operation_id) as OutboxComparable | undefined;
+        .prepare("SELECT * FROM sync_outbox WHERE institution_id = ? AND operation_id = ?")
+        .get(operation.institution_id, operation.operation_id) as OutboxComparable | undefined;
       if (existing) {
         if (!sameOperation(existing, operation, payloadJson)) {
           throw new Error("operation_id_reused_with_different_payload");
@@ -142,8 +140,8 @@ export class RelayStore {
 
     return this.db.transaction(() => {
       const received = this.db
-        .prepare("SELECT 1 FROM sync_inbox WHERE event_id = ?")
-        .get(event.event_id);
+        .prepare("SELECT 1 FROM sync_inbox WHERE institution_id = ? AND event_id = ?")
+        .get(event.institution_id, event.event_id);
       if (received) return { event_id: event.event_id, status: "duplicate" } as const;
 
       const pending = this.db.prepare(`
@@ -192,8 +190,9 @@ export class RelayStore {
             new Date().toISOString(),
           );
           this.db.prepare(
-            "UPDATE sync_outbox SET state = 'blocked', last_error = ? WHERE operation_id = ?",
-          ).run(`sync_conflict:${conflictId}`, pending.operation_id);
+            `UPDATE sync_outbox SET state = 'blocked', last_error = ?
+             WHERE institution_id = ? AND operation_id = ?`,
+          ).run(`sync_conflict:${conflictId}`, event.institution_id, pending.operation_id);
           this.recordInbox(event, remotePayload);
           this.audit(event.institution_id, "sync.conflict_detected", event, conflictId);
           return { event_id: event.event_id, status: "conflict", conflict_id: conflictId } as const;
@@ -247,14 +246,16 @@ export class RelayStore {
   }
 
   resolveConflict(
+    institutionId: string,
     conflictId: string,
     resolution: "accept_remote" | "keep_local",
     resolvedBy: string,
   ) {
     return this.db.transaction(() => {
       const conflict = this.db.prepare(`
-        SELECT * FROM sync_conflicts WHERE id = ? AND resolved_at IS NULL
-      `).get(conflictId) as
+        SELECT * FROM sync_conflicts
+        WHERE institution_id = ? AND id = ? AND resolved_at IS NULL
+      `).get(institutionId, conflictId) as
         | {
             institution_id: string;
             operation_id: string | null;
@@ -299,20 +300,23 @@ export class RelayStore {
           occurredAt: now,
         });
         if (conflict.operation_id) {
-          this.db.prepare("DELETE FROM sync_outbox WHERE operation_id = ?").run(conflict.operation_id);
+          this.db.prepare(`
+            DELETE FROM sync_outbox WHERE institution_id = ? AND operation_id = ?
+          `).run(conflict.institution_id, conflict.operation_id);
         }
       } else if (conflict.operation_id) {
         this.db.prepare(`
           UPDATE sync_outbox
           SET state = 'pending', base_server_version = ?, last_error = NULL
-          WHERE operation_id = ?
-        `).run(conflict.remote_server_version, conflict.operation_id);
+          WHERE institution_id = ? AND operation_id = ?
+        `).run(conflict.remote_server_version, conflict.institution_id, conflict.operation_id);
       }
 
       retryMaterializationFailures(this.db, conflict.institution_id);
       this.db.prepare(`
-        UPDATE sync_conflicts SET resolution = ?, resolved_at = ?, resolved_by = ? WHERE id = ?
-      `).run(resolution, now, resolvedBy, conflictId);
+        UPDATE sync_conflicts SET resolution = ?, resolved_at = ?, resolved_by = ?
+        WHERE institution_id = ? AND id = ?
+      `).run(resolution, now, resolvedBy, conflict.institution_id, conflictId);
       this.audit(conflict.institution_id, "sync.conflict_resolved", {
         conflict_id: conflictId,
         resolution,
@@ -344,12 +348,12 @@ export class RelayStore {
       blocked_operations: count("SELECT COUNT(*) AS count FROM sync_outbox WHERE state = 'blocked'"),
       unresolved_conflicts: count("SELECT COUNT(*) AS count FROM sync_conflicts WHERE resolved_at IS NULL"),
       materialization_failures: count("SELECT COUNT(*) AS count FROM sync_materialization_failures"),
-      last_cloud_sync_at: getMeta(this.db, "last_cloud_sync_at"),
+      last_cloud_sync_at: latestInstitutionMeta(this.db, "last_cloud_sync_at"),
       institutions: institutions.map((institution) => ({
         institution_id: institution.id,
         name: institution.name,
         code: institution.code,
-        last_cloud_sync_at: getMeta(this.db, `last_cloud_sync_at:${institution.id}`),
+        last_cloud_sync_at: getInstitutionMeta(this.db, institution.id, "last_cloud_sync_at"),
         pending_operations: scopedCount(
           "SELECT COUNT(*) AS count FROM sync_outbox WHERE institution_id = ? AND state IN ('pending', 'sending')",
           institution.id,

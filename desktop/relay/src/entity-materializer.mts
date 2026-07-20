@@ -325,11 +325,14 @@ export function materializeEntity(
   const updates = columns
     .filter((column) => column !== "id" && column !== "institution_id")
     .map((column) => `${column} = excluded.${column}`);
+  const conflictTarget = spec.entityType === "institution"
+    ? "id"
+    : "institution_id, id";
 
   db.prepare(`
     INSERT INTO ${spec.table}(${columns.join(", ")})
     VALUES (${columns.map(() => "?").join(", ")})
-    ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}
+    ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updates.join(", ")}
   `).run(...columns.map((column) => values[column]));
 }
 

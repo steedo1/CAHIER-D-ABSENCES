@@ -1,16 +1,43 @@
 import type { RelayDatabase } from "./db.mjs";
-import { setMeta } from "./db.mjs";
-import { collectionSpec, ENTITY_SPECS, materializeEntity, retryMaterializationFailures } from "./entity-materializer.mjs";
+import { setInstitutionMeta } from "./db.mjs";
+import {
+  collectionSpec,
+  ENTITY_SPECS,
+  materializeEntity,
+  materializeTracked,
+  retryMaterializationFailures,
+} from "./entity-materializer.mjs";
 import { canonicalJson } from "./json.mjs";
 import { SYNC_PROTOCOL_VERSION, type SyncEntityType } from "./types.mjs";
+
+export type BootstrapDiagnostic = {
+  collection: string;
+  entity_id: string;
+  institution_id: string;
+  reason:
+    | "dependency_missing"
+    | "institution_mismatch"
+    | "materialization_failed"
+    | "validation_failed"
+    | "duplicate_entity"
+    | "forbidden_collection"
+    | "unsupported_collection"
+    | "collection_invalid";
+  dependency_type?: string;
+  dependency_id?: string;
+  error?: string;
+};
 
 export type BootstrapResult = {
   snapshot_id: string;
   institution_id: string;
-  status: "applied" | "duplicate";
+  status: "applied" | "partial" | "duplicate";
   imported_entities: number;
   preserved_local_entities: number;
+  deferred_entities: number;
+  rejected_entities: number;
   collections: Record<string, number>;
+  diagnostics: BootstrapDiagnostic[];
   source_skipped_entities: number;
   source_diagnostics: Record<string, unknown>;
   completed_at: string;
@@ -25,12 +52,21 @@ type BootstrapSnapshot = {
   institution: Record<string, unknown>;
   entities: Record<string, Record<string, unknown>[]>;
   diagnostics: Record<string, unknown>;
+  inputDiagnostics: BootstrapDiagnostic[];
 };
 
 type DependencyRule = {
   field: string;
   collection: string;
   optional?: boolean;
+};
+
+type WorkItem = {
+  key: string;
+  collection: string;
+  entityType: SyncEntityType;
+  entityId: string;
+  row: Record<string, unknown>;
 };
 
 const DEPENDENCY_RULES: Record<string, readonly DependencyRule[]> = {
@@ -92,79 +128,75 @@ const FORBIDDEN_COLLECTION = /finance|payment|receipt|cash|payroll|expense|budge
 
 export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult {
   const snapshot = parseBootstrapSnapshot(raw);
-  validateBootstrapDependencies(snapshot);
   const existing = db.prepare(`
-    SELECT completed_at, imported_entities, preserved_local_entities, collections_json,
+    SELECT completed_at, status, imported_entities, preserved_local_entities,
+           deferred_entities, rejected_entities, collections_json, diagnostics_json,
            source_skipped_entities, source_diagnostics_json
     FROM sync_bootstrap_runs
-    WHERE snapshot_id = ? AND institution_id = ? AND status = 'completed'
-  `).get(snapshot.snapshot_id, snapshot.institution_id) as
-    | {
-        completed_at: string;
-        imported_entities: number;
-        preserved_local_entities: number;
-        collections_json: string;
-        source_skipped_entities: number;
-        source_diagnostics_json: string;
-      }
-    | undefined;
-  if (existing) {
-    return {
-      snapshot_id: snapshot.snapshot_id,
-      institution_id: snapshot.institution_id,
-      status: "duplicate",
-      imported_entities: Number(existing.imported_entities || 0),
-      preserved_local_entities: Number(existing.preserved_local_entities || 0),
-      collections: JSON.parse(existing.collections_json) as Record<string, number>,
-      source_skipped_entities: Number(existing.source_skipped_entities || 0),
-      source_diagnostics: JSON.parse(existing.source_diagnostics_json) as Record<string, unknown>,
-      completed_at: existing.completed_at,
-    };
-  }
+    WHERE institution_id = ? AND snapshot_id = ? AND status IN ('completed', 'partial')
+  `).get(snapshot.institution_id, snapshot.snapshot_id) as StoredBootstrapRun | undefined;
+  if (existing) return duplicateResult(snapshot, existing);
 
   return db.transaction(() => {
     const startedAt = new Date().toISOString();
     let imported = 0;
     let preserved = 0;
-    const collectionCounts: Record<string, number> = {};
+    let rejected = snapshot.inputDiagnostics.length;
+    const diagnostics = [...snapshot.inputDiagnostics];
+    const deferredKeys = new Set<string>();
+    const collectionCounts = collectionCountsFor(snapshot);
     const sourceSkippedEntities = nonNegativeInteger(
       snapshot.diagnostics.skipped_count ?? 0,
       "diagnostics.skipped_count",
     );
 
+    assertInstitutionIdentityCompatible(db, snapshot);
     const institutionPayload = {
       ...snapshot.institution,
       id: snapshot.institution_id,
       name: requiredText(snapshot.institution.name, "institution_name"),
     };
-    const institutionVersion = nonNegativeInteger(snapshot.institution.server_version ?? 0, "server_version");
-    materializeEntity(db, {
-      institutionId: snapshot.institution_id,
-      entityType: "institution",
-      entityId: snapshot.institution_id,
-      action: "upsert",
-      payload: institutionPayload,
-      serverVersion: institutionVersion,
-      occurredAt: snapshot.generated_at,
-    });
-    writeSyncRecord(
+    const institutionVersion = nonNegativeInteger(
+      snapshot.institution.server_version ?? 0,
+      "server_version",
+    );
+    const institutionDirty = isLocalDirty(
       db,
       snapshot.institution_id,
       "institution",
       snapshot.institution_id,
-      institutionPayload,
-      institutionVersion,
-      snapshot.generated_at,
     );
-    imported += 1;
-    collectionCounts.institutions = 1;
+    if (institutionDirty) {
+      preserved += 1;
+    } else {
+      materializeEntity(db, {
+        institutionId: snapshot.institution_id,
+        entityType: "institution",
+        entityId: snapshot.institution_id,
+        action: "upsert",
+        payload: institutionPayload,
+        serverVersion: institutionVersion,
+        occurredAt: snapshot.generated_at,
+      });
+      writeSyncRecord(
+        db,
+        snapshot.institution_id,
+        "institution",
+        snapshot.institution_id,
+        institutionPayload,
+        institutionVersion,
+        snapshot.generated_at,
+      );
+      imported += 1;
+    }
 
     db.prepare(`
       INSERT INTO sync_bootstrap_runs(
         snapshot_id, institution_id, generated_at, started_at, status,
-        imported_entities, preserved_local_entities, collections_json,
+        imported_entities, preserved_local_entities, deferred_entities,
+        rejected_entities, collections_json, diagnostics_json,
         source_skipped_entities, source_diagnostics_json
-      ) VALUES (?, ?, ?, ?, 'running', 0, 0, '{}', ?, ?)
+      ) VALUES (?, ?, ?, ?, 'running', 0, 0, 0, 0, '{}', '[]', ?, ?)
     `).run(
       snapshot.snapshot_id,
       snapshot.institution_id,
@@ -174,56 +206,61 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       canonicalJson(snapshot.diagnostics),
     );
 
-    for (const spec of ENTITY_SPECS) {
-      if (spec.entityType === "institution") continue;
-      const rows = snapshot.entities[spec.collection] ?? [];
-      collectionCounts[spec.collection] = rows.length;
-      for (const row of rows) {
-        const entityId = requiredText(row.id, `${spec.collection}.id`);
-        const foreignInstitution = String(row.institution_id ?? snapshot.institution_id).trim();
-        if (foreignInstitution !== snapshot.institution_id) {
-          throw new Error(`${spec.collection}.institution_id_mismatch`);
-        }
-        const dirty = db.prepare(`
-          SELECT local_dirty FROM sync_records
-          WHERE institution_id = ? AND entity_type = ? AND entity_id = ?
-        `).get(snapshot.institution_id, spec.entityType, entityId) as
-          | { local_dirty: number }
-          | undefined;
-        if (dirty?.local_dirty === 1) {
-          preserved += 1;
+    const available = loadAvailableEntities(db, snapshot.institution_id);
+    let remaining = buildWorkItems(snapshot, diagnostics);
+    rejected += diagnostics.length - snapshot.inputDiagnostics.length;
+
+    while (remaining.length > 0) {
+      let progressed = 0;
+      const next: WorkItem[] = [];
+      for (const item of remaining) {
+        const missing = missingDependencies(item, available);
+        if (missing.length > 0) {
+          deferredKeys.add(item.key);
+          next.push(item);
           continue;
         }
 
-        const serverVersion = nonNegativeInteger(row.server_version ?? 0, `${spec.collection}.server_version`);
-        const occurredAt = isoText(row.updated_at ?? snapshot.generated_at, `${spec.collection}.updated_at`);
-        try {
-          materializeEntity(db, {
-            institutionId: snapshot.institution_id,
-            entityType: spec.entityType,
-            entityId,
-            action: "upsert",
-            payload: row,
-            serverVersion,
-            occurredAt,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "materialization_failed";
-          throw new Error(`bootstrap_materialization_failed:${spec.collection}:${entityId}:${message}`);
+        const outcome = importWorkItem(db, snapshot, item);
+        if (outcome.status === "preserved") {
+          preserved += 1;
+        } else if (outcome.status === "imported") {
+          imported += 1;
+          available.get(item.collection)?.add(item.entityId);
+        } else {
+          rejected += 1;
+          diagnostics.push(outcome.diagnostic);
         }
-        writeSyncRecord(
-          db,
-          snapshot.institution_id,
-          spec.entityType,
-          entityId,
-          row,
-          serverVersion,
-          occurredAt,
-        );
-        imported += 1;
+        progressed += 1;
       }
+      remaining = next;
+      if (progressed === 0) break;
     }
 
+    for (const item of remaining) {
+      const missing = missingDependencies(item, available);
+      const diagnosticRows = missing.length > 0
+        ? missing.map((dependency) => ({
+            collection: item.collection,
+            entity_id: item.entityId,
+            institution_id: snapshot.institution_id,
+            reason: "dependency_missing" as const,
+            dependency_type: dependency.field,
+            dependency_id: dependency.id || "null",
+          }))
+        : [{
+            collection: item.collection,
+            entity_id: item.entityId,
+            institution_id: snapshot.institution_id,
+            reason: "materialization_failed" as const,
+            error: "bootstrap_entity_could_not_be_materialized",
+          }];
+      diagnostics.push(...diagnosticRows);
+      rejected += 1;
+      persistRejectedEntity(db, snapshot, item, diagnosticRows);
+    }
+
+    retryMaterializationFailures(db, snapshot.institution_id);
     db.prepare(`
       INSERT INTO sync_cursors(institution_id, stream, cursor, last_success_at, last_error_at, last_error)
       VALUES (?, 'cloud', ?, ?, NULL, NULL)
@@ -233,37 +270,47 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         last_error_at = NULL,
         last_error = NULL
     `).run(snapshot.institution_id, snapshot.cursor, snapshot.generated_at);
-    setMeta(db, "last_cloud_sync_at", snapshot.generated_at);
-    setMeta(db, `last_cloud_sync_at:${snapshot.institution_id}`, snapshot.generated_at);
-    retryMaterializationFailures(db, snapshot.institution_id);
+    setInstitutionMeta(db, snapshot.institution_id, "last_cloud_sync_at", snapshot.generated_at);
 
     const completedAt = new Date().toISOString();
+    const partial = rejected > 0 || sourceSkippedEntities > 0;
+    const storedStatus = partial ? "partial" : "completed";
+    const resultStatus: BootstrapResult["status"] = partial ? "partial" : "applied";
     db.prepare(`
       UPDATE sync_bootstrap_runs
-      SET status = 'completed', completed_at = ?, imported_entities = ?,
-          preserved_local_entities = ?, collections_json = ?,
+      SET status = ?, completed_at = ?, imported_entities = ?,
+          preserved_local_entities = ?, deferred_entities = ?, rejected_entities = ?,
+          collections_json = ?, diagnostics_json = ?,
           source_skipped_entities = ?, source_diagnostics_json = ?
-      WHERE snapshot_id = ? AND institution_id = ?
+      WHERE institution_id = ? AND snapshot_id = ?
     `).run(
+      storedStatus,
       completedAt,
       imported,
       preserved,
+      deferredKeys.size,
+      rejected,
       canonicalJson(collectionCounts),
+      canonicalJson(diagnostics),
       sourceSkippedEntities,
       canonicalJson(snapshot.diagnostics),
-      snapshot.snapshot_id,
       snapshot.institution_id,
+      snapshot.snapshot_id,
     );
     db.prepare(`
       INSERT INTO audit_log(institution_id, event_type, details_json, occurred_at)
-      VALUES (?, 'sync.bootstrap_completed', ?, ?)
+      VALUES (?, ?, ?, ?)
     `).run(
       snapshot.institution_id,
+      partial ? "sync.bootstrap_partial" : "sync.bootstrap_completed",
       canonicalJson({
         snapshot_id: snapshot.snapshot_id,
         imported_entities: imported,
         preserved_local_entities: preserved,
+        deferred_entities: deferredKeys.size,
+        rejected_entities: rejected,
         collections: collectionCounts,
+        diagnostics,
         source_skipped_entities: sourceSkippedEntities,
         source_diagnostics: snapshot.diagnostics,
       }),
@@ -273,10 +320,13 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     return {
       snapshot_id: snapshot.snapshot_id,
       institution_id: snapshot.institution_id,
-      status: "applied" as const,
+      status: resultStatus,
       imported_entities: imported,
       preserved_local_entities: preserved,
+      deferred_entities: deferredKeys.size,
+      rejected_entities: rejected,
       collections: collectionCounts,
+      diagnostics,
       source_skipped_entities: sourceSkippedEntities,
       source_diagnostics: snapshot.diagnostics,
       completed_at: completedAt,
@@ -284,32 +334,280 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
   })();
 }
 
-function validateBootstrapDependencies(snapshot: BootstrapSnapshot) {
-  const idsByCollection = new Map<string, Set<string>>();
+type StoredBootstrapRun = {
+  completed_at: string;
+  status: "completed" | "partial";
+  imported_entities: number;
+  preserved_local_entities: number;
+  deferred_entities: number;
+  rejected_entities: number;
+  collections_json: string;
+  diagnostics_json: string;
+  source_skipped_entities: number;
+  source_diagnostics_json: string;
+};
+
+function duplicateResult(
+  snapshot: BootstrapSnapshot,
+  existing: StoredBootstrapRun,
+): BootstrapResult {
+  return {
+    snapshot_id: snapshot.snapshot_id,
+    institution_id: snapshot.institution_id,
+    status: "duplicate",
+    imported_entities: Number(existing.imported_entities || 0),
+    preserved_local_entities: Number(existing.preserved_local_entities || 0),
+    deferred_entities: Number(existing.deferred_entities || 0),
+    rejected_entities: Number(existing.rejected_entities || 0),
+    collections: JSON.parse(existing.collections_json) as Record<string, number>,
+    diagnostics: JSON.parse(existing.diagnostics_json) as BootstrapDiagnostic[],
+    source_skipped_entities: Number(existing.source_skipped_entities || 0),
+    source_diagnostics: JSON.parse(existing.source_diagnostics_json) as Record<string, unknown>,
+    completed_at: existing.completed_at,
+  };
+}
+
+function assertInstitutionIdentityCompatible(db: RelayDatabase, snapshot: BootstrapSnapshot) {
+  const current = db.prepare(`
+    SELECT code FROM institutions WHERE id = ?
+  `).get(snapshot.institution_id) as { code: string | null } | undefined;
+  const currentCode = normalizedCode(current?.code);
+  const suppliedCode = normalizedCode(
+    snapshot.institution.code_unique ?? snapshot.institution.code ?? snapshot.institution.acronym,
+  );
+  if (currentCode && suppliedCode && currentCode !== suppliedCode) {
+    throw new Error(
+      `bootstrap_institution_identity_conflict:${snapshot.institution_id}:${currentCode}:${suppliedCode}`,
+    );
+  }
+}
+
+function collectionCountsFor(snapshot: BootstrapSnapshot) {
+  const counts: Record<string, number> = { institutions: 1 };
+  for (const spec of ENTITY_SPECS) {
+    if (spec.entityType !== "institution") {
+      counts[spec.collection] = snapshot.entities[spec.collection]?.length ?? 0;
+    }
+  }
+  return counts;
+}
+
+function loadAvailableEntities(db: RelayDatabase, institutionId: string) {
+  const available = new Map<string, Set<string>>();
   for (const spec of ENTITY_SPECS) {
     if (spec.entityType === "institution") continue;
-    const ids = new Set<string>();
-    for (const row of snapshot.entities[spec.collection] ?? []) {
-      const id = String(row.id ?? "").trim();
-      if (id) ids.add(id);
+    const rows = db.prepare(`
+      SELECT id FROM ${spec.table}
+      WHERE institution_id = ? AND deleted_at IS NULL
+    `).all(institutionId) as Array<{ id: string }>;
+    available.set(spec.collection, new Set(rows.map((row) => String(row.id))));
+  }
+  return available;
+}
+
+function buildWorkItems(
+  snapshot: BootstrapSnapshot,
+  diagnostics: BootstrapDiagnostic[],
+) {
+  const work: WorkItem[] = [];
+  const seen = new Set<string>();
+  let ordinal = 0;
+  for (const [collection, rows] of Object.entries(snapshot.entities)) {
+    const spec = collectionSpec(collection);
+    if (!spec || spec.entityType === "institution") continue;
+    for (const row of rows) {
+      ordinal += 1;
+      const entityId = String(row.id ?? "").trim();
+      if (!entityId) {
+        diagnostics.push({
+          collection,
+          entity_id: `<missing:${ordinal}>`,
+          institution_id: snapshot.institution_id,
+          reason: "validation_failed",
+          error: `${collection}.id_required`,
+        });
+        continue;
+      }
+      const foreignInstitution = String(row.institution_id ?? snapshot.institution_id).trim();
+      if (foreignInstitution !== snapshot.institution_id) {
+        diagnostics.push({
+          collection,
+          entity_id: entityId,
+          institution_id: snapshot.institution_id,
+          reason: "institution_mismatch",
+          dependency_type: "institution_id",
+          dependency_id: foreignInstitution || "null",
+        });
+        continue;
+      }
+      const identity = `${collection}\u0000${entityId}`;
+      if (seen.has(identity)) {
+        diagnostics.push({
+          collection,
+          entity_id: entityId,
+          institution_id: snapshot.institution_id,
+          reason: "duplicate_entity",
+        });
+        continue;
+      }
+      seen.add(identity);
+      work.push({
+        key: `${identity}\u0000${ordinal}`,
+        collection,
+        entityType: spec.entityType,
+        entityId,
+        row,
+      });
     }
-    idsByCollection.set(spec.collection, ids);
+  }
+  return work;
+}
+
+function missingDependencies(
+  item: WorkItem,
+  available: Map<string, Set<string>>,
+) {
+  const missing: Array<{ field: string; id: string; collection: string }> = [];
+  for (const rule of DEPENDENCY_RULES[item.collection] ?? []) {
+    const id = String(item.row[rule.field] ?? "").trim();
+    if (!id && rule.optional) continue;
+    if (!id || !available.get(rule.collection)?.has(id)) {
+      missing.push({ field: rule.field, id, collection: rule.collection });
+    }
+  }
+  return missing;
+}
+
+function importWorkItem(
+  db: RelayDatabase,
+  snapshot: BootstrapSnapshot,
+  item: WorkItem,
+):
+  | { status: "imported" }
+  | { status: "preserved" }
+  | { status: "rejected"; diagnostic: BootstrapDiagnostic } {
+  if (isLocalDirty(db, snapshot.institution_id, item.entityType, item.entityId)) {
+    return { status: "preserved" };
   }
 
-  for (const [collection, rules] of Object.entries(DEPENDENCY_RULES)) {
-    for (const row of snapshot.entities[collection] ?? []) {
-      const entityId = requiredText(row.id, `${collection}.id`);
-      for (const rule of rules) {
-        const foreignId = String(row[rule.field] ?? "").trim();
-        if (!foreignId && rule.optional) continue;
-        if (!foreignId || !idsByCollection.get(rule.collection)?.has(foreignId)) {
-          throw new Error(
-            `bootstrap_dependency_missing:${collection}:${entityId}:${rule.field}:${foreignId || "null"}`,
-          );
-        }
-      }
-    }
+  let serverVersion: number;
+  let occurredAt: string;
+  try {
+    serverVersion = nonNegativeInteger(
+      item.row.server_version ?? 0,
+      `${item.collection}.server_version`,
+    );
+    occurredAt = isoText(
+      item.row.updated_at ?? snapshot.generated_at,
+      `${item.collection}.updated_at`,
+    );
+  } catch (error) {
+    return {
+      status: "rejected",
+      diagnostic: {
+        collection: item.collection,
+        entity_id: item.entityId,
+        institution_id: snapshot.institution_id,
+        reason: "validation_failed",
+        error: error instanceof Error ? error.message : "bootstrap_validation_failed",
+      },
+    };
   }
+
+  writeSyncRecord(
+    db,
+    snapshot.institution_id,
+    item.entityType,
+    item.entityId,
+    item.row,
+    serverVersion,
+    occurredAt,
+  );
+  const result = materializeTracked(db, {
+    institutionId: snapshot.institution_id,
+    entityType: item.entityType,
+    entityId: item.entityId,
+    action: "upsert",
+    payload: item.row,
+    serverVersion,
+    occurredAt,
+  });
+  if (result.materialized) return { status: "imported" };
+  return {
+    status: "rejected",
+    diagnostic: {
+      collection: item.collection,
+      entity_id: item.entityId,
+      institution_id: snapshot.institution_id,
+      reason: "materialization_failed",
+      error: result.error,
+    },
+  };
+}
+
+function persistRejectedEntity(
+  db: RelayDatabase,
+  snapshot: BootstrapSnapshot,
+  item: WorkItem,
+  diagnostics: BootstrapDiagnostic[],
+) {
+  try {
+    const serverVersion = nonNegativeInteger(
+      item.row.server_version ?? 0,
+      `${item.collection}.server_version`,
+    );
+    const occurredAt = isoText(
+      item.row.updated_at ?? snapshot.generated_at,
+      `${item.collection}.updated_at`,
+    );
+    writeSyncRecord(
+      db,
+      snapshot.institution_id,
+      item.entityType,
+      item.entityId,
+      item.row,
+      serverVersion,
+      occurredAt,
+    );
+    db.prepare(`
+      INSERT INTO sync_materialization_failures(
+        institution_id, entity_type, entity_id, action, payload_json,
+        server_version, occurred_at, attempts, last_error, updated_at
+      ) VALUES (?, ?, ?, 'upsert', ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(institution_id, entity_type, entity_id) DO UPDATE SET
+        action = excluded.action,
+        payload_json = excluded.payload_json,
+        server_version = excluded.server_version,
+        occurred_at = excluded.occurred_at,
+        attempts = sync_materialization_failures.attempts + 1,
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `).run(
+      snapshot.institution_id,
+      item.entityType,
+      item.entityId,
+      canonicalJson(item.row),
+      serverVersion,
+      occurredAt,
+      `bootstrap_rejected:${canonicalJson(diagnostics)}`,
+      new Date().toISOString(),
+    );
+  } catch {
+    // The run-level diagnostic remains authoritative for an invalid payload.
+  }
+}
+
+function isLocalDirty(
+  db: RelayDatabase,
+  institutionId: string,
+  entityType: SyncEntityType,
+  entityId: string,
+) {
+  const row = db.prepare(`
+    SELECT local_dirty FROM sync_records
+    WHERE institution_id = ? AND entity_type = ? AND entity_id = ?
+  `).get(institutionId, entityType, entityId) as { local_dirty: number } | undefined;
+  return row?.local_dirty === 1;
 }
 
 function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
@@ -332,14 +630,31 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     ? {}
     : record(root.diagnostics, "diagnostics");
   const entities: Record<string, Record<string, unknown>[]> = {};
+  const inputDiagnostics: BootstrapDiagnostic[] = [];
 
   for (const [collection, value] of Object.entries(rawEntities)) {
-    if (FORBIDDEN_COLLECTION.test(collection)) throw new Error(`forbidden_collection:${collection}`);
+    const forbidden = FORBIDDEN_COLLECTION.test(collection);
     const spec = collectionSpec(collection);
-    if (!spec || spec.entityType === "institution") {
-      throw new Error(`bootstrap_collection_unsupported:${collection}`);
+    if (forbidden || !spec || spec.entityType === "institution" || !Array.isArray(value)) {
+      const rows = Array.isArray(value) && value.length > 0 ? value : [null];
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const entityId = row && typeof row === "object" && !Array.isArray(row)
+          ? String((row as Record<string, unknown>).id ?? `<row:${index}>`)
+          : `<row:${index}>`;
+        inputDiagnostics.push({
+          collection,
+          entity_id: entityId,
+          institution_id: institutionId,
+          reason: forbidden
+            ? "forbidden_collection"
+            : !spec || spec.entityType === "institution"
+              ? "unsupported_collection"
+              : "collection_invalid",
+        });
+      }
+      continue;
     }
-    if (!Array.isArray(value)) throw new Error(`${collection}_must_be_array`);
     entities[collection] = value.map((row, index) => record(row, `${collection}[${index}]`));
   }
 
@@ -352,6 +667,7 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     institution,
     entities,
     diagnostics,
+    inputDiagnostics,
   };
 }
 
@@ -383,6 +699,10 @@ function writeSyncRecord(
     serverVersion,
     updatedAt,
   );
+}
+
+function normalizedCode(value: unknown) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

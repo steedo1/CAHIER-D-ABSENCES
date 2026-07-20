@@ -85,8 +85,14 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
         if (resolution !== "accept_remote" && resolution !== "keep_local") {
           throw new HttpError(400, "resolution_invalid");
         }
+        const institutionId = String(body.institution_id || "").trim();
+        if (!institutionId) throw new HttpError(400, "institution_id_required");
         const resolvedBy = String(body.resolved_by || "local_admin").trim();
-        return json(response, 200, store.resolveConflict(id, resolution, resolvedBy));
+        return json(
+          response,
+          200,
+          store.resolveConflict(institutionId, id, resolution, resolvedBy),
+        );
       }
       return json(response, 404, { error: "not_found" });
     } catch (error) {
