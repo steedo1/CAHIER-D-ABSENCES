@@ -421,7 +421,12 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   const preparedTextbook = await prepareTextbook(onProgress);
 
   onProgress("Préparation de l’application…");
-  await warmOfflineShell(["/attendance", "/grades", "/enseignant/cahier-de-texte"]);
+  await warmOfflineShell([
+    "/choose-book",
+    "/attendance",
+    "/grades",
+    "/enseignant/cahier-de-texte",
+  ]);
 
   return {
     version: 4,
@@ -508,6 +513,7 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
 
   onProgress("Préparation de l’application…");
   await warmOfflineShell([
+    "/choose-book",
     "/class",
     "/grades/class-device",
     "/enseignant/cahier-de-texte",

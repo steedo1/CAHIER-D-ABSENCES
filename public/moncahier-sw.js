@@ -1,10 +1,11 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-18-relay-fallback-v1";
+const VERSION = "2026-07-19-offline-navigation-v2";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
 const OFFLINE_PAGE_PATHS = new Set([
+  "/choose-book",
   "/attendance",
   "/class",
   "/grades",

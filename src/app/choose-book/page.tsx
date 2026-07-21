@@ -305,9 +305,17 @@ export default function ChooseBookPage() {
     return cookieDest.startsWith("/") ? cookieDest : fallback;
   }
 
-  function openWithSpinner(dest: string, label: string) {
+  function openWithSpinner(
+    dest: string,
+    label: string,
+    documentNavigation = false
+  ) {
     setRouteLabel(label);
     setRouteLoading(true);
+    if (documentNavigation) {
+      window.location.assign(dest);
+      return;
+    }
     router.push(dest);
   }
 
@@ -322,14 +330,26 @@ export default function ChooseBookPage() {
         ? resolveOfflineDest(book)
         : `/redirect?book=${book}`;
 
-      openWithSpinner(dest, label);
+      // Hors ligne, Next router.push tente de récupérer un flux RSC sur le
+      // réseau. Une navigation documentaire permet au service worker de
+      // servir directement la page HTML préparée dans son cache.
+      openWithSpinner(dest, label, isOffline);
     };
   }
 
   function handleSimplePush(dest: string, label: string) {
     return (e: React.MouseEvent<HTMLAnchorElement>) => {
       e.preventDefault();
-      openWithSpinner(dest, label);
+      const isOffline =
+        typeof navigator !== "undefined" ? !navigator.onLine : false;
+      const offlineCapable = dest === "/enseignant/cahier-de-texte";
+
+      if (isOffline && !offlineCapable) {
+        window.alert("Cette fonctionnalité nécessite une connexion Internet.");
+        return;
+      }
+
+      openWithSpinner(dest, label, isOffline);
     };
   }
 
