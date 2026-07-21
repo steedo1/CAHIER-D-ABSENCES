@@ -7,6 +7,7 @@ export type AdminStudentRow = {
   class_id: string | null;
   class_label: string | null;
   matricule?: string | null;
+  photo_url?: string | null;
   level?: string | null;
   class_level?: string | null;
   academic_year?: string | null;
@@ -66,14 +67,13 @@ export async function getAdminStudentsServer(
     class_id: row.class_id ? String(row.class_id) : null,
     class_label: row.class_label ? String(row.class_label) : null,
     matricule: row.matricule ? String(row.matricule) : null,
+    photo_url: row.photo_url ? String(row.photo_url) : null,
     level: row.level ? String(row.level) : null,
     class_level: row.class_level ? String(row.class_level) : null,
     academic_year: row.academic_year ? String(row.academic_year) : null,
     gender: row.gender ? String(row.gender) : null,
-    is_affecte:
-      typeof row.is_affecte === "boolean" ? row.is_affecte : null,
-    is_boarder:
-      typeof row.is_boarder === "boolean" ? row.is_boarder : null,
+    is_affecte: typeof row.is_affecte === "boolean" ? row.is_affecte : null,
+    is_boarder: typeof row.is_boarder === "boolean" ? row.is_boarder : null,
     regime: row.regime ? String(row.regime) : null,
   }));
 }

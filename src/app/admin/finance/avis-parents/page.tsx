@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { FileText, Search, School2 } from "lucide-react";
+import { FileText, GraduationCap, Search, School2 } from "lucide-react";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getFinanceAccessForCurrentUser,
@@ -94,6 +94,36 @@ function formatDate(value: string | null | undefined) {
 function fullName(student: AdminStudentRow | undefined | null) {
   if (!student) return "Élève inconnu";
   return student.full_name || student.matricule || "Élève sans nom";
+}
+
+function StudentPortrait({
+  student,
+  compact = false,
+}: {
+  student: AdminStudentRow | undefined;
+  compact?: boolean;
+}) {
+  const size = compact ? "h-12 w-10" : "h-36 w-28";
+
+  return student?.photo_url ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={student.photo_url}
+      alt={`Photo de ${fullName(student)}`}
+      className={`parent-notice-student-photo ${size} shrink-0 rounded-2xl border-4 border-white object-cover shadow-lg ring-1 ring-slate-300`}
+    />
+  ) : (
+    <div
+      className={`parent-notice-student-photo ${size} grid shrink-0 place-items-center rounded-2xl border-4 border-white bg-gradient-to-br from-slate-100 to-slate-200 shadow-lg ring-1 ring-slate-300`}
+      aria-label={`Photo non disponible pour ${fullName(student)}`}
+    >
+      <GraduationCap
+        className={
+          compact ? "h-5 w-5 text-slate-400" : "h-12 w-12 text-slate-400"
+        }
+      />
+    </div>
+  );
 }
 
 function normalize(input: string) {
@@ -348,37 +378,41 @@ function NoticeDocument({
           </div>
 
           <section className="parent-notice-identity mt-7 rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                  Élève
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+              <StudentPortrait student={student} />
+
+              <div className="grid flex-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                    Élève
+                  </div>
+                  <div className="mt-1 text-lg font-black text-slate-900">
+                    {fullName(student)}
+                  </div>
                 </div>
-                <div className="mt-1 text-lg font-black text-slate-900">
-                  {fullName(student)}
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                    Classe
+                  </div>
+                  <div className="mt-1 text-lg font-black text-slate-900">
+                    {classLabel}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                  Classe
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                    Matricule
+                  </div>
+                  <div className="mt-1 text-lg font-black text-slate-900">
+                    {student?.matricule || "—"}
+                  </div>
                 </div>
-                <div className="mt-1 text-lg font-black text-slate-900">
-                  {classLabel}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                  Matricule
-                </div>
-                <div className="mt-1 text-lg font-black text-slate-900">
-                  {student?.matricule || "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                  Année scolaire
-                </div>
-                <div className="mt-1 text-lg font-black text-slate-900">
-                  {selectedAcademicYearCode || student?.academic_year || "—"}
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                    Année scolaire
+                  </div>
+                  <div className="mt-1 text-lg font-black text-slate-900">
+                    {selectedAcademicYearCode || student?.academic_year || "—"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -771,6 +805,13 @@ export default async function FinanceParentNoticesPage({
             gap: 2mm !important;
           }
 
+          .parent-notice-student-photo {
+            width: 26mm !important;
+            height: 34mm !important;
+            border-radius: 10px !important;
+            border-width: 1.2mm !important;
+          }
+
           .parent-notice-amounts {
             margin-top: 3mm !important;
             gap: 3mm !important;
@@ -949,11 +990,16 @@ export default async function FinanceParentNoticesPage({
                 {studentGroups.map((group) => (
                   <tr key={group.studentId} className="hover:bg-slate-50/70">
                     <td className="px-4 py-3">
-                      <div className="font-black text-slate-900">
-                        {fullName(group.student)}
-                      </div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                        {group.student?.matricule || "—"}
+                      <div className="flex items-center gap-3">
+                        <StudentPortrait student={group.student} compact />
+                        <div>
+                          <div className="font-black text-slate-900">
+                            {fullName(group.student)}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {group.student?.matricule || "—"}
+                          </div>
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-700">

@@ -80,6 +80,87 @@ type FeeCategoryRow = {
   name: string | null;
 };
 
+type ServiceClient = ReturnType<typeof getSupabaseServiceClient>;
+
+function chunkIds(ids: string[], size = 150) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += size) {
+    chunks.push(ids.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function fetchReceiptAllocations(
+  admin: ServiceClient,
+  receiptIds: string[],
+) {
+  const rows: ReceiptAllocationRow[] = [];
+
+  for (const ids of chunkIds(receiptIds)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("receipt_allocations")
+      .select("id,receipt_id,student_charge_id,amount,created_at")
+      .in("receipt_id", ids);
+
+    if (error) {
+      console.error("[finance/receipts] receipt_allocations:", error.message);
+      continue;
+    }
+
+    rows.push(...((data ?? []) as ReceiptAllocationRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchReceiptCharges(admin: ServiceClient, chargeIds: string[]) {
+  const rows: ChargeRow[] = [];
+
+  for (const ids of chunkIds(chargeIds)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("v_charge_balances")
+      .select(
+        "id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
+      )
+      .in("id", ids);
+
+    if (error) {
+      console.error("[finance/receipts] v_charge_balances:", error.message);
+      continue;
+    }
+
+    rows.push(...((data ?? []) as ChargeRow[]));
+  }
+
+  return rows;
+}
+
+async function fetchReceiptCategories(
+  admin: ServiceClient,
+  categoryIds: string[],
+) {
+  const rows: FeeCategoryRow[] = [];
+
+  for (const ids of chunkIds(categoryIds)) {
+    const { data, error } = await admin
+      .schema("finance")
+      .from("fee_categories")
+      .select("id,code,name")
+      .in("id", ids);
+
+    if (error) {
+      console.error("[finance/receipts] fee_categories:", error.message);
+      continue;
+    }
+
+    rows.push(...((data ?? []) as FeeCategoryRow[]));
+  }
+
+  return rows;
+}
+
 function formatMoney(value: number | string) {
   return `${Number(value || 0).toLocaleString("fr-FR")} F`;
 }
@@ -202,12 +283,20 @@ export default async function FinanceReceiptsPage({
 
   const institutionId = await getCurrentInstitutionIdOrThrow();
   const admin = getSupabaseServiceClient();
-  const adminStudents = await getAdminStudentsServer();
   const academicYearCtx = await getFinanceAcademicYearContext(
     institutionId,
     requestedAcademicYear,
   );
   const { academicYears, selectedAcademicYearCode } = academicYearCtx;
+  const adminStudents = await getAdminStudentsServer(
+    selectedAcademicYearCode || undefined,
+  ).catch((error) => {
+    console.error(
+      "[finance/receipts] students:",
+      error instanceof Error ? error.message : error,
+    );
+    return [] as AdminStudentRow[];
+  });
 
   let classesQuery = admin
     .from("classes")
@@ -228,28 +317,62 @@ export default async function FinanceReceiptsPage({
   const classIds = classRows.map((row) => row.id);
   const classMap = new Map(classRows.map((c) => [c.id, c]));
 
-  let receiptsQuery = admin
-    .schema("finance")
-    .from("receipts")
-    .select(
-      "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at",
-    )
-    .eq("school_id", institutionId)
-    .order("payment_date", { ascending: false })
-    .order("created_at", { ascending: false });
+  const buildReceiptsQuery = (select: string) => {
+    let query = admin
+      .schema("finance")
+      .from("receipts")
+      .select(select)
+      .eq("school_id", institutionId)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false });
 
-  if (selectedAcademicYearCode) {
-    receiptsQuery = receiptsQuery.eq("academic_year", selectedAcademicYearCode);
+    if (selectedAcademicYearCode) {
+      query = query.eq("academic_year", selectedAcademicYearCode);
+    }
+
+    if (statusFilter === "posted" || statusFilter === "cancelled") {
+      query = query.eq("receipt_status", statusFilter);
+    }
+
+    return query;
+  };
+
+  const fullReceiptSelect =
+    "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,cancelled_at,cancelled_by,cancel_reason,created_at";
+  const compatibleReceiptSelect =
+    "id,school_id,academic_year_id,academic_year,student_id,receipt_no,receipt_status,payment_date,payer_name,reference_no,total_amount,notes,created_at";
+
+  const primaryReceiptResult = await buildReceiptsQuery(fullReceiptSelect);
+  let receiptRows: ReceiptRow[];
+
+  if (!primaryReceiptResult.error) {
+    receiptRows = (primaryReceiptResult.data ?? []) as unknown as ReceiptRow[];
+  } else {
+    // Certaines bases plus anciennes ne possèdent pas encore les colonnes
+    // d'annulation détaillées. La liste doit néanmoins rester consultable.
+    console.error(
+      "[finance/receipts] full receipts select:",
+      primaryReceiptResult.error.message,
+    );
+    const compatibleReceiptResult = await buildReceiptsQuery(
+      compatibleReceiptSelect,
+    );
+
+    if (compatibleReceiptResult.error) {
+      throw new Error(compatibleReceiptResult.error.message);
+    }
+
+    receiptRows = (
+      (compatibleReceiptResult.data ?? []) as unknown as Array<
+        Omit<ReceiptRow, "cancelled_at" | "cancelled_by" | "cancel_reason">
+      >
+    ).map((row) => ({
+      ...row,
+      cancelled_at: null,
+      cancelled_by: null,
+      cancel_reason: null,
+    }));
   }
-
-  if (statusFilter === "posted" || statusFilter === "cancelled") {
-    receiptsQuery = receiptsQuery.eq("receipt_status", statusFilter);
-  }
-
-  const { data: receipts, error: recErr } = await receiptsQuery;
-  if (recErr) throw new Error(recErr.message);
-
-  const receiptRows = (receipts ?? []) as ReceiptRow[];
   const createdReceiptRows = receiptRows.filter((row) =>
     createdReceiptIds.has(row.id),
   );
@@ -300,55 +423,27 @@ export default async function FinanceReceiptsPage({
 
   const receiptIds = filteredReceipts.map((r) => r.id);
 
-  const { data: allocations, error: allocErr } = receiptIds.length
-    ? await admin
-        .schema("finance")
-        .from("receipt_allocations")
-        .select("id,receipt_id,student_charge_id,amount,created_at")
-        .in("receipt_id", receiptIds)
-    : { data: [], error: null as any };
-
-  if (allocErr) throw new Error(allocErr.message);
-
-  const allocationRows = (allocations ?? []) as ReceiptAllocationRow[];
+  // Une longue liste d'UUID dans un seul filtre `.in(...)` finit par dépasser
+  // la taille maximale de l'URL PostgREST et faisait tomber toute la page.
+  // Les lectures de détail sont donc découpées et restent non bloquantes.
+  const allocationRows = await fetchReceiptAllocations(admin, receiptIds);
   const chargeIds = Array.from(
     new Set(allocationRows.map((a) => a.student_charge_id)),
   );
 
-  const { data: charges, error: chErr } = chargeIds.length
-    ? await admin
-        .schema("finance")
-        .from("v_charge_balances")
-        .select(
-          "id,student_id,class_id,fee_category_id,label,due_date,net_amount,paid_amount,balance_due",
-        )
-        .in("id", chargeIds)
-    : { data: [], error: null as any };
-
-  if (chErr) throw new Error(chErr.message);
-
-  const chargeRows = (charges ?? []) as ChargeRow[];
+  const chargeRows = await fetchReceiptCharges(admin, chargeIds);
   const chargeMap = new Map(chargeRows.map((c) => [c.id, c]));
   const chargeCategoryIds = Array.from(
     new Set(
       chargeRows.map((row) => row.fee_category_id).filter(Boolean) as string[],
     ),
   );
-  const { data: categoryRowsRaw, error: categoryRowsErr } =
-    chargeCategoryIds.length
-      ? await admin
-          .schema("finance")
-          .from("fee_categories")
-          .select("id,code,name")
-          .in("id", chargeCategoryIds)
-      : { data: [], error: null as any };
-
-  if (categoryRowsErr) throw new Error(categoryRowsErr.message);
+  const categoryRowsRaw = await fetchReceiptCategories(
+    admin,
+    chargeCategoryIds,
+  );
   const categoryMap = new Map(
-    ((categoryRowsRaw ?? []) as FeeCategoryRow[]).map((category) => [
-      category.id,
-      category,
-    ]),
+    categoryRowsRaw.map((category) => [category.id, category]),
   );
 
   const allocationsByReceipt = allocationRows.reduce<
