@@ -9,6 +9,10 @@ import {
   secureTeacherAttendanceOperation,
   TeacherAttendanceError,
 } from "./teacher-attendance.mjs";
+import {
+  openTeacherAttendanceSession,
+  TeacherSessionOpenError,
+} from "./teacher-session-open.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
@@ -16,6 +20,7 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 const MAX_CONNECTIVITY_CHECK_BODY_BYTES = 4 * 1024;
 const MAX_TEACHER_ATTENDANCE_BODY_BYTES = 128 * 1024;
+const MAX_TEACHER_SESSION_OPEN_BODY_BYTES = 16 * 1024;
 
 export function createRelayServer(
   config: RelayConfig,
@@ -79,6 +84,33 @@ export function createRelayServer(
             return json(response, error.status, { error: error.code });
           }
           return json(response, 500, { error: "teacher_attendance_failed" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/attendance-sessions/open") {
+        const body = await readJson(request, MAX_TEACHER_SESSION_OPEN_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        let teacher;
+        const requestNow = options.now?.() ?? new Date();
+        try {
+          teacher = authenticateRelayTeacherAccess(store.db, token, requestNow);
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+          return json(response, 403, { error: "institution_not_allowed" });
+        }
+        if (config.teacherAttendanceWritesEnabled !== true) {
+          return json(response, 503, { error: "teacher_attendance_writes_disabled" });
+        }
+        try {
+          const result = openTeacherAttendanceSession(store.db, body, teacher, requestNow);
+          return json(response, result.idempotent ? 200 : 201, result);
+        } catch (error) {
+          if (error instanceof TeacherSessionOpenError) {
+            return json(response, error.status, { error: error.code });
+          }
+          return json(response, 500, { error: "teacher_session_open_failed" });
         }
       }
       if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {

@@ -524,6 +524,29 @@ export function secureTeacherAttendanceOperation(
       operation.protocol_version,
       operationFingerprint,
     );
+    const parentOpen = db.prepare(`
+      SELECT operation_id
+      FROM teacher_session_open_operations
+      WHERE institution_id = ? AND local_session_id = ?
+        AND created_locally = 1
+      ORDER BY accepted_at, operation_id
+      LIMIT 1
+    `).get(teacher.institution_id, session.id) as { operation_id: string } | undefined;
+    if (parentOpen) {
+      if (parentOpen.operation_id === operation.operation_id) {
+        throw new TeacherAttendanceError(409, "operation_id_conflicts_with_session_open");
+      }
+      db.prepare(`
+        INSERT INTO sync_outbox_dependencies(
+          institution_id, operation_id, depends_on_operation_id, created_at
+        ) VALUES (?, ?, ?, ?)
+      `).run(
+        teacher.institution_id,
+        operation.operation_id,
+        parentOpen.operation_id,
+        acceptedAt,
+      );
+    }
     options.faultInjector?.("after_outbox");
 
     db.prepare(`

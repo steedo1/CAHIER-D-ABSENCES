@@ -30,6 +30,11 @@ import {
   teacherAttendanceDeliveryMessage,
   type TeacherAttendanceDeliveryRecord,
 } from "@/lib/teacher-attendance-delivery";
+import {
+  openTeacherAttendanceSessionOnRelay,
+  teacherSessionCloudAvailable,
+  teacherSessionDeliveryMessage,
+} from "@/lib/teacher-session-delivery";
 
 /* ─────────────────────────────────────────
    Types
@@ -55,6 +60,7 @@ type OpenSession = {
   actual_call_at?: string | null;
   presence_method?: string | null;
   presence_distance_m?: number | null;
+  local_relay?: boolean;
 };
 
 type InstCfg = {
@@ -461,8 +467,17 @@ export default function TeacherDashboard() {
           "/api/teacher/sessions/open",
           "teacher:open:afterSync"
         )) as any;
-        setOpen((os?.item as OpenSession) || null);
-        await cacheSet("teacher:local-open", null);
+        const openServer = (os?.item as OpenSession) || null;
+        const openLocal = (await cacheGet("teacher:local-open").catch(() => null)) as OpenSession | null;
+        if (openServer) {
+          setOpen(openServer);
+          await cacheSet("teacher:local-open", null);
+        } else if (openLocal?.local_relay) {
+          setOpen(openLocal);
+        } else {
+          setOpen(null);
+          await cacheSet("teacher:local-open", null);
+        }
       } catch {
         /* ignore */
       }
@@ -1238,6 +1253,41 @@ export default function TeacherDashboard() {
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hhS, mmS, 0, 0);
 
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
+      const cloudAvailable = await teacherSessionCloudAvailable();
+      if (!cloudAvailable) {
+        if (!inst.institution_id || !activeConfiguredSlot.id) {
+          setMsg("La préparation hors ligne doit être actualisée avant d’ouvrir cette séance.");
+          return;
+        }
+        const local = await openTeacherAttendanceSessionOnRelay({
+          institutionId: inst.institution_id,
+          classId: sel.class_id,
+          periodId: activeConfiguredSlot.id,
+          attemptKey: clientSessionId,
+          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,
+        });
+        if (local.state === "relay_opened" && local.session_id) {
+          const localOpen: OpenSession = {
+            id: local.session_id,
+            class_id: sel.class_id,
+            class_label: sel.class_label,
+            subject_id: local.subject_id || sel.subject_id,
+            subject_name: sel.subject_name,
+            started_at: local.started_at || started.toISOString(),
+            actual_call_at: local.actual_call_at,
+            expected_minutes: effectiveDuration,
+            presence_method: "local_relay",
+            local_relay: true,
+          };
+          setAttendanceDelivery(null);
+          setOpen(localOpen);
+          await cacheSet("teacher:local-open", localOpen);
+        }
+        setMsg(teacherSessionDeliveryMessage(local));
+        return;
+      }
+
       const presence = await preparePresenceEvidence(clientSessionId);
       const actualCallAt = presence.actualCallAt;
 
@@ -1331,6 +1381,7 @@ export default function TeacherDashboard() {
         marks,
         relayBaseUrl: inst.attendance_presence?.relay_local_url,
         relayAccessToken: inst.attendance_presence?.relay_access_token,
+        forceRelay: open.local_relay === true,
       });
       setAttendanceDelivery(delivery);
       setMsg(teacherAttendanceDeliveryMessage(delivery));

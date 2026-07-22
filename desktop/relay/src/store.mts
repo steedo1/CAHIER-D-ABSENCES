@@ -383,12 +383,23 @@ export class RelayStore {
   listPending(limit = 100) {
     const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
     return this.db.prepare(`
-      SELECT operation_id, institution_id, device_id, actor_profile_id, entity_type,
-             entity_id, action, base_server_version, payload_json, occurred_at,
-             state, attempts, last_status, last_error
-      FROM sync_outbox
-      WHERE state IN ('pending', 'sending')
-      ORDER BY occurred_at, operation_id
+      SELECT child.operation_id, child.institution_id, child.device_id,
+             child.actor_profile_id, child.entity_type, child.entity_id,
+             child.action, child.base_server_version, child.payload_json,
+             child.occurred_at, child.state, child.attempts,
+             child.last_status, child.last_error
+      FROM sync_outbox child
+      WHERE child.state IN ('pending', 'sending')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sync_outbox_dependencies dependency
+          JOIN sync_outbox parent
+            ON parent.institution_id = dependency.institution_id
+           AND parent.operation_id = dependency.depends_on_operation_id
+          WHERE dependency.institution_id = child.institution_id
+            AND dependency.operation_id = child.operation_id
+        )
+      ORDER BY child.occurred_at, child.operation_id
       LIMIT ?
     `).all(safeLimit).map((row) => {
       const item = row as Record<string, unknown> & { payload_json: string | null };

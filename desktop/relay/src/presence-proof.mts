@@ -1,7 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
-import { authenticateRelayTeacherAccess } from "./teacher-auth.mjs";
+import {
+  authenticateRelayTeacherAccess,
+  type AuthenticatedRelayTeacher,
+} from "./teacher-auth.mjs";
 
 type PresenceProofInput = {
   institution_id?: unknown;
@@ -139,6 +142,23 @@ export function issueAttendancePresenceProof(
   const clientSessionId = required(input.client_session_id, "client_session_id");
   const accessToken = required(input.access_token, "access_token", 2048);
 
+  const teacher = authenticateRelayTeacherAccess(db, accessToken, now, {
+    institutionId,
+    actorProfileId,
+  });
+
+  return issueAttendancePresenceProofForTeacher(db, teacher, clientSessionId, now);
+}
+
+export function issueAttendancePresenceProofForTeacher(
+  db: RelayDatabase,
+  teacher: AuthenticatedRelayTeacher,
+  clientSessionId: string,
+  now = new Date(),
+) {
+  const institutionId = required(teacher.institution_id, "institution_id");
+  const actorProfileId = required(teacher.actor_profile_id, "actor_profile_id");
+  const normalizedClientSessionId = required(clientSessionId, "client_session_id");
   const institution = db.prepare(`
     SELECT settings_json FROM institutions
     WHERE id = ? AND deleted_at IS NULL
@@ -157,11 +177,6 @@ export function issueAttendancePresenceProof(
   const secret = String(attendance.relay_presence_secret || "").trim();
   if (secret.length < 32) throw new Error("relay_presence_secret_missing");
 
-  authenticateRelayTeacherAccess(db, accessToken, now, {
-    institutionId,
-    actorProfileId,
-  });
-
   const ttlSeconds = Math.min(600, Math.max(30, Math.round(Number(attendance.relay_proof_ttl_seconds || 180))));
   const issuedAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
@@ -169,7 +184,7 @@ export function issueAttendancePresenceProof(
     v: 1 as const,
     institution_id: institutionId,
     actor_profile_id: actorProfileId,
-    client_session_id: clientSessionId,
+    client_session_id: normalizedClientSessionId,
     issued_at: issuedAt,
     expires_at: expiresAt,
     source: "local_relay" as const,
@@ -184,7 +199,7 @@ export function issueAttendancePresenceProof(
   `).run(
     institutionId,
     actorProfileId,
-    canonicalJson({ client_session_id: clientSessionId, expires_at: expiresAt }),
+    canonicalJson({ client_session_id: normalizedClientSessionId, expires_at: expiresAt }),
     issuedAt,
   );
 

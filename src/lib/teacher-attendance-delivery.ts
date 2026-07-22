@@ -103,6 +103,7 @@ export type DeliverTeacherAttendanceInput = {
   }>;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
+  preferredChannel?: "relay" | null;
 };
 
 const STORE_PREFIX = "teacher:attendance-delivery:v1:";
@@ -256,6 +257,13 @@ async function getOrCreateRecord(
 
   if (latest?.content_key === contentKey) {
     if (
+      input.preferredChannel === "relay" &&
+      latest.channel === null &&
+      !latest.cloud_attempted_at
+    ) {
+      return await storePatch(deps, latest, { channel: "relay" });
+    }
+    if (
       input.serverSessionId &&
       latest.session_id !== input.serverSessionId &&
       !latest.cloud_attempted_at &&
@@ -277,7 +285,7 @@ async function getOrCreateRecord(
     marks,
     content_key: contentKey,
     state: "device_pending",
-    channel: null,
+    channel: input.preferredChannel === "relay" ? "relay" : null,
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
     cloud_attempted_at: null,
@@ -658,12 +666,14 @@ export async function deliverTeacherAttendance(input: {
   marks: DeliverTeacherAttendanceInput["marks"];
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
+  forceRelay?: boolean;
 }) {
   const resolved = await resolveOfflineSessionReference(input.sessionId);
   const deliveryInput = {
     ...input,
     sessionReference: resolved.sessionReference,
     serverSessionId: resolved.serverSessionId,
+    preferredChannel: input.forceRelay ? "relay" as const : null,
   };
   const run = () => deliverTeacherAttendanceWithDependencies(
     deliveryInput,

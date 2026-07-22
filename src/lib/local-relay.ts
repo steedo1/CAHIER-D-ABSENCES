@@ -2,6 +2,7 @@
 
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
 import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
+import type { TeacherSessionOpenRelayPayload } from "@/lib/teacher-session-protocol";
 
 export type LocalDataSource = "cloud" | "relay" | "cache";
 
@@ -503,6 +504,39 @@ export async function postRelayTeacherAttendanceOperation(input: {
     idempotent: boolean;
     relay_time: string;
   }>("/v1/teacher/attendance-operations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: JSON.stringify(input.payload),
+  }, {
+    baseUrl: input.baseUrl,
+    includeConfiguredToken: false,
+    timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
+  });
+}
+
+export async function postRelayTeacherAttendanceSessionOpen(input: {
+  baseUrl: string;
+  accessToken: string;
+  payload: TeacherSessionOpenRelayPayload;
+}) {
+  return await relayJson<{
+    ok: true;
+    operation_id: string;
+    state: "opened_on_relay" | "synced_with_cloud" | "blocked" | "conflict";
+    idempotent: boolean;
+    session: {
+      id: string;
+      client_session_id: string;
+      class_id: string;
+      subject_id: string;
+      period_id: string;
+      started_at: string;
+      actual_call_at: string | null;
+    };
+    presence_proof: string;
+    proof_expires_at: string;
+    relay_time: string;
+  }>("/v1/teacher/attendance-sessions/open", {
     method: "POST",
     headers: { Authorization: `Bearer ${input.accessToken}` },
     body: JSON.stringify(input.payload),

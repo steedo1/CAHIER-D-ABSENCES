@@ -700,3 +700,47 @@ test("28 - après mise à jour de l'ancien relais, nouveau clic reprend le même
   assert.equal(cloudProbes, 1, "le canal relais est conservé après le premier POST local");
   assert.equal(cloudPosts, 0, "aucun second envoi Cloud après l'échec local");
 });
+
+test("29 - une séance créée par le relais force l'appel sur le relais sans probe ni POST Cloud", async () => {
+  const store = new TestIndexedDbStore();
+  let cloudProbes = 0;
+  let cloudPosts = 0;
+  let relayPosts = 0;
+  const deps = scenario(store, {
+    cloudAvailable: true,
+    cloud: async () => {
+      cloudPosts += 1;
+      return { ok: true, status: 200, body: { ok: true } };
+    },
+    relay: async ({ payload }) => {
+      relayPosts += 1;
+      return {
+        ok: true,
+        status: 202,
+        body: { operation_id: payload.operation_id, state: "secured_on_relay" },
+      };
+    },
+  });
+  deps.cloudManifestAvailable = async () => {
+    cloudProbes += 1;
+    return true;
+  };
+  const result = await deliverTeacherAttendanceWithDependencies(input({
+    sessionReference: "relay-local-session",
+    serverSessionId: "relay-local-session",
+    preferredChannel: "relay",
+  }), deps);
+  assert.equal(result.state, "relay_secured");
+  assert.equal(relayPosts, 1);
+  assert.equal(cloudPosts, 0);
+  assert.equal(cloudProbes, 0);
+});
+
+test("30 - une synchronisation sans séance Cloud conserve l'ouverture locale du relais", async () => {
+  const source = await readFile(
+    new URL("../src/components/teacher/TeacherDashboard.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(source.includes("else if (openLocal?.local_relay)"), true);
+  assert.equal(source.includes("setOpen(openLocal);"), true);
+});

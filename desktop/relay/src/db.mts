@@ -9,6 +9,7 @@ const MIGRATIONS = [
   { version: 3, name: "bootstrap_diagnostics", file: "0003_bootstrap_diagnostics.sql" },
   { version: 4, name: "multi_school_partitioning", file: "0004_multi_school_partitioning.sql" },
   { version: 5, name: "teacher_attendance_operations", file: "0005_teacher_attendance_operations.sql" },
+  { version: 6, name: "teacher_session_open", file: "0006_teacher_session_open.sql" },
 ] as const;
 
 export type RelayDatabase = Database.Database;
