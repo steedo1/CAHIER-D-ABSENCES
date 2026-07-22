@@ -38,6 +38,10 @@ import {
   getParentPenalties,
   getParentTextbook,
 } from "@/lib/offline-parent";
+import {
+  checkRelayTeacherConnectivity,
+  type RelayTeacherConnectivityResult,
+} from "@/lib/local-relay";
 
 export type OfflineRole = "teacher" | "class-device" | "admin" | "parent";
 
@@ -57,6 +61,7 @@ export type OfflineReadiness = {
   consultation_ready: boolean;
   communication_ready: boolean;
   shell_ready: boolean;
+  relay_connectivity?: RelayTeacherConnectivityResult;
 };
 
 type ProgressCallback = (message: string) => void;
@@ -394,10 +399,18 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   }
 
   onProgress("Téléchargement des paramètres de l’établissement…");
-  await fetchFirstAndCache(
+  const basics: any = await fetchFirstAndCache(
     [{ url: "/api/teacher/institution/basics", key: "teacher:inst:basics" }],
     (payload: any) => Array.isArray(payload?.periods) && payload.periods.length > 0
   );
+
+  onProgress("Vérification du relais local depuis l’application…");
+  const relayPolicy = basics?.attendance_presence || {};
+  const relayConnectivity = await checkRelayTeacherConnectivity({
+    institutionId: String(basics?.institution_id || ""),
+    baseUrl: String(relayPolicy?.relay_local_url || ""),
+    accessToken: String(relayPolicy?.relay_access_token || ""),
+  });
 
   // Réglages de conduite : utiles pour les sanctions, mais optionnels si l’établissement
   // utilise encore les valeurs par défaut.
@@ -464,6 +477,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     consultation_ready: false,
     communication_ready: false,
     shell_ready: true,
+    relay_connectivity: relayConnectivity,
   };
 }
 

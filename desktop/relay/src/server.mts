@@ -4,11 +4,13 @@ import { adminDashboard } from "./admin-dashboard.mjs";
 import { attendanceMonitor } from "./attendance-monitor.mjs";
 import { founderAttendanceSlots } from "./attendance-slots.mjs";
 import { issueAttendancePresenceProof } from "./presence-proof.mjs";
+import { authenticateRelayTeacherAccess } from "./teacher-auth.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_CONNECTIVITY_CHECK_BODY_BYTES = 4 * 1024;
 
 export function createRelayServer(config: RelayConfig, store: RelayStore) {
   return createServer(async (request, response) => {
@@ -23,6 +25,24 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       if (request.method === "GET" && url.pathname === "/health") {
         return json(response, 200, { ok: true });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/connectivity-check") {
+        await readJson(request, MAX_CONNECTIVITY_CHECK_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        try {
+          const teacher = authenticateRelayTeacherAccess(store.db, token);
+          if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+            return json(response, 401, { error: "unauthorized" });
+          }
+          return json(response, 200, {
+            ok: true,
+            institution_id: teacher.institution_id,
+            relay_time: new Date().toISOString(),
+          });
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
       }
       if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {
         return json(response, 200, issueAttendancePresenceProof(store.db, await readJson(request)));
@@ -110,6 +130,27 @@ function normalizedInstitutionCode(value: unknown) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+function configuredInstitutionAllows(
+  config: RelayConfig,
+  store: RelayStore,
+  institutionId: string,
+) {
+  const allowedCodes = new Set(
+    [
+      ...(config.institutionCodes || []),
+      ...(config.institutions || []).map((institution) => institution.code),
+      config.institutionCode,
+    ]
+      .map(normalizedInstitutionCode)
+      .filter(Boolean),
+  );
+  if (allowedCodes.size === 0) return true;
+  const institution = store.db.prepare(`
+    SELECT code FROM institutions WHERE id = ? AND deleted_at IS NULL
+  `).get(institutionId) as { code: string | null } | undefined;
+  return Boolean(institution && allowedCodes.has(normalizedInstitutionCode(institution.code)));
+}
+
 function assertBootstrapMatchesConfiguredInstitution(raw: unknown, config: RelayConfig) {
   const expectedCodes = new Set(
     [...(config.institutionCodes || []), config.institutionCode]
@@ -173,6 +214,13 @@ function authorized(request: IncomingMessage, token: string | null) {
   const expectedHash = createHash("sha256").update(token).digest();
   const suppliedHash = createHash("sha256").update(supplied).digest();
   return timingSafeEqual(expectedHash, suppliedHash);
+}
+
+function teacherBearerToken(request: IncomingMessage) {
+  const authorization = String(request.headers.authorization || "");
+  if (!authorization.startsWith("Bearer ")) return null;
+  const supplied = authorization.slice(7).trim();
+  return supplied && supplied.length <= 4096 ? supplied : null;
 }
 
 async function readJson(

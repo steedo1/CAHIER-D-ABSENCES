@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
+import { authenticateRelayTeacherAccess } from "./teacher-auth.mjs";
 
 type PresenceProofInput = {
   institution_id?: unknown;
@@ -16,35 +17,11 @@ type RelayAttendanceSettings = {
   relay_proof_ttl_seconds?: number;
 };
 
-type RelayAccessPayload = {
-  v: 1;
-  purpose: "attendance_relay_access";
-  institution_id: string;
-  actor_profile_id: string;
-  issued_at: string;
-  expires_at: string;
-};
-
 function required(value: unknown, name: string, maxLength = 256) {
   const text = String(value || "").trim();
   if (!text) throw new Error(`${name}_required`);
   if (text.length > maxLength) throw new Error(`${name}_too_long`);
   return text;
-}
-
-function decodeAccessToken(token: string, secret: string): RelayAccessPayload {
-  const [encodedPayload, encodedSignature, extra] = token.split(".");
-  if (!encodedPayload || !encodedSignature || extra) throw new Error("relay_access_token_invalid");
-  const expected = createHmac("sha256", secret).update(encodedPayload).digest();
-  const supplied = Buffer.from(encodedSignature, "base64url");
-  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-    throw new Error("relay_access_token_signature_invalid");
-  }
-  try {
-    return JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as RelayAccessPayload;
-  } catch {
-    throw new Error("relay_access_token_payload_invalid");
-  }
 }
 
 export function issueAttendancePresenceProof(
@@ -76,43 +53,10 @@ export function issueAttendancePresenceProof(
   const secret = String(attendance.relay_presence_secret || "").trim();
   if (secret.length < 32) throw new Error("relay_presence_secret_missing");
 
-  const access = decodeAccessToken(accessToken, secret);
-  const accessIssued = new Date(access.issued_at).getTime();
-  const accessExpires = new Date(access.expires_at).getTime();
-  if (
-    access.v !== 1 ||
-    access.purpose !== "attendance_relay_access" ||
-    access.institution_id !== institutionId ||
-    access.actor_profile_id !== actorProfileId
-  ) {
-    throw new Error("relay_access_token_mismatch");
-  }
-  if (
-    !Number.isFinite(accessIssued) ||
-    !Number.isFinite(accessExpires) ||
-    accessExpires <= accessIssued ||
-    accessIssued > now.getTime() + 10 * 60 * 1000 ||
-    accessExpires < now.getTime() ||
-    accessExpires - accessIssued > 31 * 24 * 60 * 60 * 1000 + 5 * 60 * 1000
-  ) {
-    throw new Error("relay_access_token_expired_or_invalid");
-  }
-
-  const actor = db.prepare(`
-    SELECT p.id
-    FROM profiles p
-    JOIN user_roles r
-      ON r.institution_id = p.institution_id
-     AND r.profile_id = p.id
-     AND r.deleted_at IS NULL
-    WHERE p.id = ?
-      AND p.institution_id = ?
-      AND p.deleted_at IS NULL
-      AND p.is_active = 1
-      AND r.role = 'teacher'
-    LIMIT 1
-  `).get(actorProfileId, institutionId) as { id: string } | undefined;
-  if (!actor) throw new Error("teacher_not_paired_with_relay");
+  authenticateRelayTeacherAccess(db, accessToken, now, {
+    institutionId,
+    actorProfileId,
+  });
 
   const ttlSeconds = Math.min(600, Math.max(30, Math.round(Number(attendance.relay_proof_ttl_seconds || 180))));
   const issuedAt = now.toISOString();

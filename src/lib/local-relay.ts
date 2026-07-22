@@ -17,6 +17,19 @@ type RelayConfig = {
   token: string | null;
 };
 
+export type RelayTeacherConnectivityStatus =
+  | "reachable"
+  | "permission_denied"
+  | "incompatible_browser"
+  | "unreachable";
+
+export type RelayTeacherConnectivityResult = {
+  status: RelayTeacherConnectivityStatus;
+  checked_at: string;
+  institution_id?: string;
+  relay_time?: string;
+};
+
 const DEFAULT_RELAY_URL =
   process.env.NEXT_PUBLIC_MONCAHIER_RELAY_URL || "http://127.0.0.1:4317";
 const RELAY_URL_KEY = "moncahier:relay:url";
@@ -59,6 +72,10 @@ function relayTargetAddressSpace(baseUrl: string): RelayTargetAddressSpace {
     hostname === "[::1]" ||
     /^127(?:\.|$)/.test(hostname);
   return loopback ? "loopback" : "local";
+}
+
+function supportsRelayTargetAddressSpace() {
+  return browser() && typeof Request !== "undefined" && "targetAddressSpace" in Request.prototype;
 }
 
 export function getRelayConfig(): RelayConfig {
@@ -156,8 +173,10 @@ async function relayJson<T>(
       cache: "no-store",
       credentials: "omit",
       mode: "cors",
-      targetAddressSpace: relayTargetAddressSpace(baseUrl),
     };
+    if (supportsRelayTargetAddressSpace()) {
+      relayRequest.targetAddressSpace = relayTargetAddressSpace(baseUrl);
+    }
     const response = await fetch(`${baseUrl}${path}`, relayRequest as RequestInit);
     const payload = await safeJson(response);
     if (!response.ok) throw new Error(String(payload?.error || `RELAY_HTTP_${response.status}`));
@@ -454,4 +473,76 @@ export async function requestRelayAttendancePresenceProof(input: {
     includeConfiguredToken: false,
     timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
   });
+}
+
+async function localNetworkPermissionDenied(baseUrl: string) {
+  if (!browser() || !navigator.permissions?.query) return false;
+  const permissionName = relayTargetAddressSpace(baseUrl) === "loopback"
+    ? "loopback-network"
+    : "local-network";
+  try {
+    const result = await navigator.permissions.query({ name: permissionName } as any);
+    return result.state === "denied";
+  } catch {
+    return false;
+  }
+}
+
+function requiresLocalHttpException(baseUrl: string) {
+  if (!browser() || !window.isSecureContext) return false;
+  try {
+    return new URL(baseUrl).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+export async function checkRelayTeacherConnectivity(input: {
+  institutionId: string;
+  baseUrl: string;
+  accessToken: string;
+}): Promise<RelayTeacherConnectivityResult> {
+  const checkedAt = new Date().toISOString();
+  const institutionId = String(input.institutionId || "").trim();
+  const accessToken = String(input.accessToken || "").trim();
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  if (!browser() || !institutionId || !accessToken) {
+    return { status: "unreachable", checked_at: checkedAt };
+  }
+
+  try {
+    const response = await relayJson<{
+      ok: true;
+      institution_id: string;
+      relay_time: string;
+    }>("/v1/teacher/connectivity-check", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({}),
+    }, {
+      baseUrl,
+      includeConfiguredToken: false,
+      timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
+    });
+    if (response.ok !== true || String(response.institution_id || "").trim() !== institutionId) {
+      return { status: "unreachable", checked_at: checkedAt };
+    }
+    return {
+      status: "reachable",
+      checked_at: checkedAt,
+      institution_id: institutionId,
+      relay_time: response.relay_time,
+    };
+  } catch (error) {
+    const permissionDenied =
+      (error instanceof DOMException && error.name === "NotAllowedError") ||
+      await localNetworkPermissionDenied(baseUrl);
+    if (permissionDenied) {
+      return { status: "permission_denied", checked_at: checkedAt };
+    }
+    if (requiresLocalHttpException(baseUrl) && !supportsRelayTargetAddressSpace()) {
+      return { status: "incompatible_browser", checked_at: checkedAt };
+    }
+    return { status: "unreachable", checked_at: checkedAt };
+  }
 }

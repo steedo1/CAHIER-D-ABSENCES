@@ -82,6 +82,17 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
         ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
         : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
 
+  const relayConnectivity = role === "teacher" ? readiness?.relay_connectivity : undefined;
+  const relayConnectivityMessage = relayConnectivity?.status === "reachable"
+    ? "Relais joignable par l’application."
+    : relayConnectivity?.status === "permission_denied"
+      ? "Permission réseau local refusée."
+      : relayConnectivity?.status === "incompatible_browser"
+        ? "Navigateur incompatible avec l’accès au relais local."
+        : relayConnectivity?.status === "unreachable"
+          ? "Relais inaccessible depuis l’application."
+          : null;
+
   return (
     <section
       className={[
@@ -127,6 +138,16 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
 
           {preparing && progress && <p className="mt-2 text-xs font-medium text-sky-800">{progress}</p>}
           {error && <p className="mt-2 text-xs font-medium text-rose-700">{error}</p>}
+          {relayConnectivityMessage && (
+            <p
+              className={[
+                "mt-2 text-xs font-semibold",
+                relayConnectivity?.status === "reachable" ? "text-emerald-800" : "text-amber-800",
+              ].join(" ")}
+            >
+              {relayConnectivityMessage}
+            </p>
+          )}
           {!online && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
