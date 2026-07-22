@@ -2013,7 +2013,15 @@ async function createPaymentAction(formData: FormData) {
   }
 
   for (const group of orderedReceiptGroups) {
-    const groupAmount = group.drafts.reduce(
+    // La contrainte SQL finance.receipt_allocations_amount_check impose un
+    // montant strictement positif. Un frais affiche sur le formulaire mais
+    // non regle (ex. Pension a 0 F pendant un paiement d'annexes) ne doit donc
+    // jamais devenir une ventilation comptable.
+    const payableDrafts = group.drafts.filter((item) => {
+      const value = Number(item.amount || 0);
+      return Number.isFinite(value) && value > 0;
+    });
+    const groupAmount = payableDrafts.reduce(
       (sum, item) => sum + Number(item.amount || 0),
       0,
     );
@@ -2057,7 +2065,7 @@ async function createPaymentAction(formData: FormData) {
       .schema("finance")
       .from("receipt_allocations")
       .insert(
-        group.drafts.map((item) => ({
+        payableDrafts.map((item) => ({
           receipt_id: receipt.id,
           student_charge_id: item.charge.id,
           amount: item.amount,
@@ -2079,7 +2087,7 @@ async function createPaymentAction(formData: FormData) {
       allocationIdByChargeId.set(row.student_charge_id, row.id);
     }
 
-    const componentAllocations = group.drafts.flatMap((item) => {
+    const componentAllocations = payableDrafts.flatMap((item) => {
       const allocationId = allocationIdByChargeId.get(item.charge.id);
       if (!allocationId) return [];
 
@@ -2121,7 +2129,7 @@ async function createPaymentAction(formData: FormData) {
       receiptNo: receipt.receipt_no,
       totalAmount: groupAmount,
       categoryName: group.label,
-      drafts: group.drafts,
+      drafts: payableDrafts,
     });
   }
 

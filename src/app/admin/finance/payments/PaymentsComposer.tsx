@@ -532,8 +532,7 @@ export default function PaymentsComposer({
         // prochain encaissement. On ne les ferme plus automatiquement, sinon
         // le comptable ne peut plus les sélectionner plus tard.
         closeUnselectedComponents: false,
-        includeOnReceipt:
-          selectedCategoryIsInternat && isPensionCharge(charge.label),
+        includeOnReceipt: amountForCharge > 0,
       };
     });
   }, [
@@ -604,7 +603,7 @@ export default function PaymentsComposer({
         componentAmounts: [] as ComponentPaymentInput[],
         componentMode: "detail",
         closeUnselectedComponents: false,
-        includeOnReceipt: isPensionCharge(charge.label) || amountForCharge > 0,
+        includeOnReceipt: amountForCharge > 0,
       };
     });
 
