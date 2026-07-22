@@ -8,6 +8,10 @@ import {
   reconcileFinanceChargesForStudent,
   type FinanceSyncResult,
 } from "@/lib/finance/student-finance-sync";
+import {
+  transferStudentToSeriesClass,
+  type StudentSeriesTargetClass,
+} from "@/lib/student-series-class-transfer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +73,9 @@ function fullName(row: any) {
 }
 
 function cleanText(value: unknown) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeNullableText(value: unknown) {
@@ -80,13 +86,74 @@ function normalizeNullableText(value: unknown) {
 function cleanOfficialTrackCode(value: unknown): OfficialTrackCode | null {
   const raw = cleanText(value);
   if (!raw) return null;
-  if (!OFFICIAL_TRACK_CODES.has(raw)) throw new Error("bad_official_track_code");
+  if (!OFFICIAL_TRACK_CODES.has(raw))
+    throw new Error("bad_official_track_code");
   return raw as OfficialTrackCode;
+}
+
+function normalizeTrackLookupKey(value: unknown) {
+  return cleanText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function inferClassOfficialTrackCode(
+  row: StudentSeriesTargetClass | null | undefined,
+): OfficialTrackCode | null {
+  const explicit = cleanText(row?.official_track_code);
+  if (OFFICIAL_TRACK_CODES.has(explicit)) return explicit as OfficialTrackCode;
+
+  for (const value of [row?.label, row?.code, row?.level]) {
+    const key = normalizeTrackLookupKey(value);
+    if (!key) continue;
+
+    if (/^6/.test(key)) return "6eme";
+    if (/^5/.test(key)) return "5eme";
+    if (/^4/.test(key)) return "4eme";
+    if (/^3/.test(key)) return "3eme";
+    if (/^(2NDEA|SECONDEA|2A)/.test(key)) return "2ndeA";
+    if (/^(2NDEC|SECONDEC|2C)/.test(key)) return "2ndeC";
+    if (/^(1EREA1|PREMIEREA1|1A1)/.test(key)) return "1ereA1";
+    if (/^(1EREA2|PREMIEREA2|1A2)/.test(key)) return "1ereA2";
+    if (/^(1EREC|PREMIEREC|1C)/.test(key)) return "1ereC";
+    if (/^(1ERED|PREMIERED|1D)/.test(key)) return "1ereD";
+    if (/^(TLEA1|TERMINALEA1|TA1)/.test(key)) return "tleA1";
+    if (/^(TLEA2|TERMINALEA2|TA2)/.test(key)) return "tleA2";
+    if (/^(TLEC|TERMINALEC|TC)/.test(key)) return "tleC";
+    if (/^(TLED|TERMINALED|TD)/.test(key)) return "tleD";
+  }
+
+  return null;
+}
+
+function officialTrackLabel(code: OfficialTrackCode) {
+  const labels: Record<OfficialTrackCode, string> = {
+    "6eme": "6ème",
+    "5eme": "5ème",
+    "4eme": "4ème",
+    "3eme": "3ème",
+    "2ndeA": "2nde A",
+    "2ndeC": "2nde C",
+    "1ereA1": "1ère A1",
+    "1ereA2": "1ère A2",
+    "1ereC": "1ère C",
+    "1ereD": "1ère D",
+    tleA1: "Tle A1",
+    tleA2: "Tle A2",
+    tleC: "Tle C",
+    tleD: "Tle D",
+  };
+  return labels[code];
 }
 
 function isMissingOfficialTrackColumn(error: any) {
   const message = String(error?.message || "").toLowerCase();
-  return message.includes("official_track_code") && (message.includes("column") || message.includes("schema cache"));
+  return (
+    message.includes("official_track_code") &&
+    (message.includes("column") || message.includes("schema cache"))
+  );
 }
 
 function normalizeDateYmd(value: unknown) {
@@ -106,7 +173,6 @@ function normalizeGender(value: unknown) {
   return cleanText(value).slice(0, 8).toUpperCase();
 }
 
-
 function normalizeBool(value: unknown): boolean | null {
   if (typeof value === "boolean") return value;
   const s = cleanText(value)
@@ -117,12 +183,15 @@ function normalizeBool(value: unknown): boolean | null {
     .replace(/\s+/g, " ")
     .toLowerCase();
   if (!s) return null;
-  if (["oui", "yes", "y", "1", "true", "vrai", "r", "x"].includes(s)) return true;
+  if (["oui", "yes", "y", "1", "true", "vrai", "r", "x"].includes(s))
+    return true;
   if (["non", "no", "0", "false", "faux", "n"].includes(s)) return false;
   return null;
 }
 
-async function getCurrentAcademicYear(institutionId: string): Promise<string | null> {
+async function getCurrentAcademicYear(
+  institutionId: string,
+): Promise<string | null> {
   const srv = getSupabaseServiceClient();
 
   const { data: current } = await srv
@@ -206,7 +275,11 @@ async function getEducators(
     .eq("role", "educator");
 
   const allEducatorIds = Array.from(
-    new Set<string>((roles || []).map((row: any) => String(row.profile_id || "").trim()).filter(Boolean)),
+    new Set<string>(
+      (roles || [])
+        .map((row: any) => String(row.profile_id || "").trim())
+        .filter(Boolean),
+    ),
   );
 
   if (!allEducatorIds.length) return [];
@@ -253,7 +326,9 @@ async function requireAdminContext(
   } = await supa.auth.getUser();
 
   if (!user) {
-    return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+    return {
+      error: NextResponse.json({ error: "unauthorized" }, { status: 401 }),
+    };
   }
 
   // Important : dans cette base, le rôle n’est pas dans profiles.
@@ -264,18 +339,30 @@ async function requireAdminContext(
     .eq("id", user.id)
     .maybeSingle();
 
-  if (meErr) return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };
+  if (meErr)
+    return {
+      error: NextResponse.json({ error: meErr.message }, { status: 400 }),
+    };
 
   const { data: roleRows, error: roleErr } = await srv
     .from("user_roles")
     .select("role,institution_id")
     .eq("profile_id", user.id);
 
-  if (roleErr) return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };
+  if (roleErr)
+    return {
+      error: NextResponse.json({ error: roleErr.message }, { status: 400 }),
+    };
 
   const allowedRoles = options.write
     ? new Set(["admin", "super_admin", "founder", "finance_manager", "finance"])
-    : new Set(["admin", "super_admin", "founder", "finance_manager", "finance"]);
+    : new Set([
+        "admin",
+        "super_admin",
+        "founder",
+        "finance_manager",
+        "finance",
+      ]);
 
   const allowedRoleRows = (roleRows || []).filter((row: any) =>
     allowedRoles.has(String(row.role || "")),
@@ -283,12 +370,16 @@ async function requireAdminContext(
 
   let institutionId = String((me as any)?.institution_id || "").trim();
   if (!institutionId) {
-    const roleInstitution = allowedRoleRows.find((row: any) => row.institution_id)?.institution_id;
+    const roleInstitution = allowedRoleRows.find(
+      (row: any) => row.institution_id,
+    )?.institution_id;
     institutionId = roleInstitution ? String(roleInstitution).trim() : "";
   }
 
   if (!institutionId) {
-    return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
+    return {
+      error: NextResponse.json({ error: "no_institution" }, { status: 400 }),
+    };
   }
 
   const roleAppliesToInstitution = (row: any) => {
@@ -302,34 +393,54 @@ async function requireAdminContext(
   };
 
   const hasAccess = allowedRoleRows.some(roleAppliesToInstitution);
-  const writeRoles = new Set(["admin", "super_admin", "founder", "finance_manager", "finance"]);
+  const writeRoles = new Set([
+    "admin",
+    "super_admin",
+    "founder",
+    "finance_manager",
+    "finance",
+  ]);
   const canWrite = (roleRows || []).some((row: any) => {
     const role = String(row.role || "");
     return writeRoles.has(role) && roleAppliesToInstitution(row);
   });
 
   if (!hasAccess) {
-    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+    return {
+      error: NextResponse.json({ error: "forbidden" }, { status: 403 }),
+    };
   }
 
   const { data: cls, error: classErr } = await srv
     .from("classes")
-    .select("id,label,level,code,academic_year,official_track_code,head_teacher_id")
+    .select(
+      "id,label,level,code,academic_year,official_track_code,head_teacher_id",
+    )
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
 
-  if (classErr) return { error: NextResponse.json({ error: classErr.message }, { status: 400 }) };
-  if (!cls) return { error: NextResponse.json({ error: "class_not_found" }, { status: 404 }) };
+  if (classErr)
+    return {
+      error: NextResponse.json({ error: classErr.message }, { status: 400 }),
+    };
+  if (!cls)
+    return {
+      error: NextResponse.json({ error: "class_not_found" }, { status: 404 }),
+    };
 
   return { supa, srv, user, me, institutionId, cls, canWrite };
 }
 
-export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
   const { id } = await context.params;
   const classId = String(id || "").trim();
 
-  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  if (!classId)
+    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
   const ctx = await requireAdminContext(classId);
   if ("error" in ctx) return ctx.error;
@@ -337,51 +448,69 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   const { srv, institutionId, cls, canWrite } = ctx;
 
   const url = new URL(req.url);
-  const academicYearParam = String(url.searchParams.get("academic_year") || "").trim();
-  const academicYear = academicYearParam || (await getCurrentAcademicYear(institutionId));
+  const academicYearParam = String(
+    url.searchParams.get("academic_year") || "",
+  ).trim();
+  const academicYear =
+    academicYearParam || (await getCurrentAcademicYear(institutionId));
 
-  if (academicYear && academicYear !== "all" && String((cls as any).academic_year || "") !== academicYear) {
-    return NextResponse.json({ error: "class_not_in_academic_year" }, { status: 404 });
+  if (
+    academicYear &&
+    academicYear !== "all" &&
+    String((cls as any).academic_year || "") !== academicYear
+  ) {
+    return NextResponse.json(
+      { error: "class_not_in_academic_year" },
+      { status: 404 },
+    );
   }
 
-  const [institutionRes, academicYearRes, headTeacher, educators] = await Promise.all([
-    srv
-      .from("institutions")
-      .select(
-        [
-          "id",
-          "name",
-          "logo_url",
-          "phone",
-          "email",
-          "regional_direction",
-          "postal_address",
-          "status",
-          "head_name",
-          "head_title",
-          "country_name",
-          "country_motto",
-          "ministry_name",
-          "code",
-          "settings_json",
-        ].join(","),
-      )
-      .eq("id", institutionId)
-      .maybeSingle(),
-    academicYear && academicYear !== "all"
-      ? srv
-          .from("academic_years")
-          .select("code,label,start_date,end_date,is_current")
-          .eq("institution_id", institutionId)
-          .eq("code", academicYear)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null } as any),
-    getProfileById((cls as any).head_teacher_id ? String((cls as any).head_teacher_id) : null),
-    getEducators(institutionId, classId, (cls as any).level),
-  ]);
+  const [institutionRes, academicYearRes, headTeacher, educators] =
+    await Promise.all([
+      srv
+        .from("institutions")
+        .select(
+          [
+            "id",
+            "name",
+            "logo_url",
+            "phone",
+            "email",
+            "regional_direction",
+            "postal_address",
+            "status",
+            "head_name",
+            "head_title",
+            "country_name",
+            "country_motto",
+            "ministry_name",
+            "code",
+            "settings_json",
+          ].join(","),
+        )
+        .eq("id", institutionId)
+        .maybeSingle(),
+      academicYear && academicYear !== "all"
+        ? srv
+            .from("academic_years")
+            .select("code,label,start_date,end_date,is_current")
+            .eq("institution_id", institutionId)
+            .eq("code", academicYear)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null } as any),
+      getProfileById(
+        (cls as any).head_teacher_id
+          ? String((cls as any).head_teacher_id)
+          : null,
+      ),
+      getEducators(institutionId, classId, (cls as any).level),
+    ]);
 
   if (institutionRes.error) {
-    return NextResponse.json({ error: institutionRes.error.message }, { status: 400 });
+    return NextResponse.json(
+      { error: institutionRes.error.message },
+      { status: 400 },
+    );
   }
 
   async function loadEnrollments(includeStudentSeries: boolean) {
@@ -426,10 +555,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   if (enrollErr) {
     return NextResponse.json(
       {
-        error:
-          enrollErr.message.includes("lv2")
-            ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
-            : enrollErr.message,
+        error: enrollErr.message.includes("lv2")
+          ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
+          : enrollErr.message,
         details: enrollErr.message,
       },
       { status: 400 },
@@ -452,14 +580,13 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         birthdate: s.birthdate ?? null,
         birth_place: s.birth_place ?? null,
         nationality: s.nationality ?? null,
-        is_repeater:
-          typeof s.is_repeater === "boolean"
-            ? s.is_repeater
-            : null,
+        is_repeater: typeof s.is_repeater === "boolean" ? s.is_repeater : null,
         lv2: s.lv2 ?? null,
         is_affecte: typeof s.is_affecte === "boolean" ? s.is_affecte : null,
         is_boarder: typeof s.is_boarder === "boolean" ? s.is_boarder : null,
-        official_track_code: cleanOfficialTrackCode((row as any).official_track_code ?? null),
+        official_track_code: cleanOfficialTrackCode(
+          (row as any).official_track_code ?? null,
+        ),
         enrollment_start_date: row.start_date ?? null,
       };
     })
@@ -474,12 +601,16 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
   const institution = (institutionRes.data || {}) as Record<string, any>;
   const rawSettings = institution.settings_json;
   const settings =
-    rawSettings && typeof rawSettings === "object" && !Array.isArray(rawSettings)
+    rawSettings &&
+    typeof rawSettings === "object" &&
+    !Array.isArray(rawSettings)
       ? (rawSettings as Record<string, any>)
       : {};
   const institutionName =
     cleanText(institution.name) ||
-    cleanText(settings.institution_name || settings.school_name || settings.name);
+    cleanText(
+      settings.institution_name || settings.school_name || settings.name,
+    );
 
   return NextResponse.json({
     ok: true,
@@ -531,8 +662,10 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     students,
     totals: {
       students: students.length,
-      girls: students.filter((s: any) => /^f/i.test(String(s.gender || ""))).length,
-      boys: students.filter((s: any) => /^m/i.test(String(s.gender || ""))).length,
+      girls: students.filter((s: any) => /^f/i.test(String(s.gender || "")))
+        .length,
+      boys: students.filter((s: any) => /^m/i.test(String(s.gender || "")))
+        .length,
     },
   });
 }
@@ -542,16 +675,27 @@ async function loadFinanceProfilesForStudents(
   institutionId: string,
   classId: string,
   studentIds: string[],
-): Promise<Array<{ student_id: string; profile: FinanceStudentProfile }>> {
-  const ids = Array.from(new Set(studentIds.map((id) => cleanText(id)).filter(Boolean)));
+): Promise<
+  Array<{
+    student_id: string;
+    official_track_code: OfficialTrackCode | null;
+    profile: FinanceStudentProfile;
+  }>
+> {
+  const ids = Array.from(
+    new Set(studentIds.map((id) => cleanText(id)).filter(Boolean)),
+  );
   if (ids.length === 0) return [];
 
   const { data, error } = await srv
     .from("class_enrollments")
-    .select(`
+    .select(
+      `
       student_id,
+      official_track_code,
       students:student_id(is_affecte,is_boarder)
-    `)
+    `,
+    )
     .eq("institution_id", institutionId)
     .eq("class_id", classId)
     .is("end_date", null)
@@ -566,6 +710,9 @@ async function loadFinanceProfilesForStudents(
       if (!studentId) return null;
       return {
         student_id: studentId,
+        official_track_code: cleanOfficialTrackCode(
+          row.official_track_code ?? null,
+        ),
         profile: {
           is_affecte:
             typeof student.is_affecte === "boolean" ? student.is_affecte : null,
@@ -574,13 +721,21 @@ async function loadFinanceProfilesForStudents(
         },
       };
     })
-    .filter(Boolean) as Array<{ student_id: string; profile: FinanceStudentProfile }>;
+    .filter(Boolean) as Array<{
+    student_id: string;
+    official_track_code: OfficialTrackCode | null;
+    profile: FinanceStudentProfile;
+  }>;
 }
 
-export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
   const { id } = await context.params;
   const classId = String(id || "").trim();
-  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  if (!classId)
+    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
   const ctx = await requireAdminContext(classId, { write: true });
   if ("error" in ctx) return ctx.error;
@@ -594,14 +749,23 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   const isBoarder = normalizeBool(body?.is_boarder);
 
   if (!lastName) {
-    return NextResponse.json({ error: "Le nom de l’élève est obligatoire." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Le nom de l’élève est obligatoire." },
+      { status: 400 },
+    );
   }
   if (!firstName) {
-    return NextResponse.json({ error: "Le prénom de l’élève est obligatoire." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Le prénom de l’élève est obligatoire." },
+      { status: 400 },
+    );
   }
   if (isAffecte === null || isBoarder === null) {
     return NextResponse.json(
-      { error: "Affectation et internat sont obligatoires pour générer une dette fiable." },
+      {
+        error:
+          "Affectation et internat sont obligatoires pour générer une dette fiable.",
+      },
       { status: 400 },
     );
   }
@@ -614,7 +778,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       .eq("matricule", matricule)
       .maybeSingle();
 
-    if (dupErr) return NextResponse.json({ error: dupErr.message }, { status: 400 });
+    if (dupErr)
+      return NextResponse.json({ error: dupErr.message }, { status: 400 });
     if (duplicate?.id) {
       return NextResponse.json(
         { error: "Ce matricule existe déjà dans cet établissement." },
@@ -637,8 +802,13 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     .select("id")
     .maybeSingle();
 
-  if (createErr) return NextResponse.json({ error: createErr.message }, { status: 400 });
-  if (!created?.id) return NextResponse.json({ error: "Impossible de créer l’élève." }, { status: 400 });
+  if (createErr)
+    return NextResponse.json({ error: createErr.message }, { status: 400 });
+  if (!created?.id)
+    return NextResponse.json(
+      { error: "Impossible de créer l’élève." },
+      { status: 400 },
+    );
 
   const today = new Date().toISOString().slice(0, 10);
   const { error: enrollErr } = await srv.from("class_enrollments").upsert(
@@ -674,7 +844,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       classId,
       { is_affecte: isAffecte, is_boarder: isBoarder },
     );
-    chargesCreated = result.inserted + result.reactivated + result.updated_amount;
+    chargesCreated =
+      result.inserted + result.reactivated + result.updated_amount;
     financeWarnings = result.warnings;
   } catch (error) {
     await srv
@@ -710,30 +881,39 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   });
 }
 
-export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
   const { id } = await context.params;
   const classId = String(id || "").trim();
-  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  if (!classId)
+    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
 
   const ctx = await requireAdminContext(classId, { write: true });
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId } = ctx;
+  const { srv, institutionId, cls } = ctx;
   const body = await req.json().catch(() => ({}));
   const updates = Array.isArray(body?.updates) ? body.updates : [];
   const forceFinanceSync = body?.force_finance_sync === true;
   const syncOnlyIds = Array.isArray(body?.student_ids)
     ? Array.from(
-        new Set(body.student_ids.map((id: any) => cleanText(id)).filter(Boolean)),
+        new Set(
+          body.student_ids.map((id: any) => cleanText(id)).filter(Boolean),
+        ),
       )
     : [];
 
-  if (!updates.length && !forceFinanceSync) return NextResponse.json({ ok: true, updated: 0 });
+  if (!updates.length && !forceFinanceSync)
+    return NextResponse.json({ ok: true, updated: 0 });
   if (updates.length > 200 || syncOnlyIds.length > 200) {
     return NextResponse.json({ error: "too_many_updates" }, { status: 400 });
   }
 
-  const updateIds = updates.map((row: any) => cleanText(row?.student_id)).filter(Boolean);
+  const updateIds = updates
+    .map((row: any) => cleanText(row?.student_id))
+    .filter(Boolean);
   const requestedIds = Array.from(new Set([...updateIds, ...syncOnlyIds]));
 
   if (!requestedIds.length) return NextResponse.json({ ok: true, updated: 0 });
@@ -746,9 +926,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     .is("end_date", null)
     .in("student_id", requestedIds);
 
-  if (allowedErr) return NextResponse.json({ error: allowedErr.message }, { status: 400 });
+  if (allowedErr)
+    return NextResponse.json({ error: allowedErr.message }, { status: 400 });
 
-  const allowed = new Set((allowedRows || []).map((row: any) => String(row.student_id)));
+  const allowed = new Set(
+    (allowedRows || []).map((row: any) => String(row.student_id)),
+  );
 
   let rows: Array<{
     student_id: string;
@@ -765,8 +948,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
         const firstName = normalizeNullableText(row?.first_name);
         const lastName = normalizeNullableText(row?.last_name);
-        const matricule = normalizeNullableText(row?.matricule)?.toUpperCase() ?? null;
-        const normalizedFullName = [lastName, firstName].filter(Boolean).join(" ").trim();
+        const matricule =
+          normalizeNullableText(row?.matricule)?.toUpperCase() ?? null;
+        const normalizedFullName = [lastName, firstName]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
         const isAffecte = normalizeBool(row?.is_affecte);
         const isBoarder = normalizeBool(row?.is_boarder);
 
@@ -791,18 +978,23 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
             is_boarder: isBoarder,
           },
           matricule,
-          official_track_code: cleanOfficialTrackCode(row?.official_track_code ?? null),
+          official_track_code: cleanOfficialTrackCode(
+            row?.official_track_code ?? null,
+          ),
         };
       })
       .filter(Boolean) as Array<{
-        student_id: string;
-        patch: Record<string, any>;
-        matricule: string | null;
-        official_track_code: OfficialTrackCode | null;
-      }>;
+      student_id: string;
+      patch: Record<string, any>;
+      matricule: string | null;
+      official_track_code: OfficialTrackCode | null;
+    }>;
   } catch (error) {
     if ((error as Error)?.message === "bad_official_track_code") {
-      return NextResponse.json({ error: "bad_official_track_code" }, { status: 400 });
+      return NextResponse.json(
+        { error: "bad_official_track_code" },
+        { status: 400 },
+      );
     }
     if ((error as Error)?.message === "missing_student_name") {
       return NextResponse.json(
@@ -822,7 +1014,8 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     throw error;
   }
 
-  if (!rows.length && !forceFinanceSync) return NextResponse.json({ ok: true, updated: 0 });
+  if (!rows.length && !forceFinanceSync)
+    return NextResponse.json({ ok: true, updated: 0 });
 
   const matriculesToCheck = rows
     .map((row) => row.matricule)
@@ -834,10 +1027,14 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       matriculeCounts.set(matricule, (matriculeCounts.get(matricule) || 0) + 1);
     }
 
-    const duplicatedInRequest = Array.from(matriculeCounts.entries()).find(([, count]) => count > 1);
+    const duplicatedInRequest = Array.from(matriculeCounts.entries()).find(
+      ([, count]) => count > 1,
+    );
     if (duplicatedInRequest) {
       return NextResponse.json(
-        { error: `Le matricule ${duplicatedInRequest[0]} est saisi plusieurs fois dans cette liste.` },
+        {
+          error: `Le matricule ${duplicatedInRequest[0]} est saisi plusieurs fois dans cette liste.`,
+        },
         { status: 400 },
       );
     }
@@ -849,14 +1046,23 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       .eq("institution_id", institutionId)
       .in("matricule", uniqueMatricules);
 
-    if (duplicateErr) return NextResponse.json({ error: duplicateErr.message }, { status: 400 });
+    if (duplicateErr)
+      return NextResponse.json(
+        { error: duplicateErr.message },
+        { status: 400 },
+      );
 
     const duplicatesByMatricule = new Map<string, string[]>();
     for (const duplicate of duplicates || []) {
-      const key = String((duplicate as any).matricule || "").trim().toUpperCase();
+      const key = String((duplicate as any).matricule || "")
+        .trim()
+        .toUpperCase();
       const id = String((duplicate as any).id || "");
       if (!key || !id) continue;
-      duplicatesByMatricule.set(key, [...(duplicatesByMatricule.get(key) || []), id]);
+      duplicatesByMatricule.set(key, [
+        ...(duplicatesByMatricule.get(key) || []),
+        id,
+      ]);
     }
 
     for (const row of rows) {
@@ -864,32 +1070,44 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       const owners = duplicatesByMatricule.get(row.matricule) || [];
       if (owners.some((id) => id !== row.student_id)) {
         return NextResponse.json(
-          { error: `Le matricule ${row.matricule} existe déjà dans cet établissement.` },
+          {
+            error: `Le matricule ${row.matricule} existe déjà dans cet établissement.`,
+          },
           { status: 400 },
         );
       }
     }
   }
 
-  const [studentSnapshotsResult, enrollmentSnapshotsResult] = await Promise.all([
-    rows.length > 0
-      ? srv
-          .from("students")
-          .select(
-            "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,nationality,is_repeater,lv2,is_affecte,is_boarder",
-          )
-          .in("id", rows.map((row) => row.student_id))
-      : Promise.resolve({ data: [], error: null } as any),
-    rows.length > 0
-      ? srv
-          .from("class_enrollments")
-          .select("student_id,official_track_code")
-          .eq("institution_id", institutionId)
-          .eq("class_id", classId)
-          .is("end_date", null)
-          .in("student_id", rows.map((row) => row.student_id))
-      : Promise.resolve({ data: [], error: null } as any),
-  ]);
+  const [studentSnapshotsResult, enrollmentSnapshotsResult] = await Promise.all(
+    [
+      rows.length > 0
+        ? srv
+            .from("students")
+            .select(
+              "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,nationality,is_repeater,lv2,is_affecte,is_boarder",
+            )
+            .in(
+              "id",
+              rows.map((row) => row.student_id),
+            )
+        : Promise.resolve({ data: [], error: null } as any),
+      rows.length > 0
+        ? srv
+            .from("class_enrollments")
+            .select(
+              "id,institution_id,class_id,student_id,start_date,end_date,official_track_code",
+            )
+            .eq("institution_id", institutionId)
+            .eq("class_id", classId)
+            .is("end_date", null)
+            .in(
+              "student_id",
+              rows.map((row) => row.student_id),
+            )
+        : Promise.resolve({ data: [], error: null } as any),
+    ],
+  );
 
   if (studentSnapshotsResult.error) {
     return NextResponse.json(
@@ -921,6 +1139,96 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     ]),
   );
 
+  const currentClass: StudentSeriesTargetClass = {
+    id: String((cls as any).id),
+    institution_id: institutionId,
+    label: (cls as any).label ?? null,
+    code: (cls as any).code ?? null,
+    level: (cls as any).level ?? null,
+    academic_year: (cls as any).academic_year ?? null,
+    official_track_code: (cls as any).official_track_code ?? null,
+  };
+
+  let classCatalogQuery = srv
+    .from("classes")
+    .select(
+      "id,institution_id,label,code,level,academic_year,official_track_code",
+    )
+    .eq("institution_id", institutionId);
+
+  const currentAcademicYear = cleanText((cls as any).academic_year);
+  if (currentAcademicYear) {
+    classCatalogQuery = classCatalogQuery.eq(
+      "academic_year",
+      currentAcademicYear,
+    );
+  }
+
+  const { data: classCatalogData, error: classCatalogError } =
+    await classCatalogQuery;
+
+  if (classCatalogError) {
+    return NextResponse.json(
+      { error: classCatalogError.message },
+      { status: 400 },
+    );
+  }
+
+  const classCatalog = (classCatalogData ?? []) as StudentSeriesTargetClass[];
+  if (!classCatalog.some((row) => String(row.id) === classId)) {
+    classCatalog.push(currentClass);
+  }
+
+  function resolveSeriesTargetClass(
+    officialTrackCode: OfficialTrackCode | null,
+  ): StudentSeriesTargetClass {
+    if (!officialTrackCode) return currentClass;
+
+    const candidates = classCatalog.filter(
+      (row) => inferClassOfficialTrackCode(row) === officialTrackCode,
+    );
+    const currentCandidate = candidates.find(
+      (row) => String(row.id) === classId,
+    );
+
+    if (currentCandidate) return currentCandidate;
+    if (candidates.length === 1) return candidates[0];
+
+    if (candidates.length > 1) {
+      const labels = candidates
+        .map((row) => cleanText(row.label || row.code || row.id))
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(
+        `Plusieurs classes correspondent à la série ${officialTrackLabel(officialTrackCode)} (${labels}). Le transfert est bloqué pour éviter de choisir une classe au hasard.`,
+      );
+    }
+
+    // Une classe commune peut regrouper plusieurs séries (notamment A1/A2).
+    // Sans classe cible unique, seule la série officielle de l'inscription est modifiée.
+    return currentClass;
+  }
+
+  const targetClassByStudentId = new Map<string, StudentSeriesTargetClass>();
+  try {
+    for (const row of rows) {
+      targetClassByStudentId.set(
+        row.student_id,
+        resolveSeriesTargetClass(row.official_track_code),
+      );
+    }
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "La classe correspondant à la nouvelle série est ambiguë.",
+      },
+      { status: 409 },
+    );
+  }
+
   async function restoreSchoolProfile(studentId: string) {
     const studentSnapshot: any = studentSnapshots.get(studentId);
     const enrollmentSnapshot: any = enrollmentSnapshots.get(studentId);
@@ -931,11 +1239,13 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     await srv.from("students").update(studentPatch).eq("id", studentId);
     await srv
       .from("class_enrollments")
-      .update({ official_track_code: enrollmentSnapshot.official_track_code })
-      .eq("institution_id", institutionId)
-      .eq("class_id", classId)
-      .eq("student_id", studentId)
-      .is("end_date", null);
+      .update({
+        start_date: enrollmentSnapshot.start_date,
+        end_date: enrollmentSnapshot.end_date,
+        official_track_code: enrollmentSnapshot.official_track_code,
+      })
+      .eq("id", enrollmentSnapshot.id)
+      .eq("institution_id", institutionId);
   }
 
   let updated = 0;
@@ -951,9 +1261,25 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     warnings: [],
   };
   const financeWarnings: string[] = [];
+  let classMoves = 0;
+
+  function accumulateFinanceResult(result: FinanceSyncResult) {
+    financeSync.inserted += result.inserted;
+    financeSync.reactivated += result.reactivated;
+    financeSync.cancelled += result.cancelled;
+    financeSync.cancelled_duplicates += result.cancelled_duplicates;
+    financeSync.preserved_paid_amount += result.preserved_paid_amount;
+    financeSync.updated_amount += result.updated_amount;
+    financeSync.retargeted += result.retargeted;
+    financeSync.option_links_created += result.option_links_created;
+    financeWarnings.push(...result.warnings);
+  }
 
   for (const row of rows) {
-    if (!studentSnapshots.has(row.student_id) || !enrollmentSnapshots.has(row.student_id)) {
+    if (
+      !studentSnapshots.has(row.student_id) ||
+      !enrollmentSnapshots.has(row.student_id)
+    ) {
       return NextResponse.json(
         {
           error:
@@ -980,10 +1306,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (error) {
       return NextResponse.json(
         {
-          error:
-            error.message.includes("lv2")
-              ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
-              : error.message,
+          error: error.message.includes("lv2")
+            ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
+            : error.message,
           details: error.message,
         },
         { status: 400 },
@@ -1001,59 +1326,78 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
-    const { error: enrollmentErr } = await srv
-      .from("class_enrollments")
-      .update({ official_track_code: row.official_track_code })
-      .eq("institution_id", institutionId)
-      .eq("class_id", classId)
-      .eq("student_id", row.student_id)
-      .is("end_date", null);
-
-    if (enrollmentErr) {
-      await restoreSchoolProfile(row.student_id);
-      return NextResponse.json(
-        {
-          error: isMissingOfficialTrackColumn(enrollmentErr)
-            ? "La colonne class_enrollments.official_track_code est absente. Exécutez src/db/class_enrollments_student_series_v1.sql dans Supabase, puis réessayez."
-            : enrollmentErr.message,
-          details: enrollmentErr.message,
-        },
-        { status: 400 },
-      );
-    }
-
     try {
-      const applied = await applyStudentFinanceReconciliation({
-        srv,
-        institutionId,
-        userId: ctx.user.id,
-        studentId: row.student_id,
-        classId,
-        studentProfile: {
-          is_affecte:
-            typeof row.patch.is_affecte === "boolean" ? row.patch.is_affecte : null,
-          is_boarder:
-            typeof row.patch.is_boarder === "boolean" ? row.patch.is_boarder : null,
-        },
-      });
-      const result = applied.summary;
-      financeSync.inserted += result.inserted;
-      financeSync.reactivated += result.reactivated;
-      financeSync.cancelled += result.cancelled;
-      financeSync.cancelled_duplicates += result.cancelled_duplicates;
-      financeSync.preserved_paid_amount += result.preserved_paid_amount;
-      financeSync.updated_amount += result.updated_amount;
-      financeSync.retargeted += result.retargeted;
-      financeSync.option_links_created += result.option_links_created;
-      financeWarnings.push(...result.warnings);
+      const studentProfile = {
+        is_affecte:
+          typeof row.patch.is_affecte === "boolean"
+            ? row.patch.is_affecte
+            : null,
+        is_boarder:
+          typeof row.patch.is_boarder === "boolean"
+            ? row.patch.is_boarder
+            : null,
+      };
+      const targetClass =
+        targetClassByStudentId.get(row.student_id) ?? currentClass;
+
+      if (String(targetClass.id) !== classId) {
+        const appliedMove = await transferStudentToSeriesClass({
+          srv,
+          institutionId,
+          userId: ctx.user.id,
+          studentId: row.student_id,
+          sourceClassId: classId,
+          targetClass,
+          officialTrackCode: row.official_track_code,
+          studentProfile,
+        });
+
+        accumulateFinanceResult(appliedMove.finance.reconciliation);
+        financeSync.cancelled_duplicates +=
+          appliedMove.finance.transfer.cancelled_duplicates;
+        financeSync.preserved_paid_amount +=
+          appliedMove.finance.transfer.preserved_paid_amount;
+        financeSync.retargeted += appliedMove.finance.transfer.moved_charges;
+        financeWarnings.push(...appliedMove.finance.transfer.warnings);
+        classMoves++;
+      } else {
+        const { data: updatedEnrollment, error: enrollmentErr } = await srv
+          .from("class_enrollments")
+          .update({ official_track_code: row.official_track_code })
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .eq("student_id", row.student_id)
+          .is("end_date", null)
+          .select("id");
+
+        if (enrollmentErr) throw enrollmentErr;
+        if ((updatedEnrollment ?? []).length !== 1) {
+          throw new Error(
+            "La série n’a pas pu être enregistrée sur l’inscription active.",
+          );
+        }
+
+        const applied = await applyStudentFinanceReconciliation({
+          srv,
+          institutionId,
+          userId: ctx.user.id,
+          studentId: row.student_id,
+          classId,
+          studentProfile,
+        });
+        accumulateFinanceResult(applied.summary);
+      }
     } catch (error) {
       await restoreSchoolProfile(row.student_id);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Synchronisation finance impossible pour un élève.";
       return NextResponse.json(
         {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Synchronisation finance impossible pour un élève.",
+          error: isMissingOfficialTrackColumn(error)
+            ? "La colonne class_enrollments.official_track_code est absente. Exécutez src/db/class_enrollments_student_series_v1.sql dans Supabase, puis réessayez."
+            : message,
           details:
             "Modification annulée : le profil scolaire et financier précédent a été restauré.",
         },
@@ -1066,7 +1410,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
   if (forceFinanceSync) {
     const alreadySynced = new Set(rows.map((row) => row.student_id));
-    const idsToSync = requestedIds.filter((studentId) => allowed.has(studentId) && !alreadySynced.has(studentId));
+    const idsToSync = requestedIds.filter(
+      (studentId) => allowed.has(studentId) && !alreadySynced.has(studentId),
+    );
 
     try {
       const profiles = await loadFinanceProfilesForStudents(
@@ -1077,23 +1423,39 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
 
       for (const item of profiles) {
-        const result = await reconcileFinanceChargesForStudent(
-          srv,
-          institutionId,
-          ctx.user.id,
-          item.student_id,
-          classId,
-          item.profile,
-        );
-        financeSync.inserted += result.inserted;
-        financeSync.reactivated += result.reactivated;
-        financeSync.cancelled += result.cancelled;
-        financeSync.cancelled_duplicates += result.cancelled_duplicates;
-        financeSync.preserved_paid_amount += result.preserved_paid_amount;
-        financeSync.updated_amount += result.updated_amount;
-        financeSync.retargeted += result.retargeted;
-        financeSync.option_links_created += result.option_links_created;
-        financeWarnings.push(...result.warnings);
+        const targetClass = resolveSeriesTargetClass(item.official_track_code);
+
+        if (String(targetClass.id) !== classId) {
+          const appliedMove = await transferStudentToSeriesClass({
+            srv,
+            institutionId,
+            userId: ctx.user.id,
+            studentId: item.student_id,
+            sourceClassId: classId,
+            targetClass,
+            officialTrackCode: item.official_track_code,
+            studentProfile: item.profile,
+          });
+
+          accumulateFinanceResult(appliedMove.finance.reconciliation);
+          financeSync.cancelled_duplicates +=
+            appliedMove.finance.transfer.cancelled_duplicates;
+          financeSync.preserved_paid_amount +=
+            appliedMove.finance.transfer.preserved_paid_amount;
+          financeSync.retargeted += appliedMove.finance.transfer.moved_charges;
+          financeWarnings.push(...appliedMove.finance.transfer.warnings);
+          classMoves++;
+        } else {
+          const result = await reconcileFinanceChargesForStudent(
+            srv,
+            institutionId,
+            ctx.user.id,
+            item.student_id,
+            classId,
+            item.profile,
+          );
+          accumulateFinanceResult(result);
+        }
       }
     } catch (error) {
       financeWarnings.push(
@@ -1109,6 +1471,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     revalidatePath("/admin/finance");
     revalidatePath("/admin/finance/charges");
     revalidatePath("/admin/finance/payments");
+    revalidatePath("/admin/finance/receipts");
     revalidatePath("/admin/finance/reports");
   } catch {
     // La correction est déjà enregistrée ; la revalidation ne doit pas bloquer la réponse API.
@@ -1117,6 +1480,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   return NextResponse.json({
     ok: true,
     updated,
+    class_moves: classMoves,
     finance_sync: financeSync,
     finance_warnings: Array.from(new Set(financeWarnings)).slice(0, 5),
   });
