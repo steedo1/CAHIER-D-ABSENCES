@@ -223,20 +223,35 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 async function waitForOfflineWorker(
   registration: ServiceWorkerRegistration
 ): Promise<ServiceWorker | null> {
+  const expectedScriptUrl = new URL(MON_CAHIER_SW_URL, window.location.href).href;
   const isExpected = (worker: ServiceWorker | null) =>
-    Boolean(worker?.scriptURL.includes("/moncahier-sw.js"));
-  if (isExpected(registration.active)) return registration.active;
+    Boolean(worker && worker.scriptURL === expectedScriptUrl);
+  const findExpectedWorker = () =>
+    [registration.installing, registration.waiting, registration.active].find(
+      (worker): worker is ServiceWorker => isExpected(worker)
+    ) || null;
 
-  const candidate = registration.installing || registration.waiting;
-  if (!candidate) return isExpected(registration.active) ? registration.active : null;
+  let candidate = findExpectedWorker();
+  if (!candidate) {
+    await registration.update();
+    candidate = findExpectedWorker();
+  }
+  if (!candidate) return null;
+
+  // Un worker installe et en attente peut deja recevoir la commande de
+  // preparation. Cela permet de remplir son propre cache avant la fermeture
+  // des pages encore controlees par l'ancienne version.
+  if (candidate.state === "installed" || candidate.state === "activated") {
+    return candidate;
+  }
 
   await new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(
-      () => reject(new Error("Activation hors ligne trop longue.")),
+      () => reject(new Error("Installation du service hors ligne trop longue.")),
       15_000
     );
     const check = () => {
-      if (candidate.state === "activated") {
+      if (candidate.state === "installed" || candidate.state === "activated") {
         window.clearTimeout(timeout);
         resolve();
       } else if (candidate.state === "redundant") {
@@ -248,8 +263,7 @@ async function waitForOfflineWorker(
     check();
   });
 
-  await navigator.serviceWorker.ready;
-  return isExpected(registration.active) ? registration.active : null;
+  return isExpected(candidate) ? candidate : null;
 }
 
 /**

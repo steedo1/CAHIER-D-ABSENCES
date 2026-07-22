@@ -104,6 +104,18 @@ function readinessKey(role: OfflineRole) {
   return `${READINESS_PREFIX}${role}`;
 }
 
+function rememberOfflineBookDestinations(destinations: {
+  attendance: string;
+  grades: string;
+}) {
+  if (typeof document === "undefined") return;
+
+  const attributes = "Path=/; Max-Age=2592000; SameSite=Lax";
+  for (const [book, destination] of Object.entries(destinations)) {
+    document.cookie = `mc_last_dest_${book}=${encodeURIComponent(destination)}; ${attributes}`;
+  }
+}
+
 function responseMessage(payload: any, status: number) {
   return String(payload?.message || payload?.error || `HTTP ${status}`);
 }
@@ -427,6 +439,10 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     "/grades",
     "/enseignant/cahier-de-texte",
   ]);
+  rememberOfflineBookDestinations({
+    attendance: "/attendance",
+    grades: "/grades",
+  });
 
   return {
     version: 4,
@@ -518,6 +534,10 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
     "/grades/class-device",
     "/enseignant/cahier-de-texte",
   ]);
+  rememberOfflineBookDestinations({
+    attendance: "/class",
+    grades: "/grades/class-device",
+  });
 
   return {
     version: 4,

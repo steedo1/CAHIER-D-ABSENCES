@@ -24,6 +24,28 @@ function getCookie(name: string) {
   return m ? decodeURIComponent(m[2]) : null;
 }
 
+function validateOfflineBookDestination(
+  book: "attendance" | "grades",
+  candidate: string | null
+) {
+  if (!candidate || typeof window === "undefined") return null;
+
+  try {
+    const url = new URL(candidate, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+
+    const path = url.pathname;
+    const allowed =
+      book === "grades"
+        ? path === "/grades" || path === "/grades/class-device"
+        : path === "/attendance" || path === "/class" || path.startsWith("/class/");
+
+    return allowed ? `${path}${url.search}${url.hash}` : null;
+  } catch {
+    return null;
+  }
+}
+
 function MiniSpinner({ className = "" }: { className?: string }) {
   return <Loader2 className={`h-4 w-4 animate-spin ${className}`} />;
 }
@@ -297,12 +319,15 @@ export default function ChooseBookPage() {
   function resolveOfflineDest(book: "attendance" | "grades") {
     const byBook = getCookie(`mc_last_dest_${book}`);
     const generic = getCookie("mc_last_dest");
-    const cookieDest = byBook || generic;
-    const fallback = book === "grades" ? "/grades/class-device" : "/class";
+    const preparedDest = validateOfflineBookDestination(book, byBook);
+    if (preparedDest) return preparedDest;
 
-    if (!cookieDest) return fallback;
-    if (cookieDest.startsWith("http")) return fallback;
-    return cookieDest.startsWith("/") ? cookieDest : fallback;
+    // Compatibilite avec les appareils deja prepares, sans jamais reutiliser
+    // une destination Appel pour Notes (ou l'inverse).
+    const compatibleLegacyDest = validateOfflineBookDestination(book, generic);
+    if (compatibleLegacyDest) return compatibleLegacyDest;
+
+    return book === "grades" ? "/grades" : "/attendance";
   }
 
   function openWithSpinner(
