@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import { authenticateRelayTeacherAccess } from "./teacher-auth.mjs";
@@ -17,11 +17,115 @@ type RelayAttendanceSettings = {
   relay_proof_ttl_seconds?: number;
 };
 
+type RelayPresenceProofPayload = {
+  v: 1;
+  institution_id: string;
+  actor_profile_id: string;
+  client_session_id: string;
+  issued_at: string;
+  expires_at: string;
+  source: "local_relay";
+};
+
+export class RelayPresenceProofError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
+
 function required(value: unknown, name: string, maxLength = 256) {
   const text = String(value || "").trim();
   if (!text) throw new Error(`${name}_required`);
   if (text.length > maxLength) throw new Error(`${name}_too_long`);
   return text;
+}
+
+export function verifyAttendancePresenceProof(
+  db: RelayDatabase,
+  token: string,
+  expected: {
+    institutionId: string;
+    actorProfileId: string;
+    clientSessionId: string;
+  },
+  now = new Date(),
+) {
+  const normalized = String(token || "").trim();
+  if (!normalized || normalized.length > 4096) {
+    throw new RelayPresenceProofError("relay_proof_invalid");
+  }
+  const [encodedPayload, encodedSignature, extra] = normalized.split(".");
+  if (!encodedPayload || !encodedSignature || extra) {
+    throw new RelayPresenceProofError("relay_proof_invalid");
+  }
+
+  const institution = db.prepare(`
+    SELECT settings_json FROM institutions
+    WHERE id = ? AND deleted_at IS NULL
+  `).get(expected.institutionId) as { settings_json: string | null } | undefined;
+  if (!institution) throw new RelayPresenceProofError("institution_not_initialized");
+  const settings = parseStoredJson<Record<string, unknown>>(institution.settings_json) || {};
+  const attendance = (
+    settings.attendance_presence && typeof settings.attendance_presence === "object"
+      ? settings.attendance_presence
+      : {}
+  ) as RelayAttendanceSettings;
+  if (attendance.enabled !== true) {
+    throw new RelayPresenceProofError("attendance_presence_not_required");
+  }
+  if (attendance.allow_local_relay === false) {
+    throw new RelayPresenceProofError("relay_presence_disabled");
+  }
+  const secret = String(attendance.relay_presence_secret || "").trim();
+  if (secret.length < 32) throw new RelayPresenceProofError("relay_presence_secret_missing");
+
+  const expectedSignature = createHmac("sha256", secret).update(encodedPayload).digest();
+  let suppliedSignature: Buffer;
+  try {
+    suppliedSignature = Buffer.from(encodedSignature, "base64url");
+  } catch {
+    throw new RelayPresenceProofError("relay_proof_invalid");
+  }
+  if (
+    suppliedSignature.length !== expectedSignature.length ||
+    !timingSafeEqual(suppliedSignature, expectedSignature)
+  ) {
+    throw new RelayPresenceProofError("relay_proof_invalid");
+  }
+
+  let payload: RelayPresenceProofPayload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as RelayPresenceProofPayload;
+  } catch {
+    throw new RelayPresenceProofError("relay_proof_invalid");
+  }
+  if (
+    payload.v !== 1 ||
+    payload.source !== "local_relay" ||
+    payload.institution_id !== expected.institutionId ||
+    payload.actor_profile_id !== expected.actorProfileId ||
+    payload.client_session_id !== expected.clientSessionId
+  ) {
+    throw new RelayPresenceProofError("relay_proof_mismatch");
+  }
+
+  const issuedAt = new Date(payload.issued_at).getTime();
+  const expiresAt = new Date(payload.expires_at).getTime();
+  const configuredTtlMs = Math.min(
+    600_000,
+    Math.max(30_000, Math.round(Number(attendance.relay_proof_ttl_seconds || 180)) * 1000),
+  );
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || expiresAt <= issuedAt) {
+    throw new RelayPresenceProofError("relay_proof_time_invalid");
+  }
+  if (issuedAt > now.getTime() + 10 * 60_000) {
+    throw new RelayPresenceProofError("relay_proof_time_invalid");
+  }
+  if (expiresAt < now.getTime()) throw new RelayPresenceProofError("relay_proof_expired");
+  if (expiresAt - issuedAt > configuredTtlMs + 5_000) {
+    throw new RelayPresenceProofError("relay_proof_ttl_invalid");
+  }
+  return payload;
 }
 
 export function issueAttendancePresenceProof(

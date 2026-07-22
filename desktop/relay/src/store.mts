@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { applyBootstrap, type BootstrapResult } from "./bootstrap.mjs";
 import type { RelayDatabase } from "./db.mjs";
 import {
@@ -20,6 +20,8 @@ import type {
 import { parseRemoteEvent, parseSyncOperation } from "./validation.mjs";
 
 type OutboxComparable = {
+  protocol_version: number;
+  payload_fingerprint: string | null;
   institution_id: string;
   device_id: string;
   actor_profile_id: string | null;
@@ -70,6 +72,7 @@ export class RelayStore {
     const operation = parseSyncOperation(raw);
     this.assertInstitution(operation.institution_id);
     const payloadJson = operation.payload === null ? null : canonicalJson(operation.payload);
+    const payloadFingerprint = createHash("sha256").update(canonicalJson(operation)).digest("hex");
 
     return this.db.transaction(() => {
       const existing = this.db
@@ -85,8 +88,9 @@ export class RelayStore {
       this.db.prepare(`
         INSERT INTO sync_outbox(
           operation_id, institution_id, device_id, actor_profile_id, entity_type,
-          entity_id, action, base_server_version, payload_json, occurred_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          entity_id, action, base_server_version, payload_json, occurred_at,
+          protocol_version, payload_fingerprint
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         operation.operation_id,
         operation.institution_id,
@@ -98,6 +102,8 @@ export class RelayStore {
         operation.base_server_version,
         payloadJson,
         operation.occurred_at,
+        operation.protocol_version,
+        payloadFingerprint,
       );
 
       this.db.prepare(`
@@ -437,6 +443,7 @@ function sameOperation(
 ) {
   return (
     stored.institution_id === operation.institution_id &&
+    stored.protocol_version === operation.protocol_version &&
     stored.device_id === operation.device_id &&
     stored.actor_profile_id === (operation.actor_profile_id ?? null) &&
     stored.entity_type === operation.entity_type &&

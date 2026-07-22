@@ -26,6 +26,7 @@ export type RelayConfigFile = {
   port?: number;
   token?: string;
   allowed_origins?: string[];
+  teacher_attendance_writes_enabled?: boolean;
 };
 
 export type RelayConfig = {
@@ -39,6 +40,7 @@ export type RelayConfig = {
   institutionName?: string | null;
   institutions?: RelayInstitutionConfig[];
   institutionCodes?: string[];
+  teacherAttendanceWritesEnabled?: boolean;
 };
 
 function positivePort(value: string | number | undefined) {
@@ -83,6 +85,14 @@ function stringList(value: string | undefined) {
 
 function normalizedInstitutionCode(value: unknown) {
   return String(value || "").trim().toUpperCase();
+}
+
+function teacherAttendanceWritesEnabled(file: RelayConfigFile, env: NodeJS.ProcessEnv) {
+  const configured = String(env.MONCAHIER_RELAY_TEACHER_ATTENDANCE_WRITES_ENABLED || "")
+    .trim()
+    .toLowerCase();
+  if (configured) return ["1", "true", "yes", "on"].includes(configured);
+  return file.teacher_attendance_writes_enabled === true;
 }
 
 export function relayInstitutionsFromConfigFile(file: RelayConfigFile) {
@@ -138,5 +148,6 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
     institutionName: institutions[0]?.name || null,
     institutions,
     institutionCodes: institutions.map((item) => item.code),
+    teacherAttendanceWritesEnabled: teacherAttendanceWritesEnabled(file, env),
   };
 }

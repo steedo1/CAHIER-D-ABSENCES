@@ -5,14 +5,23 @@ import { attendanceMonitor } from "./attendance-monitor.mjs";
 import { founderAttendanceSlots } from "./attendance-slots.mjs";
 import { issueAttendancePresenceProof } from "./presence-proof.mjs";
 import { authenticateRelayTeacherAccess } from "./teacher-auth.mjs";
+import {
+  secureTeacherAttendanceOperation,
+  TeacherAttendanceError,
+} from "./teacher-attendance.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 const MAX_CONNECTIVITY_CHECK_BODY_BYTES = 4 * 1024;
+const MAX_TEACHER_ATTENDANCE_BODY_BYTES = 128 * 1024;
 
-export function createRelayServer(config: RelayConfig, store: RelayStore) {
+export function createRelayServer(
+  config: RelayConfig,
+  store: RelayStore,
+  options: { now?: () => Date } = {},
+) {
   return createServer(async (request, response) => {
     secureHeaders(response);
     applyCors(request, response, config);
@@ -31,21 +40,53 @@ export function createRelayServer(config: RelayConfig, store: RelayStore) {
         const token = teacherBearerToken(request);
         if (!token) return json(response, 401, { error: "unauthorized" });
         try {
-          const teacher = authenticateRelayTeacherAccess(store.db, token);
+          const requestNow = options.now?.() ?? new Date();
+          const teacher = authenticateRelayTeacherAccess(store.db, token, requestNow);
           if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
             return json(response, 401, { error: "unauthorized" });
           }
           return json(response, 200, {
             ok: true,
             institution_id: teacher.institution_id,
-            relay_time: new Date().toISOString(),
+            relay_time: requestNow.toISOString(),
           });
         } catch {
           return json(response, 401, { error: "unauthorized" });
         }
       }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/attendance-operations") {
+        const body = await readJson(request, MAX_TEACHER_ATTENDANCE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        let teacher;
+        const requestNow = options.now?.() ?? new Date();
+        try {
+          teacher = authenticateRelayTeacherAccess(store.db, token, requestNow);
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+          return json(response, 403, { error: "institution_not_allowed" });
+        }
+        if (config.teacherAttendanceWritesEnabled !== true) {
+          return json(response, 503, { error: "teacher_attendance_writes_disabled" });
+        }
+        try {
+          const result = secureTeacherAttendanceOperation(store.db, body, teacher, requestNow);
+          return json(response, result.idempotent ? 200 : 202, result);
+        } catch (error) {
+          if (error instanceof TeacherAttendanceError) {
+            return json(response, error.status, { error: error.code });
+          }
+          return json(response, 500, { error: "teacher_attendance_failed" });
+        }
+      }
       if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {
-        return json(response, 200, issueAttendancePresenceProof(store.db, await readJson(request)));
+        return json(
+          response,
+          200,
+          issueAttendancePresenceProof(store.db, await readJson(request), options.now?.() ?? new Date()),
+        );
       }
 
       if (request.method === "POST" && url.pathname === "/v1/sync/bootstrap") {

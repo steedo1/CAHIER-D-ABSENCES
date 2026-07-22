@@ -1056,7 +1056,7 @@ test("le bootstrap de l'école B ne remplace ni ne supprime l'école A", () => {
   db.close();
 });
 
-test("une base schéma 3 peuplée migre atomiquement vers le schéma 4 sans rejouer la migration", () => {
+test("une base schéma 3 peuplée migre atomiquement vers le schéma courant sans rejouer la migration 4", () => {
   const root = mkdtempSync(join(tmpdir(), "moncahier-relay-migration-"));
   const databasePath = join(root, "schema-3.db");
   try {
@@ -1078,7 +1078,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma 4 sans rejo
     legacy.close();
 
     let db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 4);
+    assert.equal(schemaVersion(db), 5);
     assert.equal(profileName(db, "inst-legacy", "profile-legacy"), "Mme Legacy");
     assert.equal(pendingOperationCount(db, "inst-legacy", "operation-legacy"), 1);
     assert.deepEqual(primaryKeyColumns(db, "profiles"), ["institution_id", "id"]);
@@ -1092,7 +1092,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma 4 sans rejo
     db.close();
 
     db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 4);
+    assert.equal(schemaVersion(db), 5);
     assert.equal(String((db.prepare(`
       SELECT applied_at FROM schema_migrations WHERE version = 4
     `).get() as { applied_at: string }).applied_at), appliedAt);
@@ -1104,7 +1104,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma 4 sans rejo
     db.close();
 
     db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 4);
+    assert.equal(schemaVersion(db), 5);
     assert.equal(String(db.pragma("integrity_check", { simple: true })), "ok");
     db.close();
   } finally {
