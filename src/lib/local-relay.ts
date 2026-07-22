@@ -1,6 +1,7 @@
 "use client";
 
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
+import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
 
 export type LocalDataSource = "cloud" | "relay" | "cache";
 
@@ -29,6 +30,16 @@ export type RelayTeacherConnectivityResult = {
   institution_id?: string;
   relay_time?: string;
 };
+
+export class LocalRelayHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(code);
+    this.name = "LocalRelayHttpError";
+  }
+}
 
 const DEFAULT_RELAY_URL =
   process.env.NEXT_PUBLIC_MONCAHIER_RELAY_URL || "http://127.0.0.1:4317";
@@ -179,7 +190,12 @@ async function relayJson<T>(
     }
     const response = await fetch(`${baseUrl}${path}`, relayRequest as RequestInit);
     const payload = await safeJson(response);
-    if (!response.ok) throw new Error(String(payload?.error || `RELAY_HTTP_${response.status}`));
+    if (!response.ok) {
+      throw new LocalRelayHttpError(
+        response.status,
+        String(payload?.error || `RELAY_HTTP_${response.status}`),
+      );
+    }
     return payload as T;
   } finally {
     merged.cleanup();
@@ -468,6 +484,28 @@ export async function requestRelayAttendancePresenceProof(input: {
       client_session_id: input.clientSessionId,
       access_token: input.accessToken,
     }),
+  }, {
+    baseUrl: input.baseUrl,
+    includeConfiguredToken: false,
+    timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
+  });
+}
+
+export async function postRelayTeacherAttendanceOperation(input: {
+  baseUrl: string;
+  accessToken: string;
+  payload: TeacherAttendanceRelayPayload;
+}) {
+  return await relayJson<{
+    ok: true;
+    operation_id: string;
+    state: "secured_on_relay" | "synced_with_cloud" | "blocked" | "conflict";
+    idempotent: boolean;
+    relay_time: string;
+  }>("/v1/teacher/attendance-operations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: JSON.stringify(input.payload),
   }, {
     baseUrl: input.baseUrl,
     includeConfiguredToken: false,

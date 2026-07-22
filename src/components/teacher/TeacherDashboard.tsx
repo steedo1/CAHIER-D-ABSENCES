@@ -23,6 +23,13 @@ import {
   type AttendancePresencePolicy,
 } from "@/lib/attendance-presence";
 import { requestRelayAttendancePresenceProof } from "@/lib/local-relay";
+import {
+  countUnresolvedTeacherAttendanceOperations,
+  deliverTeacherAttendance,
+  getLatestTeacherAttendanceOperation,
+  teacherAttendanceDeliveryMessage,
+  type TeacherAttendanceDeliveryRecord,
+} from "@/lib/teacher-attendance-delivery";
 
 /* ─────────────────────────────────────────
    Types
@@ -60,7 +67,13 @@ type InstCfg = {
   actor_profile_id?: string | null;
   attendance_presence?: AttendancePresencePolicy;
 };
-type Period = { weekday: number; label: string; start_time: string; end_time: string };
+type Period = {
+  id: string | null;
+  weekday: number;
+  label: string;
+  start_time: string;
+  end_time: string;
+};
 
 type InstBasics = InstCfg & { periods: Period[] };
 
@@ -601,6 +614,9 @@ export default function TeacherDashboard() {
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [attendanceDelivery, setAttendanceDelivery] =
+    useState<TeacherAttendanceDeliveryRecord | null>(null);
+  const saveMarksInFlightRef = useRef(false);
 
   const changedCount = useMemo(
     () => Object.values(rows).filter((r) => r.absent || r.late).length,
@@ -716,6 +732,7 @@ export default function TeacherDashboard() {
       const w = Number(row.weekday || 1);
       if (!grouped[w]) grouped[w] = [];
       grouped[w].push({
+        id: safeStr(row.id),
         weekday: w,
         label: row.label || "Séance",
         start_time: String(row.start_time || "08:00").slice(0, 5),
@@ -1075,9 +1092,11 @@ export default function TeacherDashboard() {
 
   /* Charger roster si séance ouverte — OFFLINE OK */
   useEffect(() => {
+    let cancelled = false;
     if (!open) {
       setRoster([]);
       setRows({});
+      setAttendanceDelivery(null);
       return;
     }
     (async () => {
@@ -1086,11 +1105,29 @@ export default function TeacherDashboard() {
         `/api/teacher/roster?class_id=${open.class_id}`,
         `teacher:roster:${open.class_id}`
       ).catch(() => ({ items: [] }));
+      if (cancelled) return;
       setRoster(((j as any)?.items || []) as RosterItem[]);
-      setRows({});
+      const latest = inst.institution_id
+        ? await getLatestTeacherAttendanceOperation(inst.institution_id, open.id).catch(() => null)
+        : null;
+      if (cancelled) return;
+      setAttendanceDelivery(latest);
+      setRows(latest
+        ? Object.fromEntries(latest.marks.map((mark) => [
+            mark.student_id,
+            {
+              absent: mark.status === "absent",
+              late: mark.status === "late",
+              reason: mark.comment || undefined,
+            },
+          ]))
+        : {});
       setLoadingRoster(false);
     })();
-  }, [open?.class_id]);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, inst.institution_id]);
 
   /* Helpers marquage */
   function toggleAbsent(id: string, v: boolean) {
@@ -1224,6 +1261,7 @@ export default function TeacherDashboard() {
       );
 
       if (r?.ok) {
+        setAttendanceDelivery(null);
         setOpen(r.data.item as OpenSession);
         await cacheSet("teacher:local-open", null);
         setMsg(`Séance démarrée ✅ • présence confirmée par ${presence.label}`);
@@ -1239,6 +1277,7 @@ export default function TeacherDashboard() {
           expected_minutes: effectiveDuration,
           presence_method: presence.evidence?.method || "not_required",
         };
+        setAttendanceDelivery(null);
         setOpen(localOpen);
         await cacheSet("teacher:local-open", localOpen);
         setMsg(`Hors connexion : séance sécurisée par ${presence.label} et mise en attente de synchronisation.`);
@@ -1262,7 +1301,8 @@ export default function TeacherDashboard() {
   }
 
   async function saveMarks() {
-    if (!open) return;
+    if (!open || saveMarksInFlightRef.current) return;
+    saveMarksInFlightRef.current = true;
     setBusy(true);
     setMsg(null);
 
@@ -1273,31 +1313,31 @@ export default function TeacherDashboard() {
         return { student_id, status: "present" as const };
       });
 
-      const clientId = clientSessionIdFromOpen(open);
-      const body: any = { session_id: open.id, marks };
-      if (clientId) body.client_session_id = clientId;
-
-      const r: any = await offlineMutateJson(
-        "/api/teacher/attendance/bulk",
-        { method: "POST", body },
-        { mergeKey: `teacher:attendance:${open.id}` }
-      );
-
-      if (r?.ok) {
-        const j = r.data || {};
-        setMsg(
-          `Enregistré ✅ : ${j.upserted ?? 0} abs./ret. — ${j.deleted ?? 0} suppressions (présent).`
-        );
-      } else if (shouldTreatAsOffline(r)) {
-        setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
-        await refreshPending();
-      } else {
-        const err = extractRespError(r);
-        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec de l’enregistrement.");
+      if (!marks.length) {
+        setMsg("Aucune modification d’appel à enregistrer.");
+        return;
       }
+      if (!inst.institution_id || !inst.actor_profile_id) {
+        setMsg("Action requise : l’identité de l’établissement doit être actualisée.");
+        return;
+      }
+
+      const delivery = await deliverTeacherAttendance({
+        institutionId: inst.institution_id,
+        actorProfileId: inst.actor_profile_id,
+        sessionId: open.id,
+        classId: open.class_id,
+        periodId: activeConfiguredSlot?.id || null,
+        marks,
+        relayBaseUrl: inst.attendance_presence?.relay_local_url,
+        relayAccessToken: inst.attendance_presence?.relay_access_token,
+      });
+      setAttendanceDelivery(delivery);
+      setMsg(teacherAttendanceDeliveryMessage(delivery));
     } catch (e: any) {
       setMsg(e?.message || "Échec enregistrement");
     } finally {
+      saveMarksInFlightRef.current = false;
       setBusy(false);
     }
   }
@@ -1312,6 +1352,7 @@ export default function TeacherDashboard() {
       setOpen(null);
       setRoster([]);
       setRows({});
+      setAttendanceDelivery(null);
       await cacheSet("teacher:local-open", null);
       computeDefaultsForNow();
     };
@@ -1522,16 +1563,22 @@ export default function TeacherDashboard() {
 
   /* Déconnexion (avec nettoyage offline) */
   async function logout() {
-    let remaining = await outboxCount().catch(() => 0);
+    const unresolvedAttendance = await countUnresolvedTeacherAttendanceOperations(
+      inst.institution_id,
+    ).catch(() => 0);
+    let remaining = (await outboxCount().catch(() => 0)) + unresolvedAttendance;
 
     if (remaining > 0 && typeof navigator !== "undefined" && navigator.onLine) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
         const result = await flushOutbox();
-        remaining = result.remaining;
+        remaining = result.remaining + unresolvedAttendance;
         await refreshPending();
       } catch {
-        remaining = await outboxCount().catch(() => remaining);
+        const historicalRemaining = await outboxCount().catch(() =>
+          Math.max(0, remaining - unresolvedAttendance)
+        );
+        remaining = historicalRemaining + unresolvedAttendance;
       }
     }
 
@@ -1830,6 +1877,11 @@ export default function TeacherDashboard() {
         {msg && (
           <div className="text-sm text-slate-700" aria-live="polite">
             {msg}
+          </div>
+        )}
+        {attendanceDelivery && !msg && (
+          <div className="text-sm font-medium text-slate-700" aria-live="polite">
+            {teacherAttendanceDeliveryMessage(attendanceDelivery)}
           </div>
         )}
       </div>

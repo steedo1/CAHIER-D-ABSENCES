@@ -65,7 +65,7 @@ export async function GET() {
   // 4) Créneaux (tous les jours), triés
   const { data: periods, error: perr2 } = await supabase
     .from("institution_periods")
-    .select("weekday, label, start_time, end_time")
+    .select("id, weekday, label, start_time, end_time")
     .eq("institution_id", instId)
     .order("weekday", { ascending: true })
     .order("start_time", { ascending: true });

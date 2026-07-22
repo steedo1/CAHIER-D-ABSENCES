@@ -26,6 +26,16 @@ type OutboxRow = {
   lastError?: string;
 };
 
+export type LegacyTeacherAttendanceMutation = {
+  id: string;
+  operationId: string;
+  body: JsonValue;
+  state: "pending" | "blocked";
+  lastStatus: number | null;
+  lastError: string | null;
+  createdAt: number;
+};
+
 type MutateInit = {
   method: "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonValue;
@@ -200,6 +210,28 @@ async function getSessionIdMap(): Promise<Record<string, string>> {
 
 async function setSessionIdMap(next: Record<string, string>): Promise<void> {
   await metaSet("sessionIdMap", next);
+}
+
+export async function resolveOfflineSessionReference(sessionId: string): Promise<{
+  sessionReference: string;
+  serverSessionId: string | null;
+}> {
+  const normalized = String(sessionId || "").trim();
+  if (!normalized) return { sessionReference: "", serverSessionId: null };
+
+  const map = await getSessionIdMap();
+  if (normalized.startsWith("client:")) {
+    return {
+      sessionReference: normalized,
+      serverSessionId: String(map[normalized] || "").trim() || null,
+    };
+  }
+
+  const clientEntry = Object.entries(map).find(([, serverId]) => serverId === normalized);
+  return {
+    sessionReference: clientEntry?.[0] || normalized,
+    serverSessionId: normalized,
+  };
 }
 
 /* ───────────────────────── Service Worker ───────────────────────── */
@@ -450,6 +482,38 @@ async function outboxAll(): Promise<OutboxRow[]> {
   await txDone(tx);
   rows.sort((a, b) => a.createdAt - b.createdAt);
   return rows;
+}
+
+export async function findLegacyTeacherAttendanceMutation(
+  sessionIds: string[],
+): Promise<LegacyTeacherAttendanceMutation | null> {
+  const acceptedIds = new Set(
+    sessionIds.map((value) => String(value || "").trim()).filter(Boolean),
+  );
+  if (!acceptedIds.size) return null;
+
+  const rows = await outboxAll();
+  const row = [...rows].reverse().find((candidate) => {
+    if (!/^\/api\/teacher\/attendance\/bulk(?:[/?]|$)/.test(candidate.url)) return false;
+    const sessionId = String(candidate.body?.session_id || "").trim();
+    const clientId = String(candidate.body?.client_session_id || "").trim();
+    return acceptedIds.has(sessionId) || acceptedIds.has(clientId) || acceptedIds.has(`client:${clientId}`);
+  });
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    operationId: row.operationId,
+    body: row.body,
+    state: row.state === "blocked" ? "blocked" : "pending",
+    lastStatus: typeof row.lastStatus === "number" ? row.lastStatus : null,
+    lastError: row.lastError || null,
+    createdAt: row.createdAt,
+  };
+}
+
+export async function removeLegacyTeacherAttendanceMutation(id: string): Promise<void> {
+  await outboxDelete(String(id || "").trim());
 }
 
 async function outboxDelete(id: string): Promise<void> {
