@@ -9,6 +9,15 @@ import {
   type GeneralSecondaryCoeffPresetPreviewItem,
 } from "@/lib/default-general-secondary-coefficients-ci";
 import AttendancePresenceSettings from "@/components/admin/AttendancePresenceSettings";
+import EducationScopeSwitcher, {
+  type EducationSettingsScope,
+} from "@/components/admin/EducationScopeSwitcher";
+import EducationSchoolProfileEditor from "@/components/admin/EducationSchoolProfileEditor";
+import EducationGradingPeriodsProfileEditor from "@/components/admin/EducationGradingPeriodsProfileEditor";
+import {
+  EDUCATION_TYPE_OPTIONS,
+  type EducationType,
+} from "@/lib/education-organization";
 
 /* =========================
    Types
@@ -709,6 +718,13 @@ export default function AdminSettingsPage() {
     setToasts((l) => l.filter((t) => t.id !== id));
 
   const [activeTab, setActiveTab] = useState<SettingsTabKey>("security");
+  const [settingsEducationTypes, setSettingsEducationTypes] = useState<EducationType[]>([
+    "general_secondary",
+  ]);
+  const [schoolSettingsScope, setSchoolSettingsScope] =
+    useState<EducationSettingsScope>("common");
+  const [gradingPeriodsScope, setGradingPeriodsScope] =
+    useState<EducationSettingsScope>("common");
 
   useEffect(() => {
     const nextTab = searchParams.get("tab");
@@ -2305,8 +2321,40 @@ export default function AdminSettingsPage() {
     pushToast("success", msg);
   }
 
+  async function loadEducationTypesForSettings() {
+    try {
+      const response = await fetch(
+        "/api/admin/institution/education-organization",
+        { cache: "no-store" },
+      );
+      const payload = await response.json().catch(() => ({}));
+      const types = Array.isArray(payload?.organization?.educationTypes)
+        ? payload.organization.educationTypes.filter((value: unknown) =>
+            EDUCATION_TYPE_OPTIONS.some((option) => option.id === value),
+          )
+        : [];
+      const nextTypes = types.length > 0 ? types : ["general_secondary"];
+      setSettingsEducationTypes(nextTypes as EducationType[]);
+      setSchoolSettingsScope((current) =>
+        current === "common" || nextTypes.includes(current) ? current : "common",
+      );
+      setGradingPeriodsScope((current) =>
+        current === "common" || nextTypes.includes(current) ? current : "common",
+      );
+    } catch {
+      setSettingsEducationTypes(["general_secondary"]);
+    }
+  }
+
+  function educationTypeLabel(type: EducationType) {
+    return (
+      EDUCATION_TYPE_OPTIONS.find((option) => option.id === type)?.label || type
+    );
+  }
+
   /* ====== chargement initial ====== */
   useEffect(() => {
+    void loadEducationTypesForSettings();
     loadInstitutionConfig();
     loadAcademicYears(); // charge aussi les périodes
     loadSubjectCoeffs();
@@ -2657,10 +2705,17 @@ export default function AdminSettingsPage() {
 
         {activeTab === "school" && (
           <>
-            {/* =======================
-            3) Horaires & séances + infos établissement
-        ======================== */}
-            <SectionCard
+            <EducationScopeSwitcher
+              value={schoolSettingsScope}
+              onChange={setSchoolSettingsScope}
+              enabledEducationTypes={settingsEducationTypes}
+            />
+            {schoolSettingsScope === "common" ? (
+              <>
+                {/* =======================
+                3) Horaires & séances + infos établissement
+            ======================== */}
+                <SectionCard
               id="schedule"
               eyebrow="Organisation"
               title="Horaires, séances et identité de l’établissement"
@@ -3279,7 +3334,14 @@ export default function AdminSettingsPage() {
                   jour le plus proche de l’heure de début de séance.
                 </div>
               </SubSection>
-            </SectionCard>
+                </SectionCard>
+              </>
+            ) : (
+              <EducationSchoolProfileEditor
+                educationType={schoolSettingsScope}
+                educationLabel={educationTypeLabel(schoolSettingsScope)}
+              />
+            )}
           </>
         )}
 
@@ -3485,10 +3547,17 @@ export default function AdminSettingsPage() {
 
         {activeTab === "grading-periods" && (
           <>
-            {/* =======================
-            5) Périodes d'évaluation (bulletins)
-        ======================== */}
-            <SectionCard
+            <EducationScopeSwitcher
+              value={gradingPeriodsScope}
+              onChange={setGradingPeriodsScope}
+              enabledEducationTypes={settingsEducationTypes}
+            />
+            {gradingPeriodsScope === "common" ? (
+              <>
+                {/* =======================
+                5) Périodes d'évaluation (bulletins)
+            ======================== */}
+                <SectionCard
               id="grading-periods"
               eyebrow="Bulletins"
               title="Périodes d'évaluation"
@@ -3698,7 +3767,14 @@ export default function AdminSettingsPage() {
                 Semestre 1 » et « Semestre 2 ». Pour le primaire, vous pouvez
                 définir « Composition de mars », « Composition de juin », etc.
               </div>
-            </SectionCard>
+                </SectionCard>
+              </>
+            ) : (
+              <EducationGradingPeriodsProfileEditor
+                educationType={gradingPeriodsScope}
+                educationLabel={educationTypeLabel(gradingPeriodsScope)}
+              />
+            )}
           </>
         )}
 

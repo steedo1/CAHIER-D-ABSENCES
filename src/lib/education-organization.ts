@@ -323,6 +323,7 @@ export type EducationOrganizationSettings = {
   educationTypes: EducationType[];
   selectedCatalogFormationIds: string[];
   customFormations: CustomFormation[];
+  /** Ancien indicateur conservé uniquement pour compatibilité de lecture. */
   legacyGeneralProtected: boolean;
   configuredAt?: string | null;
   updatedAt?: string | null;
@@ -428,15 +429,15 @@ export function getSuggestedCustomFormationLevels(
 export function getDefaultEducationOrganization(
   options: { hasExistingClasses: boolean } = { hasExistingClasses: false },
 ): EducationOrganizationSettings {
-  const legacyGeneralProtected = options.hasExistingClasses;
+  const defaultsToGeneral = options.hasExistingClasses;
 
   return {
     version: 1,
-    configured: legacyGeneralProtected,
-    educationTypes: legacyGeneralProtected ? ["general_secondary"] : [],
+    configured: defaultsToGeneral,
+    educationTypes: defaultsToGeneral ? ["general_secondary"] : [],
     selectedCatalogFormationIds: [],
     customFormations: [],
-    legacyGeneralProtected,
+    legacyGeneralProtected: false,
     configuredAt: null,
     updatedAt: null,
     updatedBy: null,

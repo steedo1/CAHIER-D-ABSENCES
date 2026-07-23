@@ -585,7 +585,13 @@ export default function ClassesPage() {
 
     const j = await r.json().catch(() => ({}));
     await refresh();
-    setOpenLevel(level);
+    setOpenLevel(
+      buildClassGroupId(
+        classEducationType,
+        selectedFormation?.id || null,
+        level,
+      ),
+    );
 
     const inserted = Number(j?.inserted ?? 0);
     const existing = Number(j?.existing ?? 0);
@@ -597,22 +603,83 @@ export default function ClassesPage() {
     setTimeout(() => setMsgPhone(null), 3500);
   }
 
+  function buildClassGroupId(
+    educationType: EducationType,
+    formationId: string | null | undefined,
+    classLevel: string,
+  ) {
+    return `${educationType}::${formationId || "general"}::${normalizeKey(classLevel)}`;
+  }
+
   const grouped = useMemo(() => {
-    const m = new Map<string, ClassRow[]>();
-    for (const c of items) {
-      if (!m.has(c.level)) m.set(c.level, []);
-      m.get(c.level)!.push(c);
+    const groups = new Map<
+      string,
+      {
+        id: string;
+        educationType: EducationType;
+        educationLabel: string;
+        formationLabel: string | null;
+        level: string;
+        items: ClassRow[];
+      }
+    >();
+
+    for (const classRow of items) {
+      const formation = formationForLevel(classRow.level);
+      const educationType: EducationType = formation?.educationType || "general_secondary";
+      const educationLabel =
+        EDUCATION_TYPE_OPTIONS.find((option) => option.id === educationType)?.label ||
+        "Secondaire général";
+      const formationLabel = formation
+        ? `${formation.diplomaLabel} — ${formation.name}`
+        : null;
+      const id = buildClassGroupId(educationType, formation?.id, classRow.level);
+      const current = groups.get(id) || {
+        id,
+        educationType,
+        educationLabel,
+        formationLabel,
+        level: classRow.level,
+        items: [],
+      };
+      current.items.push(classRow);
+      groups.set(id, current);
     }
-    for (const [k, arr] of m) {
-      arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      m.set(k, arr);
-    }
-    return m;
-  }, [items]);
+
+    const educationOrder = new Map(
+      EDUCATION_TYPE_OPTIONS.map((option, index) => [option.id, index]),
+    );
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        items: group.items.sort((a, b) =>
+          a.name.localeCompare(b.name, "fr", { numeric: true }),
+        ),
+      }))
+      .sort((a, b) => {
+        const educationDiff =
+          (educationOrder.get(a.educationType) ?? 99) -
+          (educationOrder.get(b.educationType) ?? 99);
+        if (educationDiff !== 0) return educationDiff;
+        const formationDiff = String(a.formationLabel || "").localeCompare(
+          String(b.formationLabel || ""),
+          "fr",
+        );
+        if (formationDiff !== 0) return formationDiff;
+        return a.level.localeCompare(b.level, "fr", { numeric: true });
+      });
+  }, [formationChoices, items]);
 
   useEffect(() => {
-    setOpenLevel(level);
-  }, [level]);
+    setOpenLevel(
+      buildClassGroupId(
+        classEducationType,
+        selectedFormation?.id || null,
+        level,
+      ),
+    );
+  }, [classEducationType, level, selectedFormation?.id]);
 
   function openEdit(row: ClassRow) {
     setEditId(row.id);
@@ -1012,21 +1079,30 @@ export default function ClassesPage() {
         ) : items.length === 0 ? (
           <div className="text-sm text-slate-500">Aucune classe pour cette année scolaire.</div>
         ) : (
-          Array.from(grouped.keys())
-            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-            .map((lvl) => {
-              const arr = grouped.get(lvl)!;
-              const opened = openLevel === lvl;
+          grouped.map((group) => {
+              const lvl = group.level;
+              const arr = group.items;
+              const opened = openLevel === group.id;
               return (
-                <div key={lvl} className="mb-3 overflow-hidden rounded-xl border">
+                <div key={group.id} className="mb-3 overflow-hidden rounded-xl border">
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between bg-slate-50 px-4 py-2 text-left hover:bg-slate-100"
-                    onClick={() => setOpenLevel(opened ? null : lvl)}
+                    className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-2.5 text-left hover:bg-slate-100"
+                    onClick={() => setOpenLevel(opened ? null : group.id)}
                     aria-expanded={opened}
                   >
-                    <span className="font-medium">{lvl}</span>
-                    <span className="text-xs text-slate-500">{arr.length} classe(s)</span>
+                    <span className="min-w-0">
+                      <span className="block text-[11px] font-bold uppercase tracking-wide text-sky-700">
+                        {group.educationLabel}
+                      </span>
+                      {group.formationLabel ? (
+                        <span className="mt-0.5 block truncate text-xs font-medium text-slate-600">
+                          {group.formationLabel}
+                        </span>
+                      ) : null}
+                      <span className="mt-0.5 block font-semibold text-slate-900">{lvl}</span>
+                    </span>
+                    <span className="shrink-0 text-xs text-slate-500">{arr.length} classe(s)</span>
                   </button>
 
                   {opened && (

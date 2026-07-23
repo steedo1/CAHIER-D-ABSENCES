@@ -13,7 +13,6 @@ import {
   Plus,
   Save,
   School,
-  ShieldCheck,
   Trash2,
   Wrench,
 } from "lucide-react";
@@ -108,7 +107,6 @@ export default function OrganisationPedagogiquePage() {
   const [educationTypes, setEducationTypes] = useState<EducationType[]>([]);
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<string[]>([]);
   const [customFormations, setCustomFormations] = useState<CustomFormation[]>([]);
-  const [legacyGeneralProtected, setLegacyGeneralProtected] = useState(false);
   const [configuredAt, setConfiguredAt] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -143,7 +141,6 @@ export default function OrganisationPedagogiquePage() {
       setEducationTypes(payload.organization.educationTypes || []);
       setSelectedCatalogIds(payload.organization.selectedCatalogFormationIds || []);
       setCustomFormations(payload.organization.customFormations || []);
-      setLegacyGeneralProtected(payload.organization.legacyGeneralProtected === true);
       setConfiguredAt(payload.organization.configuredAt || null);
     } catch (loadError: any) {
       setError(loadError?.message || "Impossible de charger l’organisation pédagogique.");
@@ -153,8 +150,6 @@ export default function OrganisationPedagogiquePage() {
   }
 
   function toggleEducationType(type: EducationType) {
-    if (type === "general_secondary" && legacyGeneralProtected) return;
-
     setSaved(false);
     setEducationTypes((current) => {
       const enabled = current.includes(type);
@@ -302,7 +297,6 @@ export default function OrganisationPedagogiquePage() {
       setEducationTypes(payload.organization.educationTypes);
       setSelectedCatalogIds(payload.organization.selectedCatalogFormationIds);
       setCustomFormations(payload.organization.customFormations);
-      setLegacyGeneralProtected(payload.organization.legacyGeneralProtected);
       setConfiguredAt(payload.organization.configuredAt || null);
       setSaved(true);
     } catch (saveError: any) {
@@ -345,21 +339,6 @@ export default function OrganisationPedagogiquePage() {
           </div>
         </div>
 
-        {legacyGeneralProtected ? (
-          <div className="border-t border-emerald-200 bg-emerald-50 px-4 py-3 sm:px-5">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
-              <div>
-                <div className="font-semibold text-emerald-900">Secondaire général protégé</div>
-                <p className="mt-1 text-sm leading-6 text-emerald-800">
-                  Des classes existent déjà dans cet établissement. Le secondaire général reste donc actif et
-                  les interfaces actuelles ne sont pas modifiées. Vous pouvez seulement ajouter d’autres types
-                  d’enseignement si l’établissement les propose réellement.
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </section>
 
       {error ? (
@@ -393,8 +372,6 @@ export default function OrganisationPedagogiquePage() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {EDUCATION_TYPE_OPTIONS.map((option) => {
             const selected = educationTypes.includes(option.id);
-            const locked = option.id === "general_secondary" && legacyGeneralProtected;
-
             return (
               <button
                 key={option.id}
@@ -405,7 +382,7 @@ export default function OrganisationPedagogiquePage() {
                   selected
                     ? "border-sky-500 bg-sky-50 ring-2 ring-sky-100"
                     : "border-slate-200 bg-white hover:border-sky-300 hover:bg-slate-50"
-                } ${locked ? "cursor-default" : ""}`}
+                }`}
               >
                 <div className="flex items-start gap-3">
                   <div
@@ -420,11 +397,6 @@ export default function OrganisationPedagogiquePage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-semibold text-slate-900">{option.label}</div>
-                      {locked ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                          Protégé
-                        </span>
-                      ) : null}
                     </div>
                     <p className="mt-1 text-sm leading-6 text-slate-600">{option.description}</p>
                   </div>

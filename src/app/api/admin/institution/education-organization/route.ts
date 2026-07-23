@@ -170,20 +170,13 @@ function parseStoredSettings(
         .slice(0, MAX_CUSTOM_FORMATIONS)
     : [];
 
-  const legacyGeneralProtected =
-    raw.legacyGeneralProtected === true || fallback.legacyGeneralProtected;
-
-  const effectiveEducationTypes = legacyGeneralProtected
-    ? Array.from(new Set<EducationType>(["general_secondary", ...educationTypes]))
-    : educationTypes;
-
   return {
     version: 1,
-    configured: raw.configured === true || legacyGeneralProtected,
-    educationTypes: effectiveEducationTypes,
+    configured: raw.configured === true || fallback.configured,
+    educationTypes,
     selectedCatalogFormationIds,
     customFormations,
-    legacyGeneralProtected,
+    legacyGeneralProtected: false,
     configuredAt: cleanText(raw.configuredAt, 40) || null,
     updatedAt: cleanText(raw.updatedAt, 40) || null,
     updatedBy: cleanText(raw.updatedBy, 80) || null,
@@ -285,14 +278,7 @@ export async function PUT(req: NextRequest) {
         )
       : [];
 
-    const legacyGeneralProtected =
-      currentOrganization.legacyGeneralProtected || context.hasExistingClasses;
-
-    const educationTypes: EducationType[] = legacyGeneralProtected
-      ? Array.from(
-          new Set<EducationType>(["general_secondary", ...requestedEducationTypes]),
-        )
-      : requestedEducationTypes;
+    const educationTypes: EducationType[] = requestedEducationTypes;
 
     if (educationTypes.length === 0) {
       return NextResponse.json(
@@ -372,7 +358,7 @@ export async function PUT(req: NextRequest) {
       educationTypes,
       selectedCatalogFormationIds,
       customFormations,
-      legacyGeneralProtected,
+      legacyGeneralProtected: false,
       configuredAt: currentOrganization.configuredAt || now,
       updatedAt: now,
       updatedBy: g.user.id,
