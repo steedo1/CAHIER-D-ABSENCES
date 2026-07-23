@@ -601,8 +601,11 @@ export default function ClassesPage() {
         ? formationChoices.find((item) => item.id === classRow.formation_code) || null
         : null;
       const formation = explicitFormation || formationForLevel(classRow.formation_level_code || classRow.level);
+      // La formation reconnue est prioritaire. Cela permet de reclasser correctement
+      // les classes techniques/professionnelles créées avant l'ajout des colonnes V4,
+      // même si elles ont été provisoirement marquées comme secondaire général.
       const educationType: EducationType =
-        classRow.education_type || formation?.educationType || "general_secondary";
+        formation?.educationType || classRow.education_type || "general_secondary";
       const educationLabel =
         EDUCATION_TYPE_OPTIONS.find((option) => option.id === educationType)?.label ||
         "Secondaire général";
@@ -648,6 +651,11 @@ export default function ClassesPage() {
         return a.level.localeCompare(b.level, "fr", { numeric: true });
       });
   }, [formationChoices, items]);
+
+  const visibleGroups = useMemo(
+    () => grouped.filter((group) => group.educationType === classEducationType),
+    [classEducationType, grouped],
+  );
 
   useEffect(() => {
     setOpenLevel(
@@ -794,19 +802,30 @@ export default function ClassesPage() {
     if (!items.length || !formationChoices.length) return;
 
     const pending = items
-      .filter(
-        (row) =>
-          !row.education_type &&
-          !legacyContextSyncAttempted.current.has(row.id),
-      )
+      .filter((row) => !legacyContextSyncAttempted.current.has(row.id))
       .map((row) => {
-        const formation = formationForLevel(row.level);
+        const formation = row.formation_code
+          ? formationChoices.find((item) => item.id === row.formation_code) ||
+            formationForLevel(row.formation_level_code || row.level)
+          : formationForLevel(row.formation_level_code || row.level);
         if (!formation) return null;
+
         const levelConfig = formation.levels.find(
-          (item) => normalizeKey(item.value) === normalizeKey(row.level),
+          (item) =>
+            normalizeKey(item.value) ===
+            normalizeKey(row.formation_level_code || row.level),
         );
         if (!levelConfig) return null;
+
+        const contextAlreadyCorrect =
+          row.education_type === formation.educationType &&
+          row.formation_code === formation.id &&
+          normalizeKey(row.formation_level_code || "") ===
+            normalizeKey(levelConfig.value);
+
         legacyContextSyncAttempted.current.add(row.id);
+        if (contextAlreadyCorrect) return null;
+
         return { row, formation, levelConfig };
       })
       .filter(Boolean) as {
@@ -1100,7 +1119,13 @@ export default function ClassesPage() {
 
       <div className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
+          <div>
+            <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
+            <div className="mt-0.5 text-xs font-medium text-sky-700">
+              {EDUCATION_TYPE_OPTIONS.find((option) => option.id === classEducationType)?.label ||
+                "Secondaire général"}
+            </div>
+          </div>
           <div className="text-xs text-slate-500">
             Année affichée : <b>{academicYear || "—"}</b>
           </div>
@@ -1112,8 +1137,12 @@ export default function ClassesPage() {
           <div className="text-sm text-slate-500">Choisissez une année scolaire.</div>
         ) : items.length === 0 ? (
           <div className="text-sm text-slate-500">Aucune classe pour cette année scolaire.</div>
+        ) : visibleGroups.length === 0 ? (
+          <div className="rounded-xl border border-dashed bg-slate-50 px-4 py-6 text-sm text-slate-600">
+            Aucune classe n'est encore rattachée à cet enseignement pour l'année sélectionnée.
+          </div>
         ) : (
-          grouped.map((group) => {
+          visibleGroups.map((group) => {
               const lvl = group.level;
               const arr = group.items;
               const opened = openLevel === group.id;

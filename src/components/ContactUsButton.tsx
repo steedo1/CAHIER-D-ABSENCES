@@ -87,8 +87,18 @@ function LightDialog({
 ───────────────────────────────────────────────────────────── */
 const CONTACTS = {
   phones: [
-    { label: "WhatsApp", value: "+2250748613990" },
-    { label: "Appels", value: "+2250713023762/+2250546066243" },
+    {
+      label: "WhatsApp",
+      value: "0713023762",
+      telValue: "+2250713023762",
+      whatsappValue: "+2250713023762",
+    },
+    {
+      label: "Appels",
+      value: "+2250713023762 / +2250546066243",
+      telValue: "+2250713023762",
+      whatsappValue: null,
+    },
   ],
   email: "moncahier.ci@gmail.com",
 };
@@ -128,8 +138,8 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
       >
         <div className="space-y-3">
           {CONTACTS.phones.map((p) => {
-            const telHref = p.value.replace(/[^\d+]/g, ""); // conserve + et chiffres
-            const wa = p.value.replace(/[^\d]/g, ""); // wa.me exige uniquement les chiffres
+            const telHref = p.telValue.replace(/[^\d+]/g, "");
+            const wa = p.whatsappValue?.replace(/[^\d]/g, "") || null;
             return (
               <div key={p.value} className="flex items-center justify-between rounded-lg border p-3">
                 <div className="flex items-center gap-3">
@@ -145,14 +155,16 @@ export default function ContactUsButton({ variant = "chip" }: { variant?: "chip"
                   <a href={`tel:${telHref}`} className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50">
                     Appeler
                   </a>
-                  <a
-                    href={`https://wa.me/${wa}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
-                  >
-                    WhatsApp
-                  </a>
+                  {wa ? (
+                    <a
+                      href={`https://wa.me/${wa}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
+                    >
+                      WhatsApp
+                    </a>
+                  ) : null}
                   <button
                     onClick={() => copy(p.value)}
                     className="rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
