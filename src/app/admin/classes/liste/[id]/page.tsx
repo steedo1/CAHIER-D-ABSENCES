@@ -578,7 +578,7 @@ export default function ClassListPrintPage() {
     <main className="min-h-screen bg-slate-100 px-4 py-5 text-slate-950 print:bg-white print:p-0">
       <style jsx global>{`
         @page {
-          size: A4 landscape;
+          size: A4 portrait;
           margin: 6mm;
         }
 
@@ -815,20 +815,71 @@ export default function ClassListPrintPage() {
           }
 
           .class-list-sheet {
-            max-width: none !important;
-            width: 100% !important;
+            max-width: 198mm !important;
+            width: 198mm !important;
             border: 0 !important;
             box-shadow: none !important;
             padding: 0 !important;
+            overflow: visible !important;
+          }
+
+          .official-header {
+            grid-template-columns: minmax(0, 37%) minmax(0, 36%) minmax(0, 27%) !important;
+            gap: 6px !important;
+          }
+
+          .list-title {
+            width: auto !important;
+            max-width: 100% !important;
+            white-space: normal !important;
+            line-height: 1.05 !important;
+          }
+
+          .staff-line {
+            grid-template-columns: 1fr 1fr 1fr !important;
+            gap: 5px !important;
+            font-size: 9px !important;
           }
 
           .roster-table {
-            font-size: 9.7px !important;
+            font-size: 8.7px !important;
+          }
+
+          .col-no {
+            width: 26px !important;
+          }
+          .col-matricule {
+            width: 72px !important;
+          }
+          .col-series {
+            width: 43px !important;
+          }
+          .col-affect {
+            width: 36px !important;
+          }
+          .col-board {
+            width: 36px !important;
+          }
+          .col-date {
+            width: 62px !important;
+          }
+          .col-sex {
+            width: 30px !important;
+          }
+          .col-red {
+            width: 28px !important;
+          }
+          .col-lv2 {
+            width: 34px !important;
+          }
+          .col-nat {
+            width: 36px !important;
           }
 
           .roster-table th,
           .roster-table td {
-            padding: 3px 4px !important;
+            padding: 3px 2.5px !important;
+            overflow-wrap: anywhere;
           }
 
           .roster-table tr {
@@ -837,21 +888,40 @@ export default function ClassListPrintPage() {
           }
 
           .school-logo {
-            width: 46px !important;
-            height: 46px !important;
+            width: 42px !important;
+            height: 42px !important;
           }
 
           .school-name {
-            font-size: 12.8px !important;
+            font-size: 11.5px !important;
+          }
+
+          .school-meta {
+            font-size: 8.3px !important;
           }
 
           .list-title {
-            font-size: 17px !important;
-            padding: 6px 10px !important;
+            font-size: 13.5px !important;
+            padding: 5px 6px !important;
+            border-width: 3px !important;
           }
 
           .right-meta {
-            font-size: 10.4px !important;
+            font-size: 9px !important;
+          }
+
+          .sheet-footer {
+            grid-template-columns: 1fr 1.35fr 1fr !important;
+            gap: 6px !important;
+            font-size: 8.2px !important;
+          }
+
+          .export-brand-site {
+            font-size: 8.8px !important;
+          }
+
+          .export-brand-slogan {
+            font-size: 8px !important;
           }
         }
       `}</style>
