@@ -77,6 +77,9 @@ type ClassItem = {
   name: string;
   level?: string | null;
   academic_year?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 type AcademicYearRow = {
   id: string;
@@ -214,6 +217,11 @@ export default function ImportPage() {
   const [teacherFormationCode, setTeacherFormationCode] = useState("");
   const [teacherLevelCode, setTeacherLevelCode] = useState("");
 
+  const [studentEducationType, setStudentEducationType] =
+    useState<EducationType>("general_secondary");
+  const [studentFormationCode, setStudentFormationCode] = useState("");
+  const [studentLevelCode, setStudentLevelCode] = useState("");
+
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [academicYear, setAcademicYear] = useState<string>("");
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(true);
@@ -221,19 +229,78 @@ export default function ImportPage() {
   const [level, setLevel] = useState<string>("");
   const [classId, setClassId] = useState<string>("");
 
-  const levels = useMemo(
+  const generalClasses = useMemo(
     () =>
-      Array.from(
-        new Set(classes.map((c) => c.level).filter(Boolean) as string[]),
-      ).sort((a, b) =>
-        String(a).localeCompare(String(b), undefined, { numeric: true }),
+      classes.filter(
+        (classItem) =>
+          !classItem.education_type ||
+          classItem.education_type === "general_secondary",
       ),
     [classes],
   );
 
+  const levels = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          generalClasses
+            .map((classItem) => classItem.level)
+            .filter(Boolean) as string[],
+        ),
+      ).sort((a, b) =>
+        String(a).localeCompare(String(b), undefined, { numeric: true }),
+      ),
+    [generalClasses],
+  );
+
   const classesOfLevel = useMemo(
-    () => classes.filter((c) => !level || c.level === level),
-    [classes, level],
+    () =>
+      generalClasses.filter(
+        (classItem) => !level || classItem.level === level,
+      ),
+    [generalClasses, level],
+  );
+
+  const studentFormations = useMemo(
+    () => educationContext.formationsFor(studentEducationType),
+    [educationContext.formations, studentEducationType],
+  );
+  const studentLevels = useMemo(
+    () =>
+      educationContext.levelsFor(
+        studentEducationType,
+        studentFormationCode || null,
+      ),
+    [
+      educationContext.levels,
+      studentEducationType,
+      studentFormationCode,
+    ],
+  );
+  const studentClasses = useMemo(
+    () =>
+      classes.filter((classItem) => {
+        if (studentEducationType === "general_secondary") {
+          return (
+            !classItem.education_type ||
+            classItem.education_type === "general_secondary"
+          );
+        }
+
+        return (
+          classItem.education_type === studentEducationType &&
+          String(classItem.formation_code || "") === studentFormationCode &&
+          (String(classItem.formation_level_code || "") === studentLevelCode ||
+            (!classItem.formation_level_code &&
+              String(classItem.level || "") === studentLevelCode))
+        );
+      }),
+    [
+      classes,
+      studentEducationType,
+      studentFormationCode,
+      studentLevelCode,
+    ],
   );
 
   const teacherFormations = useMemo(
@@ -277,6 +344,63 @@ export default function ImportPage() {
   useEffect(() => {
     void loadAcademicYears();
   }, []);
+
+  useEffect(() => {
+    if (
+      !educationContext.educationTypes.includes(studentEducationType) &&
+      educationContext.educationTypes.length
+    ) {
+      setStudentEducationType(educationContext.educationTypes[0]);
+    }
+  }, [educationContext.educationTypes, studentEducationType]);
+
+  useEffect(() => {
+    setClassId("");
+    setLevel("");
+
+    if (studentEducationType === "general_secondary") {
+      setStudentFormationCode("");
+      setStudentLevelCode("");
+      return;
+    }
+
+    const formationsForContext =
+      educationContext.formationsFor(studentEducationType);
+    if (
+      !formationsForContext.some(
+        (formation) => formation.key === studentFormationCode,
+      )
+    ) {
+      setStudentFormationCode(formationsForContext[0]?.key || "");
+      setStudentLevelCode("");
+    }
+  }, [
+    educationContext.formations,
+    studentEducationType,
+    studentFormationCode,
+  ]);
+
+  useEffect(() => {
+    setClassId("");
+    if (studentEducationType === "general_secondary") return;
+
+    const levelsForContext = educationContext.levelsFor(
+      studentEducationType,
+      studentFormationCode || null,
+    );
+    if (!levelsForContext.some((item) => item.level === studentLevelCode)) {
+      setStudentLevelCode(levelsForContext[0]?.level || "");
+    }
+  }, [
+    educationContext.levels,
+    studentEducationType,
+    studentFormationCode,
+    studentLevelCode,
+  ]);
+
+  useEffect(() => {
+    setClassId("");
+  }, [studentLevelCode]);
 
   useEffect(() => {
     if (
@@ -858,65 +982,198 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
         )}
 
         {mode === "students" && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div>
-              <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
-              <Select
-                value={academicYear}
-                onChange={(e) => setAcademicYear(e.target.value)}
-                disabled={loadingAcademicYears}
-              >
-                {!academicYears.length ? (
-                  <option value="">Aucune année définie</option>
-                ) : (
-                  academicYears.map((year) => (
-                    <option key={year.id} value={year.code}>
-                      {year.label || year.code}
-                      {year.is_current ? " — courante" : ""}
-                    </option>
-                  ))
-                )}
-              </Select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Les classes et listes d’élèves sont filtrées par année scolaire.
+          <div className="space-y-3">
+            {educationContext.educationTypes.length > 1 ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sky-800">
+                  Enseignement concerné par cet import
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {educationContext.educationTypes.map((type) => {
+                    const option = EDUCATION_TYPE_OPTIONS.find(
+                      (item) => item.id === type,
+                    );
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setStudentEducationType(type)}
+                        className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+                          studentEducationType === type
+                            ? "border-sky-500 bg-white text-sky-800 shadow-sm"
+                            : "border-slate-200 bg-white/70 text-slate-700"
+                        }`}
+                      >
+                        {option?.shortLabel ?? type}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 text-xs text-slate-600">
+                  Le modèle historique des élèves ne change pas. La sélection
+                  sert uniquement à afficher les bonnes formations, années et
+                  classes.
+                </div>
               </div>
-            </div>
+            ) : null}
 
-            <div>
-              <div className="mb-1 text-xs text-slate-500">Niveau</div>
-              <Select
-                value={level}
-                onChange={(e) => {
-                  setLevel(e.target.value);
-                  setClassId("");
-                }}
-              >
-                <option value="">— Tous —</option>
-                {levels.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {studentEducationType === "general_secondary" ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Année scolaire
+                  </div>
+                  <Select
+                    value={academicYear}
+                    onChange={(e) => setAcademicYear(e.target.value)}
+                    disabled={loadingAcademicYears}
+                  >
+                    {!academicYears.length ? (
+                      <option value="">Aucune année définie</option>
+                    ) : (
+                      academicYears.map((year) => (
+                        <option key={year.id} value={year.code}>
+                          {year.label || year.code}
+                          {year.is_current ? " — courante" : ""}
+                        </option>
+                      ))
+                    )}
+                  </Select>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Les classes et listes d’élèves sont filtrées par année
+                    scolaire.
+                  </div>
+                </div>
 
-            <div>
-              <div className="mb-1 text-xs text-slate-500">Classe</div>
-              <Select
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-              >
-                <option value="">— Choisir —</option>
-                {classesOfLevel.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-              <div className="mt-1 text-[11px] text-slate-500">
-                Sélectionne une classe de l’année scolaire choisie.
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Niveau</div>
+                  <Select
+                    value={level}
+                    onChange={(e) => {
+                      setLevel(e.target.value);
+                      setClassId("");
+                    }}
+                  >
+                    <option value="">— Tous —</option>
+                    {levels.map((levelItem) => (
+                      <option key={levelItem} value={levelItem}>
+                        {levelItem}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Classe</div>
+                  <Select
+                    value={classId}
+                    onChange={(e) => setClassId(e.target.value)}
+                  >
+                    <option value="">— Choisir —</option>
+                    {classesOfLevel.map((classItem) => (
+                      <option key={classItem.id} value={classItem.id}>
+                        {classItem.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Sélectionne une classe de l’année scolaire choisie.
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Année scolaire
+                  </div>
+                  <Select
+                    value={academicYear}
+                    onChange={(e) => setAcademicYear(e.target.value)}
+                    disabled={loadingAcademicYears}
+                  >
+                    {!academicYears.length ? (
+                      <option value="">Aucune année définie</option>
+                    ) : (
+                      academicYears.map((year) => (
+                        <option key={year.id} value={year.code}>
+                          {year.label || year.code}
+                          {year.is_current ? " — courante" : ""}
+                        </option>
+                      ))
+                    )}
+                  </Select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Formation / filière
+                  </div>
+                  <Select
+                    value={studentFormationCode}
+                    onChange={(event) => {
+                      setStudentFormationCode(event.target.value);
+                      setStudentLevelCode("");
+                      setClassId("");
+                    }}
+                  >
+                    <option value="">— Choisir —</option>
+                    {studentFormations.map((formation) => (
+                      <option key={formation.key} value={formation.key}>
+                        {formation.diplomaLabel} — {formation.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Année de formation / niveau
+                  </div>
+                  <Select
+                    value={studentLevelCode}
+                    onChange={(event) => {
+                      setStudentLevelCode(event.target.value);
+                      setClassId("");
+                    }}
+                    disabled={!studentFormationCode}
+                  >
+                    <option value="">— Choisir —</option>
+                    {studentLevels.map((levelItem) => (
+                      <option key={levelItem.level} value={levelItem.level}>
+                        {levelItem.level_label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">Classe</div>
+                  <Select
+                    value={classId}
+                    onChange={(event) => setClassId(event.target.value)}
+                    disabled={!studentFormationCode || !studentLevelCode}
+                  >
+                    <option value="">— Choisir —</option>
+                    {studentClasses.map((classItem) => (
+                      <option key={classItem.id} value={classItem.id}>
+                        {classItem.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Seules les classes de cette formation et de cette année
+                    sont proposées.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {educationContext.error ? (
+              <div className="text-xs text-rose-700">
+                {educationContext.error}
+              </div>
+            ) : null}
           </div>
         )}
 
