@@ -25,6 +25,7 @@ import {
   Award,
   History,
   SlidersHorizontal,
+  BookOpenCheck,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -327,6 +328,11 @@ const DISTINCTION_ITEMS: NavItem[] = [
    Groupe : Organisation scolaire
 ========================= */
 const ORGANISATION_ITEMS: NavItem[] = [
+  {
+    href: "/admin/organisation-pedagogique",
+    label: "Organisation pédagogique",
+    Icon: BookOpenCheck,
+  },
   { href: "/admin/classes", label: "Créer vos classes", Icon: School },
   { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
   {
