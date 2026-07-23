@@ -39,11 +39,30 @@ type Profile = {
 };
 
 type SubjectCoeffRow = {
+  education_type: EducationType;
+  education_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
   level: string;
   level_label?: string;
   subject_id: string;
   subject_name: string;
   coeff: number;
+};
+
+
+type SubjectCoeffLevelContext = {
+  education_type: EducationType;
+  education_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
+  level: string;
+  level_label: string;
+};
+
+type AvailableSubject = {
+  subject_id: string;
+  subject_name: string;
 };
 
 type SubjectComponentRow = {
@@ -725,6 +744,8 @@ export default function AdminSettingsPage() {
     useState<EducationSettingsScope>("common");
   const [gradingPeriodsScope, setGradingPeriodsScope] =
     useState<EducationSettingsScope>("common");
+  const [coeffSettingsScope, setCoeffSettingsScope] =
+    useState<EducationSettingsScope>("general_secondary");
 
   useEffect(() => {
     const nextTab = searchParams.get("tab");
@@ -860,6 +881,12 @@ export default function AdminSettingsPage() {
   const [savingCoeffs, setSavingCoeffs] = useState(false);
   const [msgCoeffs, setMsgCoeffs] = useState<string | null>(null);
   const [selectedCoeffLevel, setSelectedCoeffLevel] = useState<string>("");
+  const [selectedCoeffFormationCode, setSelectedCoeffFormationCode] = useState<string>("");
+  const [coeffLevelContexts, setCoeffLevelContexts] = useState<SubjectCoeffLevelContext[]>([]);
+  const [availableSubjects, setAvailableSubjects] = useState<AvailableSubject[]>([]);
+  const [newCoeffSubjectId, setNewCoeffSubjectId] = useState<string>("");
+  const [newCoeffSubjectName, setNewCoeffSubjectName] = useState<string>("");
+  const [addingCoeffSubject, setAddingCoeffSubject] = useState(false);
 
   const [subjectComponents, setSubjectComponents] = useState<
     SubjectComponentRow[]
@@ -939,20 +966,70 @@ export default function AdminSettingsPage() {
     </div>
   );
 
-  const coeffLevels = useMemo(() => {
-    const s = new Set<string>();
-    for (const row of subjectCoeffs) {
-      if (row.level) s.add(row.level);
+  const coeffScopeType: EducationType =
+    coeffSettingsScope === "common"
+      ? "general_secondary"
+      : coeffSettingsScope;
+
+  const coeffContextsForScope = useMemo(
+    () =>
+      coeffLevelContexts.filter(
+        (context) => context.education_type === coeffScopeType,
+      ),
+    [coeffLevelContexts, coeffScopeType],
+  );
+
+  const coeffFormationOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const context of coeffContextsForScope) {
+      if (context.formation_code) {
+        map.set(
+          context.formation_code,
+          context.formation_label || context.formation_code,
+        );
+      }
     }
-    return Array.from(s).sort(sortCoeffLevels);
-  }, [subjectCoeffs]);
+    return Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  }, [coeffContextsForScope]);
+
+  const coeffLevels = useMemo(() =>
+    coeffContextsForScope
+      .filter((context) =>
+        coeffScopeType === "general_secondary"
+          ? true
+          : context.formation_code === selectedCoeffFormationCode,
+      )
+      .map((context) => ({
+        value: context.level,
+        label: context.level_label || formatCoeffLevel(context.level),
+      }))
+      .filter(
+        (item, index, array) =>
+          array.findIndex((candidate) => candidate.value === item.value) === index,
+      )
+      .sort((a, b) => sortCoeffLevels(a.value, b.value)),
+    [coeffContextsForScope, coeffScopeType, selectedCoeffFormationCode],
+  );
 
   const coeffRowsForSelectedLevel = useMemo(
     () =>
       selectedCoeffLevel
-        ? subjectCoeffs.filter((row) => row.level === selectedCoeffLevel)
+        ? subjectCoeffs.filter(
+            (row) =>
+              row.education_type === coeffScopeType &&
+              row.level === selectedCoeffLevel &&
+              (coeffScopeType === "general_secondary" ||
+                row.formation_code === selectedCoeffFormationCode),
+          )
         : [],
-    [selectedCoeffLevel, subjectCoeffs],
+    [
+      coeffScopeType,
+      selectedCoeffFormationCode,
+      selectedCoeffLevel,
+      subjectCoeffs,
+    ],
   );
 
   const componentsForTarget = useMemo(
@@ -1016,10 +1093,27 @@ export default function AdminSettingsPage() {
     [ciPresetPreview, selectedCoeffLevel],
   );
 
-  // si aucun niveau sélectionné mais des niveaux disponibles → on sélectionne le 1er
   useEffect(() => {
-    if (!selectedCoeffLevel && coeffLevels.length > 0) {
-      setSelectedCoeffLevel(coeffLevels[0]);
+    if (coeffScopeType === "general_secondary") {
+      setSelectedCoeffFormationCode("");
+      return;
+    }
+    if (
+      !selectedCoeffFormationCode ||
+      !coeffFormationOptions.some(
+        (option) => option.value === selectedCoeffFormationCode,
+      )
+    ) {
+      setSelectedCoeffFormationCode(coeffFormationOptions[0]?.value || "");
+    }
+  }, [coeffFormationOptions, coeffScopeType, selectedCoeffFormationCode]);
+
+  useEffect(() => {
+    if (
+      !selectedCoeffLevel ||
+      !coeffLevels.some((item) => item.value === selectedCoeffLevel)
+    ) {
+      setSelectedCoeffLevel(coeffLevels[0]?.value || "");
     }
   }, [coeffLevels, selectedCoeffLevel]);
 
@@ -1819,13 +1913,39 @@ export default function AdminSettingsPage() {
       }
       const rows = Array.isArray(j.items) ? j.items : [];
       const mapped: SubjectCoeffRow[] = rows.map((row: any) => ({
+        education_type: EDUCATION_TYPE_OPTIONS.some((option) => option.id === row.education_type)
+          ? row.education_type
+          : "general_secondary",
+        education_label: String(row.education_label || "Secondaire général"),
+        formation_code: row.formation_code ? String(row.formation_code) : null,
+        formation_label: row.formation_label ? String(row.formation_label) : null,
         level: (row.level ?? "") ? String(row.level).trim() : "",
         level_label: String(row.level_label || formatCoeffLevel(row.level)),
         subject_id: String(row.subject_id),
         subject_name: String(row.subject_name || "Matière"),
-        coeff: Number(row.coeff ?? 1) || 1,
+        coeff: Number.isFinite(Number(row.coeff)) ? Number(row.coeff) : 1,
       }));
+      const contexts: SubjectCoeffLevelContext[] = Array.isArray(j.levels)
+        ? j.levels.map((row: any) => ({
+            education_type: EDUCATION_TYPE_OPTIONS.some((option) => option.id === row.education_type)
+              ? row.education_type
+              : "general_secondary",
+            education_label: String(row.education_label || "Secondaire général"),
+            formation_code: row.formation_code ? String(row.formation_code) : null,
+            formation_label: row.formation_label ? String(row.formation_label) : null,
+            level: String(row.level || ""),
+            level_label: String(row.level_label || formatCoeffLevel(row.level)),
+          }))
+        : [];
+      const available: AvailableSubject[] = Array.isArray(j.available_subjects)
+        ? j.available_subjects.map((row: any) => ({
+            subject_id: String(row.subject_id),
+            subject_name: String(row.subject_name || "Matière"),
+          }))
+        : [];
       setSubjectCoeffs(mapped);
+      setCoeffLevelContexts(contexts);
+      setAvailableSubjects(available);
       pushToast(
         "info",
         `Coefficients chargés (${mapped.length} entrée${
@@ -1836,9 +1956,59 @@ export default function AdminSettingsPage() {
       const m = e?.message || "Impossible de charger les coefficients.";
       setMsgCoeffs(m);
       setSubjectCoeffs([]);
+      setCoeffLevelContexts([]);
+      setAvailableSubjects([]);
       pushToast("error", m);
     } finally {
       setLoadingCoeffs(false);
+    }
+  }
+
+  async function addSubjectToCoeffLevel() {
+    if (coeffScopeType === "general_secondary") return;
+    if (!selectedCoeffFormationCode || !selectedCoeffLevel) {
+      const msg = "Choisissez d’abord une formation et un niveau.";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+    if (!newCoeffSubjectId && !newCoeffSubjectName.trim()) {
+      const msg = "Choisissez une discipline existante ou saisissez son nom.";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+      return;
+    }
+
+    setAddingCoeffSubject(true);
+    setMsgCoeffs(null);
+    try {
+      const response = await fetch("/api/admin/institution/subject-coeffs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          education_type: coeffScopeType,
+          formation_code: selectedCoeffFormationCode,
+          level: selectedCoeffLevel,
+          subject_id: newCoeffSubjectId || null,
+          subject_name: newCoeffSubjectName.trim() || null,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Ajout impossible");
+      }
+      setNewCoeffSubjectId("");
+      setNewCoeffSubjectName("");
+      await loadSubjectCoeffs();
+      const msg = "Discipline ajoutée au niveau sélectionné.";
+      setMsgCoeffs(msg);
+      pushToast("success", msg);
+    } catch (error: any) {
+      const msg = error?.message || "Impossible d’ajouter la discipline.";
+      setMsgCoeffs(msg);
+      pushToast("error", msg);
+    } finally {
+      setAddingCoeffSubject(false);
     }
   }
 
@@ -2340,6 +2510,11 @@ export default function AdminSettingsPage() {
       );
       setGradingPeriodsScope((current) =>
         current === "common" || nextTypes.includes(current) ? current : "common",
+      );
+      setCoeffSettingsScope((current) =>
+        current !== "common" && nextTypes.includes(current)
+          ? current
+          : nextTypes[0] || "general_secondary",
       );
     } catch {
       setSettingsEducationTypes(["general_secondary"]);
@@ -3983,6 +4158,13 @@ export default function AdminSettingsPage() {
 
         {activeTab === "coefficients" && (
           <>
+            <EducationScopeSwitcher
+              value={coeffSettingsScope}
+              onChange={setCoeffSettingsScope}
+              enabledEducationTypes={settingsEducationTypes}
+              includeCommon={false}
+              label="Enseignement concerné par les coefficients"
+            />
             {/* =======================
             6) Coefficients des disciplines + sous-matières
         ======================== */}
@@ -4019,7 +4201,35 @@ export default function AdminSettingsPage() {
               )}
 
               <div className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+                <div className={`grid grid-cols-1 gap-3 md:items-end ${
+                  coeffScopeType === "general_secondary"
+                    ? "md:grid-cols-3"
+                    : "md:grid-cols-4"
+                }`}>
+                  {coeffScopeType !== "general_secondary" ? (
+                    <div>
+                      <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                        Formation / filière
+                      </div>
+                      <select
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
+                        value={selectedCoeffFormationCode}
+                        onChange={(event) => {
+                          setSelectedCoeffFormationCode(event.target.value);
+                          setSelectedCoeffLevel("");
+                          setCiPresetPreview([]);
+                        }}
+                      >
+                        <option value="">— Choisir une formation —</option>
+                        {coeffFormationOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
                   <div>
                     <div className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
                       Niveau à configurer
@@ -4027,38 +4237,114 @@ export default function AdminSettingsPage() {
                     <select
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20"
                       value={selectedCoeffLevel}
-                      onChange={(e) => setSelectedCoeffLevel(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedCoeffLevel(e.target.value);
+                        setCiPresetPreview([]);
+                      }}
                     >
                       <option value="">— Choisir un niveau —</option>
-                      {coeffLevels.map((lvl) => (
-                        <option key={lvl} value={lvl}>
-                          {formatCoeffLevel(lvl)}
+                      {coeffLevels.map((levelOption) => (
+                        <option key={levelOption.value} value={levelOption.value}>
+                          {levelOption.label}
                         </option>
                       ))}
                     </select>
                     <div className="mt-1 text-[11px] text-slate-500">
-                      Choisissez d’abord le niveau, puis prévisualisez ou
-                      appliquez le référentiel CI pour ce niveau.
+                      {coeffScopeType === "general_secondary"
+                        ? "Choisissez le niveau puis prévisualisez ou appliquez le référentiel CI."
+                        : "Choisissez la filière et le niveau avant d’ajouter les disciplines."}
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 md:col-span-2">
+                  <div className={`rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 ${
+                    coeffScopeType === "general_secondary"
+                      ? "md:col-span-2"
+                      : "md:col-span-2"
+                  }`}>
                     Niveau actif :
                     <span className="ml-2 font-bold text-slate-900">
-                      {selectedCoeffLevel
-                        ? formatCoeffLevel(selectedCoeffLevel)
-                        : "Aucun niveau sélectionné"}
+                      {coeffLevels.find((item) => item.value === selectedCoeffLevel)?.label ||
+                        (selectedCoeffLevel
+                          ? formatCoeffLevel(selectedCoeffLevel)
+                          : "Aucun niveau sélectionné")}
                     </span>
                     <span className="mx-2 text-slate-300">•</span>
                     <span>
                       {selectedCoeffLevel
                         ? `${coeffRowsForSelectedLevel.length} discipline(s) affichée(s)`
-                        : "Sélection requise avant l’initialisation CI"}
+                        : "Sélection requise"}
                     </span>
                   </div>
                 </div>
               </div>
 
+              {coeffScopeType !== "general_secondary" ? (
+                <div className="mb-5 rounded-3xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-cyan-50 p-4 shadow-sm">
+                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-700">
+                    Disciplines de la formation
+                  </div>
+                  <div className="mt-1 text-lg font-black text-slate-900">
+                    Ajouter une discipline au niveau sélectionné
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Choisissez une matière déjà connue de l’établissement ou créez-en une nouvelle. Elle sera rattachée uniquement à cette formation et à ce niveau.
+                  </p>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+                    <div>
+                      <div className="mb-1 text-xs font-semibold text-slate-500">Discipline existante</div>
+                      <select
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        value={newCoeffSubjectId}
+                        onChange={(event) => {
+                          setNewCoeffSubjectId(event.target.value);
+                          if (event.target.value) setNewCoeffSubjectName("");
+                        }}
+                      >
+                        <option value="">— Choisir une discipline —</option>
+                        {availableSubjects
+                          .filter(
+                            (subject) =>
+                              !coeffRowsForSelectedLevel.some(
+                                (row) => row.subject_id === subject.subject_id,
+                              ),
+                          )
+                          .map((subject) => (
+                            <option key={subject.subject_id} value={subject.subject_id}>
+                              {subject.subject_name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs font-semibold text-slate-500">Ou nouvelle discipline</div>
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        value={newCoeffSubjectName}
+                        onChange={(event) => {
+                          setNewCoeffSubjectName(event.target.value);
+                          if (event.target.value) setNewCoeffSubjectId("");
+                        }}
+                        placeholder="Ex. Travaux pratiques d’atelier"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addSubjectToCoeffLevel}
+                      disabled={
+                        addingCoeffSubject ||
+                        !selectedCoeffFormationCode ||
+                        !selectedCoeffLevel ||
+                        (!newCoeffSubjectId && !newCoeffSubjectName.trim())
+                      }
+                      className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-60"
+                    >
+                      {addingCoeffSubject ? "Ajout…" : "Ajouter"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {coeffScopeType === "general_secondary" ? (
               <div className="mb-5 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="max-w-3xl">
@@ -4184,6 +4470,11 @@ export default function AdminSettingsPage() {
                   </div>
                 )}
               </div>
+              ) : (
+                <div className="mb-5 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+                  Les coefficients de cette filière sont gérés par l’établissement. Mon Cahier n’applique aucun coefficient automatique non vérifié : ajoutez les disciplines puis renseignez les valeurs officielles ou internes.
+                </div>
+              )}
 
               <div className="overflow-x-auto rounded-xl border">
                 <table className="min-w-full text-sm">

@@ -1,16 +1,13 @@
 // src/app/admin/classes/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   EDUCATION_TYPE_OPTIONS,
-  FORMATION_CATALOG,
-  getSuggestedCatalogFormationLevels,
-  getSuggestedCustomFormationLevels,
-  type CustomFormation,
+  getConfiguredFormations,
+  type ConfiguredFormation,
   type EducationOrganizationSettings,
   type EducationType,
-  type FormationLevelSuggestion,
 } from "@/lib/education-organization";
 
 type OfficialTrackCode =
@@ -35,6 +32,9 @@ type ClassRow = {
   level: string;
   academic_year?: string | null;
   official_track_code?: OfficialTrackCode | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   class_phone_e164?: string | null;
 };
 
@@ -53,16 +53,7 @@ type EducationOrganizationApiResponse = {
   organization?: EducationOrganizationSettings;
 };
 
-type FormationChoice = {
-  id: string;
-  source: "catalog" | "custom";
-  sourceId: string;
-  educationType: Exclude<EducationType, "general_secondary">;
-  diplomaLabel: string;
-  name: string;
-  shortCode: string;
-  levels: FormationLevelSuggestion[];
-};
+type FormationChoice = ConfiguredFormation & { id: string };
 
 const OFFICIAL_TRACK_OPTIONS: { value: OfficialTrackCode; label: string }[] = [
   { value: "6eme", label: "6ème" },
@@ -260,6 +251,7 @@ export default function ClassesPage() {
   const [organization, setOrganization] = useState<EducationOrganizationSettings | null>(null);
   const [classEducationType, setClassEducationType] = useState<EducationType>("general_secondary");
   const [selectedFormationId, setSelectedFormationId] = useState("");
+  const legacyContextSyncAttempted = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     loadAcademicYears();
@@ -299,36 +291,10 @@ export default function ClassesPage() {
 
   const formationChoices = useMemo<FormationChoice[]>(() => {
     if (!organization) return [];
-
-    const catalogChoices: FormationChoice[] = FORMATION_CATALOG
-      .filter((item) => organization.selectedCatalogFormationIds.includes(item.id))
-      .map((item) => ({
-        id: `catalog:${item.id}`,
-        source: "catalog" as const,
-        sourceId: item.id,
-        educationType: item.educationType,
-        diplomaLabel: item.diplomaLabel,
-        name: item.name,
-        shortCode: item.shortCode,
-        levels: getSuggestedCatalogFormationLevels(item),
-      }));
-
-    const customChoices: FormationChoice[] = (organization.customFormations || []).map(
-      (item: CustomFormation) => ({
-        id: `custom:${item.id}`,
-        source: "custom" as const,
-        sourceId: item.id,
-        educationType: item.educationType,
-        diplomaLabel: item.diplomaLabel,
-        name: item.name,
-        shortCode: item.shortCode,
-        levels: getSuggestedCustomFormationLevels(item),
-      }),
-    );
-
-    return [...catalogChoices, ...customChoices].sort((a, b) =>
-      `${a.diplomaLabel} ${a.name}`.localeCompare(`${b.diplomaLabel} ${b.name}`, "fr"),
-    );
+    return getConfiguredFormations(organization).map((formation) => ({
+      ...formation,
+      id: formation.key,
+    }));
   }, [organization]);
 
   const formationsForCurrentType = useMemo(
@@ -521,6 +487,9 @@ export default function ClassesPage() {
           level: x.level,
           academic_year: x.academic_year ?? null,
           official_track_code: x.official_track_code ?? x.officialTrackCode ?? null,
+          education_type: x.education_type ?? null,
+          formation_code: x.formation_code ?? null,
+          formation_level_code: x.formation_level_code ?? null,
           class_phone_e164: phone,
         };
       });
@@ -555,6 +524,9 @@ export default function ClassesPage() {
         count,
         academic_year: academicYear,
         official_track_code: isGeneralMode && !isSeriesA(level) ? officialTrackCode || null : null,
+        education_type: classEducationType,
+        formation_code: isGeneralMode ? null : selectedFormation?.id || null,
+        formation_level_code: isGeneralMode ? null : level,
         official_tracks_by_label: isGeneralMode
           ? Object.fromEntries(
               preview.map((label) => [
@@ -625,21 +597,27 @@ export default function ClassesPage() {
     >();
 
     for (const classRow of items) {
-      const formation = formationForLevel(classRow.level);
-      const educationType: EducationType = formation?.educationType || "general_secondary";
+      const explicitFormation = classRow.formation_code
+        ? formationChoices.find((item) => item.id === classRow.formation_code) || null
+        : null;
+      const formation = explicitFormation || formationForLevel(classRow.formation_level_code || classRow.level);
+      const educationType: EducationType =
+        classRow.education_type || formation?.educationType || "general_secondary";
       const educationLabel =
         EDUCATION_TYPE_OPTIONS.find((option) => option.id === educationType)?.label ||
         "Secondaire général";
       const formationLabel = formation
         ? `${formation.diplomaLabel} — ${formation.name}`
         : null;
-      const id = buildClassGroupId(educationType, formation?.id, classRow.level);
+      const id = buildClassGroupId(educationType, formation?.id, classRow.formation_level_code || classRow.level);
       const current = groups.get(id) || {
         id,
         educationType,
         educationLabel,
         formationLabel,
-        level: classRow.level,
+        level:
+          formation?.levels.find((item) => item.value === (classRow.formation_level_code || classRow.level))?.label ||
+          classRow.level,
         items: [],
       };
       current.items.push(classRow);
@@ -686,7 +664,11 @@ export default function ClassesPage() {
     setELabel(row.name);
     setELevel(row.level);
     setEAcademicYear(row.academic_year || academicYear);
-    setEOfficialTrackCode(row.official_track_code || inferOfficialTrackCode(row.level));
+    setEOfficialTrackCode(
+      row.education_type && row.education_type !== "general_secondary"
+        ? ""
+        : row.official_track_code || inferOfficialTrackCode(row.level),
+    );
     setEPhone(row.class_phone_e164 ?? "");
     setEditOpen(true);
   }
@@ -701,7 +683,11 @@ export default function ClassesPage() {
       label: eLabel,
       level: eLevel,
       academic_year: eAcademicYear || null,
-      official_track_code: eOfficialTrackCode || null,
+      official_track_code:
+        items.find((item) => item.id === editId)?.education_type &&
+        items.find((item) => item.id === editId)?.education_type !== "general_secondary"
+          ? null
+          : eOfficialTrackCode || null,
       class_phone: ePhone.trim() || null,
     };
 
@@ -803,6 +789,54 @@ export default function ClassesPage() {
     setMsgPhone("Numéro enregistré.");
     setTimeout(() => setMsgPhone(null), 1500);
   }
+
+  useEffect(() => {
+    if (!items.length || !formationChoices.length) return;
+
+    const pending = items
+      .filter(
+        (row) =>
+          !row.education_type &&
+          !legacyContextSyncAttempted.current.has(row.id),
+      )
+      .map((row) => {
+        const formation = formationForLevel(row.level);
+        if (!formation) return null;
+        const levelConfig = formation.levels.find(
+          (item) => normalizeKey(item.value) === normalizeKey(row.level),
+        );
+        if (!levelConfig) return null;
+        legacyContextSyncAttempted.current.add(row.id);
+        return { row, formation, levelConfig };
+      })
+      .filter(Boolean) as {
+      row: ClassRow;
+      formation: FormationChoice;
+      levelConfig: { value: string; label: string };
+    }[];
+
+    if (!pending.length) return;
+
+    void (async () => {
+      let updated = false;
+      for (const item of pending) {
+        const response = await fetch(`/api/admin/classes/${item.row.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            education_type: item.formation.educationType,
+            formation_code: item.formation.id,
+            formation_level_code: item.levelConfig.value,
+            official_track_code: null,
+          }),
+        });
+        if (response.ok) updated = true;
+      }
+      if (updated) await refresh();
+    })();
+    // Le Set empêche toute répétition pour une même classe pendant cette session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formationChoices, items]);
 
   const selectedAcademicYear = academicYears.find((row) => row.code === academicYear) || null;
   const canCreate =
@@ -1110,7 +1144,9 @@ export default function ClassesPage() {
                       {arr.map((c) => {
                         const draft = phoneDraft[c.id] ?? c.class_phone_e164 ?? "";
                         const unchanged = (draft || "") === (c.class_phone_e164 || "");
-                        const detectedFormation = formationForLevel(c.level);
+                        const detectedFormation = c.formation_code
+                          ? formationChoices.find((item) => item.id === c.formation_code) || formationForLevel(c.formation_level_code || c.level)
+                          : formationForLevel(c.formation_level_code || c.level);
                         return (
                           <div key={c.id} className="rounded-xl border p-3">
                             <div className="flex items-start justify-between gap-3">

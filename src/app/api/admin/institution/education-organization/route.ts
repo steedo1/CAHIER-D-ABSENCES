@@ -10,6 +10,7 @@ import {
   type CustomFormation,
   type EducationOrganizationSettings,
   type EducationType,
+  type FormationLevelConfiguration,
 } from "@/lib/education-organization";
 
 export const runtime = "nodejs";
@@ -22,6 +23,7 @@ const WRITABLE_ROLES = new Set(["admin", "super_admin"]);
 const READABLE_ROLES = new Set(["admin", "super_admin", "founder"]);
 const MAX_CUSTOM_FORMATIONS = 100;
 const MAX_LEVELS_PER_FORMATION = 12;
+const MAX_LEVEL_CONFIGURATIONS = 200;
 
 async function guard(
   supa: SupabaseClient,
@@ -139,6 +141,53 @@ function cleanCustomFormation(
   };
 }
 
+
+function cleanFormationLevelConfigurations(
+  value: unknown,
+  allowedFormationKeys: Set<string>,
+): FormationLevelConfiguration[] {
+  if (!Array.isArray(value)) return [];
+
+  const seenKeys = new Set<string>();
+  const out: FormationLevelConfiguration[] = [];
+
+  for (const raw of value) {
+    if (!isPlainObject(raw)) continue;
+
+    const formationKey = cleanText(raw.formationKey, 120);
+    if (!formationKey || !allowedFormationKeys.has(formationKey) || seenKeys.has(formationKey)) {
+      continue;
+    }
+
+    const rawLevels = Array.isArray(raw.levels) ? raw.levels : [];
+    const levelCodes = new Set<string>();
+    const levels = rawLevels
+      .map((item) => {
+        if (!isPlainObject(item)) return null;
+        const levelValue = cleanText(item.value, 80).toUpperCase();
+        const levelLabel = cleanText(item.label, 120);
+        if (!levelValue || !levelLabel || levelCodes.has(levelValue)) return null;
+        levelCodes.add(levelValue);
+        return { value: levelValue, label: levelLabel };
+      })
+      .filter((item): item is { value: string; label: string } => Boolean(item))
+      .slice(0, MAX_LEVELS_PER_FORMATION);
+
+    if (!levels.length) continue;
+
+    seenKeys.add(formationKey);
+    out.push({
+      formationKey,
+      levels,
+      updatedAt: cleanText(raw.updatedAt, 40) || new Date().toISOString(),
+    });
+
+    if (out.length >= MAX_LEVEL_CONFIGURATIONS) break;
+  }
+
+  return out;
+}
+
 function parseStoredSettings(
   settingsJson: unknown,
   hasExistingClasses: boolean,
@@ -170,12 +219,22 @@ function parseStoredSettings(
         .slice(0, MAX_CUSTOM_FORMATIONS)
     : [];
 
+  const allowedFormationKeys = new Set<string>([
+    ...selectedCatalogFormationIds.map((id) => `catalog:${id}`),
+    ...customFormations.map((item) => `custom:${item.id}`),
+  ]);
+  const formationLevelConfigurations = cleanFormationLevelConfigurations(
+    raw.formationLevelConfigurations,
+    allowedFormationKeys,
+  );
+
   return {
-    version: 1,
+    version: raw.version === 2 ? 2 : 1,
     configured: raw.configured === true || fallback.configured,
     educationTypes,
     selectedCatalogFormationIds,
     customFormations,
+    formationLevelConfigurations,
     legacyGeneralProtected: false,
     configuredAt: cleanText(raw.configuredAt, 40) || null,
     updatedAt: cleanText(raw.updatedAt, 40) || null,
@@ -325,6 +384,33 @@ export async function PUT(req: NextRequest) {
           .slice(0, MAX_CUSTOM_FORMATIONS)
       : [];
 
+    const allowedFormationKeys = new Set<string>([
+      ...selectedCatalogFormationIds.map((id) => `catalog:${id}`),
+      ...customFormations.map((item) => `custom:${item.id}`),
+    ]);
+    const formationLevelConfigurations = cleanFormationLevelConfigurations(
+      body?.formationLevelConfigurations,
+      allowedFormationKeys,
+    );
+
+    const duplicateLevelOwner = new Map<string, string>();
+    for (const configuration of formationLevelConfigurations) {
+      for (const level of configuration.levels) {
+        const previous = duplicateLevelOwner.get(level.value);
+        if (previous && previous !== configuration.formationKey) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "duplicate_formation_level_code",
+              levelCode: level.value,
+            },
+            { status: 400 },
+          );
+        }
+        duplicateLevelOwner.set(level.value, configuration.formationKey);
+      }
+    }
+
     const selectedNonGeneralTypes = educationTypes.filter(
       (type) => type !== "general_secondary",
     );
@@ -353,11 +439,12 @@ export async function PUT(req: NextRequest) {
 
     const now = new Date().toISOString();
     const nextOrganization: EducationOrganizationSettings = {
-      version: 1,
+      version: 2,
       configured: true,
       educationTypes,
       selectedCatalogFormationIds,
       customFormations,
+      formationLevelConfigurations,
       legacyGeneralProtected: false,
       configuredAt: currentOrganization.configuredAt || now,
       updatedAt: now,

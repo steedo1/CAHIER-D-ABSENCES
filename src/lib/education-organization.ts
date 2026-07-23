@@ -317,12 +317,19 @@ export type CustomFormation = {
   createdAt?: string | null;
 };
 
+export type FormationLevelConfiguration = {
+  formationKey: string;
+  levels: FormationLevelSuggestion[];
+  updatedAt?: string | null;
+};
+
 export type EducationOrganizationSettings = {
-  version: 1;
+  version: 1 | 2;
   configured: boolean;
   educationTypes: EducationType[];
   selectedCatalogFormationIds: string[];
   customFormations: CustomFormation[];
+  formationLevelConfigurations: FormationLevelConfiguration[];
   /** Ancien indicateur conservé uniquement pour compatibilité de lecture. */
   legacyGeneralProtected: boolean;
   configuredAt?: string | null;
@@ -349,6 +356,19 @@ export function getCatalogFormation(id: string) {
 export type FormationLevelSuggestion = {
   value: string;
   label: string;
+};
+
+export type ConfiguredFormation = {
+  key: string;
+  source: "catalog" | "custom";
+  sourceId: string;
+  educationType: Exclude<EducationType, "general_secondary">;
+  diplomaCode: string;
+  diplomaLabel: string;
+  name: string;
+  shortCode: string;
+  reliability?: FormationReliability;
+  levels: FormationLevelSuggestion[];
 };
 
 function compactFormationCode(value: string) {
@@ -413,11 +433,15 @@ export function getSuggestedCatalogFormationLevels(
 export function getSuggestedCustomFormationLevels(
   formation: CustomFormation,
 ): FormationLevelSuggestion[] {
+  const code = compactFormationCode(formation.shortCode || formation.name);
+
   if (formation.levels.length > 0) {
-    return formation.levels.map((level) => ({ value: level, label: level }));
+    return formation.levels.map((level, index) => ({
+      value: code ? `${index + 1}${code}` : level,
+      label: level,
+    }));
   }
 
-  const code = compactFormationCode(formation.shortCode || formation.name);
   if (!code) return [];
 
   return [
@@ -426,17 +450,90 @@ export function getSuggestedCustomFormationLevels(
   ];
 }
 
+export function formationConfigurationKey(
+  source: "catalog" | "custom",
+  sourceId: string,
+) {
+  return `${source}:${sourceId}`;
+}
+
+export function getConfiguredFormationLevels(
+  organization: Pick<EducationOrganizationSettings, "formationLevelConfigurations">,
+  formationKey: string,
+  fallback: FormationLevelSuggestion[],
+) {
+  const configured = organization.formationLevelConfigurations.find(
+    (item) => item.formationKey === formationKey,
+  );
+  return configured?.levels?.length ? configured.levels : fallback;
+}
+
+export function getConfiguredFormations(
+  organization: EducationOrganizationSettings,
+): ConfiguredFormation[] {
+  const catalog = FORMATION_CATALOG
+    .filter((item) => organization.selectedCatalogFormationIds.includes(item.id))
+    .map((item): ConfiguredFormation => {
+      const key = formationConfigurationKey("catalog", item.id);
+      return {
+        key,
+        source: "catalog",
+        sourceId: item.id,
+        educationType: item.educationType,
+        diplomaCode: item.diplomaCode,
+        diplomaLabel: item.diplomaLabel,
+        name: item.name,
+        shortCode: item.shortCode,
+        reliability: item.reliability,
+        levels: getConfiguredFormationLevels(
+          organization,
+          key,
+          getSuggestedCatalogFormationLevels(item),
+        ),
+      };
+    });
+
+  const custom = (organization.customFormations || []).map(
+    (item): ConfiguredFormation => {
+      const key = formationConfigurationKey("custom", item.id);
+      return {
+        key,
+        source: "custom",
+        sourceId: item.id,
+        educationType: item.educationType,
+        diplomaCode: item.diplomaCode,
+        diplomaLabel: item.diplomaLabel,
+        name: item.name,
+        shortCode: item.shortCode,
+        levels: getConfiguredFormationLevels(
+          organization,
+          key,
+          getSuggestedCustomFormationLevels(item),
+        ),
+      };
+    },
+  );
+
+  return [...catalog, ...custom].sort((a, b) =>
+    `${a.diplomaLabel} ${a.name}`.localeCompare(
+      `${b.diplomaLabel} ${b.name}`,
+      "fr",
+    ),
+  );
+}
+
 export function getDefaultEducationOrganization(
   options: { hasExistingClasses: boolean } = { hasExistingClasses: false },
 ): EducationOrganizationSettings {
   const defaultsToGeneral = options.hasExistingClasses;
 
   return {
-    version: 1,
+    version: 2,
     configured: defaultsToGeneral,
     educationTypes: defaultsToGeneral ? ["general_secondary"] : [],
     selectedCatalogFormationIds: [],
     customFormations: [],
+    formationLevelConfigurations: [],
     legacyGeneralProtected: false,
     configuredAt: null,
     updatedAt: null,

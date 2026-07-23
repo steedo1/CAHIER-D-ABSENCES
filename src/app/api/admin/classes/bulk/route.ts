@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 type OfficialTrackCode =
   | "6eme"
@@ -32,6 +33,12 @@ type Body = {
     OfficialTrackCode | "" | null
   > | null;
   officialTracksByLabel?: Record<string, OfficialTrackCode | "" | null> | null;
+  education_type?: EducationType | null;
+  educationType?: EducationType | null;
+  formation_code?: string | null;
+  formationCode?: string | null;
+  formation_level_code?: string | null;
+  formationLevelCode?: string | null;
 };
 
 const OFFICIAL_TRACK_CODES = new Set<string>([
@@ -167,13 +174,28 @@ export async function POST(req: NextRequest) {
   const count = Number(body.count ?? 0);
   const requestedAcademicYear = String(body.academic_year || "").trim();
   const codePrefix = body.codePrefix ?? null;
+  const educationTypeRaw = body.education_type ?? body.educationType ?? "general_secondary";
+  const education_type: EducationType = isEducationType(educationTypeRaw)
+    ? educationTypeRaw
+    : "general_secondary";
+  const formation_code = String(body.formation_code ?? body.formationCode ?? "").trim() || null;
+  const formation_level_code = String(
+    body.formation_level_code ?? body.formationLevelCode ?? level,
+  ).trim() || null;
+
+  if (education_type !== "general_secondary" && (!formation_code || !formation_level_code)) {
+    return NextResponse.json({ error: "formation_context_required" }, { status: 400 });
+  }
 
   let official_track_code: OfficialTrackCode | null = null;
   try {
-    official_track_code = cleanOfficialTrackCode(
-      body.official_track_code ?? body.officialTrackCode ?? null,
-      level,
-    );
+    official_track_code =
+      education_type === "general_secondary"
+        ? cleanOfficialTrackCode(
+            body.official_track_code ?? body.officialTrackCode ?? null,
+            level,
+          )
+        : null;
   } catch {
     return NextResponse.json(
       { error: "bad_official_track_code" },
@@ -260,7 +282,7 @@ export async function POST(req: NextRequest) {
   const { data: existingRows, error: existingErr } = await supabaseAdmin
     .from("classes")
     .select(
-      "id,label,level,code,academic_year,official_track_code,class_phone_e164",
+      "id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164",
     )
     .eq("institution_id", institution_id)
     .eq("academic_year", academic_year)
@@ -288,7 +310,13 @@ export async function POST(req: NextRequest) {
         level,
         code,
         academic_year,
-        official_track_code: rowOfficialTrackCode,
+        official_track_code: education_type === "general_secondary" ? rowOfficialTrackCode : null,
+        education_type,
+        formation_code: education_type === "general_secondary" ? null : formation_code,
+        formation_level_code:
+          education_type === "general_secondary"
+            ? rowOfficialTrackCode || level
+            : formation_level_code,
       };
     });
 
@@ -299,7 +327,7 @@ export async function POST(req: NextRequest) {
       .from("classes")
       .insert(rows)
       .select(
-        "id,label,level,code,academic_year,official_track_code,class_phone_e164",
+        "id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164",
       );
 
     if (error) {

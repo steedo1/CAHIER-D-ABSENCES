@@ -12,11 +12,13 @@ export default function EducationScopeSwitcher({
   onChange,
   enabledEducationTypes,
   label = "Enseignement concerné",
+  includeCommon = true,
 }: {
   value: EducationSettingsScope;
   onChange: (value: EducationSettingsScope) => void;
   enabledEducationTypes: EducationType[];
   label?: string;
+  includeCommon?: boolean;
 }) {
   const options = EDUCATION_TYPE_OPTIONS.filter((option) =>
     enabledEducationTypes.includes(option.id),
@@ -28,17 +30,19 @@ export default function EducationScopeSwitcher({
         {label}
       </div>
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onChange("common")}
-          className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-            value === "common"
-              ? "border-sky-500 bg-sky-50 text-sky-800 ring-2 ring-sky-100"
-              : "border-slate-200 bg-white text-slate-700 hover:border-sky-300"
-          }`}
-        >
-          Commun à tous
-        </button>
+        {includeCommon ? (
+          <button
+            type="button"
+            onClick={() => onChange("common")}
+            className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+              value === "common"
+                ? "border-sky-500 bg-sky-50 text-sky-800 ring-2 ring-sky-100"
+                : "border-slate-200 bg-white text-slate-700 hover:border-sky-300"
+            }`}
+          >
+            Commun à tous
+          </button>
+        ) : null}
         {options.map((option) => (
           <button
             key={option.id}

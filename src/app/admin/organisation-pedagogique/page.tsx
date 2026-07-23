@@ -23,6 +23,12 @@ import {
   type CustomFormation,
   type EducationOrganizationSettings,
   type EducationType,
+  getConfiguredFormations,
+  getSuggestedCatalogFormationLevels,
+  getSuggestedCustomFormationLevels,
+  formationConfigurationKey,
+  type FormationLevelConfiguration,
+  type FormationLevelSuggestion,
   type FormationReliability,
 } from "@/lib/education-organization";
 
@@ -78,6 +84,8 @@ function errorMessage(code?: string) {
       return "Choisissez ou créez au moins une formation pour chaque enseignement technique, professionnel ou BTS sélectionné.";
     case "invalid_catalog_formation":
       return "Une formation sélectionnée ne correspond plus au catalogue disponible.";
+    case "duplicate_formation_level_code":
+      return "Deux formations utilisent le même code interne de niveau. Donnez un code distinct à chaque niveau.";
     case "forbidden":
       return "Votre rôle ne permet pas de modifier cette organisation.";
     case "unauthorized":
@@ -107,6 +115,7 @@ export default function OrganisationPedagogiquePage() {
   const [educationTypes, setEducationTypes] = useState<EducationType[]>([]);
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<string[]>([]);
   const [customFormations, setCustomFormations] = useState<CustomFormation[]>([]);
+  const [formationLevelConfigurations, setFormationLevelConfigurations] = useState<FormationLevelConfiguration[]>([]);
   const [configuredAt, setConfiguredAt] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -115,6 +124,10 @@ export default function OrganisationPedagogiquePage() {
   const [error, setError] = useState<string | null>(null);
 
   const [customOpen, setCustomOpen] = useState(false);
+  const [levelsOpen, setLevelsOpen] = useState(false);
+  const [levelsTarget, setLevelsTarget] = useState<{ key: string; name: string } | null>(null);
+  const [levelsDraft, setLevelsDraft] = useState<FormationLevelSuggestion[]>([]);
+  const [levelsError, setLevelsError] = useState<string | null>(null);
   const [draft, setDraft] = useState<CustomDraft>(EMPTY_DRAFT);
   const [customError, setCustomError] = useState<string | null>(null);
 
@@ -141,6 +154,7 @@ export default function OrganisationPedagogiquePage() {
       setEducationTypes(payload.organization.educationTypes || []);
       setSelectedCatalogIds(payload.organization.selectedCatalogFormationIds || []);
       setCustomFormations(payload.organization.customFormations || []);
+      setFormationLevelConfigurations(payload.organization.formationLevelConfigurations || []);
       setConfiguredAt(payload.organization.configuredAt || null);
     } catch (loadError: any) {
       setError(loadError?.message || "Impossible de charger l’organisation pédagogique.");
@@ -162,7 +176,19 @@ export default function OrganisationPedagogiquePage() {
           ),
         );
         setSelectedCatalogIds((ids) => ids.filter((id) => !catalogIdsForType.has(id)));
+        const customIdsForType = new Set(customFormations.filter((item) => item.educationType === type).map((item) => item.id));
         setCustomFormations((items) => items.filter((item) => item.educationType !== type));
+        setFormationLevelConfigurations((items) =>
+          items.filter((item) => {
+            if (item.formationKey.startsWith("catalog:")) {
+              return !catalogIdsForType.has(item.formationKey.slice("catalog:".length));
+            }
+            if (item.formationKey.startsWith("custom:")) {
+              return !customIdsForType.has(item.formationKey.slice("custom:".length));
+            }
+            return false;
+          }),
+        );
       }
 
       return next;
@@ -171,9 +197,17 @@ export default function OrganisationPedagogiquePage() {
 
   function toggleCatalogFormation(id: string) {
     setSaved(false);
-    setSelectedCatalogIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
+    setSelectedCatalogIds((current) => {
+      const selected = current.includes(id);
+      if (selected) {
+        const key = formationConfigurationKey("catalog", id);
+        setFormationLevelConfigurations((items) =>
+          items.filter((item) => item.formationKey !== key),
+        );
+        return current.filter((item) => item !== id);
+      }
+      return [...current, id];
+    });
   }
 
   function openCustomForm(educationType?: EducationType) {
@@ -238,6 +272,43 @@ export default function OrganisationPedagogiquePage() {
 
   function removeCustomFormation(id: string) {
     setCustomFormations((current) => current.filter((item) => item.id !== id));
+    const key = formationConfigurationKey("custom", id);
+    setFormationLevelConfigurations((current) =>
+      current.filter((item) => item.formationKey !== key),
+    );
+    setSaved(false);
+  }
+
+  function openLevelsEditor(formationKey: string, name: string, fallback: FormationLevelSuggestion[]) {
+    const configured = formationLevelConfigurations.find((item) => item.formationKey === formationKey);
+    setLevelsTarget({ key: formationKey, name });
+    setLevelsDraft((configured?.levels?.length ? configured.levels : fallback).map((item) => ({ ...item })));
+    setLevelsError(null);
+    setLevelsOpen(true);
+  }
+
+  function saveLevelsEditor() {
+    if (!levelsTarget) return;
+    const seen = new Set<string>();
+    const cleaned = levelsDraft
+      .map((item) => ({
+        value: String(item.value || "").trim().toUpperCase(),
+        label: String(item.label || "").trim(),
+      }))
+      .filter((item) => item.value && item.label && !seen.has(item.value) && seen.add(item.value))
+      .slice(0, 12);
+
+    if (!cleaned.length) {
+      setLevelsError("Ajoutez au moins un niveau avec un code interne et un libellé.");
+      return;
+    }
+
+    setFormationLevelConfigurations((current) => [
+      ...current.filter((item) => item.formationKey !== levelsTarget.key),
+      { formationKey: levelsTarget.key, levels: cleaned, updatedAt: new Date().toISOString() },
+    ]);
+    setLevelsOpen(false);
+    setLevelsTarget(null);
     setSaved(false);
   }
 
@@ -260,6 +331,20 @@ export default function OrganisationPedagogiquePage() {
   const selectedCatalogFormations = useMemo(
     () => FORMATION_CATALOG.filter((item) => selectedCatalogIds.includes(item.id)),
     [selectedCatalogIds],
+  );
+
+  const configuredFormations = useMemo(
+    () =>
+      getConfiguredFormations({
+        version: 2,
+        configured: true,
+        educationTypes,
+        selectedCatalogFormationIds: selectedCatalogIds,
+        customFormations,
+        formationLevelConfigurations,
+        legacyGeneralProtected: false,
+      }),
+    [customFormations, educationTypes, formationLevelConfigurations, selectedCatalogIds],
   );
 
   const canSave = educationTypes.length > 0 && missingFormationTypes.length === 0;
@@ -286,6 +371,7 @@ export default function OrganisationPedagogiquePage() {
           educationTypes,
           selectedCatalogFormationIds: selectedCatalogIds,
           customFormations,
+          formationLevelConfigurations,
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as ApiResponse;
@@ -297,6 +383,7 @@ export default function OrganisationPedagogiquePage() {
       setEducationTypes(payload.organization.educationTypes);
       setSelectedCatalogIds(payload.organization.selectedCatalogFormationIds);
       setCustomFormations(payload.organization.customFormations);
+      setFormationLevelConfigurations(payload.organization.formationLevelConfigurations || []);
       setConfiguredAt(payload.organization.configuredAt || null);
       setSaved(true);
     } catch (saveError: any) {
@@ -567,10 +654,57 @@ export default function OrganisationPedagogiquePage() {
         </section>
       ) : null}
 
+      {configuredFormations.length > 0 ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-700">
+              <span className="font-bold">3</span>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Filières et niveaux utilisés</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Adaptez les niveaux proposés par Mon Cahier. Le code interne évite de mélanger deux « 1re année » de filières différentes.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
+            {configuredFormations.map((formation) => {
+              const fallback = formation.source === "catalog"
+                ? getSuggestedCatalogFormationLevels(FORMATION_CATALOG.find((item) => item.id === formation.sourceId)!)
+                : getSuggestedCustomFormationLevels(customFormations.find((item) => item.id === formation.sourceId)!);
+              return (
+                <div key={formation.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="font-semibold text-slate-900">{formation.diplomaLabel} — {formation.name}</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {formation.levels.map((level) => (
+                          <span key={level.value} className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-700 ring-1 ring-slate-200">
+                            {level.label} <b className="ml-1 text-slate-900">({level.value})</b>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openLevelsEditor(formation.key, formation.name, fallback)}
+                      className="shrink-0 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-800 hover:bg-violet-50"
+                    >
+                      Configurer les niveaux
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex items-start gap-3">
           <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700">
-            <span className="font-bold">3</span>
+            <span className="font-bold">4</span>
           </div>
           <div>
             <h2 className="text-lg font-bold text-slate-900">Synthèse avant enregistrement</h2>
@@ -646,6 +780,48 @@ export default function OrganisationPedagogiquePage() {
           </div>
         </div>
       </section>
+
+      {levelsOpen && levelsTarget ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h3 className="font-bold text-slate-900">Niveaux — {levelsTarget.name}</h3>
+              <p className="mt-1 text-sm text-slate-500">Chaque code doit être unique dans l’établissement.</p>
+            </div>
+            <div className="space-y-3 px-5 py-5">
+              {levelsError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{levelsError}</div> : null}
+              {levelsDraft.map((level, index) => (
+                <div key={`${index}-${level.value}`} className="grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[180px_1fr_auto]">
+                  <input
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold uppercase"
+                    value={level.value}
+                    onChange={(event) => setLevelsDraft((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))}
+                    placeholder="Code interne"
+                  />
+                  <input
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    value={level.label}
+                    onChange={(event) => setLevelsDraft((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))}
+                    placeholder="Libellé visible"
+                  />
+                  <button type="button" onClick={() => setLevelsDraft((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded-lg border border-rose-200 px-3 py-2 text-sm text-rose-700 hover:bg-rose-50">Retirer</button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setLevelsDraft((current) => [...current, { value: "", label: "" }])}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                + Ajouter un niveau
+              </button>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              <button type="button" onClick={() => setLevelsOpen(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Annuler</button>
+              <button type="button" onClick={saveLevelsEditor} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Enregistrer les niveaux</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {customOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">

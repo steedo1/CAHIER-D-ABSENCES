@@ -129,7 +129,7 @@ export async function GET(req: NextRequest) {
   let query = srv
     .from("classes")
     .select(
-      "id,label,level,code,academic_year,official_track_code,class_phone_e164",
+      "id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164",
     )
     .eq("institution_id", institutionId);
 
@@ -157,6 +157,9 @@ export async function GET(req: NextRequest) {
     academic_year: c.academic_year,
     official_track_code: c.official_track_code,
     officialTrackCode: c.official_track_code,
+    education_type: c.education_type ?? null,
+    formation_code: c.formation_code ?? null,
+    formation_level_code: c.formation_level_code ?? null,
     class_phone_e164: c.class_phone_e164 ?? null,
   }));
 

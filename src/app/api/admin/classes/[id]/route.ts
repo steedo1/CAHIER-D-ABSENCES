@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
+import { isEducationType } from "@/lib/education-organization";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -132,7 +133,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
   const { data: current, error: currentErr } = await srv
     .from("classes")
-    .select("id,label,level,code,academic_year,official_track_code,class_phone_e164")
+    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164")
     .eq("id", id)
     .eq("institution_id", institution_id)
     .maybeSingle();
@@ -152,6 +153,24 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   if (typeof body.code === "string" || body.code === null) row.code = body.code ?? null;
   if (typeof body.academic_year === "string" || body.academic_year === null) {
     row.academic_year = body.academic_year ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "education_type")) {
+    if (body.education_type === null || body.education_type === "") {
+      row.education_type = null;
+    } else if (isEducationType(body.education_type)) {
+      row.education_type = body.education_type;
+    } else {
+      return NextResponse.json({ error: "bad_education_type" }, { status: 400 });
+    }
+  }
+  if (typeof body.formation_code === "string" || body.formation_code === null) {
+    row.formation_code = body.formation_code ? body.formation_code.trim() : null;
+  }
+  if (typeof body.formation_level_code === "string" || body.formation_level_code === null) {
+    row.formation_level_code = body.formation_level_code
+      ? body.formation_level_code.trim()
+      : null;
   }
 
   if (
@@ -269,7 +288,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     .update(row)
     .eq("id", id)
     .eq("institution_id", institution_id)
-    .select("id,label,level,code,academic_year,official_track_code,class_phone_e164")
+    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164")
     .maybeSingle();
 
   if (dbErr) {

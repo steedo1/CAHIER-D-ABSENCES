@@ -1,7 +1,17 @@
-// src/app/api/admin/institution/subject-coeffs/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getMyInstitutionId } from "../../_helpers/getMyInstitution";
+import {
+  EDUCATION_ORGANIZATION_SETTINGS_KEY,
+  EDUCATION_TYPE_OPTIONS,
+  getConfiguredFormations,
+  getDefaultEducationOrganization,
+  isEducationType,
+  type CustomFormation,
+  type EducationOrganizationSettings,
+  type EducationType,
+  type FormationLevelConfiguration,
+} from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +26,15 @@ type CoeffValue = {
   coeff: number;
   include_in_average: boolean;
   source_level: string;
+};
+
+type LevelContext = {
+  education_type: EducationType;
+  education_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
+  level: string;
+  level_label: string;
 };
 
 const OFFICIAL_TRACK_CODES = [
@@ -76,7 +95,6 @@ function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
   if (isOfficialTrackCode(raw)) return raw;
 
   const normalized = normalizeText(raw);
-
   const exactByNormalized: Record<string, OfficialTrackCode> = {
     "6EME": "6eme",
     "6E": "6eme",
@@ -98,7 +116,6 @@ function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
     "2C": "2ndeC",
     "1EREA1": "1ereA1",
     PREMIEREA1: "1ereA1",
-    "1A1OFFICIEL": "1ereA1",
     "1EREA2": "1ereA2",
     PREMIEREA2: "1ereA2",
     "1EREC": "1ereC",
@@ -109,7 +126,6 @@ function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
     "1D": "1ereD",
     TLEA1: "tleA1",
     TERMINALEA1: "tleA1",
-    TA1OFFICIEL: "tleA1",
     TLEA2: "tleA2",
     TERMINALEA2: "tleA2",
     TLEC: "tleC",
@@ -121,48 +137,46 @@ function normalizeOfficialTrackCode(value: unknown): OfficialTrackCode | null {
   };
 
   if (exactByNormalized[normalized]) return exactByNormalized[normalized];
-
   if (/^6/.test(normalized)) return "6eme";
   if (/^5/.test(normalized)) return "5eme";
   if (/^4/.test(normalized)) return "4eme";
   if (/^3/.test(normalized)) return "3eme";
-
   if (/^(2NDEA|2A|SECONDEA)/.test(normalized)) return "2ndeA";
   if (/^(2NDEC|2C|SECONDEC)/.test(normalized)) return "2ndeC";
-
   if (/^(1D|1ERED|PREMIERED)/.test(normalized)) return "1ereD";
   if (/^(1C|1EREC|PREMIEREC)/.test(normalized)) return "1ereC";
-
-  // Par défaut métier validé : les anciennes classes 1A*, sans précision,
-  // sont rattachées à 1ère A2. Les vraies A1 sont gérées via official_track_code.
   if (/^(1A|1EREA|PREMIEREA)/.test(normalized)) return "1ereA2";
-
   if (/^(TLED|TD|TERMINALED)/.test(normalized)) return "tleD";
   if (/^(TLEC|TC|TERMINALEC)/.test(normalized)) return "tleC";
-
-  // Même logique pour Terminale A : TA* ancien = Tle A2 par défaut.
   if (/^(TLEA|TA|TERMINALEA)/.test(normalized)) return "tleA2";
-
   return null;
-}
-
-function resolveClassOfficialTrack(row: any): OfficialTrackCode | null {
-  return (
-    normalizeOfficialTrackCode(row?.official_track_code) ||
-    normalizeOfficialTrackCode(row?.level) ||
-    normalizeOfficialTrackCode(row?.label)
-  );
 }
 
 function officialTrackLabel(level: string) {
   return isOfficialTrackCode(level) ? OFFICIAL_TRACK_LABELS[level] : level;
 }
 
-function sortLevels(a: string, b: string) {
-  const ao = OFFICIAL_TRACK_ORDER.get(a) ?? 999;
-  const bo = OFFICIAL_TRACK_ORDER.get(b) ?? 999;
+function educationLabel(type: EducationType) {
+  return EDUCATION_TYPE_OPTIONS.find((item) => item.id === type)?.label || type;
+}
+
+function sortContexts(a: LevelContext, b: LevelContext) {
+  const educationOrder = new Map(
+    EDUCATION_TYPE_OPTIONS.map((item, index) => [item.id, index]),
+  );
+  const educationDiff =
+    (educationOrder.get(a.education_type) ?? 99) -
+    (educationOrder.get(b.education_type) ?? 99);
+  if (educationDiff !== 0) return educationDiff;
+  const formationDiff = String(a.formation_label || "").localeCompare(
+    String(b.formation_label || ""),
+    "fr",
+  );
+  if (formationDiff !== 0) return formationDiff;
+  const ao = OFFICIAL_TRACK_ORDER.get(a.level) ?? 999;
+  const bo = OFFICIAL_TRACK_ORDER.get(b.level) ?? 999;
   if (ao !== bo) return ao - bo;
-  return officialTrackLabel(a).localeCompare(officialTrackLabel(b), "fr", {
+  return a.level_label.localeCompare(b.level_label, "fr", {
     numeric: true,
     sensitivity: "base",
   });
@@ -170,6 +184,10 @@ function sortLevels(a: string, b: string) {
 
 function coefficientKey(level: string, subjectId: string) {
   return `${level}__${subjectId}`;
+}
+
+function contextKey(type: EducationType, formationCode: string | null, level: string) {
+  return `${type}__${formationCode || ""}__${level}`;
 }
 
 function normalizeCoeffValue(row: any): CoeffValue {
@@ -180,131 +198,450 @@ function normalizeCoeffValue(row: any): CoeffValue {
   };
 }
 
+function readOrganization(settingsJson: unknown, hasExistingClasses: boolean) {
+  const fallback = getDefaultEducationOrganization({ hasExistingClasses });
+  if (!settingsJson || typeof settingsJson !== "object" || Array.isArray(settingsJson)) {
+    return fallback;
+  }
+  const raw = (settingsJson as Record<string, any>)[EDUCATION_ORGANIZATION_SETTINGS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fallback;
+
+  const educationTypes = Array.isArray(raw.educationTypes)
+    ? raw.educationTypes.filter(isEducationType)
+    : fallback.educationTypes;
+  const selectedCatalogFormationIds = Array.isArray(raw.selectedCatalogFormationIds)
+    ? raw.selectedCatalogFormationIds.map(String)
+    : [];
+  const customFormations = Array.isArray(raw.customFormations)
+    ? (raw.customFormations as CustomFormation[])
+    : [];
+  const formationLevelConfigurations = Array.isArray(raw.formationLevelConfigurations)
+    ? (raw.formationLevelConfigurations as FormationLevelConfiguration[])
+    : [];
+
+  const organization: EducationOrganizationSettings = {
+    version: raw.version === 2 ? 2 : 1,
+    configured: raw.configured === true,
+    educationTypes: educationTypes.length ? educationTypes : fallback.educationTypes,
+    selectedCatalogFormationIds,
+    customFormations,
+    formationLevelConfigurations,
+    legacyGeneralProtected: false,
+    configuredAt: raw.configuredAt || null,
+    updatedAt: raw.updatedAt || null,
+    updatedBy: raw.updatedBy || null,
+  };
+  return organization;
+}
+
+function subjectKey(name: string) {
+  return String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function slug(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 16);
+}
+
 export async function GET(_req: NextRequest) {
   const { institution_id, error } = await getMyInstitutionId();
   if (error) return error;
 
   const supabase = getSupabaseServiceClient();
 
-  // 1) Niveaux/séries officiels de l’établissement.
-  // On part désormais de classes.official_track_code. Le level/label ne sert
-  // que de secours pour les anciennes classes non encore complétées.
-  const { data: classRows, error: errClasses } = await supabase
-    .from("classes")
-    .select("level,label,official_track_code")
-    .eq("institution_id", institution_id);
+  const [institutionResult, classResult, subjectResult, coeffResult, assignmentResult] =
+    await Promise.all([
+      supabase
+        .from("institutions")
+        .select("settings_json")
+        .eq("id", institution_id)
+        .maybeSingle(),
+      supabase
+        .from("classes")
+        .select(
+          "level,label,official_track_code,education_type,formation_code,formation_level_code",
+        )
+        .eq("institution_id", institution_id),
+      supabase
+        .from("institution_subjects")
+        .select("subject_id,is_active,subjects(name)")
+        .eq("institution_id", institution_id),
+      supabase
+        .from("institution_subject_coeffs")
+        .select("level,subject_id,coeff,include_in_average")
+        .eq("institution_id", institution_id),
+      supabase
+        .from("institution_level_subjects")
+        .select(
+          "education_type,formation_code,level_code,subject_id,order_index,is_active",
+        )
+        .eq("institution_id", institution_id)
+        .eq("is_active", true),
+    ]);
 
-  if (errClasses) {
-    return NextResponse.json(
-      { ok: false, error: errClasses.message },
-      { status: 400 },
-    );
+  for (const result of [
+    institutionResult,
+    classResult,
+    subjectResult,
+    coeffResult,
+    assignmentResult,
+  ]) {
+    if (result.error) {
+      return NextResponse.json(
+        { ok: false, error: result.error.message },
+        { status: 400 },
+      );
+    }
   }
 
-  const levelSet = new Set<string>();
-  (classRows || []).forEach((row: any) => {
-    const official = resolveClassOfficialTrack(row);
-    if (official) levelSet.add(official);
-  });
+  const classRows = classResult.data || [];
+  const organization = readOrganization(
+    institutionResult.data?.settings_json,
+    classRows.length > 0,
+  );
+  const configuredFormations = getConfiguredFormations(organization);
 
-  // 2) Matières de l’établissement (institution_subjects → subjects)
-  const { data: subjectRows, error: errSubjects } = await supabase
-    .from("institution_subjects")
-    .select("subject_id, subjects(name)")
-    .eq("institution_id", institution_id);
-
-  if (errSubjects) {
-    return NextResponse.json(
-      { ok: false, error: errSubjects.message },
-      { status: 400 },
+  const contextMap = new Map<string, LevelContext>();
+  const addContext = (context: LevelContext) => {
+    if (!context.level) return;
+    contextMap.set(
+      contextKey(context.education_type, context.formation_code, context.level),
+      context,
     );
+  };
+
+  for (const formation of configuredFormations) {
+    for (const level of formation.levels) {
+      addContext({
+        education_type: formation.educationType,
+        education_label: educationLabel(formation.educationType),
+        formation_code: formation.key,
+        formation_label: `${formation.diplomaLabel} — ${formation.name}`,
+        level: level.value,
+        level_label: level.label,
+      });
+    }
   }
 
-  const subjects = (subjectRows || []).map((r: any) => ({
-    subject_id: String(r.subject_id),
-    subject_name: (r.subjects?.name as string) || "Matière",
-  }));
-
-  // 3) Coeffs existants.
-  // On garde une compatibilité avec les anciens niveaux stockés : 1A, TA, 1D, etc.
-  // Mais les nouvelles sauvegardes se font désormais sous le code officiel.
-  const { data: coeffRows, error: errCoeffs } = await supabase
-    .from("institution_subject_coeffs")
-    .select("level, subject_id, coeff, include_in_average")
-    .eq("institution_id", institution_id);
-
-  if (errCoeffs) {
-    return NextResponse.json(
-      { ok: false, error: errCoeffs.message },
-      { status: 400 },
+  const formationForLevel = (level: string) => {
+    const key = normalizeText(level);
+    return (
+      configuredFormations.find((formation) =>
+        formation.levels.some((item) => normalizeText(item.value) === key),
+      ) || null
     );
+  };
+
+  for (const row of classRows as any[]) {
+    const rawLevel = String(row.formation_level_code || row.level || "").trim();
+    const explicitType = isEducationType(row.education_type)
+      ? row.education_type
+      : null;
+    const explicitFormation = row.formation_code
+      ? configuredFormations.find((item) => item.key === row.formation_code) || null
+      : null;
+    const inferredFormation = explicitFormation || formationForLevel(rawLevel);
+
+    if (
+      (explicitType && explicitType !== "general_secondary") ||
+      inferredFormation
+    ) {
+      const type =
+        explicitType && explicitType !== "general_secondary"
+          ? explicitType
+          : inferredFormation!.educationType;
+      const formationCode = row.formation_code || inferredFormation?.key || null;
+      const formation =
+        configuredFormations.find((item) => item.key === formationCode) ||
+        inferredFormation;
+      const levelConfig = formation?.levels.find(
+        (item) => normalizeText(item.value) === normalizeText(rawLevel),
+      );
+      addContext({
+        education_type: type,
+        education_label: educationLabel(type),
+        formation_code: formationCode,
+        formation_label: formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : formationCode,
+        level: rawLevel,
+        level_label: levelConfig?.label || rawLevel,
+      });
+      continue;
+    }
+
+    const official =
+      normalizeOfficialTrackCode(row.official_track_code) ||
+      normalizeOfficialTrackCode(row.level) ||
+      normalizeOfficialTrackCode(row.label);
+    if (official) {
+      addContext({
+        education_type: "general_secondary",
+        education_label: educationLabel("general_secondary"),
+        formation_code: null,
+        formation_label: null,
+        level: official,
+        level_label: officialTrackLabel(official),
+      });
+    }
   }
+
+  const subjects: { subject_id: string; subject_name: string }[] = (subjectResult.data || [])
+    .filter((row: any) => row.is_active !== false)
+    .map((row: any) => ({
+      subject_id: String(row.subject_id),
+      subject_name: String(row.subjects?.name || "Matière"),
+    }))
+    .sort((a, b) => a.subject_name.localeCompare(b.subject_name, "fr"));
+  const subjectById = new Map(subjects.map((item) => [item.subject_id, item]));
 
   const exactByKey = new Map<string, CoeffValue>();
   const legacyByKey = new Map<string, CoeffValue>();
-
-  (coeffRows || []).forEach((r: any) => {
-    const rawLevel = String(r.level ?? "").trim();
-    const subjectId = String(r.subject_id);
-    if (!rawLevel || !subjectId) return;
-
+  for (const row of coeffResult.data || []) {
+    const rawLevel = String((row as any).level || "").trim();
+    const subjectId = String((row as any).subject_id || "").trim();
+    if (!rawLevel || !subjectId) continue;
     const official = normalizeOfficialTrackCode(rawLevel);
-    const value = normalizeCoeffValue(r);
-
+    const value = normalizeCoeffValue(row);
     if (official) {
       const key = coefficientKey(official, subjectId);
-      if (isOfficialTrackCode(rawLevel)) {
-        exactByKey.set(key, value);
-      } else if (!legacyByKey.has(key)) {
-        legacyByKey.set(key, value);
+      if (isOfficialTrackCode(rawLevel)) exactByKey.set(key, value);
+      else if (!legacyByKey.has(key)) legacyByKey.set(key, value);
+    } else {
+      exactByKey.set(coefficientKey(rawLevel, subjectId), value);
+      const formation = formationForLevel(rawLevel);
+      if (formation) {
+        const level = formation.levels.find(
+          (item) => normalizeText(item.value) === normalizeText(rawLevel),
+        );
+        addContext({
+          education_type: formation.educationType,
+          education_label: educationLabel(formation.educationType),
+          formation_code: formation.key,
+          formation_label: `${formation.diplomaLabel} — ${formation.name}`,
+          level: rawLevel,
+          level_label: level?.label || rawLevel,
+        });
       }
-      levelSet.add(official);
-      return;
+    }
+  }
+
+  const assignmentMap = new Map<string, Set<string>>();
+  for (const row of assignmentResult.data || []) {
+    const type = isEducationType((row as any).education_type)
+      ? ((row as any).education_type as EducationType)
+      : null;
+    if (!type) continue;
+    const formationCode = String((row as any).formation_code || "").trim() || null;
+    const level = String((row as any).level_code || "").trim();
+    const subjectId = String((row as any).subject_id || "").trim();
+    if (!level || !subjectId) continue;
+    const key = contextKey(type, formationCode, level);
+    const current = assignmentMap.get(key) || new Set<string>();
+    current.add(subjectId);
+    assignmentMap.set(key, current);
+  }
+
+  const levels = Array.from(contextMap.values()).sort(sortContexts);
+  const items: any[] = [];
+
+  for (const context of levels) {
+    let relevantSubjectIds: string[];
+    if (context.education_type === "general_secondary") {
+      relevantSubjectIds = subjects.map((item) => item.subject_id);
+    } else {
+      const key = contextKey(
+        context.education_type,
+        context.formation_code,
+        context.level,
+      );
+      const assigned = new Set(assignmentMap.get(key) || []);
+      for (const row of coeffResult.data || []) {
+        if (String((row as any).level || "") === context.level) {
+          assigned.add(String((row as any).subject_id || ""));
+        }
+      }
+      relevantSubjectIds = Array.from(assigned).filter((id) => subjectById.has(id));
     }
 
-    // Sécurité : on garde les éventuels niveaux personnalisés au lieu de les perdre.
-    const key = coefficientKey(rawLevel, subjectId);
-    exactByKey.set(key, value);
-    levelSet.add(rawLevel);
-  });
-
-  const levels = Array.from(levelSet).sort(sortLevels);
-
-  // 4) Grille complète série officielle × matière (coeff par défaut = 1)
-  const items: {
-    level: string;
-    level_label: string;
-    subject_id: string;
-    subject_name: string;
-    coeff: number;
-    include_in_average: boolean;
-  }[] = [];
-
-  for (const level of levels) {
-    for (const subj of subjects) {
-      const key = coefficientKey(level, subj.subject_id);
+    for (const subjectId of relevantSubjectIds) {
+      const subject = subjectById.get(subjectId);
+      if (!subject) continue;
+      const key = coefficientKey(context.level, subjectId);
       const existing = exactByKey.get(key) || legacyByKey.get(key);
-
       items.push({
-        level,
-        level_label: officialTrackLabel(level),
-        subject_id: subj.subject_id,
-        subject_name: subj.subject_name,
+        ...context,
+        subject_id: subjectId,
+        subject_name: subject.subject_name,
         coeff: existing ? existing.coeff : 1,
         include_in_average: existing ? existing.include_in_average : true,
       });
     }
   }
 
-  items.sort((a, b) => {
-    const lv = sortLevels(a.level, b.level);
-    if (lv !== 0) return lv;
-    return a.subject_name.localeCompare(b.subject_name, "fr", {
-      sensitivity: "base",
-    });
+  return NextResponse.json({
+    ok: true,
+    items,
+    levels,
+    available_subjects: subjects,
   });
+}
 
-  return NextResponse.json({ ok: true, items });
+export async function POST(req: NextRequest) {
+  const { institution_id, error } = await getMyInstitutionId();
+  if (error) return error;
+
+  const body = await req.json().catch(() => ({}));
+  const educationType = body?.education_type;
+  const formationCode = String(body?.formation_code || "").trim();
+  const level = String(body?.level || "").trim();
+  const subjectIdRaw = String(body?.subject_id || "").trim();
+  const subjectName = String(body?.subject_name || "").trim();
+
+  if (
+    !isEducationType(educationType) ||
+    educationType === "general_secondary" ||
+    !formationCode ||
+    !level ||
+    (!subjectIdRaw && !subjectName)
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "bad_payload" },
+      { status: 400 },
+    );
+  }
+
+  const supabase = getSupabaseServiceClient();
+  let subjectId = subjectIdRaw;
+  let resolvedName = subjectName;
+
+  if (subjectId) {
+    const { data, error: subjectError } = await supabase
+      .from("subjects")
+      .select("id,name")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (subjectError || !data?.id) {
+      return NextResponse.json(
+        { ok: false, error: subjectError?.message || "subject_not_found" },
+        { status: 400 },
+      );
+    }
+    resolvedName = String(data.name || subjectName || "Discipline");
+  } else {
+    const key = subjectKey(subjectName);
+    const { data: existing } = await supabase
+      .from("subjects")
+      .select("id,name,subject_key")
+      .eq("subject_key", key)
+      .maybeSingle();
+
+    if (existing?.id) {
+      subjectId = String(existing.id);
+      resolvedName = String(existing.name || subjectName);
+    } else {
+      const { data: created, error: createError } = await supabase
+        .from("subjects")
+        .insert({ name: subjectName, code: slug(subjectName) })
+        .select("id,name")
+        .single();
+      if (createError || !created?.id) {
+        const { data: reread } = await supabase
+          .from("subjects")
+          .select("id,name")
+          .eq("subject_key", key)
+          .maybeSingle();
+        if (!reread?.id) {
+          return NextResponse.json(
+            { ok: false, error: createError?.message || "subject_create_failed" },
+            { status: 400 },
+          );
+        }
+        subjectId = String(reread.id);
+        resolvedName = String(reread.name || subjectName);
+      } else {
+        subjectId = String(created.id);
+        resolvedName = String(created.name || subjectName);
+      }
+    }
+  }
+
+  const { error: institutionSubjectError } = await supabase
+    .from("institution_subjects")
+    .upsert(
+      { institution_id, subject_id: subjectId, is_active: true },
+      { onConflict: "institution_id,subject_id" },
+    );
+  if (institutionSubjectError) {
+    return NextResponse.json(
+      { ok: false, error: institutionSubjectError.message },
+      { status: 400 },
+    );
+  }
+
+  const { error: assignmentError } = await supabase
+    .from("institution_level_subjects")
+    .upsert(
+      {
+        institution_id,
+        education_type: educationType,
+        formation_code: formationCode,
+        level_code: level,
+        subject_id: subjectId,
+        is_active: true,
+      },
+      {
+        onConflict:
+          "institution_id,education_type,formation_code,level_code,subject_id",
+      },
+    );
+  if (assignmentError) {
+    return NextResponse.json(
+      { ok: false, error: assignmentError.message },
+      { status: 400 },
+    );
+  }
+
+  const { error: coeffError } = await supabase
+    .from("institution_subject_coeffs")
+    .upsert(
+      {
+        institution_id,
+        level,
+        subject_id: subjectId,
+        coeff: 1,
+        include_in_average: true,
+      },
+      { onConflict: "institution_id,level,subject_id" },
+    );
+  if (coeffError) {
+    return NextResponse.json(
+      { ok: false, error: coeffError.message },
+      { status: 400 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    item: {
+      education_type: educationType,
+      formation_code: formationCode,
+      level,
+      subject_id: subjectId,
+      subject_name: resolvedName,
+      coeff: 1,
+    },
+  });
 }
 
 export async function PUT(req: NextRequest) {
@@ -356,11 +693,10 @@ export async function PUT(req: NextRequest) {
   }
 
   const supabase = getSupabaseServiceClient();
-
   const { data, error: dbErr } = await supabase
     .from("institution_subject_coeffs")
     .upsert(rows, { onConflict: "institution_id,level,subject_id" })
-    .select("level, subject_id, coeff");
+    .select("level,subject_id,coeff");
 
   if (dbErr) {
     return NextResponse.json(
