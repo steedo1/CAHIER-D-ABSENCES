@@ -3,8 +3,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { EDUCATION_TYPE_OPTIONS, type EducationType } from "@/lib/education-organization";
+import { useEducationTeachingContext } from "@/hooks/useEducationTeachingContext";
 
-type ClassRow   = { id: string; name: string; level?: string | null; academic_year?: string | null };
+type ClassRow = {
+  id: string;
+  name: string;
+  level?: string | null;
+  academic_year?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
+};
 type SubjectRow = { id: string; name: string; inst_subject_id: string | null }; // id = subjects.id, inst_subject_id = institution_subjects.id
 type TeacherRow = { id: string; display_name: string | null; email: string | null; phone: string | null };
 type AcademicYearRow = { code: string; label?: string | null; start_date?: string | null; is_current?: boolean | null };
@@ -13,7 +23,14 @@ type AcademicYearRow = { code: string; label?: string | null; start_date?: strin
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
   subject: { id: string | null; label: string }; // ici subject.id = institution_subjects.id (ou null)
-  classes: Array<{ id: string; name: string; level: string | null }>;
+  classes: Array<{
+    id: string;
+    name: string;
+    level: string | null;
+    education_type?: EducationType | null;
+    formation_code?: string | null;
+    formation_level_code?: string | null;
+  }>;
 };
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -36,6 +53,11 @@ function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
 
 export default function AffectationsPage() {
   const router = useRouter();
+  const educationContext = useEducationTeachingContext();
+  const [educationType, setEducationType] =
+    useState<EducationType>("general_secondary");
+  const [formationCode, setFormationCode] = useState("");
+  const [formationLevelCode, setFormationLevelCode] = useState("");
 
   async function fetchJSON<T = any>(url: string) {
     const r = await fetch(url, { cache: "no-store" });
@@ -131,6 +153,9 @@ export default function AffectationsPage() {
           name: x.name || x.label || x.code || "Classe",
           level: x.level ?? null,
           academic_year: x.academic_year ?? c.academic_year ?? selectedAcademicYear ?? null,
+          education_type: x.education_type ?? null,
+          formation_code: x.formation_code ?? null,
+          formation_level_code: x.formation_level_code ?? null,
         })));
         setClassIds([]);
         setLevelsFilter("");
@@ -158,6 +183,78 @@ export default function AffectationsPage() {
     })();
   }, [subjectId]);
 
+  useEffect(() => {
+    if (
+      !educationContext.educationTypes.includes(educationType) &&
+      educationContext.educationTypes.length
+    ) {
+      setEducationType(educationContext.educationTypes[0]);
+    }
+  }, [educationContext.educationTypes, educationType]);
+
+  useEffect(() => {
+    setClassIds([]);
+    setSubjectId("");
+    setTeacherId("");
+    setLevelsFilter("");
+    if (educationType === "general_secondary") {
+      setFormationCode("");
+      setFormationLevelCode("");
+      return;
+    }
+    const choices = educationContext.formationsFor(educationType);
+    if (!choices.some((formation) => formation.key === formationCode)) {
+      setFormationCode(choices[0]?.key || "");
+      setFormationLevelCode("");
+    }
+  }, [educationContext.formations, educationType]);
+
+  const formationOptions = useMemo(
+    () => educationContext.formationsFor(educationType),
+    [educationContext.formations, educationType],
+  );
+  const contextLevels = useMemo(
+    () => educationContext.levelsFor(educationType, formationCode || null),
+    [educationContext.levels, educationType, formationCode],
+  );
+
+  useEffect(() => {
+    if (educationType === "general_secondary") return;
+    if (!contextLevels.some((item) => item.level === formationLevelCode)) {
+      setFormationLevelCode(contextLevels[0]?.level || "");
+    }
+  }, [educationType, contextLevels, formationLevelCode]);
+
+  const allowedSubjectIds = useMemo(
+    () =>
+      new Set(
+        educationContext
+          .subjectsFor(educationType, formationCode || null, formationLevelCode || null)
+          .map((subject) => subject.subject_id),
+      ),
+    [
+      educationContext.items,
+      educationContext.availableSubjects,
+      educationType,
+      formationCode,
+      formationLevelCode,
+    ],
+  );
+
+  const visibleSubjects = useMemo(
+    () =>
+      educationType === "general_secondary"
+        ? subjects
+        : subjects.filter((subject) => allowedSubjectIds.has(subject.id)),
+    [subjects, educationType, allowedSubjectIds],
+  );
+
+  useEffect(() => {
+    if (subjectId && !visibleSubjects.some((subject) => subject.id === subjectId)) {
+      setSubjectId("");
+    }
+  }, [visibleSubjects, subjectId]);
+
   const levels = useMemo(
     () =>
       Array.from(new Set(classes.map((c) => c.level).filter(Boolean)))
@@ -165,9 +262,29 @@ export default function AffectationsPage() {
     [classes]
   );
 
+  const educationScopedClasses = useMemo(() => {
+    return classes.filter((classe) => {
+      const classType =
+        classe.education_type ||
+        (classe.formation_code ? educationType : "general_secondary");
+      if (educationType === "general_secondary") {
+        return classType === "general_secondary" && !classe.formation_code;
+      }
+      if (classType !== educationType) return false;
+      if (String(classe.formation_code || "") !== String(formationCode || "")) {
+        return false;
+      }
+      const classLevel = classe.formation_level_code || classe.level || "";
+      return !formationLevelCode || classLevel === formationLevelCode;
+    });
+  }, [classes, educationType, formationCode, formationLevelCode]);
+
   const filteredClasses = useMemo(
-    () => classes.filter((c) => !levelsFilter || c.level === levelsFilter),
-    [classes, levelsFilter]
+    () =>
+      educationType === "general_secondary" && levelsFilter
+        ? educationScopedClasses.filter((classe) => classe.level === levelsFilter)
+        : educationScopedClasses,
+    [educationScopedClasses, educationType, levelsFilter],
   );
 
   function toggleClass(id: string) {
@@ -204,6 +321,9 @@ export default function AffectationsPage() {
           subject_id: instSubjectId || null, // peut être null au primaire
           class_ids: classIds,
           academic_year: selectedAcademicYear || null,
+          education_type: educationType,
+          formation_code: formationCode || null,
+          formation_level_code: formationLevelCode || null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -271,6 +391,13 @@ export default function AffectationsPage() {
       if (q.trim()) url.searchParams.set("q", q.trim());
       if (manageSubject) url.searchParams.set("subject_id", manageSubject); // attend institution_subjects.id
       if (selectedAcademicYear) url.searchParams.set("academic_year", selectedAcademicYear);
+      url.searchParams.set("education_type", educationType);
+      if (educationType !== "general_secondary") {
+        if (formationCode) url.searchParams.set("formation_code", formationCode);
+        if (formationLevelCode) {
+          url.searchParams.set("formation_level_code", formationLevelCode);
+        }
+      }
       const j = await fetchJSON<{ items: CurrentItem[] }>(url.toString());
       setCurrent(j.items || []);
     } catch (e: any) {
@@ -284,12 +411,12 @@ export default function AffectationsPage() {
   useEffect(() => {
     loadCurrent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, educationType, formationCode, formationLevelCode]);
   useEffect(() => {
     const t = setTimeout(loadCurrent, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, manageSubject, selectedAcademicYear]);
+  }, [q, manageSubject, selectedAcademicYear, educationType, formationCode, formationLevelCode]);
 
   async function removeOne(teacher_id: string, class_id: string, subject_id: string | null) {
     try {
@@ -314,7 +441,11 @@ export default function AffectationsPage() {
     }
   }
 
-  async function clearAll(teacher_id: string, subject_id: string | null) {
+  async function clearAll(
+    teacher_id: string,
+    subject_id: string | null,
+    contextClassIds: string[],
+  ) {
     try {
       const r = await fetch("/api/admin/associations", {
         method: "POST",
@@ -324,6 +455,7 @@ export default function AffectationsPage() {
           teacher_id,
           subject_id, // si null → toutes disciplines
           academic_year: selectedAcademicYear || null,
+          class_ids: contextClassIds,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -350,6 +482,7 @@ export default function AffectationsPage() {
           type: "teacher_classes_clear_all",
           subject_id: subject_id || null, // optionnel, attend inst_subject_id
           academic_year: selectedAcademicYear || null,
+          class_ids: educationScopedClasses.map((classe) => classe.id),
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -393,6 +526,65 @@ export default function AffectationsPage() {
         <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
           Étape 1 • Choisir la discipline et l’enseignant
         </div>
+        {educationContext.educationTypes.length > 1 ? (
+          <div className="flex flex-wrap gap-2">
+            {educationContext.educationTypes.map((type) => {
+              const option = EDUCATION_TYPE_OPTIONS.find((item) => item.id === type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setEducationType(type)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+                    educationType === type
+                      ? "border-emerald-500 bg-white text-emerald-800 shadow-sm"
+                      : "border-emerald-100 bg-white/70 text-slate-700"
+                  }`}
+                >
+                  {option?.shortLabel ?? type}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {educationType !== "general_secondary" ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-xs text-slate-600">Formation / filière</div>
+              <Select
+                value={formationCode}
+                onChange={(event) => {
+                  setFormationCode(event.target.value);
+                  setFormationLevelCode("");
+                }}
+              >
+                <option value="">— Choisir —</option>
+                {formationOptions.map((formation) => (
+                  <option key={formation.key} value={formation.key}>
+                    {formation.diplomaLabel} — {formation.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs text-slate-600">Année de formation / niveau</div>
+              <Select
+                value={formationLevelCode}
+                onChange={(event) => setFormationLevelCode(event.target.value)}
+                disabled={!formationCode}
+              >
+                <option value="">— Choisir —</option>
+                {contextLevels.map((level) => (
+                  <option key={level.level} value={level.level}>
+                    {level.level_label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div>
             <div className="mb-1 text-xs text-slate-600">Année scolaire</div>
@@ -421,7 +613,7 @@ export default function AffectationsPage() {
             {/* value = subjects.id (global). On en déduit inst_subject_id côté JS */}
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
               <option value="">— Toutes les disciplines —</option>
-              {subjects.map((s) => (
+              {visibleSubjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
@@ -446,17 +638,26 @@ export default function AffectationsPage() {
             </Select>
           </div>
 
-          <div>
-            <div className="mb-1 text-xs text-slate-600">Filtrer par niveau (optionnel)</div>
-            <Select value={levelsFilter} onChange={(e) => setLevelsFilter(e.target.value)}>
-              <option value="">— Tous les niveaux —</option>
-              {levels.map((l) => (
-                <option key={String(l)} value={String(l)}>
-                  {String(l)}
-                </option>
-              ))}
-            </Select>
-          </div>
+          {educationType === "general_secondary" ? (
+            <div>
+              <div className="mb-1 text-xs text-slate-600">Filtrer par niveau (optionnel)</div>
+              <Select value={levelsFilter} onChange={(e) => setLevelsFilter(e.target.value)}>
+                <option value="">— Tous les niveaux —</option>
+                {levels.map((l) => (
+                  <option key={String(l)} value={String(l)}>
+                    {String(l)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-1 text-xs text-slate-600">Contexte actif</div>
+              <div className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700">
+                {contextLevels.find((item) => item.level === formationLevelCode)?.level_label || "Niveau à choisir"}
+              </div>
+            </div>
+          )}
         </div>
 
         {selectedTeacher && (
@@ -570,7 +771,7 @@ export default function AffectationsPage() {
             {/* Filtre par discipline existante → utiliser institution_subjects.id */}
             <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)} className="bg-white">
               <option value="">Toutes disciplines</option>
-              {subjects
+              {visibleSubjects
                 .filter((s) => !!s.inst_subject_id)
                 .map((s) => (
                   <option key={s.inst_subject_id!} value={s.inst_subject_id!}>
@@ -627,7 +828,13 @@ export default function AffectationsPage() {
                     <td className="px-3 py-2 align-top">
                       <button
                         className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50"
-                        onClick={() => clearAll(g.teacher.id, g.subject.id)}
+                        onClick={() =>
+                          clearAll(
+                            g.teacher.id,
+                            g.subject.id,
+                            g.classes.map((classe) => classe.id),
+                          )
+                        }
                         title="Tout retirer pour cet enseignant (et cette discipline le cas échéant)"
                       >
                         Tout retirer{g.subject.id ? " (cette discipline)" : ""}
@@ -647,6 +854,9 @@ export default function AffectationsPage() {
               <div className="font-semibold text-rose-800 text-sm">Zone de réinitialisation</div>
               <div className="text-[12px] text-rose-700">
                 Cette action supprime uniquement les affectations actives de l’année scolaire sélectionnée
+                {educationType !== "general_secondary"
+                  ? " dans la formation et l’année de formation affichées"
+                  : ""}
                 {manageSubject ? " pour la discipline sélectionnée." : "."}
               </div>
             </div>
@@ -654,7 +864,7 @@ export default function AffectationsPage() {
               {/* même select que ci-dessus (inst_subject_id) */}
               <Select value={manageSubject} onChange={(e) => setManageSubject(e.target.value)} className="bg-white">
                 <option value="">Toutes disciplines</option>
-                {subjects
+                {visibleSubjects
                   .filter((s) => !!s.inst_subject_id)
                   .map((s) => (
                     <option key={s.inst_subject_id!} value={s.inst_subject_id!}>
@@ -665,7 +875,13 @@ export default function AffectationsPage() {
               <button
                 onClick={() => clearAllInstitution(manageSubject || null)}
                 className="rounded-xl bg-rose-600 text-white px-4 py-2 text-sm font-medium shadow hover:bg-rose-700 disabled:opacity-60"
-                disabled={manageBusy}
+                disabled={
+                  manageBusy ||
+                  (educationType !== "general_secondary" &&
+                    (!formationCode ||
+                      !formationLevelCode ||
+                      educationScopedClasses.length === 0))
+                }
               >
                 {manageBusy ? "Réinitialisation…" : "Tout retirer (global)"}
               </button>

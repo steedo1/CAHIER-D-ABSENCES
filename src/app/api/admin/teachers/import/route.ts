@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
+import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -326,6 +327,28 @@ export async function POST(req: NextRequest) {
     typeof body?.country === "string" && body.country.trim()
       ? String(body.country).trim()
       : undefined;
+  const educationType: EducationType = isEducationType(body?.education_type)
+    ? body.education_type
+    : "general_secondary";
+  const formationCode =
+    typeof body?.formation_code === "string" && body.formation_code.trim()
+      ? body.formation_code.trim()
+      : null;
+  const formationLevelCode =
+    typeof body?.formation_level_code === "string" &&
+    body.formation_level_code.trim()
+      ? body.formation_level_code.trim()
+      : null;
+
+  if (
+    educationType !== "general_secondary" &&
+    (!formationCode || !formationLevelCode)
+  ) {
+    return NextResponse.json(
+      { error: "teacher_import_education_context_required" },
+      { status: 400 },
+    );
+  }
 
   const defaultPasswordOrRandom = () =>
     String(body?.default_password || process.env.DEFAULT_TEMP_PASSWORD || "") ||
@@ -346,6 +369,9 @@ export async function POST(req: NextRequest) {
         subjects: r.subjects || [],
         employment_type: r.employment_type,
         payroll_enabled: r.payroll_enabled,
+        education_type: educationType,
+        formation_code: formationCode,
+        formation_level_code: formationLevelCode,
       })),
     });
   }
@@ -370,7 +396,10 @@ export async function POST(req: NextRequest) {
     error?: string;
   }> = [];
 
-  const knownSubjects = new Map<string, string>();
+  const knownSubjects = new Map<
+    string,
+    { institution_subject_id: string; subject_id: string | null; label: string }
+  >();
 
   async function ensureSubject(instId: string, rawLabel: string): Promise<{
     institution_subject_id: string;
@@ -383,13 +412,8 @@ export async function POST(req: NextRequest) {
     const { code, name } = canonicalizeSubject(raw);
     const cacheKey = norm(name);
 
-    if (knownSubjects.has(cacheKey)) {
-      return {
-        institution_subject_id: knownSubjects.get(cacheKey)!,
-        subject_id: null,
-        label: raw,
-      };
-    }
+    const cached = knownSubjects.get(cacheKey);
+    if (cached) return cached;
 
     let subject_id: string | null = null;
 
@@ -454,12 +478,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (exactFound?.id) {
-      knownSubjects.set(cacheKey, String(exactFound.id));
-      return {
+      const resolved = {
         institution_subject_id: String(exactFound.id),
         subject_id,
         label: raw,
       };
+      knownSubjects.set(cacheKey, resolved);
+      return resolved;
     }
 
     if (subject_id) {
@@ -471,12 +496,13 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (byRef?.id) {
-        knownSubjects.set(cacheKey, String(byRef.id));
-        return {
+        const resolved = {
           institution_subject_id: String(byRef.id),
           subject_id,
           label: raw,
         };
+        knownSubjects.set(cacheKey, resolved);
+        return resolved;
       }
     }
 
@@ -488,15 +514,37 @@ export async function POST(req: NextRequest) {
 
     if (!error && createdRow?.id) {
       subjects_added++;
-      knownSubjects.set(cacheKey, String(createdRow.id));
-      return {
+      const resolved = {
         institution_subject_id: String(createdRow.id),
         subject_id,
         label: raw,
       };
+      knownSubjects.set(cacheKey, resolved);
+      return resolved;
     }
 
     return { institution_subject_id: "", subject_id: null, label: raw };
+  }
+
+  async function ensureLevelSubject(subjectId: string) {
+    if (educationType === "general_secondary") return;
+    if (!formationCode || !formationLevelCode) return;
+
+    const { error } = await srv.from("institution_level_subjects").upsert(
+      {
+        institution_id,
+        education_type: educationType,
+        formation_code: formationCode,
+        level_code: formationLevelCode,
+        subject_id: subjectId,
+        is_active: true,
+      },
+      {
+        onConflict:
+          "institution_id,education_type,formation_code,level_code,subject_id",
+      },
+    );
+    if (error) throw new Error(error.message);
   }
 
   async function ensureTeacherRole(instId: string, profile_id: string) {
@@ -687,6 +735,7 @@ export async function POST(req: NextRequest) {
       for (const subj of row.subjects || []) {
         if (!subj) continue;
         const { subject_id } = await ensureSubject(institution_id, subj);
+        if (subject_id) await ensureLevelSubject(subject_id);
         if (profile_id && subject_id) {
           try {
             await srv.from("teacher_subjects").upsert(
@@ -726,6 +775,9 @@ export async function POST(req: NextRequest) {
     failed,
     subjects_added,
     payroll_profiles_upserted,
+    education_type: educationType,
+    formation_code: formationCode,
+    formation_level_code: formationLevelCode,
     results,
   });
 }

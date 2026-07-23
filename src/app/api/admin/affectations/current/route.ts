@@ -6,7 +6,15 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
   subject: { id: string | null; label: string };
-  classes: Array<{ id: string; name: string | null; level: string | null; academic_year?: string | null }>;
+  classes: Array<{
+    id: string;
+    name: string | null;
+    level: string | null;
+    academic_year?: string | null;
+    education_type?: string | null;
+    formation_code?: string | null;
+    formation_level_code?: string | null;
+  }>;
 };
 
 const lc = (s: string | null | undefined) => (s ?? "").toLowerCase().trim();
@@ -64,6 +72,9 @@ export async function GET(req: NextRequest) {
   const qRaw = searchParams.get("q") || "";
   const subjectRaw = searchParams.get("subject_id") || ""; // institution_subjects.id OU subjects.id
   const academicYearRaw = (searchParams.get("academic_year") || "").trim();
+  const educationType = (searchParams.get("education_type") || "general_secondary").trim();
+  const formationCode = (searchParams.get("formation_code") || "").trim();
+  const formationLevelCode = (searchParams.get("formation_level_code") || "").trim();
   const q = norm(qRaw);
   const subjectFilter = (subjectRaw || "").trim();
   const academicYear = academicYearRaw || (await getCurrentAcademicYear(institution_id));
@@ -105,6 +116,23 @@ export async function GET(req: NextRequest) {
 
     if (shouldFilterYear && String(c?.academic_year || "") !== academicYear) {
       continue;
+    }
+
+    const classType = String(c?.education_type || "").trim();
+    const classFormation = String(c?.formation_code || "").trim();
+    const classFormationLevel = String(
+      c?.formation_level_code || c?.level || "",
+    ).trim();
+
+    if (educationType === "general_secondary") {
+      if ((classType && classType !== "general_secondary") || classFormation) {
+        continue;
+      }
+    } else {
+      const inferredType = classType || (classFormation ? educationType : "general_secondary");
+      if (inferredType !== educationType) continue;
+      if (!formationCode || classFormation !== formationCode) continue;
+      if (formationLevelCode && classFormationLevel !== formationLevelCode) continue;
     }
 
     const teacher_id = t?.id as string;
@@ -152,6 +180,11 @@ export async function GET(req: NextRequest) {
         name: clsName ? String(clsName) : null,
         level: clsLevel ? String(clsLevel) : null,
         academic_year: c?.academic_year ? String(c.academic_year) : null,
+        education_type: c?.education_type ? String(c.education_type) : null,
+        formation_code: c?.formation_code ? String(c.formation_code) : null,
+        formation_level_code: c?.formation_level_code
+          ? String(c.formation_level_code)
+          : null,
       });
     }
   }

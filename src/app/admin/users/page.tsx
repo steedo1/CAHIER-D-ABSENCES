@@ -2,6 +2,11 @@
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
+import EducationTeachingContextFields, {
+  type EducationTeachingContextValue,
+} from "@/components/admin/EducationTeachingContextFields";
+import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingContext";
+import type { EducationType } from "@/lib/education-organization";
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -54,6 +59,9 @@ type ClassItem = {
   level: string | null;
   code?: string | null;
   academic_year?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type TeacherRow = {
@@ -203,6 +211,15 @@ export default function UsersPage() {
   const [tEmploymentType, setTEmploymentType] =
     useState<EmploymentType>("permanent");
   const [tPayrollEnabled, setTPayrollEnabled] = useState(true);
+  const [createEducationContext, setCreateEducationContext] =
+    useState<EducationTeachingContextValue>({
+      educationType: "general_secondary",
+      formationCode: "",
+      levelCode: "",
+    });
+  const [createContextSubjects, setCreateContextSubjects] = useState<
+    EducationAvailableSubject[]
+  >([]);
 
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -224,6 +241,15 @@ export default function UsersPage() {
   const [newSubjectId, setNewSubjectId] = useState("");
   const [addingSubject, setAddingSubject] = useState(false);
   const [addMsg, setAddMsg] = useState<string | null>(null);
+  const [addEducationContext, setAddEducationContext] =
+    useState<EducationTeachingContextValue>({
+      educationType: "general_secondary",
+      formationCode: "",
+      levelCode: "",
+    });
+  const [addContextSubjects, setAddContextSubjects] = useState<
+    EducationAvailableSubject[]
+  >([]);
 
   const [payrollTeachers, setPayrollTeachers] = useState<TeacherPayrollRow[]>(
     []
@@ -243,11 +269,45 @@ export default function UsersPage() {
     [payrollTeachers, payrollTeacherId]
   );
 
-  const educatorLevels = useMemo(() => {
+  const createSubjectOptions = useMemo<SubjectItem[]>(() => {
+    if (createEducationContext.educationType === "general_secondary") return subjects;
+    const allowed = new Set(createContextSubjects.map((item) => item.subject_id));
+    return subjects.filter((subject) => allowed.has(subject.id));
+  }, [subjects, createContextSubjects, createEducationContext.educationType]);
+
+  const addSubjectOptions = useMemo<SubjectItem[]>(() => {
+    if (addEducationContext.educationType === "general_secondary") return subjects;
+    const allowed = new Set(addContextSubjects.map((item) => item.subject_id));
+    return subjects.filter((subject) => allowed.has(subject.id));
+  }, [subjects, addContextSubjects, addEducationContext.educationType]);
+
+  const educatorContextClasses = useMemo(() => {
+    return classesForEducator.filter((classe) => {
+      if (createEducationContext.educationType === "general_secondary") {
+        return (
+          (!classe.education_type ||
+            classe.education_type === "general_secondary") &&
+          !classe.formation_code
+        );
+      }
+      const classLevel = classe.formation_level_code || classe.level || "";
+      return (
+        classe.education_type === createEducationContext.educationType &&
+        String(classe.formation_code || "") ===
+          createEducationContext.formationCode &&
+        (!createEducationContext.levelCode ||
+          classLevel === createEducationContext.levelCode)
+      );
+    });
+  }, [classesForEducator, createEducationContext]);
+
+  const educatorLevels = useMemo<string[]>(() => {
     const levels = Array.from(
-      new Set(
-        classesForEducator
-          .map((c) => String(c.level || "").trim())
+      new Set<string>(
+        educatorContextClasses
+          .map((c) =>
+            String(c.formation_level_code || c.level || "").trim(),
+          )
           .filter(Boolean)
       )
     );
@@ -255,21 +315,24 @@ export default function UsersPage() {
     return levels.sort((a, b) =>
       a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" })
     );
-  }, [classesForEducator]);
+  }, [educatorContextClasses]);
 
   const educatorClassesForLevel = useMemo(() => {
     const level = educatorLevel.trim();
     if (!level) return [] as ClassItem[];
 
-    return classesForEducator
-      .filter((c) => String(c.level || "").trim() === level)
+    return educatorContextClasses
+      .filter(
+        (c) =>
+          String(c.formation_level_code || c.level || "").trim() === level,
+      )
       .sort((a, b) =>
         String(a.label || "").localeCompare(String(b.label || ""), "fr", {
           numeric: true,
           sensitivity: "base",
         })
       );
-  }, [classesForEducator, educatorLevel]);
+  }, [educatorContextClasses, educatorLevel]);
 
   function findSubjectById(id: string | null | undefined) {
     if (!id) return null;
@@ -313,6 +376,15 @@ export default function UsersPage() {
   useEffect(() => {
     setEducatorClassIds([]);
   }, [educatorLevel]);
+
+  useEffect(() => {
+    if (
+      createRole === "educator" &&
+      createEducationContext.educationType !== "general_secondary"
+    ) {
+      setEducatorLevel(createEducationContext.levelCode || "");
+    }
+  }, [createRole, createEducationContext]);
 
   useEffect(() => {
     if (!selectedPayrollTeacher) return;
@@ -364,6 +436,9 @@ export default function UsersPage() {
             level: c.level ? String(c.level) : null,
             code: c.code ? String(c.code) : null,
             academic_year: c.academic_year ? String(c.academic_year) : null,
+            education_type: c.education_type || null,
+            formation_code: c.formation_code || null,
+            formation_level_code: c.formation_level_code || null,
           }))
           .filter((c: ClassItem) => !!c.id)
       );
@@ -529,6 +604,16 @@ export default function UsersPage() {
     const rawEducatorLevel = educatorLevel.trim();
     const rawEducatorClassIds = educatorClassIds.filter(Boolean);
 
+    if (
+      rawRole === "teacher" &&
+      createEducationContext.educationType !== "general_secondary" &&
+      (!createEducationContext.formationCode || !createEducationContext.levelCode)
+    ) {
+      setSubmitting(false);
+      setMsg("Choisissez la formation et l’année de formation de l’enseignant.");
+      return;
+    }
+
     if (rawRole === "educator" && !rawEducatorLevel) {
       setSubmitting(false);
       setMsg("Choisissez le niveau suivi par l’éducateur.");
@@ -558,6 +643,18 @@ export default function UsersPage() {
           educator_level: rawRole === "educator" ? rawEducatorLevel : null,
           educator_class_ids:
             rawRole === "educator" ? rawEducatorClassIds : [],
+          education_type:
+            rawRole === "teacher" || rawRole === "educator"
+              ? createEducationContext.educationType
+              : null,
+          formation_code:
+            rawRole === "teacher" || rawRole === "educator"
+              ? createEducationContext.formationCode || null
+              : null,
+          formation_level_code:
+            rawRole === "teacher" || rawRole === "educator"
+              ? createEducationContext.levelCode || null
+              : null,
         }),
       });
 
@@ -709,6 +806,13 @@ export default function UsersPage() {
     const canonicalSubject = matchedAddSubject;
 
     if (!teacherIdForAdd || !rawSubject) return;
+    if (
+      addEducationContext.educationType !== "general_secondary" &&
+      (!addEducationContext.formationCode || !addEducationContext.levelCode)
+    ) {
+      setAddMsg("Choisissez la formation et l’année de formation.");
+      return;
+    }
     setAddingSubject(true);
     setAddMsg(null);
     try {
@@ -722,6 +826,9 @@ export default function UsersPage() {
           // Si l’API actuelle ne l’utilise pas encore, ça ne casse rien.
           subject_id: canonicalSubject?.id || null,
           subject: canonicalSubject?.name || rawSubject,
+          education_type: addEducationContext.educationType,
+          formation_code: addEducationContext.formationCode || null,
+          formation_level_code: addEducationContext.levelCode || null,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -877,6 +984,15 @@ export default function UsersPage() {
 
           {createRole === "teacher" && (
             <>
+              <div className="md:col-span-2">
+                <EducationTeachingContextFields
+                  value={createEducationContext}
+                  onChange={setCreateEducationContext}
+                  onSubjectsChange={setCreateContextSubjects}
+                  disabled={submitting}
+                  generalMessage="Le formulaire historique de l’enseignement général reste inchangé."
+                />
+              </div>
               <div>
                 <div className="mb-1 text-xs text-slate-500">Discipline</div>
                 <Input
@@ -891,7 +1007,7 @@ export default function UsersPage() {
                   placeholder="Mathématiques, Français, Musique, Arts plastiques…"
                 />
                 <datalist id="subjects-list">
-                  {subjects.map((s) => (
+                  {createSubjectOptions.map((s) => (
                     <option key={s.id} value={s.name} />
                   ))}
                 </datalist>
@@ -962,6 +1078,13 @@ export default function UsersPage() {
               <div className="text-sm font-semibold text-slate-900">
                 Affectation de l’éducateur
               </div>
+              <EducationTeachingContextFields
+                value={createEducationContext}
+                onChange={setCreateEducationContext}
+                disabled={submitting}
+                className="mt-3"
+                generalMessage="Le choix historique du niveau et des classes reste inchangé pour le général."
+              />
               <div className="mt-1 text-xs text-slate-600">
                 Choisis d’abord le niveau. Si aucune classe n’est cochée,
                 l’éducateur sera affecté à tout ce niveau. Si tu coches des
@@ -972,21 +1095,28 @@ export default function UsersPage() {
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <div className="mb-1 text-xs text-slate-500">Niveau suivi</div>
-                  <Select
-                    value={educatorLevel}
-                    onChange={(e) => setEducatorLevel(e.target.value)}
-                  >
-                    <option value="">— Choisir un niveau —</option>
-                    {educatorLevels.map((level) => (
-                      <option key={level} value={level}>
-                        {level}
-                      </option>
-                    ))}
-                  </Select>
+                  {createEducationContext.educationType ===
+                  "general_secondary" ? (
+                    <Select
+                      value={educatorLevel}
+                      onChange={(e) => setEducatorLevel(e.target.value)}
+                    >
+                      <option value="">— Choisir un niveau —</option>
+                      {educatorLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <div className="rounded-lg border bg-white px-3 py-2 text-sm text-slate-700">
+                      {educatorLevel || "Année de formation à sélectionner"}
+                    </div>
+                  )}
                   {educatorLevels.length === 0 ? (
                     <div className="mt-1 text-[11px] text-amber-700">
-                      Aucune classe chargée pour l’année scolaire active. Vérifie
-                      d’abord la création des classes.
+                      Aucune classe chargée pour ce contexte. Vérifie d’abord la
+                      création des classes.
                     </div>
                   ) : null}
                 </div>
@@ -1076,6 +1206,15 @@ export default function UsersPage() {
           canonique.
         </Help>
 
+        <EducationTeachingContextFields
+          value={addEducationContext}
+          onChange={setAddEducationContext}
+          onSubjectsChange={setAddContextSubjects}
+          disabled={addingSubject}
+          className="mb-3"
+          generalMessage="L’ajout historique d’une discipline générale reste inchangé."
+        />
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="md:col-span-1">
             <div className="mb-1 text-xs text-slate-500">Enseignant</div>
@@ -1096,7 +1235,7 @@ export default function UsersPage() {
           <div className="md:col-span-1">
             <div className="mb-1 text-xs text-slate-500">Discipline</div>
             <Input
-              list="subjects-list"
+              list="subjects-list-add"
               value={newSubjectName}
               onChange={(e) => {
                 const value = e.target.value;
@@ -1106,6 +1245,11 @@ export default function UsersPage() {
               }}
               placeholder="Ex: Mathématiques, Musique, Arts plastiques"
             />
+            <datalist id="subjects-list-add">
+              {addSubjectOptions.map((subject) => (
+                <option key={subject.id} value={subject.name} />
+              ))}
+            </datalist>
             {newSubjectName.trim() ? (
               matchedAddSubject ? (
                 <div className="mt-1 text-[11px] text-emerald-700">

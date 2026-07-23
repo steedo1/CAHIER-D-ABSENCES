@@ -3,6 +3,8 @@
 import type React from "react";
 import readXlsxFile from "read-excel-file/browser";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { EDUCATION_TYPE_OPTIONS, type EducationType } from "@/lib/education-organization";
+import { useEducationTeachingContext } from "@/hooks/useEducationTeachingContext";
 
 /* =========================
    UI helpers
@@ -206,6 +208,11 @@ async function parseImportFile(file: File): Promise<ParsedFileResult> {
 
 export default function ImportPage() {
   const [mode, setMode] = useState<Mode>("students");
+  const educationContext = useEducationTeachingContext();
+  const [teacherEducationType, setTeacherEducationType] =
+    useState<EducationType>("general_secondary");
+  const [teacherFormationCode, setTeacherFormationCode] = useState("");
+  const [teacherLevelCode, setTeacherLevelCode] = useState("");
 
   const [academicYears, setAcademicYears] = useState<AcademicYearRow[]>([]);
   const [academicYear, setAcademicYear] = useState<string>("");
@@ -229,6 +236,26 @@ export default function ImportPage() {
     [classes, level],
   );
 
+  const teacherFormations = useMemo(
+    () => educationContext.formationsFor(teacherEducationType),
+    [educationContext.formations, teacherEducationType],
+  );
+  const teacherLevels = useMemo(
+    () =>
+      educationContext.levelsFor(
+        teacherEducationType,
+        teacherFormationCode || null,
+      ),
+    [
+      educationContext.levels,
+      teacherEducationType,
+      teacherFormationCode,
+    ],
+  );
+  const teacherContextReady =
+    teacherEducationType === "general_secondary" ||
+    (!!teacherFormationCode && !!teacherLevelCode);
+
   const [csv, setCsv] = useState<string>("");
   const [preview, setPreview] = useState<any[] | null>(null);
 
@@ -250,6 +277,52 @@ export default function ImportPage() {
   useEffect(() => {
     void loadAcademicYears();
   }, []);
+
+  useEffect(() => {
+    if (
+      !educationContext.educationTypes.includes(teacherEducationType) &&
+      educationContext.educationTypes.length
+    ) {
+      setTeacherEducationType(educationContext.educationTypes[0]);
+    }
+  }, [educationContext.educationTypes, teacherEducationType]);
+
+  useEffect(() => {
+    if (teacherEducationType === "general_secondary") {
+      setTeacherFormationCode("");
+      setTeacherLevelCode("");
+      return;
+    }
+    const firstFormation = educationContext
+      .formationsFor(teacherEducationType)
+      .find((formation) => formation.key === teacherFormationCode);
+    if (!firstFormation) {
+      setTeacherFormationCode(
+        educationContext.formationsFor(teacherEducationType)[0]?.key || "",
+      );
+      setTeacherLevelCode("");
+    }
+  }, [
+    educationContext.formations,
+    teacherEducationType,
+    teacherFormationCode,
+  ]);
+
+  useEffect(() => {
+    if (teacherEducationType === "general_secondary") return;
+    const levelsForContext = educationContext.levelsFor(
+      teacherEducationType,
+      teacherFormationCode || null,
+    );
+    if (!levelsForContext.some((item) => item.level === teacherLevelCode)) {
+      setTeacherLevelCode(levelsForContext[0]?.level || "");
+    }
+  }, [
+    educationContext.levels,
+    teacherEducationType,
+    teacherFormationCode,
+    teacherLevelCode,
+  ]);
 
   useEffect(() => {
     if (!academicYear) {
@@ -342,7 +415,7 @@ export default function ImportPage() {
     mode === "students"
       ? !!csv.trim() && !!classId && !loading
       : mode === "teachers"
-        ? !!csv.trim() && !loading
+        ? !!csv.trim() && !loading && teacherContextReady
         : false;
 
   const canImport = canPreview;
@@ -403,6 +476,11 @@ export default function ImportPage() {
 
       const body: any = { action: "preview", csv };
       if (mode === "students" && classId) body.class_id = classId;
+      if (mode === "teachers") {
+        body.education_type = teacherEducationType;
+        body.formation_code = teacherFormationCode || null;
+        body.formation_level_code = teacherLevelCode || null;
+      }
 
       const r = await fetch(url, {
         method: "POST",
@@ -444,6 +522,11 @@ export default function ImportPage() {
 
       const body: any = { action: "commit", csv };
       if (mode === "students" && classId) body.class_id = classId;
+      if (mode === "teachers") {
+        body.education_type = teacherEducationType;
+        body.formation_code = teacherFormationCode || null;
+        body.formation_level_code = teacherLevelCode || null;
+      }
 
       const r = await fetch(url, {
         method: "POST",
@@ -685,6 +768,92 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
             <span className="font-medium">Conseil :</span> dans Excel, mets la
             colonne téléphone au format <b>Texte</b> pour éviter la perte d’un
             zéro initial.
+          </div>
+        )}
+
+        {mode === "teachers" && (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sky-800">
+              Enseignement concerné par cet import
+            </div>
+            {educationContext.educationTypes.length > 1 ? (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {educationContext.educationTypes.map((type) => {
+                  const option = EDUCATION_TYPE_OPTIONS.find(
+                    (item) => item.id === type,
+                  );
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setTeacherEducationType(type)}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+                        teacherEducationType === type
+                          ? "border-sky-500 bg-white text-sky-800 shadow-sm"
+                          : "border-slate-200 bg-white/70 text-slate-700"
+                      }`}
+                    >
+                      {option?.shortLabel ?? type}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {teacherEducationType === "general_secondary" ? (
+              <div className="text-sm text-slate-700">
+                Le modèle et le traitement historiques de l’enseignement général
+                restent inchangés.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Formation / filière
+                  </div>
+                  <Select
+                    value={teacherFormationCode}
+                    onChange={(event) => {
+                      setTeacherFormationCode(event.target.value);
+                      setTeacherLevelCode("");
+                    }}
+                  >
+                    <option value="">— Choisir —</option>
+                    {teacherFormations.map((formation) => (
+                      <option key={formation.key} value={formation.key}>
+                        {formation.diplomaLabel} — {formation.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <div className="mb-1 text-xs text-slate-500">
+                    Année de formation / niveau
+                  </div>
+                  <Select
+                    value={teacherLevelCode}
+                    onChange={(event) => setTeacherLevelCode(event.target.value)}
+                    disabled={!teacherFormationCode}
+                  >
+                    <option value="">— Choisir —</option>
+                    {teacherLevels.map((levelItem) => (
+                      <option key={levelItem.level} value={levelItem.level}>
+                        {levelItem.level_label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="md:col-span-2 text-xs text-slate-600">
+                  Le fichier garde les colonnes actuelles. Les disciplines importées
+                  seront simplement rattachées à la formation et à l’année choisies.
+                </div>
+              </div>
+            )}
+            {educationContext.error ? (
+              <div className="mt-2 text-xs text-rose-700">
+                {educationContext.error}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -945,6 +1114,9 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
         <div className="rounded-xl border bg-white p-4">
           <div className="mb-2 text-sm font-semibold">
             Prévisualisation ({preview.length})
+            {mode === "teachers" && teacherEducationType !== "general_secondary"
+              ? ` — ${teacherFormations.find((item) => item.key === teacherFormationCode)?.diplomaLabel || ""} ${teacherFormations.find((item) => item.key === teacherFormationCode)?.name || ""} / ${teacherLevels.find((item) => item.level === teacherLevelCode)?.level_label || teacherLevelCode}`
+              : ""}
           </div>
 
           <div className="overflow-x-auto">

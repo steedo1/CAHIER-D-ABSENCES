@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone as toE164 } from "@/lib/phone";
+import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -153,6 +154,18 @@ export async function POST(req: NextRequest) {
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const class_ids: string[] = Array.isArray(body?.class_ids) ? body.class_ids : [];
     const academicYear: string | null = (body?.academic_year || "").trim() || null;
+    const educationType: EducationType = isEducationType(body?.education_type)
+      ? body.education_type
+      : "general_secondary";
+    const formationCode =
+      typeof body?.formation_code === "string" && body.formation_code.trim()
+        ? body.formation_code.trim()
+        : null;
+    const formationLevelCode =
+      typeof body?.formation_level_code === "string" &&
+      body.formation_level_code.trim()
+        ? body.formation_level_code.trim()
+        : null;
 
     if ((!teacher_id && !email) || class_ids.length === 0) {
       return NextResponse.json({ error: "missing_params" }, { status: 400 });
@@ -171,6 +184,54 @@ export async function POST(req: NextRequest) {
       if (invalid.length) {
         return NextResponse.json(
           { error: "classes_not_in_selected_academic_year", invalid_class_ids: invalid },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (educationType !== "general_secondary") {
+      if (!formationCode || !formationLevelCode) {
+        return NextResponse.json(
+          { error: "education_context_required" },
+          { status: 400 },
+        );
+      }
+
+      const { data: contextClasses, error: contextClassError } = await srv
+        .from("classes")
+        .select("id,education_type,formation_code,formation_level_code,level")
+        .eq("institution_id", inst)
+        .in("id", class_ids);
+
+      if (contextClassError) {
+        return NextResponse.json(
+          { error: contextClassError.message },
+          { status: 400 },
+        );
+      }
+
+      const invalidContextClassIds = (contextClasses || [])
+        .filter((row: any) => {
+          const rowType = String(row.education_type || "");
+          const rowFormation = String(row.formation_code || "");
+          const rowLevel = String(row.formation_level_code || row.level || "");
+          return (
+            rowType !== educationType ||
+            rowFormation !== formationCode ||
+            rowLevel !== formationLevelCode
+          );
+        })
+        .map((row: any) => String(row.id));
+
+      if (
+        (contextClasses || []).length !== class_ids.length ||
+        invalidContextClassIds.length
+      ) {
+        return NextResponse.json(
+          {
+            error: "classes_not_in_selected_education_context",
+            invalid_class_ids: invalidContextClassIds,
+          },
           { status: 400 },
         );
       }
@@ -200,6 +261,35 @@ export async function POST(req: NextRequest) {
         .limit(1)
         .maybeSingle();
       instSubjectId = link?.id ?? null;
+
+      if (
+        educationType !== "general_secondary" &&
+        formationCode &&
+        formationLevelCode &&
+        link?.subject_id
+      ) {
+        const { data: levelSubject, error: levelSubjectError } = await srv
+          .from("institution_level_subjects")
+          .select("subject_id")
+          .eq("institution_id", inst)
+          .eq("education_type", educationType)
+          .eq("formation_code", formationCode)
+          .eq("level_code", formationLevelCode)
+          .eq("subject_id", link.subject_id)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (levelSubjectError || !levelSubject?.subject_id) {
+          return NextResponse.json(
+            {
+              error:
+                levelSubjectError?.message ||
+                "subject_not_allowed_for_selected_education_context",
+            },
+            { status: 400 },
+          );
+        }
+      }
     }
 
     // Reset affectations existantes (pour cet enseignant, et discipline si fournie)
@@ -277,6 +367,9 @@ export async function POST(req: NextRequest) {
     const teacher_id: string = body?.teacher_id;
     const subject_id_raw: string | null = body?.subject_id ?? null;
     const academicYear: string | null = (body?.academic_year || "").trim() || null;
+    const classIds: string[] | null = Array.isArray(body?.class_ids)
+      ? body.class_ids.filter((id: unknown) => typeof id === "string" && id)
+      : null;
     if (!teacher_id) return NextResponse.json({ error: "missing_params" }, { status: 400 });
 
     let yearClassIds: string[] | null = null;
@@ -303,7 +396,17 @@ export async function POST(req: NextRequest) {
       del = link?.id ? del.eq("subject_id", link.id) : del.eq("subject_id", subject_id_raw);
     }
 
-    const scopedDel = restrictDeleteToClassIds(del, yearClassIds);
+    let scopedClassIds = yearClassIds;
+    if (classIds) {
+      if (yearClassIds !== null) {
+        const allowed = new Set(yearClassIds);
+        scopedClassIds = classIds.filter((id) => allowed.has(id));
+      } else {
+        scopedClassIds = classIds;
+      }
+    }
+
+    const scopedDel = restrictDeleteToClassIds(del, scopedClassIds);
     if (!scopedDel) return NextResponse.json({ ok: true, removed: 0 });
 
     const { error, count } = await (scopedDel as any);

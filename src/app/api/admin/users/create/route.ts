@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
+import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -282,6 +283,19 @@ export async function POST(req: NextRequest) {
 
   const subjectName = (body?.subject ?? null) as string | null;
 
+  const educationType: EducationType = isEducationType(body?.education_type)
+    ? body.education_type
+    : "general_secondary";
+  const formationCode =
+    typeof body?.formation_code === "string" && body.formation_code.trim()
+      ? body.formation_code.trim()
+      : null;
+  const formationLevelCode =
+    typeof body?.formation_level_code === "string" &&
+    body.formation_level_code.trim()
+      ? body.formation_level_code.trim()
+      : null;
+
   const educatorLevel =
     typeof body?.educator_level === "string" && body.educator_level.trim()
       ? String(body.educator_level).trim()
@@ -335,6 +349,17 @@ export async function POST(req: NextRequest) {
     )
   ) {
     return NextResponse.json({ error: "subject_required" }, { status: 400 });
+  }
+
+  if (
+    role === "teacher" &&
+    educationType !== "general_secondary" &&
+    (!formationCode || !formationLevelCode)
+  ) {
+    return NextResponse.json(
+      { error: "teacher_education_context_required" },
+      { status: 400 },
+    );
   }
 
   if (role === "educator" && !educatorLevel) {
@@ -647,6 +672,36 @@ export async function POST(req: NextRequest) {
         },
         { onConflict: "institution_id,subject_id" }
       );
+
+    if (
+      educationType !== "general_secondary" &&
+      formationCode &&
+      formationLevelCode
+    ) {
+      const { error: levelSubjectError } = await supaSrv
+        .from("institution_level_subjects")
+        .upsert(
+          {
+            institution_id: inst,
+            education_type: educationType,
+            formation_code: formationCode,
+            level_code: formationLevelCode,
+            subject_id,
+            is_active: true,
+          },
+          {
+            onConflict:
+              "institution_id,education_type,formation_code,level_code,subject_id",
+          },
+        );
+
+      if (levelSubjectError) {
+        return NextResponse.json(
+          { error: levelSubjectError.message },
+          { status: 400 },
+        );
+      }
+    }
 
     try {
       await supaSrv

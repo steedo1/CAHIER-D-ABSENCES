@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -154,10 +155,33 @@ export async function POST(req: NextRequest) {
       ? body.subject_id.trim()
       : null;
 
+  const educationType: EducationType = isEducationType(body?.education_type)
+    ? body.education_type
+    : "general_secondary";
+  const formationCode =
+    typeof body?.formation_code === "string" && body.formation_code.trim()
+      ? body.formation_code.trim()
+      : null;
+  const formationLevelCode =
+    typeof body?.formation_level_code === "string" &&
+    body.formation_level_code.trim()
+      ? body.formation_level_code.trim()
+      : null;
+
   if (!profile_id) {
     return NextResponse.json(
       { error: "profile_id requis" },
       { status: 400 }
+    );
+  }
+
+  if (
+    educationType !== "general_secondary" &&
+    (!formationCode || !formationLevelCode)
+  ) {
+    return NextResponse.json(
+      { error: "teacher_education_context_required" },
+      { status: 400 },
     );
   }
 
@@ -326,6 +350,36 @@ export async function POST(req: NextRequest) {
 
   if (upInst.error) {
     return NextResponse.json({ error: upInst.error.message }, { status: 400 });
+  }
+
+  if (
+    educationType !== "general_secondary" &&
+    formationCode &&
+    formationLevelCode
+  ) {
+    const { error: levelSubjectError } = await srv
+      .from("institution_level_subjects")
+      .upsert(
+        {
+          institution_id,
+          education_type: educationType,
+          formation_code: formationCode,
+          level_code: formationLevelCode,
+          subject_id,
+          is_active: true,
+        },
+        {
+          onConflict:
+            "institution_id,education_type,formation_code,level_code,subject_id",
+        },
+      );
+
+    if (levelSubjectError) {
+      return NextResponse.json(
+        { error: levelSubjectError.message },
+        { status: 400 },
+      );
+    }
   }
 
   // 6) Link the teacher to the subject for THIS institution (idempotent).
