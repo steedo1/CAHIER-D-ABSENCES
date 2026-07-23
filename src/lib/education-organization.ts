@@ -344,6 +344,87 @@ export function getCatalogFormation(id: string) {
   return FORMATION_CATALOG.find((item) => item.id === id) || null;
 }
 
+
+export type FormationLevelSuggestion = {
+  value: string;
+  label: string;
+};
+
+function compactFormationCode(value: string) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Suggestions non bloquantes pour alimenter le générateur de classes existant.
+ * Elles restent modifiables par l'administrateur avant création.
+ */
+export function getSuggestedCatalogFormationLevels(
+  formation: FormationCatalogItem,
+): FormationLevelSuggestion[] {
+  const code = compactFormationCode(formation.shortCode);
+
+  if (formation.diplomaCode === "BAC_TECH") {
+    const series = compactFormationCode(formation.shortCode).replace(/^BAC TECH\s*/, "");
+    return [
+      { value: `2${series}`, label: `Seconde ${series}` },
+      { value: `1${series}`, label: `Première ${series}` },
+      { value: `T${series}`, label: `Terminale ${series}` },
+    ];
+  }
+
+  if (formation.diplomaCode === "BTS") {
+    const base = code.replace(/^BTS\s*/, "BTS " );
+    return [
+      { value: `1${base}`, label: `1re année — ${formation.name}` },
+      { value: `2${base}`, label: `2e année — ${formation.name}` },
+    ];
+  }
+
+  if (formation.diplomaCode === "BT") {
+    const base = code.replace(/^BT\s*/, "BT " );
+    return [
+      { value: `1${base}`, label: `1re année — ${formation.name}` },
+      { value: `2${base}`, label: `2e année — ${formation.name}` },
+      { value: `3${base}`, label: `3e année — ${formation.name}` },
+    ];
+  }
+
+  if (formation.diplomaCode === "CAP") {
+    const base = code.replace(/^CAP\s*/, "CAP " );
+    return [
+      { value: `1${base}`, label: `1re année — ${formation.name}` },
+      { value: `2${base}`, label: `2e année — ${formation.name}` },
+      { value: `3${base}`, label: `3e année — ${formation.name}` },
+    ];
+  }
+
+  return [
+    { value: `1${code}`, label: `1re année — ${formation.name}` },
+    { value: `2${code}`, label: `2e année — ${formation.name}` },
+  ];
+}
+
+export function getSuggestedCustomFormationLevels(
+  formation: CustomFormation,
+): FormationLevelSuggestion[] {
+  if (formation.levels.length > 0) {
+    return formation.levels.map((level) => ({ value: level, label: level }));
+  }
+
+  const code = compactFormationCode(formation.shortCode || formation.name);
+  if (!code) return [];
+
+  return [
+    { value: `1${code}`, label: `1re année — ${formation.name}` },
+    { value: `2${code}`, label: `2e année — ${formation.name}` },
+  ];
+}
+
 export function getDefaultEducationOrganization(
   options: { hasExistingClasses: boolean } = { hasExistingClasses: false },
 ): EducationOrganizationSettings {

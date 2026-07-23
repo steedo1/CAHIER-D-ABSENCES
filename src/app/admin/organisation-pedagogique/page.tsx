@@ -324,21 +324,21 @@ export default function OrganisationPedagogiquePage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-sky-700 via-cyan-700 to-emerald-700 px-6 py-7 text-white">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    <main className="w-full min-w-0 space-y-4 overflow-x-hidden px-3 py-4 sm:px-4 lg:px-5">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="bg-gradient-to-r from-sky-700 via-cyan-700 to-emerald-700 px-4 py-4 text-white sm:px-5">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-sky-100">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-sky-100">
                 <School className="h-4 w-4" /> Organisation scolaire
               </div>
-              <h1 className="text-2xl font-bold sm:text-3xl">Organisation pédagogique</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-sky-50 sm:text-base">
+              <h1 className="text-xl font-bold sm:text-2xl">Organisation pédagogique</h1>
+              <p className="mt-1 max-w-4xl text-sm leading-5 text-sky-50">
                 Déclarez les enseignements et les formations réellement proposés par votre établissement.
                 Mon Cahier utilisera ensuite cette organisation pour adapter progressivement les interfaces existantes.
               </p>
             </div>
-            <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm backdrop-blur">
+            <div className="w-full shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs backdrop-blur sm:w-auto sm:min-w-52">
               <div className="font-semibold">{institution?.name || "Votre établissement"}</div>
               {institution?.code ? <div className="mt-1 text-sky-100">Code : {institution.code}</div> : null}
             </div>
@@ -346,7 +346,7 @@ export default function OrganisationPedagogiquePage() {
         </div>
 
         {legacyGeneralProtected ? (
-          <div className="border-t border-emerald-200 bg-emerald-50 px-6 py-4">
+          <div className="border-t border-emerald-200 bg-emerald-50 px-4 py-3 sm:px-5">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
               <div>
@@ -376,9 +376,9 @@ export default function OrganisationPedagogiquePage() {
         </div>
       ) : null}
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex items-start gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-sky-100 text-sky-700">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-100 text-sky-700">
             <span className="font-bold">1</span>
           </div>
           <div>
@@ -390,7 +390,7 @@ export default function OrganisationPedagogiquePage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {EDUCATION_TYPE_OPTIONS.map((option) => {
             const selected = educationTypes.includes(option.id);
             const locked = option.id === "general_secondary" && legacyGeneralProtected;
@@ -401,7 +401,7 @@ export default function OrganisationPedagogiquePage() {
                 type="button"
                 onClick={() => toggleEducationType(option.id)}
                 aria-pressed={selected}
-                className={`rounded-2xl border p-4 text-left transition ${
+                className={`min-w-0 rounded-xl border p-3.5 text-left transition ${
                   selected
                     ? "border-sky-500 bg-sky-50 ring-2 ring-sky-100"
                     : "border-slate-200 bg-white hover:border-sky-300 hover:bg-slate-50"
@@ -436,9 +436,9 @@ export default function OrganisationPedagogiquePage() {
       </section>
 
       {nonGeneralEducationTypes.length > 0 ? (
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="flex items-start gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-cyan-100 text-cyan-700">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-100 text-cyan-700">
               <span className="font-bold">2</span>
             </div>
             <div className="flex-1">
@@ -450,7 +450,7 @@ export default function OrganisationPedagogiquePage() {
             </div>
           </div>
 
-          <div className="mt-6 space-y-8">
+          <div className="mt-5 space-y-5">
             {nonGeneralEducationTypes.map((educationType) => {
               const typeOption = EDUCATION_TYPE_OPTIONS.find((item) => item.id === educationType);
               const groups = groupCatalogByDiploma(educationType);
@@ -459,7 +459,7 @@ export default function OrganisationPedagogiquePage() {
               );
 
               return (
-                <div key={educationType} className="rounded-2xl border border-slate-200 p-4 sm:p-5">
+                <div key={educationType} className="min-w-0 rounded-xl border border-slate-200 p-3.5 sm:p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="font-bold text-slate-900">{typeOption?.label}</h3>
@@ -482,7 +482,7 @@ export default function OrganisationPedagogiquePage() {
                         <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">
                           {diploma}
                         </div>
-                        <div className="grid gap-3 lg:grid-cols-2">
+                        <div className="grid min-w-0 gap-3 xl:grid-cols-2">
                           {formations.map((formation) => {
                             const selected = selectedCatalogIds.includes(formation.id);
                             return (
@@ -490,7 +490,7 @@ export default function OrganisationPedagogiquePage() {
                                 key={formation.id}
                                 type="button"
                                 onClick={() => toggleCatalogFormation(formation.id)}
-                                className={`rounded-2xl border p-4 text-left transition ${
+                                className={`min-w-0 rounded-xl border p-3.5 text-left transition ${
                                   selected
                                     ? "border-cyan-500 bg-cyan-50 ring-2 ring-cyan-100"
                                     : "border-slate-200 hover:border-cyan-300 hover:bg-slate-50"
@@ -538,7 +538,7 @@ export default function OrganisationPedagogiquePage() {
                       <div className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">
                         Formations locales
                       </div>
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid min-w-0 gap-3 xl:grid-cols-2">
                         {localItems.map((item) => (
                           <div key={item.id} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
                             <div className="flex items-start justify-between gap-3">
@@ -595,9 +595,9 @@ export default function OrganisationPedagogiquePage() {
         </section>
       ) : null}
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="flex items-start gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-100 text-emerald-700">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700">
             <span className="font-bold">3</span>
           </div>
           <div>
@@ -609,7 +609,7 @@ export default function OrganisationPedagogiquePage() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
               <GraduationCap className="h-4 w-4 text-sky-700" /> Enseignements
@@ -647,7 +647,7 @@ export default function OrganisationPedagogiquePage() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-xs text-slate-500">
             {configuredAt
               ? `Configuration initiale enregistrée le ${new Date(configuredAt).toLocaleDateString("fr-FR")}.`
@@ -677,7 +677,7 @@ export default function OrganisationPedagogiquePage() {
 
       {customOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4">
-          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
             <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
               <div className="flex items-center gap-3">
                 <div className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-100 text-violet-700">

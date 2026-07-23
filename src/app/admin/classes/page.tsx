@@ -2,6 +2,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  EDUCATION_TYPE_OPTIONS,
+  FORMATION_CATALOG,
+  getSuggestedCatalogFormationLevels,
+  getSuggestedCustomFormationLevels,
+  type CustomFormation,
+  type EducationOrganizationSettings,
+  type EducationType,
+  type FormationLevelSuggestion,
+} from "@/lib/education-organization";
 
 type OfficialTrackCode =
   | "6eme"
@@ -35,6 +45,23 @@ type AcademicYearRow = {
   start_date?: string | null;
   end_date?: string | null;
   is_current: boolean;
+};
+
+type EducationOrganizationApiResponse = {
+  ok?: boolean;
+  error?: string;
+  organization?: EducationOrganizationSettings;
+};
+
+type FormationChoice = {
+  id: string;
+  source: "catalog" | "custom";
+  sourceId: string;
+  educationType: Exclude<EducationType, "general_secondary">;
+  diplomaLabel: string;
+  name: string;
+  shortCode: string;
+  levels: FormationLevelSuggestion[];
 };
 
 const OFFICIAL_TRACK_OPTIONS: { value: OfficialTrackCode; label: string }[] = [
@@ -228,8 +255,15 @@ export default function ClassesPage() {
 
   const [authErr, setAuthErr] = useState(false);
 
+  const [organizationLoading, setOrganizationLoading] = useState(true);
+  const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const [organization, setOrganization] = useState<EducationOrganizationSettings | null>(null);
+  const [classEducationType, setClassEducationType] = useState<EducationType>("general_secondary");
+  const [selectedFormationId, setSelectedFormationId] = useState("");
+
   useEffect(() => {
     loadAcademicYears();
+    void loadEducationOrganization();
   }, []);
 
   useEffect(() => {
@@ -249,9 +283,102 @@ export default function ClassesPage() {
   }, [format]);
 
   useEffect(() => {
+    if (classEducationType !== "general_secondary") {
+      setOfficialTrackCode("");
+      return;
+    }
+
     const inferred = inferOfficialTrackCode(level);
     setOfficialTrackCode(inferred);
-  }, [level]);
+  }, [classEducationType, level]);
+
+  const enabledEducationTypes = useMemo<EducationType[]>(() => {
+    const configured = organization?.educationTypes || [];
+    return configured.length > 0 ? configured : ["general_secondary"];
+  }, [organization]);
+
+  const formationChoices = useMemo<FormationChoice[]>(() => {
+    if (!organization) return [];
+
+    const catalogChoices: FormationChoice[] = FORMATION_CATALOG
+      .filter((item) => organization.selectedCatalogFormationIds.includes(item.id))
+      .map((item) => ({
+        id: `catalog:${item.id}`,
+        source: "catalog" as const,
+        sourceId: item.id,
+        educationType: item.educationType,
+        diplomaLabel: item.diplomaLabel,
+        name: item.name,
+        shortCode: item.shortCode,
+        levels: getSuggestedCatalogFormationLevels(item),
+      }));
+
+    const customChoices: FormationChoice[] = (organization.customFormations || []).map(
+      (item: CustomFormation) => ({
+        id: `custom:${item.id}`,
+        source: "custom" as const,
+        sourceId: item.id,
+        educationType: item.educationType,
+        diplomaLabel: item.diplomaLabel,
+        name: item.name,
+        shortCode: item.shortCode,
+        levels: getSuggestedCustomFormationLevels(item),
+      }),
+    );
+
+    return [...catalogChoices, ...customChoices].sort((a, b) =>
+      `${a.diplomaLabel} ${a.name}`.localeCompare(`${b.diplomaLabel} ${b.name}`, "fr"),
+    );
+  }, [organization]);
+
+  const formationsForCurrentType = useMemo(
+    () => formationChoices.filter((item) => item.educationType === classEducationType),
+    [classEducationType, formationChoices],
+  );
+
+  const selectedFormation = useMemo(
+    () => formationsForCurrentType.find((item) => item.id === selectedFormationId) || null,
+    [formationsForCurrentType, selectedFormationId],
+  );
+
+  const isGeneralMode = classEducationType === "general_secondary";
+
+  useEffect(() => {
+    if (!enabledEducationTypes.includes(classEducationType)) {
+      setClassEducationType(enabledEducationTypes[0] || "general_secondary");
+    }
+  }, [classEducationType, enabledEducationTypes]);
+
+  useEffect(() => {
+    if (classEducationType === "general_secondary") {
+      setSelectedFormationId("");
+      if (!inferOfficialTrackCode(level)) setLevel("6e");
+      return;
+    }
+
+    const nextFormation =
+      formationsForCurrentType.find((item) => item.id === selectedFormationId) ||
+      formationsForCurrentType[0] ||
+      null;
+
+    if (!nextFormation) {
+      setSelectedFormationId("");
+      return;
+    }
+
+    if (selectedFormationId !== nextFormation.id) {
+      setSelectedFormationId(nextFormation.id);
+    }
+
+    const firstLevel = nextFormation.levels[0]?.value || nextFormation.shortCode || nextFormation.name;
+    setLevel(firstLevel);
+  }, [classEducationType, formationsForCurrentType, selectedFormationId]);
+
+  useEffect(() => {
+    if (!selectedFormation || isGeneralMode) return;
+    const firstLevel = selectedFormation.levels[0]?.value || selectedFormation.shortCode || selectedFormation.name;
+    setLevel(firstLevel);
+  }, [isGeneralMode, selectedFormation]);
 
   useEffect(() => {
     const inferred = inferOfficialTrackCode(eLevel);
@@ -286,6 +413,39 @@ export default function ClassesPage() {
   }
 
   useEffect(genPreview, [level, format, count]);
+
+  async function loadEducationOrganization() {
+    setOrganizationLoading(true);
+    setOrganizationError(null);
+
+    try {
+      const response = await fetch("/api/admin/institution/education-organization", {
+        cache: "no-store",
+      });
+
+      if (response.status === 401) {
+        setAuthErr(true);
+        return;
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as EducationOrganizationApiResponse;
+      if (!response.ok || !payload.ok || !payload.organization) {
+        throw new Error(payload.error || "Impossible de charger l’organisation pédagogique.");
+      }
+
+      setOrganization(payload.organization);
+      const initialType = payload.organization.educationTypes.includes("general_secondary")
+        ? "general_secondary"
+        : payload.organization.educationTypes[0] || "general_secondary";
+      setClassEducationType(initialType);
+    } catch (error: any) {
+      setOrganization(null);
+      setClassEducationType("general_secondary");
+      setOrganizationError(error?.message || "Impossible de charger l’organisation pédagogique.");
+    } finally {
+      setOrganizationLoading(false);
+    }
+  }
 
   async function loadAcademicYears() {
     setLoadingAcademicYears(true);
@@ -381,6 +541,11 @@ export default function ClassesPage() {
       return;
     }
 
+    if (!isGeneralMode && !selectedFormation) {
+      alert("Choisissez d’abord une formation dans Organisation pédagogique.");
+      return;
+    }
+
     const r = await fetch("/api/admin/classes/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -389,13 +554,15 @@ export default function ClassesPage() {
         format,
         count,
         academic_year: academicYear,
-        official_track_code: isSeriesA(level) ? null : officialTrackCode || null,
-        official_tracks_by_label: Object.fromEntries(
-          preview.map((label) => [
-            label,
-            computeOfficialTrackForGeneratedClass(level, seriesA1ByLabel[label] === true) || null,
-          ])
-        ),
+        official_track_code: isGeneralMode && !isSeriesA(level) ? officialTrackCode || null : null,
+        official_tracks_by_label: isGeneralMode
+          ? Object.fromEntries(
+              preview.map((label) => [
+                label,
+                computeOfficialTrackForGeneratedClass(level, seriesA1ByLabel[label] === true) || null,
+              ]),
+            )
+          : {},
       }),
     });
 
@@ -571,7 +738,20 @@ export default function ClassesPage() {
   }
 
   const selectedAcademicYear = academicYears.find((row) => row.code === academicYear) || null;
-  const canCreate = !!academicYear && !loadingAcademicYears;
+  const canCreate =
+    !!academicYear &&
+    !loadingAcademicYears &&
+    !organizationLoading &&
+    (isGeneralMode || Boolean(selectedFormation));
+
+  function formationForLevel(value: string) {
+    const key = normalizeKey(value);
+    return (
+      formationChoices.find((formation) =>
+        formation.levels.some((option) => normalizeKey(option.value) === key),
+      ) || null
+    );
+  }
 
   if (authErr) {
     return (
@@ -591,15 +771,53 @@ export default function ClassesPage() {
       <div>
         <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-slate-600">
-          Créer, éditer et supprimer les classes par année scolaire. Les années viennent des paramètres de
-          l'établissement. Pour une classe commune A1/A2, gardez une seule classe physique puis renseignez la série de chaque élève dans sa liste de classe.
-          La série officielle de la classe reste utile par défaut, mais la série élève peut préciser les cas mixtes sans modifier le nom affiché.
+          Créez les classes avec le générateur actuel. Pour le secondaire général, le fonctionnement reste
+          inchangé. Pour le technique, le professionnel ou le BTS, choisissez d’abord la formation puis son
+          niveau ; le préfixe proposé reste modifiable avant création.
         </p>
       </div>
 
-      <div className="rounded-2xl border bg-white p-5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-          <div>
+      <div className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
+        {organizationError ? (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {organizationError} Le mode secondaire général reste disponible.
+          </div>
+        ) : null}
+
+        {enabledEducationTypes.length > 1 ? (
+          <div className="mb-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Enseignement concerné
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {enabledEducationTypes.map((type) => {
+                const option = EDUCATION_TYPE_OPTIONS.find((item) => item.id === type);
+                const active = classEducationType === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setClassEducationType(type)}
+                    className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "border-sky-500 bg-sky-50 text-sky-800 ring-2 ring-sky-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-sky-300"
+                    }`}
+                  >
+                    {option?.shortLabel ?? type}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          className={`grid grid-cols-1 gap-3 ${
+            isGeneralMode ? "md:grid-cols-5" : "md:grid-cols-2 xl:grid-cols-7"
+          }`}
+        >
+          <div className={isGeneralMode ? "" : "xl:col-span-1"}>
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
             <Select
               value={academicYear}
@@ -620,26 +838,75 @@ export default function ClassesPage() {
             </Select>
           </div>
 
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Niveau / préfixe</div>
-            <Input value={level} onChange={(e) => setLevel(e.target.value)} placeholder="6e / 1A / 1D / TA / TC" />
+          {!isGeneralMode ? (
+            <>
+              <div className="md:col-span-1 xl:col-span-2">
+                <div className="mb-1 text-xs text-slate-500">Formation / filière</div>
+                <Select
+                  value={selectedFormationId}
+                  onChange={(e) => setSelectedFormationId(e.target.value)}
+                  disabled={organizationLoading || formationsForCurrentType.length === 0}
+                >
+                  {formationsForCurrentType.length === 0 ? (
+                    <option value="">Aucune formation configurée</option>
+                  ) : (
+                    formationsForCurrentType.map((formation) => (
+                      <option key={formation.id} value={formation.id}>
+                        {formation.diplomaLabel} — {formation.name}
+                      </option>
+                    ))
+                  )}
+                </Select>
+              </div>
+
+              <div className="md:col-span-1 xl:col-span-1">
+                <div className="mb-1 text-xs text-slate-500">Niveau proposé</div>
+                <Select
+                  value={
+                    selectedFormation?.levels.some((option) => option.value === level) ? level : "__custom__"
+                  }
+                  onChange={(e) => {
+                    setLevel(e.target.value === "__custom__" ? "" : e.target.value);
+                  }}
+                  disabled={!selectedFormation}
+                >
+                  {(selectedFormation?.levels || []).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                  <option value="__custom__">Autre niveau / préfixe</option>
+                </Select>
+              </div>
+            </>
+          ) : null}
+
+          <div className={!isGeneralMode ? "md:col-span-1 xl:col-span-1" : ""}>
+            <div className="mb-1 text-xs text-slate-500">
+              {isGeneralMode ? "Niveau / préfixe" : "Préfixe de classe"}
+            </div>
+            <Input
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+              placeholder={isGeneralMode ? "6e / 1A / 1D / TA / TC" : "Ex. 1BT COMPTA"}
+            />
           </div>
 
-          <div>
+          <div className={!isGeneralMode ? "xl:col-span-1" : ""}>
             <div className="mb-1 text-xs text-slate-500">Format</div>
             <Select value={format} onChange={(e) => setFormat(e.target.value as any)}>
               <option value="none">Aucun suffixe</option>
               <option value="numeric">Numérique (1,2,3…)</option>
-              <option value="alpha">Alphanumérique (A,B,C…)</option>
+              <option value="alpha">Alphabétique (A,B,C…)</option>
             </Select>
-            {format === "none" && (
+            {format === "none" ? (
               <div className="mt-1 text-[11px] text-slate-500">
-                Avec « Aucun suffixe », <b>Nombre = 1</b> pour créer exactement « {level} ».
+                Une seule classe sera créée exactement avec le préfixe « {level} ».
               </div>
-            )}
+            ) : null}
           </div>
 
-          <div>
+          <div className={!isGeneralMode ? "xl:col-span-1" : ""}>
             <div className="mb-1 text-xs text-slate-500">Nombre</div>
             <Input
               type="number"
@@ -663,23 +930,31 @@ export default function ClassesPage() {
             <>{academicYearError}</>
           ) : !academicYear ? (
             <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
-          ) : isSeriesA(level) ? (
+          ) : !isGeneralMode && !selectedFormation ? (
+            <>Ajoutez d’abord une formation dans <b>Organisation pédagogique</b>.</>
+          ) : isGeneralMode && isSeriesA(level) ? (
             <>
-              Série A : cochez uniquement les divisions entièrement A1. Pour une classe commune A1/A2, laissez la classe créée normalement, puis renseignez la série de chaque élève dans <b>Liste PDF</b>.
+              Série A : cochez uniquement les divisions entièrement A1. Pour une classe commune A1/A2, laissez
+              la classe créée normalement, puis renseignez la série de chaque élève dans <b>Liste PDF</b>.
+            </>
+          ) : isGeneralMode ? (
+            <>
+              Année active : <b>{selectedAcademicYear?.label || academicYear}</b>. Série officielle déduite :
+              <b> {officialTrackLabel(officialTrackCode)}</b>.
             </>
           ) : (
             <>
-              Année active sur cet écran : <b>{selectedAcademicYear?.label || academicYear}</b>. Série officielle déduite :
-              <b> {officialTrackLabel(officialTrackCode)}</b>. La liste ci-dessous s'adapte automatiquement au choix de l'année.
+              Formation : <b>{selectedFormation?.diplomaLabel} — {selectedFormation?.name}</b>. Le préfixe proposé
+              reste modifiable ; aucune série générale officielle ne sera attribuée à ces classes.
             </>
           )}
         </div>
 
-        {preview.length > 0 && (
+        {preview.length > 0 ? (
           <div className="mt-4 rounded-xl border bg-slate-50 p-3 text-sm text-slate-700">
             <div className="mb-2 font-semibold">Prévisualisation</div>
 
-            {isSeriesA(level) ? (
+            {isGeneralMode && isSeriesA(level) ? (
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {preview.map((label) => {
                   const checked = seriesA1ByLabel[label] === true;
@@ -710,13 +985,19 @@ export default function ClassesPage() {
                 })}
               </div>
             ) : (
-              <div>{preview.join(", ")}</div>
+              <div className="flex flex-wrap gap-2">
+                {preview.map((item) => (
+                  <span key={item} className="rounded-lg border bg-white px-2.5 py-1 font-medium text-slate-800">
+                    {item}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
-      <div className="rounded-2xl border bg-white p-5">
+      <div className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
           <div className="text-xs text-slate-500">
@@ -753,6 +1034,7 @@ export default function ClassesPage() {
                       {arr.map((c) => {
                         const draft = phoneDraft[c.id] ?? c.class_phone_e164 ?? "";
                         const unchanged = (draft || "") === (c.class_phone_e164 || "");
+                        const detectedFormation = formationForLevel(c.level);
                         return (
                           <div key={c.id} className="rounded-xl border p-3">
                             <div className="flex items-start justify-between gap-3">
@@ -761,7 +1043,11 @@ export default function ClassesPage() {
                                 <div className="text-xs text-slate-500">Niveau : {c.level}</div>
                                 <div className="text-xs text-slate-500">Année : {c.academic_year || "—"}</div>
                                 <div className="mt-1 text-xs text-slate-700">
-                                  Série officielle : <b>{officialTrackLabel(c.official_track_code)}</b>
+                                  {detectedFormation ? (
+                                    <>Formation : <b>{detectedFormation.diplomaLabel} — {detectedFormation.name}</b></>
+                                  ) : (
+                                    <>Série officielle : <b>{officialTrackLabel(c.official_track_code)}</b></>
+                                  )}
                                 </div>
 
                                 <div className="mt-2 text-xs text-slate-600">
@@ -882,20 +1168,26 @@ export default function ClassesPage() {
               ))}
             </Select>
           </div>
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Série officielle</div>
-            <Select value={eOfficialTrackCode} onChange={(e) => setEOfficialTrackCode(e.target.value as any)}>
-              <option value="">À compléter</option>
-              {OFFICIAL_TRACK_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-            <div className="mt-1 text-[11px] text-slate-500">
-              Ne change pas le nom de la classe. En cas de classe commune A1/A2, la série peut aussi être précisée élève par élève dans la liste de classe.
+          {eOfficialTrackCode || inferOfficialTrackCode(eLevel) ? (
+            <div>
+              <div className="mb-1 text-xs text-slate-500">Série officielle</div>
+              <Select value={eOfficialTrackCode} onChange={(e) => setEOfficialTrackCode(e.target.value as any)}>
+                <option value="">À compléter</option>
+                {OFFICIAL_TRACK_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Ne change pas le nom de la classe. En cas de classe commune A1/A2, la série peut aussi être précisée élève par élève dans la liste de classe.
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              Cette classe utilise un niveau technique, professionnel ou local. Aucune série générale officielle n’est imposée.
+            </div>
+          )}
           <div>
             <div className="mb-1 text-xs text-slate-500">Téléphone de la classe (optionnel)</div>
             <Input value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder="+2250701020304" inputMode="tel" autoComplete="tel" />
