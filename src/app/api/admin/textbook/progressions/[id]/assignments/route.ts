@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanUuid, requireTextbookManager } from "@/lib/textbook/context";
 import { resolveTextbookSubjectForInstitution } from "@/lib/textbook/subject-matching";
+import {
+  decorateTextbookClassEducation,
+  validateTextbookSubjectForClass,
+} from "@/lib/textbook/education-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,10 +18,16 @@ export async function GET(
   if (!auth.ok) return auth.response;
   const { srv, institutionId } = auth.ctx;
 
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+
   const { data, error } = await srv
     .from("textbook_progression_class_assignments")
     .select(
-      "id,progression_id,class_id,teacher_id,is_active,created_at,classes:class_id(id,label,level)",
+      "id,progression_id,class_id,teacher_id,is_active,created_at,classes:class_id(id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code)",
     )
     .eq("institution_id", institutionId)
     .eq("progression_id", id)
@@ -28,7 +38,14 @@ export async function GET(
       { ok: false, error: error.message },
       { status: 400 },
     );
-  return NextResponse.json({ ok: true, items: data || [] });
+  const items = ((data || []) as any[]).map((row) => ({
+    ...row,
+    classes: decorateTextbookClassEducation(
+      row?.classes,
+      (institution as any)?.settings_json,
+    ),
+  }));
+  return NextResponse.json({ ok: true, items });
 }
 
 export async function POST(
@@ -106,7 +123,7 @@ export async function POST(
 
   const { data: classes, error: classErr } = await srv
     .from("classes")
-    .select("id")
+    .select("id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code")
     .eq("institution_id", institutionId)
     .in("id", classIds);
 
@@ -115,6 +132,27 @@ export async function POST(
       { ok: false, error: classErr.message },
       { status: 400 },
     );
+
+  for (const classRow of (classes || []) as any[]) {
+    const validation = await validateTextbookSubjectForClass({
+      srv,
+      institutionId,
+      classRow,
+      subjectId: resolvedSubject.subject_id || null,
+    });
+    if (!validation.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: validation.error,
+          message: validation.message,
+          class_id: classRow.id,
+          class_label: classRow.label || "Classe",
+        },
+        { status: validation.status },
+      );
+    }
+  }
 
   const validClassIds = new Set((classes || []).map((c: any) => String(c.id)));
   const rows = classIds

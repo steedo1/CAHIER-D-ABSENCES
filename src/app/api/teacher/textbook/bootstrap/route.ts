@@ -10,6 +10,7 @@ import {
   resolveTextbookAssignmentSubject,
   textbookAssignmentMatchesClassTeacherRows,
 } from "@/lib/textbook/subject-matching";
+import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +51,13 @@ export async function GET() {
   const { srv, userId, institutionId, roles } = auth.ctx;
   const isClassDevice = roles.has("class_device");
   const privileged = canManageTextbook(roles) && !isClassDevice;
+
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+  const educationSettings = (institution as any)?.settings_json || null;
 
   const classDevice = isClassDevice
     ? await findTextbookClassDevice(srv, userId, institutionId)
@@ -94,7 +102,7 @@ export async function GET() {
       subject_id,
       institution_subject_id,
       is_active,
-      classes:class_id(id,label,level,academic_year),
+      classes:class_id(id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code),
       progression:textbook_progression_templates(
         id,
         academic_year,
@@ -164,6 +172,14 @@ export async function GET() {
       subjectCatalog,
     );
   });
+
+  assignments = assignments.map((assignment) => ({
+    ...assignment,
+    classes: decorateTextbookClassEducation(
+      assignment?.classes,
+      educationSettings,
+    ),
+  }));
 
   const sourceIdsMissingDocument = uniq(
     assignments
@@ -357,7 +373,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     mode: isClassDevice ? "class_device" : "teacher",
-    class: classDevice,
+    class: decorateTextbookClassEducation(classDevice, educationSettings),
     items,
   });
 }

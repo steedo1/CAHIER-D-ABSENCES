@@ -567,6 +567,13 @@ type ParentTextbookProgression = {
   assignment_id: string;
   class_id: string;
   class_label?: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
   subject_name: string;
   teacher_name?: string | null;
   planned_total_minutes: number;
@@ -589,6 +596,13 @@ type ParentTextbookPayload = {
   ok?: boolean;
   items?: ParentTextbookProgression[];
   class_label?: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
   error?: string;
 };
 
@@ -2687,6 +2701,24 @@ export default function ParentPage() {
                           <p className="mt-1 text-[14px] font-semibold text-slate-500">
                             Choisissez une matière pour consulter le cours réalisé et le travail à faire.
                           </p>
+
+                          {primaryProgression &&
+                          String(primaryProgression.education_type || "general_secondary") !==
+                            "general_secondary" ? (
+                            <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[12px] font-black text-indigo-800">
+                              <span>{primaryProgression.education_label || "Enseignement"}</span>
+                              <span className="text-indigo-400">•</span>
+                              <span>
+                                {primaryProgression.education_context_label ||
+                                  [
+                                    primaryProgression.formation_label,
+                                    primaryProgression.formation_level_label,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" • ")}
+                              </span>
+                            </div>
+                          ) : null}
 
                           <label className="mt-5 block max-w-xl">
                             <span className="mb-2 block text-[12px] font-black uppercase tracking-[0.14em] text-slate-600">

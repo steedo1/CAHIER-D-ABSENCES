@@ -17,7 +17,17 @@ type SubjectItem = {
   name: string;
   inst_subject_id?: string | null;
 };
-type ClassItem = {
+type EducationClassMeta = {
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
+};
+
+type ClassItem = EducationClassMeta & {
   id: string;
   label?: string;
   name?: string;
@@ -63,10 +73,14 @@ type Assignment = {
   id: string;
   class_id: string;
   is_active: boolean;
-  classes?: { id: string; label?: string | null; level?: string | null } | null;
+  classes?: (EducationClassMeta & {
+    id: string;
+    label?: string | null;
+    level?: string | null;
+  }) | null;
 };
 
-type StatsItem = {
+type StatsItem = EducationClassMeta & {
   assignment_id: string;
   progression_title: string;
   class_label: string;
@@ -259,6 +273,18 @@ function classNames(...arr: Array<string | false | null | undefined>) {
 
 function labelClass(c: ClassItem | Assignment["classes"]) {
   return String(c?.label || (c as any)?.name || "Classe");
+}
+
+function classContextLabel(c: EducationClassMeta | null | undefined) {
+  if (!c || String(c.education_type || "general_secondary") === "general_secondary") {
+    return "";
+  }
+  return String(
+    c.education_context_label ||
+      [c.formation_label, c.formation_level_label].filter(Boolean).join(" • ") ||
+      c.education_label ||
+      "",
+  );
 }
 
 function parseImportLines(text: string) {
@@ -1190,7 +1216,14 @@ export default function AdminTextbookPage() {
                         const already = assignments.some((a) => a.class_id === c.id && a.is_active);
                         return (
                           <label key={c.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm font-bold ring-1 ring-slate-200">
-                            <span>{labelClass(c)} <span className="text-xs text-slate-400">{c.level || ""}</span></span>
+                            <span>
+                              {labelClass(c)} <span className="text-xs text-slate-400">{c.level || ""}</span>
+                              {classContextLabel(c) ? (
+                                <span className="mt-1 block text-[10px] font-black uppercase tracking-wide text-indigo-600">
+                                  {classContextLabel(c)}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="flex items-center gap-2">
                               {already ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">Déjà liée</span> : null}
                               <input type="checkbox" checked={checked} onChange={(e) => setSelectedClassIds((prev) => e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id))} />
@@ -1233,7 +1266,14 @@ export default function AdminTextbookPage() {
                 <tbody className="divide-y divide-slate-100">
                   {stats.map((row) => (
                     <tr key={row.assignment_id}>
-                      <td className="px-3 py-3 font-black">{row.class_label}</td>
+                      <td className="px-3 py-3 font-black">
+                        {row.class_label}
+                        {classContextLabel(row) ? (
+                          <div className="mt-1 text-[10px] font-black uppercase tracking-wide text-indigo-600">
+                            {classContextLabel(row)}
+                          </div>
+                        ) : null}
+                      </td>
                       <td className="px-3 py-3">{row.subject_name}</td>
                       <td className="px-3 py-3 text-slate-600">{row.teacher_name}</td>
                       <td className="px-3 py-3"><span className="font-black text-emerald-700">{row.completion_rate}%</span> <span className="text-xs text-slate-500">({row.completed_items}/{row.expected_items})</span></td>

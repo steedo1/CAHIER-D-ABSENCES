@@ -297,7 +297,7 @@ export async function findTextbookClassDevice(
 
   const { data: directRows } = await srv
     .from("classes")
-    .select("id,label,level,institution_id,class_phone_e164")
+    .select("id,label,level,academic_year,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
     .eq("institution_id", institutionId)
     .in("class_phone_e164", variants)
     .limit(2);
@@ -307,7 +307,7 @@ export async function findTextbookClassDevice(
   const candidateKeys = new Set(variants.map(normalizePhoneComparable).filter(Boolean));
   const { data: allClasses } = await srv
     .from("classes")
-    .select("id,label,level,institution_id,class_phone_e164")
+    .select("id,label,level,academic_year,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
     .eq("institution_id", institutionId)
     .not("class_phone_e164", "is", null)
     .limit(1000);

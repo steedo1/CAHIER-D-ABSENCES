@@ -73,7 +73,22 @@ type Assignment = {
   teacher_id?: string | null;
   effective_teacher_id?: string | null;
   effective_teacher_name?: string | null;
-  classes?: { id: string; label?: string | null; level?: string | null } | null;
+  classes?: {
+    id: string;
+    label?: string | null;
+    level?: string | null;
+    academic_year?: string | null;
+    education_type?: string | null;
+    education_label?: string | null;
+    education_short_label?: string | null;
+    formation_code?: string | null;
+    formation_label?: string | null;
+    formation_level_code?: string | null;
+    formation_level_label?: string | null;
+    education_context_key?: string | null;
+    education_context_label?: string | null;
+    education_context_complete?: boolean | null;
+  } | null;
   progression?: {
     id: string;
     title: string;
@@ -225,6 +240,23 @@ function classLabel(assignment: Assignment | null) {
   return assignment?.classes?.label || "Classe";
 }
 
+function isNonGeneralAssignment(assignment: Assignment | null) {
+  return Boolean(
+    assignment &&
+      String(assignment.classes?.education_type || "general_secondary") !==
+        "general_secondary",
+  );
+}
+
+function assignmentContextLabel(assignment: Assignment | null) {
+  if (!assignment) return "Secondaire général";
+  return (
+    assignment.classes?.education_context_label ||
+    assignment.classes?.education_label ||
+    "Secondaire général"
+  );
+}
+
 function typeLabel(type: string) {
   const labels: Record<string, string> = {
     section: "Section",
@@ -268,6 +300,12 @@ function humanError(message: string) {
     forbidden_not_class_device:
       "Ce compte classe n’est pas correctement rattaché à une classe.",
     forbidden: "Vous n’avez pas accès à cette progression.",
+    class_education_context_incomplete:
+      "Cette classe doit être rattachée à une formation et à une année de formation.",
+    subject_not_configured_for_formation_level:
+      "Cette matière n’est pas configurée pour la formation et l’année de cette classe.",
+    subject_not_resolved_for_assignment:
+      "La matière de cette progression ne peut pas être reliée au référentiel de la formation.",
   };
   return labels[message] || message;
 }
@@ -312,9 +350,43 @@ export default function TeacherTextbookPage() {
       .map((assignment) => ({
         id: assignment.class_id,
         label: classLabel(assignment),
+        education_type:
+          assignment.classes?.education_type || "general_secondary",
+        context_key:
+          assignment.classes?.education_context_key || "general_secondary",
+        context_label: assignmentContextLabel(assignment),
       }))
-      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+      .sort((a, b) => {
+        const byContext = a.context_label.localeCompare(b.context_label, "fr");
+        return byContext || a.label.localeCompare(b.label, "fr");
+      });
   }, [assignments]);
+
+  const hasNonGeneralAssignments = useMemo(
+    () =>
+      classOptions.some(
+        (option) => option.education_type !== "general_secondary",
+      ),
+    [classOptions],
+  );
+
+  const classOptionGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { label: string; items: typeof classOptions }
+    >();
+    for (const option of classOptions) {
+      const key = option.context_key || option.education_type;
+      if (!groups.has(key)) {
+        groups.set(key, { label: option.context_label, items: [] });
+      }
+      groups.get(key)!.items.push(option);
+    }
+    return Array.from(groups.entries()).map(([key, group]) => ({
+      key,
+      ...group,
+    }));
+  }, [classOptions]);
 
   const subjectAssignments = useMemo(() => {
     if (!selectedAssignment?.class_id) return [];
@@ -646,11 +718,21 @@ export default function TeacherTextbookPage() {
                     disabled={accessMode === "class_device" || classOptions.length <= 1}
                     className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-9 text-sm font-black text-slate-900 outline-none transition focus:border-emerald-400 disabled:cursor-default disabled:opacity-80"
                   >
-                    {classOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
+                    {hasNonGeneralAssignments
+                      ? classOptionGroups.map((group) => (
+                          <optgroup key={group.key} label={group.label}>
+                            {group.items.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))
+                      : classOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 </div>
@@ -700,6 +782,20 @@ export default function TeacherTextbookPage() {
                     style={{ width: `${Math.min(100, progressStats.rate)}%` }}
                   />
                 </div>
+              </div>
+            </div>
+          ) : null}
+
+          {isNonGeneralAssignment(selectedAssignment) ? (
+            <div className="mx-4 mb-4 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm sm:mx-6 lg:mx-7">
+              <div className="text-[10px] font-black uppercase tracking-[0.14em] text-indigo-600">
+                Contexte pédagogique
+              </div>
+              <div className="mt-1 font-black text-indigo-950">
+                {assignmentContextLabel(selectedAssignment)}
+              </div>
+              <div className="mt-1 text-xs font-semibold text-indigo-700">
+                {classLabel(selectedAssignment)} · {selectedAssignment?.progression?.subject_name || "Matière"}
               </div>
             </div>
           ) : null}

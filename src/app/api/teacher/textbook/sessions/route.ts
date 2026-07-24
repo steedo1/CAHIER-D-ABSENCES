@@ -13,6 +13,7 @@ import {
   resolveTextbookAssignmentSubject,
   textbookAssignmentMatchesClassTeacherRows,
 } from "@/lib/textbook/subject-matching";
+import { validateTextbookSubjectForClass } from "@/lib/textbook/education-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -232,7 +233,7 @@ export async function POST(req: NextRequest) {
   const { data: assignment, error: assignmentErr } = await srv
     .from("textbook_progression_class_assignments")
     .select(
-      "*,progression:textbook_progression_templates(id,subject_id,institution_subject_id,subject_name)",
+      "*,classes:class_id(id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code),progression:textbook_progression_templates(id,subject_id,institution_subject_id,subject_name)",
     )
     .eq("id", assignmentId)
     .eq("institution_id", institutionId)
@@ -269,6 +270,26 @@ export async function POST(req: NextRequest) {
 
   const effectiveTeacherId = access.effectiveTeacherId as string;
   const resolvedSubject = access.subject;
+
+  const educationValidation = await validateTextbookSubjectForClass({
+    srv,
+    institutionId,
+    classRow: (assignment as any).classes,
+    subjectId: resolvedSubject?.globalSubjectId ||
+      (assignment as any).subject_id ||
+      (assignment as any).progression?.subject_id ||
+      null,
+  });
+  if (!educationValidation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: educationValidation.error,
+        message: educationValidation.message,
+      },
+      { status: educationValidation.status },
+    );
+  }
 
   const { data: item, error: itemErr } = await srv
     .from("textbook_progression_items")

@@ -10,6 +10,7 @@ import {
   findTextbookTeacherForAssignment,
   resolveTextbookAssignmentSubject,
 } from "@/lib/textbook/subject-matching";
+import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +58,13 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { srv, institutionId } = auth.ctx;
 
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+  const educationSettings = (institution as any)?.settings_json || null;
+
   const url = new URL(req.url);
   const academicYear =
     cleanText(url.searchParams.get("academic_year"), 30) ||
@@ -74,7 +82,7 @@ export async function GET(req: NextRequest) {
       subject_id,
       institution_subject_id,
       is_active,
-      classes:class_id(id,label,level),
+      classes:class_id(id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code),
       progression:textbook_progression_templates(
         id,
         title,
@@ -253,6 +261,10 @@ export async function GET(req: NextRequest) {
 
   const items = assignments.map((assignment) => {
     const progression = assignment.progression || {};
+    const classContext = decorateTextbookClassEducation(
+      assignment.classes,
+      educationSettings,
+    );
     const allItems = itemsByProgression.get(String(progression.id || "")) || [];
     const actionable = allItems.filter(isActionableItem);
     const expected = actionable.length;
@@ -281,8 +293,16 @@ export async function GET(req: NextRequest) {
       progression_title: progression.title,
       academic_year: progression.academic_year,
       class_id: assignment.class_id,
-      class_label: assignment.classes?.label || "Classe",
-      level: assignment.classes?.level || progression.level || null,
+      class_label: classContext?.label || "Classe",
+      level: classContext?.level || progression.level || null,
+      education_type: classContext?.education_type || "general_secondary",
+      education_label: classContext?.education_label || "Secondaire général",
+      formation_code: classContext?.formation_code || null,
+      formation_label: classContext?.formation_label || null,
+      formation_level_code: classContext?.formation_level_code || null,
+      formation_level_label: classContext?.formation_level_label || null,
+      education_context_label:
+        classContext?.education_context_label || "Secondaire général",
       subject_id:
         progression.subject_id ||
         assignment.subject_id ||

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   const { data: enrollment, error: enrollmentErr } = await srv
     .from("class_enrollments")
-    .select("student_id,institution_id,class_id,classes:class_id(id,label,level,academic_year,institution_id)")
+    .select("student_id,institution_id,class_id,classes:class_id(id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code)")
     .eq("student_id", studentId)
     .is("end_date", null)
     .limit(1)
@@ -86,6 +87,16 @@ export async function GET(req: NextRequest) {
   if (!institutionId || !classId) {
     return NextResponse.json({ ok: true, items: [] });
   }
+
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+  const classContext = decorateTextbookClassEducation(
+    (enrollment as any)?.classes,
+    (institution as any)?.settings_json,
+  );
 
   const { data: assignments, error: assignmentErr } = await srv
     .from("textbook_progression_class_assignments")
@@ -287,7 +298,15 @@ export async function GET(req: NextRequest) {
       return {
         assignment_id: assignment.id,
         class_id: assignment.class_id,
-        class_label: (enrollment as any)?.classes?.label || null,
+        class_label: classContext?.label || null,
+        education_type: classContext?.education_type || "general_secondary",
+        education_label: classContext?.education_label || "Secondaire général",
+        formation_code: classContext?.formation_code || null,
+        formation_label: classContext?.formation_label || null,
+        formation_level_code: classContext?.formation_level_code || null,
+        formation_level_label: classContext?.formation_level_label || null,
+        education_context_label:
+          classContext?.education_context_label || "Secondaire général",
         subject_name: assignment?.progression?.subject_name || "Matière",
         teacher_name: assignment.teacher_id ? teacherNames.get(String(assignment.teacher_id)) || null : null,
         progression: {
@@ -310,7 +329,15 @@ export async function GET(req: NextRequest) {
     ok: true,
     student_id: studentId,
     class_id: classId,
-    class_label: (enrollment as any)?.classes?.label || null,
+    class_label: classContext?.label || null,
+    education_type: classContext?.education_type || "general_secondary",
+    education_label: classContext?.education_label || "Secondaire général",
+    formation_code: classContext?.formation_code || null,
+    formation_label: classContext?.formation_label || null,
+    formation_level_code: classContext?.formation_level_code || null,
+    formation_level_label: classContext?.formation_level_label || null,
+    education_context_label:
+      classContext?.education_context_label || "Secondaire général",
     items,
   });
 }
