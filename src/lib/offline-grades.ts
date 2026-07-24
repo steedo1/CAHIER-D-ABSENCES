@@ -40,8 +40,11 @@ export function gradesSettingsKey(role: GradesOfflineRole, url: string) {
   return `${prefix(role)}:settings:${part(url)}`;
 }
 
-export function gradesPeriodsKey(role: GradesOfflineRole) {
-  return `${prefix(role)}:periods`;
+export function gradesPeriodsKey(
+  role: GradesOfflineRole,
+  classId?: string | null,
+) {
+  return `${prefix(role)}:periods:${part(classId)}`;
 }
 
 export function gradesComponentsKey(

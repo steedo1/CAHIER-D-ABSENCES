@@ -18,6 +18,128 @@ export const dynamic = "force-dynamic";
 
 const MAX_PERIODS_PER_YEAR = 24;
 
+function stableToken(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).toUpperCase();
+}
+
+function scopedStorageCode(
+  educationType: EducationType,
+  profilePeriodKey: string,
+  displayCode: string,
+) {
+  const typeCode: Record<EducationType, string> = {
+    general_secondary: "GEN",
+    technical_secondary: "TECH",
+    vocational_training: "PRO",
+    higher_technical_short_cycle: "BTS",
+  };
+  const readable = String(displayCode || "P")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 12) || "P";
+  return `EDU_${typeCode[educationType]}_${stableToken(profilePeriodKey)}_${readable}`.slice(0, 50);
+}
+
+async function syncScopedGradingPeriods(
+  srv: SupabaseClient,
+  institutionId: string,
+  educationType: EducationType,
+  academicYear: string,
+  periods: ScopedGradingPeriod[],
+) {
+  const { data: existingRows, error: existingError } = await srv
+    .from("grade_periods")
+    .select("id,profile_period_key")
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear)
+    .eq("scope_type", "education")
+    .eq("education_type", educationType)
+    .is("formation_code", null);
+
+  if (existingError) throw existingError;
+
+  const existingByKey = new Map<string, { id: string; profile_period_key: string | null }>();
+  for (const row of existingRows || []) {
+    const key = String((row as any)?.profile_period_key || "").trim();
+    if (key) existingByKey.set(key, row as any);
+  }
+
+  const incomingKeys = new Set<string>();
+
+  for (const [index, period] of periods.entries()) {
+    const profilePeriodKey = String(period.id || period.code || `P${index + 1}`).trim();
+    incomingKeys.add(profilePeriodKey);
+
+    const payload = {
+      institution_id: institutionId,
+      academic_year: academicYear,
+      code: scopedStorageCode(educationType, profilePeriodKey, period.code),
+      display_code: period.code,
+      label: period.label,
+      short_label: period.short_label || period.label,
+      kind: period.kind || null,
+      start_date: period.start_date || null,
+      end_date: period.end_date || null,
+      order_index: index + 1,
+      is_active: period.is_active !== false,
+      coeff: Number.isFinite(Number(period.coeff)) ? Math.max(0, Number(period.coeff)) : 1,
+      scope_type: "education",
+      education_type: educationType,
+      formation_code: null,
+      profile_period_key: profilePeriodKey,
+    };
+
+    const existing = existingByKey.get(profilePeriodKey);
+    if (existing?.id) {
+      const { error } = await srv
+        .from("grade_periods")
+        .update(payload)
+        .eq("id", existing.id)
+        .eq("institution_id", institutionId);
+      if (error) throw error;
+    } else {
+      const { error } = await srv.from("grade_periods").insert(payload);
+      if (error) throw error;
+    }
+  }
+
+  const staleIds = (existingRows || [])
+    .filter((row: any) => !incomingKeys.has(String(row?.profile_period_key || "").trim()))
+    .map((row: any) => String(row.id));
+
+  for (const id of staleIds) {
+    const { count, error: countError } = await srv
+      .from("grade_evaluations")
+      .select("id", { count: "exact", head: true })
+      .eq("grading_period_id", id);
+    if (countError) throw countError;
+
+    if ((count || 0) > 0) {
+      const { error } = await srv
+        .from("grade_periods")
+        .update({ is_active: false })
+        .eq("id", id)
+        .eq("institution_id", institutionId);
+      if (error) throw error;
+    } else {
+      const { error } = await srv
+        .from("grade_periods")
+        .delete()
+        .eq("id", id)
+        .eq("institution_id", institutionId);
+      if (error) throw error;
+    }
+  }
+}
+
 type GuardOk = { user: { id: string }; instId: string };
 type GuardErr = { error: "unauthorized" | "no_institution" | "forbidden" };
 
@@ -236,6 +358,20 @@ export async function PUT(req: NextRequest) {
     current.updatedAt = new Date().toISOString();
     current.updatedBy = g.user.id;
     parsed.profiles[educationType] = current;
+
+    if (
+      academicYear &&
+      current.useCommonGradingPeriods === false &&
+      Object.prototype.hasOwnProperty.call(body, "gradingPeriods")
+    ) {
+      await syncScopedGradingPeriods(
+        srv,
+        g.instId,
+        educationType,
+        academicYear,
+        current.gradingPeriodsByAcademicYear[academicYear] || [],
+      );
+    }
 
     const nextSettingsJson = {
       ...settingsJson,

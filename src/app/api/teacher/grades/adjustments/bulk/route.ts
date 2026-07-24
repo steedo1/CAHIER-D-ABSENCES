@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { computeAcademicYear } from "@/lib/academicYear";
+import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -250,7 +251,20 @@ export async function POST(req: NextRequest) {
     let period: GradePeriodRow | null = null;
 
     if (requested_period_id) {
-      period = await getGradePeriodById(svc, institutionId, requested_period_id);
+      const rawPeriod = await getGradePeriodById(
+        svc,
+        institutionId,
+        requested_period_id,
+      );
+      period = rawPeriod
+        ? ((await getApplicableGradePeriodById(
+            svc as any,
+            institutionId,
+            rawPeriod.academic_year,
+            class_id,
+            requested_period_id,
+          )) as GradePeriodRow | null)
+        : null;
 
       if (!period) {
         return bad("INVALID_GRADING_PERIOD", 400, {

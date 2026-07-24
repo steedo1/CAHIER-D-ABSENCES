@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { computeAcademicYear } from "@/lib/academicYear";
+import { getApplicableGradePeriodById } from "@/lib/education-grading-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -388,11 +389,20 @@ export async function GET(req: NextRequest) {
         return bad("CLASS_OR_INSTITUTION_NOT_FOUND", 400);
       }
 
-      const period = await getGradePeriodById(
+      const rawPeriod = await getGradePeriodById(
         svc,
         institution_id,
-        grading_period_id
+        grading_period_id,
       );
+      const period = rawPeriod
+        ? ((await getApplicableGradePeriodById(
+            svc as any,
+            institution_id,
+            rawPeriod.academic_year,
+            class_id,
+            grading_period_id,
+          )) as GradePeriodRow | null)
+        : null;
 
       if (!period) {
         return bad("INVALID_GRADING_PERIOD", 400);

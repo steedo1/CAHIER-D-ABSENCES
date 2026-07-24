@@ -108,6 +108,11 @@ type TeachClass = {
   level: string;
   subject_id: string | null; // subjects.id canonique
   subject_name: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
 };
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
@@ -489,10 +494,25 @@ export default function TeacherNotesPage() {
         label: `${tc.class_label}${
           tc.subject_name ? ` — ${tc.subject_name}` : ""
         }`,
+        group:
+          tc.education_type === "general_secondary" || !tc.education_type
+            ? "Secondaire général"
+            : `${tc.education_label || "Autre enseignement"}${
+                tc.formation_label ? ` — ${tc.formation_label}` : ""
+              }`,
         value: tc,
       })),
     [teachClasses]
   );
+  const classOptionGroups = useMemo(() => {
+    const groups = new Map<string, typeof classOptions>();
+    for (const option of classOptions) {
+      const current = groups.get(option.group) || [];
+      current.push(option);
+      groups.set(option.group, current);
+    }
+    return Array.from(groups.entries());
+  }, [classOptions]);
   const [selKey, setSelKey] = useState<string>("");
   const selected = useMemo(
     () => classOptions.find((o) => o.key === selKey)?.value || null,
@@ -533,8 +553,12 @@ export default function TeacherNotesPage() {
   const [componentsLoading, setComponentsLoading] = useState(false);
   const [selectedComponentId, setSelectedComponentId] = useState<string>("");
 
-  const isCollege = selected ? isCollegeLevel(selected.level) : false;
-  const hasComponents = isCollege && components.length > 0;
+  const supportsComponents = selected
+    ? selected.education_type && selected.education_type !== "general_secondary"
+      ? true
+      : isCollegeLevel(selected.level)
+    : false;
+  const hasComponents = supportsComponents && components.length > 0;
 
   const componentById = useMemo(() => {
     const map: Record<string, SubjectComponent> = {};
@@ -638,9 +662,18 @@ export default function TeacherNotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Périodes de notes configurées (trimestres, semestres, etc.)
+  // Périodes de notes configurées pour la classe sélectionnée.
+  // Le secondaire général conserve le découpage commun historique.
   useEffect(() => {
     let cancelled = false;
+
+    if (!selected?.class_id) {
+      setGradePeriods([]);
+      setSelectedPeriodId("");
+      return () => {
+        cancelled = true;
+      };
+    }
 
     (async () => {
       try {
@@ -649,10 +682,12 @@ export default function TeacherNotesPage() {
         if (academicYearLabel) {
           params.set("academic_year", academicYearLabel);
         }
-        const url = `/api/admin/institution/grading-periods${
-          params.toString() ? `?${params.toString()}` : ""
-        }`;
-        const j: any = await gradesGetJson(url, gradesPeriodsKey("teacher"));
+        params.set("class_id", selected.class_id);
+        const url = `/api/admin/institution/grading-periods?${params.toString()}`;
+        const j: any = await gradesGetJson(
+          url,
+          gradesPeriodsKey("teacher", selected.class_id),
+        );
         const arr = (j.items || []) as GradePeriod[];
         if (cancelled) return;
         setGradePeriods(arr);
@@ -673,14 +708,17 @@ export default function TeacherNotesPage() {
     return () => {
       cancelled = true;
     };
-  }, [academicYearLabel]);
+  }, [academicYearLabel, selected?.class_id]);
 
   // Rubriques / sous-matières pour les niveaux 6e-3e
   useEffect(() => {
     setComponents([]);
     setSelectedComponentId("");
     if (!selected || !selected.subject_id) return;
-    if (!isCollegeLevel(selected.level)) return;
+    if (
+      (!selected.education_type || selected.education_type === "general_secondary") &&
+      !isCollegeLevel(selected.level)
+    ) return;
 
     (async () => {
       try {
@@ -2342,14 +2380,18 @@ export default function TeacherNotesPage() {
               aria-label="Classe — Discipline"
             >
               <option value="">— Sélectionner —</option>
-              {classOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
+              {classOptionGroups.map(([group, options]) => (
+                <optgroup key={group} label={group}>
+                  {options.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Seules vos classes affectées apparaissent.
+              Seules vos classes affectées apparaissent, regroupées par enseignement et formation.
             </div>
           </div>
 

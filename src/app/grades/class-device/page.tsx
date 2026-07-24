@@ -84,6 +84,11 @@ type TeachClass = {
   level: string;
   subject_id: string | null;
   subject_name: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
 };
 
 type RosterItem = { id: string; full_name: string; matricule: string | null };
@@ -518,10 +523,25 @@ export default function ClassDeviceNotesPage() {
         label: `${tc.class_label}${
           tc.subject_name ? ` — ${tc.subject_name}` : ""
         }`,
+        group:
+          tc.education_type === "general_secondary" || !tc.education_type
+            ? "Secondaire général"
+            : `${tc.education_label || "Autre enseignement"}${
+                tc.formation_label ? ` — ${tc.formation_label}` : ""
+              }`,
         value: tc,
       })),
     [teachClasses]
   );
+  const classOptionGroups = useMemo(() => {
+    const groups = new Map<string, typeof classOptions>();
+    for (const option of classOptions) {
+      const current = groups.get(option.group) || [];
+      current.push(option);
+      groups.set(option.group, current);
+    }
+    return Array.from(groups.entries());
+  }, [classOptions]);
   const [selKey, setSelKey] = useState<string>("");
   const selected = useMemo(
     () => classOptions.find((o) => o.key === selKey)?.value || null,
@@ -569,8 +589,12 @@ export default function ClassDeviceNotesPage() {
   const [componentsLoading, setComponentsLoading] = useState(false);
   const [selectedComponentId, setSelectedComponentId] = useState<string>("");
 
-  const isCollege = selected ? isCollegeLevel(selected.level) : false;
-  const hasComponents = isCollege && components.length > 0;
+  const supportsComponents = selected
+    ? selected.education_type && selected.education_type !== "general_secondary"
+      ? true
+      : isCollegeLevel(selected.level)
+    : false;
+  const hasComponents = supportsComponents && components.length > 0;
 
   const componentById = useMemo(() => {
     const map: Record<string, SubjectComponent> = {};
@@ -657,10 +681,18 @@ export default function ClassDeviceNotesPage() {
   }, []);
 
   /* ==========================================
-     Chargement des périodes configurées
+     Chargement des périodes configurées pour la classe
   ========================================== */
   useEffect(() => {
     let cancelled = false;
+
+    if (!selected?.class_id) {
+      setGradePeriods([]);
+      setSelectedPeriodId("");
+      return () => {
+        cancelled = true;
+      };
+    }
 
     (async () => {
       try {
@@ -670,17 +702,12 @@ export default function ClassDeviceNotesPage() {
         if (academicYearLabel) {
           params.set("academic_year", academicYearLabel);
         }
+        params.set("class_id", selected.class_id);
 
         const candidates = [
-          `/api/admin/institution/grading-periods${
-            params.toString() ? `?${params.toString()}` : ""
-          }`,
-          `/api/institution/grading-periods${
-            params.toString() ? `?${params.toString()}` : ""
-          }`,
-          `/api/teacher/institution/grading-periods${
-            params.toString() ? `?${params.toString()}` : ""
-          }`,
+          `/api/admin/institution/grading-periods?${params.toString()}`,
+          `/api/institution/grading-periods?${params.toString()}`,
+          `/api/teacher/institution/grading-periods?${params.toString()}`,
         ];
 
         let arr: GradePeriod[] = [];
@@ -690,7 +717,7 @@ export default function ClassDeviceNotesPage() {
             logInfo("useEffect[periods] -> fetch", url);
             const j: any = await gradesGetJson(
               url,
-              gradesPeriodsKey("class-device")
+              gradesPeriodsKey("class-device", selected.class_id),
             );
 
             const items = Array.isArray(j?.items) ? (j.items as GradePeriod[]) : [];
@@ -713,7 +740,7 @@ export default function ClassDeviceNotesPage() {
             (p) =>
               p.is_active !== false &&
               (!p.start_date || p.start_date <= today) &&
-              (!p.end_date || p.end_date >= today)
+              (!p.end_date || p.end_date >= today),
           );
           const firstActive = arr.find((p) => p.is_active !== false);
           return periodForToday?.id || firstActive?.id || arr[0]?.id || "";
@@ -731,7 +758,7 @@ export default function ClassDeviceNotesPage() {
     return () => {
       cancelled = true;
     };
-  }, [academicYearLabel]);
+  }, [academicYearLabel, selected?.class_id]);
 
   /* ==========================================
      Chargement des sous-matières (collège)
@@ -2632,14 +2659,18 @@ export default function ClassDeviceNotesPage() {
               aria-label="Classe — Discipline"
             >
               <option value="">— Sélectionner —</option>
-              {classOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
+              {classOptionGroups.map(([group, options]) => (
+                <optgroup key={group} label={group}>
+                  {options.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              Classes détectées à partir du téléphone de la classe.
+              Classes détectées à partir du téléphone, regroupées par enseignement et formation.
             </div>
           </div>
 

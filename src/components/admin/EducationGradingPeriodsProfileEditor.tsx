@@ -346,7 +346,7 @@ export default function EducationGradingPeriodsProfileEditor({
           </div>
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-            Ce lot enregistre le découpage propre à cet enseignement. Le branchement automatique aux évaluations, bulletins et statistiques sera réalisé dans l’étape suivante, sans modifier les périodes communes actuelles.
+            Ce découpage est désormais utilisé automatiquement par le cahier de notes pour les classes de cet enseignement. Les périodes communes du secondaire général restent inchangées.
           </div>
         </div>
       )}

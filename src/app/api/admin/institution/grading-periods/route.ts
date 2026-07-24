@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,29 +81,34 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const academicYearParam = url.searchParams.get("academic_year");
   const academic_year = (academicYearParam || computeAcademicYear()).trim();
+  const classId = String(url.searchParams.get("class_id") || "").trim() || null;
 
   const supabase = getSupabaseServiceClient();
-  const { data, error: dbErr } = await supabase
-    .from("grade_periods")
-    .select(
-      "id, institution_id, academic_year, code, label, short_label, kind, start_date, end_date, order_index, is_active, coeff"
-    )
-    .eq("institution_id", institution_id)
-    .eq("academic_year", academic_year)
-    .order("order_index", { ascending: true });
 
-  if (dbErr) {
+  try {
+    const resolved = await listApplicableGradePeriods(
+      supabase as any,
+      institution_id,
+      academic_year,
+      classId,
+    );
+
+    return NextResponse.json({
+      ok: true,
+      academic_year,
+      class_id: classId,
+      education_type: resolved.context?.educationType || null,
+      formation_code: resolved.context?.formationCode || null,
+      resolved_scope: resolved.resolvedScope,
+      fallback_to_common: resolved.fallbackToCommon,
+      items: resolved.items,
+    });
+  } catch (dbErr: any) {
     return NextResponse.json(
-      { ok: false, error: dbErr.message },
-      { status: 400 }
+      { ok: false, error: dbErr?.message || "grading_periods_read_failed" },
+      { status: 400 },
     );
   }
-
-  return NextResponse.json({
-    ok: true,
-    academic_year,
-    items: data ?? [],
-  });
 }
 
 /* =========================
@@ -204,6 +210,7 @@ export async function PUT(req: NextRequest) {
     )
     .eq("institution_id", institution_id)
     .eq("academic_year", academic_year)
+    .or("scope_type.eq.common,scope_type.is.null")
     .order("order_index", { ascending: true });
 
   if (existingErr) {
@@ -299,6 +306,11 @@ export async function PUT(req: NextRequest) {
       .from("grade_periods")
       .update({
         code: p.code,
+        display_code: p.code,
+        scope_type: "common",
+        education_type: null,
+        formation_code: null,
+        profile_period_key: null,
         label: p.label,
         short_label: p.short_label,
         kind: p.kind,
@@ -327,6 +339,11 @@ export async function PUT(req: NextRequest) {
       institution_id: p.institution_id,
       academic_year: p.academic_year,
       code: p.code,
+      display_code: p.code,
+      scope_type: "common",
+      education_type: null,
+      formation_code: null,
+      profile_period_key: null,
       label: p.label,
       short_label: p.short_label,
       kind: p.kind,
@@ -357,7 +374,8 @@ export async function PUT(req: NextRequest) {
       .delete()
       .in("id", idsToDelete)
       .eq("institution_id", institution_id)
-      .eq("academic_year", academic_year);
+      .eq("academic_year", academic_year)
+      .or("scope_type.eq.common,scope_type.is.null");
 
     if (delErr) {
       return NextResponse.json(
@@ -375,6 +393,7 @@ export async function PUT(req: NextRequest) {
     )
     .eq("institution_id", institution_id)
     .eq("academic_year", academic_year)
+    .or("scope_type.eq.common,scope_type.is.null")
     .order("order_index", { ascending: true });
 
   if (finalErr) {

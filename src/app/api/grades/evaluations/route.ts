@@ -7,6 +7,10 @@ import {
   unpublishEvaluationOfficially,
 } from "@/lib/grades/publication";
 import { computeAcademicYear } from "@/lib/academicYear";
+import {
+  autoDetectApplicableGradePeriod,
+  getApplicableGradePeriodById,
+} from "@/lib/education-grading-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -436,31 +440,28 @@ async function autoDetectGradePeriodId(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   academicYear: string,
-  evalDate: string
+  evalDate: string,
+  classId: string,
 ): Promise<string | null> {
-  const { data, error } = await srv
-    .from("grade_periods")
-    .select("id")
-    .eq("institution_id", institutionId)
-    .eq("academic_year", academicYear)
-    .eq("is_active", true)
-    .lte("start_date", evalDate)
-    .gte("end_date", evalDate)
-    .order("order_index", { ascending: true })
-    .limit(1);
-
-  if (error) {
+  try {
+    const period = await autoDetectApplicableGradePeriod(
+      srv as any,
+      institutionId,
+      academicYear,
+      classId,
+      evalDate,
+    );
+    return period?.id || null;
+  } catch (error) {
     console.error("[grades/evaluations] autoDetectGradePeriodId error", {
       institutionId,
       academicYear,
       evalDate,
+      classId,
       error,
     });
     return null;
   }
-
-  const row = Array.isArray(data) ? (data[0] as any) : null;
-  return row?.id ? String(row.id) : null;
 }
 
 async function validateExplicitGradePeriod(
@@ -468,9 +469,16 @@ async function validateExplicitGradePeriod(
   institutionId: string,
   gradingPeriodId: string,
   evalDate: string,
-  academicYear: string
+  academicYear: string,
+  classId: string,
 ): Promise<{ ok: true; period: GradePeriodRow } | { ok: false; error: string }> {
-  const period = await getGradePeriodById(srv, institutionId, gradingPeriodId);
+  const period = (await getApplicableGradePeriodById(
+    srv as any,
+    institutionId,
+    academicYear,
+    classId,
+    gradingPeriodId,
+  )) as GradePeriodRow | null;
 
   if (!period) {
     return { ok: false, error: "INVALID_GRADING_PERIOD" };
@@ -736,11 +744,20 @@ export async function GET(req: NextRequest) {
     }
 
     if (gradingPeriodId) {
-      const period = await getGradePeriodById(
+      const rawPeriod = await getGradePeriodById(
         srv,
         profile.institution_id,
-        gradingPeriodId
+        gradingPeriodId,
       );
+      const period = rawPeriod
+        ? await getApplicableGradePeriodById(
+            srv as any,
+            profile.institution_id,
+            rawPeriod.academic_year,
+            classId,
+            gradingPeriodId,
+          )
+        : null;
 
       if (!period) {
         console.warn("[grades/evaluations] GET invalid grading period", {
@@ -966,7 +983,8 @@ export async function POST(req: NextRequest) {
         profile.institution_id,
         explicitGradingPeriodId,
         eval_date,
-        academic_year
+        academic_year,
+        class_id,
       );
 
       if (!validated.ok) {
@@ -983,7 +1001,8 @@ export async function POST(req: NextRequest) {
         srv,
         profile.institution_id,
         academic_year,
-        eval_date
+        eval_date,
+        class_id,
       );
 
       if (grading_period_id) {

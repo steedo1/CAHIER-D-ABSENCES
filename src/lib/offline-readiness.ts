@@ -248,20 +248,48 @@ async function prepareGrades(
     // Le nom de l'établissement est décoratif ; les notes restent préparables.
   }
 
-  onProgress("Téléchargement des périodes de notes…");
-  const periodPayload: any = await fetchFirstAndCache(
-    [
-      "/api/admin/institution/grading-periods",
-      "/api/institution/grading-periods",
-      "/api/teacher/institution/grading-periods",
-    ].map((url) => ({ url, key: gradesPeriodsKey(role) })),
-    (payload: any) => Array.isArray(payload?.items)
-  );
-  const periodIds = uniqueIds(
-    (Array.isArray(periodPayload?.items) ? periodPayload.items : []).map(
-      (period: GradePeriod) => period?.id || null
-    )
-  );
+  onProgress("Téléchargement des périodes de notes par classe…");
+  const periodIdSet = new Set<string>();
+
+  if (classIds.length > 0) {
+    await mapLimit(classIds, 4, async (classId, index) => {
+      onProgress(`Notes : périodes ${index + 1}/${classIds.length}…`);
+      const params = new URLSearchParams({ class_id: classId });
+      const suffix = `?${params.toString()}`;
+      const periodPayload: any = await fetchFirstAndCache(
+        [
+          `/api/admin/institution/grading-periods${suffix}`,
+          `/api/institution/grading-periods${suffix}`,
+          `/api/teacher/institution/grading-periods${suffix}`,
+        ].map((url) => ({ url, key: gradesPeriodsKey(role, classId) })),
+        (payload: any) => Array.isArray(payload?.items),
+      );
+
+      for (const period of Array.isArray(periodPayload?.items)
+        ? periodPayload.items
+        : []) {
+        const id = String((period as GradePeriod)?.id || "").trim();
+        if (id) periodIdSet.add(id);
+      }
+    });
+  } else {
+    const periodPayload: any = await fetchFirstAndCache(
+      [
+        "/api/admin/institution/grading-periods",
+        "/api/institution/grading-periods",
+        "/api/teacher/institution/grading-periods",
+      ].map((url) => ({ url, key: gradesPeriodsKey(role) })),
+      (payload: any) => Array.isArray(payload?.items),
+    );
+    for (const period of Array.isArray(periodPayload?.items)
+      ? periodPayload.items
+      : []) {
+      const id = String((period as GradePeriod)?.id || "").trim();
+      if (id) periodIdSet.add(id);
+    }
+  }
+
+  const periodIds = Array.from(periodIdSet);
   const periodVariants: Array<string | null> = periodIds.length ? periodIds : [null];
   const studentIds = new Set<string>();
 

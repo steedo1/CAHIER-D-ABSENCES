@@ -2,6 +2,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  EDUCATION_ORGANIZATION_SETTINGS_KEY,
+  EDUCATION_TYPE_OPTIONS,
+  getCatalogFormation,
+  isEducationType,
+  type EducationType,
+} from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +21,78 @@ type TeachClass = {
   level: string;
   subject_id: string | null;
   subject_name: string | null;
+  education_type: EducationType;
+  education_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
+  formation_level_code: string | null;
 };
+
+
+function educationLabel(type: EducationType) {
+  return EDUCATION_TYPE_OPTIONS.find((item) => item.id === type)?.label || "Secondaire général";
+}
+
+async function buildFormationLabelMap(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+) {
+  const map = new Map<string, string>();
+  const { data } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+
+  const settings = (data as any)?.settings_json;
+  const organization = settings?.[EDUCATION_ORGANIZATION_SETTINGS_KEY];
+
+  for (const id of Array.isArray(organization?.selectedCatalogFormationIds)
+    ? organization.selectedCatalogFormationIds
+    : []) {
+    const item = getCatalogFormation(String(id));
+    if (item) map.set(`catalog:${item.id}`, `${item.diplomaLabel} — ${item.name}`);
+  }
+
+  for (const item of Array.isArray(organization?.customFormations)
+    ? organization.customFormations
+    : []) {
+    const id = String(item?.id || "").trim();
+    if (!id) continue;
+    const diploma = String(item?.diplomaLabel || item?.diplomaCode || "Formation").trim();
+    const name = String(item?.name || "").trim();
+    map.set(`custom:${id}`, name ? `${diploma} — ${name}` : diploma);
+  }
+
+  return map;
+}
+
+function classContext(
+  cls: any,
+  formationLabels: Map<string, string>,
+): Pick<
+  TeachClass,
+  | "education_type"
+  | "education_label"
+  | "formation_code"
+  | "formation_label"
+  | "formation_level_code"
+> {
+  const educationType: EducationType = isEducationType(cls?.education_type)
+    ? cls.education_type
+    : "general_secondary";
+  const formationCode = String(cls?.formation_code || "").trim() || null;
+  return {
+    education_type: educationType,
+    education_label: educationLabel(educationType),
+    formation_code: formationCode,
+    formation_label: formationCode
+      ? formationLabels.get(formationCode) || formationCode
+      : null,
+    formation_level_code:
+      String(cls?.formation_level_code || "").trim() || null,
+  };
+}
 
 export async function GET(_req: NextRequest) {
   try {
@@ -58,6 +136,10 @@ export async function GET(_req: NextRequest) {
     const isClassDevice = roleSet.has("class_device");
 
     const srv = getSupabaseServiceClient();
+    const formationLabels = await buildFormationLabelMap(
+      srv,
+      profile.institution_id,
+    );
 
     const items: TeachClass[] = [];
     const seen = new Set<string>();
@@ -117,7 +199,7 @@ export async function GET(_req: NextRequest) {
     if (isTeacher) {
       const { data: rows, error } = await supabase
         .from("class_teachers")
-        .select("class_id,subject_id,classes:class_id(label,level)")
+        .select("class_id,subject_id,classes:class_id(label,level,education_type,formation_code,formation_level_code)")
         .eq("teacher_id", profile.id)
         .eq("institution_id", profile.institution_id)
         .is("end_date", null);
@@ -134,6 +216,7 @@ export async function GET(_req: NextRequest) {
             level: String(cls.level ?? "—"),
             subject_id: row.subject_id || null,
             subject_name: null,
+            ...classContext(cls, formationLabels),
           });
         });
       }
@@ -151,7 +234,7 @@ export async function GET(_req: NextRequest) {
       const { data: clsByClassPhone, error: clsErr1 } = await srv
         .from("classes")
         .select(
-          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164"
+          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164,education_type,formation_code,formation_level_code"
         )
         .eq("institution_id", profile.institution_id)
         .eq("class_phone_e164", phone);
@@ -163,7 +246,7 @@ export async function GET(_req: NextRequest) {
       const { data: clsByDevicePhone, error: clsErr2 } = await srv
         .from("classes")
         .select(
-          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164"
+          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164,education_type,formation_code,formation_level_code"
         )
         .eq("institution_id", profile.institution_id)
         .eq("device_phone_e164", phone);
@@ -204,6 +287,7 @@ export async function GET(_req: NextRequest) {
               level: String(cls.level ?? "—"),
               subject_id: row.subject_id || null,
               subject_name: null,
+              ...classContext(cls, formationLabels),
             });
           });
         }

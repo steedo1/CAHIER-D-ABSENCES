@@ -420,6 +420,9 @@ export default function AdminNotesEvaluationsPage() {
       if (selectedYearCode) {
         params.set("academic_year", selectedYearCode);
       }
+      if (selectedClassId) {
+        params.set("class_id", selectedClassId);
+      }
       const qs = params.toString();
       const res = await fetch(
         "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : ""),
@@ -471,7 +474,7 @@ export default function AdminNotesEvaluationsPage() {
   useEffect(() => {
     loadPeriods();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYearCode]);
+  }, [selectedYearCode, selectedClassId]);
 
   const activePeriod = useMemo(() => {
     if (!selectedPeriodCode) return null;
@@ -1236,7 +1239,10 @@ export default function AdminNotesEvaluationsPage() {
             <div className="mb-1 text-xs text-slate-500">Classe</div>
             <Select
               value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
+              onChange={(e) => {
+                setSelectedClassId(e.target.value);
+                setSelectedPeriodCode("");
+              }}
               disabled={!selectedLevel}
             >
               <option value="">— Toutes —</option>
@@ -1289,6 +1295,9 @@ export default function AdminNotesEvaluationsPage() {
             <div className="mt-1 text-[11px] text-slate-500">
               En choisissant une période, les dates <b>Du</b> et <b>Au</b> sont
               automatiquement réglées sur le début et la fin de cette période.
+              {selectedClassId
+                ? " Le découpage affiché correspond à la classe sélectionnée."
+                : " Sans classe sélectionnée, le découpage commun est utilisé."}
             </div>
           </div>
           <div className="flex items-end">
