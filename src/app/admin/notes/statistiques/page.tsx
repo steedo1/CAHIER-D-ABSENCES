@@ -12,6 +12,10 @@ import {
   School,
   Search,
 } from "lucide-react";
+import {
+  educationStatisticsClassMatches,
+  resolveEducationStatisticsContext,
+} from "@/lib/education-statistics";
 
 type ClassRow = {
   id: string;
@@ -20,6 +24,11 @@ type ClassRow = {
   level?: string | null;
   academic_year?: string | null;
   official_track_code?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
 };
 
 type GradePeriod = {
@@ -575,6 +584,11 @@ export default function AdminNotesStatsPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
   const [selectedClassId, setSelectedClassId] = useState("");
+  const [selectedEducationType, setSelectedEducationType] =
+    useState("general_secondary");
+  const [selectedFormationCode, setSelectedFormationCode] = useState("");
+  const [selectedFormationLevelCode, setSelectedFormationLevelCode] =
+    useState("");
 
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -593,9 +607,24 @@ export default function AdminNotesStatsPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
 
+  const educationSettings = institution?.settings_json || institution || null;
+
+  const classContextById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof resolveEducationStatisticsContext>>();
+    for (const item of classes) {
+      map.set(item.id, resolveEducationStatisticsContext(item, educationSettings));
+    }
+    return map;
+  }, [classes, educationSettings]);
+
   const selectedClass = useMemo(
     () => classes.find((c) => c.id === selectedClassId) || null,
     [classes, selectedClassId]
+  );
+
+  const selectedClassContext = useMemo(
+    () => (selectedClass ? classContextById.get(selectedClass.id) || null : null),
+    [classContextById, selectedClass]
   );
 
   const selectedSubject = useMemo(
@@ -604,6 +633,59 @@ export default function AdminNotesStatsPage() {
   );
 
   const selectedSubjectName = selectedSubject?.name || "Matière";
+
+  const hasNonGeneralClasses = useMemo(
+    () =>
+      classes.some(
+        (item) =>
+          (classContextById.get(item.id)?.educationType || "general_secondary") !==
+          "general_secondary"
+      ),
+    [classes, classContextById]
+  );
+
+  const educationTypeOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of classes) {
+      const context = classContextById.get(item.id);
+      if (context) map.set(context.educationType, context.educationLabel);
+    }
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [classes, classContextById]);
+
+  const formationOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of classes) {
+      const context = classContextById.get(item.id);
+      if (!context || context.educationType !== selectedEducationType) continue;
+      if (!context.formationCode) continue;
+      map.set(
+        context.formationCode,
+        context.formationLabel || context.formationCode
+      );
+    }
+    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
+  }, [classes, classContextById, selectedEducationType]);
+
+  const formationLevelOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of classes) {
+      const context = classContextById.get(item.id);
+      if (!context || context.educationType !== selectedEducationType) continue;
+      if (context.formationCode !== selectedFormationCode) continue;
+      if (!context.formationLevelCode) continue;
+      map.set(
+        context.formationLevelCode,
+        context.formationLevelLabel || context.formationLevelCode
+      );
+    }
+    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
+  }, [
+    classes,
+    classContextById,
+    selectedEducationType,
+    selectedFormationCode,
+  ]);
 
   const academicYears = useMemo(() => {
     const set = new Set<string>();
@@ -615,23 +697,76 @@ export default function AdminNotesStatsPage() {
   }, [classes, periods]);
 
   const filteredClasses = useMemo(() => {
-    if (!selectedAcademicYear) return classes;
-    return classes.filter((c) => c.academic_year === selectedAcademicYear);
-  }, [classes, selectedAcademicYear]);
+    return classes
+      .filter(
+        (c) => !selectedAcademicYear || c.academic_year === selectedAcademicYear
+      )
+      .filter((c) =>
+        educationStatisticsClassMatches(c, {
+          educationType: selectedEducationType,
+          formationCode: selectedFormationCode,
+          formationLevelCode: selectedFormationLevelCode,
+        })
+      );
+  }, [
+    classes,
+    selectedAcademicYear,
+    selectedEducationType,
+    selectedFormationCode,
+    selectedFormationLevelCode,
+  ]);
 
   useEffect(() => {
-    if (!selectedAcademicYear) return;
-    if (!selectedClassId) return;
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (cls && cls.academic_year !== selectedAcademicYear) {
-      setSelectedClassId("");
-      setSelectedPeriodId("");
-      setSelectedSubjectId("");
-      setMatrixRows([]);
-      setLoadedPeriods([]);
-      setErrorMsg(null);
+    if (selectedEducationType === "general_secondary") {
+      if (selectedFormationCode) setSelectedFormationCode("");
+      if (selectedFormationLevelCode) setSelectedFormationLevelCode("");
+      return;
     }
-  }, [classes, selectedAcademicYear, selectedClassId]);
+
+    if (
+      selectedFormationCode &&
+      formationOptions.some((item) => item.code === selectedFormationCode)
+    ) {
+      return;
+    }
+
+    setSelectedFormationCode(formationOptions[0]?.code || "");
+  }, [selectedEducationType, selectedFormationCode, formationOptions]);
+
+  useEffect(() => {
+    if (selectedEducationType === "general_secondary") return;
+
+    if (
+      selectedFormationLevelCode &&
+      formationLevelOptions.some(
+        (item) => item.code === selectedFormationLevelCode
+      )
+    ) {
+      return;
+    }
+
+    setSelectedFormationLevelCode(formationLevelOptions[0]?.code || "");
+  }, [
+    selectedEducationType,
+    selectedFormationLevelCode,
+    formationLevelOptions,
+  ]);
+
+  useEffect(() => {
+    if (
+      selectedClassId &&
+      filteredClasses.some((item) => item.id === selectedClassId)
+    ) {
+      return;
+    }
+
+    setSelectedClassId(filteredClasses[0]?.id || "");
+    setSelectedPeriodId("");
+    setSelectedSubjectId("");
+    setMatrixRows([]);
+    setLoadedPeriods([]);
+    setErrorMsg(null);
+  }, [filteredClasses, selectedClassId]);
 
   const matrixPeriods = useMemo(() => {
     return periods
@@ -764,9 +899,23 @@ export default function AdminNotesStatsPage() {
         setClasses(items);
 
         if (!selectedClassId && items.length) {
-          setSelectedClassId(items[0].id);
-          if (items[0].academic_year) {
-            setSelectedAcademicYear(items[0].academic_year);
+          const first =
+            items.find(
+              (item) =>
+                String(item.education_type || "general_secondary") ===
+                "general_secondary"
+            ) || items[0];
+
+          setSelectedEducationType(
+            String(first.education_type || "general_secondary")
+          );
+          setSelectedFormationCode(String(first.formation_code || ""));
+          setSelectedFormationLevelCode(
+            String(first.formation_level_code || "")
+          );
+          setSelectedClassId(first.id);
+          if (first.academic_year) {
+            setSelectedAcademicYear(first.academic_year);
           }
         }
       } catch (e: any) {
@@ -788,11 +937,19 @@ export default function AdminNotesStatsPage() {
 
   useEffect(() => {
     const cls = classes.find((c) => c.id === selectedClassId);
+    if (!cls) return;
 
-    if (cls?.academic_year) {
+    if (cls.academic_year) {
       setSelectedAcademicYear(cls.academic_year);
     }
-  }, [selectedClassId, classes]);
+
+    const context = classContextById.get(cls.id);
+    if (!context) return;
+
+    setSelectedEducationType(context.educationType);
+    setSelectedFormationCode(context.formationCode || "");
+    setSelectedFormationLevelCode(context.formationLevelCode || "");
+  }, [selectedClassId, classes, classContextById]);
 
   useEffect(() => {
     let cancelled = false;
@@ -805,6 +962,7 @@ export default function AdminNotesStatsPage() {
         const params = new URLSearchParams();
 
         if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedClassId) params.set("class_id", selectedClassId);
 
         const url = `/api/admin/institution/grading-periods${
           params.toString() ? `?${params.toString()}` : ""
@@ -845,7 +1003,7 @@ export default function AdminNotesStatsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
 
   useEffect(() => {
     if (!matrixPeriods.length) {
@@ -1304,7 +1462,14 @@ export default function AdminNotesStatsPage() {
     const className = clsLabel(selectedClass);
     const title = `Matrice matière — ${selectedSubjectName}`;
     const periodText = selectedPeriod ? periodLabel(selectedPeriod) : "Période";
-    const subtitle = `${className || "Classe"} • ${selectedAcademicYear || "—"} • ${periodText}`;
+    const contextText =
+      selectedClassContext &&
+      selectedClassContext.educationType !== "general_secondary"
+        ? ` • ${selectedClassContext.contextLabel}`
+        : "";
+    const subtitle = `${className || "Classe"}${contextText} • ${
+      selectedAcademicYear || "—"
+    } • ${periodText}`;
     const generatedAt = generatedAtLabel();
 
     const institutionName = institution?.institution_name || "ÉTABLISSEMENT";
@@ -1889,6 +2054,103 @@ export default function AdminNotesStatsPage() {
       </header>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        {hasNonGeneralClasses && (
+          <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
+            <div className="mb-3">
+              <div className="text-sm font-semibold text-indigo-950">
+                Contexte pédagogique
+              </div>
+              <div className="text-xs text-indigo-700">
+                Les statistiques restent séparées par type d’enseignement, formation
+                et année de formation.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Type d’enseignement
+                </label>
+                <Select
+                  value={selectedEducationType}
+                  onChange={(e) => {
+                    setSelectedEducationType(e.target.value);
+                    setSelectedFormationCode("");
+                    setSelectedFormationLevelCode("");
+                    setSelectedClassId("");
+                    setSelectedPeriodId("");
+                    setSelectedSubjectId("");
+                    setMatrixRows([]);
+                    setLoadedPeriods([]);
+                  }}
+                  disabled={classesLoading}
+                >
+                  {educationTypeOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              {selectedEducationType !== "general_secondary" && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                      Formation / filière
+                    </label>
+                    <Select
+                      value={selectedFormationCode}
+                      onChange={(e) => {
+                        setSelectedFormationCode(e.target.value);
+                        setSelectedFormationLevelCode("");
+                        setSelectedClassId("");
+                        setSelectedPeriodId("");
+                        setSelectedSubjectId("");
+                        setMatrixRows([]);
+                        setLoadedPeriods([]);
+                      }}
+                      disabled={classesLoading || !formationOptions.length}
+                    >
+                      <option value="">— Sélectionner —</option>
+                      {formationOptions.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                      Année de formation
+                    </label>
+                    <Select
+                      value={selectedFormationLevelCode}
+                      onChange={(e) => {
+                        setSelectedFormationLevelCode(e.target.value);
+                        setSelectedClassId("");
+                        setSelectedPeriodId("");
+                        setSelectedSubjectId("");
+                        setMatrixRows([]);
+                        setLoadedPeriods([]);
+                      }}
+                      disabled={classesLoading || !formationLevelOptions.length}
+                    >
+                      <option value="">— Sélectionner —</option>
+                      {formationLevelOptions.map((item) => (
+                        <option key={item.code} value={item.code}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
           <div className="lg:col-span-3">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1902,14 +2164,32 @@ export default function AdminNotesStatsPage() {
             >
               <option value="">— Sélectionner une classe —</option>
 
-              {filteredClasses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {clsLabel(c)}
-                  {c.level ? ` • ${c.level}` : ""}
-                  {c.academic_year ? ` • ${c.academic_year}` : ""}
-                </option>
-              ))}
+              {filteredClasses.map((c) => {
+                const context = classContextById.get(c.id);
+                const formationSuffix =
+                  context && context.educationType !== "general_secondary"
+                    ? ` • ${[context.formationLabel, context.formationLevelLabel]
+                        .filter(Boolean)
+                        .join(" • ")}`
+                    : c.level
+                      ? ` • ${c.level}`
+                      : "";
+
+                return (
+                  <option key={c.id} value={c.id}>
+                    {clsLabel(c)}
+                    {formationSuffix}
+                    {c.academic_year ? ` • ${c.academic_year}` : ""}
+                  </option>
+                );
+              })}
             </Select>
+            {selectedClassContext &&
+              selectedClassContext.educationType !== "general_secondary" && (
+                <div className="mt-1 text-[11px] font-medium text-indigo-700">
+                  {selectedClassContext.contextLabel}
+                </div>
+              )}
           </div>
 
           <div className="lg:col-span-2">
@@ -2028,8 +2308,12 @@ export default function AdminNotesStatsPage() {
           </GhostButton>
 
           <span className="text-xs text-slate-500">
-            {selectedClass ? clsLabel(selectedClass) : "Aucune classe"} •{" "}
-            {selectedAcademicYear || "année courante"} •{" "}
+            {selectedClass ? clsLabel(selectedClass) : "Aucune classe"}
+            {selectedClassContext &&
+            selectedClassContext.educationType !== "general_secondary"
+              ? ` • ${selectedClassContext.contextLabel}`
+              : ""}{" "}
+            • {selectedAcademicYear || "année courante"} •{" "}
             {selectedPeriod ? periodLabel(selectedPeriod) : "période"} •{" "}
             {selectedSubjectName}
           </span>

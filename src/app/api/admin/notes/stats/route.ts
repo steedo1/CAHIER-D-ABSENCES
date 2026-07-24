@@ -26,6 +26,10 @@ type ClassSubjectStat = {
   class_id: string;
   class_label: string;
   level: string | null;
+  academic_year: string | null;
+  education_type: string;
+  formation_code: string | null;
+  formation_level_code: string | null;
   subject_id: string | null;
   subject_name: string | null;
   evals_count: number;
@@ -47,6 +51,52 @@ function chunks<T>(arr: T[], size = 500): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function normalizedEducationType(value: unknown) {
+  const type = String(value || "").trim();
+  return type || "general_secondary";
+}
+
+function classMatchesFilters(
+  cls: any,
+  filters: {
+    academicYear: string | null;
+    educationType: string | null;
+    formationCode: string | null;
+    formationLevelCode: string | null;
+  },
+) {
+  if (
+    filters.academicYear &&
+    String(cls?.academic_year || "").trim() !== filters.academicYear
+  ) {
+    return false;
+  }
+
+  if (
+    filters.educationType &&
+    normalizedEducationType(cls?.education_type) !== filters.educationType
+  ) {
+    return false;
+  }
+
+  if (
+    filters.formationCode &&
+    String(cls?.formation_code || "").trim() !== filters.formationCode
+  ) {
+    return false;
+  }
+
+  if (
+    filters.formationLevelCode &&
+    String(cls?.formation_level_code || "").trim() !==
+      filters.formationLevelCode
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export async function GET(req: NextRequest) {
@@ -90,6 +140,17 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const published = searchParams.get("published"); // "true" | "false" | null
+    const classId = String(searchParams.get("class_id") || "").trim() || null;
+    const subjectIdFilter =
+      String(searchParams.get("subject_id") || "").trim() || null;
+    const academicYear =
+      String(searchParams.get("academic_year") || "").trim() || null;
+    const educationType =
+      String(searchParams.get("education_type") || "").trim() || null;
+    const formationCode =
+      String(searchParams.get("formation_code") || "").trim() || null;
+    const formationLevelCode =
+      String(searchParams.get("formation_level_code") || "").trim() || null;
 
     let evalQuery = supabase
       .from("grade_evaluations")
@@ -105,7 +166,11 @@ export async function GET(req: NextRequest) {
         classes!inner(
           institution_id,
           label,
-          level
+          level,
+          academic_year,
+          education_type,
+          formation_code,
+          formation_level_code
         )
       `
       )
@@ -117,6 +182,8 @@ export async function GET(req: NextRequest) {
     if (to) evalQuery = evalQuery.lte("eval_date", to);
     if (published === "true") evalQuery = evalQuery.eq("is_published", true);
     if (published === "false") evalQuery = evalQuery.eq("is_published", false);
+    if (classId) evalQuery = evalQuery.eq("class_id", classId);
+    if (subjectIdFilter) evalQuery = evalQuery.eq("subject_id", subjectIdFilter);
 
     const { data: evalsData, error: evalErr } = await evalQuery;
 
@@ -128,9 +195,16 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const evalRows = ((evalsData || []) as any as EvalRow[]).filter(
-      (ev) => ev.id && ev.class_id && ev.subject_id
-    );
+    const evalRows = ((evalsData || []) as any as EvalRow[]).filter((ev) => {
+      if (!ev.id || !ev.class_id || !ev.subject_id) return false;
+      const cls = relOne<any>(ev.classes);
+      return classMatchesFilters(cls, {
+        academicYear,
+        educationType,
+        formationCode,
+        formationLevelCode,
+      });
+    });
 
     if (!evalRows.length) {
       return NextResponse.json({
@@ -139,6 +213,12 @@ export async function GET(req: NextRequest) {
           from,
           to,
           published,
+          class_id: classId,
+          subject_id: subjectIdFilter,
+          academic_year: academicYear,
+          education_type: educationType,
+          formation_code: formationCode,
+          formation_level_code: formationLevelCode,
           total_evaluations: 0,
           total_subject_classes: 0,
         },
@@ -254,6 +334,10 @@ export async function GET(req: NextRequest) {
       class_id: string;
       class_label: string;
       level: string | null;
+      academic_year: string | null;
+      education_type: string;
+      formation_code: string | null;
+      formation_level_code: string | null;
       subject_id: string;
       subject_name: string;
       evalIds: Set<string>;
@@ -268,6 +352,14 @@ export async function GET(req: NextRequest) {
       const cls = relOne<any>(ev.classes);
       const classLabel = String(cls?.label || "Classe").trim();
       const level = cls?.level ? String(cls.level).trim() : null;
+      const classAcademicYear = cls?.academic_year
+        ? String(cls.academic_year).trim()
+        : null;
+      const classEducationType = normalizedEducationType(cls?.education_type);
+      const classFormationCode =
+        String(cls?.formation_code || "").trim() || null;
+      const classFormationLevelCode =
+        String(cls?.formation_level_code || "").trim() || null;
       const subjectId = String(ev.subject_id);
       const subjectName = subjectsById[subjectId]?.name || "Matière";
       const key = `${ev.class_id}::${subjectId}`;
@@ -278,6 +370,10 @@ export async function GET(req: NextRequest) {
           class_id: ev.class_id,
           class_label: classLabel,
           level,
+          academic_year: classAcademicYear,
+          education_type: classEducationType,
+          formation_code: classFormationCode,
+          formation_level_code: classFormationLevelCode,
           subject_id: subjectId,
           subject_name: subjectName,
           evalIds: new Set<string>(),
@@ -328,6 +424,10 @@ export async function GET(req: NextRequest) {
         class_id: acc.class_id,
         class_label: acc.class_label,
         level: acc.level,
+        academic_year: acc.academic_year,
+        education_type: acc.education_type,
+        formation_code: acc.formation_code,
+        formation_level_code: acc.formation_level_code,
         subject_id: acc.subject_id,
         subject_name: acc.subject_name,
         evals_count: acc.evalIds.size,
@@ -352,6 +452,12 @@ export async function GET(req: NextRequest) {
         from,
         to,
         published,
+        class_id: classId,
+        subject_id: subjectIdFilter,
+        academic_year: academicYear,
+        education_type: educationType,
+        formation_code: formationCode,
+        formation_level_code: formationLevelCode,
         total_evaluations: evalRows.length,
         total_subject_classes: by_class_subject.length,
       },
