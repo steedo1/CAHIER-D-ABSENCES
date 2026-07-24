@@ -18,6 +18,15 @@ type MetaClass = {
   id: string;
   label: string;
   level: string | null;
+  education_type: string;
+  education_label: string;
+  education_short_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_key?: string | null;
+  education_context_label?: string | null;
 };
 
 type Period = {
@@ -45,6 +54,13 @@ type OpenSession = {
   call_date: string;
   started_at: string;
   actual_call_at?: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
 };
 
 type RosterItem = {
@@ -64,6 +80,11 @@ type MetaResponse = {
   institution_name?: string | null;
   academic_year_label?: string | null;
   levels: string[];
+  education_types?: Array<{
+    id: string;
+    label: string;
+    short_label?: string | null;
+  }>;
   classes: MetaClass[];
   periods: Period[];
   open_session?: OpenSession | null;
@@ -181,6 +202,12 @@ export default function AppelAdministratifPage() {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [previews, setPreviews] = useState<Record<string, PreviewInfo>>({});
 
+  const [selectedEducationType, setSelectedEducationType] =
+    useState<string>("general_secondary");
+  const [selectedFormationCode, setSelectedFormationCode] =
+    useState<string>("");
+  const [selectedFormationLevelCode, setSelectedFormationLevelCode] =
+    useState<string>("");
   const [selectedLevel, setSelectedLevel] = useState<string>("all");
   const [classId, setClassId] = useState<string>("");
   const [periodId, setPeriodId] = useState<string>("");
@@ -195,10 +222,112 @@ export default function AppelAdministratifPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
+  const hasNonGeneralClasses = useMemo(
+    () =>
+      classes.some(
+        (item) =>
+          String(item.education_type || "general_secondary") !==
+          "general_secondary",
+      ),
+    [classes],
+  );
+
+  const educationTypeOptions = useMemo(() => {
+    const byId = new Map<
+      string,
+      { id: string; label: string; short_label?: string | null }
+    >();
+
+    for (const item of classes) {
+      const id = String(item.education_type || "general_secondary");
+      if (!byId.has(id)) {
+        byId.set(id, {
+          id,
+          label:
+            item.education_label ||
+            (id === "general_secondary"
+              ? "Secondaire général"
+              : id),
+          short_label: item.education_short_label || null,
+        });
+      }
+    }
+
+    return Array.from(byId.values());
+  }, [classes]);
+
+  const formationOptions = useMemo(() => {
+    const byCode = new Map<string, string>();
+    for (const item of classes) {
+      if (item.education_type !== selectedEducationType) continue;
+      const code = String(item.formation_code || "");
+      if (!code) continue;
+      if (!byCode.has(code)) {
+        byCode.set(
+          code,
+          item.formation_label || item.education_context_label || code,
+        );
+      }
+    }
+    return Array.from(byCode.entries()).map(([code, label]) => ({
+      code,
+      label,
+    }));
+  }, [classes, selectedEducationType]);
+
+  const formationLevelOptions = useMemo(() => {
+    const byCode = new Map<string, string>();
+    for (const item of classes) {
+      if (item.education_type !== selectedEducationType) continue;
+      if (
+        String(item.formation_code || "") !==
+        String(selectedFormationCode || "")
+      ) {
+        continue;
+      }
+      const code = String(item.formation_level_code || "");
+      if (!code) continue;
+      if (!byCode.has(code)) {
+        byCode.set(code, item.formation_level_label || code);
+      }
+    }
+    return Array.from(byCode.entries()).map(([code, label]) => ({
+      code,
+      label,
+    }));
+  }, [classes, selectedEducationType, selectedFormationCode]);
+
   const filteredClasses = useMemo(() => {
-    if (selectedLevel === "all") return classes;
-    return classes.filter((c) => c.level === selectedLevel);
-  }, [classes, selectedLevel]);
+    const scoped = classes.filter(
+      (c) =>
+        String(c.education_type || "general_secondary") ===
+        selectedEducationType,
+    );
+
+    if (selectedEducationType === "general_secondary") {
+      if (selectedLevel === "all") return scoped;
+      return scoped.filter((c) => c.level === selectedLevel);
+    }
+
+    return scoped
+      .filter(
+        (c) =>
+          !selectedFormationCode ||
+          String(c.formation_code || "") === selectedFormationCode,
+      )
+      .filter(
+        (c) =>
+          !selectedFormationLevelCode ||
+          String(c.formation_level_code || "") ===
+            selectedFormationLevelCode,
+      );
+  }, [
+    classes,
+    selectedEducationType,
+    selectedFormationCode,
+    selectedFormationLevelCode,
+    selectedLevel,
+  ]);
 
   const selectedClass = useMemo(
     () => classes.find((c) => c.id === classId) || null,
@@ -252,12 +381,55 @@ export default function AppelAdministratifPage() {
       setOpen(json.open_session || null);
 
       if (json.open_session) {
+        const openClass =
+          nextClasses.find(
+            (item) => item.id === json.open_session?.class_id,
+          ) || null;
+        const openEducationType =
+          openClass?.education_type ||
+          json.open_session.education_type ||
+          "general_secondary";
+
+        setSelectedEducationType(openEducationType);
+        setSelectedFormationCode(openClass?.formation_code || "");
+        setSelectedFormationLevelCode(
+          openClass?.formation_level_code || "",
+        );
+        setSelectedLevel(
+          openEducationType === "general_secondary"
+            ? openClass?.level || "all"
+            : "all",
+        );
         setClassId(json.open_session.class_id);
         setPeriodId(json.open_session.period_id);
       } else {
+        const firstClass =
+          nextClasses.find(
+            (item) =>
+              String(item.education_type || "general_secondary") ===
+              "general_secondary",
+          ) ||
+          nextClasses[0] ||
+          null;
+
+        if (firstClass) {
+          setSelectedEducationType(
+            firstClass.education_type || "general_secondary",
+          );
+          setSelectedFormationCode(firstClass.formation_code || "");
+          setSelectedFormationLevelCode(
+            firstClass.formation_level_code || "",
+          );
+          setSelectedLevel(
+            firstClass.education_type === "general_secondary"
+              ? firstClass.level || "all"
+              : "all",
+          );
+        }
+
         setClassId((prev) => {
           if (prev && nextClasses.some((c) => c.id === prev)) return prev;
-          return nextClasses[0]?.id || "";
+          return firstClass?.id || "";
         });
 
         setPeriodId((prev) => {
@@ -352,13 +524,60 @@ export default function AppelAdministratifPage() {
   }, [open?.class_id]);
 
   useEffect(() => {
-    if (!selectedClass) return;
-    if (selectedLevel === "all") return;
-    if (selectedClass.level === selectedLevel) return;
+    if (open) return;
+    if (selectedClass && filteredClasses.some((item) => item.id === selectedClass.id)) {
+      return;
+    }
 
-    const first = filteredClasses[0];
-    if (first) setClassId(first.id);
-  }, [filteredClasses, selectedClass, selectedLevel]);
+    setClassId(filteredClasses[0]?.id || "");
+  }, [filteredClasses, selectedClass, open]);
+
+  useEffect(() => {
+    if (selectedEducationType === "general_secondary") {
+      setSelectedFormationCode("");
+      setSelectedFormationLevelCode("");
+      return;
+    }
+
+    if (
+      selectedFormationCode &&
+      formationOptions.some(
+        (formation) => formation.code === selectedFormationCode,
+      )
+    ) {
+      return;
+    }
+
+    setSelectedFormationCode(formationOptions[0]?.code || "");
+  }, [
+    selectedEducationType,
+    selectedFormationCode,
+    formationOptions,
+  ]);
+
+  useEffect(() => {
+    if (selectedEducationType === "general_secondary") {
+      setSelectedFormationLevelCode("");
+      return;
+    }
+
+    if (
+      selectedFormationLevelCode &&
+      formationLevelOptions.some(
+        (level) => level.code === selectedFormationLevelCode,
+      )
+    ) {
+      return;
+    }
+
+    setSelectedFormationLevelCode(
+      formationLevelOptions[0]?.code || "",
+    );
+  }, [
+    selectedEducationType,
+    selectedFormationLevelCode,
+    formationLevelOptions,
+  ]);
 
   function toggleAbsent(id: string, value: boolean) {
     setRows((prev) => {
@@ -554,25 +773,108 @@ export default function AppelAdministratifPage() {
             <span>Préparation de l’appel</span>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Niveau</label>
-              <Select
-                value={selectedLevel}
-                onChange={(e) => setSelectedLevel(e.target.value)}
-                disabled={!!open}
-              >
-                <option value="all">Tous les niveaux</option>
-                {levels.map((lvl) => (
-                  <option key={lvl} value={lvl}>
-                    {levelLabel(lvl)}
-                  </option>
-                ))}
-              </Select>
-            </div>
+          <div
+            className={[
+              "grid gap-3",
+              hasNonGeneralClasses
+                ? "md:grid-cols-2 xl:grid-cols-5"
+                : "md:grid-cols-3",
+            ].join(" ")}
+          >
+            {hasNonGeneralClasses && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  Type d’enseignement
+                </label>
+                <Select
+                  value={selectedEducationType}
+                  onChange={(e) => {
+                    setSelectedEducationType(e.target.value);
+                    setSelectedLevel("all");
+                    setSelectedFormationCode("");
+                    setSelectedFormationLevelCode("");
+                  }}
+                  disabled={!!open}
+                >
+                  {educationTypeOptions.map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+
+            {selectedEducationType === "general_secondary" ? (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  Niveau
+                </label>
+                <Select
+                  value={selectedLevel}
+                  onChange={(e) => setSelectedLevel(e.target.value)}
+                  disabled={!!open}
+                >
+                  <option value="all">Tous les niveaux</option>
+                  {levels.map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {levelLabel(lvl)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">
+                    Formation / filière
+                  </label>
+                  <Select
+                    value={selectedFormationCode}
+                    onChange={(e) => {
+                      setSelectedFormationCode(e.target.value);
+                      setSelectedFormationLevelCode("");
+                    }}
+                    disabled={!!open}
+                  >
+                    <option value="">Sélectionner</option>
+                    {formationOptions.map((formation) => (
+                      <option
+                        key={formation.code}
+                        value={formation.code}
+                      >
+                        {formation.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">
+                    Année de formation
+                  </label>
+                  <Select
+                    value={selectedFormationLevelCode}
+                    onChange={(e) =>
+                      setSelectedFormationLevelCode(e.target.value)
+                    }
+                    disabled={!!open}
+                  >
+                    <option value="">Sélectionner</option>
+                    {formationLevelOptions.map((level) => (
+                      <option key={level.code} value={level.code}>
+                        {level.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </>
+            )}
 
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Classe</label>
+              <label className="text-sm font-medium text-slate-700">
+                Classe
+              </label>
               <Select
                 value={classId}
                 onChange={(e) => setClassId(e.target.value)}
@@ -585,10 +887,25 @@ export default function AppelAdministratifPage() {
                   </option>
                 ))}
               </Select>
+              {selectedClass &&
+                selectedClass.education_type !==
+                  "general_secondary" && (
+                  <div className="text-[11px] text-indigo-700">
+                    {selectedClass.education_context_label ||
+                      [
+                        selectedClass.formation_label,
+                        selectedClass.formation_level_label,
+                      ]
+                        .filter(Boolean)
+                        .join(" • ")}
+                  </div>
+                )}
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium text-slate-700">Créneau</label>
+              <label className="text-sm font-medium text-slate-700">
+                Créneau
+              </label>
               <Select
                 value={periodId}
                 onChange={(e) => setPeriodId(e.target.value)}
@@ -597,7 +914,8 @@ export default function AppelAdministratifPage() {
                 <option value="">Sélectionner</option>
                 {periods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label || "Séance"} • {p.start_time} → {p.end_time}
+                    {p.label || "Séance"} • {p.start_time} →{" "}
+                    {p.end_time}
                   </option>
                 ))}
               </Select>

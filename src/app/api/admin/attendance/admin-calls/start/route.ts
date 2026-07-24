@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  attendanceClassContextIsComplete,
+  resolveAttendanceEducationContext,
+} from "@/lib/education-attendance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,7 +95,9 @@ export async function POST(req: NextRequest) {
   ] = await Promise.all([
     srv
       .from("classes")
-      .select("id,label,institution_id")
+      .select(
+        "id,label,level,institution_id,education_type,formation_code,formation_level_code",
+      )
       .eq("institution_id", institution_id)
       .eq("id", class_id)
       .maybeSingle(),
@@ -128,6 +134,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (
+    !attendanceClassContextIsComplete({
+      educationType: (cls as any).education_type,
+      formationCode: (cls as any).formation_code,
+      formationLevelCode: (cls as any).formation_level_code,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        error: "class_education_context_incomplete",
+        message:
+          "Cette classe doit être rattachée à une formation et à une année de formation avant l’appel.",
+      },
+      { status: 409 },
+    );
+  }
+
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institution_id)
+    .maybeSingle();
+
+  const educationContext = resolveAttendanceEducationContext({
+    educationType: (cls as any).education_type,
+    formationCode: (cls as any).formation_code,
+    formationLevelCode: (cls as any).formation_level_code,
+    classLevel: (cls as any).level,
+    settingsJson: (institution as any)?.settings_json,
+  });
+  const educationPayload = {
+    education_type: educationContext.education_type,
+    education_label: educationContext.education_label,
+    formation_code: educationContext.formation_code,
+    formation_label: educationContext.formation_label,
+    formation_level_code: educationContext.formation_level_code,
+    formation_level_label: educationContext.formation_level_label,
+    education_context_label: educationContext.context_label,
+  };
+
   const nowIso = new Date().toISOString();
 
   if (existing) {
@@ -158,6 +204,7 @@ export async function POST(req: NextRequest) {
         call_date,
         started_at: String(updated?.started_at || existing.started_at || nowIso),
         actual_call_at: String(updated?.actual_call_at || nowIso),
+        ...educationPayload,
       },
       reused: true,
     });
@@ -193,6 +240,7 @@ export async function POST(req: NextRequest) {
       call_date,
       started_at: String(inserted?.started_at || nowIso),
       actual_call_at: String(inserted?.actual_call_at || nowIso),
+      ...educationPayload,
     },
   });
 }

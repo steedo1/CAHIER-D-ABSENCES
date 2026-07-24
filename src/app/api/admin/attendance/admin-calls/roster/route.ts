@@ -173,6 +173,47 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Source principale : inscriptions actives de la classe.
+  // Cela couvre aussi les élèves importés et les classes techniques/professionnelles/BTS,
+  // sans dépendre d'un ancien champ students.class_id.
+  try {
+    const { data: enrollments, error: enrollmentError } = await srv
+      .from("class_enrollments")
+      .select(`
+        student_id,
+        students:student_id ( id, first_name, last_name, full_name, matricule )
+      `)
+      .eq("class_id", class_id)
+      .is("end_date", null);
+
+    if (enrollmentError) throw enrollmentError;
+
+    const enrolledItems = uniqueRoster(
+      (enrollments || []).map((row: any) => {
+        const student = row?.students || {};
+        return {
+          id: normString(student.id || row?.student_id),
+          full_name:
+            [normString(student.last_name), normString(student.first_name)]
+              .filter(Boolean)
+              .join(" ")
+              .trim() || normString(student.full_name),
+          matricule: normString(student.matricule) || null,
+        };
+      }).filter((row: RosterItem) => Boolean(row.id && row.full_name))
+    );
+
+    if (enrolledItems.length > 0) {
+      return NextResponse.json({ ok: true, items: enrolledItems });
+    }
+  } catch (e: any) {
+    console.warn("[admin-calls/roster] class_enrollments_failed", {
+      error: e?.message || String(e),
+    });
+  }
+
+  // Compatibilité historique : conserver les sources déjà utilisées
+  // lorsqu'une ancienne installation ne dispose pas encore d'inscriptions actives.
   try {
     const existing = await tryExistingAdminStudents(req, class_id);
     if (existing.length > 0) {

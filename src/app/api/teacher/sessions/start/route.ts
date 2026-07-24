@@ -7,6 +7,10 @@ import {
   verifyAttendancePresence,
 } from "@/lib/attendance-presence-server";
 import type { AttendancePresenceEvidence } from "@/lib/attendance-presence";
+import {
+  attendanceClassContextIsComplete,
+  resolveAttendanceEducationContext,
+} from "@/lib/education-attendance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -238,7 +242,7 @@ export async function POST(req: NextRequest) {
     /* 1) Récupérer la classe pour avoir institution_id + label */
     const { data: cls, error: clsErr } = await svc
       .from("classes")
-      .select("id, label, institution_id")
+      .select("id, label, level, institution_id, education_type, formation_code, formation_level_code")
       .eq("id", class_id)
       .maybeSingle();
 
@@ -272,21 +276,23 @@ export async function POST(req: NextRequest) {
 
     /* 2) Résoudre subject_id → institution_subjects.id (instSubjectId) */
     let instSubjectId: string | null = null;
+    let canonicalSubjectId: string | null = null;
 
     // 2.a) raw_subject_id est déjà un institution_subjects.id ?
     const { data: asInst, error: asInstErr } = await svc
       .from("institution_subjects")
-      .select("id")
+      .select("id,subject_id")
       .eq("id", raw_subject_id)
       .maybeSingle();
 
     if (asInst && !asInstErr) {
       instSubjectId = asInst.id;
+      canonicalSubjectId = String((asInst as any).subject_id || raw_subject_id);
     } else {
       // 2.b) sinon raw_subject_id = subjects.id canonique
       const { data: viaCanonical, error: viaCanonicalErr } = await svc
         .from("institution_subjects")
-        .select("id")
+        .select("id,subject_id")
         .eq("institution_id", cls.institution_id)
         .eq("subject_id", raw_subject_id)
         .eq("is_active", true)
@@ -294,6 +300,7 @@ export async function POST(req: NextRequest) {
 
       if (viaCanonical && !viaCanonicalErr) {
         instSubjectId = viaCanonical.id;
+        canonicalSubjectId = String((viaCanonical as any).subject_id || raw_subject_id);
       }
     }
 
@@ -308,12 +315,70 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const classEducationType = String(
+      (cls as any).education_type || "general_secondary",
+    );
+    const isNonGeneralClass = classEducationType !== "general_secondary";
+
+    if (
+      isNonGeneralClass &&
+      !attendanceClassContextIsComplete({
+        educationType: classEducationType,
+        formationCode: (cls as any).formation_code,
+        formationLevelCode: (cls as any).formation_level_code,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error: "class_education_context_incomplete",
+          message:
+            "Cette classe doit être rattachée à une formation et à une année de formation avant l’appel.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (isNonGeneralClass && canonicalSubjectId) {
+      const { data: allowedSubject, error: allowedSubjectError } = await svc
+        .from("institution_level_subjects")
+        .select("id")
+        .eq("institution_id", cls.institution_id)
+        .eq("education_type", classEducationType)
+        .eq("formation_code", String((cls as any).formation_code || ""))
+        .eq(
+          "level_code",
+          String((cls as any).formation_level_code || ""),
+        )
+        .eq("subject_id", canonicalSubjectId)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (allowedSubjectError) {
+        return NextResponse.json(
+          { error: allowedSubjectError.message },
+          { status: 400 },
+        );
+      }
+
+      if (!allowedSubject) {
+        return NextResponse.json(
+          {
+            error: "subject_not_configured_for_formation_level",
+            message:
+              "Cette matière n’est pas configurée pour la formation et l’année de cette classe.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     /* 3) Déterminer le créneau (période) + rendre START idempotent (1 prof = 1 séance / créneau) */
 
     // a) fuseau de l’établissement
     const { data: inst, error: instErr } = await svc
       .from("institutions")
-      .select("tz")
+      .select("tz,settings_json")
       .eq("id", cls.institution_id)
       .maybeSingle();
 
@@ -322,6 +387,24 @@ export async function POST(req: NextRequest) {
     }
 
     const tz = String(inst?.tz || "Africa/Abidjan");
+    const educationContext = resolveAttendanceEducationContext({
+      educationType: (cls as any).education_type,
+      formationCode: (cls as any).formation_code,
+      formationLevelCode: (cls as any).formation_level_code,
+      classLevel: (cls as any).level,
+      settingsJson: (inst as any)?.settings_json,
+    });
+    const educationPayload = {
+      education_type: educationContext.education_type,
+      education_label: educationContext.education_label,
+      education_short_label: educationContext.education_short_label,
+      formation_code: educationContext.formation_code,
+      formation_label: educationContext.formation_label,
+      formation_level_code: educationContext.formation_level_code,
+      formation_level_label: educationContext.formation_level_label,
+      education_context_key: educationContext.context_key,
+      education_context_label: educationContext.context_label,
+    };
 
     // date locale + heure locale + weekday ISO (1..7) basées sur l'heure réelle du clic
     const { y, mo, da, hm: callHM, isodow } = localYMDHMAndISODow(effectiveCallAt, tz);
@@ -532,6 +615,7 @@ export async function POST(req: NextRequest) {
         presence_method: (session as any).presence_method as string | null,
         presence_distance_m: (session as any).presence_distance_m as number | null,
         expected_minutes: session.expected_minutes as number | null,
+        ...educationPayload,
       };
 
       return NextResponse.json({ item }, { status: 200 });
@@ -620,6 +704,7 @@ export async function POST(req: NextRequest) {
               started_at: s2.started_at as string,
               actual_call_at: (s2 as any).actual_call_at as string | null,
               expected_minutes: s2.expected_minutes as number | null,
+              ...educationPayload,
             };
             return NextResponse.json({ item }, { status: 200 });
           }
@@ -645,6 +730,7 @@ export async function POST(req: NextRequest) {
       presence_method: (session as any).presence_method as string | null,
       presence_distance_m: (session as any).presence_distance_m as number | null,
       expected_minutes: session.expected_minutes as number | null,
+      ...educationPayload,
     };
 
     return NextResponse.json({ item }, { status: 200 });

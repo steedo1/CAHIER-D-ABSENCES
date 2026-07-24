@@ -154,6 +154,47 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const requestedStudentIds = Array.from(
+    new Set(payload.map((item) => item.student_id)),
+  );
+  const { data: enrollments, error: enrollmentsError } = await srv
+    .from("class_enrollments")
+    .select("student_id")
+    .eq("class_id", session.class_id)
+    .is("end_date", null)
+    .in(
+      "student_id",
+      requestedStudentIds.length
+        ? requestedStudentIds
+        : ["00000000-0000-0000-0000-000000000000"],
+    );
+
+  if (enrollmentsError) {
+    return NextResponse.json(
+      { error: enrollmentsError.message },
+      { status: 400 },
+    );
+  }
+
+  const enrolledIds = new Set(
+    (enrollments || []).map((row: any) => String(row.student_id || "")),
+  );
+  const invalidStudentIds = requestedStudentIds.filter(
+    (studentId) => !enrolledIds.has(studentId),
+  );
+
+  if (invalidStudentIds.length > 0) {
+    return NextResponse.json(
+      {
+        error: "student_not_enrolled_in_session_class",
+        message:
+          "Un ou plusieurs élèves ne sont pas inscrits dans la classe de cet appel.",
+        student_ids: invalidStudentIds,
+      },
+      { status: 409 },
+    );
+  }
+
   const { data: upsertedRows, error: uErr } = await srv
     .from("admin_student_call_marks")
     .upsert(payload, { onConflict: "call_id,student_id" })

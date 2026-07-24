@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,6 +13,15 @@ type ItemOut = {
   level: string;
   subject_id: string | null;
   subject_name: string | null;
+  education_type: string;
+  education_label: string;
+  education_short_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
+  formation_level_code: string | null;
+  formation_level_label: string | null;
+  education_context_key: string;
+  education_context_label: string;
 };
 
 type TimetableRow = {
@@ -132,10 +142,21 @@ function dedupeAndSort(items: ItemOut[]): ItemOut[] {
       return true;
     })
     .sort((a, b) => {
+      const byEducation = a.education_label.localeCompare(
+        b.education_label,
+        "fr",
+      );
+      const byContext = a.education_context_label.localeCompare(
+        b.education_context_label,
+        "fr",
+        { numeric: true },
+      );
       const byClass = a.class_label.localeCompare(b.class_label, "fr", {
         numeric: true,
       });
       return (
+        byEducation ||
+        byContext ||
         byClass ||
         String(a.subject_name || "").localeCompare(
           String(b.subject_name || ""),
@@ -181,7 +202,7 @@ export async function GET() {
 
     const { data: institution, error: institutionError } = await srv
       .from("institutions")
-      .select("id,tz")
+      .select("id,tz,settings_json")
       .eq("id", institutionId)
       .maybeSingle();
 
@@ -241,7 +262,7 @@ export async function GET() {
     const classIds = uniqStrings(timetables.map((row) => row.class_id));
     const { data: classes, error: classesError } = await srv
       .from("classes")
-      .select("id,label,level,institution_id")
+      .select("id,label,level,institution_id,education_type,formation_code,formation_level_code")
       .eq("institution_id", institutionId)
       .in("id", classIds);
 
@@ -266,12 +287,29 @@ export async function GET() {
         const rawSubjectId = String(row.subject_id || "").trim() || null;
         const subject = rawSubjectId ? subjectLookup.get(rawSubjectId) : null;
 
+        const education = resolveAttendanceEducationContext({
+          educationType: classRow.education_type,
+          formationCode: classRow.formation_code,
+          formationLevelCode: classRow.formation_level_code,
+          classLevel: classRow.level,
+          settingsJson: institution?.settings_json,
+        });
+
         return {
           class_id: classId,
           class_label: String(classRow.label || "Classe"),
           level: String(classRow.level || ""),
           subject_id: subject?.canonicalSubjectId || rawSubjectId,
           subject_name: subject?.subjectName || null,
+          education_type: education.education_type,
+          education_label: education.education_label,
+          education_short_label: education.education_short_label,
+          formation_code: education.formation_code,
+          formation_label: education.formation_label,
+          formation_level_code: education.formation_level_code,
+          formation_level_label: education.formation_level_label,
+          education_context_key: education.context_key,
+          education_context_label: education.context_label,
         };
       })
       .filter((item): item is ItemOut => Boolean(item));
@@ -280,6 +318,9 @@ export async function GET() {
       items: dedupeAndSort(items),
       source: "teacher_timetables",
       period_id: String(activePeriod.id),
+      has_non_general: items.some(
+        (item) => item.education_type !== "general_secondary",
+      ),
     });
   } catch (error: any) {
     return noStoreJson(

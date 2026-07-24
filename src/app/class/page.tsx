@@ -89,7 +89,21 @@ function GhostButton(
 }
 
 /* ───────── Types ───────── */
-type MyClass = { id: string; label: string; level: string | null; institution_id: string };
+type MyClass = {
+  id: string;
+  label: string;
+  level: string | null;
+  institution_id: string;
+  education_type?: string | null;
+  education_label?: string | null;
+  education_short_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_key?: string | null;
+  education_context_label?: string | null;
+};
 type Subject = { id: string; label: string };
 type RosterItem = { id: string; full_name: string; matricule: string | null };
 type OpenSession = {
@@ -101,6 +115,15 @@ type OpenSession = {
   started_at: string;
   actual_call_at?: string | null;
   expected_minutes?: number | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  education_short_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_key?: string | null;
+  education_context_label?: string | null;
 };
 
 type InstCfg = {
@@ -302,6 +325,20 @@ export default function ClassDevicePage() {
   const [classId, setClassId] = useState<string>("");
   const [subjectId, setSubjectId] = useState<string>("");
   const [subjectLoadMode, setSubjectLoadMode] = useState<SubjectLoadMode>("empty");
+
+  const selectedClass = useMemo(
+    () => classes.find((item) => item.id === classId) || null,
+    [classes, classId],
+  );
+  const hasNonGeneralClasses = useMemo(
+    () =>
+      classes.some(
+        (item) =>
+          String(item.education_type || "general_secondary") !==
+          "general_secondary",
+      ),
+    [classes],
+  );
 
   // paramètres établissement & périodes
   const [inst, setInst] = useState<InstCfg>({
@@ -901,6 +938,19 @@ export default function ClassDevicePage() {
             label: c.label,
             level: c.level ?? null,
             institution_id: c.institution_id,
+            education_type: c.education_type || "general_secondary",
+            education_label: c.education_label || "Secondaire général",
+            education_short_label: c.education_short_label || "Général",
+            formation_code: c.formation_code || null,
+            formation_label: c.formation_label || null,
+            formation_level_code: c.formation_level_code || null,
+            formation_level_label: c.formation_level_label || null,
+            education_context_key:
+              c.education_context_key || c.education_type || "general_secondary",
+            education_context_label:
+              c.education_context_label ||
+              c.education_label ||
+              "Secondaire général",
           };
         });
 
@@ -1672,6 +1722,21 @@ export default function ClassDevicePage() {
           started_at: started.toISOString(),
           actual_call_at: actualCallAtISO,
           expected_minutes: effectiveDuration,
+          education_type: cls?.education_type || "general_secondary",
+          education_label: cls?.education_label || "Secondaire général",
+          education_short_label: cls?.education_short_label || "Général",
+          formation_code: cls?.formation_code || null,
+          formation_label: cls?.formation_label || null,
+          formation_level_code: cls?.formation_level_code || null,
+          formation_level_label: cls?.formation_level_label || null,
+          education_context_key:
+            cls?.education_context_key ||
+            cls?.education_type ||
+            "general_secondary",
+          education_context_label:
+            cls?.education_context_label ||
+            cls?.education_label ||
+            "Secondaire général",
         };
 
         setOpen(localOpen);
@@ -1974,10 +2039,34 @@ export default function ClassDevicePage() {
               {classes.length === 0 ? <option value="">— Aucune —</option> : null}
               {classes.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.label}
+                  {hasNonGeneralClasses &&
+                  String(c.education_type || "general_secondary") !==
+                    "general_secondary"
+                    ? `${c.label} — ${c.education_short_label || "Autre"}`
+                    : c.label}
                 </option>
               ))}
             </Select>
+            {selectedClass &&
+              String(
+                selectedClass.education_type || "general_secondary",
+              ) !== "general_secondary" && (
+                <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                  <div className="font-semibold">
+                    {selectedClass.education_label ||
+                      "Autre enseignement"}
+                  </div>
+                  <div className="mt-0.5">
+                    {selectedClass.education_context_label ||
+                      [
+                        selectedClass.formation_label,
+                        selectedClass.formation_level_label,
+                      ]
+                        .filter(Boolean)
+                        .join(" • ")}
+                  </div>
+                </div>
+              )}
           </div>
 
           <div>
@@ -2251,6 +2340,19 @@ export default function ClassDevicePage() {
               {openPlannedRange}
               {openIsClient ? " • (en attente de sync)" : ""}
             </div>
+            {String(open.education_type || "general_secondary") !==
+              "general_secondary" && (
+              <div className="text-xs font-medium text-indigo-700">
+                {open.education_context_label ||
+                  [
+                    open.formation_label,
+                    open.formation_level_label,
+                  ]
+                    .filter(Boolean)
+                    .join(" • ") ||
+                  open.education_label}
+              </div>
+            )}
             <div className="text-xs text-slate-500">
               Début réel : {openActualStart || "—"}
             </div>

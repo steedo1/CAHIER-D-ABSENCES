@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  attendanceClassContextIsComplete,
+  resolveAttendanceEducationContext,
+} from "@/lib/education-attendance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -209,7 +213,9 @@ export async function POST(req: NextRequest) {
 
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,label,institution_id,class_phone_e164")
+      .select(
+        "id,label,level,institution_id,class_phone_e164,education_type,formation_code,formation_level_code",
+      )
       .eq("id", class_id)
       .maybeSingle();
 
@@ -238,26 +244,33 @@ export async function POST(req: NextRequest) {
     }
 
     let instSubjectId: string | null = null;
+    let canonicalSubjectId: string | null = null;
 
     {
       const { data: asInst } = await srv
         .from("institution_subjects")
-        .select("id")
+        .select("id,subject_id")
         .eq("id", subject_id)
         .maybeSingle();
 
       if (asInst?.id) {
         instSubjectId = String(asInst.id);
+        canonicalSubjectId = String((asInst as any).subject_id || subject_id);
       } else {
         const { data: viaCanonical } = await srv
           .from("institution_subjects")
-          .select("id")
+          .select("id,subject_id")
           .eq("institution_id", cls.institution_id)
           .eq("subject_id", subject_id)
           .eq("is_active", true)
           .maybeSingle();
 
-        if (viaCanonical?.id) instSubjectId = String(viaCanonical.id);
+        if (viaCanonical?.id) {
+          instSubjectId = String(viaCanonical.id);
+          canonicalSubjectId = String(
+            (viaCanonical as any).subject_id || subject_id,
+          );
+        }
       }
     }
 
@@ -272,9 +285,66 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const classEducationType = String(
+      (cls as any).education_type || "general_secondary",
+    );
+    const isNonGeneralClass = classEducationType !== "general_secondary";
+
+    if (
+      isNonGeneralClass &&
+      !attendanceClassContextIsComplete({
+        educationType: classEducationType,
+        formationCode: (cls as any).formation_code,
+        formationLevelCode: (cls as any).formation_level_code,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error: "class_education_context_incomplete",
+          message:
+            "Cette classe doit être rattachée à une formation et à une année de formation avant l’appel.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (isNonGeneralClass && canonicalSubjectId) {
+      const { data: allowedSubject, error: allowedSubjectError } = await srv
+        .from("institution_level_subjects")
+        .select("id")
+        .eq("institution_id", cls.institution_id)
+        .eq("education_type", classEducationType)
+        .eq("formation_code", String((cls as any).formation_code || ""))
+        .eq(
+          "level_code",
+          String((cls as any).formation_level_code || ""),
+        )
+        .eq("subject_id", canonicalSubjectId)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (allowedSubjectError) {
+        return NextResponse.json(
+          { error: allowedSubjectError.message },
+          { status: 400 },
+        );
+      }
+      if (!allowedSubject) {
+        return NextResponse.json(
+          {
+            error: "subject_not_configured_for_formation_level",
+            message:
+              "Cette matière n’est pas configurée pour la formation et l’année de cette classe.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const { data: inst, error: iErr } = await srv
       .from("institutions")
-      .select("tz, default_session_minutes")
+      .select("tz, default_session_minutes, settings_json")
       .eq("id", cls.institution_id)
       .maybeSingle();
 
@@ -283,6 +353,13 @@ export async function POST(req: NextRequest) {
     }
 
     const tz = String(inst?.tz || "Africa/Abidjan");
+    const educationContext = resolveAttendanceEducationContext({
+      educationType: (cls as any).education_type,
+      formationCode: (cls as any).formation_code,
+      formationLevelCode: (cls as any).formation_level_code,
+      classLevel: (cls as any).level,
+      settingsJson: (inst as any)?.settings_json,
+    });
     const defSessionMin =
       Number.isFinite(Number(inst?.default_session_minutes)) &&
       Number(inst?.default_session_minutes) > 0
@@ -554,6 +631,15 @@ export async function POST(req: NextRequest) {
         started_at: session.started_at,
         actual_call_at: session.actual_call_at ?? callISO,
         expected_minutes: session.expected_minutes ?? expected_minutes ?? null,
+        education_type: educationContext.education_type,
+        education_label: educationContext.education_label,
+        education_short_label: educationContext.education_short_label,
+        formation_code: educationContext.formation_code,
+        formation_label: educationContext.formation_label,
+        formation_level_code: educationContext.formation_level_code,
+        formation_level_label: educationContext.formation_level_label,
+        education_context_key: educationContext.context_key,
+        education_context_label: educationContext.context_label,
       },
     });
   } catch (e: any) {

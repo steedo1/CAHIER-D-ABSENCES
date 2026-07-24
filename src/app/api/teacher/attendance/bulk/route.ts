@@ -202,6 +202,54 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (marks.length > 0) {
+    const requestedStudentIds = Array.from(
+      new Set(
+        marks
+          .map((mark) => String(mark?.student_id || "").trim())
+          .filter(Boolean),
+      ),
+    );
+
+    const { data: enrollments, error: enrollmentsError } = await srv
+      .from("class_enrollments")
+      .select("student_id")
+      .eq("class_id", session.class_id)
+      .is("end_date", null)
+      .in(
+        "student_id",
+        requestedStudentIds.length
+          ? requestedStudentIds
+          : ["00000000-0000-0000-0000-000000000000"],
+      );
+
+    if (enrollmentsError) {
+      return NextResponse.json(
+        { error: enrollmentsError.message },
+        { status: 400 },
+      );
+    }
+
+    const enrolledIds = new Set(
+      (enrollments || []).map((row: any) => String(row.student_id || "")),
+    );
+    const invalidStudentIds = requestedStudentIds.filter(
+      (studentId) => !enrolledIds.has(studentId),
+    );
+
+    if (invalidStudentIds.length > 0) {
+      return NextResponse.json(
+        {
+          error: "student_not_enrolled_in_session_class",
+          message:
+            "Un ou plusieurs élèves ne sont pas inscrits dans la classe de cette séance.",
+          student_ids: invalidStudentIds,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const { data: presencePolicy, error: presencePolicyError } = await srv
     .from("institution_attendance_policies")
     .select("enabled,teacher_accounts_only")

@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  attendanceClassContextIsComplete,
+  isNonGeneralAttendanceEducation,
+} from "@/lib/education-attendance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -358,7 +362,7 @@ export async function GET(req: NextRequest) {
 
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,label,institution_id,class_phone_e164")
+      .select("id,label,level,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
       .eq("id", class_id)
       .maybeSingle();
 
@@ -390,6 +394,27 @@ export async function GET(req: NextRequest) {
     const institutionId = String(cls.institution_id || "").trim();
     if (!institutionId) {
       return NextResponse.json({ items: [] as SubjectItem[] });
+    }
+
+    const nonGeneral = isNonGeneralAttendanceEducation(
+      (cls as any).education_type,
+    );
+    if (
+      nonGeneral &&
+      !attendanceClassContextIsComplete({
+        educationType: (cls as any).education_type,
+        formationCode: (cls as any).formation_code,
+        formationLevelCode: (cls as any).formation_level_code,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error: "class_education_context_incomplete",
+          message:
+            "Cette classe doit être rattachée à une formation et à une année de formation.",
+        },
+        { status: 409 },
+      );
     }
 
     const { data: inst, error: instErr } = await srv
@@ -439,14 +464,64 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    // 2) Ancien système uniquement sans créneau demandé : utilisé pour constituer
-    //    le cache de secours lors de la préparation hors ligne.
-    const legacySubjectIds = await getLegacySubjectIds(srv, class_id, institutionId);
+    // 2) Sans créneau demandé : constitution du cache de secours.
+    // Le général conserve exactement son fallback historique.
+    // Les autres enseignements utilisent le référentiel de la formation/niveau.
+    if (nonGeneral) {
+      const { data: configuredRows, error: configuredError } = await srv
+        .from("institution_level_subjects")
+        .select("subject_id,order_index")
+        .eq("institution_id", institutionId)
+        .eq(
+          "education_type",
+          String((cls as any).education_type || ""),
+        )
+        .eq("formation_code", String((cls as any).formation_code || ""))
+        .eq(
+          "level_code",
+          String((cls as any).formation_level_code || ""),
+        )
+        .eq("is_active", true)
+        .order("order_index", { ascending: true });
+
+      if (configuredError) {
+        return NextResponse.json(
+          { error: configuredError.message },
+          { status: 400 },
+        );
+      }
+
+      const configuredSubjectIds = uniq<string>(
+        (configuredRows || [])
+          .map((row: any) => String(row.subject_id || "").trim())
+          .filter(Boolean),
+      );
+      if (!configuredSubjectIds.length) {
+        return NextResponse.json({ items: [] as SubjectItem[] });
+      }
+
+      const configuredItems = await mapSubjectIdsToItems(
+        srv,
+        institutionId,
+        configuredSubjectIds,
+      );
+      return NextResponse.json({ items: configuredItems });
+    }
+
+    const legacySubjectIds = await getLegacySubjectIds(
+      srv,
+      class_id,
+      institutionId,
+    );
     if (!legacySubjectIds.length) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    const legacyItems = await mapSubjectIdsToItems(srv, institutionId, legacySubjectIds);
+    const legacyItems = await mapSubjectIdsToItems(
+      srv,
+      institutionId,
+      legacySubjectIds,
+    );
     return NextResponse.json({ items: legacyItems });
   } catch (err: any) {
     console.error("[class.subjects] unexpected error", err);

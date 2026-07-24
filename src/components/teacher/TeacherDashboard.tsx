@@ -27,6 +27,7 @@ import {
   countUnresolvedTeacherAttendanceOperations,
   deliverTeacherAttendance,
   getLatestTeacherAttendanceOperation,
+  stageTeacherAttendanceDraft,
   teacherAttendanceDeliveryMessage,
   type TeacherAttendanceDeliveryRecord,
 } from "@/lib/teacher-attendance-delivery";
@@ -35,6 +36,11 @@ import {
   teacherSessionCloudAvailable,
   teacherSessionDeliveryMessage,
 } from "@/lib/teacher-session-delivery";
+import {
+  closeTeacherAttendanceSessionOnRelay,
+  teacherSessionLifecycleDeliveryMessage,
+  transitionTeacherAttendanceSessionOnRelay,
+} from "@/lib/teacher-session-lifecycle-delivery";
 
 /* ─────────────────────────────────────────
    Types
@@ -45,6 +51,15 @@ type TeachClass = {
   level: string;
   subject_id: string | null;
   subject_name: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  education_short_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_key?: string | null;
+  education_context_label?: string | null;
 };
 type RosterItem = { id: string; full_name: string; matricule: string | null };
 type OpenSession = {
@@ -61,6 +76,19 @@ type OpenSession = {
   presence_method?: string | null;
   presence_distance_m?: number | null;
   local_relay?: boolean;
+  period_id?: string | null;
+  scheduled_end_at?: string | null;
+  grace_expires_at?: string | null;
+  session_state?: "open" | "finalizing" | "closed";
+  education_type?: string | null;
+  education_label?: string | null;
+  education_short_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_key?: string | null;
+  education_context_label?: string | null;
 };
 
 type InstCfg = {
@@ -570,10 +598,53 @@ export default function TeacherDashboard() {
       teachClasses.map((tc) => ({
         key: `${tc.class_id}|${tc.subject_id ?? ""}`,
         label: `${tc.class_label}${tc.subject_name ? ` — ${tc.subject_name}` : ""}`,
+        groupKey:
+          tc.education_context_key ||
+          tc.education_type ||
+          "general_secondary",
+        groupLabel:
+          tc.education_context_label ||
+          tc.education_label ||
+          "Secondaire général",
         value: tc,
       })),
     [teachClasses]
   );
+
+  const hasNonGeneralTeachingContext = useMemo(
+    () =>
+      teachClasses.some(
+        (item) =>
+          String(item.education_type || "general_secondary") !==
+          "general_secondary",
+      ),
+    [teachClasses],
+  );
+
+  const groupedOptions = useMemo(() => {
+    const groups = new Map<
+      string,
+      { label: string; items: typeof options }
+    >();
+
+    for (const option of options) {
+      const current = groups.get(option.groupKey);
+      if (current) {
+        current.items.push(option);
+      } else {
+        groups.set(option.groupKey, {
+          label: option.groupLabel,
+          items: [option],
+        });
+      }
+    }
+
+    return Array.from(groups.entries()).map(([key, group]) => ({
+      key,
+      label: group.label,
+      items: group.items,
+    }));
+  }, [options]);
 
   // sélection classe
   const [selKey, setSelKey] = useState<string>("");
@@ -631,6 +702,26 @@ export default function TeacherDashboard() {
   const [msg, setMsg] = useState<string | null>(null);
   const [attendanceDelivery, setAttendanceDelivery] =
     useState<TeacherAttendanceDeliveryRecord | null>(null);
+  const [transitionPrompt, setTransitionPrompt] = useState<{
+    classId: string;
+    classLabel: string;
+    subjectId: string | null;
+    subjectName: string | null;
+    periodId: string;
+    expectedMinutes: number;
+    attemptKey: string;
+    previous: Record<string, unknown> | null;
+    educationType?: string | null;
+    educationLabel?: string | null;
+    educationShortLabel?: string | null;
+    formationCode?: string | null;
+    formationLabel?: string | null;
+    formationLevelCode?: string | null;
+    formationLevelLabel?: string | null;
+    educationContextKey?: string | null;
+    educationContextLabel?: string | null;
+  } | null>(null);
+  const [finalizationDismissedFor, setFinalizationDismissedFor] = useState<string | null>(null);
   const saveMarksInFlightRef = useRef(false);
 
   const changedCount = useMemo(
@@ -987,6 +1078,31 @@ export default function TeacherDashboard() {
 
   const canStartAttendanceNow = !!activeConfiguredSlot;
   const canSelectClassNow = canStartAttendanceNow && !classesLoading && options.length > 0;
+  const openLifecycle = useMemo(() => {
+    if (!open?.local_relay) return null;
+    const scheduledEnd = new Date(open.scheduled_end_at || "").getTime();
+    const fallbackStart = new Date(open.started_at).getTime();
+    const fallbackMinutes = Number(
+      open.expected_minutes ?? duration ?? inst.default_session_minutes ?? 60,
+    );
+    const endMs = Number.isFinite(scheduledEnd)
+      ? scheduledEnd
+      : Number.isFinite(fallbackStart) && Number.isFinite(fallbackMinutes)
+        ? fallbackStart + fallbackMinutes * 60_000
+        : NaN;
+    if (!Number.isFinite(endMs)) return null;
+    const configuredGrace = new Date(open.grace_expires_at || "").getTime();
+    const graceMs = Number.isFinite(configuredGrace) ? configuredGrace : endMs + 10 * 60_000;
+    return {
+      endMs,
+      graceMs,
+      finalizing: nowTick >= endMs && nowTick < graceMs,
+      expired: nowTick >= graceMs,
+    };
+  }, [open, duration, inst.default_session_minutes, nowTick]);
+  const ownerFinalizationModalVisible = Boolean(
+    openLifecycle?.finalizing && open && finalizationDismissedFor !== open.id,
+  );
 
   const activeSlotKey = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
@@ -1144,6 +1260,46 @@ export default function TeacherDashboard() {
     };
   }, [open, inst.institution_id]);
 
+  function attendanceMarksFromRows(source: Record<string, Row>) {
+    return Object.entries(source).map(([student_id, row]) => {
+      if (row.absent) {
+        return { student_id, status: "absent" as const, reason: row.reason ?? null };
+      }
+      if (row.late) {
+        return { student_id, status: "late" as const, reason: row.reason ?? null };
+      }
+      return { student_id, status: "present" as const };
+    });
+  }
+
+  async function persistAttendanceDraft(source: Record<string, Row>) {
+    if (!open || !inst.institution_id || !inst.actor_profile_id) return null;
+    const periodId = open.period_id || activeConfiguredSlot?.id || null;
+    const marks = attendanceMarksFromRows(source);
+    if (!periodId || marks.length === 0) return null;
+    return await stageTeacherAttendanceDraft({
+      institutionId: inst.institution_id,
+      actorProfileId: inst.actor_profile_id,
+      sessionId: open.id,
+      classId: open.class_id,
+      periodId,
+      marks,
+      forceRelay: open.local_relay === true,
+    });
+  }
+
+  useEffect(() => {
+    if (!open || Object.keys(rows).length === 0) return;
+    const timer = window.setTimeout(() => {
+      void persistAttendanceDraft(rows).catch(() => {
+        setMsg("Impossible de conserver les changements sur cet appareil. Ne fermez pas la séance.");
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // La persistance locale suit chaque nouvelle version des marques.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, open?.id, open?.period_id, inst.institution_id, inst.actor_profile_id]);
+
   /* Helpers marquage */
   function toggleAbsent(id: string, v: boolean) {
     setRows((prev) => {
@@ -1279,10 +1435,60 @@ export default function TeacherDashboard() {
             expected_minutes: effectiveDuration,
             presence_method: "local_relay",
             local_relay: true,
+            period_id: activeConfiguredSlot.id,
+            scheduled_end_at: local.scheduled_end_at,
+            grace_expires_at: local.grace_expires_at,
+            session_state: local.session_state || "open",
+            education_type: sel.education_type || "general_secondary",
+            education_label: sel.education_label || "Secondaire général",
+            education_short_label: sel.education_short_label || "Général",
+            formation_code: sel.formation_code || null,
+            formation_label: sel.formation_label || null,
+            formation_level_code: sel.formation_level_code || null,
+            formation_level_label: sel.formation_level_label || null,
+            education_context_key:
+              sel.education_context_key ||
+              sel.education_type ||
+              "general_secondary",
+            education_context_label:
+              sel.education_context_label ||
+              sel.education_label ||
+              "Secondaire général",
           };
           setAttendanceDelivery(null);
+          setTransitionPrompt(null);
           setOpen(localOpen);
           await cacheSet("teacher:local-open", localOpen);
+        } else if (local.last_error === "previous_session_transition_required") {
+          const details = local.last_details || {};
+          const previous = details.previous_session && typeof details.previous_session === "object"
+            ? details.previous_session as Record<string, unknown>
+            : null;
+          setTransitionPrompt({
+            classId: sel.class_id,
+            classLabel: sel.class_label,
+            subjectId: sel.subject_id,
+            subjectName: sel.subject_name,
+            periodId: activeConfiguredSlot.id,
+            expectedMinutes: effectiveDuration,
+            attemptKey: clientSessionId,
+            previous,
+            educationType: sel.education_type || "general_secondary",
+            educationLabel: sel.education_label || "Secondaire général",
+            educationShortLabel: sel.education_short_label || "Général",
+            formationCode: sel.formation_code || null,
+            formationLabel: sel.formation_label || null,
+            formationLevelCode: sel.formation_level_code || null,
+            formationLevelLabel: sel.formation_level_label || null,
+            educationContextKey:
+              sel.education_context_key ||
+              sel.education_type ||
+              "general_secondary",
+            educationContextLabel:
+              sel.education_context_label ||
+              sel.education_label ||
+              "Secondaire général",
+          });
         }
         setMsg(teacherSessionDeliveryMessage(local));
         return;
@@ -1326,6 +1532,19 @@ export default function TeacherDashboard() {
           actual_call_at: actualCallAt,
           expected_minutes: effectiveDuration,
           presence_method: presence.evidence?.method || "not_required",
+          education_type: sel.education_type || "general_secondary",
+          education_label: sel.education_label || "Secondaire général",
+          education_short_label: sel.education_short_label || "Général",
+          formation_code: sel.formation_code || null,
+          formation_label: sel.formation_label || null,
+          formation_level_code: sel.formation_level_code || null,
+          formation_level_label: sel.formation_level_label || null,
+          education_context_key:
+            sel.education_context_key || sel.education_type || "general_secondary",
+          education_context_label:
+            sel.education_context_label ||
+            sel.education_label ||
+            "Secondaire général",
         };
         setAttendanceDelivery(null);
         setOpen(localOpen);
@@ -1357,11 +1576,7 @@ export default function TeacherDashboard() {
     setMsg(null);
 
     try {
-      const marks = Object.entries(rows).map(([student_id, r]) => {
-        if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
-        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null };
-        return { student_id, status: "present" as const };
-      });
+      const marks = attendanceMarksFromRows(rows);
 
       if (!marks.length) {
         setMsg("Aucune modification d’appel à enregistrer.");
@@ -1377,7 +1592,7 @@ export default function TeacherDashboard() {
         actorProfileId: inst.actor_profile_id,
         sessionId: open.id,
         classId: open.class_id,
-        periodId: activeConfiguredSlot?.id || null,
+        periodId: open.period_id || activeConfiguredSlot?.id || null,
         marks,
         relayBaseUrl: inst.attendance_presence?.relay_local_url,
         relayAccessToken: inst.attendance_presence?.relay_access_token,
@@ -1409,6 +1624,53 @@ export default function TeacherDashboard() {
     };
 
     try {
+      if (open.local_relay) {
+        if (!inst.institution_id || !inst.actor_profile_id) {
+          setMsg("La séance reste ouverte : l’identité locale doit être actualisée.");
+          return;
+        }
+        const marks = attendanceMarksFromRows(rows);
+        if (marks.length > 0) {
+          await persistAttendanceDraft(rows);
+          const attendance = await deliverTeacherAttendance({
+            institutionId: inst.institution_id,
+            actorProfileId: inst.actor_profile_id,
+            sessionId: open.id,
+            classId: open.class_id,
+            periodId: open.period_id || activeConfiguredSlot?.id || null,
+            marks,
+            relayBaseUrl: inst.attendance_presence?.relay_local_url,
+            relayAccessToken: inst.attendance_presence?.relay_access_token,
+            forceRelay: true,
+          });
+          setAttendanceDelivery(attendance);
+          if (attendance.state !== "relay_secured" && attendance.state !== "cloud_synced") {
+            setMsg(
+              `${teacherAttendanceDeliveryMessage(attendance)} ` +
+              "La séance reste affichée pour éviter toute perte.",
+            );
+            return;
+          }
+        }
+        const closed = await closeTeacherAttendanceSessionOnRelay({
+          institutionId: inst.institution_id,
+          sessionId: open.id,
+          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,
+        });
+        if (closed.state !== "relay_confirmed") {
+          setMsg(
+            `${teacherSessionLifecycleDeliveryMessage(closed)} ` +
+            "La liste reste affichée jusqu’à confirmation.",
+          );
+          return;
+        }
+        await finishLocal();
+        setFinalizationDismissedFor(null);
+        setMsg(teacherSessionLifecycleDeliveryMessage(closed));
+        return;
+      }
+
       const openId = String(open.id || "");
       const clientId = clientSessionIdFromOpen(open);
       const isLocal = openId.startsWith("client:");
@@ -1439,6 +1701,77 @@ export default function TeacherDashboard() {
       }
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function beginNextSessionTransition() {
+    if (!transitionPrompt || !inst.institution_id) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const transitioned = await transitionTeacherAttendanceSessionOnRelay({
+        institutionId: inst.institution_id,
+        classId: transitionPrompt.classId,
+        periodId: transitionPrompt.periodId,
+        attemptKey: transitionPrompt.attemptKey,
+        relayBaseUrl: inst.attendance_presence?.relay_local_url,
+        relayAccessToken: inst.attendance_presence?.relay_access_token,
+      });
+      if (transitioned.state !== "relay_confirmed" || !transitioned.new_session) {
+        setMsg(teacherSessionLifecycleDeliveryMessage(transitioned));
+        return;
+      }
+      const session = transitioned.new_session;
+      const localOpen: OpenSession = {
+        id: String(session.id || ""),
+        class_id: transitionPrompt.classId,
+        class_label: transitionPrompt.classLabel,
+        subject_id: String(session.subject_id || transitionPrompt.subjectId || "") || null,
+        subject_name: transitionPrompt.subjectName,
+        period_id: transitionPrompt.periodId,
+        started_at: String(session.started_at || ""),
+        actual_call_at: String(session.actual_call_at || session.requested_start_at || "") || null,
+        expected_minutes: transitionPrompt.expectedMinutes,
+        scheduled_end_at: String(session.scheduled_end_at || "") || null,
+        grace_expires_at: String(session.grace_expires_at || "") || null,
+        session_state: "open",
+        presence_method: "local_relay",
+        local_relay: true,
+        education_type:
+          transitionPrompt.educationType || "general_secondary",
+        education_label:
+          transitionPrompt.educationLabel || "Secondaire général",
+        education_short_label:
+          transitionPrompt.educationShortLabel || "Général",
+        formation_code: transitionPrompt.formationCode || null,
+        formation_label: transitionPrompt.formationLabel || null,
+        formation_level_code:
+          transitionPrompt.formationLevelCode || null,
+        formation_level_label:
+          transitionPrompt.formationLevelLabel || null,
+        education_context_key:
+          transitionPrompt.educationContextKey ||
+          transitionPrompt.educationType ||
+          "general_secondary",
+        education_context_label:
+          transitionPrompt.educationContextLabel ||
+          transitionPrompt.educationLabel ||
+          "Secondaire général",
+      };
+      if (!localOpen.id || !localOpen.started_at) {
+        setMsg("La réponse du relais ne permet pas d’ouvrir le nouveau cours en sécurité.");
+        return;
+      }
+      setAttendanceDelivery(null);
+      setOpen(localOpen);
+      await cacheSet("teacher:local-open", localOpen);
+      setTransitionPrompt(null);
+      setFinalizationDismissedFor(null);
+      setMsg(teacherSessionLifecycleDeliveryMessage(transitioned));
+    } catch (error: any) {
+      setMsg(error?.message || "Échec du passage au cours suivant.");
     } finally {
       setBusy(false);
     }
@@ -1703,7 +2036,7 @@ export default function TeacherDashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-2">
-            <Button onClick={saveMarks} disabled={busy} aria-label="Enregistrer">
+            <Button onClick={saveMarks} disabled={busy || !!openLifecycle?.expired} aria-label="Enregistrer">
               <Save className="h-4 w-4" />
               {busy ? "…" : `Save${changedCount ? ` (${changedCount})` : ""}`}
             </Button>
@@ -1726,7 +2059,76 @@ export default function TeacherDashboard() {
   ) : null;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+    <>
+      {ownerFinalizationModalVisible && open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="teacher-finalization-title"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <h2 id="teacher-finalization-title" className="text-lg font-semibold text-slate-950">
+              Votre créneau est terminé
+            </h2>
+            <p className="mt-2 text-sm text-slate-700">
+              {open.subject_name || "Cours"} — {hmInTZ(new Date(open.started_at), inst.tz)} à{" "}
+              {openLifecycle ? hmInTZ(new Date(openLifecycle.endMs), inst.tz) : "—"}
+            </p>
+            <p className="mt-3 text-sm text-slate-600">
+              Vous pouvez vérifier votre propre appel pendant dix minutes. Cette fenêtre
+              n’ajoute aucune minute au temps payable.
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <GhostButton
+                onClick={() => setFinalizationDismissedFor(open.id)}
+                disabled={busy}
+              >
+                Finaliser ma séance
+              </GhostButton>
+              <Button onClick={endSession} disabled={busy}>
+                Terminer maintenant
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {transitionPrompt && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="teacher-transition-title"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <h2 id="teacher-transition-title" className="text-lg font-semibold text-slate-950">
+              La séance précédente n’a pas été finalisée
+            </h2>
+            <p className="mt-2 text-sm text-slate-700">
+              {String(transitionPrompt.previous?.subject_name || "Cours précédent")} —{" "}
+              {transitionPrompt.previous?.scheduled_start_at
+                ? hmInTZ(new Date(String(transitionPrompt.previous.scheduled_start_at)), inst.tz)
+                : "—"}{" "}
+              à{" "}
+              {transitionPrompt.previous?.scheduled_end_at
+                ? hmInTZ(new Date(String(transitionPrompt.previous.scheduled_end_at)), inst.tz)
+                : "—"}
+            </p>
+            <p className="mt-3 text-sm text-slate-600">
+              Vous ne confirmez pas la fin du travail de votre collègue et vous n’avez pas accès
+              à sa liste. Le relais conservera son dernier appel durable comme « à vérifier ».
+            </p>
+            <div className="mt-5 flex justify-end">
+              <Button onClick={beginNextSessionTransition} disabled={busy}>
+                Commencer mon cours
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
       {/* Header premium */}
       <header className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-900 to-slate-950 px-4 py-4 sm:px-6 sm:py-5 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1818,15 +2220,42 @@ export default function TeacherDashboard() {
                     ? "— Aucun cours prévu —"
                     : "— Sélectionner —"}
               </option>
-              {options.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
+              {hasNonGeneralTeachingContext
+                ? groupedOptions.map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.items.map((o) => (
+                        <option key={o.key} value={o.key}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : options.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
               <Chip tone="amber">Astuce</Chip> Seules les classes où vous êtes affecté(e) apparaissent.
             </div>
+            {sel &&
+              String(sel.education_type || "general_secondary") !==
+                "general_secondary" && (
+                <div className="mt-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                  <div className="font-semibold">
+                    {sel.education_label || "Autre enseignement"}
+                  </div>
+                  <div className="mt-0.5">
+                    {[
+                      sel.formation_label,
+                      sel.formation_level_label,
+                    ]
+                      .filter(Boolean)
+                      .join(" • ")}
+                  </div>
+                </div>
+              )}
           </div>
 
           {/* Heure de début (verrouillé) */}
@@ -1907,7 +2336,7 @@ export default function TeacherDashboard() {
           </div>
         ) : (
           <div className="hidden md:flex items-center gap-2">
-            <Button onClick={saveMarks} disabled={busy} aria-label="Enregistrer">
+            <Button onClick={saveMarks} disabled={busy || !!openLifecycle?.expired} aria-label="Enregistrer">
               <Save className="h-4 w-4" />
               {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
             </Button>
@@ -1928,6 +2357,11 @@ export default function TeacherDashboard() {
         {msg && (
           <div className="text-sm text-slate-700" aria-live="polite">
             {msg}
+          </div>
+        )}
+        {openLifecycle?.expired && open?.local_relay && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            La fenêtre de finalisation est expirée. La liste est désormais en lecture seule.
           </div>
         )}
         {attendanceDelivery && !msg && (
@@ -2096,6 +2530,19 @@ export default function TeacherDashboard() {
                         })}`
                       : ""}
                   </div>
+                  {String(open.education_type || "general_secondary") !==
+                    "general_secondary" && (
+                    <div className="text-xs font-medium text-indigo-700">
+                      {open.education_context_label ||
+                        [
+                          open.formation_label,
+                          open.formation_level_label,
+                        ]
+                          .filter(Boolean)
+                          .join(" • ") ||
+                        open.education_label}
+                    </div>
+                  )}
                   {actualCallAt && actualCallAt !== plannedStartIso && (
                     <div className="text-xs text-slate-500">
                       Appel lancé à {new Date(actualCallAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -2156,6 +2603,7 @@ export default function TeacherDashboard() {
                             className="h-4 w-4 accent-red-600"
                             checked={!!r.absent}
                             onChange={(e) => toggleAbsent(st.id, e.target.checked)}
+                            disabled={!!openLifecycle?.expired}
                             aria-label={`Absent: ${st.full_name}`}
                           />
                         </td>
@@ -2165,7 +2613,7 @@ export default function TeacherDashboard() {
                             className="h-4 w-4 accent-amber-600"
                             checked={!!r.late}
                             onChange={(e) => toggleLate(st.id, e.target.checked)}
-                            disabled={!!r.absent}
+                            disabled={!!r.absent || !!openLifecycle?.expired}
                             aria-label={`Retard: ${st.full_name}`}
                           />
                         </td>
@@ -2181,6 +2629,7 @@ export default function TeacherDashboard() {
 
       {/* Barre mobile sticky */}
       {mobileBar}
-    </div>
+      </div>
+    </>
   );
 }

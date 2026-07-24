@@ -1,6 +1,7 @@
 //src/app/api/teacher/roster/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /**
  * GET /api/teacher/roster?class_id=UUID
@@ -10,6 +11,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
  */
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
+  const srv = getSupabaseServiceClient();
   const { data: { user } } = await supa.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
@@ -25,6 +27,20 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
   const inst = me?.institution_id as string | undefined;
   if (!inst) return NextResponse.json({ items: [] });
+
+  const { data: classRow, error: classError } = await srv
+    .from("classes")
+    .select("id,institution_id")
+    .eq("id", class_id)
+    .eq("institution_id", inst)
+    .maybeSingle();
+
+  if (classError) {
+    return NextResponse.json({ error: classError.message }, { status: 400 });
+  }
+  if (!classRow) {
+    return NextResponse.json({ error: "class_not_found" }, { status: 404 });
+  }
 
   // autorisation :
   // 1) séance ouverte sur cette classe

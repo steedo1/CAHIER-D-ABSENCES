@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -105,7 +106,7 @@ export async function GET(req: NextRequest) {
   {
     const { data, error } = await srv
       .from("classes")
-      .select("id,label,level,institution_id,class_phone_e164")
+      .select("id,label,level,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
       .in("class_phone_e164", variants.length ? variants : ["__no_match__"]); // évite .in([])
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -118,7 +119,7 @@ export async function GET(req: NextRequest) {
     if (orExpr) {
       const { data, error } = await srv
         .from("classes")
-        .select("id,label,level,institution_id,class_phone_e164")
+        .select("id,label,level,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
         .or(orExpr);
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       items = data || [];
@@ -135,7 +136,7 @@ export async function GET(req: NextRequest) {
     if (instIds.length > 0) {
       const { data: insts, error: instErr } = await srv
         .from("institutions")
-        .select("id,name,short_name")
+        .select("id,name,short_name,settings_json")
         .in("id", instIds);
 
       if (!instErr && insts) {
@@ -152,16 +153,52 @@ export async function GET(req: NextRequest) {
           const institution_name =
             (inst as any).name || (inst as any).short_name || null;
 
+          const education = resolveAttendanceEducationContext({
+            educationType: c.education_type,
+            formationCode: c.formation_code,
+            formationLevelCode: c.formation_level_code,
+            classLevel: c.level,
+            settingsJson: (inst as any).settings_json,
+          });
+
           return {
             ...c,
             institution_name,
+            education_type: education.education_type,
+            education_label: education.education_label,
+            education_short_label: education.education_short_label,
+            formation_code: education.formation_code,
+            formation_label: education.formation_label,
+            formation_level_code: education.formation_level_code,
+            formation_level_label: education.formation_level_label,
+            education_context_key: education.context_key,
+            education_context_label: education.context_label,
           };
         });
       }
     }
   } catch {
-    // En cas de souci, on garde simplement items tel quel (on ne casse rien)
-    enriched = items;
+    // En cas de souci, on garde les classes et on fournit au moins le type brut.
+    enriched = (items || []).map((c: any) => {
+      const education = resolveAttendanceEducationContext({
+        educationType: c.education_type,
+        formationCode: c.formation_code,
+        formationLevelCode: c.formation_level_code,
+        classLevel: c.level,
+      });
+      return {
+        ...c,
+        education_type: education.education_type,
+        education_label: education.education_label,
+        education_short_label: education.education_short_label,
+        formation_code: education.formation_code,
+        formation_label: education.formation_label,
+        formation_level_code: education.formation_level_code,
+        formation_level_label: education.formation_level_label,
+        education_context_key: education.context_key,
+        education_context_label: education.context_label,
+      };
+    });
   }
 
   // Debug optionnel

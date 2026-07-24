@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -193,6 +194,7 @@ export async function GET(req: NextRequest) {
 
   const [
     instSettings,
+    { data: institutionMeta, error: institutionMetaError },
     { data: classes, error: cErr },
     { data: periods, error: pErr },
     { data: tts, error: ttErr },
@@ -203,8 +205,15 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     loadInstitutionSettings(req),
     srv
+      .from("institutions")
+      .select("id,settings_json")
+      .eq("id", institution_id)
+      .maybeSingle(),
+    srv
       .from("classes")
-      .select("id,label,level,institution_id")
+      .select(
+        "id,label,level,institution_id,education_type,formation_code,formation_level_code",
+      )
       .eq("institution_id", institution_id)
       .order("label"),
     srv
@@ -243,6 +252,12 @@ export async function GET(req: NextRequest) {
       .limit(1),
   ]);
 
+  if (institutionMetaError) {
+    return NextResponse.json(
+      { error: institutionMetaError.message },
+      { status: 400 },
+    );
+  }
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 400 });
   if (ttErr) return NextResponse.json({ error: ttErr.message }, { status: 400 });
@@ -326,15 +341,55 @@ export async function GET(req: NextRequest) {
     };
   }
 
-  const normalizedClasses = (classes || []).map((c: any) => ({
-    id: String(c.id),
-    label: String(c.label || ""),
-    level: String(c.level || "").trim() || inferLevelFromClassLabel(c.label) || null,
-  }));
+  const normalizedClasses = (classes || []).map((c: any) => {
+    const education = resolveAttendanceEducationContext({
+      educationType: c.education_type,
+      formationCode: c.formation_code,
+      formationLevelCode: c.formation_level_code,
+      classLevel: c.level,
+      settingsJson: (institutionMeta as any)?.settings_json,
+    });
+
+    return {
+      id: String(c.id),
+      label: String(c.label || ""),
+      level:
+        String(c.level || "").trim() ||
+        inferLevelFromClassLabel(c.label) ||
+        null,
+      education_type: education.education_type,
+      education_label: education.education_label,
+      education_short_label: education.education_short_label,
+      formation_code: education.formation_code,
+      formation_label: education.formation_label,
+      formation_level_code: education.formation_level_code,
+      formation_level_label: education.formation_level_label,
+      education_context_key: education.context_key,
+      education_context_label: education.context_label,
+    };
+  });
 
   const levels = Array.from(
-    new Set(normalizedClasses.map((c) => c.level).filter((x): x is string => !!x))
+    new Set(
+      normalizedClasses
+        .filter((c) => c.education_type === "general_secondary")
+        .map((c) => c.level)
+        .filter((x): x is string => !!x),
+    ),
   ).sort(compareLevels);
+
+  const education_types = Array.from(
+    new Map(
+      normalizedClasses.map((c) => [
+        c.education_type,
+        {
+          id: c.education_type,
+          label: c.education_label,
+          short_label: c.education_short_label,
+        },
+      ]),
+    ).values(),
+  );
 
   const normalizedPeriods = (periods || [])
     .map((p: any) => ({
@@ -364,6 +419,34 @@ export async function GET(req: NextRequest) {
         call_date: String(openRaw.call_date),
         started_at: String(openRaw.started_at),
         actual_call_at: openRaw.actual_call_at ? String(openRaw.actual_call_at) : null,
+        education_type:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.education_type || "general_secondary",
+        education_label:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.education_label || "Secondaire général",
+        formation_code:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.formation_code || null,
+        formation_label:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.formation_label || null,
+        formation_level_code:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.formation_level_code || null,
+        formation_level_label:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.formation_level_label || null,
+        education_context_label:
+          normalizedClasses.find(
+            (c) => c.id === String(openRaw?.class_id || ""),
+          )?.education_context_label || "Secondaire général",
       }
     : null;
 
@@ -372,6 +455,7 @@ export async function GET(req: NextRequest) {
     institution_name: instSettings.institution_name,
     academic_year_label: instSettings.academic_year_label,
     levels,
+    education_types,
     classes: normalizedClasses,
     periods: normalizedPeriods,
     previews,
