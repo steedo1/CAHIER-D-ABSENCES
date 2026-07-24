@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { cleanText, cleanUuid } from "@/lib/textbook/context";
+import {
+  decorateTextbookProgressionEducation,
+  resolveTextbookProgressionEducationContext,
+  textbookProgressionContextValidationError,
+} from "@/lib/textbook/progression-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +83,7 @@ export async function GET(req: NextRequest) {
   const level = cleanText(url.searchParams.get("level"), 80);
   const subjectName = cleanText(url.searchParams.get("subject_name"), 160);
   const status = cleanText(url.searchParams.get("status"), 30);
+  const educationType = cleanText(url.searchParams.get("education_type"), 60);
 
   let query = srv
     .from("textbook_progression_templates")
@@ -91,6 +97,11 @@ export async function GET(req: NextRequest) {
       subject_name,
       level,
       series,
+      education_type,
+      formation_code,
+      formation_label,
+      formation_level_code,
+      formation_level_label,
       title,
       description,
       status,
@@ -120,11 +131,14 @@ export async function GET(req: NextRequest) {
   if (level) query = query.eq("level", level);
   if (subjectName) query = query.ilike("subject_name", `%${subjectName}%`);
   if (status) query = query.eq("status", status);
+  if (educationType) query = query.eq("education_type", educationType);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
 
-  const rows = await decorateDocuments(srv, (data || []) as any[]);
+  const rows = (await decorateDocuments(srv, (data || []) as any[])).map((row) =>
+    decorateTextbookProgressionEducation(row),
+  );
   return NextResponse.json({ ok: true, items: rows });
 }
 
@@ -154,9 +168,19 @@ export async function POST(req: NextRequest) {
   const series = cleanText(raw.series, 80) || null;
   const description = cleanText(raw.description, 1000) || null;
   const status = cleanText(raw.status, 30) === "draft" ? "draft" : "active";
+  const educationContext = resolveTextbookProgressionEducationContext({
+    educationType: raw.education_type,
+    formationCode: raw.formation_code,
+    formationLabel: raw.formation_label,
+    formationLevelCode: raw.formation_level_code,
+    formationLevelLabel: raw.formation_level_label,
+    level,
+  });
+  const contextError = textbookProgressionContextValidationError(educationContext);
 
   if (!title) return NextResponse.json({ ok: false, error: "title_required" }, { status: 400 });
   if (!academicYear) return NextResponse.json({ ok: false, error: "academic_year_required" }, { status: 400 });
+  if (contextError) return NextResponse.json({ ok: false, error: contextError.error, message: contextError.message }, { status: contextError.status });
   if (!level) return NextResponse.json({ ok: false, error: "level_required" }, { status: 400 });
   if (!subjectId && !subjectName) return NextResponse.json({ ok: false, error: "subject_required" }, { status: 400 });
 
@@ -226,8 +250,13 @@ export async function POST(req: NextRequest) {
       subject_id: subjectId,
       institution_subject_id: null,
       subject_name: subjectName || null,
-      level,
+      level: educationContext.education_type === "general_secondary" ? level : educationContext.formation_level_code,
       series,
+      education_type: educationContext.education_type,
+      formation_code: educationContext.formation_code,
+      formation_label: educationContext.formation_label,
+      formation_level_code: educationContext.formation_level_code,
+      formation_level_label: educationContext.formation_level_label,
       title,
       description,
       status,

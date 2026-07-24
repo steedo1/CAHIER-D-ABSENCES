@@ -43,6 +43,13 @@ type Progression = {
   subject_name?: string | null;
   level?: string | null;
   series?: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
   description?: string | null;
   status?: string | null;
   scope?: "national" | "school" | string | null;
@@ -94,6 +101,20 @@ type StatsItem = EducationClassMeta & {
   realized_hours: number;
 };
 
+type EducationLevelContext = {
+  education_type: string;
+  education_label: string;
+  formation_code: string | null;
+  formation_label: string | null;
+  level: string;
+  level_label: string;
+};
+
+type EducationContextSubject = EducationLevelContext & {
+  subject_id: string;
+  subject_name: string;
+};
+
 type AdminTextbookTab = "library" | "progressions" | "stats";
 
 const ITEM_TYPE_OPTIONS = [
@@ -124,10 +145,13 @@ const emptyCreate = {
   series: "",
   subject_id: "",
   description: "",
+  education_type: "general_secondary",
+  formation_code: "",
+  formation_level_code: "",
 };
 
 const IMPORT_HEADER =
-  "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Trimestre;Semaine";
+  "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Période;Semaine";
 
 const ANGLAIS_2NDE_A_C_OFFICIAL_SAMPLE = [
   IMPORT_HEADER,
@@ -287,6 +311,18 @@ function classContextLabel(c: EducationClassMeta | null | undefined) {
   );
 }
 
+function progressionContextLabel(p: Progression | null | undefined) {
+  if (!p || String(p.education_type || "general_secondary") === "general_secondary") {
+    return "";
+  }
+  return String(
+    p.education_context_label ||
+      [p.formation_label, p.formation_level_label].filter(Boolean).join(" • ") ||
+      p.education_label ||
+      "",
+  );
+}
+
 function parseImportLines(text: string) {
   return text
     .split(/\r?\n/g)
@@ -332,6 +368,8 @@ export default function AdminTextbookPage() {
 
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [educationContexts, setEducationContexts] = useState<EducationLevelContext[]>([]);
+  const [educationContextSubjects, setEducationContextSubjects] = useState<EducationContextSubject[]>([]);
   const [progressions, setProgressions] = useState<Progression[]>([]);
   const [nationalProgressions, setNationalProgressions] = useState<Progression[]>([]);
   const [canManageNational, setCanManageNational] = useState(false);
@@ -353,7 +391,9 @@ export default function AdminTextbookPage() {
   const [nationalSearch, setNationalSearch] = useState("");
   const [nationalYearFilter, setNationalYearFilter] = useState("");
   const [nationalSubjectFilter, setNationalSubjectFilter] = useState("");
+  const [nationalEducationFilter, setNationalEducationFilter] = useState("");
   const [schoolSearch, setSchoolSearch] = useState("");
+  const [schoolEducationFilter, setSchoolEducationFilter] = useState("");
   const [showLocalCreate, setShowLocalCreate] = useState(false);
   const [editableItems, setEditableItems] = useState<ProgressionItem[]>([]);
 
@@ -367,6 +407,72 @@ export default function AdminTextbookPage() {
     [nationalProgressions, nationalSelectedId],
   );
 
+  const educationTypeOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set("general_secondary", "Secondaire général");
+    for (const context of educationContexts) {
+      map.set(context.education_type, context.education_label || context.education_type);
+    }
+    for (const c of classes) {
+      const type = String(c.education_type || "general_secondary");
+      map.set(type, c.education_label || map.get(type) || type);
+    }
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [educationContexts, classes]);
+
+  const createFormationOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const context of educationContexts) {
+      if (context.education_type !== createForm.education_type) continue;
+      const code = String(context.formation_code || "");
+      if (!code) continue;
+      map.set(code, context.formation_label || code);
+    }
+    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
+  }, [educationContexts, createForm.education_type]);
+
+  const createLevelOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const context of educationContexts) {
+      if (context.education_type !== createForm.education_type) continue;
+      if (String(context.formation_code || "") !== createForm.formation_code) continue;
+      map.set(context.level, context.level_label || context.level);
+    }
+    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
+  }, [educationContexts, createForm.education_type, createForm.formation_code]);
+
+  const createSubjectOptions = useMemo(() => {
+    if (createForm.education_type === "general_secondary") return subjects;
+    const allowed = new Set(
+      educationContextSubjects
+        .filter(
+          (row) =>
+            row.education_type === createForm.education_type &&
+            String(row.formation_code || "") === createForm.formation_code &&
+            row.level === createForm.formation_level_code,
+        )
+        .map((row) => row.subject_id),
+    );
+    return subjects.filter((subject) => allowed.has(subject.id));
+  }, [
+    subjects,
+    educationContextSubjects,
+    createForm.education_type,
+    createForm.formation_code,
+    createForm.formation_level_code,
+  ]);
+
+  const nationalEducationTypes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          nationalProgressions.map((p) =>
+            String(p.education_type || "general_secondary"),
+          ),
+        ),
+      ),
+    [nationalProgressions],
+  );
 
   const nationalYears = useMemo(
     () =>
@@ -389,21 +495,31 @@ export default function AdminTextbookPage() {
     return nationalProgressions.filter((p) => {
       if (nationalYearFilter && p.academic_year !== nationalYearFilter) return false;
       if (nationalSubjectFilter && (p.subject_name || "") !== nationalSubjectFilter) return false;
+      if (
+        nationalEducationFilter &&
+        String(p.education_type || "general_secondary") !== nationalEducationFilter
+      ) return false;
       if (!q) return true;
       const haystack = normalizeSearch(
-        [p.title, p.subject_name, p.level, p.series, p.academic_year].join(" "),
+        [p.title, p.subject_name, p.level, p.series, p.academic_year, progressionContextLabel(p)].join(" "),
       );
       return haystack.includes(q);
     });
-  }, [nationalProgressions, nationalSearch, nationalYearFilter, nationalSubjectFilter]);
+  }, [nationalProgressions, nationalSearch, nationalYearFilter, nationalSubjectFilter, nationalEducationFilter]);
 
   const filteredProgressions = useMemo(() => {
     const q = normalizeSearch(schoolSearch);
-    if (!q) return progressions;
-    return progressions.filter((p) =>
-      normalizeSearch([p.title, p.subject_name, p.level, p.academic_year].join(" ")).includes(q),
-    );
-  }, [progressions, schoolSearch]);
+    return progressions.filter((p) => {
+      if (
+        schoolEducationFilter &&
+        String(p.education_type || "general_secondary") !== schoolEducationFilter
+      ) return false;
+      if (!q) return true;
+      return normalizeSearch(
+        [p.title, p.subject_name, p.level, p.academic_year, progressionContextLabel(p)].join(" "),
+      ).includes(q);
+    });
+  }, [progressions, schoolSearch, schoolEducationFilter]);
 
   const selectedItemCount = items.length || selected?.items?.length || 0;
 
@@ -430,7 +546,7 @@ export default function AdminTextbookPage() {
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.ok === false) {
       throw new Error(
-        json?.error || json?.details || `Erreur HTTP ${res.status}`,
+        json?.message || json?.details || json?.error || `Erreur HTTP ${res.status}`,
       );
     }
     return json;
@@ -440,13 +556,20 @@ export default function AdminTextbookPage() {
     setLoading(true);
     setError(null);
     try {
-      const [subjectJson, classJson, progressionJson, statsJson, nationalJson] =
-        await Promise.all([
+      const [
+        subjectJson,
+        classJson,
+        progressionJson,
+        statsJson,
+        nationalJson,
+        contextJson,
+      ] = await Promise.all([
           fetchJson("/api/admin/subjects"),
           fetchJson("/api/admin/classes?limit=999"),
           fetchJson("/api/admin/textbook/progressions"),
           fetchJson("/api/admin/textbook/stats"),
           fetchJson("/api/admin/textbook/national"),
+          fetchJson("/api/admin/institution/subject-coeffs"),
         ]);
 
       setSubjects(subjectJson.items || []);
@@ -454,6 +577,8 @@ export default function AdminTextbookPage() {
       setProgressions(progressionJson.items || []);
       setStats(statsJson.items || []);
       setNationalProgressions(nationalJson.items || []);
+      setEducationContexts(contextJson.levels || []);
+      setEducationContextSubjects(contextJson.items || []);
       setCanManageNational(Boolean(nationalJson.can_manage_national));
 
       const firstId = progressionJson.items?.[0]?.id || "";
@@ -572,7 +697,11 @@ export default function AdminTextbookPage() {
         ? ` ${autoAssigned} classe(s) liée(s) automatiquement.`
         : json.auto_assign_skipped === "manual_subject"
           ? " Affectation manuelle requise pour cette discipline."
-          : "";
+          : json.auto_assign_skipped === "subject_not_configured_for_context"
+            ? " La matière doit d’abord être configurée pour cette formation et cette année."
+            : json.auto_assign_skipped === "no_matching_class"
+              ? " Aucune classe compatible n’a été trouvée dans cet établissement."
+              : "";
       setMessage(
         json.already_exists
           ? `Cette progression est déjà disponible dans votre établissement.${autoText}`
@@ -636,11 +765,27 @@ export default function AdminTextbookPage() {
     setMessage(null);
     try {
       const subject = subjects.find((s) => s.id === createForm.subject_id);
+      const selectedContext = educationContexts.find(
+        (context) =>
+          context.education_type === createForm.education_type &&
+          String(context.formation_code || "") === createForm.formation_code &&
+          context.level === createForm.formation_level_code,
+      );
       const form = new FormData();
       form.set("title", createForm.title);
       form.set("academic_year", createForm.academic_year);
-      form.set("level", createForm.level);
+      form.set(
+        "level",
+        createForm.education_type === "general_secondary"
+          ? createForm.level
+          : createForm.formation_level_code,
+      );
       form.set("series", createForm.series);
+      form.set("education_type", createForm.education_type);
+      form.set("formation_code", createForm.formation_code);
+      form.set("formation_label", selectedContext?.formation_label || "");
+      form.set("formation_level_code", createForm.formation_level_code);
+      form.set("formation_level_label", selectedContext?.level_label || "");
       form.set("subject_id", subject?.id || "");
       form.set("institution_subject_id", subject?.inst_subject_id || "");
       form.set("subject_name", subject?.name || "");
@@ -809,14 +954,41 @@ export default function AdminTextbookPage() {
   }
 
   const compatibleClasses = useMemo(() => {
-    if (!selected?.level) return classes;
+    if (!selected) return [];
+    const educationType = String(
+      selected.education_type || "general_secondary",
+    );
+
+    if (educationType !== "general_secondary") {
+      return classes.filter(
+        (c) =>
+          String(c.education_type || "general_secondary") === educationType &&
+          String(c.formation_code || "") ===
+            String(selected.formation_code || "") &&
+          String(c.formation_level_code || "") ===
+            String(selected.formation_level_code || selected.level || "") &&
+          (!selected.academic_year ||
+            !c.academic_year ||
+            String(c.academic_year) === String(selected.academic_year)),
+      );
+    }
+
+    if (!selected.level) {
+      return classes.filter(
+        (c) =>
+          String(c.education_type || "general_secondary") ===
+          "general_secondary",
+      );
+    }
     const level = selected.level.toLowerCase();
     return classes.filter(
       (c) =>
-        String(c.level || "").toLowerCase() === level ||
-        labelClass(c).toLowerCase().includes(level),
+        String(c.education_type || "general_secondary") ===
+          "general_secondary" &&
+        (String(c.level || "").toLowerCase() === level ||
+          labelClass(c).toLowerCase().includes(level)),
     );
-  }, [classes, selected?.level]);
+  }, [classes, selected]);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 md:px-6">
@@ -909,7 +1081,7 @@ export default function AdminTextbookPage() {
                   placeholder="Rechercher : matière, niveau, année..."
                   className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-indigo-400"
                 />
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid gap-2 sm:grid-cols-3">
                   <select
                     value={nationalYearFilter}
                     onChange={(e) => setNationalYearFilter(e.target.value)}
@@ -928,6 +1100,18 @@ export default function AdminTextbookPage() {
                     <option value="">Toutes matières</option>
                     {nationalSubjects.map((subject) => (
                       <option key={subject} value={subject}>{subject}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={nationalEducationFilter}
+                    onChange={(e) => setNationalEducationFilter(e.target.value)}
+                    className="rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold outline-none focus:border-indigo-400"
+                  >
+                    <option value="">Tous enseignements</option>
+                    {nationalEducationTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {educationTypeOptions.find((item) => item.id === type)?.label || type}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -960,7 +1144,7 @@ export default function AdminTextbookPage() {
                     <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-black text-slate-500">
                       <span>{p.subject_name || "Matière"}</span>
                       <span>·</span>
-                      <span>{p.level || "Niveau"}</span>
+                      <span>{progressionContextLabel(p) || p.level || "Niveau"}</span>
                       <span>·</span>
                       <span>{p.academic_year}</span>
                       <span className="rounded-full bg-white px-2 py-0.5 text-indigo-700 ring-1 ring-indigo-100">
@@ -991,7 +1175,7 @@ export default function AdminTextbookPage() {
                       </div>
                       <h2 className="mt-1 text-2xl font-black">{selectedNational.title}</h2>
                       <p className="mt-1 text-sm font-bold text-slate-500">
-                        {selectedNational.subject_name || "Matière"} · {selectedNational.level || "Niveau"} · {selectedNational.academic_year}
+                        {selectedNational.subject_name || "Matière"} · {progressionContextLabel(selectedNational) || selectedNational.level || "Niveau"} · {selectedNational.academic_year}
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
                         <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">Nationale</span>
@@ -1064,12 +1248,26 @@ export default function AdminTextbookPage() {
                   <h2 className="text-lg font-black">Progressions de l’établissement</h2>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">{filteredProgressions.length}</span>
                 </div>
-                <input
-                  value={schoolSearch}
-                  onChange={(e) => setSchoolSearch(e.target.value)}
-                  placeholder="Rechercher une copie..."
-                  className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-                />
+                <div className="mt-3 grid gap-2">
+                  <input
+                    value={schoolSearch}
+                    onChange={(e) => setSchoolSearch(e.target.value)}
+                    placeholder="Rechercher une copie..."
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                  />
+                  <select
+                    value={schoolEducationFilter}
+                    onChange={(e) => setSchoolEducationFilter(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                  >
+                    <option value="">Tous les enseignements</option>
+                    {educationTypeOptions.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <select
                   value={selectedId}
                   onChange={(e) => setSelectedId(e.target.value)}
@@ -1077,7 +1275,9 @@ export default function AdminTextbookPage() {
                 >
                   <option value="">Sélectionner une progression</option>
                   {filteredProgressions.map((p) => (
-                    <option key={p.id} value={p.id}>{p.title} — {p.level || "Niveau"}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.title} — {progressionContextLabel(p) || p.level || "Niveau"}
+                    </option>
                   ))}
                 </select>
                 <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
@@ -1092,7 +1292,9 @@ export default function AdminTextbookPage() {
                       )}
                     >
                       <div className="line-clamp-1 text-sm font-black">{p.title}</div>
-                      <div className="mt-1 text-xs font-bold text-slate-500">{p.subject_name || "Matière"} · {p.level || "Niveau"} · {p.academic_year}</div>
+                      <div className="mt-1 text-xs font-bold text-slate-500">
+                        {p.subject_name || "Matière"} · {progressionContextLabel(p) || p.level || "Niveau"} · {p.academic_year}
+                      </div>
                       <div className="mt-2 text-[11px] font-black text-slate-500">{p.items?.length || 0} lignes · {p.assignments?.length || 0} classes</div>
                     </button>
                   ))}
@@ -1107,22 +1309,149 @@ export default function AdminTextbookPage() {
               </section>
 
               {showLocalCreate ? (
-                <form onSubmit={createProgression} className="rounded-[28px] border border-amber-200 bg-amber-50 p-4 shadow-sm space-y-3">
-                  <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Titre" value={createForm.title} onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))} required />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Année" value={createForm.academic_year} onChange={(e) => setCreateForm((f) => ({ ...f, academic_year: e.target.value }))} />
-                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" placeholder="Niveau" value={createForm.level} onChange={(e) => setCreateForm((f) => ({ ...f, level: e.target.value }))} required />
+                <form
+                  onSubmit={createProgression}
+                  className="space-y-3 rounded-[28px] border border-amber-200 bg-amber-50 p-4 shadow-sm"
+                >
+                  <input
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                    placeholder="Titre"
+                    value={createForm.title}
+                    onChange={(e) =>
+                      setCreateForm((f) => ({ ...f, title: e.target.value }))
+                    }
+                    required
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      placeholder="Année scolaire"
+                      value={createForm.academic_year}
+                      onChange={(e) =>
+                        setCreateForm((f) => ({
+                          ...f,
+                          academic_year: e.target.value,
+                        }))
+                      }
+                    />
+                    <select
+                      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      value={createForm.education_type}
+                      onChange={(e) =>
+                        setCreateForm((f) => ({
+                          ...f,
+                          education_type: e.target.value,
+                          formation_code: "",
+                          formation_level_code: "",
+                          subject_id: "",
+                        }))
+                      }
+                    >
+                      {educationTypeOptions.map((type) => (
+                        <option key={type.id} value={type.id}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400" value={createForm.subject_id} onChange={(e) => setCreateForm((f) => ({ ...f, subject_id: e.target.value }))} required>
+
+                  {createForm.education_type === "general_secondary" ? (
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                      placeholder="Niveau"
+                      value={createForm.level}
+                      onChange={(e) =>
+                        setCreateForm((f) => ({ ...f, level: e.target.value }))
+                      }
+                      required
+                    />
+                  ) : (
+                    <div className="grid gap-2">
+                      <select
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                        value={createForm.formation_code}
+                        onChange={(e) =>
+                          setCreateForm((f) => ({
+                            ...f,
+                            formation_code: e.target.value,
+                            formation_level_code: "",
+                            subject_id: "",
+                          }))
+                        }
+                        required
+                      >
+                        <option value="">Formation / filière</option>
+                        {createFormationOptions.map((formation) => (
+                          <option key={formation.code} value={formation.code}>
+                            {formation.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                        value={createForm.formation_level_code}
+                        onChange={(e) =>
+                          setCreateForm((f) => ({
+                            ...f,
+                            formation_level_code: e.target.value,
+                            subject_id: "",
+                          }))
+                        }
+                        required
+                      >
+                        <option value="">Année de formation</option>
+                        {createLevelOptions.map((level) => (
+                          <option key={level.code} value={level.code}>
+                            {level.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <select
+                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+                    value={createForm.subject_id}
+                    onChange={(e) =>
+                      setCreateForm((f) => ({
+                        ...f,
+                        subject_id: e.target.value,
+                      }))
+                    }
+                    required
+                  >
                     <option value="">Discipline</option>
-                    {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {createSubjectOptions.map((subject) => (
+                      <option key={subject.id} value={subject.id}>
+                        {subject.name}
+                      </option>
+                    ))}
                   </select>
+                  {createForm.education_type !== "general_secondary" &&
+                  createForm.formation_level_code &&
+                  !createSubjectOptions.length ? (
+                    <p className="rounded-xl bg-white px-3 py-2 text-xs font-bold text-amber-800 ring-1 ring-amber-200">
+                      Aucune matière n’est encore configurée pour cette formation et cette année.
+                    </p>
+                  ) : null}
                   <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">
                     <Upload className="h-4 w-4" />
-                    <span>{documentFile ? documentFile.name : "Fichier officiel"}</span>
-                    <input className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv" onChange={(e) => setDocumentFile(e.target.files?.[0] || null)} />
+                    <span>
+                      {documentFile ? documentFile.name : "Fichier officiel"}
+                    </span>
+                    <input
+                      className="hidden"
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
+                      onChange={(e) =>
+                        setDocumentFile(e.target.files?.[0] || null)
+                      }
+                    />
                   </label>
-                  <button disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60">
+                  <button
+                    disabled={busy}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-60"
+                  >
                     <Save className="h-4 w-4" /> Enregistrer
                   </button>
                 </form>
@@ -1140,7 +1469,9 @@ export default function AdminTextbookPage() {
                     <div>
                       <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Progression d’établissement</div>
                       <h2 className="mt-1 text-2xl font-black">{selected.title}</h2>
-                      <p className="mt-1 text-sm font-bold text-slate-500">{selected.subject_name || "Matière"} · {selected.level || "Niveau"} · {selected.academic_year}</p>
+                      <p className="mt-1 text-sm font-bold text-slate-500">
+                        {selected.subject_name || "Matière"} · {progressionContextLabel(selected) || selected.level || "Niveau"} · {selected.academic_year}
+                      </p>
                     </div>
                     {selected.document?.signed_url ? (
                       <a href={selected.document.signed_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-black text-slate-700">
@@ -1169,7 +1500,7 @@ export default function AdminTextbookPage() {
                             <th className="px-2 py-3">Rubrique</th>
                             <th className="px-2 py-3">Thème</th>
                             <th className="px-2 py-3">Min</th>
-                            <th className="px-2 py-3">Trim.</th>
+                            <th className="px-2 py-3">Période</th>
                             <th className="px-2 py-3">Semaine</th>
                             <th className="px-2 py-3"></th>
                           </tr>
@@ -1208,7 +1539,7 @@ export default function AdminTextbookPage() {
                       </button>
                     </div>
                     <p className="mt-1 text-xs font-bold leading-5 text-slate-500">
-                      Auto pour les matières communes. Manuel pour LV2, musique et arts plastiques.
+                      Seules les classes du même type d’enseignement, de la même formation et de la même année sont proposées.
                     </p>
                     <div className="mt-4 max-h-[420px] space-y-2 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
                       {compatibleClasses.map((c) => {

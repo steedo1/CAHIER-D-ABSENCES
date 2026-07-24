@@ -21,9 +21,9 @@ export type ProgressionImportContext = {
   academic_year?: string | null;
 } | null;
 
-export const IMPORT_HEADER = "Ordre;Type;Rubrique;Thème;Compétence;Titre;Durée minutes;Nb séances;Trimestre;Mois;Semaine";
+export const IMPORT_HEADER = "Ordre;Type;Rubrique;Thème;Compétence;Titre;Durée minutes;Nb séances;Période;Mois;Semaine";
 
-const LEGACY_HEADER = "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Trimestre;Semaine";
+const LEGACY_HEADER = "Ordre;Type;Rubrique;Thème;Titre;Durée minutes;Période;Semaine";
 
 const STRUCTURAL_ITEM_TYPES = new Set(["section", "theme", "rubric", "competency", "chapter"]);
 

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanText, requireTextbookManager } from "@/lib/textbook/context";
 import { resolveTextbookSubjectForInstitution } from "@/lib/textbook/subject-matching";
+import { validateTextbookSubjectForClass } from "@/lib/textbook/education-context";
+import {
+  normalizeTextbookProgressionEducationType,
+  textbookProgressionMatchesClass,
+} from "@/lib/textbook/progression-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +74,7 @@ async function autoAssignCompatibleClasses(
   async function fetchClasses(filterYear: boolean) {
     let query = srv
       .from("classes")
-      .select("id,label,level,academic_year")
+      .select("id,label,level,academic_year,education_type,formation_code,formation_level_code")
       .eq("institution_id", institutionId);
 
     if (filterYear && progression?.academic_year) {
@@ -84,12 +89,40 @@ async function autoAssignCompatibleClasses(
   let classes = await fetchClasses(true);
   if (!classes.length) classes = await fetchClasses(false);
 
-  const classIds = classes
-    .filter((row: any) => classMatchesLevel(row, progression?.level))
+  const progressionType = normalizeTextbookProgressionEducationType(
+    progression?.education_type,
+  );
+  const compatibleClasses = classes.filter((row: any) => {
+    if (!textbookProgressionMatchesClass(progression, row)) return false;
+    if (progressionType === "general_secondary") {
+      return classMatchesLevel(row, progression?.level);
+    }
+    return true;
+  });
+
+  const validatedClasses: any[] = [];
+  for (const classRow of compatibleClasses) {
+    const validation = await validateTextbookSubjectForClass({
+      srv,
+      institutionId,
+      classRow,
+      subjectId: progression?.subject_id || null,
+    });
+    if (validation.ok) validatedClasses.push(classRow);
+  }
+
+  const classIds = validatedClasses
     .map((row: any) => String(row.id))
     .filter(Boolean);
 
-  if (!classIds.length) return { count: 0, skipped: "no_matching_class" };
+  if (!classIds.length) {
+    return {
+      count: 0,
+      skipped: compatibleClasses.length
+        ? "subject_not_configured_for_context"
+        : "no_matching_class",
+    };
+  }
 
   const rows = Array.from(new Set(classIds)).map((classId) => ({
     institution_id: institutionId,
@@ -210,6 +243,11 @@ export async function POST(
       subject_name,
       level,
       series,
+      education_type,
+      formation_code,
+      formation_label,
+      formation_level_code,
+      formation_level_label,
       title,
       description,
       status,
@@ -267,7 +305,7 @@ export async function POST(
   const { data: existing } = await srv
     .from("textbook_progression_templates")
     .select(
-      "id,title,academic_year,subject_id,institution_subject_id,subject_name,level,series,status,source_national_template_id",
+      "id,title,academic_year,subject_id,institution_subject_id,subject_name,level,series,education_type,formation_code,formation_label,formation_level_code,formation_level_label,status,source_national_template_id",
     )
     .eq("institution_id", institutionId)
     .eq("scope", "school")
@@ -281,6 +319,11 @@ export async function POST(
       subject_id: effectiveNational.subject_id || null,
       institution_subject_id: effectiveNational.institution_subject_id || null,
       subject_name: effectiveNational.subject_name || null,
+      education_type: effectiveNational.education_type || "general_secondary",
+      formation_code: effectiveNational.formation_code || null,
+      formation_label: effectiveNational.formation_label || null,
+      formation_level_code: effectiveNational.formation_level_code || null,
+      formation_level_label: effectiveNational.formation_level_label || null,
       updated_by: userId,
       updated_at: new Date().toISOString(),
     };
@@ -342,6 +385,11 @@ export async function POST(
       subject_name: effectiveNational.subject_name || null,
       level: (national as any).level,
       series: (national as any).series || null,
+      education_type: (national as any).education_type || "general_secondary",
+      formation_code: (national as any).formation_code || null,
+      formation_label: (national as any).formation_label || null,
+      formation_level_code: (national as any).formation_level_code || null,
+      formation_level_label: (national as any).formation_level_label || null,
       title: titleOverride || (national as any).title,
       description: (national as any).description || null,
       status: "active",

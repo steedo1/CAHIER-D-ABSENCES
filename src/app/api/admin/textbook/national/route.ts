@@ -6,6 +6,11 @@ import {
   requireNationalTextbookManager,
   requireTextbookManager,
 } from "@/lib/textbook/context";
+import {
+  decorateTextbookProgressionEducation,
+  resolveTextbookProgressionEducationContext,
+  textbookProgressionContextValidationError,
+} from "@/lib/textbook/progression-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +63,15 @@ export async function GET(req: NextRequest) {
   const academicYear = cleanText(url.searchParams.get("academic_year"), 30);
   const level = cleanText(url.searchParams.get("level"), 80);
   const subjectId = cleanUuid(url.searchParams.get("subject_id"));
+  const educationType = cleanText(url.searchParams.get("education_type"), 60);
+  const formationCode = cleanText(url.searchParams.get("formation_code"), 160);
+  const formationLevelCode = cleanText(url.searchParams.get("formation_level_code"), 160);
+
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
 
   let query = srv
     .from("textbook_progression_templates")
@@ -71,6 +85,11 @@ export async function GET(req: NextRequest) {
       subject_name,
       level,
       series,
+      education_type,
+      formation_code,
+      formation_label,
+      formation_level_code,
+      formation_level_label,
       title,
       description,
       status,
@@ -100,11 +119,19 @@ export async function GET(req: NextRequest) {
   if (academicYear) query = query.eq("academic_year", academicYear);
   if (level) query = query.eq("level", level);
   if (subjectId) query = query.eq("subject_id", subjectId);
+  if (educationType) query = query.eq("education_type", educationType);
+  if (formationCode) query = query.eq("formation_code", formationCode);
+  if (formationLevelCode) query = query.eq("formation_level_code", formationLevelCode);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
 
-  const rows = await decorateDocuments(srv, (data || []) as any[]);
+  const rows = (await decorateDocuments(srv, (data || []) as any[])).map((row) =>
+    decorateTextbookProgressionEducation(
+      row,
+      (institution as any)?.settings_json,
+    ),
+  );
   return NextResponse.json({
     ok: true,
     items: rows,
@@ -143,8 +170,25 @@ export async function POST(req: NextRequest) {
   const description = cleanText(raw.description, 1000) || null;
   const status = cleanText(raw.status, 30) === "draft" ? "draft" : "active";
 
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+  const educationContext = resolveTextbookProgressionEducationContext({
+    educationType: raw.education_type,
+    formationCode: raw.formation_code,
+    formationLabel: raw.formation_label,
+    formationLevelCode: raw.formation_level_code,
+    formationLevelLabel: raw.formation_level_label,
+    level,
+    settingsJson: (institution as any)?.settings_json,
+  });
+  const contextError = textbookProgressionContextValidationError(educationContext);
+
   if (!title) return NextResponse.json({ ok: false, error: "title_required" }, { status: 400 });
   if (!academicYear) return NextResponse.json({ ok: false, error: "academic_year_required" }, { status: 400 });
+  if (contextError) return NextResponse.json({ ok: false, error: contextError.error, message: contextError.message }, { status: contextError.status });
   if (!level) return NextResponse.json({ ok: false, error: "level_required" }, { status: 400 });
   if (!subjectId && !institutionSubjectId && !subjectName) {
     return NextResponse.json({ ok: false, error: "subject_required" }, { status: 400 });
@@ -219,8 +263,13 @@ export async function POST(req: NextRequest) {
       subject_id: subjectId,
       institution_subject_id: institutionSubjectId,
       subject_name: subjectName || null,
-      level,
+      level: educationContext.education_type === "general_secondary" ? level : educationContext.formation_level_code,
       series,
+      education_type: educationContext.education_type,
+      formation_code: educationContext.formation_code,
+      formation_label: educationContext.formation_label,
+      formation_level_code: educationContext.formation_level_code,
+      formation_level_label: educationContext.formation_level_label,
       title,
       description,
       status,

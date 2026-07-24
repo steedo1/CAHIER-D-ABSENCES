@@ -18,6 +18,13 @@ type NationalProgression = {
   subject_name?: string | null;
   level?: string | null;
   series?: string | null;
+  education_type?: string | null;
+  education_label?: string | null;
+  formation_code?: string | null;
+  formation_label?: string | null;
+  formation_level_code?: string | null;
+  formation_level_label?: string | null;
+  education_context_label?: string | null;
   description?: string | null;
   status?: string | null;
   published_at?: string | null;
@@ -51,7 +58,31 @@ const emptyForm = {
   level: "",
   series: "",
   description: "",
+  education_type: "general_secondary",
+  formation_code: "",
+  formation_label: "",
+  formation_level_code: "",
+  formation_level_label: "",
 };
+
+const EDUCATION_TYPES = [
+  { id: "general_secondary", label: "Secondaire général" },
+  { id: "technical_secondary", label: "Enseignement technique" },
+  { id: "vocational_training", label: "Formation professionnelle" },
+  { id: "higher_short_cycle", label: "BTS / cycle supérieur court" },
+];
+
+function progressionContextLabel(item: NationalProgression | null | undefined) {
+  if (!item || String(item.education_type || "general_secondary") === "general_secondary") {
+    return item?.level || "Niveau";
+  }
+  return String(
+    item.education_context_label ||
+      [item.formation_label, item.formation_level_label].filter(Boolean).join(" • ") ||
+      item.level ||
+      "Formation",
+  );
+}
 
 function classNames(...arr: Array<string | false | null | undefined>) {
   return arr.filter(Boolean).join(" ");
@@ -136,8 +167,18 @@ export default function SuperNationalProgressionsPage() {
       fd.set("title", form.title);
       fd.set("academic_year", form.academic_year);
       fd.set("subject_name", form.subject_name);
-      fd.set("level", form.level);
+      fd.set(
+        "level",
+        form.education_type === "general_secondary"
+          ? form.level
+          : form.formation_level_code,
+      );
       fd.set("series", form.series);
+      fd.set("education_type", form.education_type);
+      fd.set("formation_code", form.formation_code);
+      fd.set("formation_label", form.formation_label);
+      fd.set("formation_level_code", form.formation_level_code);
+      fd.set("formation_level_label", form.formation_level_label);
       fd.set("description", form.description);
       fd.set("status", "active");
       if (documentFile) fd.set("document_file", documentFile);
@@ -298,10 +339,40 @@ export default function SuperNationalProgressionsPage() {
 
             <div className="mt-5 space-y-3">
               <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Titre : Progression nationale Anglais 2nde A-C" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Année : 2026-2027" value={form.academic_year} onChange={(e) => setForm((f) => ({ ...f, academic_year: e.target.value }))} required />
-                <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Niveau : 2nde A-C" value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value }))} required />
+                <select
+                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400"
+                  value={form.education_type}
+                  onChange={(e) => setForm((f) => ({
+                    ...f,
+                    education_type: e.target.value,
+                    formation_code: "",
+                    formation_label: "",
+                    formation_level_code: "",
+                    formation_level_label: "",
+                    level: "",
+                  }))}
+                >
+                  {EDUCATION_TYPES.map((type) => (
+                    <option key={type.id} value={type.id}>{type.label}</option>
+                  ))}
+                </select>
               </div>
+              {form.education_type === "general_secondary" ? (
+                <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Niveau : 2nde A-C" value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value }))} required />
+              ) : (
+                <div className="grid gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Code formation : CAP-ELEVAGE" value={form.formation_code} onChange={(e) => setForm((f) => ({ ...f, formation_code: e.target.value }))} required />
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Formation : CAP — Élevage" value={form.formation_label} onChange={(e) => setForm((f) => ({ ...f, formation_label: e.target.value }))} required />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Code année : YEAR-1" value={form.formation_level_code} onChange={(e) => setForm((f) => ({ ...f, formation_level_code: e.target.value }))} required />
+                    <input className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Libellé : 1re année" value={form.formation_level_label} onChange={(e) => setForm((f) => ({ ...f, formation_level_label: e.target.value }))} required />
+                  </div>
+                </div>
+              )}
               <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Discipline : Anglais" value={form.subject_name} onChange={(e) => setForm((f) => ({ ...f, subject_name: e.target.value }))} required />
               <input className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Série / option si nécessaire" value={form.series} onChange={(e) => setForm((f) => ({ ...f, series: e.target.value }))} />
               <textarea className="h-24 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Description / source officielle" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
@@ -333,7 +404,7 @@ export default function SuperNationalProgressionsPage() {
                 >
                   <div className="text-sm font-black text-slate-900">{p.title}</div>
                   <div className="mt-1 text-xs font-bold text-slate-500">
-                    {p.subject_name || "Discipline"} · {p.level || "Niveau"} · {p.academic_year}
+                    {p.subject_name || "Discipline"} · {progressionContextLabel(p)} · {p.academic_year}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black">
                     <span className="rounded-full bg-white px-2 py-1 text-violet-700 ring-1 ring-violet-100">{p.status || "active"}</span>

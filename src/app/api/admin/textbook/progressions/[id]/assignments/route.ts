@@ -5,6 +5,10 @@ import {
   decorateTextbookClassEducation,
   validateTextbookSubjectForClass,
 } from "@/lib/textbook/education-context";
+import {
+  decorateTextbookProgressionEducation,
+  textbookProgressionContextMismatchMessage,
+} from "@/lib/textbook/progression-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,9 +77,15 @@ export async function POST(
     );
   }
 
+  const { data: institution } = await srv
+    .from("institutions")
+    .select("settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+
   const { data: progression, error: progressionErr } = await srv
     .from("textbook_progression_templates")
-    .select("id,subject_id,institution_subject_id,subject_name,scope")
+    .select("id,subject_id,institution_subject_id,subject_name,scope,academic_year,level,education_type,formation_code,formation_label,formation_level_code,formation_level_label")
     .eq("id", id)
     .eq("institution_id", institutionId)
     .eq("scope", "school")
@@ -133,7 +143,48 @@ export async function POST(
       { status: 400 },
     );
 
+  const decoratedProgression = decorateTextbookProgressionEducation(
+    progression,
+    (institution as any)?.settings_json,
+  );
+
   for (const classRow of (classes || []) as any[]) {
+    const contextMismatch = textbookProgressionContextMismatchMessage(
+      decoratedProgression,
+      classRow,
+    );
+    if (contextMismatch) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: contextMismatch.error,
+          message: contextMismatch.message,
+          class_id: classRow.id,
+          class_label: classRow.label || "Classe",
+        },
+        { status: contextMismatch.status },
+      );
+    }
+
+    if (
+      decoratedProgression.education_type !== "general_secondary" &&
+      decoratedProgression.academic_year &&
+      classRow.academic_year &&
+      String(decoratedProgression.academic_year) !== String(classRow.academic_year)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "progression_class_academic_year_mismatch",
+          message:
+            "Cette progression et cette classe n’appartiennent pas à la même année scolaire.",
+          class_id: classRow.id,
+          class_label: classRow.label || "Classe",
+        },
+        { status: 409 },
+      );
+    }
+
     const validation = await validateTextbookSubjectForClass({
       srv,
       institutionId,
