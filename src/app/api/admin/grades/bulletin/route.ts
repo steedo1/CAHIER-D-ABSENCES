@@ -1261,10 +1261,13 @@ function buildFallbackGroups(opts: {
   const sciences: string[] = [];
   const autres: string[] = [];
 
-  // Pour le technique, le professionnel et le BTS, on ne force pas les
-  // catégories du secondaire général. Sans configuration explicite, toutes
-  // les disciplines restent réunies dans un bilan neutre et fidèle.
+  // Compatibilité historique : le fallback LETTRES / SCIENCES / AUTRES
+  // reste réservé au secondaire général. Pour le technique, le professionnel
+  // et le BTS, l'absence de groupes configurés signifie simplement que les
+  // matières sont affichées directement, sans ligne de bilan intermédiaire.
   const isGeneralSecondary = !educationType || educationType === "general_secondary";
+
+  if (!isGeneralSecondary) return [];
 
   for (const sid of subjectIds) {
     const meta = subjectInfoById.get(sid) || { name: "", code: "" };
@@ -1317,18 +1320,6 @@ function buildFallbackGroups(opts: {
       items,
     };
   };
-
-  if (!isGeneralSecondary) {
-    return [
-      mkGroup({
-        id: "fallback-disciplines",
-        code: "BILAN_DISCIPLINES",
-        label: "BILAN DES DISCIPLINES",
-        order_index: 1,
-        sids: subjectIds,
-      }),
-    ].filter((g) => g.items.length > 0);
-  }
 
   const groups: BulletinSubjectGroup[] = [
     mkGroup({
@@ -2659,7 +2650,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ⚙️ (B) fallback auto : si aucune config DB exploitable => on fabrique bilans LETTRES/SCIENCES/AUTRES
+  // ⚙️ (B) fallback historique : uniquement pour le secondaire général.
+  // Pour les autres enseignements, [] conserve une liste continue de matières.
   if (!subjectGroups.length) {
     subjectGroups = buildFallbackGroups({
       subjectIds: orderedSubjectIds,

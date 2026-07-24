@@ -4,6 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { verifyBulletinQR } from "@/lib/bulletin-qr";
 import { resolveBulletinByCode } from "@/lib/bulletin-qr-store";
+import {
+  resolveBulletinEducationContext,
+  resolveScopedInstitutionSettings,
+} from "@/lib/education-bulletins";
+import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -211,6 +216,7 @@ function buildCoeffLevelCandidates(
     return out;
   }
 
+  pushUniqueLevelCandidate(out, classRow.formation_level_code);
   pushUniqueLevelCandidate(out, classRow.level);
   pushUniqueLevelCandidate(out, classRow.code);
   pushUniqueLevelCandidate(out, classRow.label);
@@ -1074,6 +1080,9 @@ type ClassRow = {
   head_teacher_id?: string | null;
   level?: string | null;
   official_track_code?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type HeadTeacherRow = {
@@ -1283,8 +1292,17 @@ function buildFallbackGroups(opts: {
   subjectIds: string[];
   subjectInfoById: Map<string, { name: string; code: string }>;
   coeffBySubject: Map<string, { coeff: number; include: boolean }>;
+  educationType?: string | null;
 }): BulletinSubjectGroup[] {
   const { subjectIds, subjectInfoById, coeffBySubject } = opts;
+
+  // Même règle que le bulletin imprimé : les regroupements automatiques
+  // LETTRES / SCIENCES / AUTRES restent un héritage du secondaire général.
+  // Sans groupes explicites en technique, professionnel ou BTS, le QR affiche
+  // directement les matières, dans leur ordre officiel.
+  if (opts.educationType && opts.educationType !== "general_secondary") {
+    return [];
+  }
 
   const letters: string[] = [];
   const sciences: string[] = [];
@@ -1781,8 +1799,20 @@ export async function GET(req: NextRequest) {
     classRow,
     bulletinLevel,
   );
+  const educationContext = resolveBulletinEducationContext({
+    educationType: classRow.education_type,
+    formationCode: classRow.formation_code,
+    formationLevelCode: classRow.formation_level_code,
+    settingsJson: (inst as any).settings_json,
+  });
+  const scopedInstitutionSettings = resolveScopedInstitutionSettings({
+    educationType: educationContext.educationType,
+    settingsJson: (inst as any).settings_json,
+  });
   const allowSubjectComponents =
-    allowSubjectComponentsForBulletinLevel(bulletinLevel);
+    educationContext.educationType === "general_secondary"
+      ? allowSubjectComponentsForBulletinLevel(bulletinLevel)
+      : true;
   const institutionMeta: InstitutionMeta = {
     id: String((inst as any).id || instIdStr),
     name: (inst as any).name ?? null,
@@ -1795,8 +1825,36 @@ export async function GET(req: NextRequest) {
       null,
     settings_json: (inst as any).settings_json ?? null,
   };
+  const institutionSettings = ((inst as any).settings_json || {}) as Record<string, any>;
+  const officialValue = (key: string): string | null => {
+    const candidates = [
+      (scopedInstitutionSettings as any)?.[key],
+      (inst as any)?.[key],
+      institutionSettings?.[key],
+    ];
+    for (const candidate of candidates) {
+      const value = String(candidate ?? "").trim();
+      if (value) return value;
+    }
+    return null;
+  };
+  const officialInstitution = {
+    country_name: officialValue("country_name"),
+    country_motto: officialValue("country_motto"),
+    ministry_name: officialValue("ministry_name"),
+    institution_region: officialValue("institution_region"),
+    institution_status: officialValue("institution_status"),
+    institution_head_name: officialValue("institution_head_name"),
+    institution_head_title: officialValue("institution_head_title"),
+    institution_code:
+      officialValue("institution_code") ||
+      institutionMeta.code_unique ||
+      institutionMeta.code ||
+      null,
+  };
   const isCSCA = isCSCAInstitution(institutionMeta);
 
+  let applicablePeriodsForYear: any[] = [];
   let periodMeta: {
     id?: string | null;
     from: string | null;
@@ -1808,155 +1866,100 @@ export async function GET(req: NextRequest) {
     coeff?: number | null;
   } = { from: dateFrom, to: dateTo };
 
-  if ((!dateFrom || !dateTo) && (academicYearToken || classRow.academic_year)) {
-    const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
-    const labelGuess =
-      periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
+  const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
+  const labelGuess =
+    periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
 
-    if (yearGuess && labelGuess) {
-      const { data: periodsData } = await srv
-        .from("grade_periods")
-        .select(
-          "id, academic_year, code, label, short_label, start_date, end_date, coeff",
-        )
-        .eq("institution_id", instIdStr)
-        .eq("academic_year", yearGuess)
-        .order("start_date", { ascending: true });
-
-      const periods = (periodsData || []) as any[];
-      const tok = normText(String(labelGuess));
-
-      const exact =
-        periods.find(
-          (p) =>
-            normText(p?.code) === tok ||
-            normText(p?.label) === tok ||
-            normText(p?.short_label) === tok,
-        ) ?? null;
-
-      const fuzzy =
-        exact ||
-        periods.find((p) => {
-          const c = normText(p?.code);
-          const l = normText(p?.label);
-          const s = normText(p?.short_label);
-          return (
-            (tok && c && (c.includes(tok) || tok.includes(c))) ||
-            (tok && l && (l.includes(tok) || tok.includes(l))) ||
-            (tok && s && (s.includes(tok) || tok.includes(s)))
-          );
-        }) ||
-        null;
-
-      if (fuzzy?.start_date && fuzzy?.end_date) {
-        dateFrom = String(fuzzy.start_date);
-        dateTo = String(fuzzy.end_date);
-      }
+  if (yearGuess) {
+    try {
+      const resolved = await listApplicableGradePeriods(
+        srv,
+        instIdStr,
+        yearGuess,
+        classRow.id,
+      );
+      applicablePeriodsForYear = (resolved.items || []) as any[];
+    } catch {
+      applicablePeriodsForYear = [];
     }
   }
 
+  const findApplicablePeriodByToken = (value: unknown): any | null => {
+    const tok = normText(String(value ?? ""));
+    if (!tok) return null;
+
+    const exact =
+      applicablePeriodsForYear.find(
+        (p) =>
+          normText(p?.code) === tok ||
+          normText(p?.display_code) === tok ||
+          normText(p?.label) === tok ||
+          normText(p?.short_label) === tok,
+      ) ?? null;
+
+    return (
+      exact ||
+      applicablePeriodsForYear.find((p) => {
+        const values = [
+          normText(p?.code),
+          normText(p?.display_code),
+          normText(p?.label),
+          normText(p?.short_label),
+        ].filter(Boolean);
+        return values.some((candidate) =>
+          candidate.includes(tok) || tok.includes(candidate),
+        );
+      }) ||
+      null
+    );
+  };
+
+  let matchedPeriod: any | null = null;
+
   if (dateFrom && dateTo) {
-    const { data: gp, error: gpErr } = await srv
-      .from("grade_periods")
-      .select(
-        "id, academic_year, code, label, short_label, start_date, end_date, coeff",
-      )
-      .eq("institution_id", instIdStr)
-      .eq("start_date", dateFrom)
-      .eq("end_date", dateTo)
-      .maybeSingle();
+    matchedPeriod =
+      applicablePeriodsForYear.find(
+        (p) =>
+          String(p?.start_date || "") === String(dateFrom) &&
+          String(p?.end_date || "") === String(dateTo),
+      ) ?? null;
+  }
 
-    if (!gpErr && gp) {
-      periodMeta = {
-        id: gp.id ?? null,
-        from: dateFrom,
-        to: dateTo,
-        code: gp.code ?? null,
-        label: gp.label ?? null,
-        short_label: gp.short_label ?? null,
-        academic_year: gp.academic_year ?? null,
-        coeff:
-          gp.coeff === null || gp.coeff === undefined
-            ? null
-            : cleanCoeff(gp.coeff),
-      };
-    } else {
-      const yearGuess = academicYearToken ?? classRow.academic_year ?? null;
-      const labelGuess =
-        periodCodeToken ?? periodLabelToken ?? payload?.period ?? null;
+  if (!matchedPeriod && labelGuess) {
+    matchedPeriod = findApplicablePeriodByToken(labelGuess);
+  }
 
-      let fuzzy: any | null = null;
-
-      if (yearGuess && labelGuess) {
-        const { data: periodsData } = await srv
-          .from("grade_periods")
-          .select(
-            "id, academic_year, code, label, short_label, start_date, end_date, coeff",
-          )
-          .eq("institution_id", instIdStr)
-          .eq("academic_year", yearGuess)
-          .order("start_date", { ascending: true });
-
-        const periods = (periodsData || []) as any[];
-        const tok = normText(String(labelGuess));
-
-        fuzzy =
-          periods.find(
-            (p) =>
-              normText(p?.code) === tok ||
-              normText(p?.label) === tok ||
-              normText(p?.short_label) === tok,
-          ) ??
-          periods.find((p) => {
-            const c = normText(p?.code);
-            const l = normText(p?.label);
-            const s = normText(p?.short_label);
-            return (
-              (tok && c && (c.includes(tok) || tok.includes(c))) ||
-              (tok && l && (l.includes(tok) || tok.includes(l))) ||
-              (tok && s && (s.includes(tok) || tok.includes(s)))
-            );
-          }) ??
-          null;
-      }
-
-      if (fuzzy?.start_date && fuzzy?.end_date) {
-        dateFrom = String(fuzzy.start_date);
-        dateTo = String(fuzzy.end_date);
-
-        periodMeta = {
-          id: fuzzy.id ?? null,
-          from: dateFrom,
-          to: dateTo,
-          code: fuzzy.code ?? periodCodeToken ?? null,
-          label: fuzzy.label ?? periodLabelToken ?? null,
-          short_label: fuzzy.short_label ?? null,
-          academic_year: fuzzy.academic_year ?? yearGuess ?? null,
-          coeff:
-            fuzzy.coeff === null || fuzzy.coeff === undefined
-              ? null
-              : cleanCoeff(fuzzy.coeff),
-        };
-      } else {
-        periodMeta = {
-          from: dateFrom,
-          to: dateTo,
-          code: periodCodeToken ?? null,
-          label: periodLabelToken ?? null,
-          short_label: null,
-          academic_year: academicYearToken ?? classRow.academic_year ?? null,
-          coeff: null,
-        };
-      }
-    }
+  if (matchedPeriod?.start_date && matchedPeriod?.end_date) {
+    dateFrom = String(matchedPeriod.start_date);
+    dateTo = String(matchedPeriod.end_date);
+    periodMeta = {
+      id: matchedPeriod.id ?? null,
+      from: dateFrom,
+      to: dateTo,
+      code:
+        matchedPeriod.display_code ??
+        matchedPeriod.code ??
+        periodCodeToken ??
+        null,
+      label: matchedPeriod.label ?? periodLabelToken ?? null,
+      short_label: matchedPeriod.short_label ?? null,
+      academic_year: matchedPeriod.academic_year ?? yearGuess ?? null,
+      coeff:
+        matchedPeriod.coeff === null || matchedPeriod.coeff === undefined
+          ? null
+          : cleanCoeff(matchedPeriod.coeff),
+    };
   } else {
+    // Compatibilité avec les anciens QR : si la période historique n'est plus
+    // présente dans la configuration courante, on conserve les dates signées
+    // du QR au lieu de rendre le document invalide.
     periodMeta = {
       from: dateFrom,
       to: dateTo,
       code: periodCodeToken ?? null,
       label: periodLabelToken ?? null,
       short_label: null,
-      academic_year: academicYearToken ?? classRow.academic_year ?? null,
+      academic_year: yearGuess,
       coeff: null,
     };
   }
@@ -1970,6 +1973,42 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     if (!htErr && ht) headTeacher = ht as HeadTeacherRow;
   }
+
+  const institutionResponseMeta = {
+    id: institutionMeta.id,
+    name: institutionMeta.name ?? null,
+    code: institutionMeta.code ?? null,
+    code_unique: institutionMeta.code_unique ?? null,
+    acronym: institutionMeta.acronym ?? null,
+    logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+    institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
+    ...officialInstitution,
+  };
+
+  const classResponseMeta = {
+    id: classRow.id,
+    label: classRow.label || classRow.code || "Classe",
+    code: classRow.code || null,
+    academic_year: classRow.academic_year || null,
+    level: classRow.level || null,
+    official_track_code: classRow.official_track_code || null,
+    education_type: educationContext.educationType,
+    education_label: educationContext.educationLabel,
+    formation_code: educationContext.formationCode,
+    formation_label: educationContext.formationLabel,
+    formation_level_code: educationContext.formationLevelCode,
+    formation_level_label: educationContext.formationLevelLabel,
+    coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
+    bulletin_level: bulletinLevel,
+    head_teacher: headTeacher
+      ? {
+          id: headTeacher.id,
+          display_name: headTeacher.display_name || null,
+          phone: headTeacher.phone || null,
+          email: headTeacher.email || null,
+        }
+      : null,
+  };
 
   if (mode === "short" && liteMode) {
     const snap = (payload as any)?.s ?? null;
@@ -1995,32 +2034,8 @@ export async function GET(req: NextRequest) {
       source: "bulletin_qr_codes_snapshot",
       calculation_profile: isCSCA ? "csca" : "standard",
       is_csca: isCSCA,
-      institution: {
-        id: institutionMeta.id,
-        name: institutionMeta.name ?? null,
-        code: institutionMeta.code ?? null,
-        code_unique: institutionMeta.code_unique ?? null,
-        acronym: institutionMeta.acronym ?? null,
-        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-      },
-      class: {
-        id: classRow.id,
-        label: classRow.label || classRow.code || "Classe",
-        code: classRow.code || null,
-        academic_year:
-          classRow.academic_year || safePeriod.academic_year || null,
-        level: classRow.level || null,
-        official_track_code: classRow.official_track_code || null,
-        head_teacher: headTeacher
-          ? {
-              id: headTeacher.id,
-              display_name: headTeacher.display_name || null,
-              phone: headTeacher.phone || null,
-              email: headTeacher.email || null,
-            }
-          : null,
-      },
+      institution: institutionResponseMeta,
+      class: classResponseMeta,
       student: {
         id: (stu as any).id,
         full_name:
@@ -2082,16 +2097,25 @@ export async function GET(req: NextRequest) {
   }
 
   if (yearForAnnual) {
-    const { data: yearPeriodsData } = await srv
-      .from("grade_periods")
-      .select(
-        "id, academic_year, code, label, short_label, start_date, end_date, coeff",
-      )
-      .eq("institution_id", instIdStr)
-      .eq("academic_year", yearForAnnual)
-      .order("start_date", { ascending: true });
+    if (
+      !applicablePeriodsForYear.length ||
+      String(applicablePeriodsForYear[0]?.academic_year || "") !==
+        String(yearForAnnual)
+    ) {
+      try {
+        const resolved = await listApplicableGradePeriods(
+          srv,
+          instIdStr,
+          yearForAnnual,
+          classRow.id,
+        );
+        applicablePeriodsForYear = (resolved.items || []) as any[];
+      } catch {
+        applicablePeriodsForYear = [];
+      }
+    }
 
-    yearPeriods = (yearPeriodsData || []) as any[];
+    yearPeriods = applicablePeriodsForYear;
 
     if (yearPeriods.length && dateTo) {
       const ends = yearPeriods
@@ -2156,33 +2180,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       mode,
-      institution: {
-        id: institutionMeta.id,
-        name: institutionMeta.name ?? null,
-        code: institutionMeta.code ?? null,
-        code_unique: institutionMeta.code_unique ?? null,
-        acronym: institutionMeta.acronym ?? null,
-        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-      },
-      class: {
-        id: classRow.id,
-        label: classRow.label || classRow.code || "Classe",
-        code: classRow.code || null,
-        academic_year: classRow.academic_year || null,
-        level: classRow.level || null,
-        official_track_code: classRow.official_track_code || null,
-        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
-        bulletin_level: bulletinLevel,
-        head_teacher: headTeacher
-          ? {
-              id: headTeacher.id,
-              display_name: headTeacher.display_name || null,
-              phone: headTeacher.phone || null,
-              email: headTeacher.email || null,
-            }
-          : null,
-      },
+      institution: institutionResponseMeta,
+      class: classResponseMeta,
       student: {
         id: stu.id,
         full_name:
@@ -3101,33 +3100,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       mode,
-      institution: {
-        id: institutionMeta.id,
-        name: institutionMeta.name ?? null,
-        code: institutionMeta.code ?? null,
-        code_unique: institutionMeta.code_unique ?? null,
-        acronym: institutionMeta.acronym ?? null,
-        logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-        institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-      },
-      class: {
-        id: classRow.id,
-        label: classRow.label || classRow.code || "Classe",
-        code: classRow.code || null,
-        academic_year: classRow.academic_year || null,
-        level: classRow.level || null,
-        official_track_code: classRow.official_track_code || null,
-        coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
-        bulletin_level: bulletinLevel,
-        head_teacher: headTeacher
-          ? {
-              id: headTeacher.id,
-              display_name: headTeacher.display_name || null,
-              phone: headTeacher.phone || null,
-              email: headTeacher.email || null,
-            }
-          : null,
-      },
+      institution: institutionResponseMeta,
+      class: classResponseMeta,
       student: {
         id: stu.id,
         full_name:
@@ -3311,20 +3285,32 @@ export async function GET(req: NextRequest) {
     subjectInfoById.set(s.id, { name: s.name ?? "", code: s.code ?? "" }),
   );
 
-  if (bulletinLevel) {
+  if (coeffLevelCandidates.length) {
     const { data: groupsData } = await srv
       .from("bulletin_subject_groups")
       .select(
         "id, level, label, order_index, is_active, code, short_label, annual_coeff",
       )
       .eq("institution_id", instIdStr)
-      .eq("level", bulletinLevel)
       .order("order_index", { ascending: true });
 
     if (groupsData && groupsData.length) {
-      const activeGroups = (groupsData as any[]).filter(
+      const allActiveGroups = (groupsData as any[]).filter(
         (g) => g.is_active !== false,
       );
+      let activeGroups: any[] = [];
+
+      for (const wantedLevel of coeffLevelCandidates) {
+        const wanted = normalizeStoredLevel(wantedLevel);
+        const matching = allActiveGroups.filter(
+          (g) => normalizeStoredLevel(g.level) === wanted,
+        );
+        if (matching.length) {
+          activeGroups = matching;
+          break;
+        }
+      }
+
       if (activeGroups.length) {
         const groupIds = activeGroups.map((g) => String(g.id));
 
@@ -3494,6 +3480,7 @@ export async function GET(req: NextRequest) {
       subjectIds: orderedSubjectIds,
       subjectInfoById,
       coeffBySubject,
+      educationType: educationContext.educationType,
     });
   }
 
@@ -4109,33 +4096,8 @@ export async function GET(req: NextRequest) {
     mode,
     calculation_profile: isCSCA ? "csca" : "standard",
     is_csca: isCSCA,
-    institution: {
-      id: institutionMeta.id,
-      name: institutionMeta.name ?? null,
-      code: institutionMeta.code ?? null,
-      code_unique: institutionMeta.code_unique ?? null,
-      acronym: institutionMeta.acronym ?? null,
-      logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-      institution_logo_url: safePublicLogoUrl(institutionMeta.logo_url),
-    },
-    class: {
-      id: classRow.id,
-      label: classRow.label || classRow.code || "Classe",
-      code: classRow.code || null,
-      academic_year: classRow.academic_year || null,
-      level: classRow.level || null,
-      official_track_code: classRow.official_track_code || null,
-      coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
-      bulletin_level: bulletinLevel,
-      head_teacher: headTeacher
-        ? {
-            id: headTeacher.id,
-            display_name: headTeacher.display_name || null,
-            phone: headTeacher.phone || null,
-            email: headTeacher.email || null,
-          }
-        : null,
-    },
+    institution: institutionResponseMeta,
+    class: classResponseMeta,
     student: {
       id: stu.id,
       full_name:
