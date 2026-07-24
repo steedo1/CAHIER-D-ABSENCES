@@ -9,6 +9,11 @@ import QRCode from "qrcode";
 
 // ✅ QR court stocké en DB (table bulletin_qr_codes)
 import { getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
+import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
+import {
+  resolveBulletinEducationContext,
+  resolveScopedInstitutionSettings,
+} from "@/lib/education-bulletins";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +35,9 @@ type ClassRow = {
   head_teacher_id?: string | null;
   level?: string | null;
   official_track_code?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type HeadTeacherRow = {
@@ -151,6 +159,7 @@ type GradePeriodRow = {
   code: string | null;
   label: string | null;
   short_label: string | null;
+  kind?: string | null;
   start_date: string;
   end_date: string;
   coeff: number | null;
@@ -1244,12 +1253,18 @@ function buildFallbackGroups(opts: {
   subjectIds: string[];
   subjectInfoById: Map<string, { name: string; code: string }>;
   coeffBySubject: Map<string, { coeff: number; include: boolean }>;
+  educationType?: string | null;
 }): BulletinSubjectGroup[] {
-  const { subjectIds, subjectInfoById, coeffBySubject } = opts;
+  const { subjectIds, subjectInfoById, coeffBySubject, educationType } = opts;
 
   const letters: string[] = [];
   const sciences: string[] = [];
   const autres: string[] = [];
+
+  // Pour le technique, le professionnel et le BTS, on ne force pas les
+  // catégories du secondaire général. Sans configuration explicite, toutes
+  // les disciplines restent réunies dans un bilan neutre et fidèle.
+  const isGeneralSecondary = !educationType || educationType === "general_secondary";
 
   for (const sid of subjectIds) {
     const meta = subjectInfoById.get(sid) || { name: "", code: "" };
@@ -1302,6 +1317,18 @@ function buildFallbackGroups(opts: {
       items,
     };
   };
+
+  if (!isGeneralSecondary) {
+    return [
+      mkGroup({
+        id: "fallback-disciplines",
+        code: "BILAN_DISCIPLINES",
+        label: "BILAN DES DISCIPLINES",
+        order_index: 1,
+        sids: subjectIds,
+      }),
+    ].filter((g) => g.items.length > 0);
+  }
 
   const groups: BulletinSubjectGroup[] = [
     mkGroup({
@@ -1509,7 +1536,7 @@ export async function GET(req: NextRequest) {
   /* 1) Vérifier que la classe appartient à l'établissement + récupérer prof principal */
   const { data: cls, error: clsErr } = await supabase
     .from("classes")
-    .select("id, label, code, institution_id, academic_year, head_teacher_id, level, official_track_code")
+    .select("id, label, code, institution_id, academic_year, head_teacher_id, level, official_track_code, education_type, formation_code, formation_level_code")
     .eq("id", classId)
     .maybeSingle();
 
@@ -1531,11 +1558,11 @@ export async function GET(req: NextRequest) {
 
   const bulletinLevel = normalizeBulletinLevel(classRow.level);
   const coeffLevelCandidates = buildCoeffLevelCandidates(classRow, bulletinLevel);
-  const allowSubjectComponents = allowSubjectComponentsForBulletinLevel(bulletinLevel);
 
-  /* ✅ lire l'option établissement : bulletin_signatures_enabled (institutions) */
+  /* ✅ lire l'option établissement et résoudre le profil officiel de la branche */
   let bulletinSignaturesEnabled = false;
   let institutionMeta: InstitutionMeta = { id: institutionId };
+  let institutionSettingsJson: unknown = {};
   {
     const { data: instRow } = await srvClient
       .from("institutions")
@@ -1549,6 +1576,7 @@ export async function GET(req: NextRequest) {
       code_unique: (instRow as any)?.code_unique ?? null,
       acronym: (instRow as any)?.acronym ?? null,
     };
+    institutionSettingsJson = (instRow as any)?.settings_json || {};
 
     const col = (instRow as any)?.bulletin_signatures_enabled;
     if (typeof col === "boolean") bulletinSignaturesEnabled = col;
@@ -1557,6 +1585,21 @@ export async function GET(req: NextRequest) {
         (instRow as any)?.settings_json?.bulletin_signatures_enabled ?? false
       );
   }
+
+  const educationContext = resolveBulletinEducationContext({
+    educationType: classRow.education_type,
+    formationCode: classRow.formation_code,
+    formationLevelCode: classRow.formation_level_code,
+    settingsJson: institutionSettingsJson,
+  });
+  const scopedInstitutionSettings = resolveScopedInstitutionSettings({
+    educationType: educationContext.educationType,
+    settingsJson: institutionSettingsJson,
+  });
+  const allowSubjectComponents =
+    educationContext.educationType === "general_secondary"
+      ? allowSubjectComponentsForBulletinLevel(bulletinLevel)
+      : true;
 
   const isCSCA = isCSCAInstitution(institutionMeta);
 
@@ -1574,7 +1617,7 @@ export async function GET(req: NextRequest) {
     } else if (ht) headTeacher = ht as HeadTeacherRow;
   }
 
-  /* 1bis) Retrouver éventuellement la période de bulletin (grade_periods) + son coeff */
+  /* 1bis) Résoudre la période applicable à la classe et à sa branche */
   let periodMeta: {
     id?: string | null;
     from: string | null;
@@ -1582,80 +1625,88 @@ export async function GET(req: NextRequest) {
     code?: string | null;
     label?: string | null;
     short_label?: string | null;
+    kind?: string | null;
     academic_year?: string | null;
     coeff?: number | null;
   } = { id: null, from: dateFrom, to: dateTo };
 
-  if (dateFrom && dateTo) {
-    // ⚠️ évite maybeSingle() (erreur si doublons) -> on prend le 1er match
-    const { data: gpRows, error: gpErr } = await supabase
-      .from("grade_periods")
-      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-      .eq("institution_id", institutionId)
-      .eq("start_date", dateFrom)
-      .eq("end_date", dateTo)
-      .order("start_date", { ascending: true })
-      .limit(1);
-
-    const gp = (gpRows && gpRows.length ? (gpRows[0] as any) : null) as any;
-
-    if (gpErr) {
-      // ignore
-    } else if (gp) {
-      periodMeta = {
-        id: gp.id ?? null,
-        from: dateFrom,
-        to: dateTo,
-        code: gp.code ?? null,
-        label: gp.label ?? null,
-        short_label: gp.short_label ?? null,
-        academic_year: gp.academic_year ?? null,
-        coeff: gp.coeff === null || gp.coeff === undefined ? null : cleanCoeff(gp.coeff),
-      };
-    }
-  }
-
-  /* ✅ 1ter) Déterminer dernière période + flags (annual only on last) */
-  const academicYearForPeriods = periodMeta.academic_year ?? classRow.academic_year ?? null;
+  const academicYearForPeriods =
+    String(searchParams.get("academic_year") || classRow.academic_year || "").trim() || null;
 
   let periodsForYear: GradePeriodRow[] = [];
   let periodsDefined = false;
   let lastPeriod: GradePeriodRow | null = null;
   let isLastPeriod = false;
 
-  {
-    let q = supabase
-      .from("grade_periods")
-      .select("id, academic_year, code, label, short_label, start_date, end_date, coeff")
-      .eq("institution_id", institutionId);
+  if (academicYearForPeriods) {
+    const resolvedPeriods = await listApplicableGradePeriods(
+      srvClient as any,
+      institutionId,
+      academicYearForPeriods,
+      classRow.id,
+    );
 
-    if (academicYearForPeriods) q = q.eq("academic_year", academicYearForPeriods);
+    periodsForYear = (resolvedPeriods.items || []).map((row: any) => ({
+      id: String(row.id),
+      academic_year: row.academic_year ?? academicYearForPeriods,
+      code: row.code ?? null,
+      label: row.label ?? null,
+      short_label: row.short_label ?? null,
+      start_date: row.start_date ?? "",
+      end_date: row.end_date ?? "",
+      coeff: row.coeff ?? null,
+      kind: row.kind ?? null,
+    })) as GradePeriodRow[];
 
-    const { data: pData, error: pErr } = await q.order("start_date", { ascending: true });
+    periodsDefined = periodsForYear.length > 0;
 
-    if (!pErr && pData?.length) {
-      periodsForYear = (pData as any[]) as GradePeriodRow[];
-      periodsDefined = periodsForYear.length > 0;
+    const matchedPeriod = periodsForYear.find(
+      (row) =>
+        String(row.start_date || "") === String(dateFrom || "") &&
+        String(row.end_date || "") === String(dateTo || ""),
+    );
 
-      // dernier = max end_date (fallback start_date)
-      const sorted = periodsForYear.slice().sort((a, b) => {
-        const ae = String(a.end_date || "");
-        const be = String(b.end_date || "");
-        if (ae !== be) return ae.localeCompare(be);
-        const asd = String(a.start_date || "");
-        const bsd = String(b.start_date || "");
-        return asd.localeCompare(bsd);
-      });
-
-      lastPeriod = sorted.length ? sorted[sorted.length - 1] : null;
-
-      isLastPeriod =
-        !!lastPeriod &&
-        !!dateFrom &&
-        !!dateTo &&
-        String(lastPeriod.start_date) === String(dateFrom) &&
-        String(lastPeriod.end_date) === String(dateTo);
+    if (matchedPeriod) {
+      periodMeta = {
+        id: matchedPeriod.id,
+        from: matchedPeriod.start_date,
+        to: matchedPeriod.end_date,
+        code: matchedPeriod.code ?? null,
+        label: matchedPeriod.label ?? null,
+        short_label: matchedPeriod.short_label ?? null,
+        kind: (matchedPeriod as any).kind ?? null,
+        academic_year: matchedPeriod.academic_year ?? academicYearForPeriods,
+        coeff:
+          matchedPeriod.coeff === null || matchedPeriod.coeff === undefined
+            ? null
+            : cleanCoeff(matchedPeriod.coeff),
+      };
+    } else if (
+      educationContext.educationType !== "general_secondary" &&
+      dateFrom &&
+      dateTo &&
+      periodsDefined
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "PERIOD_NOT_APPLICABLE_TO_CLASS" },
+        { status: 400 },
+      );
     }
+
+    const sorted = periodsForYear.slice().sort((a, b) => {
+      const ae = String(a.end_date || "");
+      const be = String(b.end_date || "");
+      if (ae !== be) return ae.localeCompare(be);
+      return String(a.start_date || "").localeCompare(String(b.start_date || ""));
+    });
+
+    lastPeriod = sorted.length ? sorted[sorted.length - 1] : null;
+    isLastPeriod =
+      !!lastPeriod &&
+      !!dateFrom &&
+      !!dateTo &&
+      String(lastPeriod.start_date) === String(dateFrom) &&
+      String(lastPeriod.end_date) === String(dateTo);
   }
 
   const periodResponse = {
@@ -2614,6 +2665,7 @@ export async function GET(req: NextRequest) {
       subjectIds: orderedSubjectIds,
       subjectInfoById,
       coeffBySubject,
+      educationType: educationContext.educationType,
     });
 
     groupedSubjectIds = new Set<string>();
@@ -3919,6 +3971,14 @@ export async function GET(req: NextRequest) {
       legacy_verify_path: BULLETIN_VERIFY_LEGACY_PATH,
     },
     signatures: { enabled: bulletinSignaturesEnabled },
+    education: {
+      type: educationContext.educationType,
+      label: educationContext.educationLabel,
+      formation_code: educationContext.formationCode,
+      formation_label: educationContext.formationLabel,
+      formation_level_code: educationContext.formationLevelCode,
+    },
+    institution_settings: scopedInstitutionSettings,
     class: {
       id: classRow.id,
       label: classRow.label || classRow.code || "Classe",
@@ -3926,6 +3986,10 @@ export async function GET(req: NextRequest) {
       academic_year: classRow.academic_year || null,
       level: classRow.level || null,
       official_track_code: classRow.official_track_code || null,
+      education_type: educationContext.educationType,
+      formation_code: educationContext.formationCode,
+      formation_label: educationContext.formationLabel,
+      formation_level_code: educationContext.formationLevelCode,
       coefficient_level: coeffLevelCandidates[0] || bulletinLevel || null,
       bulletin_level: bulletinLevel,
       head_teacher: headTeacher

@@ -10,6 +10,11 @@ import React, {
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { bulletinDocumentTitle } from "@/lib/education-bulletins";
+import {
+  EDUCATION_TYPE_OPTIONS,
+  type EducationType,
+} from "@/lib/education-organization";
 
 /* ───────── Types ───────── */
 
@@ -19,6 +24,9 @@ type ClassRow = {
   label?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type InstitutionSettings = {
@@ -213,11 +221,24 @@ type BulletinItemWithRank = BulletinItemBase & {
 
 type BulletinResponse = {
   ok: boolean;
+  education?: {
+    type: EducationType;
+    label: string;
+    formation_code?: string | null;
+    formation_label?: string | null;
+    formation_level_code?: string | null;
+  } | null;
+  institution_settings?: Partial<InstitutionSettings> | null;
   class: {
     id: string;
     label: string;
     code?: string | null;
     academic_year?: string | null;
+    level?: string | null;
+    education_type?: EducationType | null;
+    formation_code?: string | null;
+    formation_label?: string | null;
+    formation_level_code?: string | null;
     head_teacher?: {
       id: string;
       display_name: string | null;
@@ -231,6 +252,7 @@ type BulletinResponse = {
     code?: string | null;
     label?: string | null;
     short_label?: string | null;
+    kind?: string | null;
     academic_year?: string | null;
     coeff?: number | null;
     periods_defined?: boolean | null;
@@ -280,6 +302,7 @@ type GradePeriod = {
   code: string | null;
   label: string | null;
   short_label: string | null;
+  kind?: string | null;
   start_date: string; // YYYY-MM-DD
   end_date: string; // YYYY-MM-DD
   coeff: number | null;
@@ -1074,7 +1097,7 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
 
 function periodTitle(period: BulletinResponse["period"]) {
   const t = (period.label || period.short_label || period.code || "").trim();
-  return t || "Trimestre";
+  return t || "Période";
 }
 
 function endOfYearDecisionLabel(avg: number | null | undefined): string {
@@ -1892,7 +1915,12 @@ function StudentBulletinCard({
 
           <div className="text-center">
             <div className="official-title text-[13px] font-bold uppercase leading-tight">
-              BULLETIN TRIMESTRIEL DE NOTES
+              {bulletinDocumentTitle({
+                educationType: classInfo.education_type || "general_secondary",
+                periodKind: period.kind,
+                periodLabel: period.label || period.short_label,
+                periodCode: period.code,
+              })}
             </div>
             <div className="official-subtitle text-[11px] font-semibold">{periodTitle(period)}</div>
           </div>
@@ -1983,6 +2011,12 @@ function StudentBulletinCard({
               <span className="font-semibold">Classe : </span>
               <span>{classInfo.label}</span>
             </div>
+            {classInfo.formation_label ? (
+              <div>
+                <span className="font-semibold">Formation : </span>
+                <span>{classInfo.formation_label}</span>
+              </div>
+            ) : null}
             <div>
               <span className="font-semibold">Effectif : </span>
               <span>{total}</span>
@@ -2489,6 +2523,7 @@ export default function BulletinsPage() {
 
         const params = new URLSearchParams();
         if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedClassId) params.set("class_id", selectedClassId);
 
         const qs = params.toString();
         const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
@@ -2516,7 +2551,7 @@ export default function BulletinsPage() {
     };
 
     run();
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
 
   const academicYears = useMemo(() => {
     const set = new Set<string>();
@@ -2797,6 +2832,39 @@ export default function BulletinsPage() {
   const subjects = enriched?.response.subjects ?? [];
   const subjectComponents = enriched?.response.subject_components ?? [];
   const subjectGroups = enriched?.response.subject_groups ?? [];
+  const effectiveInstitution = useMemo<InstitutionSettings | null>(() => {
+    if (!institution && !enriched?.response.institution_settings) return null;
+    return {
+      ...(institution || {}),
+      ...(enriched?.response.institution_settings || {}),
+    };
+  }, [institution, enriched?.response.institution_settings]);
+
+  const selectedClass = useMemo(
+    () => classes.find((row) => row.id === selectedClassId) || null,
+    [classes, selectedClassId],
+  );
+
+  const classesByEducationType = useMemo(() => {
+    const map = new Map<EducationType, ClassRow[]>();
+    for (const option of EDUCATION_TYPE_OPTIONS) map.set(option.id, []);
+    for (const row of classes) {
+      const type = row.education_type || "general_secondary";
+      const list = map.get(type) || [];
+      list.push(row);
+      map.set(type, list);
+    }
+    return EDUCATION_TYPE_OPTIONS.map((option) => ({
+      option,
+      items: (map.get(option.id) || []).sort((a, b) =>
+        String(a.label || a.name || "").localeCompare(
+          String(b.label || b.name || ""),
+          "fr",
+          { numeric: true, sensitivity: "base" },
+        ),
+      ),
+    })).filter((group) => group.items.length > 0);
+  }, [classes]);
 
   const handlePrint = () => {
     if (!items.length) return;
@@ -3369,7 +3437,7 @@ export default function BulletinsPage() {
                 subjectGroups={subjectGroups}
                 classInfo={classInfo}
                 period={period}
-                institution={institution}
+                institution={effectiveInstitution}
                 stats={stats}
                 conduct={conductByStudentId.get(it.student_id) || null}
                 conductLabel={conductSummary?.conduct_label || null}
@@ -3486,7 +3554,7 @@ export default function BulletinsPage() {
 
             <div className="md:col-span-2">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Période (trimestre / séquence)
+                Période d’évaluation
               </label>
               <Select
                 value={selectedPeriodId}
@@ -3522,15 +3590,19 @@ export default function BulletinsPage() {
                 disabled={classesLoading}
               >
                 <option value="">Sélectionner une classe…</option>
-                {classes.map((c) => {
-                  const label = (c.name || c.label || "").trim();
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {label || "Classe"}
-                      {c.level ? ` (${c.level})` : ""}
-                    </option>
-                  );
-                })}
+                {classesByEducationType.map((group) => (
+                  <optgroup key={group.option.id} label={group.option.label}>
+                    {group.items.map((c) => {
+                      const label = (c.name || c.label || "").trim();
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {label || "Classe"}
+                          {c.level ? ` (${c.level})` : ""}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
               </Select>
             </div>
 
@@ -3555,6 +3627,20 @@ export default function BulletinsPage() {
                 onChange={(e) => setDateTo(e.target.value)}
               />
             </div>
+
+            {selectedClass ? (
+              <div className="md:col-span-6 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                <span className="font-bold">Contexte du bulletin :</span>{" "}
+                {EDUCATION_TYPE_OPTIONS.find(
+                  (option) => option.id === (selectedClass.education_type || "general_secondary"),
+                )?.label || "Secondaire général"}
+                {selectedClass.formation_level_code
+                  ? ` • ${selectedClass.formation_level_code}`
+                  : selectedClass.level
+                  ? ` • ${selectedClass.level}`
+                  : ""}
+              </div>
+            ) : null}
           </div>
 
           {errorMsg && (
