@@ -20,6 +20,7 @@ export type BulletinEducationContext = {
   formationCode: string | null;
   formationLabel: string | null;
   formationLevelCode: string | null;
+  formationLevelLabel: string | null;
 };
 
 function isPlainObject(value: unknown): value is Record<string, any> {
@@ -74,6 +75,7 @@ export function resolveBulletinEducationContext(input: {
   const formationCode = String(input.formationCode || "").trim() || null;
   const formationLevelCode = String(input.formationLevelCode || "").trim() || null;
   let formationLabel: string | null = null;
+  let formationLevelLabel: string | null = formationLevelCode;
 
   if (formationCode && educationType !== "general_secondary") {
     const organization = parseEducationOrganization(input.settingsJson);
@@ -82,6 +84,10 @@ export function resolveBulletinEducationContext(input: {
     );
     if (formation) {
       formationLabel = `${formation.diplomaLabel} — ${formation.name}`;
+      const level = formation.levels.find(
+        (item) => String(item.value) === String(formationLevelCode || ""),
+      );
+      if (level?.label) formationLevelLabel = level.label;
     }
   }
 
@@ -91,6 +97,7 @@ export function resolveBulletinEducationContext(input: {
     formationCode,
     formationLabel,
     formationLevelCode,
+    formationLevelLabel,
   };
 }
 

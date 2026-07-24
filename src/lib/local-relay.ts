@@ -3,6 +3,10 @@
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
 import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
 import type { TeacherSessionOpenRelayPayload } from "@/lib/teacher-session-protocol";
+import type {
+  TeacherSessionCloseRelayPayload,
+  TeacherSessionTransitionRelayPayload,
+} from "@/lib/teacher-session-lifecycle-protocol";
 
 export type LocalDataSource = "cloud" | "relay" | "cache";
 
@@ -36,6 +40,7 @@ export class LocalRelayHttpError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly payload: Record<string, any> | null = null,
   ) {
     super(code);
     this.name = "LocalRelayHttpError";
@@ -195,6 +200,7 @@ async function relayJson<T>(
       throw new LocalRelayHttpError(
         response.status,
         String(payload?.error || `RELAY_HTTP_${response.status}`),
+        payload && typeof payload === "object" ? payload : null,
       );
     }
     return payload as T;
@@ -532,11 +538,92 @@ export async function postRelayTeacherAttendanceSessionOpen(input: {
       period_id: string;
       started_at: string;
       actual_call_at: string | null;
+      scheduled_end_at: string | null;
+      grace_expires_at: string | null;
+      session_state: "open" | "finalizing" | "closed";
     };
     presence_proof: string;
     proof_expires_at: string;
     relay_time: string;
   }>("/v1/teacher/attendance-sessions/open", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: JSON.stringify(input.payload),
+  }, {
+    baseUrl: input.baseUrl,
+    includeConfiguredToken: false,
+    timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
+  });
+}
+
+export async function postRelayTeacherAttendanceSessionClose(input: {
+  baseUrl: string;
+  accessToken: string;
+  payload: TeacherSessionCloseRelayPayload;
+}) {
+  return await relayJson<{
+    ok: true;
+    operation_id: string;
+    idempotent: boolean;
+    already_closed: boolean;
+    relay_time: string;
+    session: {
+      id: string;
+      session_state: "closed";
+      closed_at: string;
+      scheduled_end_at: string;
+      payable_end_at: string;
+      closure_source: string;
+      closure_confirmation: "confirmed" | "unconfirmed";
+      requires_payroll_review: boolean;
+    };
+  }>("/v1/teacher/attendance-sessions/close", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: JSON.stringify(input.payload),
+  }, {
+    baseUrl: input.baseUrl,
+    includeConfiguredToken: false,
+    timeoutMs: RELAY_PRESENCE_TIMEOUT_MS,
+  });
+}
+
+export async function postRelayTeacherAttendanceSessionTransition(input: {
+  baseUrl: string;
+  accessToken: string;
+  payload: TeacherSessionTransitionRelayPayload;
+}) {
+  return await relayJson<{
+    ok: true;
+    operation_id: string;
+    state: string;
+    idempotent: boolean;
+    requested_start_at: string;
+    relay_time: string;
+    previous_session: {
+      id: string;
+      session_state: "closed";
+      closure_source: "next_slot_takeover";
+      closure_confirmation: "unconfirmed";
+      requires_payroll_review: true;
+      attendance_snapshot_status: "none" | "partial" | "complete";
+    };
+    session: {
+      id: string;
+      client_session_id: string;
+      class_id: string;
+      subject_id: string;
+      period_id: string;
+      started_at: string;
+      requested_start_at: string;
+      actual_call_at: string | null;
+      scheduled_end_at: string | null;
+      grace_expires_at: string | null;
+      session_state: "open" | "finalizing" | "closed";
+    };
+    presence_proof: string | null;
+    proof_expires_at: string | null;
+  }>("/v1/teacher/attendance-sessions/transition", {
     method: "POST",
     headers: { Authorization: `Bearer ${input.accessToken}` },
     body: JSON.stringify(input.payload),
