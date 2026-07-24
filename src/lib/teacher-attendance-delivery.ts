@@ -274,6 +274,23 @@ async function getOrCreateRecord(
     return latest;
   }
 
+  if (
+    latest &&
+    latest.state === "device_pending" &&
+    !latest.cloud_attempted_at &&
+    !latest.relay_attempted_at
+  ) {
+    return await storePatch(deps, latest, {
+      session_id: input.serverSessionId || input.sessionReference,
+      class_id: input.classId,
+      period_id: periodId,
+      marks,
+      content_key: contentKey,
+      channel: input.preferredChannel === "relay" ? "relay" : latest.channel,
+      last_error: "attendance_draft_saved_on_device",
+    });
+  }
+
   const created: TeacherAttendanceDeliveryRecord = {
     schema_version: 1,
     institution_id: input.institutionId,
@@ -690,6 +707,44 @@ export async function deliverTeacherAttendance(input: {
         run,
       )
     : await run();
+}
+
+export async function stageTeacherAttendanceDraft(input: {
+  institutionId: string;
+  actorProfileId: string;
+  sessionId: string;
+  classId: string;
+  periodId: string | null;
+  marks: DeliverTeacherAttendanceInput["marks"];
+  forceRelay?: boolean;
+}) {
+  const institutionId = normalizedText(input.institutionId);
+  const sessionId = normalizedText(input.sessionId);
+  const classId = normalizedText(input.classId);
+  if (!institutionId) throw new Error("institution_id_required");
+  if (!sessionId) throw new Error("session_id_required");
+  if (!classId) throw new Error("class_id_required");
+  const resolved = await resolveOfflineSessionReference(sessionId);
+  const deps = productionDependencies();
+  return await stageTeacherAttendanceDraftWithDependencies({
+    institutionId,
+    actorProfileId: normalizedText(input.actorProfileId),
+    sessionReference: resolved.sessionReference,
+    serverSessionId: resolved.serverSessionId,
+    classId,
+    periodId: normalizedText(input.periodId) || null,
+    marks: input.marks,
+    preferredChannel: input.forceRelay ? "relay" : null,
+  }, deps);
+}
+
+export async function stageTeacherAttendanceDraftWithDependencies(
+  input: DeliverTeacherAttendanceInput,
+  deps: TeacherAttendanceDeliveryDependencies,
+) {
+  const marks = normalizeTeacherAttendanceMarks(input.marks);
+  if (!marks.length) return null;
+  return await getOrCreateRecord(input, deps, marks);
 }
 
 export async function getLatestTeacherAttendanceOperation(
