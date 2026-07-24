@@ -28,11 +28,15 @@ export type TeacherSessionDeliveryRecord = {
   subject_id: string | null;
   started_at: string | null;
   actual_call_at: string | null;
+  scheduled_end_at: string | null;
+  grace_expires_at: string | null;
+  session_state: "open" | "finalizing" | "closed" | null;
   created_at: string;
   updated_at: string;
   relay_attempted_at: string | null;
   last_status: number | null;
   last_error: string | null;
+  last_details?: Record<string, unknown> | null;
   requires_authentication: boolean;
 };
 
@@ -151,12 +155,16 @@ async function getOrCreateRecord(
     subject_id: null,
     started_at: null,
     actual_call_at: null,
+    scheduled_end_at: null,
+    grace_expires_at: null,
+    session_state: null,
     created_at: timestamp,
     updated_at: timestamp,
     relay_attempted_at: null,
     last_status: null,
     last_error: null,
     requires_authentication: false,
+    last_details: null,
   };
   await deps.store.put(created);
   return created;
@@ -195,6 +203,7 @@ async function openInternal(
     last_status: null,
     last_error: "relay_session_open_in_progress",
     requires_authentication: false,
+    last_details: null,
   });
   const payload = buildTeacherSessionOpenRelayPayload({
     operationId: attempted.operation_id,
@@ -233,6 +242,7 @@ async function openInternal(
         state: "blocked",
         last_status: response.status,
         last_error: "relay_session_open_response_mismatch",
+        last_details: null,
       });
     }
     return await storePatch(deps, attempted, {
@@ -241,17 +251,28 @@ async function openInternal(
       subject_id: normalizedText(session?.subject_id) || null,
       started_at: normalizedText(session?.started_at) || null,
       actual_call_at: normalizedText(session?.actual_call_at) || null,
+      scheduled_end_at: normalizedText(session?.scheduled_end_at) || null,
+      grace_expires_at: normalizedText(session?.grace_expires_at) || null,
+      session_state: session?.session_state === "open" ||
+          session?.session_state === "finalizing" || session?.session_state === "closed"
+        ? session.session_state
+        : null,
       last_status: response.status,
       last_error: null,
+      last_details: null,
     });
   }
 
   const code = errorCode(response);
+  const details = response.body?.details && typeof response.body.details === "object"
+    ? response.body.details as Record<string, unknown>
+    : null;
   if (response.status === 404 && code !== "class_not_found" && code !== "period_not_found") {
     return await storePatch(deps, attempted, {
       state: "device_pending",
       last_status: response.status,
       last_error: "relay_session_open_route_unavailable",
+      last_details: null,
     });
   }
   if (response.status === 503 && code === "teacher_attendance_writes_disabled") {
@@ -259,6 +280,7 @@ async function openInternal(
       state: "device_pending",
       last_status: response.status,
       last_error: code,
+      last_details: details,
     });
   }
   if (response.status === 401) {
@@ -266,6 +288,7 @@ async function openInternal(
       state: "device_pending",
       last_status: response.status,
       last_error: "authentication_required",
+      last_details: null,
       requires_authentication: true,
     });
   }
@@ -274,12 +297,14 @@ async function openInternal(
       state: "blocked",
       last_status: response.status,
       last_error: code,
+      last_details: details,
     });
   }
   return await storePatch(deps, attempted, {
     state: "device_pending",
     last_status: response.status,
     last_error: code,
+    last_details: details,
   });
 }
 
@@ -315,7 +340,7 @@ function productionDependencies(): TeacherSessionDeliveryDependencies {
           return {
             ok: false,
             status: error.status,
-            body: { error: error.code },
+            body: { ...(error.payload || {}), error: error.code },
           };
         }
         throw error;
