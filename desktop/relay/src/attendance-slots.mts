@@ -57,8 +57,16 @@ export function founderAttendanceSlots(
     const timetables = db.prepare(`
       SELECT class_id, subject_id, teacher_id, period_id
       FROM teacher_timetables
-      WHERE institution_id = ? AND period_id = ? AND deleted_at IS NULL
-    `).all(options.institutionId, period.id) as Array<{
+      WHERE institution_id = ? AND period_id = ?
+        AND (weekday = ? OR (? = 0 AND weekday = 7) OR (? = 7 AND weekday = 0))
+        AND deleted_at IS NULL
+    `).all(
+      options.institutionId,
+      period.id,
+      dbWeekday,
+      dbWeekday,
+      dbWeekday,
+    ) as Array<{
       class_id: string;
       subject_id: string;
       teacher_id: string;

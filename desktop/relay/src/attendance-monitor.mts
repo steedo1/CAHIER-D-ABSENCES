@@ -22,6 +22,7 @@ type PeriodRow = {
 
 type TimetableRow = {
   period_id: string;
+  weekday: number | null;
   class_id: string;
   subject_id: string;
   teacher_id: string;
@@ -70,7 +71,7 @@ export function attendanceMonitor(
     WHERE institution_id = ? AND deleted_at IS NULL
   `).all(options.institutionId) as PeriodRow[];
   const timetables = db.prepare(`
-    SELECT tt.period_id, tt.class_id, tt.subject_id, tt.teacher_id,
+    SELECT tt.period_id, tt.weekday, tt.class_id, tt.subject_id, tt.teacher_id,
            c.label AS class_label, s.name AS subject_name,
            COALESCE(NULLIF(TRIM(p.display_name), ''), NULLIF(TRIM(p.email), ''),
                     NULLIF(TRIM(p.phone), ''), 'Enseignant') AS teacher_name,
@@ -125,7 +126,7 @@ export function attendanceMonitor(
 
   for (const timetable of timetables) {
     const period = periodById.get(timetable.period_id);
-    if (!period) continue;
+    if (!period || !sameWeekday(period.weekday, timetable.weekday)) continue;
     const dates = datesByWeekday.get(period.weekday) ?? [];
     const startMinutes = timeToMinutes(period.start_time);
     const endMinutes = timeToMinutes(period.end_time);
@@ -248,7 +249,7 @@ function nextStartBySlot(
   const groups = new Map<string, Map<string, number>>();
   for (const timetable of timetables) {
     const period = periodById.get(timetable.period_id);
-    if (!period) continue;
+    if (!period || !sameWeekday(period.weekday, timetable.weekday)) continue;
     const group = [
       period.weekday,
       timetable.class_id,
@@ -284,6 +285,14 @@ function jsDayToDbWeekday(day: number, mode: WeekdayMode) {
   if (mode === "js") return day;
   if (mode === "iso") return day === 0 ? 7 : day;
   return (day + 6) % 7;
+}
+
+function sameWeekday(periodWeekday: number, timetableWeekday: number | null) {
+  return timetableWeekday !== null && (
+    periodWeekday === timetableWeekday ||
+    (periodWeekday === 0 && timetableWeekday === 7) ||
+    (periodWeekday === 7 && timetableWeekday === 0)
+  );
 }
 
 function parseYmd(value: string, label: string) {

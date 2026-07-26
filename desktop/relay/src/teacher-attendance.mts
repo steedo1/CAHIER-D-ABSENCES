@@ -357,7 +357,9 @@ function validateBusinessRules(
   const timetable = db.prepare(`
     SELECT 1 FROM teacher_timetables
     WHERE institution_id = ? AND teacher_id = ? AND class_id = ?
-      AND subject_id = ? AND period_id = ? AND deleted_at IS NULL
+      AND subject_id = ? AND period_id = ?
+      AND (weekday = ? OR (? = 0 AND weekday = 7))
+      AND deleted_at IS NULL
     LIMIT 1
   `).get(
     teacher.institution_id,
@@ -365,6 +367,8 @@ function validateBusinessRules(
     session.class_id,
     session.subject_id,
     operation.period_id,
+    localSession.weekday,
+    localSession.weekday,
   );
   if (!timetable) throw new TeacherAttendanceError(403, "teacher_not_scheduled_for_slot");
 

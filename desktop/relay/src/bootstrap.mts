@@ -208,6 +208,12 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
 
     const available = loadAvailableEntities(db, snapshot.institution_id);
     let remaining = buildWorkItems(snapshot, diagnostics);
+    const incomingTimetableIds = new Set(
+      remaining
+        .filter((item) => item.entityType === "teacher_timetable")
+        .map((item) => item.entityId),
+    );
+    const preservedSupersededTimetableIds = new Set<string>();
     rejected += diagnostics.length - snapshot.inputDiagnostics.length;
 
     while (remaining.length > 0) {
@@ -227,6 +233,17 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         } else if (outcome.status === "imported") {
           imported += 1;
           available.get(item.collection)?.add(item.entityId);
+          if (item.entityType === "teacher_timetable") {
+            const reconciliation = reconcileSupersededTeacherTimetables(
+              db,
+              snapshot,
+              item.entityId,
+              incomingTimetableIds,
+              preservedSupersededTimetableIds,
+              sourceSkippedEntities === 0,
+            );
+            preserved += reconciliation.preserved;
+          }
         } else {
           rejected += 1;
           diagnostics.push(outcome.diagnostic);
@@ -543,6 +560,107 @@ function importWorkItem(
       error: result.error,
     },
   };
+}
+
+function reconcileSupersededTeacherTimetables(
+  db: RelayDatabase,
+  snapshot: BootstrapSnapshot,
+  incomingId: string,
+  incomingIds: ReadonlySet<string>,
+  preservedIds: Set<string>,
+  sourceIsComplete: boolean,
+) {
+  if (!sourceIsComplete) return { preserved: 0 };
+  const incoming = db.prepare(`
+    SELECT class_id, subject_id, teacher_id, period_id, weekday
+    FROM teacher_timetables
+    WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+  `).get(snapshot.institution_id, incomingId) as {
+    class_id: string;
+    subject_id: string;
+    teacher_id: string;
+    period_id: string;
+    weekday: number | null;
+  } | undefined;
+  if (!incoming) return { preserved: 0 };
+
+  const candidates = db.prepare(`
+    SELECT id
+    FROM teacher_timetables
+    WHERE institution_id = ?
+      AND id <> ?
+      AND class_id = ?
+      AND subject_id = ?
+      AND teacher_id = ?
+      AND period_id = ?
+      AND weekday IS ?
+      AND deleted_at IS NULL
+    ORDER BY id
+  `).all(
+    snapshot.institution_id,
+    incomingId,
+    incoming.class_id,
+    incoming.subject_id,
+    incoming.teacher_id,
+    incoming.period_id,
+    incoming.weekday,
+  ) as Array<{ id: string }>;
+
+  let preserved = 0;
+  for (const candidate of candidates) {
+    if (incomingIds.has(candidate.id)) continue;
+    if (
+      isLocalDirty(db, snapshot.institution_id, "teacher_timetable", candidate.id) ||
+      hasLocalTimetableOperation(db, snapshot.institution_id, candidate.id)
+    ) {
+      if (!preservedIds.has(candidate.id)) {
+        preservedIds.add(candidate.id);
+        preserved += 1;
+      }
+      continue;
+    }
+
+    db.prepare(`
+      UPDATE teacher_timetables
+      SET deleted_at = ?, updated_at = ?
+      WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+    `).run(
+      snapshot.generated_at,
+      snapshot.generated_at,
+      snapshot.institution_id,
+      candidate.id,
+    );
+    db.prepare(`
+      UPDATE sync_records
+      SET local_dirty = 0, deleted_at = ?, updated_at = ?
+      WHERE institution_id = ? AND entity_type = 'teacher_timetable' AND entity_id = ?
+    `).run(
+      snapshot.generated_at,
+      snapshot.generated_at,
+      snapshot.institution_id,
+      candidate.id,
+    );
+    db.prepare(`
+      DELETE FROM sync_materialization_failures
+      WHERE institution_id = ? AND entity_type = 'teacher_timetable' AND entity_id = ?
+    `).run(snapshot.institution_id, candidate.id);
+  }
+  return { preserved };
+}
+
+function hasLocalTimetableOperation(
+  db: RelayDatabase,
+  institutionId: string,
+  timetableId: string,
+) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM sync_outbox
+    WHERE institution_id = ?
+      AND entity_type = 'teacher_timetable'
+      AND entity_id = ?
+    LIMIT 1
+  `).get(institutionId, timetableId));
 }
 
 function persistRejectedEntity(

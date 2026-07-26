@@ -12,6 +12,7 @@ const MIGRATIONS = [
   { version: 5, name: "teacher_attendance_operations", file: "0005_teacher_attendance_operations.sql" },
   { version: 6, name: "teacher_session_open", file: "0006_teacher_session_open.sql" },
   { version: 7, name: "teacher_session_close_transition", file: "0007_teacher_session_close_transition.sql" },
+  { version: 8, name: "teacher_timetable_identity", file: "0008_teacher_timetable_identity.sql" },
 ] as const;
 
 export type RelayDatabase = Database.Database;
@@ -59,9 +60,13 @@ function migrate(db: RelayDatabase) {
     const sql = readFileSync(file, "utf8");
     if (migration.version === 4) assertSchema3CanMigrateTo4(db);
     if (migration.version === 7) assertSchema6CanMigrateTo7(db);
+    const schema8RowCount = migration.version === 8
+      ? assertSchema7CanMigrateTo8(db)
+      : null;
     const apply = db.transaction(() => {
       db.exec(sql);
       if (migration.version === 7) finalizeSchema7Migration(db);
+      if (migration.version === 8) finalizeSchema8Migration(db, schema8RowCount);
       db.prepare(
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
       ).run(migration.version, migration.name, new Date().toISOString());
@@ -70,7 +75,7 @@ function migrate(db: RelayDatabase) {
         throw new Error(`relay_database_foreign_key_violation:${JSON.stringify(violations[0])}`);
       }
     });
-    if (migration.version === 4) {
+    if (migration.version === 4 || migration.version === 8) {
       db.pragma("foreign_keys = OFF");
       try {
         apply();
@@ -84,6 +89,76 @@ function migrate(db: RelayDatabase) {
 
   const violations = db.pragma("foreign_key_check") as unknown[];
   if (violations.length > 0) throw new Error("relay_database_foreign_key_violation");
+}
+
+function assertSchema7CanMigrateTo8(db: RelayDatabase) {
+  const stagingTable = db.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = '__v8_teacher_timetables'
+  `).get();
+  if (stagingTable) {
+    throw new Error("migration_v8_preflight:staging_table_exists");
+  }
+
+  const columns = db.pragma("table_info(teacher_timetables)") as Array<{
+    name: string;
+    pk: number;
+  }>;
+  const requiredColumns = [
+    "id",
+    "institution_id",
+    "academic_year",
+    "class_id",
+    "subject_id",
+    "teacher_id",
+    "period_id",
+    "weekday",
+    "server_version",
+    "updated_at",
+    "deleted_at",
+  ];
+  if (
+    columns.length !== requiredColumns.length ||
+    requiredColumns.some((name) => !columns.some((column) => column.name === name))
+  ) {
+    throw new Error("migration_v8_preflight:teacher_timetables_schema_unexpected");
+  }
+  const primaryKey = columns
+    .filter((column) => column.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((column) => column.name);
+  if (primaryKey.join(",") !== "institution_id,id") {
+    throw new Error("migration_v8_preflight:teacher_timetables_primary_key_unexpected");
+  }
+
+  const violations = db.pragma("foreign_key_check") as unknown[];
+  if (violations.length > 0) {
+    throw new Error("migration_v8_preflight:foreign_key_violation");
+  }
+  return Number(
+    (db.prepare("SELECT COUNT(*) AS count FROM teacher_timetables").get() as { count: number }).count,
+  );
+}
+
+function finalizeSchema8Migration(db: RelayDatabase, expectedRowCount: number | null) {
+  if (expectedRowCount === null) {
+    throw new Error("migration_v8_finalize:missing_preflight");
+  }
+  const remainingStagingTable = db.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = '__v8_teacher_timetables'
+  `).get();
+  if (remainingStagingTable) {
+    throw new Error("migration_v8_finalize:staging_table_remains");
+  }
+  const actualRowCount = Number(
+    (db.prepare("SELECT COUNT(*) AS count FROM teacher_timetables").get() as { count: number }).count,
+  );
+  if (actualRowCount !== expectedRowCount) {
+    throw new Error(
+      `migration_v8_finalize:row_count_mismatch:expected=${expectedRowCount}:actual=${actualRowCount}`,
+    );
+  }
 }
 
 function assertSchema6CanMigrateTo7(db: RelayDatabase) {
