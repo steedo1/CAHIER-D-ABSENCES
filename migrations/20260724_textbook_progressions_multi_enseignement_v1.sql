@@ -73,7 +73,7 @@ begin
           'general_secondary',
           'technical_secondary',
           'vocational_training',
-          'higher_short_cycle'
+          'higher_technical_short_cycle'
         )
       );
   end if;
