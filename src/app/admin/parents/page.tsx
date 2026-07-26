@@ -11,6 +11,13 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
 } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  getClassLevelCode,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* =========================
    UI helpers
@@ -89,7 +96,7 @@ function Skeleton({ className = "" }: { className?: string }) {
    Types
 ========================= */
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name: string;
   level: string;
@@ -778,8 +785,11 @@ export default function AdminStudentsByClassPage() {
   const [cfg, setCfg] = useState<InstitutionSettings>({});
   const [academicYear, setAcademicYear] = useState("");
 
-  const [level, setLevel] = useState("");
-  const [classId, setClassId] = useState("");
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>(
+    DEFAULT_EDUCATION_SCOPE,
+  );
+  const level = educationScope.levelCode;
+  const classId = educationScope.classId;
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
@@ -980,20 +990,10 @@ export default function AdminStudentsByClassPage() {
   const classLevelById = useMemo(() => {
     const map = new Map<string, string>();
     for (const c of classes) {
-      map.set(c.id, c.level);
+      map.set(c.id, getClassLevelCode(c));
     }
     return map;
   }, [classes]);
-
-  const levels = useMemo(() => {
-    return Array.from(new Set(classes.map((c) => c.level).filter(Boolean))).sort(
-      (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })
-    );
-  }, [classes]);
-
-  const classesOfLevel = useMemo(() => {
-    return classes.filter((c) => !level || c.level === level);
-  }, [classes, level]);
 
   const studentsFiltered = useMemo(() => {
     let list = students;
@@ -1510,8 +1510,8 @@ export default function AdminStudentsByClassPage() {
                 Liste des eleves par classe
               </h1>
               <p className="mt-1 text-sm text-white/80">
-                Selectionnez un niveau, choisissez la classe, recherchez, modifiez un eleve,
-                generez la liste PDF et les attestations de frequentation.
+                Selectionnez le type d'enseignement, la formation si necessaire,
+                le niveau et la classe avant de gerer les eleves et les documents.
               </p>
             </div>
 
@@ -1577,50 +1577,32 @@ export default function AdminStudentsByClassPage() {
         </div>
       </header>
 
-      <section className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div>
-            <div className="mb-1 text-xs text-slate-600">Niveau</div>
-            <Select
-              value={level}
-              onChange={(e) => {
-                setLevel(e.target.value);
-                setClassId("");
-              }}
-            >
-              <option value="">- Tous -</option>
-              {levels.map((lvl) => (
-                <option key={lvl} value={lvl}>
-                  {lvl}
-                </option>
-              ))}
-            </Select>
-          </div>
+      <div className="space-y-3">
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={setEducationScope}
+          classes={classes}
+          allowAllEducationTypes={false}
+          showLevel
+          showClass
+          disabled={loading}
+          title="Périmètre de la liste des élèves"
+        />
 
-          <div>
-            <div className="mb-1 text-xs text-slate-600">Classe</div>
-            <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
-              <option value="">- Choisir -</option>
-              {classesOfLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name || c.label || c.id}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="md:col-span-2">
+        <section className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="max-w-2xl">
             <div className="mb-1 text-xs text-slate-600">
-              Recherche (nom ou matricule)
+              Recherche dans la classe choisie (nom ou matricule)
             </div>
             <Input
               placeholder="Ex : KOUASSI / 20166309J"
               value={q}
+              disabled={!classId}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

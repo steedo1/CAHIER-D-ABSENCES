@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType } from "@/lib/education-organization";
 
 const READ_ALLOWED_ROLES = new Set([
   "admin",
@@ -116,6 +117,50 @@ export async function GET(req: NextRequest) {
   const academicYearParam = (
     url.searchParams.get("academic_year") || ""
   ).trim();
+  const educationTypeParam = String(
+    url.searchParams.get("education_type") || "",
+  ).trim();
+  const formationCodeParam = String(
+    url.searchParams.get("formation_code") || "",
+  ).trim();
+  const levelCodeParam = String(
+    url.searchParams.get("formation_level_code") ||
+      url.searchParams.get("level_code") ||
+      "",
+  ).trim();
+  const classIdParam = String(
+    url.searchParams.get("class_id") || url.searchParams.get("classId") || "",
+  ).trim();
+
+  if (
+    educationTypeParam &&
+    educationTypeParam !== "all" &&
+    !isEducationType(educationTypeParam)
+  ) {
+    return NextResponse.json(
+      { error: "bad_education_type" },
+      { status: 400 },
+    );
+  }
+
+  if (
+    formationCodeParam &&
+    (!educationTypeParam ||
+      educationTypeParam === "all" ||
+      educationTypeParam === "general_secondary")
+  ) {
+    return NextResponse.json(
+      { error: "formation_requires_non_general_education_type" },
+      { status: 400 },
+    );
+  }
+
+  if (levelCodeParam && (!educationTypeParam || educationTypeParam === "all")) {
+    return NextResponse.json(
+      { error: "level_requires_education_type" },
+      { status: 400 },
+    );
+  }
 
   let limit = Number(limitRaw);
   if (!Number.isFinite(limit) || limit <= 0) {
@@ -137,6 +182,35 @@ export async function GET(req: NextRequest) {
   // Pour consulter toutes les anciennes classes, appeler explicitement academic_year=all.
   if (shouldFilterYear) {
     query = query.eq("academic_year", academicYear);
+  }
+
+  if (classIdParam) {
+    query = query.eq("id", classIdParam);
+  }
+
+  if (educationTypeParam === "general_secondary") {
+    // Compatibilite des anciennes classes creees avant l'ajout de
+    // education_type : un contexte absent represente le secondaire general.
+    query = query.or(
+      "education_type.eq.general_secondary,education_type.is.null",
+    );
+  } else if (
+    educationTypeParam &&
+    educationTypeParam !== "all" &&
+    isEducationType(educationTypeParam)
+  ) {
+    query = query.eq("education_type", educationTypeParam);
+  }
+
+  if (formationCodeParam) {
+    query = query.eq("formation_code", formationCodeParam);
+  }
+
+  if (levelCodeParam) {
+    query =
+      educationTypeParam === "general_secondary"
+        ? query.eq("level", levelCodeParam)
+        : query.eq("formation_level_code", levelCodeParam);
   }
 
   const { data, error } = await query
@@ -166,5 +240,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     items,
     academic_year: shouldFilterYear ? academicYear : null,
+    scope: {
+      education_type: educationTypeParam || null,
+      formation_code: formationCodeParam || null,
+      formation_level_code: levelCodeParam || null,
+      class_id: classIdParam || null,
+    },
   });
 }
