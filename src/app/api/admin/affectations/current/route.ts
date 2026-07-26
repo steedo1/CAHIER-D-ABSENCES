@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType } from "@/lib/education-organization";
 
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
@@ -67,6 +68,30 @@ export async function GET(req: NextRequest) {
   const institution_id = (me?.institution_id as string) || null;
   if (!institution_id) return NextResponse.json({ error: "no_institution" }, { status: 400 });
 
+  const { data: callerRoles, error: callerRolesError } = await srv
+    .from("user_roles")
+    .select("role,institution_id")
+    .eq("profile_id", user.id);
+
+  if (callerRolesError) {
+    return NextResponse.json(
+      { error: callerRolesError.message },
+      { status: 400 },
+    );
+  }
+
+  const canRead = (callerRoles || []).some((row: any) => {
+    const role = String(row.role || "");
+    return (
+      role === "super_admin" ||
+      (role === "admin" && String(row.institution_id || "") === institution_id)
+    );
+  });
+
+  if (!canRead) {
+    return NextResponse.json({ error: "admin_required" }, { status: 403 });
+  }
+
   // Filters
   const { searchParams } = new URL(req.url);
   const qRaw = searchParams.get("q") || "";
@@ -75,6 +100,11 @@ export async function GET(req: NextRequest) {
   const educationType = (searchParams.get("education_type") || "general_secondary").trim();
   const formationCode = (searchParams.get("formation_code") || "").trim();
   const formationLevelCode = (searchParams.get("formation_level_code") || "").trim();
+  const classId = (searchParams.get("class_id") || "").trim();
+  if (educationType !== "all" && !isEducationType(educationType)) {
+    return NextResponse.json({ error: "bad_education_type" }, { status: 400 });
+  }
+
   const q = norm(qRaw);
   const subjectFilter = (subjectRaw || "").trim();
   const academicYear = academicYearRaw || (await getCurrentAcademicYear(institution_id));
@@ -103,6 +133,43 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  // Compatibilité historique : class_teachers.subject_id a parfois contenu
+  // directement subjects.id au lieu de institution_subjects.id.
+  const directSubjectIds = Array.from(
+    new Set(
+      (data || [])
+        .filter((row: any) => !(row as any).instsub)
+        .map((row: any) => String(row.subject_id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const directSubjectsById = new Map<
+    string,
+    { id: string; name: string | null; code: string | null }
+  >();
+
+  if (directSubjectIds.length > 0) {
+    const { data: directSubjects, error: directSubjectsError } = await srv
+      .from("subjects")
+      .select("id,name,code")
+      .in("id", directSubjectIds);
+
+    if (directSubjectsError) {
+      return NextResponse.json(
+        { error: directSubjectsError.message },
+        { status: 400 },
+      );
+    }
+
+    for (const subject of directSubjects || []) {
+      directSubjectsById.set(String(subject.id), {
+        id: String(subject.id),
+        name: subject.name ? String(subject.name) : null,
+        code: subject.code ? String(subject.code) : null,
+      });
+    }
+  }
+
   // Group by (teacher_id, subject_id/institution_subjects)
   const groups = new Map<
     string,
@@ -113,37 +180,45 @@ export async function GET(req: NextRequest) {
     const t = (row as any).teacher;
     const c = (row as any).class || {};
     const is = (row as any).instsub;
+    const rawSubjectId = String((row as any).subject_id || "").trim();
+    const directSubject = directSubjectsById.get(rawSubjectId) || null;
 
     if (shouldFilterYear && String(c?.academic_year || "") !== academicYear) {
       continue;
     }
 
     const classType = String(c?.education_type || "").trim();
+    const normalizedClassType = classType || "general_secondary";
     const classFormation = String(c?.formation_code || "").trim();
     const classFormationLevel = String(
       c?.formation_level_code || c?.level || "",
     ).trim();
+    const currentClassId = String(c?.id || "").trim();
 
-    if (educationType === "general_secondary") {
-      if ((classType && classType !== "general_secondary") || classFormation) {
-        continue;
-      }
-    } else {
-      const inferredType = classType || (classFormation ? educationType : "general_secondary");
-      if (inferredType !== educationType) continue;
-      if (!formationCode || classFormation !== formationCode) continue;
-      if (formationLevelCode && classFormationLevel !== formationLevelCode) continue;
+    // Le mode « Tous les enseignements » est réservé aux vues de synthèse.
+    // Pour un type précis, les classes historiques sans education_type restent
+    // compatibles avec le secondaire général.
+    if (educationType !== "all" && normalizedClassType !== educationType) {
+      continue;
     }
+    if (formationCode && classFormation !== formationCode) continue;
+    if (formationLevelCode && classFormationLevel !== formationLevelCode) continue;
+    if (classId && currentClassId !== classId) continue;
 
-    const teacher_id = t?.id as string;
+    const teacher_id = String(t?.id || "").trim();
+    if (!teacher_id) continue;
+
     const instSubId = (is?.id as string) ?? null;
-    const subjId = (is?.subj?.id as string) ?? null;
-    const subjectKey = instSubId || "NULL";
+    const subjId =
+      ((is?.subj?.id as string) ?? null) || directSubject?.id || null;
+    const subjectKey = instSubId || subjId || rawSubjectId || "NULL";
     const key = `${teacher_id}::${subjectKey}`;
 
     const subjectLabel =
       (is?.custom_name as string) ||
       (is?.subj?.name as string) ||
+      directSubject?.name ||
+      directSubject?.code ||
       "—";
 
     if (!groups.has(key)) {
@@ -154,7 +229,7 @@ export async function GET(req: NextRequest) {
           email: t?.email ?? null,
           phone: t?.phone ?? null,
         },
-        subject: { id: instSubId, label: subjectLabel },
+        subject: { id: instSubId || subjId, label: subjectLabel },
         classes: [],
         _subjectIds: { instSubId, subjId },
       });

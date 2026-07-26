@@ -65,6 +65,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const qRaw  = (searchParams.get("q") || "").trim();
+    const roleFilter = (searchParams.get("role") || "").trim();
     const qText = lc(qRaw);
     const qNum  = digits(qRaw); // <= on cherche sur les CHIFFRES uniquement
 
@@ -130,7 +131,9 @@ export async function GET(req: NextRequest) {
 
     // 5) Filtre côté serveur
     const filtered = (profs || []).filter((p) => {
-      if (!qRaw) return true; // sans filtre => tout visible
+      const profileRoles = rolesByProfile.get(p.id) || [];
+      if (roleFilter && !profileRoles.includes(roleFilter)) return false;
+      if (!qRaw) return true; // sans filtre texte => tout le rôle demandé
 
       // match texte (nom/email)
       const matchText =

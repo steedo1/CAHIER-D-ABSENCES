@@ -5,8 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import EducationTeachingContextFields, {
   type EducationTeachingContextValue,
 } from "@/components/admin/EducationTeachingContextFields";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingContext";
 import type { EducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -69,6 +75,22 @@ type TeacherRow = {
   display_name: string | null;
   email: string | null;
   phone: string | null;
+};
+
+type TeacherServiceClass = {
+  id: string;
+  name: string | null;
+  level: string | null;
+  academic_year?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
+};
+
+type TeacherServiceItem = {
+  teacher: TeacherRow;
+  subject: { id: string | null; label: string };
+  classes: TeacherServiceClass[];
 };
 
 type TeacherPayrollRow = {
@@ -251,6 +273,17 @@ export default function UsersPage() {
     EducationAvailableSubject[]
   >([]);
 
+  const [servicesScope, setServicesScope] = useState<EducationScopeValue>({
+    educationType: ALL_EDUCATION_TYPES,
+    formationCode: "",
+    levelCode: "",
+    classId: "",
+  });
+  const [teacherServices, setTeacherServices] = useState<TeacherServiceItem[]>([]);
+  const [servicesQuery, setServicesQuery] = useState("");
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+
   const [payrollTeachers, setPayrollTeachers] = useState<TeacherPayrollRow[]>(
     []
   );
@@ -267,6 +300,11 @@ export default function UsersPage() {
     () =>
       payrollTeachers.find((t) => t.profile_id === payrollTeacherId) || null,
     [payrollTeachers, payrollTeacherId]
+  );
+
+  const teacherServiceCount = useMemo(
+    () => new Set(teacherServices.map((item) => item.teacher.id)).size,
+    [teacherServices],
   );
 
   const createSubjectOptions = useMemo<SubjectItem[]>(() => {
@@ -374,6 +412,18 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
+    void loadTeacherServices();
+    // Le chargement suit uniquement le périmètre. La recherche texte est lancée
+    // par le bouton pour éviter une requête à chaque caractère saisi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    servicesScope.educationType,
+    servicesScope.formationCode,
+    servicesScope.levelCode,
+    servicesScope.classId,
+  ]);
+
+  useEffect(() => {
     setEducatorClassIds([]);
   }, [educatorLevel]);
 
@@ -453,6 +503,45 @@ export default function UsersPage() {
         ? prev.filter((id) => id !== classId)
         : [...prev, classId]
     );
+  }
+
+  async function loadTeacherServices(queryOverride?: string) {
+    setServicesLoading(true);
+    setServicesError(null);
+    try {
+      const params = buildEducationScopeSearchParams(servicesScope);
+      const query =
+        typeof queryOverride === "string" ? queryOverride : servicesQuery;
+      if (query.trim()) params.set("q", query.trim());
+
+      const r = await fetch(
+        `/api/admin/affectations/current?${params.toString()}`,
+        { cache: "no-store" },
+      );
+      const j = await r.json().catch(() => ({}));
+
+      if (r.status === 401) {
+        setAuthErr(true);
+        setTeacherServices([]);
+        return;
+      }
+      if (!r.ok) {
+        setServicesError(j?.error || "Impossible de charger les services enseignants.");
+        setTeacherServices([]);
+        return;
+      }
+
+      setTeacherServices(
+        Array.isArray(j.items) ? (j.items as TeacherServiceItem[]) : [],
+      );
+    } catch (e: any) {
+      setServicesError(
+        e?.message || "Erreur de chargement des services enseignants.",
+      );
+      setTeacherServices([]);
+    } finally {
+      setServicesLoading(false);
+    }
   }
 
   async function loadTeachersForAdd() {
@@ -620,6 +709,18 @@ export default function UsersPage() {
       return;
     }
 
+    if (
+      rawRole === "educator" &&
+      createEducationContext.educationType !== "general_secondary" &&
+      rawEducatorClassIds.length === 0
+    ) {
+      setSubmitting(false);
+      setMsg(
+        "Cochez au moins une classe pour un éducateur du technique, du professionnel ou du supérieur court.",
+      );
+      return;
+    }
+
     try {
       const r = await fetch("/api/admin/users/create", {
         method: "POST",
@@ -693,7 +794,7 @@ export default function UsersPage() {
         if (rawRole === "educator") {
           const scope = rawEducatorClassIds.length
             ? `${rawEducatorClassIds.length} classe(s) cochée(s) du niveau ${rawEducatorLevel}`
-            : `tout le niveau ${rawEducatorLevel}`;
+            : `tout le niveau général ${rawEducatorLevel}`;
           setMsg(`Compte éducateur créé et affecté à ${scope}.`);
         } else {
           setMsg(`Compte ${labelRole} créé.`);
@@ -721,6 +822,10 @@ export default function UsersPage() {
       try {
         await loadPayrollTeachers();
       } catch {}
+
+      try {
+        await loadTeacherServices("");
+      } catch {}
     } catch {
       setSubmitting(false);
       setMsg("Erreur réseau.");
@@ -732,7 +837,7 @@ export default function UsersPage() {
     setSearching(true);
     setRmMsg(null);
     try {
-      const url = `/api/admin/users?q=${encodeURIComponent(q.trim())}`;
+      const url = `/api/admin/users?q=${encodeURIComponent(q.trim())}&role=teacher`;
       const r = await fetch(url, { cache: "no-store" });
       if (r.status === 401) {
         setAuthErr(true);
@@ -793,6 +898,10 @@ export default function UsersPage() {
 
       try {
         await loadPayrollTeachers();
+      } catch {}
+
+      try {
+        await loadTeacherServices();
       } catch {}
     } catch (e: any) {
       setRmMsg(e?.message || "Erreur réseau.");
@@ -1086,10 +1195,10 @@ export default function UsersPage() {
                 generalMessage="Le choix historique du niveau et des classes reste inchangé pour le général."
               />
               <div className="mt-1 text-xs text-slate-600">
-                Choisis d’abord le niveau. Si aucune classe n’est cochée,
-                l’éducateur sera affecté à tout ce niveau. Si tu coches des
-                classes, son nom apparaîtra seulement sur les listes PDF de ces
-                classes.
+                Dans le secondaire général, aucune classe cochée signifie tout
+                le niveau. Pour le technique, le professionnel et le supérieur
+                court, coche au moins une classe afin de conserver un périmètre
+                non ambigu.
               </div>
 
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1127,8 +1236,11 @@ export default function UsersPage() {
                     {educatorLevel ? (
                       educatorClassIds.length > 0 ? (
                         <b>{educatorClassIds.length} classe(s) cochée(s)</b>
-                      ) : (
+                      ) : createEducationContext.educationType ===
+                        "general_secondary" ? (
                         <b>Tout le niveau {educatorLevel}</b>
+                      ) : (
+                        <b className="text-amber-700">Classes à sélectionner</b>
                       )
                     ) : (
                       <span className="text-slate-500">Niveau à sélectionner</span>
@@ -1166,8 +1278,10 @@ export default function UsersPage() {
                   )}
 
                   <div className="mt-2 text-[11px] text-slate-600">
-                    Rien coché = éducateur de tout le niveau. Classes cochées =
-                    éducateur limité à ces classes.
+                    {createEducationContext.educationType ===
+                    "general_secondary"
+                      ? "Rien coché = éducateur de tout le niveau. Classes cochées = éducateur limité à ces classes."
+                      : "Au moins une classe doit être cochée pour cet enseignement. Les autres affectations du même éducateur seront conservées."}
                   </div>
                 </div>
               ) : null}
@@ -1182,7 +1296,10 @@ export default function UsersPage() {
             disabled={
               submitting ||
               !tPhone.trim() ||
-              (createRole === "educator" && !educatorLevel.trim())
+              (createRole === "educator" && !educatorLevel.trim()) ||
+              (createRole === "educator" &&
+                createEducationContext.educationType !== "general_secondary" &&
+                educatorClassIds.length === 0)
             }
           >
             {submitting ? "Création…" : "Créer le compte"}
@@ -1194,6 +1311,124 @@ export default function UsersPage() {
             {msg}
           </div>
         )}
+      </div>
+
+      <div className="rounded-2xl border bg-white p-5">
+        <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
+          Enseignants et services par enseignement
+        </div>
+        <Help>
+          Cette vue s’appuie sur les <b>affectations actives aux classes</b>.
+          Elle permet de vérifier qu’un enseignant, une matière et des classes
+          restent dans le même périmètre pédagogique. Un compte enseignant sans
+          classe affectée n’apparaît pas encore ici.
+        </Help>
+
+        <EducationScopeFilter
+          value={servicesScope}
+          onChange={setServicesScope}
+          classes={classesForEducator}
+          allowAllEducationTypes
+          showLevel
+          showClass
+          classLabel="Classe (facultatif)"
+          disabled={servicesLoading}
+          title="Filtrer les services enseignants"
+          className="mb-4"
+        />
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1">
+            <div className="mb-1 text-xs text-slate-500">
+              Recherche dans le périmètre
+            </div>
+            <Input
+              value={servicesQuery}
+              onChange={(e) => setServicesQuery(e.target.value)}
+              placeholder="Enseignant, discipline ou classe"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void loadTeacherServices();
+              }}
+            />
+          </div>
+          <Button
+            onClick={() => void loadTeacherServices()}
+            disabled={servicesLoading}
+          >
+            {servicesLoading ? "Chargement…" : "Appliquer le filtre"}
+          </Button>
+          {servicesQuery ? (
+            <button
+              type="button"
+              onClick={() => {
+                setServicesQuery("");
+                void loadTeacherServices("");
+              }}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Effacer
+            </button>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full bg-sky-100 px-3 py-1 font-medium text-sky-800">
+            {teacherServiceCount} enseignant(s)
+          </span>
+          <span className="rounded-full bg-emerald-100 px-3 py-1 font-medium text-emerald-800">
+            {teacherServices.length} service(s) matière
+          </span>
+        </div>
+
+        {servicesError ? (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {servicesError}
+          </div>
+        ) : null}
+
+        <div className="mt-4 space-y-3">
+          {servicesLoading ? (
+            <div className="rounded-xl border bg-slate-50 px-4 py-4 text-sm text-slate-600">
+              Chargement des services enseignants…
+            </div>
+          ) : teacherServices.length === 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+              Aucune affectation active trouvée dans ce périmètre.
+            </div>
+          ) : (
+            teacherServices.map((item) => (
+              <div
+                key={`${item.teacher.id}::${item.subject.id || item.subject.label}`}
+                className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4"
+              >
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {item.teacher.display_name || "(Sans nom)"}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {item.teacher.phone || item.teacher.email || "—"}
+                    </div>
+                  </div>
+                  <span className="w-fit rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800">
+                    {item.subject.label || "Discipline non renseignée"}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.classes.map((classe) => (
+                    <span
+                      key={classe.id}
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700"
+                    >
+                      {classe.name || classe.id}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border bg-white p-5">

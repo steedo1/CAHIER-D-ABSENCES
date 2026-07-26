@@ -134,57 +134,218 @@ function uniqueStrings(values: unknown): string[] {
   );
 }
 
+type EducatorClassRow = {
+  id: string;
+  level: string | null;
+  academic_year: string | null;
+  education_type: EducationType | null;
+  formation_code: string | null;
+  formation_level_code: string | null;
+};
+
+function normalizedClassEducationType(row: EducatorClassRow): EducationType {
+  return isEducationType(row.education_type)
+    ? row.education_type
+    : "general_secondary";
+}
+
+function educatorClassMatchesContext(
+  row: EducatorClassRow,
+  opts: {
+    educationType: EducationType;
+    formationCode: string | null;
+    level: string;
+  },
+) {
+  if (normalizedClassEducationType(row) !== opts.educationType) return false;
+
+  if (opts.educationType === "general_secondary") {
+    return (
+      !String(row.formation_code || "").trim() &&
+      String(row.level || "").trim() === opts.level
+    );
+  }
+
+  return (
+    String(row.formation_code || "").trim() ===
+      String(opts.formationCode || "").trim() &&
+    String(row.formation_level_code || row.level || "").trim() === opts.level
+  );
+}
+
+async function getCurrentAcademicYear(institutionId: string) {
+  const supaSrv = getSupabaseServiceClient();
+  const { data } = await supaSrv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.code ? String(data.code) : null;
+}
+
 async function saveEducatorAssignments(opts: {
   profileId: string;
   institutionId: string;
+  educationType: EducationType;
+  formationCode: string | null;
+  formationLevelCode: string | null;
   level: string | null;
   classIds: string[];
 }) {
   const supaSrv = getSupabaseServiceClient();
   const level = String(opts.level || "").trim();
+  const formationCode = String(opts.formationCode || "").trim() || null;
+  const formationLevelCode =
+    String(opts.formationLevelCode || "").trim() || null;
 
   if (!level) {
     return { ok: false as const, error: "educator_level_required" };
   }
 
-  const classIds = Array.from(new Set(opts.classIds.filter(isUuid)));
+  if (
+    opts.educationType !== "general_secondary" &&
+    (!formationCode || !formationLevelCode)
+  ) {
+    return { ok: false as const, error: "educator_education_context_required" };
+  }
 
-  let validClassIds: string[] = [];
-  if (classIds.length > 0) {
+  if (
+    opts.educationType !== "general_secondary" &&
+    formationLevelCode !== level
+  ) {
+    return { ok: false as const, error: "educator_level_context_mismatch" };
+  }
+
+  const requestedClassIds = Array.from(
+    new Set(opts.classIds.map((id) => String(id || "").trim()).filter(Boolean)),
+  );
+  const validUuidClassIds = requestedClassIds.filter(isUuid);
+
+  if (validUuidClassIds.length !== requestedClassIds.length) {
+    return { ok: false as const, error: "educator_classes_invalid" };
+  }
+
+  // La table historique educator_class_assignments ne porte pas encore le
+  // type d'enseignement ni la formation. Pour un enseignement non général,
+  // une affectation « tout le niveau » serait donc ambiguë. On impose des
+  // classes explicites afin de préserver plusieurs contextes sur le même compte.
+  if (
+    opts.educationType !== "general_secondary" &&
+    validUuidClassIds.length === 0
+  ) {
+    return {
+      ok: false as const,
+      error: "educator_classes_required_for_non_general",
+    };
+  }
+
+  let selectedClasses: EducatorClassRow[] = [];
+  if (validUuidClassIds.length > 0) {
     const { data: classes, error: classErr } = await supaSrv
       .from("classes")
-      .select("id,level")
+      .select(
+        "id,level,academic_year,education_type,formation_code,formation_level_code",
+      )
       .eq("institution_id", opts.institutionId)
-      .in("id", classIds);
+      .in("id", validUuidClassIds);
 
     if (classErr) {
       return { ok: false as const, error: classErr.message };
     }
 
-    const rows = Array.isArray(classes) ? classes : [];
-    validClassIds = rows
-      .filter((row: any) => String(row.level || "").trim() === level)
-      .map((row: any) => String(row.id));
-
-    if (validClassIds.length !== classIds.length) {
+    selectedClasses = (Array.isArray(classes) ? classes : []) as EducatorClassRow[];
+    if (selectedClasses.length !== validUuidClassIds.length) {
       return { ok: false as const, error: "educator_classes_invalid" };
+    }
+
+    const invalid = selectedClasses.filter(
+      (row) =>
+        !educatorClassMatchesContext(row, {
+          educationType: opts.educationType,
+          formationCode,
+          level,
+        }),
+    );
+
+    if (invalid.length > 0) {
+      return { ok: false as const, error: "educator_classes_out_of_context" };
     }
   }
 
-  const table = supaSrv.from("educator_class_assignments");
+  const selectedYears = Array.from(
+    new Set(
+      selectedClasses
+        .map((row) => String(row.academic_year || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (selectedYears.length > 1) {
+    return { ok: false as const, error: "educator_classes_multiple_years" };
+  }
 
-  const { error: delErr } = await table
-    .delete()
-    .eq("institution_id", opts.institutionId)
-    .eq("profile_id", opts.profileId);
+  const academicYear =
+    selectedYears[0] || (await getCurrentAcademicYear(opts.institutionId));
 
-  if (delErr) {
-    return { ok: false as const, error: delErr.message };
+  // On remplace uniquement le périmètre pédagogique courant. Les autres
+  // affectations de l'éducateur sont conservées intactes.
+  if (academicYear) {
+    const { data: yearClasses, error: yearClassesError } = await supaSrv
+      .from("classes")
+      .select(
+        "id,level,academic_year,education_type,formation_code,formation_level_code",
+      )
+      .eq("institution_id", opts.institutionId)
+      .eq("academic_year", academicYear);
+
+    if (yearClassesError) {
+      return { ok: false as const, error: yearClassesError.message };
+    }
+
+    const contextClassIds = ((yearClasses || []) as EducatorClassRow[])
+      .filter((row) =>
+        educatorClassMatchesContext(row, {
+          educationType: opts.educationType,
+          formationCode,
+          level,
+        }),
+      )
+      .map((row) => row.id);
+
+    if (contextClassIds.length > 0) {
+      const { error: scopedDeleteError } = await supaSrv
+        .from("educator_class_assignments")
+        .delete()
+        .eq("institution_id", opts.institutionId)
+        .eq("profile_id", opts.profileId)
+        .in("class_id", contextClassIds);
+
+      if (scopedDeleteError) {
+        return { ok: false as const, error: scopedDeleteError.message };
+      }
+    }
+  }
+
+  if (opts.educationType === "general_secondary") {
+    const { error: generalLevelDeleteError } = await supaSrv
+      .from("educator_class_assignments")
+      .delete()
+      .eq("institution_id", opts.institutionId)
+      .eq("profile_id", opts.profileId)
+      .eq("level", level)
+      .is("class_id", null);
+
+    if (generalLevelDeleteError) {
+      return { ok: false as const, error: generalLevelDeleteError.message };
+    }
   }
 
   const rows =
-    validClassIds.length > 0
-      ? validClassIds.map((classId) => ({
+    validUuidClassIds.length > 0
+      ? validUuidClassIds.map((classId) => ({
           institution_id: opts.institutionId,
           profile_id: opts.profileId,
           level,
@@ -209,9 +370,13 @@ async function saveEducatorAssignments(opts: {
 
   return {
     ok: true as const,
+    education_type: opts.educationType,
+    formation_code: formationCode,
+    formation_level_code: formationLevelCode,
+    academic_year: academicYear,
     level,
-    class_ids: validClassIds,
-    scope: validClassIds.length > 0 ? "classes" : "level",
+    class_ids: validUuidClassIds,
+    scope: validUuidClassIds.length > 0 ? "classes" : "level",
   };
 }
 
@@ -366,6 +531,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "educator_level_required" },
       { status: 400 }
+    );
+  }
+
+  if (
+    role === "educator" &&
+    educationType !== "general_secondary" &&
+    (!formationCode || !formationLevelCode)
+  ) {
+    return NextResponse.json(
+      { error: "educator_education_context_required" },
+      { status: 400 },
+    );
+  }
+
+  if (
+    role === "educator" &&
+    educationType !== "general_secondary" &&
+    educatorClassIds.length === 0
+  ) {
+    return NextResponse.json(
+      { error: "educator_classes_required_for_non_general" },
+      { status: 400 },
     );
   }
 
@@ -527,6 +714,9 @@ export async function POST(req: NextRequest) {
     const saved = await saveEducatorAssignments({
       profileId: uid,
       institutionId: inst,
+      educationType,
+      formationCode,
+      formationLevelCode,
       level: educatorLevel,
       classIds: educatorClassIds,
     });
@@ -539,6 +729,10 @@ export async function POST(req: NextRequest) {
       ok: true,
       user_id: uid,
       educator_assignment: {
+        education_type: saved.education_type,
+        formation_code: saved.formation_code,
+        formation_level_code: saved.formation_level_code,
+        academic_year: saved.academic_year,
         level: saved.level,
         class_ids: saved.class_ids,
         scope: saved.scope,

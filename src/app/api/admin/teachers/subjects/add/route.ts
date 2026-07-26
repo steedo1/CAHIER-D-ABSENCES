@@ -224,6 +224,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const { data: teacherRole, error: teacherRoleError } = await srv
+    .from("user_roles")
+    .select("profile_id")
+    .eq("profile_id", profile_id)
+    .eq("institution_id", institution_id)
+    .eq("role", "teacher")
+    .limit(1)
+    .maybeSingle();
+
+  if (teacherRoleError) {
+    return NextResponse.json(
+      { error: teacherRoleError.message },
+      { status: 400 },
+    );
+  }
+
+  if (!teacherRole) {
+    return NextResponse.json(
+      { error: "teacher_not_in_institution" },
+      { status: 400 },
+    );
+  }
+
   let subject_id: string | null = null;
   let resolvedSubjectName = subject;
   let resolvedSubjectCode: string | null = null;
