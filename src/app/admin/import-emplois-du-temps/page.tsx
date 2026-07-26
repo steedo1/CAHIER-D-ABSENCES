@@ -13,6 +13,15 @@ import {
   Search,
   X,
 } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  buildEducationScopeSearchParams,
+  DEFAULT_EDUCATION_SCOPE,
+  getEducationScopeWriteError,
+  isEducationScopeReadyForWrite,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type UploadState =
   | { status: "idle" }
@@ -20,7 +29,7 @@ type UploadState =
   | { status: "success"; message: string; errors?: string[] }
   | { status: "error"; message: string; errors?: string[] };
 
-type MetaClass = { id: string; label: string };
+type MetaClass = EducationScopedClass & { id: string; label: string };
 type MetaSubject = { id: string; label: string };
 type MetaTeacher = { id: string; display_name: string; phone: string | null };
 type MetaPeriod = {
@@ -32,10 +41,12 @@ type MetaPeriod = {
 };
 
 type TimetablesMeta = {
+  allClasses: MetaClass[];
   classes: MetaClass[];
   subjects: MetaSubject[];
   teachers: MetaTeacher[];
   periods: MetaPeriod[];
+  scope?: EducationScopeValue;
 };
 
 type ManualMeta = {
@@ -127,6 +138,9 @@ type Mode = "csv" | "manual";
 
 export default function ImportEmploisDuTempsPage() {
   const [mode, setMode] = useState<Mode>("csv");
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>(
+    DEFAULT_EDUCATION_SCOPE,
+  );
 
   // ---------- ÉTAT CSV ----------
   const [file, setFile] = useState<File | null>(null);
@@ -166,33 +180,74 @@ export default function ImportEmploisDuTempsPage() {
   // UI: recherche dans la liste des classes (sidebar)
   const [classQuery, setClassQuery] = useState<string>("");
 
+  const educationScopeParams = useMemo(
+    () => buildEducationScopeSearchParams(educationScope).toString(),
+    [educationScope],
+  );
+  const educationScopeReady = isEducationScopeReadyForWrite(educationScope);
+  const educationScopeError = getEducationScopeWriteError(educationScope);
+
+  function handleEducationScopeChange(next: EducationScopeValue) {
+    setEducationScope(next);
+    setSelectedSubjectId("");
+    setSelectedTeacherId("");
+    setManualMeta(null);
+    setManualError(null);
+    setCellSelection({});
+    setActiveCell(null);
+    setSaveManualMessage(null);
+    setSaveManualError(null);
+    setUploadState({ status: "idle" });
+    setClassQuery("");
+  }
+
   // ---------- CHARGEMENT MÉTA COMMUNE ----------
   useEffect(() => {
+    let cancelled = false;
+
     async function loadMeta() {
       try {
         setMetaLoading(true);
         setMetaError(null);
-        const res = await fetch("/api/admin/timetables/meta", {
-          method: "GET",
-        });
+        const endpoint = educationScopeParams
+          ? `/api/admin/timetables/meta?${educationScopeParams}`
+          : "/api/admin/timetables/meta";
+        const res = await fetch(endpoint, { method: "GET" });
+        const json = (await res.json().catch(() => null)) as
+          | TimetablesMeta
+          | { message?: string; error?: string }
+          | null;
+
         if (!res.ok) {
-          setMetaError(
-            `Impossible de charger les données d'aide (HTTP ${res.status}).`
-          );
+          if (!cancelled) {
+            setMetaError(
+              json && "message" in json && json.message
+                ? json.message
+                : `Impossible de charger les données d'aide (HTTP ${res.status}).`,
+            );
+          }
           return;
         }
-        const json = (await res.json()) as TimetablesMeta;
-        setMeta(json);
+
+        if (!cancelled && json && "classes" in json) {
+          setMeta(json as TimetablesMeta);
+        }
       } catch (e: any) {
-        setMetaError(
-          e?.message || "Erreur lors du chargement des données d'aide."
-        );
+        if (!cancelled) {
+          setMetaError(
+            e?.message || "Erreur lors du chargement des données d'aide.",
+          );
+        }
       } finally {
-        setMetaLoading(false);
+        if (!cancelled) setMetaLoading(false);
       }
     }
+
     loadMeta();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [educationScopeParams]);
 
   // ---------- HELPERS CSV ----------
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -249,6 +304,10 @@ export default function ImportEmploisDuTempsPage() {
       const form = new FormData();
       form.append("file", file);
       form.append("overwrite", overwrite ? "1" : "0");
+      form.append("education_type", educationScope.educationType);
+      form.append("formation_code", educationScope.formationCode);
+      form.append("formation_level_code", educationScope.levelCode);
+      form.append("class_id", educationScope.classId);
 
       const res = await fetch("/api/admin/timetables/import", {
         method: "POST",
@@ -295,7 +354,8 @@ export default function ImportEmploisDuTempsPage() {
     try {
       setManualLoading(true);
       setManualError(null);
-      const params = new URLSearchParams({ subject_id: subjectId });
+      const params = buildEducationScopeSearchParams(educationScope);
+      params.set("subject_id", subjectId);
       if (teacherId) params.set("teacher_id", teacherId);
       const res = await fetch(
         `/api/admin/timetables/manual?${params.toString()}`,
@@ -545,6 +605,10 @@ export default function ImportEmploisDuTempsPage() {
           teacher_id: selectedTeacherId,
           items,
           clear_slots,
+          education_type: educationScope.educationType,
+          formation_code: educationScope.formationCode,
+          formation_level_code: educationScope.levelCode,
+          class_id: educationScope.classId,
         }),
       });
 
@@ -612,7 +676,8 @@ export default function ImportEmploisDuTempsPage() {
     );
   }, [classesForSelectedTeacher, classQuery]);
 
-  const canEditManual = !!selectedSubjectId && !!selectedTeacherId;
+  const canEditManual =
+    educationScopeReady && !!selectedSubjectId && !!selectedTeacherId;
 
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6 space-y-6">
@@ -659,6 +724,25 @@ export default function ImportEmploisDuTempsPage() {
           </div>
         </div>
       </header>
+
+      <EducationScopeFilter
+        value={educationScope}
+        onChange={handleEducationScopeChange}
+        classes={meta?.allClasses || meta?.classes || []}
+        allowAllEducationTypes={false}
+        showLevel
+        showClass
+        disabled={metaLoading}
+        title="Périmètre de l'emploi du temps"
+        classLabel="Classe précise (facultatif)"
+      />
+
+      {educationScopeError ? (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{educationScopeError}</p>
+        </div>
+      ) : null}
 
       {mode === "csv" && (
         <section className="grid gap-4 lg:grid-cols-3">
@@ -707,7 +791,7 @@ export default function ImportEmploisDuTempsPage() {
 
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3 text-xs text-slate-700 space-y-2">
               <div className="font-semibold text-slate-800 mb-1">
-                Aide : valeurs disponibles dans votre établissement
+                Aide : valeurs disponibles dans le périmètre sélectionné
               </div>
 
               {metaLoading && (
@@ -821,7 +905,12 @@ export default function ImportEmploisDuTempsPage() {
               <Button
                 type="button"
                 onClick={handleUpload}
-                disabled={!file || uploadState.status === "uploading"}
+                disabled={
+                  !educationScopeReady ||
+                  metaLoading ||
+                  !file ||
+                  uploadState.status === "uploading"
+                }
               >
                 {uploadState.status === "uploading" ? (
                   <>
@@ -925,7 +1014,11 @@ export default function ImportEmploisDuTempsPage() {
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     Matière
                   </label>
-                  <Select value={selectedSubjectId} onChange={handleChangeSubject}>
+                  <Select
+                    value={selectedSubjectId}
+                    onChange={handleChangeSubject}
+                    disabled={!educationScopeReady || metaLoading}
+                  >
                     <option value="">— Sélectionnez une matière —</option>
                     {meta?.subjects.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -942,7 +1035,11 @@ export default function ImportEmploisDuTempsPage() {
                   <Select
                     value={selectedTeacherId}
                     onChange={handleChangeTeacher}
-                    disabled={!selectedSubjectId || manualLoading}
+                    disabled={
+                      !educationScopeReady ||
+                      !selectedSubjectId ||
+                      manualLoading
+                    }
                   >
                     <option value="">
                       {selectedSubjectId
@@ -1006,7 +1103,12 @@ export default function ImportEmploisDuTempsPage() {
                   <Button
                     type="button"
                     onClick={handleSaveManual}
-                    disabled={savingManual || !selectedSubjectId || !selectedTeacherId}
+                    disabled={
+                      !educationScopeReady ||
+                      savingManual ||
+                      !selectedSubjectId ||
+                      !selectedTeacherId
+                    }
                   >
                     {savingManual ? (
                       <>

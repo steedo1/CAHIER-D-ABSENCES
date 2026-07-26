@@ -2,6 +2,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  classMatchesEducationScope,
+  getEducationScopeWriteError,
+  readEducationScopeFromRecord,
+  type EducationScopedClass,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,6 +179,20 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const file = form.get("file");
     const overwrite = String(form.get("overwrite") || "0") === "1";
+    const scope = readEducationScopeFromRecord({
+      education_type: form.get("education_type"),
+      formation_code: form.get("formation_code"),
+      formation_level_code: form.get("formation_level_code"),
+      class_id: form.get("class_id"),
+    });
+    const scopeError = getEducationScopeWriteError(scope);
+
+    if (scopeError) {
+      return NextResponse.json(
+        { error: "invalid_education_scope", message: scopeError },
+        { status: 400 },
+      );
+    }
 
     if (!(file instanceof Blob)) {
       return NextResponse.json(
@@ -236,10 +256,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Précharger les données de l'établissement
+    // Précharger les données de l'établissement. Les classes sont ensuite
+    // réduites au périmètre pédagogique choisi avant toute correspondance CSV.
     const [{ data: classes }, { data: subjects }, { data: profiles }, { data: periods }] =
       await Promise.all([
-        srv.from("classes").select("id,label").eq("institution_id", institution_id),
+        srv
+          .from("classes")
+          .select(
+            "id,label,level,education_type,formation_code,formation_level_code",
+          )
+          .eq("institution_id", institution_id),
         srv
           .from("institution_subjects")
           .select("id,custom_name,subjects:subject_id(name)")
@@ -254,13 +280,61 @@ export async function POST(req: NextRequest) {
           .eq("institution_id", institution_id),
       ]);
 
-    // Map classes avec normalisation "sans espace"
-    const classByLabel = new Map<string, string>();
-    (classes || []).forEach((c: any) => {
-      const key = normalizeClasseLabel(c.label);
-      if (key) {
-        classByLabel.set(key, c.id);
-      }
+    const scopedClasses = (classes || [])
+      .map((row: any) =>
+        ({
+          id: String(row.id),
+          label: String(row.label || ""),
+          level: row.level ? String(row.level) : null,
+          education_type: row.education_type ?? null,
+          formation_code: row.formation_code ?? null,
+          formation_level_code: row.formation_level_code ?? null,
+        }) satisfies EducationScopedClass,
+      )
+      .filter((row) => classMatchesEducationScope(row, scope));
+
+    if (scopedClasses.length === 0) {
+      return NextResponse.json(
+        {
+          error: "empty_education_scope",
+          message: "Aucune classe ne correspond au périmètre sélectionné.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const scopedClassIds = scopedClasses.map((row) => row.id);
+    const { data: assignments, error: assignmentErr } = await srv
+      .from("class_teachers")
+      .select("class_id,subject_id,teacher_id,end_date")
+      .eq("institution_id", institution_id)
+      .in("class_id", scopedClassIds)
+      .is("end_date", null);
+
+    if (assignmentErr) {
+      return NextResponse.json(
+        { error: "assignments_failed", message: assignmentErr.message },
+        { status: 400 },
+      );
+    }
+
+    const assignmentKeys = new Set(
+      (assignments || []).map(
+        (row: any) =>
+          `${String(row.class_id)}::${String(row.subject_id)}::${String(row.teacher_id)}`,
+      ),
+    );
+
+    // Plusieurs formations peuvent réutiliser le même libellé de classe.
+    // Le périmètre lève normalement l'ambiguïté ; si deux classes du même
+    // périmètre portent encore le même libellé, l'import refuse de deviner.
+    const classIdsByLabel = new Map<string, string[]>();
+    scopedClasses.forEach((row) => {
+      const key = normalizeClasseLabel(row.label);
+      if (!key) return;
+      const current = classIdsByLabel.get(key) || [];
+      current.push(row.id);
+      classIdsByLabel.set(key, current);
     });
 
     const subjectByName = new Map<string, string>();
@@ -365,13 +439,20 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const class_id = classByLabel.get(normClasse);
-      if (!class_id) {
+      const matchingClassIds = classIdsByLabel.get(normClasse) || [];
+      if (matchingClassIds.length === 0) {
         errors.push(
-          `Ligne ${lineNo}: classe "${classe}" introuvable dans l'établissement.`
+          `Ligne ${lineNo}: classe "${classe}" introuvable dans le périmètre pédagogique sélectionné.`
         );
         continue;
       }
+      if (matchingClassIds.length > 1) {
+        errors.push(
+          `Ligne ${lineNo}: le libellé de classe "${classe}" est ambigu dans ce périmètre. Renommez les classes concernées ou importez une classe précise.`
+        );
+        continue;
+      }
+      const class_id = matchingClassIds[0];
 
       const subject_id = subjectByName.get(normDisc);
       if (!subject_id) {
@@ -402,6 +483,13 @@ export async function POST(req: NextRequest) {
       if (!teacher_id) {
         errors.push(
           `Ligne ${lineNo}: enseignant "${ensIdent}" introuvable (ni nom ni téléphone ne correspondent dans l'établissement).`
+        );
+        continue;
+      }
+
+      if (!assignmentKeys.has(`${class_id}::${subject_id}::${teacher_id}`)) {
+        errors.push(
+          `Ligne ${lineNo}: l'enseignant "${ensIdent}" n'est pas affecté à la discipline "${disc}" dans la classe "${classe}" pour ce périmètre.`
         );
         continue;
       }
@@ -485,6 +573,7 @@ export async function POST(req: NextRequest) {
       skipped: errors.length,
       message: `${inserted} lignes importées, ${errors.length} ignorées.`,
       errors,
+      scope,
     });
   } catch (e: any) {
     return NextResponse.json(

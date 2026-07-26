@@ -125,3 +125,62 @@ export function buildEducationScopeSearchParams(
 
   return params;
 }
+
+export function readEducationScopeFromSearchParams(
+  params: URLSearchParams,
+): EducationScopeValue {
+  const rawType = clean(params.get("education_type"));
+  const educationType: EducationScopeType =
+    rawType === ALL_EDUCATION_TYPES || isEducationType(rawType)
+      ? rawType
+      : "general_secondary";
+
+  return {
+    educationType,
+    formationCode: clean(params.get("formation_code")),
+    levelCode: clean(
+      params.get("formation_level_code") || params.get("level_code"),
+    ),
+    classId: clean(params.get("class_id") || params.get("classId")),
+  };
+}
+
+export function readEducationScopeFromRecord(
+  input: Record<string, unknown> | null | undefined,
+): EducationScopeValue {
+  const rawType = clean(input?.education_type);
+  const educationType: EducationScopeType =
+    rawType === ALL_EDUCATION_TYPES || isEducationType(rawType)
+      ? rawType
+      : "general_secondary";
+
+  return {
+    educationType,
+    formationCode: clean(input?.formation_code),
+    levelCode: clean(
+      input?.formation_level_code || input?.level_code,
+    ),
+    classId: clean(input?.class_id || input?.classId),
+  };
+}
+
+export function getEducationScopeWriteError(
+  scope: EducationScopeValue,
+): string | null {
+  if (scope.educationType === ALL_EDUCATION_TYPES) {
+    return "Selectionnez un type d'enseignement precis avant cette operation.";
+  }
+
+  if (
+    scope.educationType !== "general_secondary" &&
+    !clean(scope.formationCode)
+  ) {
+    return "Selectionnez une formation ou une filiere avant cette operation.";
+  }
+
+  return null;
+}
+
+export function isEducationScopeReadyForWrite(scope: EducationScopeValue) {
+  return getEducationScopeWriteError(scope) === null;
+}
