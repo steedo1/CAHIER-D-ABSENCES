@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { localDateTime, scheduledSlotTimes } from "./teacher-session-rules.mjs";
 
 const MIGRATIONS = [
   { version: 1, name: "core", file: "0001_core.sql" },
@@ -10,6 +11,7 @@ const MIGRATIONS = [
   { version: 4, name: "multi_school_partitioning", file: "0004_multi_school_partitioning.sql" },
   { version: 5, name: "teacher_attendance_operations", file: "0005_teacher_attendance_operations.sql" },
   { version: 6, name: "teacher_session_open", file: "0006_teacher_session_open.sql" },
+  { version: 7, name: "teacher_session_close_transition", file: "0007_teacher_session_close_transition.sql" },
 ] as const;
 
 export type RelayDatabase = Database.Database;
@@ -56,8 +58,10 @@ function migrate(db: RelayDatabase) {
     const file = fileURLToPath(new URL(`../migrations/${migration.file}`, import.meta.url));
     const sql = readFileSync(file, "utf8");
     if (migration.version === 4) assertSchema3CanMigrateTo4(db);
+    if (migration.version === 7) assertSchema6CanMigrateTo7(db);
     const apply = db.transaction(() => {
       db.exec(sql);
+      if (migration.version === 7) finalizeSchema7Migration(db);
       db.prepare(
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
       ).run(migration.version, migration.name, new Date().toISOString());
@@ -80,6 +84,129 @@ function migrate(db: RelayDatabase) {
 
   const violations = db.pragma("foreign_key_check") as unknown[];
   if (violations.length > 0) throw new Error("relay_database_foreign_key_violation");
+}
+
+function assertSchema6CanMigrateTo7(db: RelayDatabase) {
+  const rows = db.prepare(`
+    SELECT ts.id, ts.institution_id, ts.class_id, ts.period_id, ts.started_at,
+           COALESCE(NULLIF(TRIM(i.timezone), ''), 'Africa/Abidjan') AS timezone
+    FROM teacher_sessions ts
+    JOIN institutions i ON i.id = ts.institution_id
+    WHERE ts.deleted_at IS NULL AND ts.period_id IS NOT NULL
+    ORDER BY ts.institution_id, ts.id
+  `).all() as Array<{
+    id: string;
+    institution_id: string;
+    class_id: string;
+    period_id: string;
+    started_at: string;
+    timezone: string;
+  }>;
+  const occupied = new Map<string, string>();
+  for (const row of rows) {
+    let sessionDate: string;
+    try {
+      sessionDate = localDateTime(row.started_at, row.timezone).ymd;
+    } catch {
+      throw new Error(
+        `migration_v7_preflight:session_time_invalid:institution_id=${row.institution_id}` +
+        `:session_id=${row.id}`,
+      );
+    }
+    const key = [row.institution_id, row.class_id, sessionDate, row.period_id].join("\u0000");
+    const previous = occupied.get(key);
+    if (previous) {
+      throw new Error(
+        `migration_v7_preflight:duplicate_class_date_period` +
+        `:institution_id=${row.institution_id}:class_id=${row.class_id}` +
+        `:session_date=${sessionDate}:period_id=${row.period_id}` +
+        `:session_ids=${previous},${row.id}`,
+      );
+    }
+    occupied.set(key, row.id);
+  }
+}
+
+function finalizeSchema7Migration(db: RelayDatabase) {
+  const rows = db.prepare(`
+    SELECT ts.id, ts.institution_id, ts.started_at, ts.actual_call_at,
+           ts.ended_at, ts.period_id,
+           COALESCE(NULLIF(TRIM(i.timezone), ''), 'Africa/Abidjan') AS timezone,
+           p.start_time, p.end_time,
+           EXISTS(
+             SELECT 1 FROM teacher_session_open_operations op
+             WHERE op.institution_id = ts.institution_id
+               AND op.local_session_id = ts.id
+           ) AS managed_locally,
+           EXISTS(
+             SELECT 1 FROM teacher_attendance_operations attendance
+             WHERE attendance.institution_id = ts.institution_id
+               AND attendance.session_id = ts.id
+           ) AS has_attendance
+    FROM teacher_sessions ts
+    JOIN institutions i ON i.id = ts.institution_id
+    LEFT JOIN institution_periods p
+      ON p.institution_id = ts.institution_id AND p.id = ts.period_id
+    ORDER BY ts.institution_id, ts.id
+  `).all() as Array<{
+    id: string;
+    institution_id: string;
+    started_at: string;
+    actual_call_at: string | null;
+    ended_at: string | null;
+    period_id: string | null;
+    timezone: string;
+    start_time: string | null;
+    end_time: string | null;
+    managed_locally: number;
+    has_attendance: number;
+  }>;
+  const update = db.prepare(`
+    UPDATE teacher_sessions
+    SET session_date = ?, session_state = ?, scheduled_start_at = ?,
+        requested_start_at = ?, actual_started_at = ?, scheduled_end_at = ?,
+        finalizing_at = ?, grace_expires_at = ?, closed_at = ?,
+        payable_end_at = ?, closure_source = ?, closure_confirmation = ?,
+        requires_payroll_review = 0, local_lifecycle_managed = ?,
+        attendance_snapshot_status = ?
+    WHERE institution_id = ? AND id = ?
+  `);
+  for (const row of rows) {
+    const sessionDate = localDateTime(row.started_at, row.timezone).ymd;
+    const schedule = row.period_id && row.start_time && row.end_time
+      ? scheduledSlotTimes(sessionDate, row.start_time, row.end_time, row.timezone)
+      : null;
+    const scheduledStartAt = schedule?.scheduledStartAt || row.started_at;
+    const scheduledEndAt = schedule?.scheduledEndAt || row.ended_at || row.started_at;
+    const ended = row.ended_at ? new Date(row.ended_at) : null;
+    const scheduledEnd = new Date(scheduledEndAt);
+    const payableEndAt = ended && Number.isFinite(ended.getTime())
+      ? new Date(Math.min(ended.getTime(), scheduledEnd.getTime())).toISOString()
+      : null;
+    update.run(
+      sessionDate,
+      row.ended_at ? "closed" : "open",
+      scheduledStartAt,
+      row.actual_call_at || row.started_at,
+      row.actual_call_at || row.started_at,
+      scheduledEndAt,
+      row.ended_at ? scheduledEndAt : null,
+      schedule?.graceExpiresAt || new Date(scheduledEnd.getTime() + 10 * 60_000).toISOString(),
+      row.ended_at,
+      payableEndAt,
+      row.ended_at ? "cloud_existing" : null,
+      row.ended_at ? "confirmed" : null,
+      row.managed_locally ? 1 : 0,
+      row.has_attendance ? "partial" : "none",
+      row.institution_id,
+      row.id,
+    );
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX teacher_sessions_one_class_date_period
+      ON teacher_sessions(institution_id, class_id, session_date, period_id)
+      WHERE deleted_at IS NULL AND session_date IS NOT NULL AND period_id IS NOT NULL;
+  `);
 }
 
 export function schemaVersion(db: RelayDatabase) {

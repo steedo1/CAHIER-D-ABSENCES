@@ -13,6 +13,12 @@ import {
   openTeacherAttendanceSession,
   TeacherSessionOpenError,
 } from "./teacher-session-open.mjs";
+import {
+  closeTeacherAttendanceSession,
+  maintainTeacherAttendanceSessions,
+  TeacherSessionLifecycleError,
+  transitionTeacherAttendanceSession,
+} from "./teacher-session-lifecycle.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 
@@ -21,13 +27,15 @@ const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
 const MAX_CONNECTIVITY_CHECK_BODY_BYTES = 4 * 1024;
 const MAX_TEACHER_ATTENDANCE_BODY_BYTES = 128 * 1024;
 const MAX_TEACHER_SESSION_OPEN_BODY_BYTES = 16 * 1024;
+const MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES = 16 * 1024;
+const SESSION_MAINTENANCE_INTERVAL_MS = 30_000;
 
 export function createRelayServer(
   config: RelayConfig,
   store: RelayStore,
   options: { now?: () => Date } = {},
 ) {
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     secureHeaders(response);
     applyCors(request, response, config);
     if (request.method === "OPTIONS") {
@@ -37,6 +45,13 @@ export function createRelayServer(
     }
     try {
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+      if (
+        config.teacherAttendanceWritesEnabled === true &&
+        url.pathname !== "/health" &&
+        url.pathname !== "/v1/teacher/connectivity-check"
+      ) {
+        maintainTeacherAttendanceSessions(store.db, options.now?.() ?? new Date());
+      }
       if (request.method === "GET" && url.pathname === "/health") {
         return json(response, 200, { ok: true });
       }
@@ -108,9 +123,72 @@ export function createRelayServer(
           return json(response, result.idempotent ? 200 : 201, result);
         } catch (error) {
           if (error instanceof TeacherSessionOpenError) {
-            return json(response, error.status, { error: error.code });
+            return json(response, error.status, {
+              error: error.code,
+              ...(error.details ? { details: error.details } : {}),
+            });
           }
           return json(response, 500, { error: "teacher_session_open_failed" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/attendance-sessions/close") {
+        const body = await readJson(request, MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        const requestNow = options.now?.() ?? new Date();
+        let teacher;
+        try {
+          teacher = authenticateRelayTeacherAccess(store.db, token, requestNow);
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+          return json(response, 403, { error: "institution_not_allowed" });
+        }
+        if (config.teacherAttendanceWritesEnabled !== true) {
+          return json(response, 503, { error: "teacher_attendance_writes_disabled" });
+        }
+        try {
+          const result = closeTeacherAttendanceSession(store.db, body, teacher, requestNow);
+          return json(response, result.idempotent ? 200 : 202, result);
+        } catch (error) {
+          if (error instanceof TeacherSessionLifecycleError) {
+            return json(response, error.status, {
+              error: error.code,
+              ...(error.details ? { details: error.details } : {}),
+            });
+          }
+          return json(response, 500, { error: "teacher_session_close_failed" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/attendance-sessions/transition") {
+        const body = await readJson(request, MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        const requestNow = options.now?.() ?? new Date();
+        let teacher;
+        try {
+          teacher = authenticateRelayTeacherAccess(store.db, token, requestNow);
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+          return json(response, 403, { error: "institution_not_allowed" });
+        }
+        if (config.teacherAttendanceWritesEnabled !== true) {
+          return json(response, 503, { error: "teacher_attendance_writes_disabled" });
+        }
+        try {
+          const result = transitionTeacherAttendanceSession(store.db, body, teacher, requestNow);
+          return json(response, result.idempotent ? 200 : 201, result);
+        } catch (error) {
+          if (error instanceof TeacherSessionLifecycleError) {
+            return json(response, error.status, {
+              error: error.code,
+              ...(error.details ? { details: error.details } : {}),
+            });
+          }
+          return json(response, 500, { error: "teacher_session_transition_failed" });
         }
       }
       if (request.method === "POST" && url.pathname === "/v1/attendance/presence-proof") {
@@ -194,6 +272,22 @@ export function createRelayServer(
       return json(response, status, { error: message });
     }
   });
+  let maintenanceTimer: ReturnType<typeof setInterval> | null = null;
+  if (config.teacherAttendanceWritesEnabled === true) {
+    maintainTeacherAttendanceSessions(store.db, options.now?.() ?? new Date());
+    maintenanceTimer = setInterval(() => {
+      try {
+        maintainTeacherAttendanceSessions(store.db, options.now?.() ?? new Date());
+      } catch {
+        // La requête suivante réessaiera ; aucun secret ni détail SQLite n'est journalisé.
+      }
+    }, SESSION_MAINTENANCE_INTERVAL_MS);
+    maintenanceTimer.unref();
+  }
+  server.once("close", () => {
+    if (maintenanceTimer) clearInterval(maintenanceTimer);
+  });
+  return server;
 }
 
 function normalizedInstitutionCode(value: unknown) {

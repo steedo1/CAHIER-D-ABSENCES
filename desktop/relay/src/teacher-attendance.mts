@@ -6,6 +6,7 @@ import {
   verifyAttendancePresenceProof,
 } from "./presence-proof.mjs";
 import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import { maintainTeacherAttendanceSessions } from "./teacher-session-lifecycle.mjs";
 
 const PROTOCOL_VERSION = 1 as const;
 const OPERATION_TYPE = "attendance.call.submit" as const;
@@ -45,6 +46,23 @@ type SessionRow = {
   server_version: number;
   updated_at: string;
   deleted_at: string | null;
+  session_date: string | null;
+  session_state: "open" | "finalizing" | "closed";
+  scheduled_start_at: string | null;
+  requested_start_at: string | null;
+  actual_started_at: string | null;
+  scheduled_end_at: string | null;
+  finalizing_at: string | null;
+  grace_expires_at: string | null;
+  closed_at: string | null;
+  payable_end_at: string | null;
+  closure_source: string | null;
+  closure_confirmation: string | null;
+  requires_payroll_review: number;
+  local_lifecycle_managed: number;
+  last_attendance_operation_id: string | null;
+  attendance_durable_at: string | null;
+  attendance_snapshot_status: "none" | "partial" | "complete";
 };
 
 type PeriodRow = {
@@ -274,7 +292,13 @@ function validateBusinessRules(
   const session = db.prepare(`
     SELECT id, institution_id, client_session_id, class_id, subject_id, teacher_id,
            period_id, started_at, actual_call_at, ended_at, origin,
-           server_version, updated_at, deleted_at
+           server_version, updated_at, deleted_at, session_date,
+           session_state, scheduled_start_at, requested_start_at,
+           actual_started_at, scheduled_end_at, finalizing_at,
+           grace_expires_at, closed_at, payable_end_at, closure_source,
+           closure_confirmation, requires_payroll_review,
+           local_lifecycle_managed, last_attendance_operation_id,
+           attendance_durable_at, attendance_snapshot_status
     FROM teacher_sessions
     WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
   `).get(teacher.institution_id, operation.session_id) as SessionRow | undefined;
@@ -288,7 +312,9 @@ function validateBusinessRules(
   if (session.period_id && session.period_id !== operation.period_id) {
     throw new TeacherAttendanceError(403, "period_mismatch");
   }
-  if (session.ended_at) throw new TeacherAttendanceError(409, "session_closed");
+  if (session.ended_at || session.session_state === "closed") {
+    throw new TeacherAttendanceError(409, "session_closed");
+  }
 
   const classRow = db.prepare(`
     SELECT 1 FROM classes
@@ -309,11 +335,14 @@ function validateBusinessRules(
   const periodStart = timeMinutes(period.start_time);
   const periodEnd = timeMinutes(period.end_time);
   if (periodEnd <= periodStart) throw new TeacherAttendanceError(409, "period_time_invalid");
-  if (
+  const graceExpiresMs = new Date(session.grace_expires_at || "").getTime();
+  const canFinalize = session.session_state === "finalizing" &&
+    Number.isFinite(graceExpiresMs) && now.getTime() < graceExpiresMs;
+  if (!canFinalize && (
     !weekdayMatches(period.weekday, localNow.weekday) ||
     localNow.minutes < periodStart ||
     localNow.minutes >= periodEnd
-  ) {
+  )) {
     throw new TeacherAttendanceError(409, "attendance_outside_slot");
   }
   if (
@@ -450,6 +479,7 @@ export function secureTeacherAttendanceOperation(
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ): TeacherAttendanceResult {
   const operation = parseOperation(raw);
+  maintainTeacherAttendanceSessions(db, now);
   const operationFingerprint = fingerprint(operation, teacher);
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) return idempotentResult(operation, teacher, operationFingerprint, existing);
@@ -549,17 +579,55 @@ export function secureTeacherAttendanceOperation(
     }
     options.faultInjector?.("after_outbox");
 
+    const activeRosterCount = Number((db.prepare(`
+      SELECT COUNT(DISTINCT enrollment.student_id) AS count
+      FROM class_enrollments enrollment
+      JOIN students student
+        ON student.institution_id = enrollment.institution_id
+       AND student.id = enrollment.student_id
+      WHERE enrollment.institution_id = ? AND enrollment.class_id = ?
+        AND enrollment.deleted_at IS NULL AND student.deleted_at IS NULL
+        AND student.is_active = 1
+        AND (enrollment.start_date IS NULL OR enrollment.start_date <= ?)
+        AND (enrollment.end_date IS NULL OR enrollment.end_date >= ?)
+    `).get(
+      teacher.institution_id,
+      session.class_id,
+      localNow.ymd,
+      localNow.ymd,
+    ) as { count: number }).count || 0);
+    const snapshotStatus = normalizedMarks.length >= activeRosterCount && activeRosterCount > 0
+      ? "complete"
+      : "partial";
     db.prepare(`
       UPDATE teacher_sessions
       SET actual_call_at = COALESCE(actual_call_at, ?),
           period_id = COALESCE(period_id, ?),
+          last_attendance_operation_id = ?,
+          attendance_durable_at = ?,
+          attendance_snapshot_status = ?,
           updated_at = ?
       WHERE institution_id = ? AND id = ?
-    `).run(acceptedAt, operation.period_id, acceptedAt, teacher.institution_id, session.id);
+    `).run(
+      acceptedAt,
+      operation.period_id,
+      operation.operation_id,
+      acceptedAt,
+      snapshotStatus,
+      acceptedAt,
+      teacher.institution_id,
+      session.id,
+    );
     const materializedSession = db.prepare(`
       SELECT institution_id, client_session_id, class_id, subject_id, teacher_id,
              period_id, started_at, actual_call_at, ended_at, origin,
-             server_version, updated_at, deleted_at
+             server_version, updated_at, deleted_at, session_date,
+             session_state, scheduled_start_at, requested_start_at,
+             actual_started_at, scheduled_end_at, finalizing_at,
+             grace_expires_at, closed_at, payable_end_at, closure_source,
+             closure_confirmation, requires_payroll_review,
+             local_lifecycle_managed, last_attendance_operation_id,
+             attendance_durable_at, attendance_snapshot_status
       FROM teacher_sessions WHERE institution_id = ? AND id = ?
     `).get(teacher.institution_id, session.id) as Record<string, unknown>;
     writeDirtyRecord(db, {

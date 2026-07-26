@@ -3,6 +3,14 @@ import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson } from "./json.mjs";
 import { issueAttendancePresenceProofForTeacher } from "./presence-proof.mjs";
 import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import {
+  activePreviousSessionConflict,
+  maintainTeacherAttendanceSessions,
+} from "./teacher-session-lifecycle.mjs";
+import {
+  resolveTeacherScheduledSlot,
+  TeacherSessionRuleError,
+} from "./teacher-session-rules.mjs";
 
 const PROTOCOL_VERSION = 1 as const;
 const OPERATION_TYPE = "attendance.session.open" as const;
@@ -41,6 +49,23 @@ type SessionRow = {
   server_version: number;
   updated_at: string;
   deleted_at: string | null;
+  session_date: string | null;
+  session_state: "open" | "finalizing" | "closed";
+  scheduled_start_at: string | null;
+  requested_start_at: string | null;
+  actual_started_at: string | null;
+  scheduled_end_at: string | null;
+  finalizing_at: string | null;
+  grace_expires_at: string | null;
+  closed_at: string | null;
+  payable_end_at: string | null;
+  closure_source: string | null;
+  closure_confirmation: string | null;
+  requires_payroll_review: number;
+  local_lifecycle_managed: number;
+  last_attendance_operation_id: string | null;
+  attendance_durable_at: string | null;
+  attendance_snapshot_status: string;
 };
 
 type StoredReceipt = {
@@ -72,6 +97,9 @@ export type TeacherSessionOpenResult = {
     period_id: string;
     started_at: string;
     actual_call_at: string | null;
+    scheduled_end_at: string | null;
+    grace_expires_at: string | null;
+    session_state: "open" | "finalizing" | "closed";
   };
   presence_proof: string;
   proof_expires_at: string;
@@ -79,7 +107,11 @@ export type TeacherSessionOpenResult = {
 };
 
 export class TeacherSessionOpenError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly details: Record<string, unknown> | null = null,
+  ) {
     super(code);
   }
 }
@@ -156,7 +188,13 @@ function sessionRow(db: RelayDatabase, institutionId: string, sessionId: string)
   return db.prepare(`
     SELECT id, client_session_id, class_id, subject_id, teacher_id, period_id,
            started_at, actual_call_at, ended_at, origin, server_version,
-           updated_at, deleted_at
+           updated_at, deleted_at, session_date, session_state,
+           scheduled_start_at, requested_start_at, actual_started_at,
+           scheduled_end_at, finalizing_at, grace_expires_at, closed_at,
+           payable_end_at, closure_source, closure_confirmation,
+           requires_payroll_review, local_lifecycle_managed,
+           last_attendance_operation_id, attendance_durable_at,
+           attendance_snapshot_status
     FROM teacher_sessions
     WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
   `).get(institutionId, sessionId) as SessionRow | undefined;
@@ -253,99 +291,84 @@ function validateBusinessRules(
   teacher: AuthenticatedRelayTeacher,
   now: Date,
 ) {
-  const institution = db.prepare(`
-    SELECT timezone FROM institutions
-    WHERE id = ? AND deleted_at IS NULL
-  `).get(teacher.institution_id) as { timezone: string } | undefined;
-  if (!institution) throw new TeacherSessionOpenError(404, "institution_not_initialized");
-
-  const classRow = db.prepare(`
-    SELECT 1 FROM classes
-    WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
-  `).get(teacher.institution_id, operation.class_id);
-  if (!classRow) throw new TeacherSessionOpenError(404, "class_not_found");
-
-  const period = db.prepare(`
-    SELECT id, weekday, start_time, end_time
-    FROM institution_periods
-    WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
-  `).get(teacher.institution_id, operation.period_id) as PeriodRow | undefined;
-  if (!period) throw new TeacherSessionOpenError(404, "period_not_found");
-
-  const timezone = String(institution.timezone || "Africa/Abidjan");
-  const localNow = localDateTime(now, timezone);
-  if (localNow.weekday === 0) {
-    throw new TeacherSessionOpenError(409, "attendance_sunday_not_allowed");
-  }
-  const periodStart = timeMinutes(period.start_time);
-  const periodEnd = timeMinutes(period.end_time);
-  if (periodEnd <= periodStart) {
-    throw new TeacherSessionOpenError(409, "period_time_invalid");
-  }
-  if (
-    !weekdayMatches(period.weekday, localNow.weekday) ||
-    localNow.minutes < periodStart ||
-    localNow.minutes >= periodEnd
-  ) {
-    throw new TeacherSessionOpenError(409, "attendance_outside_slot");
-  }
-
-  const timetables = db.prepare(`
-    SELECT id, subject_id
-    FROM teacher_timetables
-    WHERE institution_id = ? AND teacher_id = ? AND class_id = ?
-      AND period_id = ? AND deleted_at IS NULL
-      AND (weekday = ? OR (? = 0 AND weekday = 7))
-    ORDER BY id
-  `).all(
-    teacher.institution_id,
-    teacher.actor_profile_id,
-    operation.class_id,
-    operation.period_id,
-    localNow.weekday,
-    localNow.weekday,
-  ) as TimetableRow[];
-  if (timetables.length === 0) {
-    throw new TeacherSessionOpenError(403, "teacher_not_scheduled_for_slot");
-  }
-  if (timetables.length > 1) {
-    throw new TeacherSessionOpenError(409, "teacher_timetable_ambiguous");
-  }
-  const timetable = timetables[0];
-  if (!timetable) throw new TeacherSessionOpenError(409, "teacher_timetable_ambiguous");
-
-  const openSessions = db.prepare(`
-    SELECT id, client_session_id, class_id, subject_id, teacher_id, period_id,
-           started_at, actual_call_at, ended_at, origin, server_version,
-           updated_at, deleted_at
-    FROM teacher_sessions
-    WHERE institution_id = ? AND teacher_id = ?
-      AND ended_at IS NULL AND deleted_at IS NULL
-    ORDER BY started_at, id
-  `).all(teacher.institution_id, teacher.actor_profile_id) as SessionRow[];
-  let reusable: SessionRow | null = null;
-  for (const session of openSessions) {
-    const localSession = localDateTime(session.started_at, timezone);
-    const sameSlot =
-      localSession.ymd === localNow.ymd && session.period_id === operation.period_id;
-    if (
-      sameSlot &&
-      session.class_id === operation.class_id &&
-      session.subject_id === timetable.subject_id
-    ) {
-      reusable = session;
-      continue;
+  let schedule;
+  try {
+    schedule = resolveTeacherScheduledSlot(db, {
+      teacher,
+      classId: operation.class_id,
+      periodId: operation.period_id,
+      now,
+    });
+  } catch (error) {
+    if (error instanceof TeacherSessionRuleError) {
+      throw new TeacherSessionOpenError(error.status, error.code, error.details);
     }
-    if (sameSlot) throw new TeacherSessionOpenError(409, "session_slot_conflict");
-    throw new TeacherSessionOpenError(409, "concurrent_session_open");
+    throw error;
+  }
+
+  const existingSlot = db.prepare(`
+    SELECT id FROM teacher_sessions
+    WHERE institution_id = ? AND class_id = ? AND session_date = ? AND period_id = ?
+      AND deleted_at IS NULL
+    LIMIT 1
+  `).get(
+    teacher.institution_id,
+    operation.class_id,
+    schedule.sessionDate,
+    operation.period_id,
+  ) as { id: string } | undefined;
+  let reusable: SessionRow | null = null;
+  if (existingSlot) {
+    const existing = sessionRow(db, teacher.institution_id, existingSlot.id);
+    if (!existing) throw new TeacherSessionOpenError(409, "session_slot_conflict");
+    if (existing.session_state === "closed" || existing.ended_at) {
+      throw new TeacherSessionOpenError(409, "session_slot_already_closed");
+    }
+    if (
+      existing.teacher_id !== teacher.actor_profile_id ||
+      existing.subject_id !== schedule.timetable.subject_id
+    ) {
+      throw new TeacherSessionOpenError(409, "session_slot_conflict");
+    }
+    reusable = existing;
+  }
+
+  if (!reusable) {
+    const previous = activePreviousSessionConflict(db, {
+      teacher,
+      classId: operation.class_id,
+      targetPeriodId: operation.period_id,
+      sessionDate: schedule.sessionDate,
+      scheduledStartAt: schedule.scheduledStartAt,
+    });
+    if (previous) {
+      throw new TeacherSessionOpenError(409, previous.code, previous.details);
+    }
+    const residualConcurrent = db.prepare(`
+      SELECT id FROM teacher_sessions
+      WHERE institution_id = ? AND teacher_id = ?
+        AND ended_at IS NULL AND deleted_at IS NULL
+        AND (session_date IS NULL OR scheduled_end_at IS NULL)
+      ORDER BY started_at, id
+      LIMIT 1
+    `).get(
+      teacher.institution_id,
+      teacher.actor_profile_id,
+    ) as { id: string } | undefined;
+    if (residualConcurrent) {
+      throw new TeacherSessionOpenError(409, "concurrent_session_open");
+    }
   }
 
   return {
-    localNow,
-    period,
-    timetable,
+    localNow: { ymd: schedule.sessionDate, weekday: schedule.weekday },
+    period: schedule.period,
+    timetable: schedule.timetable,
     reusable,
-    startedAt: slotStartIso(localNow.ymd, period.start_time, timezone),
+    startedAt: schedule.scheduledStartAt,
+    scheduledEndAt: schedule.scheduledEndAt,
+    graceExpiresAt: schedule.graceExpiresAt,
+    sessionDate: schedule.sessionDate,
   };
 }
 
@@ -388,6 +411,12 @@ function resultFromReceipt(
   }
   const session = sessionRow(db, teacher.institution_id, receipt.local_session_id);
   if (!session) throw new TeacherSessionOpenError(409, "local_session_mapping_missing");
+  if (session.session_state === "closed" || session.ended_at) {
+    throw new TeacherSessionOpenError(409, "session_slot_already_closed");
+  }
+  if (session.session_state === "finalizing") {
+    throw new TeacherSessionOpenError(409, "previous_session_owner_must_confirm");
+  }
   const proof = proofForSession(db, teacher, session, now);
   return {
     ok: true,
@@ -402,6 +431,9 @@ function resultFromReceipt(
       period_id: session.period_id || operation.period_id,
       started_at: session.started_at,
       actual_call_at: session.actual_call_at,
+      scheduled_end_at: session.scheduled_end_at,
+      grace_expires_at: session.grace_expires_at,
+      session_state: session.session_state,
     },
     presence_proof: proof.proof,
     proof_expires_at: proof.expires_at,
@@ -428,6 +460,20 @@ function sessionPayload(
     server_version: session.server_version,
     updated_at: session.updated_at,
     deleted_at: session.deleted_at,
+    session_date: session.session_date,
+    session_state: session.session_state,
+    scheduled_start_at: session.scheduled_start_at,
+    requested_start_at: session.requested_start_at,
+    actual_started_at: session.actual_started_at,
+    scheduled_end_at: session.scheduled_end_at,
+    finalizing_at: session.finalizing_at,
+    grace_expires_at: session.grace_expires_at,
+    closed_at: session.closed_at,
+    payable_end_at: session.payable_end_at,
+    closure_source: session.closure_source,
+    closure_confirmation: session.closure_confirmation,
+    requires_payroll_review: session.requires_payroll_review === 1,
+    attendance_snapshot_status: session.attendance_snapshot_status,
     local_session_id: session.id,
     remote_session_id: null,
     open_operation_id: input.operationId,
@@ -443,6 +489,7 @@ export function openTeacherAttendanceSession(
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ): TeacherSessionOpenResult {
   const operation = parseOperation(raw);
+  maintainTeacherAttendanceSessions(db, now);
   const operationFingerprint = fingerprint(operation, teacher);
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) {
@@ -463,8 +510,15 @@ export function openTeacherAttendanceSession(
         INSERT INTO teacher_sessions(
           id, institution_id, client_session_id, class_id, subject_id,
           teacher_id, period_id, started_at, actual_call_at, ended_at,
-          origin, server_version, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'teacher', 0, ?, NULL)
+          origin, server_version, updated_at, deleted_at,
+          session_date, session_state, scheduled_start_at, requested_start_at,
+          actual_started_at, scheduled_end_at, finalizing_at, grace_expires_at,
+          closed_at, payable_end_at, closure_source, closure_confirmation,
+          requires_payroll_review, local_lifecycle_managed,
+          attendance_snapshot_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'teacher', 0, ?, NULL,
+                  ?, 'open', ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL,
+                  0, 1, 'none')
       `).run(
         sessionId,
         teacher.institution_id,
@@ -476,6 +530,35 @@ export function openTeacherAttendanceSession(
         business.startedAt,
         acceptedAt,
         acceptedAt,
+        business.sessionDate,
+        business.startedAt,
+        acceptedAt,
+        acceptedAt,
+        business.scheduledEndAt,
+        business.graceExpiresAt,
+      );
+    } else {
+      db.prepare(`
+        UPDATE teacher_sessions
+        SET session_date = COALESCE(session_date, ?),
+            scheduled_start_at = COALESCE(scheduled_start_at, ?),
+            requested_start_at = COALESCE(requested_start_at, ?),
+            actual_started_at = COALESCE(actual_started_at, actual_call_at, ?),
+            scheduled_end_at = COALESCE(scheduled_end_at, ?),
+            grace_expires_at = COALESCE(grace_expires_at, ?),
+            local_lifecycle_managed = 1,
+            updated_at = ?
+        WHERE institution_id = ? AND id = ?
+      `).run(
+        business.sessionDate,
+        business.startedAt,
+        acceptedAt,
+        acceptedAt,
+        business.scheduledEndAt,
+        business.graceExpiresAt,
+        acceptedAt,
+        teacher.institution_id,
+        sessionId,
       );
     }
     options.faultInjector?.("after_session");
@@ -552,6 +635,40 @@ export function openTeacherAttendanceSession(
       );
       options.faultInjector?.("after_outbox");
 
+      const priorClose = db.prepare(`
+        SELECT closure.operation_id
+        FROM teacher_session_closure_events closure
+        JOIN teacher_sessions previous
+          ON previous.institution_id = closure.institution_id
+         AND previous.id = closure.session_id
+        JOIN sync_outbox parent
+          ON parent.institution_id = closure.institution_id
+         AND parent.operation_id = closure.operation_id
+        WHERE previous.institution_id = ? AND previous.class_id = ?
+          AND previous.session_date = ? AND previous.period_id <> ?
+          AND previous.scheduled_end_at <= ?
+        ORDER BY previous.scheduled_end_at DESC, previous.id
+        LIMIT 1
+      `).get(
+        teacher.institution_id,
+        operation.class_id,
+        business.sessionDate,
+        operation.period_id,
+        business.startedAt,
+      ) as { operation_id: string } | undefined;
+      if (priorClose) {
+        db.prepare(`
+          INSERT OR IGNORE INTO sync_outbox_dependencies(
+            institution_id, operation_id, depends_on_operation_id, created_at
+          ) VALUES (?, ?, ?, ?)
+        `).run(
+          teacher.institution_id,
+          operation.operation_id,
+          priorClose.operation_id,
+          acceptedAt,
+        );
+      }
+
       db.prepare(`
         INSERT INTO sync_records(
           institution_id, entity_type, entity_id, payload_json, server_version,
@@ -603,6 +720,9 @@ export function openTeacherAttendanceSession(
         period_id: session.period_id || operation.period_id,
         started_at: session.started_at,
         actual_call_at: session.actual_call_at,
+        scheduled_end_at: session.scheduled_end_at,
+        grace_expires_at: session.grace_expires_at,
+        session_state: session.session_state,
       },
       presence_proof: proof.proof,
       proof_expires_at: proof.expires_at,

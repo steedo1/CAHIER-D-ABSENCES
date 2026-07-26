@@ -37,6 +37,36 @@ export function adminDashboard(
     pending_absence: rows.filter((row) => row.status === "pending_absence").length,
     justified_absence: rows.filter((row) => row.status === "justified_absence").length,
   };
+  const sessionReviews = db.prepare(`
+    SELECT ts.id AS session_id,
+           COALESCE(NULLIF(TRIM(profile.display_name), ''), 'Enseignant') AS teacher_name,
+           subject.name AS subject_name,
+           class.label AS class_label,
+           period.label AS period_label,
+           period.start_time, period.end_time,
+           ts.closure_source, ts.closure_confirmation,
+           ts.scheduled_start_at, ts.scheduled_end_at,
+           ts.payable_end_at, ts.attendance_snapshot_status,
+           MAX(0, CAST(ROUND(
+             (julianday(ts.payable_end_at) - julianday(ts.scheduled_start_at)) * 24 * 60
+           ) AS INTEGER)) AS proposed_minutes
+    FROM teacher_sessions ts
+    JOIN profiles profile
+      ON profile.institution_id = ts.institution_id AND profile.id = ts.teacher_id
+    JOIN subjects subject
+      ON subject.institution_id = ts.institution_id AND subject.id = ts.subject_id
+    JOIN classes class
+      ON class.institution_id = ts.institution_id AND class.id = ts.class_id
+    LEFT JOIN institution_periods period
+      ON period.institution_id = ts.institution_id AND period.id = ts.period_id
+    WHERE ts.institution_id = ? AND ts.requires_payroll_review = 1
+      AND ts.deleted_at IS NULL
+    ORDER BY ts.closed_at DESC, ts.id
+  `).all(options.institutionId).map((row) => ({
+    ...(row as Record<string, unknown>),
+    proposed_amount: null,
+    proposed_amount_status: "cloud_calculation_required",
+  }));
 
   return {
     source: "relay",
@@ -66,6 +96,10 @@ export function adminDashboard(
     },
     attendance,
     attendance_rows: rows,
+    session_reviews: {
+      count: sessionReviews.length,
+      items: sessionReviews,
+    },
     sync: {
       pending_operations: scalar(
         "SELECT COUNT(*) AS count FROM sync_outbox WHERE institution_id = ? AND state IN ('pending', 'sending')",

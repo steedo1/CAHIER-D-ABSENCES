@@ -1,6 +1,7 @@
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson } from "./json.mjs";
 import type { SyncAction, SyncEntityType } from "./types.mjs";
+import { localDateTime, scheduledSlotTimes } from "./teacher-session-rules.mjs";
 
 type EntitySpec = {
   table: string;
@@ -320,6 +321,9 @@ export function materializeEntity(
     else if (jsonColumns.has(column)) values[column] = normalizeJson(raw);
     else values[column] = normalizeStoredValue(raw);
   }
+  if (spec.entityType === "teacher_session") {
+    enrichTeacherSessionLifecycle(db, institutionId, entityId, values);
+  }
 
   const columns = Object.keys(values);
   const updates = columns
@@ -334,6 +338,76 @@ export function materializeEntity(
     VALUES (${columns.map(() => "?").join(", ")})
     ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updates.join(", ")}
   `).run(...columns.map((column) => values[column]));
+}
+
+function enrichTeacherSessionLifecycle(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  values: Record<string, unknown>,
+) {
+  const current = db.prepare(`
+    SELECT started_at, actual_call_at, ended_at, period_id,
+           session_state, closure_source, closure_confirmation,
+           requires_payroll_review
+    FROM teacher_sessions
+    WHERE institution_id = ? AND id = ?
+  `).get(institutionId, entityId) as {
+    started_at: string;
+    actual_call_at: string | null;
+    ended_at: string | null;
+    period_id: string | null;
+    session_state: string;
+    closure_source: string | null;
+    closure_confirmation: string | null;
+    requires_payroll_review: number;
+  } | undefined;
+  const startedAt = String(values.started_at ?? current?.started_at ?? "").trim();
+  if (!startedAt) return;
+  const institution = db.prepare(`
+    SELECT COALESCE(NULLIF(TRIM(timezone), ''), 'Africa/Abidjan') AS timezone
+    FROM institutions WHERE id = ?
+  `).get(institutionId) as { timezone: string } | undefined;
+  if (!institution) return;
+  const sessionDate = localDateTime(startedAt, institution.timezone).ymd;
+  values.session_date = sessionDate;
+  values.scheduled_start_at = startedAt;
+  values.requested_start_at = values.actual_call_at ?? current?.actual_call_at ?? startedAt;
+  values.actual_started_at = values.actual_call_at ?? current?.actual_call_at ?? startedAt;
+
+  const periodId = String(values.period_id ?? current?.period_id ?? "").trim();
+  if (periodId) {
+    const period = db.prepare(`
+      SELECT start_time, end_time FROM institution_periods
+      WHERE institution_id = ? AND id = ?
+    `).get(institutionId, periodId) as { start_time: string; end_time: string } | undefined;
+    if (period) {
+      const schedule = scheduledSlotTimes(
+        sessionDate,
+        period.start_time,
+        period.end_time,
+        institution.timezone,
+      );
+      values.scheduled_start_at = schedule.scheduledStartAt;
+      values.scheduled_end_at = schedule.scheduledEndAt;
+      values.grace_expires_at = schedule.graceExpiresAt;
+    }
+  }
+  const endedAt = values.ended_at === undefined ? current?.ended_at : values.ended_at;
+  if (endedAt) {
+    values.session_state = "closed";
+    values.closed_at = endedAt;
+    if (!current?.closure_source) {
+      values.closure_source = "cloud_existing";
+      values.closure_confirmation = "confirmed";
+      values.requires_payroll_review = 0;
+    }
+    const scheduledEndMs = new Date(String(values.scheduled_end_at || endedAt)).getTime();
+    const endedMs = new Date(String(endedAt)).getTime();
+    values.payable_end_at = new Date(Math.min(endedMs, scheduledEndMs)).toISOString();
+  } else if (!current) {
+    values.session_state = "open";
+  }
 }
 
 function normalizeBoolean(value: unknown, column: string) {
