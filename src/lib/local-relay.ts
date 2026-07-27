@@ -1,6 +1,10 @@
 "use client";
 
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
+import {
+  buildEducationScopeSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
 import type { TeacherSessionOpenRelayPayload } from "@/lib/teacher-session-protocol";
 import type {
@@ -286,25 +290,36 @@ export async function fetchAdminAttendanceMonitor<T>(
   from: string,
   to: string,
   signal?: AbortSignal,
+  educationScope?: EducationScopeValue,
 ): Promise<LocalReadResult<{ rows: T[] }>> {
-  const key = `relay:admin:attendance:${from}:${to}`;
+  const query = new URLSearchParams({ from, to });
+
+  if (educationScope) {
+    const scopeParams = buildEducationScopeSearchParams(educationScope);
+    scopeParams.forEach((value, key) => query.set(key, value));
+  }
+
+  const queryString = query.toString();
+  const key = `relay:admin:attendance:${queryString}`;
+
   try {
     const cloud = await cloudJson<{ rows: T[] }>(
-      `/api/admin/attendance/monitor?${new URLSearchParams({ from, to }).toString()}`,
+      `/api/admin/attendance/monitor?${queryString}`,
       signal,
     );
     return await writeEnvelope(key, cloud, "cloud");
   } catch (cloudError) {
     if (signal?.aborted) throw cloudError;
+
     const institutionId = await resolveRelayInstitutionId(signal);
+
     if (institutionId) {
       try {
+        const relayQuery = new URLSearchParams(query);
+        relayQuery.set("institution_id", institutionId);
+
         const relay = await relayJson<{ rows: T[] }>(
-          `/v1/admin/attendance/monitor?${new URLSearchParams({
-            institution_id: institutionId,
-            from,
-            to,
-          }).toString()}`,
+          `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
           { signal },
         );
         return await writeEnvelope(key, relay, "relay");
@@ -312,6 +327,7 @@ export async function fetchAdminAttendanceMonitor<T>(
         // Dernier niveau : vue locale connue.
       }
     }
+
     const cached = await readEnvelope<{ rows: T[] }>(key);
     if (cached) return { ...cached, source: "cache" };
     throw cloudError;

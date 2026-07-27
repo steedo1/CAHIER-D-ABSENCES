@@ -1074,7 +1074,7 @@ export default function SurveillanceAppelsPage() {
       return "Tous les enseignements";
     }
 
-    const parts = [educationTypeLabel(educationScope.educationType)];
+    const parts: string[] = [educationTypeLabel(educationScope.educationType)];
     if (educationScope.formationCode) {
       const formation = educationContext
         .formationsFor(educationScope.educationType)
