@@ -12,6 +12,13 @@ import {
   ShieldCheck,
   XCircle,
 } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
@@ -81,13 +88,36 @@ type AbsenceRequestItem = {
   makeup_plan?: MakeupPlan | null;
 };
 
+type TeacherOption = { id: string; name: string };
+
+type RequestCounts = {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  cancelled: number;
+};
+
 type ApiListResponse =
-  | { ok: true; items: AbsenceRequestItem[] }
+  | {
+      ok: true;
+      items: AbsenceRequestItem[];
+      teachers?: TeacherOption[];
+      counts?: RequestCounts;
+    }
   | { ok: false; error: string };
 
 type ApiActionResponse =
   | { ok: true; item: AbsenceRequestItem; message?: string }
   | { ok: false; error: string };
+
+const EMPTY_COUNTS: RequestCounts = {
+  total: 0,
+  pending: 0,
+  approved: 0,
+  rejected: 0,
+  cancelled: 0,
+};
 
 function classNames(...arr: Array<string | false | null | undefined>) {
   return arr.filter(Boolean).join(" ");
@@ -380,23 +410,55 @@ function normalizeAbsenceItem(raw: unknown): AbsenceRequestItem {
 
 export default function AdminAssiduitePage() {
   const [items, setItems] = useState<AbsenceRequestItem[]>([]);
+  const [classes, setClasses] = useState<EducationScopedClass[]>([]);
+  const [teachers, setTeachers] = useState<TeacherOption[]>([]);
+  const [counts, setCounts] = useState<RequestCounts>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>({
+    educationType: ALL_EDUCATION_TYPES,
+    formationCode: "",
+    levelCode: "",
+    classId: "",
+  });
   const [statusFilter, setStatusFilter] = useState<RequestStatus | "all">("pending");
+  const [teacherId, setTeacherId] = useState("all");
   const [teacherQuery, setTeacherQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    (async () => {
+      try {
+        const response = await fetch("/api/admin/classes?limit=999", {
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !active) return;
+        setClasses(Array.isArray(payload?.items) ? payload.items : []);
+      } catch {
+        // Le filtre reste utilisable au niveau type / formation même sans liste locale.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function load() {
     try {
       setError(null);
       setRefreshing(true);
 
-      const qs = new URLSearchParams();
+      const qs = buildEducationScopeSearchParams(educationScope);
       if (statusFilter !== "all") qs.set("status", statusFilter);
+      if (teacherId !== "all") qs.set("teacher_profile_id", teacherId);
 
       const res = await fetch(`/api/admin/absence-requests?${qs.toString()}`, {
         cache: "no-store",
@@ -407,17 +469,30 @@ export default function AdminAssiduitePage() {
       if (!res.ok || !json?.ok) {
         throw new Error(
           (json && "error" in json && json.error) ||
-            "Impossible de charger les demandes d’absence."
+            "Impossible de charger les demandes d’absence.",
         );
       }
 
+      const nextTeachers = Array.isArray(json.teachers) ? json.teachers : [];
+      setTeachers(nextTeachers);
+      setCounts(json.counts || EMPTY_COUNTS);
       setItems(
         (Array.isArray(json.items) ? json.items : []).map((item) =>
-          normalizeAbsenceItem(item)
-        )
+          normalizeAbsenceItem(item),
+        ),
       );
+
+      if (
+        teacherId !== "all" &&
+        !nextTeachers.some((teacher) => teacher.id === teacherId)
+      ) {
+        setTeacherId("all");
+      }
     } catch (e: any) {
       setError(e?.message || "Erreur de chargement.");
+      setItems([]);
+      setTeachers([]);
+      setCounts(EMPTY_COUNTS);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -426,32 +501,16 @@ export default function AdminAssiduitePage() {
 
   useEffect(() => {
     void load();
-  }, [statusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, teacherId, educationScope]);
 
   const filteredItems = useMemo(() => {
     const q = teacherQuery.trim().toLowerCase();
     if (!q) return items;
     return items.filter((item) =>
-      String(item.teacher_name ?? "").toLowerCase().includes(q)
+      String(item.teacher_name ?? "").toLowerCase().includes(q),
     );
   }, [items, teacherQuery]);
-
-  const counts = useMemo(() => {
-    return items.reduce(
-      (acc, item) => {
-        acc.total += 1;
-        acc[item.status] += 1;
-        return acc;
-      },
-      {
-        total: 0,
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-        cancelled: 0,
-      }
-    );
-  }, [items]);
 
   async function handleAction(id: string, action: "approve" | "reject") {
     try {
@@ -469,6 +528,12 @@ export default function AdminAssiduitePage() {
           id,
           action,
           admin_comment,
+          education_scope: {
+            education_type: educationScope.educationType,
+            formation_code: educationScope.formationCode,
+            formation_level_code: educationScope.levelCode,
+            class_id: educationScope.classId,
+          },
         }),
       });
 
@@ -481,12 +546,13 @@ export default function AdminAssiduitePage() {
         );
       }
 
-      const normalizedItem = normalizeAbsenceItem(json.item);
-
-      setItems((prev) =>
-        prev.map((item) => (item.id === id ? normalizedItem : item))
-      );
-      setSelectedId(id);
+      setCommentDraft((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setSelectedId(null);
+      await load();
     } catch (e: any) {
       setError(e?.message || "Erreur lors de la validation.");
     } finally {
@@ -531,6 +597,18 @@ export default function AdminAssiduitePage() {
         </div>
       </section>
 
+      <EducationScopeFilter
+        value={educationScope}
+        onChange={(nextScope) => {
+          setEducationScope(nextScope);
+          setTeacherId("all");
+          setSelectedId(null);
+        }}
+        classes={classes}
+        allowAllEducationTypes
+        title="Périmètre des autorisations d’absence"
+      />
+
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total</div>
@@ -555,14 +633,16 @@ export default function AdminAssiduitePage() {
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div>
             <label className="mb-2 block text-sm font-semibold text-slate-800">
               Statut
             </label>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as RequestStatus | "all")}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as RequestStatus | "all")
+              }
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
             >
               <option value="all">Tous</option>
@@ -575,7 +655,28 @@ export default function AdminAssiduitePage() {
 
           <div>
             <label className="mb-2 block text-sm font-semibold text-slate-800">
-              Recherche enseignant
+              Enseignant
+            </label>
+            <select
+              value={teacherId}
+              onChange={(e) => {
+                setTeacherId(e.target.value);
+                setSelectedId(null);
+              }}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15"
+            >
+              <option value="all">Tous les enseignants</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-slate-800">
+              Recherche dans les résultats
             </label>
             <div className="relative">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
