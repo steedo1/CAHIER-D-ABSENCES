@@ -56,7 +56,7 @@ export function createRelayServer(
         return json(response, 200, { ok: true });
       }
       if (request.method === "POST" && url.pathname === "/v1/teacher/connectivity-check") {
-        await readJson(request, MAX_CONNECTIVITY_CHECK_BODY_BYTES);
+        const body = await readJson(request, MAX_CONNECTIVITY_CHECK_BODY_BYTES);
         const token = teacherBearerToken(request);
         if (!token) return json(response, 401, { error: "unauthorized" });
         try {
@@ -69,6 +69,7 @@ export function createRelayServer(
             ok: true,
             institution_id: teacher.institution_id,
             relay_time: requestNow.toISOString(),
+            ...teacherScheduleCompatibility(store, teacher.institution_id, body),
           });
         } catch {
           return json(response, 401, { error: "unauthorized" });
@@ -295,6 +296,82 @@ function normalizedInstitutionCode(value: unknown) {
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
+}
+
+type ConnectivityScheduleStatus = "matched" | "period_missing" | "period_mismatch";
+
+type RelayPeriodSummary = {
+  id: string;
+  weekday: number;
+  label: string | null;
+  start_time: string;
+  end_time: string;
+};
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeConnectivityWeekday(value: unknown) {
+  const day = Number(value);
+  if (!Number.isInteger(day)) return null;
+  if (day === 0) return 7;
+  return day >= 1 && day <= 7 ? day : null;
+}
+
+function normalizeConnectivityTime(value: unknown) {
+  const match = String(value || "").trim().match(/^(\d{2}):(\d{2})/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
+function teacherScheduleCompatibility(
+  store: RelayStore,
+  institutionId: string,
+  rawBody: unknown,
+): {
+  schedule_status?: ConnectivityScheduleStatus;
+  relay_period?: RelayPeriodSummary | null;
+} {
+  const body = recordValue(rawBody);
+  const expected = recordValue(body.expected_period);
+  const periodId = String(expected.id || "").trim();
+  if (!periodId) return {};
+
+  const relayPeriod = store.db.prepare(`
+    SELECT id, weekday, label, start_time, end_time
+    FROM institution_periods
+    WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+  `).get(institutionId, periodId) as RelayPeriodSummary | undefined;
+
+  if (!relayPeriod) {
+    return { schedule_status: "period_missing", relay_period: null };
+  }
+
+  const normalizedRelay: RelayPeriodSummary = {
+    id: String(relayPeriod.id),
+    weekday: normalizeConnectivityWeekday(relayPeriod.weekday) || Number(relayPeriod.weekday),
+    label: relayPeriod.label == null ? null : String(relayPeriod.label),
+    start_time: normalizeConnectivityTime(relayPeriod.start_time) || String(relayPeriod.start_time),
+    end_time: normalizeConnectivityTime(relayPeriod.end_time) || String(relayPeriod.end_time),
+  };
+  const expectedWeekday = normalizeConnectivityWeekday(expected.weekday);
+  const expectedStart = normalizeConnectivityTime(expected.start_time);
+  const expectedEnd = normalizeConnectivityTime(expected.end_time);
+  const matches =
+    (expectedWeekday == null || normalizedRelay.weekday === expectedWeekday) &&
+    (expectedStart == null || normalizedRelay.start_time === expectedStart) &&
+    (expectedEnd == null || normalizedRelay.end_time === expectedEnd);
+
+  return {
+    schedule_status: matches ? "matched" : "period_mismatch",
+    relay_period: normalizedRelay,
+  };
 }
 
 function configuredInstitutionAllows(

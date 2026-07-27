@@ -23,6 +23,15 @@ function formatPreparedAt(value: string) {
   }).format(date);
 }
 
+function formatCheckedAt(value: string | undefined) {
+  const date = new Date(String(value || ""));
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export default function OfflineReadinessCard({ role, className = "" }: Props) {
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -83,9 +92,12 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
         : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
 
   const relayConnectivity = role === "teacher" ? readiness?.relay_connectivity : undefined;
+  const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
   const relayConnectivityMessage = relayConnectivity?.status === "reachable"
-    ? "Relais joignable par l’application."
-    : relayConnectivity?.status === "permission_denied"
+    ? `Relais joignable lors de la dernière actualisation${relayCheckedAt ? ` (${relayCheckedAt})` : ""}.`
+    : relayConnectivity?.status === "access_denied"
+      ? "Accès enseignant au relais refusé. Actualisez les données d’accès."
+      : relayConnectivity?.status === "permission_denied"
       ? "Permission réseau local refusée."
       : relayConnectivity?.status === "incompatible_browser"
         ? "Navigateur incompatible avec l’accès au relais local."

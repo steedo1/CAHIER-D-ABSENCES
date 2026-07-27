@@ -393,7 +393,13 @@ export function teacherSessionDeliveryMessage(record: TeacherSessionDeliveryReco
     return "Séance conservée sur cet appareil : les écritures du relais restent désactivées.";
   }
   if (record.last_error === "attendance_outside_slot") {
-    return "Ouverture refusée : l’appel est hors du créneau autorisé.";
+    return "Ouverture refusée : l’appel est hors du créneau connu par le relais. Vérifiez que ses horaires ont bien été synchronisés.";
+  }
+  if (record.last_error === "period_not_found") {
+    return "Ouverture refusée : ce créneau n’existe pas encore sur le relais. Synchronisez le PC relais depuis les paramètres administrateur.";
+  }
+  if (record.last_error === "class_not_found") {
+    return "Ouverture refusée : cette classe n’existe pas encore sur le relais. Synchronisez les données pédagogiques.";
   }
   if (record.last_error === "attendance_sunday_not_allowed") {
     return "Ouverture refusée : aucun appel ne peut être ouvert le dimanche.";
@@ -409,6 +415,9 @@ export function teacherSessionDeliveryMessage(record: TeacherSessionDeliveryReco
   }
   if (record.requires_authentication) {
     return "Séance conservée sur cet appareil : reconnectez-vous avant de réessayer.";
+  }
+  if (record.state === "blocked") {
+    return "Ouverture refusée par le relais local. Actualisez l’emploi du temps puis synchronisez le PC relais avant de réessayer.";
   }
   return "Séance conservée sur cet appareil : relais local inaccessible.";
 }

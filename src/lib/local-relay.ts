@@ -3,10 +3,6 @@
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
 import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
 import type { TeacherSessionOpenRelayPayload } from "@/lib/teacher-session-protocol";
-import {
-  buildEducationScopeSearchParams,
-  type EducationScopeValue,
-} from "@/lib/education-scope";
 import type {
   TeacherSessionCloseRelayPayload,
   TeacherSessionTransitionRelayPayload,
@@ -29,15 +25,38 @@ type RelayConfig = {
 
 export type RelayTeacherConnectivityStatus =
   | "reachable"
+  | "access_denied"
   | "permission_denied"
   | "incompatible_browser"
   | "unreachable";
+
+export type RelayTeacherScheduleStatus =
+  | "matched"
+  | "period_missing"
+  | "period_mismatch";
+
+export type RelayTeacherExpectedPeriod = {
+  id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+};
+
+export type RelayTeacherPeriodSummary = {
+  id: string;
+  weekday: number;
+  label: string | null;
+  start_time: string;
+  end_time: string;
+};
 
 export type RelayTeacherConnectivityResult = {
   status: RelayTeacherConnectivityStatus;
   checked_at: string;
   institution_id?: string;
   relay_time?: string;
+  schedule_status?: RelayTeacherScheduleStatus;
+  relay_period?: RelayTeacherPeriodSummary | null;
 };
 
 export class LocalRelayHttpError extends Error {
@@ -267,20 +286,11 @@ export async function fetchAdminAttendanceMonitor<T>(
   from: string,
   to: string,
   signal?: AbortSignal,
-  scope?: EducationScopeValue,
 ): Promise<LocalReadResult<{ rows: T[] }>> {
-  const query = new URLSearchParams({ from, to });
-  if (scope) {
-    const scopeParams = buildEducationScopeSearchParams(scope);
-    scopeParams.forEach((value, name) => query.set(name, value));
-  }
-
-  const queryString = query.toString();
-  const key = `relay:admin:attendance:${queryString}`;
-
+  const key = `relay:admin:attendance:${from}:${to}`;
   try {
     const cloud = await cloudJson<{ rows: T[] }>(
-      `/api/admin/attendance/monitor?${queryString}`,
+      `/api/admin/attendance/monitor?${new URLSearchParams({ from, to }).toString()}`,
       signal,
     );
     return await writeEnvelope(key, cloud, "cloud");
@@ -289,10 +299,12 @@ export async function fetchAdminAttendanceMonitor<T>(
     const institutionId = await resolveRelayInstitutionId(signal);
     if (institutionId) {
       try {
-        const relayQuery = new URLSearchParams(query);
-        relayQuery.set("institution_id", institutionId);
         const relay = await relayJson<{ rows: T[] }>(
-          `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
+          `/v1/admin/attendance/monitor?${new URLSearchParams({
+            institution_id: institutionId,
+            from,
+            to,
+          }).toString()}`,
           { signal },
         );
         return await writeEnvelope(key, relay, "relay");
@@ -671,6 +683,7 @@ export async function checkRelayTeacherConnectivity(input: {
   institutionId: string;
   baseUrl: string;
   accessToken: string;
+  expectedPeriod?: RelayTeacherExpectedPeriod | null;
 }): Promise<RelayTeacherConnectivityResult> {
   const checkedAt = new Date().toISOString();
   const institutionId = String(input.institutionId || "").trim();
@@ -685,10 +698,23 @@ export async function checkRelayTeacherConnectivity(input: {
       ok: true;
       institution_id: string;
       relay_time: string;
+      schedule_status?: RelayTeacherScheduleStatus;
+      relay_period?: RelayTeacherPeriodSummary | null;
     }>("/v1/teacher/connectivity-check", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({}),
+      body: JSON.stringify(
+        input.expectedPeriod
+          ? {
+              expected_period: {
+                id: String(input.expectedPeriod.id || "").trim(),
+                weekday: Number(input.expectedPeriod.weekday),
+                start_time: String(input.expectedPeriod.start_time || "").slice(0, 5),
+                end_time: String(input.expectedPeriod.end_time || "").slice(0, 5),
+              },
+            }
+          : {},
+      ),
     }, {
       baseUrl,
       includeConfiguredToken: false,
@@ -702,8 +728,13 @@ export async function checkRelayTeacherConnectivity(input: {
       checked_at: checkedAt,
       institution_id: institutionId,
       relay_time: response.relay_time,
+      schedule_status: response.schedule_status,
+      relay_period: response.relay_period,
     };
   } catch (error) {
+    if (error instanceof LocalRelayHttpError && error.status === 401) {
+      return { status: "access_denied", checked_at: checkedAt };
+    }
     const permissionDenied =
       (error instanceof DOMException && error.name === "NotAllowedError") ||
       await localNetworkPermissionDenied(baseUrl);

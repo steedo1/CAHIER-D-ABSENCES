@@ -72,6 +72,32 @@ function seedTeacher(
   );
 }
 
+function seedPeriod(
+  db: RelayDatabase,
+  input: {
+    institutionId: string;
+    periodId: string;
+    weekday: number;
+    label: string;
+    startTime: string;
+    endTime: string;
+  },
+) {
+  db.prepare(`
+    INSERT INTO institution_periods(
+      id, institution_id, weekday, label, start_time, end_time, server_version, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+  `).run(
+    input.periodId,
+    input.institutionId,
+    input.weekday,
+    input.label,
+    input.startTime,
+    input.endTime,
+    new Date().toISOString(),
+  );
+}
+
 function totalChanges(db: Database.Database) {
   const row = db.prepare("SELECT total_changes() AS count").get() as { count: number };
   return Number(row.count);
@@ -161,6 +187,87 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
       { padding: "x".repeat(5_000) },
     )).status, 413);
 
+    assert.equal(totalChanges(db), changesBefore);
+  } finally {
+    await relay.close();
+    db.close();
+  }
+});
+
+test("le contrôle de connectivité détecte un créneau relais absent ou désynchronisé", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  seedSchool(db, { institutionId: "inst-1", code: "SCH-000001", secret: SCHOOL_ONE_SECRET });
+  seedTeacher(db, { institutionId: "inst-1", actorProfileId: "teacher-active", active: true });
+  seedPeriod(db, {
+    institutionId: "inst-1",
+    periodId: "period-1",
+    weekday: 1,
+    label: "07:15–08:10",
+    startTime: "07:15:00",
+    endTime: "08:10:00",
+  });
+  const token = relayTeacherToken({
+    secret: SCHOOL_ONE_SECRET,
+    institutionId: "inst-1",
+    actorProfileId: "teacher-active",
+  });
+  const relay = await startRelay(store, {
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: "admin-token",
+    institutionCode: "SCH-000001",
+    institutionCodes: ["SCH-000001"],
+  });
+  const changesBefore = totalChanges(db);
+
+  try {
+    const matched = await connectivityPost(relay.url, token, {
+      expected_period: {
+        id: "period-1",
+        weekday: 1,
+        start_time: "07:15",
+        end_time: "08:10",
+      },
+    });
+    assert.equal(matched.status, 200);
+    const matchedBody = await matched.json() as any;
+    assert.equal(matchedBody.schedule_status, "matched");
+    assert.deepEqual(matchedBody.relay_period, {
+      id: "period-1",
+      weekday: 1,
+      label: "07:15–08:10",
+      start_time: "07:15",
+      end_time: "08:10",
+    });
+
+    const mismatched = await connectivityPost(relay.url, token, {
+      expected_period: {
+        id: "period-1",
+        weekday: 1,
+        start_time: "00:00",
+        end_time: "01:00",
+      },
+    });
+    assert.equal(mismatched.status, 200);
+    const mismatchedBody = await mismatched.json() as any;
+    assert.equal(mismatchedBody.schedule_status, "period_mismatch");
+    assert.equal(mismatchedBody.relay_period.start_time, "07:15");
+    assert.equal(mismatchedBody.relay_period.end_time, "08:10");
+
+    const missing = await connectivityPost(relay.url, token, {
+      expected_period: {
+        id: "period-cloud-new",
+        weekday: 1,
+        start_time: "00:00",
+        end_time: "01:00",
+      },
+    });
+    assert.equal(missing.status, 200);
+    const missingBody = await missing.json() as any;
+    assert.equal(missingBody.schedule_status, "period_missing");
+    assert.equal(missingBody.relay_period, null);
     assert.equal(totalChanges(db), changesBefore);
   } finally {
     await relay.close();

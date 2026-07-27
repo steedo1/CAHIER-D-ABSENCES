@@ -9,6 +9,7 @@ import {
   type GeneralSecondaryCoeffPresetPreviewItem,
 } from "@/lib/default-general-secondary-coefficients-ci";
 import AttendancePresenceSettings from "@/components/admin/AttendancePresenceSettings";
+import { getRelayConfig, syncRelayBootstrap } from "@/lib/local-relay";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -1766,6 +1767,17 @@ export default function AdminSettingsPage() {
     });
     pushToast("info", "Créneau supprimé (non enregistré).");
   }
+  function periodTimeRangeLabel(startTime: string, endTime: string) {
+    return `${String(startTime || "").slice(0, 5)}–${String(endTime || "").slice(0, 5)}`;
+  }
+
+  function normalizedPeriodLabel(value: string) {
+    return String(value || "")
+      .trim()
+      .replace(/[–—]/g, "-")
+      .replace(/\s+/g, "");
+  }
+
   function setCell(day: number, idx: number, patch: Partial<Period>) {
     setByDay((m) => {
       const list = (m[day] || []).slice();
@@ -1776,7 +1788,16 @@ export default function AdminSettingsPage() {
         start_time: "08:00",
         end_time: "08:55",
       };
-      list[idx] = { ...cur, ...patch, weekday: day };
+      const next = { ...cur, ...patch, weekday: day };
+      const timeChanged = patch.start_time !== undefined || patch.end_time !== undefined;
+      const previousAutomaticLabel = periodTimeRangeLabel(cur.start_time, cur.end_time);
+      if (
+        timeChanged &&
+        normalizedPeriodLabel(cur.label) === normalizedPeriodLabel(previousAutomaticLabel)
+      ) {
+        next.label = periodTimeRangeLabel(next.start_time, next.end_time);
+      }
+      list[idx] = next;
       return { ...m, [day]: list };
     });
   }
@@ -1832,9 +1853,29 @@ export default function AdminSettingsPage() {
           .filter((v) => typeof v === "number")
           .join(" / ") || `${all.length}`;
 
-      const ok = `Créneaux enregistrés ✅ (${changes})`;
-      setMsgSched(ok);
-      pushToast("success", ok);
+      const savedMessage = `Créneaux enregistrés ✅ (${changes})`;
+      const relayConfig = getRelayConfig();
+      let finalMessage = savedMessage;
+      let toastLevel: "success" | "info" | "error" = "success";
+
+      if (relayConfig.token) {
+        setMsgSched(`${savedMessage} • Synchronisation du relais local…`);
+        const relay = await syncRelayBootstrap({ force: true }).catch((error: any) => ({
+          ok: false,
+          error: String(error?.message || error),
+        }));
+        if (relay.ok) {
+          finalMessage = `${savedMessage} • Relais local synchronisé ✅`;
+        } else {
+          finalMessage =
+            `${savedMessage} • ⚠️ Le relais n’a pas pu être actualisé. ` +
+            `Utilisez « Tester et synchroniser » avant le prochain appel hors ligne.`;
+          toastLevel = "info";
+        }
+      }
+
+      setMsgSched(finalMessage);
+      pushToast(toastLevel, finalMessage);
       await loadInstitutionConfig();
     } catch (e: any) {
       const m = e?.message || "Erreur enregistrement créneaux";

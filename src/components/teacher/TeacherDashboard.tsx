@@ -22,7 +22,12 @@ import {
   type AttendancePresenceEvidence,
   type AttendancePresencePolicy,
 } from "@/lib/attendance-presence";
-import { requestRelayAttendancePresenceProof } from "@/lib/local-relay";
+import {
+  checkRelayTeacherConnectivity,
+  LocalRelayHttpError,
+  requestRelayAttendancePresenceProof,
+  type RelayTeacherConnectivityResult,
+} from "@/lib/local-relay";
 import {
   countUnresolvedTeacherAttendanceOperations,
   deliverTeacherAttendance,
@@ -246,6 +251,63 @@ const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   };
   return map[w] ?? 7;
 };
+
+function relayConnectivityFailureMessage(
+  status: RelayTeacherConnectivityResult["status"],
+) {
+  if (status === "access_denied") {
+    return "Le relais a refusé l’accès enseignant. Actualisez le mode hors ligne afin de renouveler les données d’accès.";
+  }
+  if (status === "permission_denied") {
+    return "Permission réseau local refusée. Autorisez l’accès au réseau local pour ce site, puis réessayez.";
+  }
+  if (status === "incompatible_browser") {
+    return "Ce navigateur ne peut pas accéder au relais HTTP local depuis cette page sécurisée. Utilisez le navigateur autorisé de l’établissement.";
+  }
+  return "Le relais local ne répond pas actuellement. Vérifiez que le téléphone est connecté au Wi-Fi local autorisé et que le PC relais est démarré.";
+}
+
+function relayScheduleMismatchMessage(
+  relay: RelayTeacherConnectivityResult,
+  expected: Period,
+) {
+  if (relay.status !== "reachable" || !relay.schedule_status || relay.schedule_status === "matched") {
+    return null;
+  }
+  const expectedRange = `${expected.start_time}–${expected.end_time}`;
+  if (relay.schedule_status === "period_missing") {
+    return (
+      `Appel bloqué : le créneau ${expectedRange} n’existe pas encore sur le PC relais. ` +
+      "Depuis le poste Admin, ouvrez Paramètres puis cliquez sur « Tester et synchroniser »."
+    );
+  }
+  const local = relay.relay_period;
+  const relayRange = local ? `${local.start_time}–${local.end_time}` : "horaire inconnu";
+  return (
+    `Appel bloqué : le téléphone utilise ${expectedRange}, mais le PC relais utilise encore ${relayRange}. ` +
+    "Synchronisez le relais après la modification des créneaux."
+  );
+}
+
+function relayPresenceFailureMessage(error: unknown) {
+  if (error instanceof LocalRelayHttpError) {
+    if (error.status === 401 || error.code === "unauthorized") {
+      return "Le relais a refusé l’accès enseignant. Actualisez le mode hors ligne afin de renouveler les données d’accès.";
+    }
+    if (error.code === "institution_not_allowed") {
+      return "Ce relais n’est pas configuré pour cet établissement.";
+    }
+    return `Le relais local a refusé la vérification (${error.code}).`;
+  }
+  if (error instanceof DOMException && error.name === "NotAllowedError") {
+    return "Permission réseau local refusée. Autorisez l’accès au réseau local pour ce site, puis réessayez.";
+  }
+  const message = String((error as any)?.message || "").toLowerCase();
+  if (message.includes("délai") || message.includes("timeout") || message.includes("abort")) {
+    return "Le relais local n’a pas répondu dans le délai prévu. Vérifiez le Wi-Fi et le PC relais.";
+  }
+  return "Le relais local est inaccessible maintenant. Connectez ce téléphone au réseau local autorisé.";
+}
 
 /* ─────────────────────────────────────────
    Institution identity (même logique que la page offline qui marche)
@@ -1349,14 +1411,17 @@ export default function TeacherDashboard() {
           actualCallAt: relay.issued_at,
           label: "réseau local",
         };
-      } catch {
+      } catch (error) {
         // Le téléphone peut être dans l'école avec les données mobiles : GPS ci-dessous.
+        if (!policy.allow_gps_fallback) {
+          throw new Error(relayPresenceFailureMessage(error));
+        }
       }
     }
 
     if (!policy.allow_gps_fallback) {
       throw new Error(
-        "Le relais local de l'école est inaccessible. Connectez ce téléphone au réseau local autorisé.",
+        "Le relais local est requis pour cet appel. Connectez ce téléphone au réseau local autorisé.",
       );
     }
 
@@ -1409,7 +1474,48 @@ export default function TeacherDashboard() {
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hhS, mmS, 0, 0);
 
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
+      const relayPolicy = inst.attendance_presence;
+      let liveRelayCheck: RelayTeacherConnectivityResult | null = null;
+      if (
+        relayPolicy?.enabled &&
+        relayPolicy.allow_local_relay &&
+        relayPolicy.relay_local_url &&
+        relayPolicy.relay_access_token &&
+        inst.institution_id &&
+        activeConfiguredSlot.id
+      ) {
+        setMsg("Vérification en temps réel du relais et du créneau…");
+        liveRelayCheck = await checkRelayTeacherConnectivity({
+          institutionId: inst.institution_id,
+          baseUrl: relayPolicy.relay_local_url,
+          accessToken: relayPolicy.relay_access_token,
+          expectedPeriod: {
+            id: activeConfiguredSlot.id,
+            weekday: activeConfiguredSlot.weekday,
+            start_time: activeConfiguredSlot.start_time,
+            end_time: activeConfiguredSlot.end_time,
+          },
+        });
+        const scheduleMismatch = relayScheduleMismatchMessage(
+          liveRelayCheck,
+          activeConfiguredSlot,
+        );
+        if (scheduleMismatch) {
+          setMsg(scheduleMismatch);
+          return;
+        }
+      }
+
       const cloudAvailable = await teacherSessionCloudAvailable();
+      if (
+        liveRelayCheck &&
+        liveRelayCheck.status !== "reachable" &&
+        (!cloudAvailable || relayPolicy?.allow_gps_fallback !== true)
+      ) {
+        setMsg(relayConnectivityFailureMessage(liveRelayCheck.status));
+        return;
+      }
+
       if (!cloudAvailable) {
         if (!inst.institution_id || !activeConfiguredSlot.id) {
           setMsg("La préparation hors ligne doit être actualisée avant d’ouvrir cette séance.");
