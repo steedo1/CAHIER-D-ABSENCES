@@ -2,6 +2,18 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, Filter, RefreshCw, Download, FileText } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  educationTypeLabel,
+  useEducationTeachingContext,
+} from "@/hooks/useEducationTeachingContext";
+import {
+  buildEducationScopeSearchParams,
+  DEFAULT_EDUCATION_SCOPE,
+  getClassDisplayLabel,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -92,9 +104,10 @@ function Card({
 }
 
 /* ───────── Types ───────── */
-type ClassItem = {
+type ClassItem = EducationScopedClass & {
   id: string;
   name: string;
+  label?: string | null;
   level: string;
   academic_year?: string | null;
 };
@@ -864,10 +877,14 @@ export default function AbsencesMatrixOnly() {
   const [to, setTo] = useState("");
   const [rubrique, setRubrique] = useState<"absent" | "tardy">("absent");
 
-  // Sélections niveau / classe
+  // Périmètre pédagogique : type → formation → niveau → classe
+  const teachingContext = useEducationTeachingContext();
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
-  const [selectedLevel, setSelectedLevel] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>(
+    DEFAULT_EDUCATION_SCOPE,
+  );
+  const selectedLevel = educationScope.levelCode;
+  const selectedClassId = educationScope.classId;
 
   // Périodes / années scolaires
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -895,8 +912,12 @@ export default function AbsencesMatrixOnly() {
         const items: ClassItem[] = itemsRaw.map((c: any) => ({
           id: String(c.id),
           name: String(c.name || c.label || c.code || "Classe"),
+          label: c.label || c.name || null,
           level: String(c.level || "").trim(),
           academic_year: c.academic_year || null,
+          education_type: c.education_type || null,
+          formation_code: c.formation_code || null,
+          formation_level_code: c.formation_level_code || null,
         }));
         setAllClasses(items);
       })
@@ -921,14 +942,27 @@ export default function AbsencesMatrixOnly() {
     run();
   }, []);
 
-  /* Charger périodes (même route que les bulletins) */
+  /* Charger les périodes applicables à la classe sélectionnée. */
   useEffect(() => {
     const run = async () => {
+      if (!selectedClassId) {
+        setPeriods([]);
+        setSelectedPeriodId("");
+        return;
+      }
+
       try {
         setPeriodsLoading(true);
-        const res = await fetch("/api/admin/institution/grading-periods", {
-          cache: "no-store",
-        });
+        const params = new URLSearchParams();
+        params.set("class_id", selectedClassId);
+        if (selectedAcademicYear) {
+          params.set("academic_year", selectedAcademicYear);
+        }
+
+        const res = await fetch(
+          `/api/admin/institution/grading-periods?${params.toString()}`,
+          { cache: "no-store" },
+        );
 
         if (!res.ok) {
           console.warn("[Absences] grading-periods non disponible", res.status);
@@ -940,8 +974,8 @@ export default function AbsencesMatrixOnly() {
         const items: GradePeriod[] = Array.isArray(json)
           ? json
           : Array.isArray((json as any).items)
-          ? (json as any).items
-          : [];
+            ? (json as any).items
+            : [];
 
         setPeriods(items);
       } catch (e) {
@@ -952,26 +986,8 @@ export default function AbsencesMatrixOnly() {
       }
     };
 
-    run();
-  }, []);
-
-  /* Niveaux à partir des classes */
-  const levelsFromClasses = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of allClasses) if (c.level) s.add((c.level || "").trim());
-    return Array.from(s).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    );
-  }, [allClasses]);
-
-  const classesOfLevel = useMemo(() => {
-    if (!selectedLevel) return [];
-    return allClasses
-      .filter((c) => c.level === selectedLevel)
-      .sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { numeric: true })
-      );
-  }, [allClasses, selectedLevel]);
+    void run();
+  }, [selectedAcademicYear, selectedClassId]);
 
   /* Années scolaires disponibles */
   const academicYears = useMemo(() => {
@@ -1012,11 +1028,6 @@ export default function AbsencesMatrixOnly() {
     setFrom(p.start_date || "");
     setTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
-
-  /* Quand on change de niveau, on vide la classe */
-  useEffect(() => {
-    setSelectedClassId("");
-  }, [selectedLevel]);
 
   /* Index minutes par élève × matière */
   const matrixIndex = useMemo(() => {
@@ -1070,7 +1081,7 @@ export default function AbsencesMatrixOnly() {
     setLoading(true);
 
     try {
-      const qs = new URLSearchParams();
+      const qs = buildEducationScopeSearchParams(educationScope);
       qs.set("class_id", selectedClassId);
       qs.set("type", rubrique);
       if (from) qs.set("from", from);
@@ -1145,8 +1156,7 @@ export default function AbsencesMatrixOnly() {
     setFrom("");
     setTo("");
     setRubrique("absent");
-    setSelectedLevel("");
-    setSelectedClassId("");
+    setEducationScope(DEFAULT_EDUCATION_SCOPE);
     setSelectedAcademicYear("");
     setSelectedPeriodId("");
     setMatrix(null);
@@ -1204,6 +1214,43 @@ export default function AbsencesMatrixOnly() {
     if (!selectedClassId) return null;
     return allClasses.find((c) => c.id === selectedClassId) || null;
   }, [allClasses, selectedClassId]);
+
+  const educationScopeLabel = useMemo(() => {
+    const parts = [educationTypeLabel(educationScope.educationType as any)];
+
+    if (educationScope.formationCode) {
+      const formation = teachingContext.formations.find(
+        (item) => item.key === educationScope.formationCode,
+      );
+      parts.push(
+        formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : educationScope.formationCode,
+      );
+    }
+
+    if (educationScope.levelCode) {
+      const level = teachingContext.levels.find(
+        (item) =>
+          item.education_type === educationScope.educationType &&
+          String(item.formation_code || "") ===
+            String(educationScope.formationCode || "") &&
+          item.level === educationScope.levelCode,
+      );
+      parts.push(level?.level_label || educationScope.levelCode);
+    }
+
+    if (selectedClass) {
+      parts.push(getClassDisplayLabel(selectedClass));
+    }
+
+    return parts.filter(Boolean).join(" • ");
+  }, [
+    educationScope,
+    selectedClass,
+    teachingContext.formations,
+    teachingContext.levels,
+  ]);
 
   const globalStats = useMemo<{
     studentsCount: number;
@@ -1461,7 +1508,7 @@ export default function AbsencesMatrixOnly() {
 
     openPdfPrintWindow({
       title: `Matrice des ${rubrique === "absent" ? "absences" : "retards"}`,
-      subtitle: `Classe : ${classLabel} • Période : ${periodLabel} • Rubrique : ${rubriqueLabel}`,
+      subtitle: `Périmètre : ${educationScopeLabel} • Classe : ${classLabel} • Période : ${periodLabel} • Rubrique : ${rubriqueLabel}`,
       summaryHtml,
       tableHtml,
       institution,
@@ -1477,16 +1524,16 @@ export default function AbsencesMatrixOnly() {
           Matrice des absences
         </h1>
         <p className="text-sm text-slate-600">
-          Filtre la période, l&apos;année scolaire, le niveau, la classe et la
-          rubrique (absence/retard). Le tableau affiche les élèves en lignes et
-          les disciplines en colonnes.
+          Sélectionne d’abord le type d&apos;enseignement, la formation si
+          nécessaire, le niveau et la classe. Le tableau affiche ensuite les
+          élèves en lignes et les disciplines en colonnes.
         </p>
       </div>
 
       {/* Filtres */}
       <Card
         title="Filtres"
-        subtitle="Choisis d’abord l’année scolaire, puis éventuellement une période, puis le niveau et la classe. Les dates restent modifiables."
+        subtitle="Délimite le périmètre pédagogique, puis choisis éventuellement une période. Les dates restent modifiables."
         actions={
           <div className="flex items-center gap-2">
             <GhostButton onClick={() => setRange("week")}>
@@ -1501,6 +1548,22 @@ export default function AbsencesMatrixOnly() {
           </div>
         }
       >
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={(next) => {
+            setEducationScope(next);
+            setMatrix(null);
+            setSelectedPeriodId("");
+          }}
+          classes={allClasses}
+          allowAllEducationTypes={false}
+          showLevel
+          showClass
+          disabled={loading}
+          title="Enseignement, formation, niveau et classe"
+          className="mb-4"
+        />
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
           {/* Année scolaire */}
           <div className="md:col-span-2">
@@ -1552,39 +1615,6 @@ export default function AbsencesMatrixOnly() {
                     `${formatDateFR(p.start_date)} → ${formatDateFR(
                       p.end_date
                     )}`}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          {/* Niveau */}
-          <div className="md:col-span-1">
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select
-              value={selectedLevel}
-              onChange={(e) => setSelectedLevel(e.target.value)}
-            >
-              <option value="">— Tous —</option>
-              {levelsFromClasses.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          {/* Classe */}
-          <div className="md:col-span-1">
-            <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              disabled={!selectedLevel}
-            >
-              <option value="">— Choisir —</option>
-              {classesOfLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
                 </option>
               ))}
             </Select>

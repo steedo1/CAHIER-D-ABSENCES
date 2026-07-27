@@ -9,10 +9,24 @@ import {
   AlertTriangle,
   Clock,
 } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  educationTypeLabel,
+  useEducationTeachingContext,
+} from "@/hooks/useEducationTeachingContext";
+import type { EducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  getClassDisplayLabel,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name: string;
+  label?: string | null;
   level?: string | null;
   academic_year?: string | null;
 };
@@ -25,6 +39,9 @@ type JustifRow = {
   class_id: string;
   class_label: string | null;
   class_level: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_id: string | null;
   subject_name: string | null;
   started_at: string;
@@ -123,8 +140,15 @@ function defaultDates() {
 
 export default function AssiduiteJustificationsPage() {
   const { from: defFrom, to: defTo } = useMemo(() => defaultDates(), []);
+  const teachingContext = useEducationTeachingContext();
   const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [classId, setClassId] = useState<string>("");
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>({
+    educationType: ALL_EDUCATION_TYPES,
+    formationCode: "",
+    levelCode: "",
+    classId: "",
+  });
+  const classId = educationScope.classId;
   const [from, setFrom] = useState<string>(defFrom);
   const [to, setTo] = useState<string>(defTo);
   const [status, setStatus] = useState<"all" | "absent" | "late">("all");
@@ -149,7 +173,17 @@ export default function AssiduiteJustificationsPage() {
         if (!res.ok) {
           throw new Error(data?.error || "Erreur chargement des classes.");
         }
-        const arr: ClassRow[] = Array.isArray(data?.items) ? data.items : [];
+        const raw: any[] = Array.isArray(data?.items) ? data.items : [];
+        const arr: ClassRow[] = raw.map((row) => ({
+          id: String(row.id),
+          name: String(row.name || row.label || row.code || "Classe"),
+          label: row.label || row.name || null,
+          level: row.level || null,
+          academic_year: row.academic_year || null,
+          education_type: row.education_type || null,
+          formation_code: row.formation_code || null,
+          formation_level_code: row.formation_level_code || null,
+        }));
         setClasses(arr);
       } catch (e: any) {
         console.error("[assiduite] loadClasses error", e);
@@ -166,7 +200,7 @@ export default function AssiduiteJustificationsPage() {
       setLoading(true);
       setError(null);
 
-      const params = new URLSearchParams();
+      const params = buildEducationScopeSearchParams(educationScope);
       if (from) params.set("from", from);
       if (to) params.set("to", to);
       if (classId) params.set("class_id", classId);
@@ -248,6 +282,79 @@ export default function AssiduiteJustificationsPage() {
     }
   }
 
+  const scopeSummary = useMemo(() => {
+    if (educationScope.educationType === ALL_EDUCATION_TYPES) {
+      return "Tous les enseignements";
+    }
+
+    const parts = [educationTypeLabel(educationScope.educationType)];
+    if (educationScope.formationCode) {
+      const formation = teachingContext.formations.find(
+        (item) => item.key === educationScope.formationCode,
+      );
+      parts.push(
+        formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : educationScope.formationCode,
+      );
+    }
+    if (educationScope.levelCode) {
+      const level = teachingContext.levels.find(
+        (item) =>
+          item.education_type === educationScope.educationType &&
+          String(item.formation_code || "") ===
+            String(educationScope.formationCode || "") &&
+          item.level === educationScope.levelCode,
+      );
+      parts.push(level?.level_label || educationScope.levelCode);
+    }
+    if (educationScope.classId) {
+      const selectedClass = classes.find(
+        (item) => item.id === educationScope.classId,
+      );
+      if (selectedClass) parts.push(getClassDisplayLabel(selectedClass));
+    }
+    return parts.filter(Boolean).join(" • ");
+  }, [
+    classes,
+    educationScope,
+    teachingContext.formations,
+    teachingContext.levels,
+  ]);
+
+  function rowEducationLabel(row: JustifRow) {
+    const type = row.education_type || "general_secondary";
+    const parts = [educationTypeLabel(type)];
+
+    if (row.formation_code) {
+      const formation = teachingContext.formations.find(
+        (item) => item.key === row.formation_code,
+      );
+      parts.push(
+        formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : row.formation_code,
+      );
+    }
+
+    const levelCode =
+      type === "general_secondary"
+        ? row.class_level
+        : row.formation_level_code || row.class_level;
+    if (levelCode) {
+      const level = teachingContext.levels.find(
+        (item) =>
+          item.education_type === type &&
+          String(item.formation_code || "") ===
+            String(row.formation_code || "") &&
+          item.level === levelCode,
+      );
+      parts.push(level?.level_label || levelCode);
+    }
+
+    return parts.filter(Boolean).join(" • ");
+  }
+
   const isEmpty = !loading && items.length === 0;
 
   return (
@@ -271,26 +378,24 @@ export default function AssiduiteJustificationsPage() {
           Filtres
         </div>
 
-        <div className="grid gap-3 md:grid-cols-4">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">
-              Classe
-            </label>
-            <Select
-              value={classId}
-              onChange={(e) => setClassId(e.target.value)}
-              disabled={loadingClasses}
-            >
-              <option value="">Toutes les classes</option>
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.level ? ` — ${c.level}` : ""}
-                </option>
-              ))}
-            </Select>
-          </div>
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={(next) => {
+            setEducationScope(next);
+            setItems([]);
+            setEditingId(null);
+            setEditingReason("");
+          }}
+          classes={classes}
+          allowAllEducationTypes
+          showLevel={educationScope.educationType !== ALL_EDUCATION_TYPES}
+          showClass={educationScope.educationType !== ALL_EDUCATION_TYPES}
+          disabled={loadingClasses || loading}
+          title="Périmètre des absences et retards"
+          className="mb-4"
+        />
 
+        <div className="grid gap-3 md:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-600">
               Du
@@ -364,7 +469,7 @@ export default function AssiduiteJustificationsPage() {
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Clock className="h-3.5 w-3.5" />
             <span>
-              Période : {from || "…"} → {to || "…"}
+              {scopeSummary} • Période : {from || "…"} → {to || "…"}
             </span>
           </div>
         </div>
@@ -429,11 +534,9 @@ export default function AssiduiteJustificationsPage() {
                         <div className="font-medium">
                           {row.class_label || "—"}
                         </div>
-                        {row.class_level && (
-                          <div className="text-[11px] text-slate-500">
-                            {row.class_level}
-                          </div>
-                        )}
+                        <div className="text-[11px] text-slate-500">
+                          {rowEducationLabel(row)}
+                        </div>
                       </td>
                       <td className="px-3 py-2 align-top text-xs text-slate-700">
                         <div className="font-semibold">
