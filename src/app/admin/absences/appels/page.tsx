@@ -14,6 +14,19 @@ import {
   Hourglass,
 } from "lucide-react";
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  educationTypeLabel,
+  useEducationTeachingContext,
+} from "@/hooks/useEducationTeachingContext";
+import type { EducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassDisplayLabel,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type MonitorStatus =
   | "missing"
@@ -29,7 +42,12 @@ type MonitorRow = {
   period_label?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  class_id?: string | null;
   class_label?: string | null;
+  class_level?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_name?: string | null;
   teacher_name: string;
   status: MonitorStatus;
@@ -84,6 +102,65 @@ type SubjectGroup = {
     ok: number;
   };
 };
+
+const DEFAULT_MONITOR_SCOPE: EducationScopeValue = {
+  educationType: ALL_EDUCATION_TYPES,
+  formationCode: "",
+  levelCode: "",
+  classId: "",
+};
+
+function classFromMonitorRow(row: MonitorRow): EducationScopedClass | null {
+  const id = String(row.class_id || "").trim();
+  if (!id) return null;
+
+  return {
+    id,
+    label: row.class_label || id,
+    level: row.class_level || null,
+    education_type: row.education_type || null,
+    formation_code: row.formation_code || null,
+    formation_level_code: row.formation_level_code || null,
+  };
+}
+
+function uniqueClassesFromRows(rows: MonitorRow[]) {
+  const map = new Map<string, EducationScopedClass>();
+  for (const row of rows) {
+    const classRow = classFromMonitorRow(row);
+    if (classRow) map.set(classRow.id, classRow);
+  }
+  return Array.from(map.values());
+}
+
+function rowMatchesScope(
+  row: MonitorRow,
+  scope: EducationScopeValue,
+  knownClasses: EducationScopedClass[],
+) {
+  if (scope.educationType === ALL_EDUCATION_TYPES) return true;
+
+  let classRow = classFromMonitorRow(row);
+  if (!classRow && row.class_label) {
+    const matches = knownClasses.filter(
+      (candidate) => getClassDisplayLabel(candidate) === row.class_label,
+    );
+    if (matches.length === 1) classRow = matches[0] || null;
+  }
+
+  if (!classRow) {
+    // Compatibilite temporaire des anciennes reponses du relais : elles ne
+    // transportaient pas encore l'identifiant ni le contexte de la classe.
+    return (
+      scope.educationType === "general_secondary" &&
+      !scope.formationCode &&
+      !scope.levelCode &&
+      !scope.classId
+    );
+  }
+
+  return classMatchesEducationScope(classRow, scope);
+}
 
 /* ───────── Helpers ───────── */
 
@@ -313,9 +390,18 @@ function buildPrintHtml(args: {
   to: string;
   statusLabel: string;
   teacherLabelText: string;
+  educationScopeLabel: string;
   rows: MonitorRow[];
 }) {
-  const { cfg, from, to, statusLabel, teacherLabelText, rows } = args;
+  const {
+    cfg,
+    from,
+    to,
+    statusLabel,
+    teacherLabelText,
+    educationScopeLabel,
+    rows,
+  } = args;
 
   const institutionName = institutionDisplayName(cfg);
   const logoUrl = (cfg.institution_logo_url || "").trim();
@@ -691,6 +777,7 @@ function buildPrintHtml(args: {
       <div class="report-subtitle">
         Période du <strong>${escapeHtml(dateLongFR(from))}</strong> au
         <strong>${escapeHtml(dateLongFR(to))}</strong><br />
+        Périmètre : <strong>${escapeHtml(educationScopeLabel)}</strong><br />
         Filtre statut : <strong>${escapeHtml(statusLabel)}</strong> •
         <strong>${escapeHtml(teacherLabelText)}</strong>
       </div>
@@ -826,6 +913,12 @@ export default function SurveillanceAppelsPage() {
   const [to, setTo] = useState<string>(() => toLocalDateInputValue(new Date()));
   const [statusFilter, setStatusFilter] = useState<MonitorStatus | "all">("all");
   const [teacherQuery, setTeacherQuery] = useState<string>("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_MONITOR_SCOPE);
+  const [availableClasses, setAvailableClasses] = useState<
+    EducationScopedClass[]
+  >([]);
+  const educationContext = useEducationTeachingContext();
 
   const [rowsState, setRowsState] = useState<FetchState<MonitorRow[]>>({
     loading: false,
@@ -874,6 +967,26 @@ export default function SurveillanceAppelsPage() {
     void loadInstitutionSettings();
   }, [loadInstitutionSettings]);
 
+  const loadClasses = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/classes?limit=999", {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      setAvailableClasses(
+        Array.isArray(payload?.items) ? payload.items : [],
+      );
+    } catch {
+      // Non bloquant : en source relais, les classes présentes dans les lignes
+      // restent utilisables comme solution de repli.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadClasses();
+  }, [loadClasses]);
+
   const loadRows = useCallback(async () => {
     if (!from || !to) return;
 
@@ -886,7 +999,6 @@ export default function SurveillanceAppelsPage() {
       return;
     }
 
-    if (inFlightRef.current) return;
     inFlightRef.current = true;
 
     abortRef.current?.abort();
@@ -904,6 +1016,7 @@ export default function SurveillanceAppelsPage() {
         from,
         to,
         controller.signal,
+        educationScope,
       );
       setDataSource(result.source);
       setRowsState({
@@ -922,7 +1035,7 @@ export default function SurveillanceAppelsPage() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [from, to]);
+  }, [educationScope, from, to]);
 
   useEffect(() => {
     void loadRows();
@@ -934,9 +1047,61 @@ export default function SurveillanceAppelsPage() {
     };
   }, []);
 
-  const rows = rowsState.data || [];
-  const initialLoading = rowsState.loading && rows.length === 0;
-  const refreshing = rowsState.loading && rows.length > 0;
+  const rawRows = rowsState.data || [];
+  const classesFromRows = useMemo(
+    () => uniqueClassesFromRows(rawRows),
+    [rawRows],
+  );
+  const scopeClasses = useMemo(() => {
+    const map = new Map<string, EducationScopedClass>();
+    for (const row of [...availableClasses, ...classesFromRows]) {
+      map.set(row.id, row);
+    }
+    return Array.from(map.values());
+  }, [availableClasses, classesFromRows]);
+  const rows = useMemo(
+    () =>
+      rawRows.filter((row) =>
+        rowMatchesScope(row, educationScope, scopeClasses),
+      ),
+    [educationScope, rawRows, scopeClasses],
+  );
+  const initialLoading = rowsState.loading && rawRows.length === 0;
+  const refreshing = rowsState.loading && rawRows.length > 0;
+
+  const educationScopeLabel = useMemo(() => {
+    if (educationScope.educationType === ALL_EDUCATION_TYPES) {
+      return "Tous les enseignements";
+    }
+
+    const parts = [educationTypeLabel(educationScope.educationType)];
+    if (educationScope.formationCode) {
+      const formation = educationContext
+        .formationsFor(educationScope.educationType)
+        .find((row) => row.key === educationScope.formationCode);
+      parts.push(
+        formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : educationScope.formationCode,
+      );
+    }
+    if (educationScope.levelCode) {
+      const level = educationContext
+        .levelsFor(
+          educationScope.educationType,
+          educationScope.formationCode || null,
+        )
+        .find((row) => row.level === educationScope.levelCode);
+      parts.push(level?.level_label || educationScope.levelCode);
+    }
+    if (educationScope.classId) {
+      const classRow = scopeClasses.find(
+        (row) => row.id === educationScope.classId,
+      );
+      parts.push(classRow ? getClassDisplayLabel(classRow) : educationScope.classId);
+    }
+    return parts.join(" • ");
+  }, [educationContext, educationScope, scopeClasses]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {
@@ -1053,6 +1218,7 @@ export default function SurveillanceAppelsPage() {
       to,
       statusLabel,
       teacherLabelText,
+      educationScopeLabel,
       rows: filteredRows,
     });
 
@@ -1113,6 +1279,17 @@ export default function SurveillanceAppelsPage() {
             </div>
           </div>
         </header>
+
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={setEducationScope}
+          classes={scopeClasses}
+          allowAllEducationTypes
+          showLevel={educationScope.educationType !== ALL_EDUCATION_TYPES}
+          showClass={educationScope.educationType !== ALL_EDUCATION_TYPES}
+          classLabel="Classe (facultatif)"
+          title="Filtrer la surveillance par enseignement"
+        />
 
         <section className="grid gap-3 md:grid-cols-5">
           <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">

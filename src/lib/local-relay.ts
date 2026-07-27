@@ -3,6 +3,10 @@
 import { cacheDeleteByPrefixes, cacheGet, cacheSet } from "@/lib/offline";
 import type { TeacherAttendanceRelayPayload } from "@/lib/teacher-attendance-protocol";
 import type { TeacherSessionOpenRelayPayload } from "@/lib/teacher-session-protocol";
+import {
+  buildEducationScopeSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import type {
   TeacherSessionCloseRelayPayload,
   TeacherSessionTransitionRelayPayload,
@@ -263,11 +267,20 @@ export async function fetchAdminAttendanceMonitor<T>(
   from: string,
   to: string,
   signal?: AbortSignal,
+  scope?: EducationScopeValue,
 ): Promise<LocalReadResult<{ rows: T[] }>> {
-  const key = `relay:admin:attendance:${from}:${to}`;
+  const query = new URLSearchParams({ from, to });
+  if (scope) {
+    const scopeParams = buildEducationScopeSearchParams(scope);
+    scopeParams.forEach((value, name) => query.set(name, value));
+  }
+
+  const queryString = query.toString();
+  const key = `relay:admin:attendance:${queryString}`;
+
   try {
     const cloud = await cloudJson<{ rows: T[] }>(
-      `/api/admin/attendance/monitor?${new URLSearchParams({ from, to }).toString()}`,
+      `/api/admin/attendance/monitor?${queryString}`,
       signal,
     );
     return await writeEnvelope(key, cloud, "cloud");
@@ -276,12 +289,10 @@ export async function fetchAdminAttendanceMonitor<T>(
     const institutionId = await resolveRelayInstitutionId(signal);
     if (institutionId) {
       try {
+        const relayQuery = new URLSearchParams(query);
+        relayQuery.set("institution_id", institutionId);
         const relay = await relayJson<{ rows: T[] }>(
-          `/v1/admin/attendance/monitor?${new URLSearchParams({
-            institution_id: institutionId,
-            from,
-            to,
-          }).toString()}`,
+          `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
           { signal },
         );
         return await writeEnvelope(key, relay, "relay");
