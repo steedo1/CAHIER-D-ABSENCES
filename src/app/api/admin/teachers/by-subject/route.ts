@@ -2,10 +2,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  readEducationScopeFromSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
-/** Helper: exécute une requête Supabase et retourne data ou null (ex: table absente). */
+/** Helper: exécute une requête Supabase et retourne data ou null. */
 async function trySelect<T>(
-  fn: () => Promise<{ data: T | null; error: any }>
+  fn: () => Promise<{ data: T | null; error: any }>,
 ): Promise<T | null> {
   try {
     const { data, error } = await fn();
@@ -16,11 +22,126 @@ async function trySelect<T>(
   }
 }
 
+const SCOPE_PARAMS = [
+  "education_type",
+  "formation_code",
+  "formation_level_code",
+  "level_code",
+  "class_id",
+  "classId",
+] as const;
+
+function readValidatedScope(params: URLSearchParams):
+  | { ok: true; scope: EducationScopeValue; active: boolean }
+  | { ok: false; error: string } {
+  const active = SCOPE_PARAMS.some((name) => params.has(name));
+  const rawType = String(params.get("education_type") || "").trim();
+
+  if (
+    rawType &&
+    rawType !== ALL_EDUCATION_TYPES &&
+    !isEducationType(rawType)
+  ) {
+    return { ok: false, error: "bad_education_type" };
+  }
+
+  const scope = active
+    ? readEducationScopeFromSearchParams(params)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
+
+  if (
+    scope.formationCode &&
+    (scope.educationType === ALL_EDUCATION_TYPES ||
+      scope.educationType === "general_secondary")
+  ) {
+    return {
+      ok: false,
+      error: "formation_requires_non_general_education_type",
+    };
+  }
+
+  if (scope.levelCode && scope.educationType === ALL_EDUCATION_TYPES) {
+    return { ok: false, error: "level_requires_education_type" };
+  }
+
+  return { ok: true, scope, active };
+}
+
+async function resolveScopedClassIds(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  scope: EducationScopeValue,
+  scopeParamsPresent: boolean,
+): Promise<string[] | null> {
+  const hasRestriction =
+    scopeParamsPresent &&
+    (scope.educationType !== ALL_EDUCATION_TYPES ||
+      Boolean(scope.formationCode) ||
+      Boolean(scope.levelCode) ||
+      Boolean(scope.classId));
+
+  if (!hasRestriction) return null;
+
+  let query = srv
+    .from("classes")
+    .select("id")
+    .eq("institution_id", institutionId);
+
+  if (scope.classId) query = query.eq("id", scope.classId);
+
+  if (scope.educationType === "general_secondary") {
+    query = query.or(
+      "education_type.eq.general_secondary,education_type.is.null",
+    );
+  } else if (scope.educationType !== ALL_EDUCATION_TYPES) {
+    query = query.eq("education_type", scope.educationType);
+  }
+
+  if (scope.formationCode) {
+    query = query.eq("formation_code", scope.formationCode);
+  }
+
+  if (scope.levelCode) {
+    query =
+      scope.educationType === "general_secondary"
+        ? query.eq("level", scope.levelCode)
+        : query.eq("formation_level_code", scope.levelCode);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  return Array.from(
+    new Set((data || []).map((row: any) => String(row.id)).filter(Boolean)),
+  );
+}
+
+async function resolveSubjectIds(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  subjectId: string,
+) {
+  const ids = new Set<string>([subjectId]);
+
+  const { data } = await srv
+    .from("institution_subjects")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("subject_id", subjectId);
+
+  for (const row of data || []) ids.add(String(row.id));
+  return Array.from(ids);
+}
+
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
-  // ── Auth requise
   const {
     data: { user },
   } = await supa.auth.getUser();
@@ -30,10 +151,12 @@ export async function GET(req: NextRequest) {
   }
 
   const url = new URL(req.url);
-  const subject_id_qs = (url.searchParams.get("subject_id") || "").trim();
+  const subjectId = String(url.searchParams.get("subject_id") || "").trim();
+  const scopeResult = readValidatedScope(url.searchParams);
+  if (!scopeResult.ok) {
+    return NextResponse.json({ error: scopeResult.error }, { status: 400 });
+  }
 
-  // ── Établissement courant = celui du profil connecté
-  // On évite toute logique "intelligente" qui peut basculer sur un autre établissement.
   const profCtx = await supa
     .from("profiles")
     .select("institution_id")
@@ -44,113 +167,158 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: profCtx.error.message }, { status: 400 });
   }
 
-  const institution_id = (profCtx.data?.institution_id as string) ?? null;
-
-  if (!institution_id) {
+  const institutionId = String(profCtx.data?.institution_id || "").trim();
+  if (!institutionId) {
     return NextResponse.json(
       { error: "no_institution", items: [] },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  // ── Vérifier que l’utilisateur a bien le droit admin sur CET établissement
   const adminCheck = await srv
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .eq("institution_id", institution_id)
+    .eq("institution_id", institutionId)
     .in("role", ["admin", "super_admin"])
     .limit(1)
     .maybeSingle();
 
   if (adminCheck.error) {
-    return NextResponse.json({ error: adminCheck.error.message }, { status: 400 });
+    return NextResponse.json(
+      { error: adminCheck.error.message },
+      { status: 400 },
+    );
   }
 
   if (!adminCheck.data) {
     return NextResponse.json({ error: "forbidden", items: [] }, { status: 403 });
   }
 
-  // ── 1) Tous les teachers rattachés à l’établissement
-  const ur = await srv
+  const roles = await srv
     .from("user_roles")
     .select("profile_id")
-    .eq("institution_id", institution_id)
+    .eq("institution_id", institutionId)
     .eq("role", "teacher");
 
-  if (ur.error) {
-    return NextResponse.json({ error: ur.error.message }, { status: 400 });
+  if (roles.error) {
+    return NextResponse.json({ error: roles.error.message }, { status: 400 });
   }
 
   let teacherIds = new Set<string>(
-    (ur.data ?? []).map((r: any) => String(r.profile_id))
+    (roles.data || []).map((row: any) => String(row.profile_id)),
   );
 
-  if (teacherIds.size === 0) {
+  if (!teacherIds.size) {
     return NextResponse.json({ items: [] });
   }
 
-  // ── 2) Filtre par matière (si demandé)
-  if (subject_id_qs) {
-    let filtered: Set<string> | null = null;
+  const scopedClassIds = await resolveScopedClassIds(
+    srv,
+    institutionId,
+    scopeResult.scope,
+    scopeResult.active,
+  );
+  const classScopeActive = scopedClassIds !== null;
+  const allowedSubjectIds = subjectId
+    ? await resolveSubjectIds(srv, institutionId, subjectId)
+    : [];
 
-    // (a) préféré : teacher_subjects
-    const ts = await trySelect<any[]>(async () =>
+  if (classScopeActive) {
+    if (!scopedClassIds?.length) {
+      return NextResponse.json({ items: [] });
+    }
+
+    let serviceRows = await trySelect<any[]>(async () => {
+      let query = srv
+        .from("class_teachers")
+        .select("teacher_id,subject_id,class_id")
+        .eq("institution_id", institutionId)
+        .in("class_id", scopedClassIds);
+      if (subjectId) query = query.in("subject_id", allowedSubjectIds);
+      return await query;
+    });
+
+    if (!Array.isArray(serviceRows)) {
+      serviceRows = await trySelect<any[]>(async () => {
+        let query = srv
+          .from("teacher_timetables")
+          .select("teacher_id,subject_id,class_id")
+          .eq("institution_id", institutionId)
+          .in("class_id", scopedClassIds);
+        if (subjectId) query = query.in("subject_id", allowedSubjectIds);
+        return await query;
+      });
+    }
+
+    const allowedTeachers = new Set(
+      (serviceRows || [])
+        .map((row: any) => String(row.teacher_id || ""))
+        .filter(Boolean),
+    );
+    teacherIds = new Set(
+      Array.from(teacherIds).filter((id) => allowedTeachers.has(id)),
+    );
+  } else if (subjectId) {
+    let filtered = await trySelect<any[]>(async () =>
       await srv
         .from("teacher_subjects")
         .select("profile_id")
-        .eq("institution_id", institution_id)
-        .eq("subject_id", subject_id_qs)
+        .eq("institution_id", institutionId)
+        .in("subject_id", allowedSubjectIds),
     );
 
-    if (Array.isArray(ts)) {
-      filtered = new Set(ts.map((x: any) => String(x.profile_id)));
+    let allowedTeachers: Set<string> | null = null;
+    if (Array.isArray(filtered)) {
+      allowedTeachers = new Set(
+        filtered.map((row: any) => String(row.profile_id)),
+      );
     } else {
-      // (b) fallback : class_teachers si teacher_subjects n'existe pas
-      const ct = await trySelect<any[]>(async () =>
+      filtered = await trySelect<any[]>(async () =>
         await srv
           .from("class_teachers")
           .select("teacher_id")
-          .eq("institution_id", institution_id)
-          .eq("subject_id", subject_id_qs)
+          .eq("institution_id", institutionId)
+          .in("subject_id", allowedSubjectIds),
       );
-
-      if (Array.isArray(ct)) {
-        filtered = new Set(ct.map((x: any) => String(x.teacher_id)));
+      if (Array.isArray(filtered)) {
+        allowedTeachers = new Set(
+          filtered.map((row: any) => String(row.teacher_id)),
+        );
       }
     }
 
-    if (filtered) {
+    if (allowedTeachers) {
       teacherIds = new Set(
-        [...teacherIds].filter((id) => filtered!.has(id))
+        Array.from(teacherIds).filter((id) => allowedTeachers!.has(id)),
       );
-
-      if (teacherIds.size === 0) {
-        return NextResponse.json({ items: [] });
-      }
     }
   }
 
-  // ── 3) Profils
-  const ids = Array.from(teacherIds);
+  if (!teacherIds.size) {
+    return NextResponse.json({ items: [] });
+  }
 
-  const pf = await srv
+  const profiles = await srv
     .from("profiles")
     .select("id, display_name, email, phone")
-    .eq("institution_id", institution_id)
-    .in("id", ids)
+    .eq("institution_id", institutionId)
+    .in("id", Array.from(teacherIds))
     .order("display_name", { ascending: true });
 
-  if (pf.error) {
-    return NextResponse.json({ error: pf.error.message }, { status: 400 });
+  if (profiles.error) {
+    return NextResponse.json(
+      { error: profiles.error.message },
+      { status: 400 },
+    );
   }
 
   return NextResponse.json({
-    items: (pf.data ?? []).map((p: any) => ({
-      id: p.id as string,
-      display_name: (p.display_name ?? "") as string | null,
-      email: (p.email ?? null) as string | null,
-      phone: (p.phone ?? null) as string | null,
+    items: (profiles.data || []).map((profile: any) => ({
+      id: String(profile.id),
+      display_name: profile.display_name ?? null,
+      email: profile.email ?? null,
+      phone: profile.phone ?? null,
     })),
   });
 }

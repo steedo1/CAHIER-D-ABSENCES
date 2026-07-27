@@ -2,6 +2,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { isEducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  readEducationScopeFromSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* ───────── helpers communs ───────── */
 function toDayRange(from: string, to: string) {
@@ -35,6 +41,145 @@ function niceName(p: any) {
 async function tableExists(db: any, name: string) {
   const { error } = await db.from(name).select("*").limit(1);
   return !error;
+}
+
+const EDUCATION_SCOPE_PARAMS = [
+  "education_type",
+  "formation_code",
+  "formation_level_code",
+  "level_code",
+  "class_id",
+  "classId",
+] as const;
+
+function readValidatedEducationScope(params: URLSearchParams):
+  | { ok: true; scope: EducationScopeValue; active: boolean }
+  | { ok: false; error: string } {
+  const active = EDUCATION_SCOPE_PARAMS.some((name) => params.has(name));
+  const rawType = String(params.get("education_type") || "").trim();
+
+  if (
+    rawType &&
+    rawType !== ALL_EDUCATION_TYPES &&
+    !isEducationType(rawType)
+  ) {
+    return { ok: false, error: "Type d'enseignement invalide." };
+  }
+
+  const scope = active
+    ? readEducationScopeFromSearchParams(params)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
+
+  if (
+    scope.formationCode &&
+    (scope.educationType === ALL_EDUCATION_TYPES ||
+      scope.educationType === "general_secondary")
+  ) {
+    return {
+      ok: false,
+      error: "Une formation exige un type d'enseignement non général.",
+    };
+  }
+
+  if (scope.levelCode && scope.educationType === ALL_EDUCATION_TYPES) {
+    return {
+      ok: false,
+      error: "Un niveau exige un type d'enseignement précis.",
+    };
+  }
+
+  return { ok: true, scope, active };
+}
+
+async function resolveScopedClassIds(
+  db: any,
+  institutionId: string,
+  scope: EducationScopeValue,
+  scopeParamsPresent: boolean,
+): Promise<string[] | null> {
+  const hasRestriction =
+    scopeParamsPresent &&
+    (scope.educationType !== ALL_EDUCATION_TYPES ||
+      Boolean(scope.formationCode) ||
+      Boolean(scope.levelCode) ||
+      Boolean(scope.classId));
+
+  if (!hasRestriction) return null;
+
+  let query = db
+    .from("classes")
+    .select("id")
+    .eq("institution_id", institutionId);
+
+  if (scope.classId) query = query.eq("id", scope.classId);
+
+  if (scope.educationType === "general_secondary") {
+    query = query.or(
+      "education_type.eq.general_secondary,education_type.is.null",
+    );
+  } else if (scope.educationType !== ALL_EDUCATION_TYPES) {
+    query = query.eq("education_type", scope.educationType);
+  }
+
+  if (scope.formationCode) {
+    query = query.eq("formation_code", scope.formationCode);
+  }
+
+  if (scope.levelCode) {
+    query =
+      scope.educationType === "general_secondary"
+        ? query.eq("level", scope.levelCode)
+        : query.eq("formation_level_code", scope.levelCode);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  return Array.from(
+    new Set((data || []).map((row: any) => String(row.id)).filter(Boolean)),
+  );
+}
+
+async function resolveSubjectNameMap(
+  db: any,
+  subjectIds: string[],
+  institutionId: string,
+): Promise<Record<string, string>> {
+  const ids = Array.from(new Set(subjectIds.map(String).filter(Boolean)));
+  const names: Record<string, string> = {};
+  if (!ids.length) return names;
+
+  const { data: baseSubjects } = await db
+    .from("subjects")
+    .select("id,name")
+    .in("id", ids);
+
+  for (const row of baseSubjects || []) {
+    names[String(row.id)] = String(row.name || "").trim();
+  }
+
+  const unresolved = ids.filter((id) => !names[id]);
+  if (!unresolved.length) return names;
+
+  const { data: links } = await db
+    .from("institution_subjects")
+    .select("id,subject_id,custom_name,subjects:subject_id(id,name)")
+    .eq("institution_id", institutionId)
+    .in("id", unresolved);
+
+  for (const row of links || []) {
+    const relation = (row as any).subjects;
+    names[String((row as any).id)] = String(
+      (row as any).custom_name || relation?.name || "",
+    ).trim();
+  }
+
+  return names;
 }
 
 /** Pour un subjects.id, renvoie tous les IDs possibles pour sessions.subject_id */
@@ -218,19 +363,46 @@ export async function GET(req: NextRequest) {
 
     const { fromISO, toISOExclusive } = toDayRange(from, to);
 
-    // Établissement de l’utilisateur courant (RLS)
+    // Établissement de l’utilisateur courant (RLS).
     const {
       data: { user },
     } = await rls.auth.getUser();
-    let inst: string | null = null;
-    if (user) {
-      const { data: me } = await rls
-        .from("profiles")
-        .select("institution_id")
-        .eq("id", user.id)
-        .maybeSingle();
-      inst = (me?.institution_id as string) || null;
+
+    if (!user) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
+
+    const { data: me, error: meError } = await rls
+      .from("profiles")
+      .select("institution_id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (meError) {
+      return NextResponse.json({ error: meError.message }, { status: 400 });
+    }
+
+    const inst = String(me?.institution_id || "").trim();
+    if (!inst) {
+      return NextResponse.json({ error: "no_institution" }, { status: 400 });
+    }
+
+    const scopeResult = readValidatedEducationScope(searchParams);
+    if (!scopeResult.ok) {
+      return NextResponse.json({ error: scopeResult.error }, { status: 400 });
+    }
+
+    const educationScope = scopeResult.scope;
+    const scopedClassIds = await resolveScopedClassIds(
+      srv,
+      inst,
+      educationScope,
+      scopeResult.active,
+    );
+    const classScopeActive = scopedClassIds !== null;
+    const allowedSessionSubjectIds = subject_id
+      ? await resolveSessionSubjectIds(srv, subject_id, inst)
+      : [];
 
     /* ============================ TIMESHEET ============================ */
     if (mode === "timesheet") {
@@ -254,24 +426,18 @@ export async function GET(req: NextRequest) {
 
       const dates = rangeDates(from, to);
 
-      let instForSlots = inst;
-      if (usePeriods && !instForSlots) {
-        const { data: profInst } = await srv
-          .from("profiles")
-          .select("institution_id")
-          .eq("id", teacher_id)
-          .maybeSingle();
-        instForSlots = (profInst?.institution_id as string) || null;
-      }
+      const instForSlots = inst;
 
       const subjectsSet = new Set<string>();
       let teacherName: string | null = null;
       {
         let q = srv
           .from("teacher_subjects")
-          .select("profile_id, subject_name, teacher_name");
-        if (inst) q = q.eq("institution_id", inst);
-        const { data: ts } = await q.eq("profile_id", teacher_id);
+          .select("profile_id, subject_name, teacher_name")
+          .eq("institution_id", inst)
+          .eq("profile_id", teacher_id);
+        if (subject_id) q = q.in("subject_id", allowedSessionSubjectIds);
+        const { data: ts } = await q;
         for (const r of ts || []) {
           const nm = String(r.subject_name ?? "").trim();
           if (nm) subjectsSet.add(nm);
@@ -297,12 +463,37 @@ export async function GET(req: NextRequest) {
             ? "class_sessions"
             : "sessions";
 
+      if (classScopeActive && !scopedClassIds?.length) {
+        const slots =
+          usePeriods && instForSlots
+            ? await buildInstitutionSlots(srv, instForSlots)
+            : buildUniformSlots(startHour, endHour, slotMin);
+
+        return NextResponse.json({
+          teacher: {
+            id: teacher_id,
+            name: teacherName || "(enseignant)",
+            subjects: [],
+            total_minutes: 0,
+            total_sessions: 0,
+          },
+          dates,
+          classes: [],
+          slots,
+          cells: {},
+          cellsMeta: {},
+        });
+      }
+
       let qCT = srv
         .from("class_teachers")
         .select("class_id, subject_id")
+        .eq("institution_id", inst)
         .eq("teacher_id", teacher_id);
-      if (inst) qCT = qCT.eq("institution_id", inst);
-      const { data: ctPairs } = await qCT;
+      if (classScopeActive) qCT = qCT.in("class_id", scopedClassIds || []);
+      if (subject_id) qCT = qCT.in("subject_id", allowedSessionSubjectIds);
+      const { data: ctPairs, error: ctError } = await qCT;
+      if (ctError) throw new Error(ctError.message);
 
       const pairKey = (c?: string | null, s?: string | null) =>
         `${c ?? ""}|${s ?? ""}`;
@@ -319,11 +510,14 @@ export async function GET(req: NextRequest) {
         .select(
           "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
         )
+        .eq("institution_id", inst)
         .eq("teacher_id", teacher_id)
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
-      if (inst) q1 = q1.eq("institution_id", inst);
-      const { data: sOwn } = await q1;
+      if (classScopeActive) q1 = q1.in("class_id", scopedClassIds || []);
+      if (subject_id) q1 = q1.in("subject_id", allowedSessionSubjectIds);
+      const { data: sOwn, error: ownError } = await q1;
+      if (ownError) throw new Error(ownError.message);
 
       // Sessions créées côté compte-classe (mêmes classes du prof)
       const classIdsForTeacher = Array.from(
@@ -336,11 +530,13 @@ export async function GET(req: NextRequest) {
           .select(
             "id, teacher_id, class_id, subject_id, started_at, actual_call_at, expected_minutes, institution_id, created_by"
           )
+          .eq("institution_id", inst)
           .in("class_id", classIdsForTeacher)
           .gte("started_at", fromISO)
           .lt("started_at", toISOExclusive);
-        if (inst) q2 = q2.eq("institution_id", inst);
-        const { data: sRaw } = await q2;
+        if (subject_id) q2 = q2.in("subject_id", allowedSessionSubjectIds);
+        const { data: sRaw, error: classSessionError } = await q2;
+        if (classSessionError) throw new Error(classSessionError.message);
         sFromClass = (sRaw || []).filter((r) =>
           allowedPairs.has(
             pairKey(
@@ -356,16 +552,25 @@ export async function GET(req: NextRequest) {
       for (const s of sOwn || []) byId.set(String(s.id), s);
       for (const s of sFromClass || []) byId.set(String(s.id), s);
 
-      const sessions = Array.from(byId.values()).map((s: any) => ({
-        id: String(s.id),
-        class_id: s.class_id ? String(s.class_id) : null,
-        subject_id: s.subject_id ? String(s.subject_id) : null,
-        started_at: String(s.started_at),
-        actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
-        expected_minutes: Number(s.expected_minutes || 0),
-        teacher_id: s.teacher_id ? String(s.teacher_id) : null,
-        created_by: s.created_by ? String(s.created_by) : null,
-      }));
+      const allowedSubjectSet = new Set(allowedSessionSubjectIds);
+      const sessions = Array.from(byId.values())
+        .map((s: any) => ({
+          id: String(s.id),
+          class_id: s.class_id ? String(s.class_id) : null,
+          subject_id: s.subject_id ? String(s.subject_id) : null,
+          started_at: String(s.started_at),
+          actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
+          expected_minutes: Number(s.expected_minutes || 0),
+          teacher_id: s.teacher_id ? String(s.teacher_id) : null,
+          created_by: s.created_by ? String(s.created_by) : null,
+        }))
+        .filter(
+          (session) =>
+            !subject_id ||
+            Boolean(
+              session.subject_id && allowedSubjectSet.has(session.subject_id),
+            ),
+        );
 
       const classIdsFromSessions = Array.from(
         new Set(sessions.map((s) => s.class_id).filter(Boolean))
@@ -558,59 +763,148 @@ export async function GET(req: NextRequest) {
 
     /* ====================== SUMMARY / DETAIL ====================== */
 
-    // 1) Base enseignants (de l’établissement)
-    let qUR = srv.from("user_roles").select("profile_id").eq("role", "teacher");
-    if (inst) qUR = qUR.eq("institution_id", inst);
-    const { data: ur } = await qUR;
+    // 1) Base enseignants de l’établissement.
+    const { data: ur, error: roleError } = await srv
+      .from("user_roles")
+      .select("profile_id")
+      .eq("institution_id", inst)
+      .eq("role", "teacher");
 
-    const allTeacherIds = Array.from(
-      new Set((ur || []).map((r: any) => String(r.profile_id)))
+    if (roleError) throw new Error(roleError.message);
+
+    const allTeacherIds: string[] = Array.from(
+      new Set<string>(
+        (ur || [])
+          .map((row: any) => String(row.profile_id || ""))
+          .filter(Boolean),
+      ),
     );
 
-    // 2) Noms & disciplines depuis teacher_subjects
+    // 2) Noms et disciplines connues.
     let qTS = srv
       .from("teacher_subjects")
-      .select("profile_id, subject_id, teacher_name, subject_name, institution_id");
-    if (inst) qTS = qTS.eq("institution_id", inst);
+      .select("profile_id, subject_id, teacher_name, subject_name, institution_id")
+      .eq("institution_id", inst);
     if (allTeacherIds.length) qTS = qTS.in("profile_id", allTeacherIds);
-    if (subject_id) qTS = qTS.eq("subject_id", subject_id);
-    const { data: tsRows } = await qTS;
+    if (subject_id) qTS = qTS.in("subject_id", allowedSessionSubjectIds);
+    const { data: tsRows, error: teacherSubjectError } = await qTS;
+    if (teacherSubjectError) throw new Error(teacherSubjectError.message);
 
     const teacherNameById = new Map<string, string>();
-    for (const r of tsRows || []) {
-      const pid = String(r.profile_id);
-      const nm = String(r.teacher_name ?? "").trim();
-      if (!teacherNameById.has(pid) && nm) teacherNameById.set(pid, nm);
-    }
-
-    const missing = allTeacherIds.filter((id) => !teacherNameById.has(id));
-    if (missing.length) {
-      const { data: profs } = await srv
-        .from("profiles")
-        .select("id, display_name, first_name, last_name, email, phone")
-        .in("id", missing);
-      for (const p of profs || []) teacherNameById.set(String(p.id), niceName(p));
-    }
-
-    const subjectNamesPerTeacher: Record<string, string[]> = {};
-    for (const r of tsRows || []) {
-      const tid = String(r.profile_id);
-      const nm = String(r.subject_name ?? "").trim();
-      if (!nm) continue;
-      if (!subjectNamesPerTeacher[tid]) subjectNamesPerTeacher[tid] = [];
-      if (!subjectNamesPerTeacher[tid].includes(nm)) {
-        subjectNamesPerTeacher[tid].push(nm);
+    for (const row of tsRows || []) {
+      const profileId = String(row.profile_id);
+      const name = String(row.teacher_name || "").trim();
+      if (name && !teacherNameById.has(profileId)) {
+        teacherNameById.set(profileId, name);
       }
     }
 
-    for (const k of Object.keys(subjectNamesPerTeacher)) {
-      subjectNamesPerTeacher[k].sort((a, b) => a.localeCompare(b, "fr"));
+    const missingNames = allTeacherIds.filter(
+      (id) => !teacherNameById.has(id),
+    );
+    if (missingNames.length) {
+      const { data: profiles, error: profileError } = await srv
+        .from("profiles")
+        .select("id, display_name, first_name, last_name, email, phone")
+        .eq("institution_id", inst)
+        .in("id", missingNames);
+      if (profileError) throw new Error(profileError.message);
+      for (const profile of profiles || []) {
+        teacherNameById.set(String(profile.id), niceName(profile));
+      }
     }
 
     let teacherScope: string[] = allTeacherIds;
-    if (subject_id) {
-      const allowed = new Set((tsRows || []).map((r: any) => String(r.profile_id)));
-      teacherScope = teacherScope.filter((id) => allowed.has(id));
+    let scopedServiceRows: any[] | null = null;
+
+    if (classScopeActive) {
+      if (!scopedClassIds?.length) {
+        return mode === "detail"
+          ? NextResponse.json({ rows: [], total_minutes: 0, count: 0 })
+          : NextResponse.json({ items: [] });
+      }
+
+      let servicesQuery = srv
+        .from("class_teachers")
+        .select("teacher_id,subject_id,class_id")
+        .eq("institution_id", inst)
+        .in("class_id", scopedClassIds);
+      if (subject_id) {
+        servicesQuery = servicesQuery.in(
+          "subject_id",
+          allowedSessionSubjectIds,
+        );
+      }
+
+      const { data: serviceRows, error: serviceError } = await servicesQuery;
+      if (serviceError) throw new Error(serviceError.message);
+      const scopedRows: any[] = serviceRows || [];
+      scopedServiceRows = scopedRows;
+
+      const allowedTeachers = new Set<string>(
+        scopedRows
+          .map((row: any) => String(row.teacher_id || ""))
+          .filter(Boolean),
+      );
+      teacherScope = teacherScope.filter((id) => allowedTeachers.has(id));
+    } else if (subject_id) {
+      const allowedTeachers = new Set(
+        (tsRows || []).map((row: any) => String(row.profile_id)),
+      );
+      teacherScope = teacherScope.filter((id) => allowedTeachers.has(id));
+    }
+
+    const subjectNamesPerTeacher: Record<string, string[]> = {};
+
+    if (scopedServiceRows) {
+      const serviceSubjectIds = scopedServiceRows
+        .map((row: any) => String(row.subject_id || ""))
+        .filter(Boolean);
+      const serviceSubjectNames = await resolveSubjectNameMap(
+        srv,
+        serviceSubjectIds,
+        inst,
+      );
+
+      for (const row of scopedServiceRows) {
+        const teacherId = String(row.teacher_id || "");
+        const subjectName = serviceSubjectNames[String(row.subject_id || "")];
+        if (!teacherId || !subjectName) continue;
+        if (!subjectNamesPerTeacher[teacherId]) {
+          subjectNamesPerTeacher[teacherId] = [];
+        }
+        if (!subjectNamesPerTeacher[teacherId].includes(subjectName)) {
+          subjectNamesPerTeacher[teacherId].push(subjectName);
+        }
+      }
+    } else {
+      for (const row of tsRows || []) {
+        const teacherId = String(row.profile_id || "");
+        const subjectName = String(row.subject_name || "").trim();
+        if (!teacherId || !subjectName) continue;
+        if (!subjectNamesPerTeacher[teacherId]) {
+          subjectNamesPerTeacher[teacherId] = [];
+        }
+        if (!subjectNamesPerTeacher[teacherId].includes(subjectName)) {
+          subjectNamesPerTeacher[teacherId].push(subjectName);
+        }
+      }
+    }
+
+    for (const teacherId of Object.keys(subjectNamesPerTeacher)) {
+      subjectNamesPerTeacher[teacherId].sort((a, b) =>
+        a.localeCompare(b, "fr"),
+      );
+    }
+
+    if (mode === "detail" && teacher_id && !teacherScope.includes(teacher_id)) {
+      return NextResponse.json({ rows: [], total_minutes: 0, count: 0 });
+    }
+
+    if (!teacherScope.length) {
+      return mode === "detail"
+        ? NextResponse.json({ rows: [], total_minutes: 0, count: 0 })
+        : NextResponse.json({ items: [] });
     }
 
     // 3) Séances
@@ -622,53 +916,46 @@ export async function GET(req: NextRequest) {
           : "sessions";
 
     const baseSessions = () => {
-      let q = srv
+      let query = srv
         .from(sessionsTable2)
         .select(
-          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id"
+          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id",
         )
+        .eq("institution_id", inst)
         .gte("started_at", fromISO)
         .lt("started_at", toISOExclusive);
-      if (inst) q = q.eq("institution_id", inst);
-      return q;
-    };
 
-    const allowedSessionSubjectIds = subject_id
-      ? await resolveSessionSubjectIds(srv, subject_id, inst)
-      : [];
+      if (classScopeActive) {
+        query = query.in("class_id", scopedClassIds || []);
+      }
+
+      return query;
+    };
 
     let sessRows: any[] = [];
     if (mode === "detail") {
       if (!teacher_id) {
         return NextResponse.json(
           { error: "teacher_id requis pour mode=detail" },
-          { status: 400 }
+          { status: 400 },
         );
       }
-      let q = baseSessions().eq("teacher_id", teacher_id);
+
+      let query = baseSessions().eq("teacher_id", teacher_id);
       if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions()
-          .eq("teacher_id", teacher_id)
-          .is("subject_id", null);
-        sessRows = [...(withSubj || []), ...(noSubj || [])];
-      } else {
-        const { data } = await q;
-        sessRows = data || [];
+        query = query.in("subject_id", allowedSessionSubjectIds);
       }
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      sessRows = data || [];
     } else {
-      let q = baseSessions();
-      if (teacherScope.length) q = q.in("teacher_id", teacherScope);
+      let query = baseSessions().in("teacher_id", teacherScope);
       if (subject_id) {
-        const { data: withSubj } = await q.in("subject_id", allowedSessionSubjectIds);
-        const { data: noSubj } = await baseSessions()
-          .in("teacher_id", teacherScope)
-          .is("subject_id", null);
-        sessRows = [...(withSubj || []), ...(noSubj || [])];
-      } else {
-        const { data } = await q;
-        sessRows = data || [];
+        query = query.in("subject_id", allowedSessionSubjectIds);
       }
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      sessRows = data || [];
     }
 
     // 3.a dédoublonne par ID (au cas où)

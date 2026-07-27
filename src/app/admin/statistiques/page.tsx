@@ -2,11 +2,30 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  educationTypeLabel,
+  useEducationTeachingContext,
+} from "@/hooks/useEducationTeachingContext";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  getClassDisplayLabel,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* ─────────────────────────────────────────
    Types
 ────────────────────────────────────────── */
 type Subject = { id: string; name: string };
+type ClassItem = EducationScopedClass & {
+  id: string;
+  name: string;
+  label?: string | null;
+  level?: string | null;
+  academic_year?: string | null;
+};
 type Teacher = {
   id: string;
   display_name?: string | null;
@@ -306,6 +325,16 @@ export default function AdminStatistiquesPage() {
   /* Onglets */
   const [view, setView] = useState<ViewMode>("tableau");
 
+  const teachingContext = useEducationTeachingContext();
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>({
+    educationType: ALL_EDUCATION_TYPES,
+    formationCode: "",
+    levelCode: "",
+    classId: "",
+  });
+
   /* Filtres communs */
   const [from, setFrom] = useState<string>(() => {
     const d = new Date();
@@ -346,6 +375,50 @@ export default function AdminStatistiquesPage() {
 
   const disciplineHeader =
     subjectId === "ALL" ? "Discipline(s)" : "Discipline (filtrée)";
+
+  const educationScopeLabel = useMemo(() => {
+    if (educationScope.educationType === ALL_EDUCATION_TYPES) {
+      return "Tous les enseignements";
+    }
+
+    const parts: string[] = [educationTypeLabel(educationScope.educationType)];
+
+    if (educationScope.formationCode) {
+      const formation = teachingContext.formations.find(
+        (item) => item.key === educationScope.formationCode,
+      );
+      parts.push(
+        formation
+          ? `${formation.diplomaLabel} — ${formation.name}`
+          : educationScope.formationCode,
+      );
+    }
+
+    if (educationScope.levelCode) {
+      const level = teachingContext.levels.find(
+        (item) =>
+          item.education_type === educationScope.educationType &&
+          String(item.formation_code || "") ===
+            String(educationScope.formationCode || "") &&
+          item.level === educationScope.levelCode,
+      );
+      parts.push(level?.level_label || educationScope.levelCode);
+    }
+
+    if (educationScope.classId) {
+      const selectedClass = classes.find(
+        (item) => item.id === educationScope.classId,
+      );
+      if (selectedClass) parts.push(getClassDisplayLabel(selectedClass));
+    }
+
+    return parts.filter(Boolean).join(" • ");
+  }, [
+    classes,
+    educationScope,
+    teachingContext.formations,
+    teachingContext.levels,
+  ]);
 
   /* Agrégation hebdo pour la vue "Contrôle inspecteur" */
   const inspectorRows = useMemo<InspectorWeekRow[]>(() => {
@@ -388,6 +461,89 @@ export default function AdminStatistiquesPage() {
     );
   }, [detail.data]);
 
+  /* Classes de l'année active, nécessaires au périmètre pédagogique. */
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoadingClasses(true);
+      try {
+        const res = await fetch("/api/admin/classes", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Chargement des classes impossible.");
+
+        const rows: ClassItem[] = (Array.isArray(json?.items) ? json.items : []).map(
+          (row: any) => ({
+            id: String(row.id),
+            name: String(row.name || row.label || row.code || "Classe"),
+            label: row.label || row.name || null,
+            level: row.level || null,
+            academic_year: row.academic_year || null,
+            education_type: row.education_type || null,
+            formation_code: row.formation_code || null,
+            formation_level_code: row.formation_level_code || null,
+          }),
+        );
+
+        if (!cancelled) setClasses(rows);
+      } catch {
+        if (!cancelled) setClasses([]);
+      } finally {
+        if (!cancelled) setLoadingClasses(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const scopedSubjects = useMemo<Subject[]>(() => {
+    const fallback = subjects.length
+      ? subjects
+      : [{ id: "ALL", name: "Toutes les disciplines" }];
+
+    if (
+      educationScope.educationType === ALL_EDUCATION_TYPES ||
+      educationScope.educationType === "general_secondary"
+    ) {
+      return fallback;
+    }
+
+    if (!educationScope.formationCode) {
+      return fallback.filter((subject) => subject.id === "ALL");
+    }
+
+    const allowedIds = new Set(
+      teachingContext
+        .subjectsFor(
+          educationScope.educationType,
+          educationScope.formationCode,
+          educationScope.levelCode || null,
+        )
+        .map((subject) => subject.subject_id),
+    );
+
+    if (teachingContext.loading && allowedIds.size === 0) return fallback;
+
+    return fallback.filter(
+      (subject) => subject.id === "ALL" || allowedIds.has(subject.id),
+    );
+  }, [
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    subjects,
+    teachingContext.loading,
+    teachingContext.subjectsFor,
+  ]);
+
+  useEffect(() => {
+    if (!scopedSubjects.some((subject) => subject.id === subjectId)) {
+      setSubjectId("ALL");
+    }
+  }, [scopedSubjects, subjectId]);
+
   /* Charger disciplines (globale, réutilisée aussi par le timesheet) */
   useEffect(() => {
     (async () => {
@@ -401,32 +557,50 @@ export default function AdminStatistiquesPage() {
     })();
   }, []);
 
-  /* Charger enseignants (selon filtre discipline) — vue Tableau */
+  /* Charger les enseignants dans le périmètre pédagogique sélectionné. */
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       setLoadingTeachers(true);
       try {
-        const url =
-          subjectId === "ALL"
-            ? `/api/admin/teachers/by-subject`
-            : `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(
-                subjectId
-              )}`;
-        const res = await fetch(url, { cache: "no-store" });
-        const json = (await res.json()) as { items: Teacher[] };
-        setTeachers([
-          { id: "ALL", display_name: "Tous les enseignants" },
-          ...(json.items || []),
-        ]);
-        setTeacherId("ALL");
+        const qs = buildEducationScopeSearchParams(educationScope);
+        if (subjectId !== "ALL") qs.set("subject_id", subjectId);
+
+        const res = await fetch(
+          `/api/admin/teachers/by-subject?${qs.toString()}`,
+          { cache: "no-store" },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Chargement des enseignants impossible.");
+
+        if (!cancelled) {
+          setTeachers([
+            { id: "ALL", display_name: "Tous les enseignants" },
+            ...(Array.isArray(json?.items) ? json.items : []),
+          ]);
+          setTeacherId("ALL");
+        }
       } catch {
-        setTeachers([{ id: "ALL", display_name: "Tous les enseignants" }]);
-        setTeacherId("ALL");
+        if (!cancelled) {
+          setTeachers([{ id: "ALL", display_name: "Tous les enseignants" }]);
+          setTeacherId("ALL");
+        }
       } finally {
-        setLoadingTeachers(false);
+        if (!cancelled) setLoadingTeachers(false);
       }
     })();
-  }, [subjectId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+    subjectId,
+  ]);
 
   /* Charger données (tableau) */
   async function loadTableData() {
@@ -434,12 +608,11 @@ export default function AdminStatistiquesPage() {
     if (showDetail) {
       setDetail({ loading: true, error: null, data: null });
       try {
-        const qs = new URLSearchParams({
-          mode: "detail",
-          from,
-          to,
-          teacher_id: teacherId,
-        });
+        const qs = buildEducationScopeSearchParams(educationScope);
+        qs.set("mode", "detail");
+        qs.set("from", from);
+        qs.set("to", to);
+        qs.set("teacher_id", teacherId);
         if (subjectId !== "ALL") qs.set("subject_id", subjectId);
         const res = await fetch(`/api/admin/statistics?${qs.toString()}`, {
           cache: "no-store",
@@ -457,7 +630,10 @@ export default function AdminStatistiquesPage() {
     } else {
       setSummary({ loading: true, error: null, data: null });
       try {
-        const qs = new URLSearchParams({ mode: "summary", from, to });
+        const qs = buildEducationScopeSearchParams(educationScope);
+        qs.set("mode", "summary");
+        qs.set("from", from);
+        qs.set("to", to);
         if (subjectId !== "ALL") qs.set("subject_id", subjectId);
         const res = await fetch(`/api/admin/statistics?${qs.toString()}`, {
           cache: "no-store",
@@ -478,7 +654,16 @@ export default function AdminStatistiquesPage() {
   useEffect(() => {
     if (view === "tableau") loadTableData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [from, to, subjectId, teacherId]);
+  }, [
+    from,
+    to,
+    subjectId,
+    teacherId,
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+  ]);
 
   /* ===== Exports PDF ===== */
 
@@ -527,7 +712,7 @@ export default function AdminStatistiquesPage() {
 
     openPdfPrintWindow(
       "Synthèse des séances d'appel par enseignant",
-      `Période du ${from} au ${to}`,
+      `Période du ${from} au ${to} • ${educationScopeLabel}`,
       tableHtml
     );
   }
@@ -585,7 +770,7 @@ export default function AdminStatistiquesPage() {
 
     openPdfPrintWindow(
       "Détail des séances d'appel",
-      `Enseignant ${teacherLabel(currentTeacher)} • Période du ${from} au ${to}`,
+      `Enseignant ${teacherLabel(currentTeacher)} • Période du ${from} au ${to} • ${educationScopeLabel}`,
       tableHtml
     );
   }
@@ -645,7 +830,7 @@ export default function AdminStatistiquesPage() {
 
     openPdfPrintWindow(
       'Vue "Contrôle inspecteur"',
-      `Enseignant ${teacherLabel(currentTeacher)} • Période du ${from} au ${to}`,
+      `Enseignant ${teacherLabel(currentTeacher)} • Période du ${from} au ${to} • ${educationScopeLabel}`,
       tableHtml
     );
   }
@@ -653,6 +838,15 @@ export default function AdminStatistiquesPage() {
   /* ====== Timesheet (emploi du temps d’appel) ====== */
   const [tsSubjectId, setTsSubjectId] = useState<string>(""); // ✅ filtre discipline (vide = toutes)
   const [tsTeacherId, setTsTeacherId] = useState<string>("");
+
+  useEffect(() => {
+    if (
+      tsSubjectId &&
+      !scopedSubjects.some((subject) => subject.id === tsSubjectId)
+    ) {
+      setTsSubjectId("");
+    }
+  }, [scopedSubjects, tsSubjectId]);
   const [tsTeachers, setTsTeachers] = useState<{ id: string; label: string }[]>([]);
   const [slot, setSlot] = useState<number>(60);
   const [startHour, setStartHour] = useState<number>(7);
@@ -677,46 +871,70 @@ export default function AdminStatistiquesPage() {
   // ✅ Jours scolaires uniquement
   const [onlyWeekdays, setOnlyWeekdays] = useState<boolean>(false);
 
-  /* Charger liste enseignants pour le timesheet — avec filtre discipline optionnel */
+  /* Enseignants du timesheet, limités au même périmètre pédagogique. */
   useEffect(() => {
     if (view !== "timesheet") return;
+
+    let cancelled = false;
     (async () => {
       try {
-        const url = tsSubjectId
-          ? `/api/admin/teachers/by-subject?subject_id=${encodeURIComponent(
-              tsSubjectId
-            )}`
-          : `/api/admin/teachers/by-subject`;
-        const res = await fetch(url, { cache: "no-store" });
-        const j = await res.json();
-        const items: Teacher[] = (j?.items || []) as Teacher[];
-        const opts = items.map((t) => ({ id: String(t.id), label: teacherLabel(t) }));
-        setTsTeachers(opts);
-        // Conserver la sélection si possible, sinon prendre le premier
-        if (!opts.find((o) => o.id === tsTeacherId)) {
-          setTsTeacherId(opts[0]?.id || "");
+        const qs = buildEducationScopeSearchParams(educationScope);
+        if (tsSubjectId) qs.set("subject_id", tsSubjectId);
+
+        const res = await fetch(
+          `/api/admin/teachers/by-subject?${qs.toString()}`,
+          { cache: "no-store" },
+        );
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j?.error || "Chargement des enseignants impossible.");
+
+        const items: Teacher[] = Array.isArray(j?.items) ? j.items : [];
+        const opts = items.map((t) => ({
+          id: String(t.id),
+          label: teacherLabel(t),
+        }));
+
+        if (!cancelled) {
+          setTsTeachers(opts);
+          setTsTeacherId((current) =>
+            opts.some((option) => option.id === current)
+              ? current
+              : opts[0]?.id || "",
+          );
         }
       } catch {
-        setTsTeachers([]);
-        setTsTeacherId("");
+        if (!cancelled) {
+          setTsTeachers([]);
+          setTsTeacherId("");
+        }
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, tsSubjectId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    view,
+    tsSubjectId,
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+  ]);
 
   async function loadTimesheet() {
     if (view !== "timesheet") return;
     if (!tsTeacherId || !from || !to) return;
     setTsData({ loading: true, error: null, data: null });
-    const qs = new URLSearchParams({
-      mode: "timesheet",
-      teacher_id: tsTeacherId,
-      from,
-      to,
-      slot: String(slot),
-      start_hour: String(startHour),
-      end_hour: String(endHour),
-    });
+    const qs = buildEducationScopeSearchParams(educationScope);
+    qs.set("mode", "timesheet");
+    qs.set("teacher_id", tsTeacherId);
+    qs.set("from", from);
+    qs.set("to", to);
+    qs.set("slot", String(slot));
+    qs.set("start_hour", String(startHour));
+    qs.set("end_hour", String(endHour));
+    if (tsSubjectId) qs.set("subject_id", tsSubjectId);
     if (usePeriods) qs.set("use_periods", "1"); // ✅ active les créneaux établissement
     try {
       const res = await fetch(`/api/admin/statistics?${qs.toString()}`, {
@@ -742,7 +960,21 @@ export default function AdminStatistiquesPage() {
   useEffect(() => {
     loadTimesheet();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, tsTeacherId, from, to, slot, startHour, endHour, usePeriods]);
+  }, [
+    view,
+    tsTeacherId,
+    tsSubjectId,
+    from,
+    to,
+    slot,
+    startHour,
+    endHour,
+    usePeriods,
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+  ]);
 
   const td = tsData.data;
 
@@ -817,6 +1049,15 @@ export default function AdminStatistiquesPage() {
         </div>
       </header>
 
+      <EducationScopeFilter
+        value={educationScope}
+        onChange={setEducationScope}
+        classes={classes}
+        allowAllEducationTypes
+        disabled={loadingClasses}
+        title="Périmètre du contrôle des enseignants"
+      />
+
       {/* Filtres de période (communs) */}
       <section className="rounded-2xl border border-slate-200 bg-white/90 shadow-sm p-4 md:p-5">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -840,7 +1081,7 @@ export default function AdminStatistiquesPage() {
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700">Discipline</label>
                 <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-                  {subjects.map((s) => (
+                  {scopedSubjects.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
@@ -875,7 +1116,7 @@ export default function AdminStatistiquesPage() {
                   onChange={(e) => setTsSubjectId(e.target.value)}
                 >
                   <option value="">Toutes les disciplines</option>
-                  {subjects
+                  {scopedSubjects
                     .filter((s) => s.id !== "ALL")
                     .map((s) => (
                       <option key={s.id} value={s.id}>
