@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { isEducationType } from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,25 +78,6 @@ export async function GET(req: NextRequest) {
     ? "tardy"
     : "absent") as "absent" | "tardy";
   const format = String(url.searchParams.get("format") || "").toLowerCase(); // "csv" | ""
-  const educationTypeParam = String(
-    url.searchParams.get("education_type") || "",
-  ).trim();
-  const formationCodeParam = String(
-    url.searchParams.get("formation_code") || "",
-  ).trim();
-  const levelCodeParam = String(
-    url.searchParams.get("formation_level_code") ||
-      url.searchParams.get("level_code") ||
-      "",
-  ).trim();
-
-  if (
-    educationTypeParam &&
-    educationTypeParam !== "all" &&
-    !isEducationType(educationTypeParam)
-  ) {
-    return NextResponse.json({ error: "bad_education_type" }, { status: 400 });
-  }
 
   if (!class_id) {
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
@@ -127,59 +107,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "no_institution" }, { status: 400 });
   }
 
-  // La classe est la frontière de sécurité et la source du contexte
-  // pédagogique. On vérifie son appartenance avant toute lecture de séances.
-  const { data: classRow, error: classErr } = await srv
-    .from("classes")
-    .select(
-      "id,label,level,academic_year,education_type,formation_code,formation_level_code",
-    )
-    .eq("institution_id", inst)
-    .eq("id", class_id)
-    .maybeSingle();
-
-  if (classErr) {
-    return NextResponse.json({ error: classErr.message }, { status: 400 });
-  }
-  if (!classRow) {
-    return NextResponse.json({ error: "class_not_found" }, { status: 404 });
-  }
-
-  const classEducationType = isEducationType((classRow as any).education_type)
-    ? (classRow as any).education_type
-    : "general_secondary";
-  const classFormationCode = String(
-    (classRow as any).formation_code || "",
-  ).trim();
-  const classLevelCode = String(
-    classEducationType === "general_secondary"
-      ? (classRow as any).level || ""
-      : (classRow as any).formation_level_code || (classRow as any).level || "",
-  ).trim();
-
-  const outsideScope =
-    (educationTypeParam &&
-      educationTypeParam !== "all" &&
-      educationTypeParam !== classEducationType) ||
-    (formationCodeParam && formationCodeParam !== classFormationCode) ||
-    (levelCodeParam && levelCodeParam !== classLevelCode);
-
-  if (outsideScope) {
-    return NextResponse.json(
-      { error: "class_outside_education_scope" },
-      { status: 400 },
-    );
-  }
-
-  const resolvedScope = {
-    class_id,
-    class_label: (classRow as any).label || null,
-    academic_year: (classRow as any).academic_year || null,
-    education_type: classEducationType,
-    formation_code: classFormationCode || null,
-    formation_level_code: classLevelCode || null,
-  };
-
   // ── Lignes = élèves inscrits dans la classe
   const { data: enr, error: enrErr } = await srv
     .from("class_enrollments")
@@ -204,7 +131,6 @@ export async function GET(req: NextRequest) {
   let sessQ = srv
     .from("teacher_sessions")
     .select("id, class_id, subject_id, teacher_id, started_at")
-    .eq("institution_id", inst)
     .eq("class_id", class_id);
 
   if (from) {
@@ -244,7 +170,6 @@ export async function GET(req: NextRequest) {
       subjectDistinct: {},
       subjectTotals: {},
       studentTotals: {},
-      scope: resolvedScope,
     });
   }
 
@@ -443,6 +368,5 @@ export async function GET(req: NextRequest) {
     subjectDistinct,
     subjectTotals,
     studentTotals,
-    scope: resolvedScope,
   });
 }

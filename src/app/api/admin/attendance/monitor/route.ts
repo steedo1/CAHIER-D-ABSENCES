@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { isEducationType, type EducationType } from "@/lib/education-organization";
-import {
-  ALL_EDUCATION_TYPES,
-  classMatchesEducationScope,
-  readEducationScopeFromSearchParams,
-  type EducationScopedClass,
-} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,12 +19,7 @@ type MonitorRow = {
   period_label?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
-  class_id: string;
   class_label?: string | null;
-  class_level?: string | null;
-  education_type?: EducationType | null;
-  formation_code?: string | null;
-  formation_level_code?: string | null;
   subject_name?: string | null;
   teacher_name: string;
   teacher_phone?: string | null;
@@ -155,38 +143,6 @@ export async function GET(req: NextRequest) {
   const toParam = url.searchParams.get("to");
   const debug = url.searchParams.get("debug") === "1";
 
-  const rawEducationType = String(
-    url.searchParams.get("education_type") || "",
-  ).trim();
-  if (
-    rawEducationType &&
-    rawEducationType !== ALL_EDUCATION_TYPES &&
-    !isEducationType(rawEducationType)
-  ) {
-    return NextResponse.json({ error: "bad_education_type" }, { status: 400 });
-  }
-
-  const educationScope = readEducationScopeFromSearchParams(url.searchParams);
-  if (
-    educationScope.formationCode &&
-    (educationScope.educationType === ALL_EDUCATION_TYPES ||
-      educationScope.educationType === "general_secondary")
-  ) {
-    return NextResponse.json(
-      { error: "formation_requires_non_general_education_type" },
-      { status: 400 },
-    );
-  }
-  if (
-    educationScope.levelCode &&
-    educationScope.educationType === ALL_EDUCATION_TYPES
-  ) {
-    return NextResponse.json(
-      { error: "level_requires_education_type" },
-      { status: 400 },
-    );
-  }
-
   const {
     data: { user },
     error: userErr,
@@ -280,12 +236,7 @@ export async function GET(req: NextRequest) {
       .from("teacher_timetables")
       .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id")
       .eq("institution_id", institution_id),
-    srv
-      .from("classes")
-      .select(
-        "id,label,level,education_type,formation_code,formation_level_code",
-      )
-      .eq("institution_id", institution_id),
+    srv.from("classes").select("id,label").eq("institution_id", institution_id),
     srv
       .from("institution_subjects")
       .select("id,custom_name,subjects:subject_id(id,name)")
@@ -391,25 +342,9 @@ export async function GET(req: NextRequest) {
     datesByWeekday.set(wdDb, arr);
   }
 
-  const classById = new Map<string, EducationScopedClass>();
+  const classLabelById = new Map<string, string>();
   (classes || []).forEach((c: any) => {
-    const id = String(c.id || "").trim();
-    if (!id) return;
-
-    classById.set(id, {
-      id,
-      label: String(c.label || ""),
-      level: c.level ? String(c.level) : null,
-      education_type: isEducationType(c.education_type)
-        ? c.education_type
-        : null,
-      formation_code: c.formation_code
-        ? String(c.formation_code)
-        : null,
-      formation_level_code: c.formation_level_code
-        ? String(c.formation_level_code)
-        : null,
-    });
+    classLabelById.set(String(c.id), String(c.label || ""));
   });
 
   const subjectNameById = new Map<string, string>();
@@ -581,12 +516,7 @@ export async function GET(req: NextRequest) {
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
 
-    const classRow = classById.get(classId);
-    if (!classRow || !classMatchesEducationScope(classRow, educationScope)) {
-      return;
-    }
-
-    const classLabel = String(classRow.label || classRow.name || "");
+    const classLabel = classLabelById.get(classId) || "";
 
     let subjName = subjectNameById.get(subjectId) || "";
     if (!subjName) {
@@ -683,12 +613,7 @@ export async function GET(req: NextRequest) {
         period_label: periodLabel || null,
         planned_start: normalizeTimeFromDb(period.start_time),
         planned_end: normalizeTimeFromDb(period.end_time),
-        class_id: classId,
         class_label: classLabel || null,
-        class_level: classRow.level || null,
-        education_type: classRow.education_type || null,
-        formation_code: classRow.formation_code || null,
-        formation_level_code: classRow.formation_level_code || null,
         subject_name: subjName || null,
         teacher_name: teacherName,
         teacher_phone: teacherPhone,
@@ -733,7 +658,6 @@ export async function GET(req: NextRequest) {
         ).padStart(2, "0")}`,
         nowMinutes,
         range: { from: toYMD(fromDate), to: toYMD(toDate), days: dates.length },
-        educationScope,
         counts: {
           periods: (periods || []).length,
           tts: (tts || []).length,

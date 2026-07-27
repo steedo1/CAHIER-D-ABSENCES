@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
-import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +20,6 @@ type JustifItem = {
   class_id: string;
   class_label: string | null;
   class_level: string | null;
-  education_type: EducationType;
-  formation_code: string | null;
-  formation_level_code: string | null;
   subject_id: string | null;
   subject_name: string | null;
   started_at: string;
@@ -435,121 +431,9 @@ export async function GET(req: NextRequest) {
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
     const class_id = url.searchParams.get("class_id") || "";
-    const educationTypeParam = String(
-      url.searchParams.get("education_type") || "",
-    ).trim();
-    const formationCodeParam = String(
-      url.searchParams.get("formation_code") || "",
-    ).trim();
-    const levelCodeParam = String(
-      url.searchParams.get("formation_level_code") ||
-        url.searchParams.get("level_code") ||
-        "",
-    ).trim();
     const statusParam = url.searchParams.get("status") || "all";
     const onlyUnjustified =
       (url.searchParams.get("only_unjustified") || "1") === "1";
-
-    if (
-      educationTypeParam &&
-      educationTypeParam !== "all" &&
-      !isEducationType(educationTypeParam)
-    ) {
-      return NextResponse.json(
-        { error: "bad_education_type" },
-        { status: 400 },
-      );
-    }
-
-    if (
-      formationCodeParam &&
-      (!educationTypeParam ||
-        educationTypeParam === "all" ||
-        educationTypeParam === "general_secondary")
-    ) {
-      return NextResponse.json(
-        { error: "formation_requires_non_general_education_type" },
-        { status: 400 },
-      );
-    }
-
-    if (levelCodeParam && (!educationTypeParam || educationTypeParam === "all")) {
-      return NextResponse.json(
-        { error: "level_requires_education_type" },
-        { status: 400 },
-      );
-    }
-
-    const hasEducationScope = Boolean(
-      class_id ||
-        (educationTypeParam && educationTypeParam !== "all") ||
-        formationCodeParam ||
-        levelCodeParam,
-    );
-    let allowedClassIds: string[] | null = null;
-
-    if (hasEducationScope) {
-      let classesQuery = srv
-        .from("classes")
-        .select(
-          "id,label,level,education_type,formation_code,formation_level_code",
-        )
-        .eq("institution_id", institution_id);
-
-      if (class_id) classesQuery = classesQuery.eq("id", class_id);
-
-      if (educationTypeParam === "general_secondary") {
-        classesQuery = classesQuery.or(
-          "education_type.eq.general_secondary,education_type.is.null",
-        );
-      } else if (
-        educationTypeParam &&
-        educationTypeParam !== "all" &&
-        isEducationType(educationTypeParam)
-      ) {
-        classesQuery = classesQuery.eq("education_type", educationTypeParam);
-      }
-
-      if (formationCodeParam) {
-        classesQuery = classesQuery.eq("formation_code", formationCodeParam);
-      }
-      if (levelCodeParam) {
-        classesQuery =
-          educationTypeParam === "general_secondary"
-            ? classesQuery.eq("level", levelCodeParam)
-            : classesQuery.eq("formation_level_code", levelCodeParam);
-      }
-
-      const { data: scopedClasses, error: scopedClassesErr } =
-        await classesQuery;
-      if (scopedClassesErr) {
-        return NextResponse.json(
-          { error: scopedClassesErr.message },
-          { status: 400 },
-        );
-      }
-
-      allowedClassIds = (scopedClasses || []).map((row: any) => String(row.id));
-
-      if (class_id && !allowedClassIds.includes(class_id)) {
-        return NextResponse.json(
-          { error: "class_outside_education_scope" },
-          { status: 400 },
-        );
-      }
-
-      if (!allowedClassIds.length) {
-        return NextResponse.json({
-          items: [] as JustifItem[],
-          scope: {
-            education_type: educationTypeParam || null,
-            formation_code: formationCodeParam || null,
-            formation_level_code: levelCodeParam || null,
-            class_id: class_id || null,
-          },
-        });
-      }
-    }
 
     let q = srv
       .from("v_mark_minutes")
@@ -566,14 +450,7 @@ export async function GET(req: NextRequest) {
       q = q.neq("status", "present");
     }
 
-    if (allowedClassIds) {
-      q =
-        allowedClassIds.length === 1
-          ? q.eq("class_id", allowedClassIds[0])
-          : q.in("class_id", allowedClassIds);
-    } else if (class_id) {
-      q = q.eq("class_id", class_id);
-    }
+    if (class_id) q = q.eq("class_id", class_id);
     if (from) q = q.gte("started_at", from);
     if (to) q = q.lt("started_at", endOfDayPlus1(to));
 
@@ -585,15 +462,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (!rows || rows.length === 0) {
-      return NextResponse.json({
-        items: [] as JustifItem[],
-        scope: {
-          education_type: educationTypeParam || null,
-          formation_code: formationCodeParam || null,
-          formation_level_code: levelCodeParam || null,
-          class_id: class_id || null,
-        },
-      });
+      return NextResponse.json({ items: [] as JustifItem[] });
     }
 
     const markIds = Array.from(
@@ -665,9 +534,7 @@ export async function GET(req: NextRequest) {
     // Classes
     const { data: classes, error: classesErr } = await srv
       .from("classes")
-      .select(
-        "id, label, level, education_type, formation_code, formation_level_code",
-      )
+      .select("id, label, level")
       .in("id", classIds);
 
     if (classesErr) {
@@ -679,24 +546,12 @@ export async function GET(req: NextRequest) {
 
     const classesById = new Map<
       string,
-      {
-        label: string | null;
-        level: string | null;
-        education_type: EducationType;
-        formation_code: string | null;
-        formation_level_code: string | null;
-      }
+      { label: string | null; level: string | null }
     >();
     for (const c of classes || []) {
-      const educationType = isEducationType((c as any).education_type)
-        ? (c as any).education_type
-        : "general_secondary";
       classesById.set(String((c as any).id), {
         label: (c as any).label ?? null,
         level: (c as any).level ?? null,
-        education_type: educationType,
-        formation_code: (c as any).formation_code ?? null,
-        formation_level_code: (c as any).formation_level_code ?? null,
       });
     }
 
@@ -807,9 +662,6 @@ export async function GET(req: NextRequest) {
       const klass = classesById.get(class_id_row) || {
         label: null,
         level: null,
-        education_type: "general_secondary" as EducationType,
-        formation_code: null,
-        formation_level_code: null,
       };
 
       // Résolution du nom de matière
@@ -867,9 +719,6 @@ export async function GET(req: NextRequest) {
         class_id: class_id_row,
         class_label: klass.label,
         class_level: klass.level,
-        education_type: klass.education_type,
-        formation_code: klass.formation_code,
-        formation_level_code: klass.formation_level_code,
         subject_id,
         subject_name,
         started_at: r.started_at,
@@ -880,15 +729,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({
-      items,
-      scope: {
-        education_type: educationTypeParam || null,
-        formation_code: formationCodeParam || null,
-        formation_level_code: levelCodeParam || null,
-        class_id: class_id || null,
-      },
-    });
+    return NextResponse.json({ items });
   } catch (e: any) {
     console.error("[admin.attendance.unjustified][GET] fatal", e);
     return NextResponse.json(
