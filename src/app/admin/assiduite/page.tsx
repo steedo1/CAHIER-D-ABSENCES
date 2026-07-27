@@ -287,7 +287,7 @@ export default function AssiduiteJustificationsPage() {
       return "Tous les enseignements";
     }
 
-    const parts = [educationTypeLabel(educationScope.educationType)];
+    const parts: string[] = [educationTypeLabel(educationScope.educationType)];
     if (educationScope.formationCode) {
       const formation = teachingContext.formations.find(
         (item) => item.key === educationScope.formationCode,
@@ -324,7 +324,7 @@ export default function AssiduiteJustificationsPage() {
 
   function rowEducationLabel(row: JustifRow) {
     const type = row.education_type || "general_secondary";
-    const parts = [educationTypeLabel(type)];
+    const parts: string[] = [educationTypeLabel(type)];
 
     if (row.formation_code) {
       const formation = teachingContext.formations.find(

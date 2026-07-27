@@ -1216,7 +1216,7 @@ export default function AbsencesMatrixOnly() {
   }, [allClasses, selectedClassId]);
 
   const educationScopeLabel = useMemo(() => {
-    const parts = [educationTypeLabel(educationScope.educationType as any)];
+    const parts: string[] = [educationTypeLabel(educationScope.educationType as any)];
 
     if (educationScope.formationCode) {
       const formation = teachingContext.formations.find(
