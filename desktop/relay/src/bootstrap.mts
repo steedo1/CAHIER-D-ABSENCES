@@ -44,6 +44,31 @@ export type BootstrapResult = {
   snapshot_revision: number | null;
   snapshot_completeness: "complete" | "partial";
   applied_snapshot_revision: number | null;
+  materialization_failure_counters: MaterializationFailureCounters;
+};
+
+export type MaterializationFailureCounters = {
+  failures_retried: number;
+  failures_materialized: number;
+  obsolete_failures_pruned: number;
+  protected_failures_preserved: number;
+  invalid_failures_preserved: number;
+  ineligible_failures_preserved: number;
+  timetable_ambiguities_before_retry: number;
+  timetable_ambiguities_after_retry: number;
+  preserved_by_reason: {
+    other_entity_type: number;
+    snapshot_not_authoritative: number;
+    unsupported_action: number;
+    invalid_payload: number;
+    current_snapshot_mismatch: number;
+    current_replacement_not_materialized: number;
+    no_semantic_replacement: number;
+    sync_record_missing: number;
+    local_dirty: number;
+    outbox_operation: number;
+    outbox_dependency: number;
+  };
 };
 
 type BootstrapSnapshot = {
@@ -131,6 +156,15 @@ const DEPENDENCY_RULES: Record<string, readonly DependencyRule[]> = {
 };
 
 const FORBIDDEN_COLLECTION = /finance|payment|receipt|cash|payroll|expense|budget|charge|debt/i;
+const TIMETABLE_AUTHORITATIVE_COLLECTIONS = [
+  "teacher_timetables",
+  "institution_periods",
+  "classes",
+  "profiles",
+  "subjects",
+  "teacher_subjects",
+  "user_roles",
+] as const;
 
 export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult {
   const snapshot = parseBootstrapSnapshot(raw);
@@ -219,6 +253,10 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         .filter((item) => item.entityType === "teacher_timetable")
         .map((item) => item.entityId),
     );
+    const incomingTimetableKeys = timetableKeysFromSnapshot(
+      remaining,
+      snapshot.institution_id,
+    );
     const preservedSupersededTimetableIds = new Set<string>();
     rejected += diagnostics.length - snapshot.inputDiagnostics.length;
 
@@ -283,7 +321,37 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       persistRejectedEntity(db, snapshot, item, diagnosticRows);
     }
 
-    retryMaterializationFailures(db, snapshot.institution_id);
+    const failurePreparation = prepareMaterializationFailureRetry(
+      db,
+      snapshot,
+      incomingTimetableIds,
+      incomingTimetableKeys,
+      sourceSkippedEntities,
+    );
+    const timetableAmbiguitiesBeforeRetry = countTimetableAmbiguities(
+      db,
+      snapshot.institution_id,
+    );
+    const retry = retryMaterializationFailures(
+      db,
+      snapshot.institution_id,
+      500,
+      failurePreparation.excludedFailureKeys,
+    );
+    const timetableAmbiguitiesAfterRetry = countTimetableAmbiguities(
+      db,
+      snapshot.institution_id,
+    );
+    if (timetableAmbiguitiesAfterRetry > timetableAmbiguitiesBeforeRetry) {
+      throw new Error("bootstrap_teacher_timetable_ambiguity_after_failure_retry");
+    }
+    const materializationFailureCounters: MaterializationFailureCounters = {
+      ...failurePreparation.counters,
+      failures_retried: retry.attempted,
+      failures_materialized: retry.materialized,
+      timetable_ambiguities_before_retry: timetableAmbiguitiesBeforeRetry,
+      timetable_ambiguities_after_retry: timetableAmbiguitiesAfterRetry,
+    };
     db.prepare(`
       INSERT INTO sync_cursors(institution_id, stream, cursor, last_success_at, last_error_at, last_error)
       VALUES (?, 'cloud', ?, ?, NULL, NULL)
@@ -360,6 +428,7 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         diagnostics,
         source_skipped_entities: sourceSkippedEntities,
         source_diagnostics: snapshot.diagnostics,
+        materialization_failure_counters: materializationFailureCounters,
       }),
       completedAt,
     );
@@ -382,6 +451,7 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       applied_snapshot_revision: completeSnapshotApplied
         ? snapshot.snapshot_revision
         : storedScheduleRevision(db, snapshot.institution_id),
+      materialization_failure_counters: materializationFailureCounters,
     };
   })();
 }
@@ -423,6 +493,11 @@ function duplicateResult(
       db,
       snapshot.institution_id,
     ),
+    materialization_failure_counters: storedMaterializationFailureCounters(
+      db,
+      snapshot.institution_id,
+      snapshot.snapshot_id,
+    ),
   };
 }
 
@@ -435,6 +510,101 @@ function storedScheduleRevision(db: RelayDatabase, institutionId: string) {
   if (value === null) return null;
   const revision = Number(value);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function emptyMaterializationFailureCounters(): MaterializationFailureCounters {
+  return {
+    failures_retried: 0,
+    failures_materialized: 0,
+    obsolete_failures_pruned: 0,
+    protected_failures_preserved: 0,
+    invalid_failures_preserved: 0,
+    ineligible_failures_preserved: 0,
+    timetable_ambiguities_before_retry: 0,
+    timetable_ambiguities_after_retry: 0,
+    preserved_by_reason: {
+      other_entity_type: 0,
+      snapshot_not_authoritative: 0,
+      unsupported_action: 0,
+      invalid_payload: 0,
+      current_snapshot_mismatch: 0,
+      current_replacement_not_materialized: 0,
+      no_semantic_replacement: 0,
+      sync_record_missing: 0,
+      local_dirty: 0,
+      outbox_operation: 0,
+      outbox_dependency: 0,
+    },
+  };
+}
+
+function storedMaterializationFailureCounters(
+  db: RelayDatabase,
+  institutionId: string,
+  snapshotId: string,
+) {
+  const rows = db.prepare(`
+    SELECT details_json
+    FROM audit_log
+    WHERE institution_id = ?
+      AND event_type IN ('sync.bootstrap_completed', 'sync.bootstrap_partial')
+    ORDER BY occurred_at DESC
+    LIMIT 100
+  `).all(institutionId) as Array<{ details_json: string }>;
+  for (const row of rows) {
+    try {
+      const details = JSON.parse(row.details_json) as Record<string, unknown>;
+      if (details.snapshot_id !== snapshotId) continue;
+      return normalizedMaterializationFailureCounters(
+        details.materialization_failure_counters,
+      );
+    } catch {
+      continue;
+    }
+  }
+  return emptyMaterializationFailureCounters();
+}
+
+function normalizedMaterializationFailureCounters(
+  value: unknown,
+): MaterializationFailureCounters {
+  const empty = emptyMaterializationFailureCounters();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return empty;
+  const input = value as Record<string, unknown>;
+  const reasons = input.preserved_by_reason &&
+      typeof input.preserved_by_reason === "object" &&
+      !Array.isArray(input.preserved_by_reason)
+    ? input.preserved_by_reason as Record<string, unknown>
+    : {};
+  const count = (candidate: unknown) => {
+    const number = Number(candidate);
+    return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+  };
+  return {
+    failures_retried: count(input.failures_retried),
+    failures_materialized: count(input.failures_materialized),
+    obsolete_failures_pruned: count(input.obsolete_failures_pruned),
+    protected_failures_preserved: count(input.protected_failures_preserved),
+    invalid_failures_preserved: count(input.invalid_failures_preserved),
+    ineligible_failures_preserved: count(input.ineligible_failures_preserved),
+    timetable_ambiguities_before_retry: count(input.timetable_ambiguities_before_retry),
+    timetable_ambiguities_after_retry: count(input.timetable_ambiguities_after_retry),
+    preserved_by_reason: {
+      other_entity_type: count(reasons.other_entity_type),
+      snapshot_not_authoritative: count(reasons.snapshot_not_authoritative),
+      unsupported_action: count(reasons.unsupported_action),
+      invalid_payload: count(reasons.invalid_payload),
+      current_snapshot_mismatch: count(reasons.current_snapshot_mismatch),
+      current_replacement_not_materialized: count(
+        reasons.current_replacement_not_materialized,
+      ),
+      no_semantic_replacement: count(reasons.no_semantic_replacement),
+      sync_record_missing: count(reasons.sync_record_missing),
+      local_dirty: count(reasons.local_dirty),
+      outbox_operation: count(reasons.outbox_operation),
+      outbox_dependency: count(reasons.outbox_dependency),
+    },
+  };
 }
 
 function assertInstitutionIdentityCompatible(db: RelayDatabase, snapshot: BootstrapSnapshot) {
@@ -613,6 +783,350 @@ function importWorkItem(
       error: result.error,
     },
   };
+}
+
+type StoredMaterializationFailure = {
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  payload_json: string | null;
+};
+
+function timetableKeysFromSnapshot(
+  items: readonly WorkItem[],
+  institutionId: string,
+) {
+  const keys = new Map<string, string>();
+  for (const item of items) {
+    if (item.entityType !== "teacher_timetable") continue;
+    const key = timetableSemanticKey(item.row, institutionId, item.entityId);
+    if (key !== null) keys.set(item.entityId, key);
+  }
+  return keys;
+}
+
+function prepareMaterializationFailureRetry(
+  db: RelayDatabase,
+  snapshot: BootstrapSnapshot,
+  incomingTimetableIds: ReadonlySet<string>,
+  incomingTimetableKeys: ReadonlyMap<string, string>,
+  sourceSkippedEntities: number,
+) {
+  const counters = emptyMaterializationFailureCounters();
+  const excludedFailureKeys = new Set<string>();
+  const failures = db.prepare(`
+    SELECT entity_type, entity_id, action, payload_json
+    FROM sync_materialization_failures
+    WHERE institution_id = ?
+    ORDER BY entity_type, entity_id
+  `).all(snapshot.institution_id) as StoredMaterializationFailure[];
+  const authoritative = isAuthoritativeTimetableSnapshot(
+    snapshot,
+    sourceSkippedEntities,
+  );
+  const replacementKeys = new Set(incomingTimetableKeys.values());
+
+  for (const failure of failures) {
+    const failureKey = materializationFailureKey(
+      failure.entity_type,
+      failure.entity_id,
+    );
+    if (failure.entity_type !== "teacher_timetable") {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.other_entity_type += 1;
+      continue;
+    }
+    if (!authoritative) {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.snapshot_not_authoritative += 1;
+      continue;
+    }
+    if (failure.action !== "upsert") {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.unsupported_action += 1;
+      continue;
+    }
+
+    const payload = parsedFailurePayload(failure.payload_json);
+    const semanticKey = payload === null
+      ? null
+      : timetableSemanticKey(
+          payload,
+          snapshot.institution_id,
+          failure.entity_id,
+        );
+    if (semanticKey === null) {
+      excludedFailureKeys.add(failureKey);
+      counters.invalid_failures_preserved += 1;
+      counters.preserved_by_reason.invalid_payload += 1;
+      continue;
+    }
+
+    if (incomingTimetableIds.has(failure.entity_id)) {
+      if (incomingTimetableKeys.get(failure.entity_id) === semanticKey) {
+        continue;
+      }
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.current_snapshot_mismatch += 1;
+      continue;
+    }
+    if (!replacementKeys.has(semanticKey)) {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.no_semantic_replacement += 1;
+      continue;
+    }
+    if (!hasMaterializedTimetableReplacement(
+      db,
+      snapshot.institution_id,
+      semanticKey,
+      incomingTimetableKeys,
+    )) {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.current_replacement_not_materialized += 1;
+      continue;
+    }
+
+    const syncRecord = db.prepare(`
+      SELECT local_dirty
+      FROM sync_records
+      WHERE institution_id = ?
+        AND entity_type = 'teacher_timetable'
+        AND entity_id = ?
+    `).get(snapshot.institution_id, failure.entity_id) as {
+      local_dirty: number;
+    } | undefined;
+    if (!syncRecord) {
+      excludedFailureKeys.add(failureKey);
+      counters.ineligible_failures_preserved += 1;
+      counters.preserved_by_reason.sync_record_missing += 1;
+      continue;
+    }
+
+    const protectedByLocalDirty = syncRecord.local_dirty !== 0;
+    const protectedByOutboxOperation = hasPendingTimetableOperation(
+      db,
+      snapshot.institution_id,
+      failure.entity_id,
+    );
+    const protectedByOutboxDependency = hasTimetableOutboxDependency(
+      db,
+      snapshot.institution_id,
+      failure.entity_id,
+    );
+    if (
+      protectedByLocalDirty ||
+      protectedByOutboxOperation ||
+      protectedByOutboxDependency
+    ) {
+      excludedFailureKeys.add(failureKey);
+      counters.protected_failures_preserved += 1;
+      if (protectedByLocalDirty) counters.preserved_by_reason.local_dirty += 1;
+      if (protectedByOutboxOperation) {
+        counters.preserved_by_reason.outbox_operation += 1;
+      }
+      if (protectedByOutboxDependency) {
+        counters.preserved_by_reason.outbox_dependency += 1;
+      }
+      continue;
+    }
+
+    const deleted = db.prepare(`
+      DELETE FROM sync_materialization_failures
+      WHERE institution_id = ?
+        AND entity_type = 'teacher_timetable'
+        AND entity_id = ?
+    `).run(snapshot.institution_id, failure.entity_id);
+    counters.obsolete_failures_pruned += deleted.changes;
+  }
+
+  return { counters, excludedFailureKeys };
+}
+
+function isAuthoritativeTimetableSnapshot(
+  snapshot: BootstrapSnapshot,
+  sourceSkippedEntities: number,
+) {
+  if (
+    snapshot.snapshot_completeness !== "complete" ||
+    snapshot.snapshot_revision === null ||
+    sourceSkippedEntities !== 0
+  ) {
+    return false;
+  }
+  if (!TIMETABLE_AUTHORITATIVE_COLLECTIONS.every((collection) =>
+    Object.prototype.hasOwnProperty.call(snapshot.entities, collection)
+  )) {
+    return false;
+  }
+  const omitted = omittedCollections(snapshot.diagnostics);
+  return !TIMETABLE_AUTHORITATIVE_COLLECTIONS.some((collection) =>
+    omitted.has(collection)
+  );
+}
+
+function omittedCollections(diagnostics: Record<string, unknown>) {
+  const omitted = new Set<string>();
+  for (
+    const key of [
+      "omitted_collections",
+      "skipped_collections",
+      "collections_omitted",
+    ]
+  ) {
+    const value = diagnostics[key];
+    if (!Array.isArray(value)) continue;
+    for (const collection of value) {
+      const text = String(collection ?? "").trim();
+      if (text) omitted.add(text);
+    }
+  }
+  const skipped = diagnostics.skipped;
+  if (Array.isArray(skipped)) {
+    for (const entry of skipped) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const collection = String(
+        (entry as Record<string, unknown>).collection ?? "",
+      ).trim();
+      if (collection) omitted.add(collection);
+    }
+  }
+  return omitted;
+}
+
+function parsedFailurePayload(payloadJson: string | null) {
+  if (payloadJson === null) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function timetableSemanticKey(
+  payload: Record<string, unknown>,
+  institutionId: string,
+  entityId: string,
+) {
+  const payloadInstitution = String(payload.institution_id ?? "").trim();
+  if (payloadInstitution !== institutionId) return null;
+  const payloadId = String(payload.id ?? "").trim();
+  if (payloadId && payloadId !== entityId) return null;
+  const classId = String(payload.class_id ?? "").trim();
+  const subjectId = String(payload.subject_id ?? "").trim();
+  const teacherId = String(payload.teacher_id ?? "").trim();
+  const periodId = String(payload.period_id ?? "").trim();
+  const weekday = Number(payload.weekday);
+  if (
+    !classId ||
+    !subjectId ||
+    !teacherId ||
+    !periodId ||
+    payload.weekday === null ||
+    payload.weekday === undefined ||
+    !Number.isInteger(weekday)
+  ) {
+    return null;
+  }
+  return canonicalJson([
+    institutionId,
+    classId,
+    subjectId,
+    teacherId,
+    periodId,
+    weekday,
+  ]);
+}
+
+function materializationFailureKey(entityType: string, entityId: string) {
+  return `${entityType}\u0000${entityId}`;
+}
+
+function hasPendingTimetableOperation(
+  db: RelayDatabase,
+  institutionId: string,
+  timetableId: string,
+) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM sync_outbox
+    WHERE institution_id = ?
+      AND entity_type = 'teacher_timetable'
+      AND entity_id = ?
+      AND state IN ('pending', 'sending', 'blocked')
+    LIMIT 1
+  `).get(institutionId, timetableId));
+}
+
+function hasTimetableOutboxDependency(
+  db: RelayDatabase,
+  institutionId: string,
+  timetableId: string,
+) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM sync_outbox AS operation
+    JOIN sync_outbox_dependencies AS dependency
+      ON dependency.institution_id = operation.institution_id
+     AND (
+       dependency.operation_id = operation.operation_id
+       OR dependency.depends_on_operation_id = operation.operation_id
+     )
+    WHERE operation.institution_id = ?
+      AND operation.entity_type = 'teacher_timetable'
+      AND operation.entity_id = ?
+      AND operation.state IN ('pending', 'sending', 'blocked')
+    LIMIT 1
+  `).get(institutionId, timetableId));
+}
+
+function hasMaterializedTimetableReplacement(
+  db: RelayDatabase,
+  institutionId: string,
+  semanticKey: string,
+  incomingTimetableKeys: ReadonlyMap<string, string>,
+) {
+  for (const [entityId, incomingKey] of incomingTimetableKeys) {
+    if (incomingKey !== semanticKey) continue;
+    const row = db.prepare(`
+      SELECT id, institution_id, class_id, subject_id, teacher_id, period_id, weekday
+      FROM teacher_timetables
+      WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+    `).get(institutionId, entityId) as Record<string, unknown> | undefined;
+    if (
+      row &&
+      timetableSemanticKey(row, institutionId, entityId) === semanticKey
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function countTimetableAmbiguities(
+  db: RelayDatabase,
+  institutionId: string,
+) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT teacher_id, class_id, period_id, weekday
+      FROM teacher_timetables
+      WHERE institution_id = ? AND deleted_at IS NULL
+      GROUP BY teacher_id, class_id, period_id, weekday
+      HAVING COUNT(*) > 1
+    )
+  `).get(institutionId) as { count: number };
+  return Number(row.count);
 }
 
 function reconcileSupersededTeacherTimetables(

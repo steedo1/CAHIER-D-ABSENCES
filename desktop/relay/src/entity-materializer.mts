@@ -486,9 +486,10 @@ export function retryMaterializationFailures(
   db: RelayDatabase,
   institutionId: string,
   limit = 500,
+  excludedFailureKeys: ReadonlySet<string> = new Set(),
 ) {
   const order = new Map(ENTITY_SPECS.map((spec, index) => [spec.entityType, index]));
-  const rows = db.prepare(`
+  const rows = (db.prepare(`
     SELECT institution_id, entity_type, entity_id, action, payload_json,
            server_version, occurred_at
     FROM sync_materialization_failures
@@ -503,7 +504,9 @@ export function retryMaterializationFailures(
     payload_json: string | null;
     server_version: number;
     occurred_at: string;
-  }>;
+  }>).filter((row) =>
+    !excludedFailureKeys.has(`${row.entity_type}\u0000${row.entity_id}`)
+  );
   rows.sort((a, b) =>
     (order.get(a.entity_type) ?? 999) - (order.get(b.entity_type) ?? 999)
     || a.occurred_at.localeCompare(b.occurred_at),
