@@ -2063,6 +2063,15 @@ function StudentBulletinCard({
         />
       ) : null}
 
+      {item.official_print_kind === "duplicate" ? (
+        <div
+          aria-hidden="true"
+          className="bulletin-duplicata-watermark"
+        >
+          DUPLICATA
+        </div>
+      ) : null}
+
       {!item.official_print_kind ? (
         <div className="bulletin-unissued-print-warning mb-1 rounded-md border-2 border-amber-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.14em] text-amber-800">
           APERÇU — BULLETIN NON ÉMIS — UTILISER LE BOUTON IMPRIMER
@@ -3233,21 +3242,12 @@ function BulletinsPageContent() {
     try {
       setPrintPreparing(true);
       setErrorMsg(null);
-      let prepared = await sendPrepareRequest();
-
-      if (!prepared.response.ok && prepared.payload?.requires_reason) {
-        const reason = window.prompt(
-          "Ces bulletins ont déjà été émis. Indiquez le motif du duplicata :",
-          "Demande du parent / réimpression administrative",
-        );
-        if (!reason || !reason.trim()) return;
-        prepared = await sendPrepareRequest(reason.trim());
-      }
+      const prepared = await sendPrepareRequest();
 
       if (!prepared.response.ok || !prepared.payload?.ok) {
         if (prepared.payload?.error === "official_bulletin_changed") {
           throw new Error(
-            "Au moins un bulletin officiel a déjà été émis avec des données différentes. La réimpression est bloquée pour éviter un faux duplicata. Réimprimez la version originale depuis l’onglet Duplicata.",
+            "Ce bulletin a été modifié depuis son émission. Pour tirer le duplicata de l’original, utilisez Duplicata > Bulletins.",
           );
         }
         throw new Error(
@@ -3553,7 +3553,23 @@ function BulletinsPageContent() {
           user-select: none;
         }
 
-        .print-page-content > :not(.bulletin-watermark) {
+        .bulletin-duplicata-watermark {
+          position: absolute;
+          inset: 0;
+          z-index: 20;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          pointer-events: none;
+          user-select: none;
+          color: rgba(190, 24, 93, 0.11);
+          font-size: 72px;
+          font-weight: 1000;
+          letter-spacing: 0.16em;
+          transform: rotate(-24deg);
+        }
+
+        .print-page-content > :not(.bulletin-watermark):not(.bulletin-duplicata-watermark) {
           position: relative;
           z-index: 1;
         }

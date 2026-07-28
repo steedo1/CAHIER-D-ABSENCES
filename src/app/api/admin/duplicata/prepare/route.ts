@@ -33,6 +33,15 @@ function errorMessage(error: any) {
   return cleanOfficialText(error?.message || error || "Erreur inconnue");
 }
 
+function stripCancellationAuditNotes(value: unknown) {
+  const cleaned = String(value ?? "")
+    .split(/\r?\n/)
+    .filter((line) => !line.includes("Reçu annulé pour correction."))
+    .join("\n")
+    .trim();
+  return cleaned || null;
+}
+
 async function registerPrint(
   admin: ReturnType<typeof getSupabaseServiceClient>,
   issueId: string,
@@ -79,7 +88,7 @@ async function prepareReceipt(req: NextRequest, body: any) {
   }
 
   const receiptId = cleanOfficialText(body?.source_id || body?.receipt_id);
-  const reason = cleanOfficialText(body?.reason);
+  const requestedIssueId = cleanOfficialText(body?.issue_id);
   if (!receiptId) {
     return NextResponse.json(
       { ok: false, error: "receipt_id_required" },
@@ -103,136 +112,115 @@ async function prepareReceipt(req: NextRequest, body: any) {
     );
   }
   if (!receipt) {
-    return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
-  }
-  if (cleanOfficialText((receipt as any).receipt_status) !== "posted") {
     return NextResponse.json(
-      { ok: false, error: "cancelled_receipt_cannot_be_duplicated" },
-      { status: 409 },
+      { ok: false, error: "receipt_not_found" },
+      { status: 404 },
     );
   }
 
-  const [allocationResult, studentResult] = await Promise.all([
-    admin
-      .schema("finance")
-      .from("receipt_allocations")
-      .select("*")
-      .eq("receipt_id", receiptId)
-      .order("created_at", { ascending: true }),
-    admin
-      .from("students")
-      .select("id,first_name,last_name,full_name,matricule,class_id")
-      .eq("id", (receipt as any).student_id)
-      .eq("institution_id", access.institutionId)
-      .maybeSingle(),
-  ]);
+  const receiptWasCancelled =
+    cleanOfficialText((receipt as any).receipt_status) === "cancelled";
 
-  if (allocationResult.error) {
-    return NextResponse.json(
-      { ok: false, error: allocationResult.error.message },
-      { status: 400 },
-    );
-  }
-  if (studentResult.error) {
-    return NextResponse.json(
-      { ok: false, error: studentResult.error.message },
-      { status: 400 },
-    );
-  }
-
-  const allocations = allocationResult.data ?? [];
-  const student = studentResult.data ?? null;
-
-  const studentName =
-    cleanOfficialText((student as any)?.full_name) ||
-    [
-      cleanOfficialText((student as any)?.last_name),
-      cleanOfficialText((student as any)?.first_name),
-    ]
-      .filter(Boolean)
-      .join(" ") ||
-    cleanOfficialText((student as any)?.matricule) ||
-    "Élève";
-
-  const transactionSnapshot = canonicalOfficialSnapshot({
-    receipt: {
-      id: (receipt as any).id,
-      school_id: (receipt as any).school_id,
-      academic_year_id: (receipt as any).academic_year_id ?? null,
-      academic_year: (receipt as any).academic_year ?? null,
-      student_id: (receipt as any).student_id,
-      receipt_no: (receipt as any).receipt_no,
-      receipt_status: (receipt as any).receipt_status,
-      payment_date: (receipt as any).payment_date,
-      payer_name: (receipt as any).payer_name ?? null,
-      reference_no: (receipt as any).reference_no ?? null,
-      total_amount: (receipt as any).total_amount,
-      notes: (receipt as any).notes ?? null,
-      created_by: (receipt as any).created_by ?? null,
-      created_at: (receipt as any).created_at,
-    },
-    allocations: allocations.map((row: any) => ({
-      id: row.id,
-      receipt_id: row.receipt_id,
-      student_charge_id: row.student_charge_id,
-      amount: row.amount,
-      created_at: row.created_at,
-    })),
-  });
-
-  const snapshot = canonicalOfficialSnapshot({
-    transaction: transactionSnapshot,
-    student_at_issue: student,
-  });
-  const snapshotHash = hashOfficialSnapshot(transactionSnapshot);
-
-  let { data: issue, error: issueError } = await admin
+  let issueQuery = admin
     .from("official_document_issues")
-    .select("id,snapshot_hash,status,issued_at,official_number")
+    .select("id,issued_at,official_number")
     .eq("institution_id", access.institutionId)
     .eq("document_type", "receipt")
     .eq("source_id", receiptId)
-    .eq("source_version", 1)
-    .maybeSingle();
+    .eq("source_version", 1);
 
+  if (requestedIssueId) {
+    issueQuery = issueQuery.eq("id", requestedIssueId);
+  }
+
+  let { data: issue, error: issueError } = await issueQuery.maybeSingle();
   if (issueError) {
-    return NextResponse.json({ ok: false, error: issueError.message }, { status: 400 });
-  }
-
-  if (issue && cleanOfficialText((issue as any).snapshot_hash) !== snapshotHash) {
     return NextResponse.json(
-      { ok: false, error: "receipt_snapshot_changed" },
-      { status: 409 },
+      { ok: false, error: issueError.message },
+      { status: 400 },
+    );
+  }
+  if (requestedIssueId && !issue) {
+    return NextResponse.json(
+      { ok: false, error: "receipt_issue_not_found" },
+      { status: 404 },
     );
   }
 
-  if (issue && cleanOfficialText((issue as any).status) !== "valid") {
-    return NextResponse.json(
-      { ok: false, error: "receipt_issue_not_valid" },
-      { status: 409 },
-    );
-  }
+  if (!issue) {
+    const [allocationResult, studentResult] = await Promise.all([
+      admin
+        .schema("finance")
+        .from("receipt_allocations")
+        .select("*")
+        .eq("receipt_id", receiptId)
+        .order("created_at", { ascending: true }),
+      admin
+        .from("students")
+        .select("id,first_name,last_name,full_name,matricule,class_id")
+        .eq("id", (receipt as any).student_id)
+        .eq("institution_id", access.institutionId)
+        .maybeSingle(),
+    ]);
 
-  if (issue) {
-    const { data: original } = await admin
-      .from("official_document_print_events")
-      .select("id")
-      .eq("issue_id", (issue as any).id)
-      .eq("print_kind", "original")
-      .maybeSingle();
-
-    if (original && !reason) {
+    if (allocationResult.error) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "duplicate_reason_required",
-          requires_reason: true,
-          document_type: "receipt",
-        },
-        { status: 409 },
+        { ok: false, error: allocationResult.error.message },
+        { status: 400 },
       );
     }
-  } else {
+    if (studentResult.error) {
+      return NextResponse.json(
+        { ok: false, error: studentResult.error.message },
+        { status: 400 },
+      );
+    }
+
+    const allocations = allocationResult.data ?? [];
+    const student = studentResult.data ?? null;
+    const studentName =
+      cleanOfficialText((student as any)?.full_name) ||
+      [
+        cleanOfficialText((student as any)?.last_name),
+        cleanOfficialText((student as any)?.first_name),
+      ]
+        .filter(Boolean)
+        .join(" ") ||
+      cleanOfficialText((student as any)?.matricule) ||
+      "Élève";
+
+    const transactionSnapshot = canonicalOfficialSnapshot({
+      receipt: {
+        id: (receipt as any).id,
+        school_id: (receipt as any).school_id,
+        academic_year_id: (receipt as any).academic_year_id ?? null,
+        academic_year: (receipt as any).academic_year ?? null,
+        student_id: (receipt as any).student_id,
+        receipt_no: (receipt as any).receipt_no,
+        receipt_status: "posted",
+        payment_date: (receipt as any).payment_date,
+        payer_name: (receipt as any).payer_name ?? null,
+        reference_no: (receipt as any).reference_no ?? null,
+        total_amount: (receipt as any).total_amount,
+        notes: stripCancellationAuditNotes((receipt as any).notes),
+        created_by: (receipt as any).created_by ?? null,
+        created_at: (receipt as any).created_at,
+      },
+      allocations: allocations.map((row: any) => ({
+        id: row.id,
+        receipt_id: row.receipt_id,
+        student_charge_id: row.student_charge_id,
+        amount: row.amount,
+        created_at: row.created_at,
+      })),
+    });
+
+    const snapshot = canonicalOfficialSnapshot({
+      transaction: transactionSnapshot,
+      student_at_issue: student,
+    });
+    const snapshotHash = hashOfficialSnapshot(transactionSnapshot);
+
     const { data: inserted, error: insertError } = await admin
       .from("official_document_issues")
       .insert({
@@ -250,13 +238,10 @@ async function prepareReceipt(req: NextRequest, body: any) {
         snapshot_hash: snapshotHash,
         status: "valid",
       })
-      .select("id,snapshot_hash,status,issued_at,official_number")
+      .select("id,issued_at,official_number")
       .single();
 
     if (insertError) {
-      // Deux utilisateurs peuvent ouvrir le même reçu au même instant. La
-      // contrainte unique choisit un seul original ; l'autre requête reprend
-      // alors la ligne créée et sera traitée comme un duplicata.
       if ((insertError as any).code !== "23505") {
         return NextResponse.json(
           { ok: false, error: insertError.message },
@@ -266,7 +251,7 @@ async function prepareReceipt(req: NextRequest, body: any) {
 
       const { data: concurrentIssue, error: concurrentError } = await admin
         .from("official_document_issues")
-        .select("id,snapshot_hash,status,issued_at,official_number")
+        .select("id,issued_at,official_number")
         .eq("institution_id", access.institutionId)
         .eq("document_type", "receipt")
         .eq("source_id", receiptId)
@@ -279,15 +264,6 @@ async function prepareReceipt(req: NextRequest, body: any) {
           { status: 400 },
         );
       }
-      if (
-        cleanOfficialText((concurrentIssue as any).snapshot_hash) !== snapshotHash ||
-        cleanOfficialText((concurrentIssue as any).status) !== "valid"
-      ) {
-        return NextResponse.json(
-          { ok: false, error: "receipt_issue_conflict" },
-          { status: 409 },
-        );
-      }
       issue = concurrentIssue;
     } else {
       issue = inserted;
@@ -295,11 +271,35 @@ async function prepareReceipt(req: NextRequest, body: any) {
   }
 
   try {
+    if (receiptWasCancelled) {
+      const { data: originalEvent, error: originalEventError } = await admin
+        .from("official_document_print_events")
+        .select("id")
+        .eq("issue_id", String((issue as any).id))
+        .eq("print_kind", "original")
+        .maybeSingle();
+
+      if (originalEventError) throw originalEventError;
+      if (!originalEvent) {
+        await registerPrint(
+          admin,
+          String((issue as any).id),
+          generalAccess.userId,
+          "",
+          {
+            document_type: "receipt",
+            source_id: receiptId,
+            seeded_original_for_cancelled_receipt: true,
+          },
+        );
+      }
+    }
+
     const event = await registerPrint(
       admin,
       String((issue as any).id),
       generalAccess.userId,
-      reason,
+      "",
       {
         document_type: "receipt",
         source_id: receiptId,
@@ -316,14 +316,10 @@ async function prepareReceipt(req: NextRequest, body: any) {
       ...event,
     });
   } catch (error: any) {
-    const message = errorMessage(error);
-    if (message.includes("duplicate_reason_required")) {
-      return NextResponse.json(
-        { ok: false, error: "duplicate_reason_required", requires_reason: true },
-        { status: 409 },
-      );
-    }
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: errorMessage(error) },
+      { status: 400 },
+    );
   }
 }
 

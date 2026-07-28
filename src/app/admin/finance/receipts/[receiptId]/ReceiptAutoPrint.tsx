@@ -5,6 +5,7 @@ import { useEffect } from "react";
 type ReceiptAutoPrintProps = {
   enabled: boolean;
   receiptId: string;
+  issueId?: string;
   delayMs?: number;
 };
 
@@ -15,7 +16,6 @@ type PreparedPrint = {
   generated_at?: string | null;
   issued_at?: string | null;
   official_number?: string | null;
-  requires_reason?: boolean;
   error?: string;
 };
 
@@ -86,19 +86,26 @@ function applyPreparedPrint(meta: PreparedPrint) {
 
   document.querySelectorAll<HTMLElement>("[data-duplicata-banner]").forEach((el) => {
     el.dataset.visible = isDuplicate ? "true" : "false";
-    el.textContent = isDuplicate
-      ? `DUPLICATA N° ${duplicateNumber}${issuedAt ? ` — original enregistré le ${issuedAt}` : ""}${generatedAt ? ` — réédité le ${generatedAt}` : ""}`
-      : "";
+    el.textContent = isDuplicate ? `DUPLICATA N° ${duplicateNumber}` : "";
   });
+
+  document
+    .querySelectorAll<HTMLElement>("[data-duplicata-watermark]")
+    .forEach((el) => {
+      el.dataset.visible = isDuplicate ? "true" : "false";
+    });
 
   document.querySelectorAll<HTMLElement>("[data-official-print-meta]").forEach((el) => {
     el.textContent = isDuplicate
-      ? `Duplicata n° ${duplicateNumber}${issuedAt ? ` — original enregistré le ${issuedAt}` : ""}${generatedAt ? ` — réédition enregistrée le ${generatedAt}` : ""}`
+      ? `Duplicata n° ${duplicateNumber}${issuedAt ? ` — original du ${issuedAt}` : ""}${generatedAt ? ` — tiré le ${generatedAt}` : ""}`
       : `Exemplaire original${generatedAt ? ` enregistré le ${generatedAt}` : ""}`;
   });
 }
 
-async function requestPreparedPrint(receiptId: string, reason = "") {
+async function prepareReceiptPrint(
+  receiptId: string,
+  issueId?: string,
+): Promise<PreparedPrint | null> {
   const response = await fetch("/api/admin/duplicata/prepare", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -106,43 +113,25 @@ async function requestPreparedPrint(receiptId: string, reason = "") {
     body: JSON.stringify({
       document_type: "receipt",
       source_id: receiptId,
-      reason,
+      issue_id: issueId || null,
     }),
   });
 
   const payload = (await response.json().catch(() => ({}))) as PreparedPrint;
-  return { response, payload };
-}
-
-async function prepareReceiptPrint(receiptId: string): Promise<PreparedPrint | null> {
-  let result = await requestPreparedPrint(receiptId);
-
-  if (!result.response.ok && result.payload.requires_reason) {
-    const reason = window.prompt(
-      "Ce reçu a déjà été émis. Indiquez le motif du duplicata :",
-      "Demande du parent / réimpression administrative",
+  if (!response.ok || !payload.ok) {
+    window.alert(
+      payload.error || "Impossible de préparer l’impression du duplicata.",
     );
-    if (!reason || !reason.trim()) return null;
-    result = await requestPreparedPrint(receiptId, reason.trim());
-  }
-
-  if (!result.response.ok || !result.payload.ok) {
-    const message =
-      result.payload.error === "cancelled_receipt_cannot_be_duplicated"
-        ? "Ce reçu est annulé. Aucun duplicata valable ne peut être produit."
-        : result.payload.error === "receipt_snapshot_changed"
-          ? "Le contenu de ce reçu ne correspond plus à sa version officielle. Impression bloquée."
-          : result.payload.error || "Impossible d’enregistrer cette impression officielle.";
-    window.alert(message);
     return null;
   }
 
-  return result.payload;
+  return payload;
 }
 
 export default function ReceiptAutoPrint({
   enabled,
   receiptId,
+  issueId,
   delayMs = 220,
 }: ReceiptAutoPrintProps) {
   useEffect(() => {
@@ -157,7 +146,7 @@ export default function ReceiptAutoPrint({
 
       window.setTimeout(async () => {
         try {
-          const prepared = await prepareReceiptPrint(receiptId);
+          const prepared = await prepareReceiptPrint(receiptId, issueId);
           if (!prepared) return;
           applyPreparedPrint(prepared);
           await waitForFonts();
@@ -167,7 +156,7 @@ export default function ReceiptAutoPrint({
           window.print();
         } catch {
           window.alert(
-            "L’impression officielle n’a pas pu être préparée. La page reste ouverte.",
+            "L’impression n’a pas pu être préparée. La page reste ouverte.",
           );
         }
       }, delayMs);
@@ -186,7 +175,7 @@ export default function ReceiptAutoPrint({
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [enabled, receiptId, delayMs]);
+  }, [enabled, receiptId, issueId, delayMs]);
 
   return null;
 }

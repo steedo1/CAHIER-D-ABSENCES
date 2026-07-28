@@ -261,11 +261,6 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   {
-    href: "/admin/duplicata",
-    label: "Duplicata",
-    Icon: Copy,
-  },
-  {
     href: "/admin/notes/bilan",
     label: "Bilan trimestriel / annuel",
     Icon: FileText,
@@ -389,6 +384,18 @@ const ADMIN_PAYROLL_ITEM: NavItem = {
   badge: "PAIE",
 };
 
+const DUPLICATA_RECEIPT_ITEM: NavItem = {
+  href: "/admin/duplicata/recus",
+  label: "Reçus",
+  Icon: FileText,
+};
+
+const DUPLICATA_BULLETIN_ITEM: NavItem = {
+  href: "/admin/duplicata/bulletins",
+  label: "Bulletins",
+  Icon: FileSpreadsheet,
+};
+
 const FINANCE_FULL_ITEMS: NavItem[] = [
   { href: "/admin/finance", label: "Tableau financier", Icon: LayoutDashboard },
   {
@@ -397,7 +404,6 @@ const FINANCE_FULL_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   { href: "/admin/finance/receipts", label: "Reçus", Icon: FileText },
-  { href: "/admin/duplicata", label: "Duplicata", Icon: Copy },
   { href: "/admin/finance/arrears", label: "Impayés", Icon: BarChart3 },
   {
     href: "/admin/finance/avis-parents",
@@ -1057,6 +1063,34 @@ export default function SidebarNav() {
     [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
+  const duplicataItems = React.useMemo(() => {
+    if (isEducator || isInfirmier) return [];
+    if (isFinanceManager || isFinanceOnlyShell) {
+      return [DUPLICATA_RECEIPT_ITEM];
+    }
+    if (isAdmin) {
+      return [DUPLICATA_BULLETIN_ITEM];
+    }
+    if (role === null) {
+      if (pathname?.startsWith("/admin/duplicata/recus")) {
+        return [DUPLICATA_RECEIPT_ITEM];
+      }
+      if (pathname?.startsWith("/admin/duplicata/bulletins")) {
+        return [DUPLICATA_BULLETIN_ITEM];
+      }
+      return [];
+    }
+    return [DUPLICATA_RECEIPT_ITEM, DUPLICATA_BULLETIN_ITEM];
+  }, [
+    isAdmin,
+    isEducator,
+    isFinanceManager,
+    isFinanceOnlyShell,
+    isInfirmier,
+    pathname,
+    role,
+  ]);
+
   const fileCorrespondenceItems = React.useMemo(
     () =>
       FILE_CORRESPONDENCE_ITEMS.filter(() => {
@@ -1137,6 +1171,12 @@ export default function SidebarNav() {
     currentTab,
   );
 
+  const duplicataActive = groupHasActiveItem(
+    pathname,
+    duplicataItems,
+    currentTab,
+  );
+
   const fileCorrespondenceActive =
     !isEducator &&
     !isInfirmier &&
@@ -1198,6 +1238,9 @@ export default function SidebarNav() {
     currentTab,
   );
 
+  const [duplicataOpen, setDuplicataOpen] =
+    React.useState<boolean>(duplicataActive);
+
   const [fileCorrespondenceOpen, setFileCorrespondenceOpen] =
     React.useState<boolean>(fileCorrespondenceActive);
 
@@ -1230,6 +1273,10 @@ export default function SidebarNav() {
 
   const [settingsOpen, setSettingsOpen] =
     React.useState<boolean>(settingsActive);
+
+  React.useEffect(() => {
+    if (duplicataActive) setDuplicataOpen(true);
+  }, [duplicataActive]);
 
   React.useEffect(() => {
     if (fileCorrespondenceActive) setFileCorrespondenceOpen(true);
@@ -1372,6 +1419,19 @@ export default function SidebarNav() {
                   accent="violet"
                 />
               )}
+
+            {duplicataItems.length > 0 && (
+              <GroupSection
+                title="Duplicata"
+                Icon={Copy}
+                items={duplicataItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={duplicataOpen}
+                onToggle={() => setDuplicataOpen((v) => !v)}
+                accent="violet"
+              />
+            )}
 
             {!isInfirmier && !isFinanceManager && conductManagementItems.length > 0 && (
               <GroupSection

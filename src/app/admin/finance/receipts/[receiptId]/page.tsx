@@ -163,6 +163,15 @@ function institutionDisplayName(cfg: InstitutionSettings) {
   );
 }
 
+function stripCancellationAuditNotes(value: string | null | undefined) {
+  const cleaned = String(value ?? "")
+    .split(/\r?\n/)
+    .filter((line) => !line.includes("Reçu annulé pour correction."))
+    .join("\n")
+    .trim();
+  return cleaned || null;
+}
+
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
@@ -310,27 +319,6 @@ async function cancelReceiptForCorrectionAction(formData: FormData) {
     .eq("receipt_status", "posted");
 
   if (updateErr) throw new Error(updateErr.message);
-
-  // Le reçu officiel reste dans l'historique, mais aucun duplicata valable ne
-  // doit pouvoir être produit après son annulation pour correction.
-  try {
-    const { error: issueUpdateError } = await admin
-      .from("official_document_issues")
-      .update({
-        status: "cancelled",
-        revoked_at: nowIso,
-        revoked_by: user?.id ?? null,
-        revoke_reason: reason,
-      })
-      .eq("institution_id", institutionId)
-      .eq("document_type", "receipt")
-      .eq("source_id", receiptId)
-      .eq("status", "valid");
-
-    if (issueUpdateError) throw issueUpdateError;
-  } catch (error) {
-    console.warn("[finance/receipts] registre duplicata non mis à jour", error);
-  }
 
   revalidatePath("/admin/finance");
   revalidatePath("/admin/finance/payments");
@@ -536,7 +524,7 @@ export default async function FinanceReceiptPrintPage({
   searchParams,
 }: {
   params: Promise<{ receiptId: string }>;
-  searchParams?: Promise<{ autoprint?: string }>;
+  searchParams?: Promise<{ autoprint?: string; duplicata?: string }>;
 }) {
   const access = await getFinanceAccessForCurrentUser();
 
@@ -549,6 +537,7 @@ export default async function FinanceReceiptPrintPage({
 
   const receiptId = String(resolvedParams?.receiptId || "").trim();
   const autoPrint = String(resolvedSearch?.autoprint || "") === "1";
+  const duplicateIssueId = String(resolvedSearch?.duplicata || "").trim();
 
   if (!receiptId) {
     notFound();
@@ -571,9 +560,50 @@ export default async function FinanceReceiptPrintPage({
   if (recErr) throw new Error(recErr.message);
   if (!receipt) notFound();
 
-  const typedReceipt = receipt as ReceiptRow;
+  let officialIssue: any = null;
+  if (autoPrint || duplicateIssueId) {
+    let issueQuery = admin
+      .from("official_document_issues")
+      .select("id,document_type,source_id,snapshot")
+      .eq("institution_id", institutionId)
+      .eq("document_type", "receipt")
+      .eq("source_id", receiptId);
 
-  const [{ data: allocations, error: allocErr }, student, institutionSettings] =
+    if (duplicateIssueId) {
+      issueQuery = issueQuery.eq("id", duplicateIssueId);
+    }
+
+    const { data: issue, error: issueError } = await issueQuery.maybeSingle();
+    if (issueError) throw new Error(issueError.message);
+    if (duplicateIssueId && !issue) notFound();
+    officialIssue = issue ?? null;
+  }
+
+  const snapshotReceipt = officialIssue?.snapshot?.transaction?.receipt ?? null;
+  const snapshotAllocations = officialIssue?.snapshot?.transaction?.allocations;
+  const snapshotStudent = officialIssue?.snapshot?.student_at_issue ?? null;
+
+  const typedReceipt = (snapshotReceipt
+    ? {
+        ...(receipt as any),
+        ...snapshotReceipt,
+        receipt_status: "posted",
+        cancelled_at: null,
+        cancelled_by: null,
+        cancel_reason: null,
+      }
+    : autoPrint
+      ? {
+          ...(receipt as any),
+          receipt_status: "posted",
+          cancelled_at: null,
+          cancelled_by: null,
+          cancel_reason: null,
+          notes: stripCancellationAuditNotes((receipt as any).notes),
+        }
+      : receipt) as ReceiptRow;
+
+  const [{ data: allocations, error: allocErr }, liveStudent, institutionSettings] =
     await Promise.all([
       supabase
         .schema("finance")
@@ -581,18 +611,23 @@ export default async function FinanceReceiptPrintPage({
         .select("id,receipt_id,student_charge_id,amount,created_at")
         .eq("receipt_id", typedReceipt.id)
         .order("created_at", { ascending: true }),
-      fetchReceiptStudentServer(
-        admin,
-        institutionId,
-        typedReceipt.student_id,
-        typedReceipt.academic_year,
-      ),
+      snapshotStudent
+        ? Promise.resolve(snapshotStudent as AdminStudentRow)
+        : fetchReceiptStudentServer(
+            admin,
+            institutionId,
+            typedReceipt.student_id,
+            typedReceipt.academic_year,
+          ),
       fetchInstitutionSettingsServer(admin, institutionId),
     ]);
 
   if (allocErr) throw new Error(allocErr.message);
 
-  const allocationRows = (allocations ?? []) as ReceiptAllocationRow[];
+  const student = (snapshotStudent || liveStudent) as AdminStudentRow | null;
+  const allocationRows = (Array.isArray(snapshotAllocations)
+    ? snapshotAllocations
+    : allocations ?? []) as ReceiptAllocationRow[];
 
   const chargeIds = Array.from(
     new Set(allocationRows.map((a) => a.student_charge_id)),
@@ -1092,9 +1127,11 @@ export default async function FinanceReceiptPrintPage({
             : "Reçu de paiement";
 
   const schoolName = institutionDisplayName(institutionSettings);
+  const printQuery = new URLSearchParams({ autoprint: "1" });
+  if (duplicateIssueId) printQuery.set("duplicata", duplicateIssueId);
   const printHref = `/admin/finance/receipts/${encodeURIComponent(
     receiptId,
-  )}?autoprint=1`;
+  )}?${printQuery.toString()}`;
 
   return (
     <div className="receipt-print-root receipt-page-shell mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 print:px-0 print:py-0">
@@ -1105,12 +1142,29 @@ export default async function FinanceReceiptPrintPage({
         }
 
         .receipt-duplicata-banner,
-        .receipt-official-print-warning {
+        .receipt-official-print-warning,
+        .receipt-duplicata-watermark {
           display: none;
         }
 
         .receipt-duplicata-banner[data-visible="true"] {
           display: block;
+        }
+
+        .receipt-duplicata-watermark[data-visible="true"] {
+          display: flex;
+          position: absolute;
+          inset: 0;
+          z-index: 25;
+          align-items: center;
+          justify-content: center;
+          pointer-events: none;
+          user-select: none;
+          font-size: 68px;
+          font-weight: 1000;
+          letter-spacing: 0.18em;
+          color: rgba(190, 24, 93, 0.13);
+          transform: rotate(-24deg);
         }
 
         @media print {
@@ -1500,7 +1554,11 @@ export default async function FinanceReceiptPrintPage({
         }
       `}</style>
 
-      <ReceiptAutoPrint enabled={autoPrint} receiptId={receiptId} />
+      <ReceiptAutoPrint
+        enabled={autoPrint}
+        receiptId={receiptId}
+        issueId={officialIssue?.id || undefined}
+      />
 
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1521,18 +1579,18 @@ export default async function FinanceReceiptPrintPage({
             Retour aux reçus
           </Link>
 
-          {typedReceipt.receipt_status === "posted" ? (
-            <Link
-              href={printHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              prefetch={false}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
-            >
-              <Printer className="h-4 w-4" />
-              Imprimer / PDF
-            </Link>
-          ) : (
+          <Link
+            href={printHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            prefetch={false}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700"
+          >
+            <Printer className="h-4 w-4" />
+            Imprimer / PDF
+          </Link>
+
+          {typedReceipt.receipt_status === "cancelled" ? (
             <Link
               href={`/admin/finance/payments?${new URLSearchParams({
                 ...(typedReceipt.academic_year
@@ -1547,7 +1605,7 @@ export default async function FinanceReceiptPrintPage({
               <RefreshCcw className="h-4 w-4" />
               Ressaisir le paiement
             </Link>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -1609,6 +1667,15 @@ export default async function FinanceReceiptPrintPage({
             className="receipt-watermark pointer-events-none absolute left-1/2 top-1/2 z-0 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.045]"
           />
         ) : null}
+
+        <div
+          data-duplicata-watermark
+          data-visible="false"
+          aria-hidden="true"
+          className="receipt-duplicata-watermark"
+        >
+          DUPLICATA
+        </div>
 
         <div className="receipt-header relative z-10 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
