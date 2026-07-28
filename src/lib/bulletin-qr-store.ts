@@ -1,6 +1,7 @@
 //src/lib/bulletin-qr-store.ts
 import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { hashOfficialSnapshot } from "@/lib/official-documents";
 
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // sans 0/O, 1/I
 
@@ -20,38 +21,47 @@ export async function getOrCreateBulletinShortCode(
   }
 ) {
   const nowIso = new Date().toISOString();
+  const payloadHash = hashOfficialSnapshot(opts.payload);
 
-  // 1) Réutilise un code existant (non révoqué, non expiré)
-  const { data: existing } = await srv
+  // 1) Réutilise un code existant seulement tant qu'il n'a pas été
+  // rattaché à un bulletin officiellement émis. Un QR officiel est immuable.
+  const { data: existingRows } = await srv
     .from("bulletin_qr_codes")
-    .select("code, expires_at, revoked")
+    .select("id, code, payload, expires_at, revoked, payload_hash, official_issue_id")
     .eq("bulletin_key", opts.bulletinKey)
     .eq("revoked", false)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
 
-  if (existing?.code) {
-    const exp = existing.expires_at ? new Date(existing.expires_at) : null;
-    if (!exp || exp.getTime() > Date.now()) {
-      // Important : on garde le même code court, mais on rafraîchit
-      // toujours son payload. Sinon un QR déjà généré peut conserver une
-      // ancienne moyenne alors que le bulletin vient d'être recalculé.
-      // L'échec de cette mise à jour ne doit pas bloquer le bulletin.
-      try {
-        await srv
-          .from("bulletin_qr_codes")
-          .update({
-            payload: opts.payload,
-            expires_at: opts.expiresAt ?? null,
-          })
-          .eq("code", existing.code);
-      } catch {
-        // non bloquant : la vérification publique recalcule aussi les moyennes
-      }
+  const usableRows = (existingRows ?? []).filter((row: any) => {
+    if (!row?.code) return false;
+    const exp = row.expires_at ? new Date(row.expires_at) : null;
+    return !exp || exp.getTime() > Date.now();
+  });
 
-      return existing.code;
-    }
+  // Une version officielle ayant exactement le même contenu reste prioritaire,
+  // même si un brouillon plus récent a été généré après une modification.
+  const officialMatch = usableRows.find((row: any) => {
+    if (!row.official_issue_id) return false;
+    const storedHash =
+      String(row.payload_hash || "") || hashOfficialSnapshot(row.payload ?? null);
+    return storedHash === payloadHash;
+  });
+  if (officialMatch?.code) return officialMatch.code;
+
+  // Un QR non encore émis peut être actualisé. Un QR officiel ne l'est jamais.
+  const editableDraft = usableRows.find((row: any) => !row.official_issue_id);
+  if (editableDraft?.code) {
+    const { error: updateError } = await srv
+      .from("bulletin_qr_codes")
+      .update({
+        payload: opts.payload,
+        payload_hash: payloadHash,
+        expires_at: opts.expiresAt ?? null,
+      })
+      .eq("id", editableDraft.id);
+
+    if (!updateError) return editableDraft.code;
   }
 
   // 2) Sinon crée un nouveau code (anti-collision)
@@ -62,6 +72,7 @@ export async function getOrCreateBulletinShortCode(
       code,
       bulletin_key: opts.bulletinKey,
       payload: opts.payload,
+      payload_hash: payloadHash,
       expires_at: opts.expiresAt ?? null,
       revoked: false,
       created_at: nowIso,

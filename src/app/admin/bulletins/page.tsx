@@ -2,6 +2,7 @@
 "use client";
 
 import React, {
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,6 +11,7 @@ import React, {
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -169,6 +171,7 @@ type BulletinItemBase = {
   student_id: string;
   full_name: string;
   matricule: string | null;
+  rank?: number | null;
 
   // Infos élève
   sex?: string | null;
@@ -191,6 +194,16 @@ type BulletinItemBase = {
   // ✅ QR renvoyé par l’API
   qr_url?: string | null;
   qr_token?: string | null;
+  qr_code?: string | null;
+
+  // Registre officiel / duplicata
+  official_document_source_id?: string | null;
+  official_document_number?: string | null;
+  official_issue_id?: string | null;
+  official_print_kind?: "original" | "duplicate" | "offline_copy" | null;
+  official_duplicate_number?: number | null;
+  official_issued_at?: string | null;
+  official_printed_at?: string | null;
 
   // ✅ QR PNG généré côté serveur (PRIORITAIRE pour l’affichage)
   qr_png?: string | null;
@@ -274,6 +287,9 @@ type BulletinResponse = {
   subject_groups: BulletinGroup[];
   subject_components?: BulletinSubjectComponent[];
   items: BulletinItemBase[];
+  official_snapshot_locked?: boolean;
+  official_total_students?: number | null;
+  official_stats_snapshot?: ClassStats | null;
 
   qr?: {
     enabled?: boolean;
@@ -335,6 +351,7 @@ type ConductItem = {
   tardy_count?: number;
   absence_minutes?: number;
   tardy_minutes?: number;
+  official_rank_snapshot?: number | null;
 };
 
 type ConductSummaryResponse = {
@@ -575,6 +592,17 @@ function formatDateFR(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("fr-FR");
 }
+
+function formatOfficialDateTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("fr-FR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 
 function formatYesNo(value: boolean | null | undefined): string {
   if (value === true) return "Oui";
@@ -997,6 +1025,25 @@ function computeRanksAndStats(res: BulletinResponse | null): EnrichedBulletin | 
   if (!res) return null;
 
   const baseItems = res.items ?? [];
+
+  if (res.official_snapshot_locked) {
+    const lockedItems: BulletinItemWithRank[] = baseItems.map((item) => ({
+      ...item,
+      rank:
+        item.rank !== null && item.rank !== undefined && Number.isFinite(Number(item.rank))
+          ? Number(item.rank)
+          : null,
+    }));
+    return {
+      response: res,
+      items: lockedItems,
+      stats: res.official_stats_snapshot ?? {
+        highest: null,
+        lowest: null,
+        classAvg: null,
+      },
+    };
+  }
 
   // ✅ Le front ne fabrique plus une moyenne générale quand l’API renvoie null.
   // Nouvelle règle :
@@ -2016,6 +2063,26 @@ function StudentBulletinCard({
         />
       ) : null}
 
+      {!item.official_print_kind ? (
+        <div className="bulletin-unissued-print-warning mb-1 rounded-md border-2 border-amber-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.14em] text-amber-800">
+          APERÇU — BULLETIN NON ÉMIS — UTILISER LE BOUTON IMPRIMER
+        </div>
+      ) : item.official_print_kind === "duplicate" ? (
+        <div className="mb-1 rounded-md border-2 border-rose-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
+          DUPLICATA N° {item.official_duplicate_number || 1}
+          {item.official_issued_at
+            ? ` — original enregistré le ${formatOfficialDateTime(item.official_issued_at)}`
+            : ""}
+          {item.official_printed_at
+            ? ` — réédité le ${formatOfficialDateTime(item.official_printed_at)}`
+            : ""}
+        </div>
+      ) : item.official_print_kind === "offline_copy" ? (
+        <div className="mb-1 rounded-md border-2 border-amber-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.14em] text-amber-800">
+          COPIE HORS CONNEXION — ÉMISSION NON ENREGISTRÉE
+        </div>
+      ) : null}
+
       {/* ENTÊTE OFFICIEL */}
       <div className="bdr bulletin-header mb-1 p-1">
         <div className="grid grid-cols-3 items-start gap-2">
@@ -2035,6 +2102,11 @@ function StudentBulletinCard({
               BULLETIN TRIMESTRIEL DE NOTES
             </div>
             <div className="official-subtitle text-[11px] font-semibold">{periodTitle(period)}</div>
+            {item.official_document_number ? (
+              <div className="mt-[2px] text-[8px] font-semibold uppercase tracking-wide text-slate-600">
+                Réf. {item.official_document_number}
+              </div>
+            ) : null}
           </div>
 
           <div className="relative flex justify-end gap-2">
@@ -2562,8 +2634,14 @@ function StudentBulletinCard({
 
 /* ───────── Page principale ───────── */
 
-export default function BulletinsPage() {
+function BulletinsPageContent() {
   const { isOnline } = useOnlineStatus();
+  const searchParams = useSearchParams();
+  const duplicateIssueId = String(searchParams.get("duplicata") || "").trim();
+  const [officialSnapshotOverrides, setOfficialSnapshotOverrides] = useState<
+    Record<string, any>
+  >({});
+  const [printPreparing, setPrintPreparing] = useState(false);
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
 
@@ -2615,6 +2693,62 @@ export default function BulletinsPage() {
   }, [previewOpen]);
 
   useEffect(() => {
+    if (!duplicateIssueId) return;
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        setBulletinLoading(true);
+        setErrorMsg(null);
+        const response = await fetch(
+          `/api/admin/duplicata/${encodeURIComponent(duplicateIssueId)}`,
+          { cache: "no-store" },
+        );
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error || "Duplicata introuvable.");
+        }
+        if (payload.issue?.document_type !== "bulletin") {
+          throw new Error("Ce document n’est pas un bulletin.");
+        }
+
+        const snapshot = payload.issue?.snapshot;
+        const responseSnapshot = snapshot?.response as BulletinResponse | undefined;
+        if (!snapshot || !responseSnapshot || !Array.isArray(responseSnapshot.items)) {
+          throw new Error("L’instantané officiel du bulletin est incomplet.");
+        }
+        if (cancelled) return;
+
+        const sourceId = String(payload.issue?.source_id || "").trim();
+        setOfficialSnapshotOverrides(sourceId ? { [sourceId]: snapshot } : {});
+        setBulletinRaw(responseSnapshot);
+        setInstitution((snapshot.institution || null) as InstitutionSettings | null);
+        setConductSummary((snapshot.conduct_summary || null) as ConductSummaryResponse | null);
+        if (typeof snapshot.signatures_enabled === "boolean") {
+          setSignaturesEnabled(snapshot.signatures_enabled);
+        }
+        setSelectedClassId(String(responseSnapshot.class?.id || ""));
+        setSelectedAcademicYear(String(responseSnapshot.period?.academic_year || ""));
+        setDateFrom(String(responseSnapshot.period?.from || ""));
+        setDateTo(String(responseSnapshot.period?.to || ""));
+        setPreviewOpen(true);
+      } catch (error: any) {
+        if (!cancelled) {
+          setErrorMsg(error?.message || "Impossible de charger le duplicata.");
+        }
+      } finally {
+        if (!cancelled) setBulletinLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [duplicateIssueId]);
+
+  useEffect(() => {
+    if (duplicateIssueId) return;
     const run = async () => {
       try {
         setClassesLoading(true);
@@ -2635,9 +2769,10 @@ export default function BulletinsPage() {
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [duplicateIssueId]);
 
   useEffect(() => {
+    if (duplicateIssueId) return;
     const cls = classes.find((c) => c.id === selectedClassId);
     if (cls?.academic_year) {
       setSelectedAcademicYear(cls.academic_year);
@@ -2645,9 +2780,10 @@ export default function BulletinsPage() {
       setDateFrom("");
       setDateTo("");
     }
-  }, [selectedClassId, classes]);
+  }, [selectedClassId, classes, duplicateIssueId]);
 
   useEffect(() => {
+    if (duplicateIssueId) return;
     const run = async () => {
       try {
         setInstitutionLoading(true);
@@ -2667,9 +2803,10 @@ export default function BulletinsPage() {
       }
     };
     run();
-  }, []);
+  }, [duplicateIssueId]);
 
   useEffect(() => {
+    if (duplicateIssueId) return;
     const run = async () => {
       try {
         setPeriodsLoading(true);
@@ -2690,7 +2827,7 @@ export default function BulletinsPage() {
     };
 
     run();
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, duplicateIssueId]);
 
   const academicYears = useMemo(() => {
     const set = new Set<string>();
@@ -2850,6 +2987,20 @@ export default function BulletinsPage() {
 
   const conductRankByStudentId = useMemo(() => {
     const map = new Map<string, number>();
+    const snapshotItems = Array.isArray(conductSummary?.items)
+      ? conductSummary.items
+      : [];
+    for (const item of snapshotItems) {
+      if (
+        item.official_rank_snapshot !== null &&
+        item.official_rank_snapshot !== undefined &&
+        Number.isFinite(Number(item.official_rank_snapshot))
+      ) {
+        map.set(item.student_id, Number(item.official_rank_snapshot));
+      }
+    }
+    if (map.size > 0) return map;
+
     const entries = Array.isArray(conductSummary?.items)
       ? conductSummary.items
           .map((it) => ({
@@ -2954,18 +3105,193 @@ export default function BulletinsPage() {
   const subjectComponents = enriched?.response.subject_components ?? [];
   const subjectGroups = enriched?.response.subject_groups ?? [];
 
-  const handlePrint = () => {
-    if (!items.length) return;
+  const displayTotal = Math.max(
+    1,
+    Number(enriched?.response.official_total_students || items.length || 1),
+  );
+
+  const handlePrint = async () => {
+    if (!items.length || !enriched || !classInfo) return;
     if (typeof window === "undefined") return;
 
-    // ✅ force recalcul fit-to-page AVANT print (tous les bulletins)
-    window.dispatchEvent(new Event("bulletins:recalc-fit"));
-
-    requestAnimationFrame(() => {
+    const launchBrowserPrint = () => {
+      window.dispatchEvent(new Event("bulletins:recalc-fit"));
       requestAnimationFrame(() => {
-        window.print();
+        requestAnimationFrame(() => {
+          window.print();
+        });
       });
-    });
+    };
+
+    if (!isOnline) {
+      const accepted = window.confirm(
+        "Vous êtes hors connexion. Cette impression ne pourra pas être enregistrée comme original ou duplicata. Imprimer une copie hors connexion clairement marquée ?",
+      );
+      if (!accepted) return;
+      setBulletinRaw((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) => ({
+                ...item,
+                official_print_kind: "offline_copy",
+                official_duplicate_number: null,
+                official_printed_at: new Date().toISOString(),
+              })),
+            }
+          : current,
+      );
+      window.setTimeout(launchBrowserPrint, 0);
+      return;
+    }
+
+    const buildDocument = (item: BulletinItemWithRank) => {
+      const sourceId = String(item.official_document_source_id || "").trim();
+      const officialNumber = String(item.official_document_number || "").trim();
+      if (!sourceId || !officialNumber) {
+        throw new Error(
+          `Le bulletin de ${item.full_name} ne possède pas encore de référence officielle. Rechargez les bulletins en ligne.`,
+        );
+      }
+
+      const override = officialSnapshotOverrides[sourceId];
+      let snapshot = override;
+
+      if (!snapshot) {
+        const {
+          official_issue_id: _officialIssueId,
+          official_print_kind: _officialPrintKind,
+          official_duplicate_number: _officialDuplicateNumber,
+          official_issued_at: _officialIssuedAt,
+          official_printed_at: _officialPrintedAt,
+          qr_png: _qrPng,
+          ...snapshotItem
+        } = item;
+
+        const conductItem = conductByStudentId.get(item.student_id) || null;
+        const conductRank = conductRankByStudentId.get(item.student_id) ?? null;
+
+        snapshot = {
+          schema_version: 1,
+          response: {
+            ...enriched.response,
+            items: [snapshotItem],
+            official_snapshot_locked: true,
+            official_total_students: displayTotal,
+            official_stats_snapshot: stats,
+          },
+          institution,
+          conduct_summary: conductSummary
+            ? {
+                ...conductSummary,
+                items: conductItem
+                  ? [
+                      {
+                        ...conductItem,
+                        official_rank_snapshot: conductRank,
+                      },
+                    ]
+                  : [],
+              }
+            : null,
+          signatures_enabled: signaturesEnabled === true,
+        };
+      }
+
+      return {
+        source_id: sourceId,
+        official_number: officialNumber,
+        beneficiary_id: item.student_id,
+        beneficiary_name: item.full_name,
+        academic_year: period.academic_year || classInfo.academic_year || null,
+        class_id: classInfo.id,
+        class_label: classInfo.label,
+        period_key: [period.from || "", period.to || "", period.code || ""].join("|"),
+        period_label: periodTitle(period),
+        qr_code: item.qr_code || null,
+        qr_token: item.qr_token || null,
+        snapshot,
+      };
+    };
+
+    const sendPrepareRequest = async (reason = "") => {
+      const documents = items.map(buildDocument);
+      const response = await fetch("/api/admin/duplicata/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          document_type: "bulletin",
+          documents,
+          reason,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    try {
+      setPrintPreparing(true);
+      setErrorMsg(null);
+      let prepared = await sendPrepareRequest();
+
+      if (!prepared.response.ok && prepared.payload?.requires_reason) {
+        const reason = window.prompt(
+          "Ces bulletins ont déjà été émis. Indiquez le motif du duplicata :",
+          "Demande du parent / réimpression administrative",
+        );
+        if (!reason || !reason.trim()) return;
+        prepared = await sendPrepareRequest(reason.trim());
+      }
+
+      if (!prepared.response.ok || !prepared.payload?.ok) {
+        if (prepared.payload?.error === "official_bulletin_changed") {
+          throw new Error(
+            "Au moins un bulletin officiel a déjà été émis avec des données différentes. La réimpression est bloquée pour éviter un faux duplicata. Réimprimez la version originale depuis l’onglet Duplicata.",
+          );
+        }
+        throw new Error(
+          prepared.payload?.error ||
+            "Impossible d’enregistrer l’émission officielle des bulletins.",
+        );
+      }
+
+      const metadataBySource = new Map<string, any>();
+      for (const row of prepared.payload.items || []) {
+        metadataBySource.set(String(row.source_id || ""), row);
+      }
+
+      setBulletinRaw((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) => {
+                const meta = metadataBySource.get(
+                  String(item.official_document_source_id || ""),
+                );
+                if (!meta) return item;
+                return {
+                  ...item,
+                  official_issue_id: meta.issue_id || null,
+                  official_print_kind: meta.print_kind || null,
+                  official_duplicate_number: meta.duplicate_number ?? null,
+                  official_issued_at: meta.issued_at || null,
+                  official_printed_at: meta.generated_at || null,
+                };
+              }),
+            }
+          : current,
+      );
+
+      window.setTimeout(launchBrowserPrint, 0);
+    } catch (error: any) {
+      const message =
+        error?.message || "Une erreur est survenue avant l’impression officielle.";
+      setErrorMsg(message);
+      window.alert(message);
+    } finally {
+      setPrintPreparing(false);
+    }
   };
 
   return (
@@ -2983,6 +3309,10 @@ export default function BulletinsPage() {
           --bulletin-border: #1e293b;
           --bulletin-muted-border: #a8b6c8;
           --bulletin-text: #111827;
+        }
+
+        .bulletin-unissued-print-warning {
+          display: none;
         }
 
         .bdr {
@@ -3253,6 +3583,10 @@ export default function BulletinsPage() {
         }
 
         @media print {
+          .bulletin-unissued-print-warning {
+            display: block !important;
+          }
+
           @page {
             size: A4 portrait;
             margin: 4mm;
@@ -3404,19 +3738,21 @@ export default function BulletinsPage() {
               Fermer
             </Button>
 
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={handleLoadBulletin}
-              disabled={bulletinLoading || !selectedClassId}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Recharger
-            </Button>
+            {!duplicateIssueId ? (
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={handleLoadBulletin}
+                disabled={bulletinLoading || !selectedClassId}
+              >
+                <RefreshCw className="h-4 w-4" />
+                Recharger
+              </Button>
+            ) : null}
 
-            <Button type="button" onClick={handlePrint}>
+            <Button type="button" onClick={handlePrint} disabled={printPreparing}>
               <Printer className="h-4 w-4" />
-              Imprimer
+              {printPreparing ? "Préparation…" : "Imprimer"}
             </Button>
           </div>
 
@@ -3425,7 +3761,7 @@ export default function BulletinsPage() {
               <StudentBulletinCard
                 key={it.student_id}
                 index={idx}
-                total={items.length}
+                total={displayTotal}
                 item={it}
                 subjects={subjects}
                 subjectComponents={subjectComponents}
@@ -3651,5 +3987,19 @@ export default function BulletinsPage() {
         </div>
       )}
     </>
+  );
+}
+
+export default function BulletinsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-6xl px-4 py-8 text-sm font-semibold text-slate-600">
+          Chargement des bulletins…
+        </div>
+      }
+    >
+      <BulletinsPageContent />
+    </Suspense>
   );
 }

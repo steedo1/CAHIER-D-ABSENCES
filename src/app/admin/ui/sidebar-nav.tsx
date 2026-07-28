@@ -26,6 +26,7 @@ import {
   History,
   SlidersHorizontal,
   BookOpenCheck,
+  Copy,
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
@@ -260,6 +261,11 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   {
+    href: "/admin/duplicata",
+    label: "Duplicata",
+    Icon: Copy,
+  },
+  {
     href: "/admin/notes/bilan",
     label: "Bilan trimestriel / annuel",
     Icon: FileText,
@@ -391,6 +397,7 @@ const FINANCE_FULL_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   { href: "/admin/finance/receipts", label: "Reçus", Icon: FileText },
+  { href: "/admin/duplicata", label: "Duplicata", Icon: Copy },
   { href: "/admin/finance/arrears", label: "Impayés", Icon: BarChart3 },
   {
     href: "/admin/finance/avis-parents",

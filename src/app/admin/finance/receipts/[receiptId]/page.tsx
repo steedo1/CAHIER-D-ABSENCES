@@ -311,6 +311,27 @@ async function cancelReceiptForCorrectionAction(formData: FormData) {
 
   if (updateErr) throw new Error(updateErr.message);
 
+  // Le reçu officiel reste dans l'historique, mais aucun duplicata valable ne
+  // doit pouvoir être produit après son annulation pour correction.
+  try {
+    const { error: issueUpdateError } = await admin
+      .from("official_document_issues")
+      .update({
+        status: "cancelled",
+        revoked_at: nowIso,
+        revoked_by: user?.id ?? null,
+        revoke_reason: reason,
+      })
+      .eq("institution_id", institutionId)
+      .eq("document_type", "receipt")
+      .eq("source_id", receiptId)
+      .eq("status", "valid");
+
+    if (issueUpdateError) throw issueUpdateError;
+  } catch (error) {
+    console.warn("[finance/receipts] registre duplicata non mis à jour", error);
+  }
+
   revalidatePath("/admin/finance");
   revalidatePath("/admin/finance/payments");
   revalidatePath("/admin/finance/receipts");
@@ -318,6 +339,7 @@ async function cancelReceiptForCorrectionAction(formData: FormData) {
   revalidatePath("/admin/finance/charges");
   revalidatePath("/admin/finance/arrears");
   revalidatePath("/admin/finance/reports");
+  revalidatePath("/admin/duplicata");
 
   const query = new URLSearchParams();
   const academicYear = String((receipt as any).academic_year || "").trim();
@@ -1082,7 +1104,19 @@ export default async function FinanceReceiptPrintPage({
           margin: 4mm;
         }
 
+        .receipt-duplicata-banner,
+        .receipt-official-print-warning {
+          display: none;
+        }
+
+        .receipt-duplicata-banner[data-visible="true"] {
+          display: block;
+        }
+
         @media print {
+          .receipt-official-print-warning[data-visible="true"] {
+            display: block !important;
+          }
           html,
           body {
             width: auto !important;
@@ -1466,7 +1500,7 @@ export default async function FinanceReceiptPrintPage({
         }
       `}</style>
 
-      <ReceiptAutoPrint enabled={autoPrint} />
+      <ReceiptAutoPrint enabled={autoPrint} receiptId={receiptId} />
 
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1658,6 +1692,22 @@ export default async function FinanceReceiptPrintPage({
         </div>
 
         <div className="receipt-title-strip relative z-10 mx-6 mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-center">
+          <div
+            data-official-print-warning
+            data-visible="true"
+            className="receipt-official-print-warning mb-2 rounded-xl border-2 border-amber-700 bg-white px-3 py-2 text-sm font-black uppercase tracking-[0.14em] text-amber-800"
+          >
+            {typedReceipt.receipt_status === "cancelled"
+              ? "ANNULÉ — SANS VALEUR"
+              : autoPrint
+                ? "PRÉPARATION DE L’IMPRESSION OFFICIELLE — PATIENTEZ"
+                : "COPIE DE CONSULTATION — IMPRESSION NON ENREGISTRÉE"}
+          </div>
+          <div
+            data-duplicata-banner
+            data-visible="false"
+            className="receipt-duplicata-banner mb-2 rounded-xl border-2 border-rose-700 bg-white px-3 py-2 text-sm font-black uppercase tracking-[0.18em] text-rose-700"
+          />
           <div className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-700">
             Document officiel de paiement
           </div>
@@ -1980,6 +2030,7 @@ export default async function FinanceReceiptPrintPage({
             </span>
             <span className="font-bold text-slate-700">
               www.mon-cahier.com · Reçu généré par Mon Cahier
+              <span data-official-print-meta className="ml-2" />
             </span>
           </div>
         </div>

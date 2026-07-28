@@ -9,6 +9,7 @@ import QRCode from "qrcode";
 
 // ✅ QR court stocké en DB (table bulletin_qr_codes)
 import { getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
+import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import {
   resolveBulletinEducationContext,
@@ -720,6 +721,8 @@ async function addQrToItems<T extends { student_id: string }>(
     qr_code: string | null;
     qr_token: string | null;
     qr_url: string | null;
+    official_document_source_id: string;
+    official_document_number: string;
   })[]
 > {
   const academicYear = opts.periodMeta.academic_year ?? opts.classAcademicYear ?? null;
@@ -854,12 +857,24 @@ const snapFor = (row: any) => {
 
           const url = code ? `${opts.origin}${BULLETIN_VERIFY_SHORT_PREFIX}/${code}` : null;
 
+          const bulletinKey = computeBulletinKey({
+            instId: opts.institutionId,
+            classId: opts.classId,
+            studentId: it.student_id,
+            academicYear,
+            periodFrom: opts.periodMeta.from ?? null,
+            periodTo: opts.periodMeta.to ?? null,
+            periodLabel,
+          });
+
           return {
             ...it,
             qr_mode: code ? ("short" as const) : null,
             qr_code: code || null,
             qr_token: null,
             qr_url: url,
+            official_document_source_id: bulletinKey,
+            official_document_number: bulletinOfficialNumber(code, bulletinKey),
           };
         } catch {
           // fallback token (si possible)
@@ -879,12 +894,24 @@ const snapFor = (row: any) => {
             ? `${opts.origin}${BULLETIN_VERIFY_LEGACY_PATH}?t=${encodeURIComponent(token)}`
             : null;
 
+          const bulletinKey = computeBulletinKey({
+            instId: opts.institutionId,
+            classId: opts.classId,
+            studentId: it.student_id,
+            academicYear,
+            periodFrom: opts.periodMeta.from ?? null,
+            periodTo: opts.periodMeta.to ?? null,
+            periodLabel,
+          });
+
           return {
             ...it,
             qr_mode: token ? ("token" as const) : null,
             qr_code: null,
             qr_token: token,
             qr_url: url,
+            official_document_source_id: bulletinKey,
+            official_document_number: bulletinOfficialNumber(null, bulletinKey),
           };
         }
       })
@@ -893,6 +920,16 @@ const snapFor = (row: any) => {
 
   // 3) Fallback token pour tous
   return items.map((it) => {
+    const bulletinKey = computeBulletinKey({
+      instId: opts.institutionId,
+      classId: opts.classId,
+      studentId: it.student_id,
+      academicYear,
+      periodFrom: opts.periodMeta.from ?? null,
+      periodTo: opts.periodMeta.to ?? null,
+      periodLabel,
+    });
+
     const token = signBulletinQRToken({
       instId: opts.institutionId,
       classId: opts.classId,
@@ -913,6 +950,8 @@ const snapFor = (row: any) => {
       qr_code: null,
       qr_token: token,
       qr_url: url,
+      official_document_source_id: bulletinKey,
+      official_document_number: bulletinOfficialNumber(null, bulletinKey),
     };
   });
 }
