@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { probeCloudSchedule } from "@/lib/cloud-availability";
 import {
   Notebook,
   NotebookPen,
@@ -264,7 +265,7 @@ export default function ChooseBookPage() {
 
   useEffect(() => {
     const update = () =>
-      setIsOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+      void probeCloudSchedule().then((result) => setIsOnline(Boolean(result)));
 
     update();
     window.addEventListener("online", update);
@@ -301,13 +302,9 @@ export default function ChooseBookPage() {
 
         setSigEligibility("ineligible");
 
-        if (typeof navigator !== "undefined" && !navigator.onLine) {
-          setSigHint(
-            "Hors ligne : vérification indisponible. Reconnectez-vous une fois."
-          );
-        } else {
-          setSigHint(null);
-        }
+        setSigHint(
+          "Cloud indisponible : vérification suspendue. Reconnectez-vous une fois."
+        );
       }
     })();
 
@@ -345,43 +342,45 @@ export default function ChooseBookPage() {
   }
 
   function handleBookClick(book: "attendance" | "grades", label: string) {
-    return (e: React.MouseEvent<HTMLAnchorElement>) => {
+    return async (e: React.MouseEvent<HTMLAnchorElement>) => {
       e.preventDefault();
 
-      const isOffline =
-        typeof navigator !== "undefined" ? !navigator.onLine : false;
+      const cloudReachable = Boolean(await probeCloudSchedule());
+      setIsOnline(cloudReachable);
 
-      const dest = isOffline
-        ? resolveOfflineDest(book)
-        : `/redirect?book=${book}`;
+      const dest = cloudReachable
+        ? `/redirect?book=${book}`
+        : resolveOfflineDest(book);
 
       // Hors ligne, Next router.push tente de récupérer un flux RSC sur le
       // réseau. Une navigation documentaire permet au service worker de
       // servir directement la page HTML préparée dans son cache.
-      openWithSpinner(dest, label, isOffline);
+      openWithSpinner(dest, label, !cloudReachable);
     };
   }
 
   function handleSimplePush(dest: string, label: string) {
-    return (e: React.MouseEvent<HTMLAnchorElement>) => {
+    return async (e: React.MouseEvent<HTMLAnchorElement>) => {
       e.preventDefault();
-      const isOffline =
-        typeof navigator !== "undefined" ? !navigator.onLine : false;
+      const cloudReachable = Boolean(await probeCloudSchedule());
+      setIsOnline(cloudReachable);
       const offlineCapable = dest === "/enseignant/cahier-de-texte";
 
-      if (isOffline && !offlineCapable) {
+      if (!cloudReachable && !offlineCapable) {
         window.alert("Cette fonctionnalité nécessite une connexion Internet.");
         return;
       }
 
-      openWithSpinner(dest, label, isOffline);
+      openWithSpinner(dest, label, !cloudReachable);
     };
   }
 
-  function handleReturnClick(e: React.MouseEvent<HTMLAnchorElement>) {
+  async function handleReturnClick(e: React.MouseEvent<HTMLAnchorElement>) {
     e.preventDefault();
 
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
+    const cloudReachable = Boolean(await probeCloudSchedule());
+    setIsOnline(cloudReachable);
+    if (!cloudReachable) {
       router.back();
       return;
     }
@@ -433,11 +432,11 @@ export default function ChooseBookPage() {
                 ) : (
                   <WifiOff className="h-3.5 w-3.5" />
                 )}
-                {isOnline ? "En ligne" : "Hors ligne"}
+                {isOnline ? "Cloud accessible" : "Cloud indisponible"}
               </div>
 
               <Link
-                href="/redirect"
+                href={isOnline ? "/redirect" : "/choose-book"}
                 onClick={handleReturnClick}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50"
               >
@@ -450,7 +449,7 @@ export default function ChooseBookPage() {
         <section className="mx-auto max-w-6xl px-4 py-8 md:py-10">
           <div className="grid gap-5 md:grid-cols-2">
             <PremiumActionCard
-              href="/redirect?book=attendance"
+              href={isOnline ? "/redirect?book=attendance" : resolveOfflineDest("attendance")}
               onClick={handleBookClick(
                 "attendance",
                 "Ouverture du cahier des absences"
@@ -463,7 +462,7 @@ export default function ChooseBookPage() {
             />
 
             <PremiumActionCard
-              href="/redirect?book=grades"
+              href={isOnline ? "/redirect?book=grades" : resolveOfflineDest("grades")}
               onClick={handleBookClick(
                 "grades",
                 "Ouverture du cahier de notes"

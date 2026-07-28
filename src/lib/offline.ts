@@ -3,6 +3,8 @@
 
 type JsonValue = any;
 
+import { MON_CAHIER_SERVICE_WORKER_RELEASE } from "@/lib/offline-release";
+
 type KVRow = {
   key: string;
   value: JsonValue;
@@ -79,7 +81,8 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-const SW_BUILD = "2026-07-19-offline-navigation-v2";
+const SW_BUILD = MON_CAHIER_SERVICE_WORKER_RELEASE;
+export { MON_CAHIER_SERVICE_WORKER_RELEASE };
 export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
@@ -344,6 +347,32 @@ export async function warmOfflineShell(urls: string[]): Promise<void> {
       { type: "MON_CAHIER_WARM_SHELL", urls: normalized },
       [channel.port2]
     );
+  });
+}
+
+export async function getActiveOfflineWorkerRelease(): Promise<string | null> {
+  if (!isBrowser() || !("serviceWorker" in navigator)) return null;
+  const registration = await registerServiceWorker();
+  if (!registration) return null;
+  const worker = await waitForOfflineWorker(registration);
+  if (!worker) return null;
+
+  return await new Promise<string | null>((resolve) => {
+    const channel = new MessageChannel();
+    const timeout = window.setTimeout(() => {
+      channel.port1.close();
+      resolve(null);
+    }, 3_000);
+    channel.port1.onmessage = (event) => {
+      window.clearTimeout(timeout);
+      channel.port1.close();
+      resolve(
+        event.data?.ok === true && typeof event.data?.release === "string"
+          ? event.data.release
+          : null,
+      );
+    };
+    worker.postMessage({ type: "MON_CAHIER_GET_RELEASE" }, [channel.port2]);
   });
 }
 

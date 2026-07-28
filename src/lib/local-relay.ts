@@ -11,6 +11,7 @@ import type {
   TeacherSessionCloseRelayPayload,
   TeacherSessionTransitionRelayPayload,
 } from "@/lib/teacher-session-lifecycle-protocol";
+import { probeCloudSchedule } from "@/lib/cloud-availability";
 
 export type LocalDataSource = "cloud" | "relay" | "cache";
 
@@ -37,7 +38,16 @@ export type RelayTeacherConnectivityStatus =
 export type RelayTeacherScheduleStatus =
   | "matched"
   | "period_missing"
-  | "period_mismatch";
+  | "period_mismatch"
+  | "ready"
+  | "not_prepared";
+
+export type RelayCapabilities = {
+  attendance_session_open?: boolean;
+  attendance_write?: boolean;
+  attendance_session_close?: boolean;
+  attendance_transition?: boolean;
+};
 
 export type RelayTeacherExpectedPeriod = {
   id: string;
@@ -61,6 +71,13 @@ export type RelayTeacherConnectivityResult = {
   relay_time?: string;
   schedule_status?: RelayTeacherScheduleStatus;
   relay_period?: RelayTeacherPeriodSummary | null;
+  relay_version?: string;
+  schema_version?: number;
+  protocol_version?: number;
+  teacher_attendance_writes_enabled?: boolean;
+  capabilities?: RelayCapabilities;
+  snapshot_revision?: number | null;
+  generated_at?: string | null;
 };
 
 export class LocalRelayHttpError extends Error {
@@ -80,12 +97,23 @@ const RELAY_URL_KEY = "moncahier:relay:url";
 const RELAY_TOKEN_KEY = "moncahier:relay:token";
 const INSTITUTION_ID_KEY = "moncahier:relay:institution-id";
 const LAST_BOOTSTRAP_KEY = "moncahier:relay:last-bootstrap-at";
+const ADMIN_SCHEDULE_SYNC_KEY = "moncahier:relay:schedule-sync-state";
+const ADMIN_SCHEDULE_SYNC_EVENT = "moncahier:relay:schedule-sync-state";
 const BOOTSTRAP_THROTTLE_MS = 5 * 60 * 1000;
 const RELAY_TIMEOUT_MS = 5_000;
 const RELAY_PERMISSION_TIMEOUT_MS = 15_000;
 const RELAY_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const RELAY_PRESENCE_TIMEOUT_MS = 5_000;
 let bootstrapInFlight: Promise<any> | null = null;
+let adminScheduleSyncQueue: Promise<any> = Promise.resolve(null);
+
+export type AdminScheduleSyncState = {
+  status: "pending" | "syncing" | "synced";
+  updated_at: string;
+  snapshot_revision?: number | null;
+  relay_revision?: number | null;
+  error?: string | null;
+};
 
 function browser() {
   return typeof window !== "undefined";
@@ -151,6 +179,39 @@ export function rememberRelayInstitution(institutionId: string | null | undefine
 export function getRememberedRelayInstitution() {
   if (!browser()) return null;
   return String(window.localStorage.getItem(INSTITUTION_ID_KEY) || "").trim() || null;
+}
+
+export function getAdminScheduleSyncState(): AdminScheduleSyncState | null {
+  if (!browser()) return null;
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(ADMIN_SCHEDULE_SYNC_KEY) || "null",
+    );
+    return parsed && typeof parsed === "object"
+      ? parsed as AdminScheduleSyncState
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function setAdminScheduleSyncState(state: AdminScheduleSyncState) {
+  if (!browser()) return;
+  window.localStorage.setItem(ADMIN_SCHEDULE_SYNC_KEY, JSON.stringify(state));
+  window.dispatchEvent(
+    new CustomEvent(ADMIN_SCHEDULE_SYNC_EVENT, { detail: state }),
+  );
+}
+
+export function subscribeAdminScheduleSync(
+  listener: (state: AdminScheduleSyncState | null) => void,
+) {
+  if (!browser()) return () => undefined;
+  const handler = (event: Event) => {
+    listener((event as CustomEvent<AdminScheduleSyncState>).detail || null);
+  };
+  window.addEventListener(ADMIN_SCHEDULE_SYNC_EVENT, handler);
+  return () => window.removeEventListener(ADMIN_SCHEDULE_SYNC_EVENT, handler);
 }
 
 export async function clearRelayUserState() {
@@ -272,15 +333,13 @@ async function cloudJson<T>(url: string, signal?: AbortSignal) {
 export async function resolveRelayInstitutionId(signal?: AbortSignal) {
   if (!browser()) return null;
 
-  if (navigator.onLine) {
-    try {
-      const role = await cloudJson<{ institution_id?: string | null }>("/api/auth/role", signal);
-      const institutionId = String(role?.institution_id || "").trim();
-      if (institutionId) rememberRelayInstitution(institutionId);
-      if (institutionId) return institutionId;
-    } catch {
-      // En cas de coupure pendant la requête, on reprend l'établissement mémorisé.
-    }
+  try {
+    const role = await cloudJson<{ institution_id?: string | null }>("/api/auth/role", signal);
+    const institutionId = String(role?.institution_id || "").trim();
+    if (institutionId) rememberRelayInstitution(institutionId);
+    if (institutionId) return institutionId;
+  } catch {
+    // Le Wi-Fi local peut rester actif sans accès Cloud.
   }
 
   return getRememberedRelayInstitution();
@@ -477,7 +536,7 @@ export async function fetchFounderAttendanceSlots<T>(
 }
 
 export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
-  if (!browser() || !navigator.onLine) return { ok: false, skipped: "offline" as const };
+  if (!browser()) return { ok: false, skipped: "server" as const };
   const last = Number(window.localStorage.getItem(LAST_BOOTSTRAP_KEY) || 0);
   if (!options.force && Date.now() - last < BOOTSTRAP_THROTTLE_MS) {
     return { ok: true, skipped: "throttled" as const };
@@ -490,6 +549,14 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
         timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
       });
       const snapshot = await cloudJson<any>("/api/admin/offline/bootstrap");
+      const snapshotRevision = Number(snapshot?.snapshot_revision);
+      if (
+        snapshot?.snapshot_completeness !== "complete" ||
+        !Number.isSafeInteger(snapshotRevision) ||
+        snapshotRevision < 0
+      ) {
+        throw new Error("bootstrap_snapshot_not_complete");
+      }
       rememberRelayInstitution(snapshot?.institution_id);
       const result = await relayJson<any>("/v1/sync/bootstrap", {
         method: "POST",
@@ -497,8 +564,16 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
       }, {
         timeoutMs: RELAY_BOOTSTRAP_TIMEOUT_MS,
       });
+      const appliedRevision = Number(result?.applied_snapshot_revision);
+      if (
+        (result?.status !== "applied" && result?.status !== "duplicate") ||
+        !Number.isSafeInteger(appliedRevision) ||
+        appliedRevision !== snapshotRevision
+      ) {
+        throw new Error("relay_schedule_revision_not_acknowledged");
+      }
       window.localStorage.setItem(LAST_BOOTSTRAP_KEY, String(Date.now()));
-      return { ok: true, result };
+      return { ok: true, result, snapshot_revision: snapshotRevision };
     } catch (error: any) {
       return { ok: false, error: String(error?.message || error) };
     } finally {
@@ -507,6 +582,45 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
   })();
 
   return bootstrapInFlight;
+}
+
+export function syncRelayScheduleAfterMutation() {
+  const job = adminScheduleSyncQueue
+    .catch(() => null)
+    .then(async () => {
+      setAdminScheduleSyncState({
+        status: "syncing",
+        updated_at: new Date().toISOString(),
+      });
+      const result = await syncRelayBootstrap({ force: true });
+      if (result.ok) {
+        const revision = Number(result.snapshot_revision);
+        setAdminScheduleSyncState({
+          status: "synced",
+          updated_at: new Date().toISOString(),
+          snapshot_revision: revision,
+          relay_revision: Number(result.result?.applied_snapshot_revision),
+          error: null,
+        });
+      } else {
+        setAdminScheduleSyncState({
+          status: "pending",
+          updated_at: new Date().toISOString(),
+          error: String(result.error || "relay_schedule_sync_failed"),
+        });
+      }
+      return result;
+    });
+  adminScheduleSyncQueue = job;
+  return job;
+}
+
+export function markRelayScheduleSyncPending() {
+  setAdminScheduleSyncState({
+    status: "pending",
+    updated_at: new Date().toISOString(),
+    error: "relay_sync_required_after_cloud_mutation",
+  });
 }
 
 export async function requestRelayAttendancePresenceProof(input: {
@@ -716,6 +830,13 @@ export async function checkRelayTeacherConnectivity(input: {
       relay_time: string;
       schedule_status?: RelayTeacherScheduleStatus;
       relay_period?: RelayTeacherPeriodSummary | null;
+      relay_version?: string;
+      schema_version?: number;
+      protocol_version?: number;
+      teacher_attendance_writes_enabled?: boolean;
+      capabilities?: RelayCapabilities;
+      snapshot_revision?: number | null;
+      generated_at?: string | null;
     }>("/v1/teacher/connectivity-check", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -746,6 +867,17 @@ export async function checkRelayTeacherConnectivity(input: {
       relay_time: response.relay_time,
       schedule_status: response.schedule_status,
       relay_period: response.relay_period,
+      relay_version: response.relay_version,
+      schema_version: response.schema_version,
+      protocol_version: response.protocol_version,
+      teacher_attendance_writes_enabled:
+        response.teacher_attendance_writes_enabled,
+      capabilities: response.capabilities,
+      snapshot_revision:
+        response.snapshot_revision === null
+          ? null
+          : Number(response.snapshot_revision),
+      generated_at: response.generated_at,
     };
   } catch (error) {
     if (error instanceof LocalRelayHttpError && error.status === 401) {
@@ -762,4 +894,71 @@ export async function checkRelayTeacherConnectivity(input: {
     }
     return { status: "unreachable", checked_at: checkedAt };
   }
+}
+
+export type RelayTeacherOfflineSchedule = {
+  version: 1;
+  institution_id: string;
+  schedule_revision: number;
+  generated_at: string | null;
+  snapshot_completeness: "complete";
+  source: "relay";
+  slots: Array<{
+    key: string;
+    weekday: number;
+    label: string;
+    start_time: string;
+    end_time: string;
+    items: Array<{
+      class_id: string;
+      class_label: string;
+      level: string;
+      subject_id: string;
+      subject_name: string;
+    }>;
+  }>;
+  class_count: number;
+  slot_count: number;
+  rosters: Record<string, { items: Array<Record<string, unknown>> }>;
+  assignments: Array<{
+    institution_id?: string;
+    class_id?: string;
+    teacher_id?: string;
+    subject_id?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+  }>;
+};
+
+export async function fetchRelayTeacherOfflineSchedule(input: {
+  institutionId: string;
+  baseUrl: string;
+  accessToken: string;
+}) {
+  const schedule = await relayJson<RelayTeacherOfflineSchedule>(
+    "/v1/teacher/offline-schedule",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+      body: "{}",
+    },
+    {
+      baseUrl: input.baseUrl,
+      includeConfiguredToken: false,
+      timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
+    },
+  );
+  if (
+    schedule.snapshot_completeness !== "complete" ||
+    String(schedule.institution_id || "").trim() !==
+      String(input.institutionId || "").trim() ||
+    !Number.isSafeInteger(Number(schedule.schedule_revision))
+  ) {
+    throw new Error("relay_schedule_snapshot_invalid");
+  }
+  return schedule;
+}
+
+export async function cloudScheduleAvailable() {
+  return await probeCloudSchedule();
 }

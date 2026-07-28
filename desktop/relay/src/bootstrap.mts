@@ -1,5 +1,5 @@
 import type { RelayDatabase } from "./db.mjs";
-import { setInstitutionMeta } from "./db.mjs";
+import { getInstitutionMeta, setInstitutionMeta } from "./db.mjs";
 import {
   collectionSpec,
   ENTITY_SPECS,
@@ -41,6 +41,9 @@ export type BootstrapResult = {
   source_skipped_entities: number;
   source_diagnostics: Record<string, unknown>;
   completed_at: string;
+  snapshot_revision: number | null;
+  snapshot_completeness: "complete" | "partial";
+  applied_snapshot_revision: number | null;
 };
 
 type BootstrapSnapshot = {
@@ -48,6 +51,9 @@ type BootstrapSnapshot = {
   snapshot_id: string;
   institution_id: string;
   generated_at: string;
+  snapshot_revision: number | null;
+  snapshot_completeness: "complete" | "partial";
+  schedule_manifest: Record<string, unknown>;
   cursor: string | null;
   institution: Record<string, unknown>;
   entities: Record<string, Record<string, unknown>[]>;
@@ -135,7 +141,7 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     FROM sync_bootstrap_runs
     WHERE institution_id = ? AND snapshot_id = ? AND status IN ('completed', 'partial')
   `).get(snapshot.institution_id, snapshot.snapshot_id) as StoredBootstrapRun | undefined;
-  if (existing) return duplicateResult(snapshot, existing);
+  if (existing) return duplicateResult(db, snapshot, existing);
 
   return db.transaction(() => {
     const startedAt = new Date().toISOString();
@@ -291,6 +297,30 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
 
     const completedAt = new Date().toISOString();
     const partial = rejected > 0 || sourceSkippedEntities > 0;
+    const completeSnapshotApplied =
+      snapshot.snapshot_completeness === "complete" &&
+      snapshot.snapshot_revision !== null &&
+      !partial;
+    if (completeSnapshotApplied) {
+      setInstitutionMeta(
+        db,
+        snapshot.institution_id,
+        "attendance_schedule_manifest",
+        canonicalJson(snapshot.schedule_manifest),
+      );
+      setInstitutionMeta(
+        db,
+        snapshot.institution_id,
+        "attendance_schedule_revision",
+        String(snapshot.snapshot_revision),
+      );
+      setInstitutionMeta(
+        db,
+        snapshot.institution_id,
+        "attendance_schedule_generated_at",
+        snapshot.generated_at,
+      );
+    }
     const storedStatus = partial ? "partial" : "completed";
     const resultStatus: BootstrapResult["status"] = partial ? "partial" : "applied";
     db.prepare(`
@@ -347,6 +377,11 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       source_skipped_entities: sourceSkippedEntities,
       source_diagnostics: snapshot.diagnostics,
       completed_at: completedAt,
+      snapshot_revision: snapshot.snapshot_revision,
+      snapshot_completeness: snapshot.snapshot_completeness,
+      applied_snapshot_revision: completeSnapshotApplied
+        ? snapshot.snapshot_revision
+        : storedScheduleRevision(db, snapshot.institution_id),
     };
   })();
 }
@@ -365,6 +400,7 @@ type StoredBootstrapRun = {
 };
 
 function duplicateResult(
+  db: RelayDatabase,
   snapshot: BootstrapSnapshot,
   existing: StoredBootstrapRun,
 ): BootstrapResult {
@@ -381,7 +417,24 @@ function duplicateResult(
     source_skipped_entities: Number(existing.source_skipped_entities || 0),
     source_diagnostics: JSON.parse(existing.source_diagnostics_json) as Record<string, unknown>,
     completed_at: existing.completed_at,
+    snapshot_revision: snapshot.snapshot_revision,
+    snapshot_completeness: snapshot.snapshot_completeness,
+    applied_snapshot_revision: storedScheduleRevision(
+      db,
+      snapshot.institution_id,
+    ),
   };
+}
+
+function storedScheduleRevision(db: RelayDatabase, institutionId: string) {
+  const value = getInstitutionMeta(
+    db,
+    institutionId,
+    "attendance_schedule_revision",
+  );
+  if (value === null) return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
 function assertInstitutionIdentityCompatible(db: RelayDatabase, snapshot: BootstrapSnapshot) {
@@ -736,10 +789,22 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
   const snapshotId = requiredText(root.snapshot_id, "snapshot_id");
   const institutionId = requiredText(root.institution_id, "institution_id");
   const generatedAt = isoText(root.generated_at, "generated_at");
+  const snapshotRevision = root.snapshot_revision === undefined
+    ? null
+    : nonNegativeInteger(root.snapshot_revision, "snapshot_revision");
+  const snapshotCompleteness = root.snapshot_completeness === "complete"
+    ? "complete"
+    : "partial";
+  if (snapshotCompleteness === "complete" && snapshotRevision === null) {
+    throw new Error("snapshot_revision_required_for_complete_snapshot");
+  }
   const cursor = root.cursor === null || root.cursor === undefined
     ? null
     : requiredText(root.cursor, "cursor");
   const institution = record(root.institution, "institution");
+  const scheduleManifest = root.schedule_manifest === undefined
+    ? {}
+    : record(root.schedule_manifest, "schedule_manifest");
   if (institution.id !== undefined && String(institution.id).trim() !== institutionId) {
     throw new Error("institution.id_mismatch");
   }
@@ -781,6 +846,9 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     snapshot_id: snapshotId,
     institution_id: institutionId,
     generated_at: generatedAt,
+    snapshot_revision: snapshotRevision,
+    snapshot_completeness: snapshotCompleteness,
+    schedule_manifest: scheduleManifest,
     cursor,
     institution,
     entities,

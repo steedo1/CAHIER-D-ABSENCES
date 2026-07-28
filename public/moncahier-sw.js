@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-19-offline-navigation-v2";
+const VERSION = "2026-07-28-schedule-coherence-v1";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
@@ -184,6 +184,16 @@ async function warmDocument(rawUrl) {
 }
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
+    event.ports?.[0]?.postMessage({ ok: true, release: VERSION });
+    return;
+  }
+
+  if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
+    event.ports?.[0]?.postMessage({ ok: true, release: VERSION });
+    return;
+  }
+
   if (event.data?.type === "MON_CAHIER_PURGE_ADMIN_LOCAL") {
     event.waitUntil(
       (async () => {

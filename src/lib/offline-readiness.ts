@@ -1,6 +1,12 @@
 "use client";
 
-import { cacheGet, cacheSet, warmOfflineShell } from "@/lib/offline";
+import {
+  cacheGet,
+  cacheSet,
+  getActiveOfflineWorkerRelease,
+  MON_CAHIER_SERVICE_WORKER_RELEASE,
+  warmOfflineShell,
+} from "@/lib/offline";
 import {
   gradesClassesKey,
   gradesComponentsKey,
@@ -40,13 +46,21 @@ import {
 } from "@/lib/offline-parent";
 import {
   checkRelayTeacherConnectivity,
+  fetchRelayTeacherOfflineSchedule,
+  type RelayCapabilities,
   type RelayTeacherConnectivityResult,
 } from "@/lib/local-relay";
+import { probeCloudSchedule } from "@/lib/cloud-availability";
+import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
+import {
+  decideOfflineSchedulePolicy,
+  type SchedulePolicyStatus,
+} from "@/lib/offline-schedule-policy";
 
 export type OfflineRole = "teacher" | "class-device" | "admin" | "parent";
 
 export type OfflineReadiness = {
-  version: 4;
+  version: 4 | 5;
   role: OfflineRole;
   prepared_at: string;
   class_count: number;
@@ -62,6 +76,33 @@ export type OfflineReadiness = {
   communication_ready: boolean;
   shell_ready: boolean;
   relay_connectivity?: RelayTeacherConnectivityResult;
+  web_release?: string;
+  service_worker_release?: string;
+  schedule_revision?: number | null;
+  schedule_generated_at?: string | null;
+  data_presence?: {
+    classes: number;
+    students: number;
+    slots: number;
+    grades: number;
+    textbook_assignments: number;
+    assignments: number;
+  };
+  relay_capabilities?: RelayCapabilities;
+  schedule_compatibility?: TeacherScheduleCompatibilityStatus;
+};
+
+export type TeacherScheduleCompatibilityStatus =
+  Exclude<SchedulePolicyStatus, "refresh_from_relay">;
+
+export type TeacherScheduleAssessment = {
+  status: TeacherScheduleCompatibilityStatus;
+  message: string;
+  readiness: OfflineReadiness | null;
+  cloud_reachable: boolean;
+  phone_revision: number | null;
+  relay_revision: number | null;
+  cloud_revision: number | null;
 };
 
 type ProgressCallback = (message: string) => void;
@@ -74,6 +115,12 @@ type PeriodLike = {
 
 type TeacherBootstrap = {
   version?: number;
+  institution_id?: string | null;
+  web_release?: string;
+  schedule_revision?: number | null;
+  snapshot_completeness?: "complete" | "partial";
+  generated_at?: string | null;
+  assignments?: Array<Record<string, unknown>>;
   slots?: Array<{
     key: string;
     items?: GradeClass[];
@@ -405,7 +452,255 @@ async function prepareTextbook(
 
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
   const value = await cacheGet<OfflineReadiness>(readinessKey(role));
-  return value?.version === 4 && value.role === role ? value : null;
+  return (value?.version === 4 || value?.version === 5) && value.role === role
+    ? value
+    : null;
+}
+
+function completeRelayCapabilities(capabilities?: RelayCapabilities) {
+  return Boolean(
+    capabilities?.attendance_session_open &&
+      capabilities.attendance_write &&
+      capabilities.attendance_session_close &&
+      capabilities.attendance_transition,
+  );
+}
+
+function safeRevision(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+async function applyTeacherScheduleFromRelay(
+  readiness: OfflineReadiness,
+  basics: any,
+) {
+  const schedule = await fetchRelayTeacherOfflineSchedule({
+    institutionId: String(basics?.institution_id || ""),
+    baseUrl: String(basics?.attendance_presence?.relay_local_url || ""),
+    accessToken: String(basics?.attendance_presence?.relay_access_token || ""),
+  });
+  await cacheSet("teacher:offline:bootstrap", schedule);
+  for (const slot of schedule.slots) {
+    await cacheSet(`teacher:classes:${slot.key}`, {
+      items: slot.items,
+      has_active_slot: true,
+      scheduled_for_slot: slot.items.length > 0,
+    });
+  }
+  for (const [classId, roster] of Object.entries(schedule.rosters || {})) {
+    await cacheSet(`teacher:roster:${classId}`, roster);
+  }
+
+  const studentIds = new Set<string>();
+  for (const roster of Object.values(schedule.rosters || {})) {
+    for (const student of roster.items || []) {
+      const id = String(student?.id || "").trim();
+      if (id) studentIds.add(id);
+    }
+  }
+  const next: OfflineReadiness = {
+    ...readiness,
+    version: 5,
+    prepared_at: new Date().toISOString(),
+    class_count: schedule.class_count,
+    student_count: studentIds.size,
+    slot_count: schedule.slot_count,
+    schedule_revision: schedule.schedule_revision,
+    schedule_generated_at: schedule.generated_at,
+    data_presence: {
+      classes: schedule.class_count,
+      students: studentIds.size,
+      slots: schedule.slot_count,
+      grades: readiness.evaluation_count,
+      textbook_assignments: readiness.textbook_assignment_count,
+      assignments: schedule.assignments.length,
+    },
+  };
+  await cacheSet(readinessKey("teacher"), next);
+  return next;
+}
+
+export async function assessTeacherOfflineReadiness(
+  initial: OfflineReadiness | null,
+): Promise<TeacherScheduleAssessment> {
+  const base = {
+    readiness: initial,
+    cloud_reachable: false,
+    phone_revision: safeRevision(initial?.schedule_revision),
+    relay_revision: null,
+    cloud_revision: null,
+  };
+  if (
+    !initial ||
+    initial.version !== 5 ||
+    initial.role !== "teacher" ||
+    initial.web_release !== MON_CAHIER_WEB_RELEASE ||
+    initial.service_worker_release !== MON_CAHIER_SERVICE_WORKER_RELEASE ||
+    initial.data_presence?.slots !== initial.slot_count ||
+    Number(initial.data_presence?.slots || 0) <= 0 ||
+    Number(initial.data_presence?.classes || 0) <= 0
+  ) {
+    return {
+      ...base,
+      status: "not_prepared",
+      message: "La préparation de cet appareil doit être actualisée.",
+    };
+  }
+
+  const basics: any = await cacheGet("teacher:inst:basics").catch(() => null);
+  const institutionId = String(basics?.institution_id || "").trim();
+  const relayPolicy = basics?.attendance_presence || {};
+  if (
+    !institutionId ||
+    !relayPolicy?.relay_local_url ||
+    !relayPolicy?.relay_access_token
+  ) {
+    return {
+      ...base,
+      status: "not_prepared",
+      message: "Les données d’accès professeur au relais sont absentes.",
+    };
+  }
+
+  const [cloud, relay, serviceWorkerRelease] = await Promise.all([
+    probeCloudSchedule(),
+    checkRelayTeacherConnectivity({
+      institutionId,
+      baseUrl: String(relayPolicy.relay_local_url),
+      accessToken: String(relayPolicy.relay_access_token),
+    }),
+    getActiveOfflineWorkerRelease(),
+  ]);
+  const cloudRevision = safeRevision(cloud?.schedule_revision);
+  const relayRevision = safeRevision(relay.snapshot_revision);
+  const state = {
+    ...base,
+    cloud_reachable: Boolean(cloud),
+    relay_revision: relayRevision,
+    cloud_revision: cloudRevision,
+  };
+  if (serviceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+    return {
+      ...state,
+      status: "not_prepared",
+      message:
+        "Le service worker actif n’est pas celui de cette version Web. Rechargez l’application puis réessayez.",
+    };
+  }
+  const initialPolicy = decideOfflineSchedulePolicy({
+    phone_prepared: true,
+    relay_status: relay.status,
+    relay_contract_complete:
+      relay.teacher_attendance_writes_enabled === true &&
+      completeRelayCapabilities(relay.capabilities),
+    phone_revision: base.phone_revision,
+    relay_revision: relayRevision,
+    cloud_revision: cloudRevision,
+  });
+  if (initialPolicy === "not_prepared") {
+    return {
+      ...state,
+      status: "not_prepared",
+      message: "La préparation ne contient pas de révision complète.",
+    };
+  }
+  if (
+    initialPolicy === "relay_unreachable" ||
+    initialPolicy === "relay_access_denied" ||
+    initialPolicy === "relay_permission_denied" ||
+    initialPolicy === "browser_incompatible"
+  ) {
+    return {
+      ...state,
+      status: initialPolicy,
+      message:
+        initialPolicy === "relay_permission_denied"
+          ? "La permission d’accès au réseau local est refusée."
+          : initialPolicy === "browser_incompatible"
+            ? "Ce navigateur ne peut pas contrôler le relais local."
+            : initialPolicy === "relay_access_denied"
+              ? "Le relais refuse le jeton professeur signé."
+              : "Le relais local est inaccessible.",
+    };
+  }
+  if (initialPolicy === "relay_incompatible") {
+    return {
+      ...state,
+      status: "relay_incompatible",
+      message:
+        "Le relais ne confirme pas toutes les capacités d’appel ou sa révision complète.",
+    };
+  }
+
+  let readiness = initial;
+  let phoneRevision = safeRevision(readiness.schedule_revision);
+  if (initialPolicy === "refresh_from_relay") {
+    try {
+      readiness = await applyTeacherScheduleFromRelay(readiness, basics);
+      phoneRevision = safeRevision(readiness.schedule_revision);
+    } catch {
+      return {
+        ...state,
+        status: "phone_stale",
+        message:
+          "Le relais est plus récent, mais l’actualisation professeur sécurisée a échoué.",
+      };
+    }
+  }
+
+  const withPhone = {
+    ...state,
+    readiness,
+    phone_revision: phoneRevision,
+  };
+  const finalPolicy = decideOfflineSchedulePolicy({
+    phone_prepared: true,
+    relay_status: relay.status,
+    relay_contract_complete:
+      relay.teacher_attendance_writes_enabled === true &&
+      completeRelayCapabilities(relay.capabilities),
+    phone_revision: phoneRevision,
+    relay_revision: relayRevision,
+    cloud_revision: cloudRevision,
+  });
+  if (finalPolicy === "relay_stale" || finalPolicy === "sources_diverged") {
+    return {
+      ...withPhone,
+      status: finalPolicy,
+      message:
+        finalPolicy === "relay_stale" &&
+        cloudRevision !== null &&
+        relayRevision !== null &&
+        relayRevision < cloudRevision
+          ? "Le Cloud est plus récent que le relais. L’administration doit réactualiser le relais."
+          : finalPolicy === "relay_stale"
+            ? "Le téléphone est plus récent que le relais."
+            : "Les révisions du Cloud et du relais divergent.",
+    };
+  }
+  if (finalPolicy === "phone_stale") {
+    return {
+      ...withPhone,
+      status: "phone_stale",
+      message: "Les données d’appel de ce téléphone doivent être actualisées.",
+    };
+  }
+  if (finalPolicy === "refresh_from_relay" || finalPolicy === "not_prepared") {
+    return {
+      ...withPhone,
+      status: "phone_stale",
+      message: "Les données d’appel de ce téléphone doivent être actualisées.",
+    };
+  }
+  return {
+    ...withPhone,
+    status: "ready",
+    message: cloud
+      ? "Cloud, relais et téléphone utilisent la même révision."
+      : "Cloud indisponible : le relais et le téléphone utilisent la même révision.",
+  };
 }
 
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
@@ -484,9 +779,15 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     attendance: "/attendance",
     grades: "/grades",
   });
+  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
+  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+    throw new Error(
+      "Le nouveau service hors ligne n’est pas encore actif. Rechargez la page puis relancez la préparation.",
+    );
+  }
 
   return {
-    version: 4,
+    version: 5,
     role: "teacher",
     prepared_at: new Date().toISOString(),
     class_count: uniqueIds([
@@ -506,6 +807,30 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     communication_ready: false,
     shell_ready: true,
     relay_connectivity: relayConnectivity,
+    web_release: String(bootstrap.web_release || MON_CAHIER_WEB_RELEASE),
+    service_worker_release: activeServiceWorkerRelease,
+    schedule_revision: safeRevision(bootstrap.schedule_revision),
+    schedule_generated_at: String(bootstrap.generated_at || "") || null,
+    data_presence: {
+      classes: classIds.length,
+      students: studentIds.size,
+      slots: slots.length,
+      grades: preparedGrades.evaluationCount,
+      textbook_assignments: preparedTextbook.assignmentCount,
+      assignments: Array.isArray(bootstrap.assignments)
+        ? bootstrap.assignments.length
+        : 0,
+    },
+    relay_capabilities: relayConnectivity.capabilities,
+    schedule_compatibility:
+      bootstrap.snapshot_completeness === "complete" &&
+      safeRevision(bootstrap.schedule_revision) !== null &&
+      safeRevision(bootstrap.schedule_revision) ===
+        safeRevision(relayConnectivity.snapshot_revision) &&
+      relayConnectivity.teacher_attendance_writes_enabled === true &&
+      completeRelayCapabilities(relayConnectivity.capabilities)
+        ? "ready"
+        : "not_prepared",
   };
 }
 
@@ -803,7 +1128,8 @@ export async function prepareOffline(
   role: OfflineRole,
   onProgress: ProgressCallback = () => undefined
 ): Promise<OfflineReadiness> {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
+  const cloud = await probeCloudSchedule();
+  if (!cloud) {
     throw new Error("Reconnectez Internet pour actualiser les données hors ligne.");
   }
 

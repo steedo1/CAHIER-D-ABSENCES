@@ -21,6 +21,11 @@ import {
 } from "./teacher-session-lifecycle.mjs";
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
+import {
+  institutionScheduleContract,
+  relayRuntimeContract,
+} from "./schedule-contract.mjs";
+import { teacherOfflineSchedule } from "./teacher-offline-schedule.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
@@ -28,6 +33,7 @@ const MAX_CONNECTIVITY_CHECK_BODY_BYTES = 4 * 1024;
 const MAX_TEACHER_ATTENDANCE_BODY_BYTES = 128 * 1024;
 const MAX_TEACHER_SESSION_OPEN_BODY_BYTES = 16 * 1024;
 const MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES = 16 * 1024;
+const MAX_TEACHER_OFFLINE_SCHEDULE_BODY_BYTES = 4 * 1024;
 const SESSION_MAINTENANCE_INTERVAL_MS = 30_000;
 
 export function createRelayServer(
@@ -48,12 +54,35 @@ export function createRelayServer(
       if (
         config.teacherAttendanceWritesEnabled === true &&
         url.pathname !== "/health" &&
-        url.pathname !== "/v1/teacher/connectivity-check"
+        url.pathname !== "/v1/teacher/connectivity-check" &&
+        url.pathname !== "/v1/teacher/offline-schedule"
       ) {
         maintainTeacherAttendanceSessions(store.db, options.now?.() ?? new Date());
       }
       if (request.method === "GET" && url.pathname === "/health") {
-        return json(response, 200, { ok: true });
+        const institutionIds = store.db.prepare(`
+          SELECT id FROM institutions WHERE deleted_at IS NULL ORDER BY id
+        `).all() as Array<{ id: string }>;
+        const scoped =
+          institutionIds.length === 1
+            ? institutionScheduleContract(store.db, institutionIds[0]!.id)
+            : {
+                snapshot_revision: null,
+                generated_at: null,
+                schedule_status:
+                  institutionIds.length > 1
+                    ? "authenticated_institution_required"
+                    : "not_prepared",
+              };
+        return json(response, 200, {
+          ok: true,
+          ...relayRuntimeContract(
+            store.db,
+            config.teacherAttendanceWritesEnabled === true,
+          ),
+          ...scoped,
+          relay_period: null,
+        });
       }
       if (request.method === "POST" && url.pathname === "/v1/teacher/connectivity-check") {
         const body = await readJson(request, MAX_CONNECTIVITY_CHECK_BODY_BYTES);
@@ -69,9 +98,38 @@ export function createRelayServer(
             ok: true,
             institution_id: teacher.institution_id,
             relay_time: requestNow.toISOString(),
+            ...relayRuntimeContract(
+              store.db,
+              config.teacherAttendanceWritesEnabled === true,
+            ),
+            ...institutionScheduleContract(store.db, teacher.institution_id),
             ...teacherScheduleCompatibility(store, teacher.institution_id, body),
           });
         } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/teacher/offline-schedule") {
+        await readJson(request, MAX_TEACHER_OFFLINE_SCHEDULE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        try {
+          const teacher = authenticateRelayTeacherAccess(
+            store.db,
+            token,
+            options.now?.() ?? new Date(),
+          );
+          if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
+            return json(response, 403, { error: "institution_not_allowed" });
+          }
+          return json(response, 200, teacherOfflineSchedule(store.db, teacher));
+        } catch (error) {
+          const code = error instanceof Error
+            ? error.message
+            : "teacher_offline_schedule_failed";
+          if (code === "schedule_snapshot_not_prepared") {
+            return json(response, 409, { error: code });
+          }
           return json(response, 401, { error: "unauthorized" });
         }
       }

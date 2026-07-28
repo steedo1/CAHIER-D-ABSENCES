@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CloudDownload, RefreshCcw, ShieldCheck, WifiOff } from "lucide-react";
 import {
+  assessTeacherOfflineReadiness,
   getOfflineReadiness,
   prepareOffline,
   type OfflineReadiness,
   type OfflineRole,
+  type TeacherScheduleAssessment,
 } from "@/lib/offline-readiness";
 
 type Props = {
@@ -37,37 +39,64 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [online, setOnline] = useState(true);
+  const [assessment, setAssessment] =
+    useState<TeacherScheduleAssessment | null>(null);
 
   useEffect(() => {
-    setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
-    void getOfflineReadiness(role).then(setReadiness).catch(() => setReadiness(null));
-
-    const handleOnline = () => setOnline(true);
-    const handleOffline = () => setOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    let cancelled = false;
+    const refresh = async () => {
+      const stored = await getOfflineReadiness(role).catch(() => null);
+      if (cancelled) return;
+      setReadiness(stored);
+      if (role === "teacher") {
+        const next = await assessTeacherOfflineReadiness(stored);
+        if (cancelled) return;
+        setAssessment(next);
+        setReadiness(next.readiness);
+      }
+    };
+    void refresh();
+    const handleNetworkChange = () => void refresh();
+    window.addEventListener("online", handleNetworkChange);
+    window.addEventListener("offline", handleNetworkChange);
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      cancelled = true;
+      window.removeEventListener("online", handleNetworkChange);
+      window.removeEventListener("offline", handleNetworkChange);
     };
   }, [role]);
 
   const stale = useMemo(() => {
     if (!readiness) return false;
     const preparedAt = new Date(readiness.prepared_at).getTime();
-    return !Number.isFinite(preparedAt) || Date.now() - preparedAt > 24 * 60 * 60 * 1000;
-  }, [readiness]);
+    const ageStale =
+      !Number.isFinite(preparedAt) ||
+      Date.now() - preparedAt > 24 * 60 * 60 * 1000;
+    const scheduleStale =
+      role === "teacher" && assessment?.status !== "ready";
+    return ageStale || scheduleStale;
+  }, [assessment?.status, readiness, role]);
 
   async function handlePrepare() {
-    if (!online || preparing) return;
+    if (preparing) return;
     setPreparing(true);
     setError(null);
     setProgress("Démarrage de la préparation…");
     try {
       const next = await prepareOffline(role, setProgress);
-      setReadiness(next);
-      setProgress("Préparation terminée.");
+      if (role === "teacher") {
+        const checked = await assessTeacherOfflineReadiness(next);
+        setAssessment(checked);
+        setReadiness(checked.readiness);
+        setProgress(
+          checked.status === "ready"
+            ? "Préparation et cohérence vérifiées."
+            : "Données téléchargées, mais cohérence hors ligne non confirmée.",
+        );
+      } else {
+        setReadiness(next);
+        setProgress("Préparation terminée.");
+      }
     } catch (cause: any) {
       setError(String(cause?.message || "La préparation hors ligne a échoué."));
       setProgress("");
@@ -93,8 +122,10 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
 
   const relayConnectivity = role === "teacher" ? readiness?.relay_connectivity : undefined;
   const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
-  const relayConnectivityMessage = relayConnectivity?.status === "reachable"
-    ? `Relais joignable lors de la dernière actualisation${relayCheckedAt ? ` (${relayCheckedAt})` : ""}.`
+  const relayConnectivityMessage = assessment
+    ? assessment.message
+    : relayConnectivity?.status === "reachable"
+    ? `Relais joignable lors de la dernière actualisation${relayCheckedAt ? ` (${relayCheckedAt})` : ""}, cohérence non encore vérifiée.`
     : relayConnectivity?.status === "access_denied"
       ? "Accès enseignant au relais refusé. Actualisez les données d’accès."
       : relayConnectivity?.status === "permission_denied"
@@ -132,7 +163,9 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
             )}
             {readiness
               ? stale
-                ? "Mode hors ligne prêt — actualisation conseillée"
+                ? role === "teacher"
+                  ? "Mode hors ligne non compatible"
+                  : "Mode hors ligne prêt — actualisation conseillée"
                 : "Mode hors ligne prêt"
               : "Préparer le mode hors ligne"}
           </div>
@@ -154,16 +187,16 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
             <p
               className={[
                 "mt-2 text-xs font-semibold",
-                relayConnectivity?.status === "reachable" ? "text-emerald-800" : "text-amber-800",
+                assessment?.status === "ready" ? "text-emerald-800" : "text-amber-800",
               ].join(" ")}
             >
               {relayConnectivityMessage}
             </p>
           )}
-          {!online && (
+          {assessment && !assessment.cloud_reachable && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
-              Hors connexion : les données déjà préparées restent disponibles.
+              Cloud indisponible : la cohérence est décidée avec le relais local.
             </p>
           )}
         </div>
@@ -171,7 +204,7 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
         <button
           type="button"
           onClick={handlePrepare}
-          disabled={!online || preparing}
+          disabled={preparing}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-55"
         >
           {preparing ? (

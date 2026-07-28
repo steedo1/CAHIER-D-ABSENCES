@@ -7,6 +7,10 @@ import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import {
+  assessTeacherOfflineReadiness,
+  getOfflineReadiness,
+} from "@/lib/offline-readiness";
+import {
   registerServiceWorker,
   offlineGetJson,
   offlineMutateJson,
@@ -541,7 +545,7 @@ export default function TeacherDashboard() {
 
   async function syncNow() {
     if (syncing) return;
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
+    if (!(await teacherSessionCloudAvailable())) {
       setMsg("Hors connexion : synchronisation impossible.");
       return;
     }
@@ -601,15 +605,18 @@ export default function TeacherDashboard() {
   useEffect(() => {
     registerServiceWorker();
 
-    const online = typeof navigator !== "undefined" ? navigator.onLine : true;
-    setIsOnline(online);
+    void teacherSessionCloudAvailable().then(setIsOnline);
 
     void refreshPending();
 
     const onOnline = () => {
-      setIsOnline(true);
-      void refreshPending();
-      void syncNow();
+      void teacherSessionCloudAvailable().then((available) => {
+        setIsOnline(available);
+        if (available) {
+          void refreshPending();
+          void syncNow();
+        }
+      });
     };
     const onOffline = () => {
       setIsOnline(false);
@@ -643,7 +650,7 @@ export default function TeacherDashboard() {
   }
 
   function shouldTreatAsOffline(r: any): boolean {
-    // navigator.onLine peut mentir, mais on garde isOnline comme 1ère info.
+    // isOnline provient d'une vraie sonde Cloud, pas de navigator.onLine.
     if (!isOnline) return true;
     if (r?.offline === true) return true;
     if (r?.queued === true) return true;
@@ -1437,6 +1444,25 @@ export default function TeacherDashboard() {
   }
 
   async function startSession() {
+    const storedReadiness = await getOfflineReadiness("teacher").catch(
+      () => null,
+    );
+    const scheduleAssessment =
+      await assessTeacherOfflineReadiness(storedReadiness);
+    if (scheduleAssessment.status !== "ready") {
+      setMsg(scheduleAssessment.message);
+      return;
+    }
+    if (
+      storedReadiness?.schedule_revision !==
+      scheduleAssessment.readiness?.schedule_revision
+    ) {
+      setMsg(
+        "L’emploi du temps a été actualisé depuis le relais. Rechargez cette page avant de commencer l’appel.",
+      );
+      return;
+    }
+
     if (!sel) {
       setMsg(
         canStartAttendanceNow
@@ -2058,7 +2084,7 @@ export default function TeacherDashboard() {
     ).catch(() => 0);
     let remaining = (await outboxCount().catch(() => 0)) + unresolvedAttendance;
 
-    if (remaining > 0 && typeof navigator !== "undefined" && navigator.onLine) {
+    if (remaining > 0 && await teacherSessionCloudAvailable()) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
         const result = await flushOutbox();

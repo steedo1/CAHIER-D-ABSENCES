@@ -103,6 +103,23 @@ async function selectProfilesByIds(srv: any, ids: string[]) {
   return result;
 }
 
+async function attendanceScheduleRevision(srv: any, institutionId: string) {
+  const { data, error } = await srv
+    .from("attendance_schedule_revisions")
+    .select("revision,updated_at")
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+  if (error) throw new Error(`attendance_schedule_revision:${error.message}`);
+  const revision = Number(data?.revision ?? 0);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("attendance_schedule_revision_invalid");
+  }
+  return {
+    revision,
+    updated_at: text(data?.updated_at) || null,
+  };
+}
+
 export async function GET(request: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -141,7 +158,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const generatedAt = new Date().toISOString();
-    const [institution, academicYears, profiles, userRoles, classes, subjectRows, teacherSubjects,
+    const revisionBefore = await attendanceScheduleRevision(srv, institutionId);
+    const [institution, academicYears, profiles, userRoles, classes, subjectRows, teacherSubjects, classTeachers,
       students, enrollments, periods, timetables, absenceRequests, sessions,
       attendancePolicy, attendanceZones] = await Promise.all([
       srv.from("institutions").select("id,name,code,code_unique,tz,settings_json").eq("id", institutionId).maybeSingle(),
@@ -151,6 +169,7 @@ export async function GET(request: NextRequest) {
       selectRows(srv.from("classes").select("id,institution_id,academic_year,label,level").eq("institution_id", institutionId), "classes"),
       selectRows(srv.from("institution_subjects").select("id,institution_id,subject_id,custom_name,subjects:subject_id(name,code)").eq("institution_id", institutionId), "institution_subjects"),
       selectRows(srv.from("teacher_subjects").select("profile_id,subject_id,institution_id").eq("institution_id", institutionId), "teacher_subjects"),
+      selectRows(srv.from("class_teachers").select("institution_id,class_id,teacher_id,subject_id,start_date,end_date").eq("institution_id", institutionId), "class_teachers"),
       selectRows(srv.from("students").select("id,institution_id,matricule,first_name,last_name,full_name,gender").eq("institution_id", institutionId), "students"),
       selectRows(srv.from("class_enrollments").select("institution_id,class_id,student_id,start_date,end_date").eq("institution_id", institutionId), "class_enrollments"),
       selectRows(srv.from("institution_periods").select("id,institution_id,weekday,label,start_time,end_time").eq("institution_id", institutionId), "institution_periods"),
@@ -179,6 +198,7 @@ export async function GET(request: NextRequest) {
     const referencedProfileIds = new Set([
       ...userRoles.map((row) => text(row.profile_id)),
       ...teacherSubjects.map((row) => text(row.profile_id)),
+      ...classTeachers.map((row) => text(row.teacher_id)),
       ...timetables.map((row) => text(row.teacher_id)),
       ...absenceRequests.map((row) => text(row.teacher_profile_id)),
       ...sessions.map((row) => text(row.teacher_id)),
@@ -224,6 +244,32 @@ export async function GET(request: NextRequest) {
         return [];
       }
       return [{ ...row, teacher_id: teacherId, subject_id: localSubjectId }];
+    });
+    const normalizedClassTeachers = classTeachers.flatMap((row) => {
+      const teacherId = text(row.teacher_id);
+      const classId = text(row.class_id);
+      const rawSubjectId = text(row.subject_id);
+      const localSubjectId = rawSubjectId
+        ? subjectIdMap.get(rawSubjectId)
+        : null;
+      if (!profileIds.has(teacherId)) {
+        missing("class_teachers", row, "teacher_id", teacherId);
+        return [];
+      }
+      if (!classIds.has(classId)) {
+        missing("class_teachers", row, "class_id", classId);
+        return [];
+      }
+      if (rawSubjectId && !localSubjectId) {
+        missing("class_teachers", row, "subject_id", rawSubjectId);
+        return [];
+      }
+      return [{
+        ...row,
+        teacher_id: teacherId,
+        class_id: classId,
+        subject_id: localSubjectId,
+      }];
     });
     const normalizedEnrollments = enrollments.flatMap((row) => {
       if (!classIds.has(text(row.class_id))) {
@@ -307,13 +353,29 @@ export async function GET(request: NextRequest) {
           relay_proof_ttl_seconds: Number(attendancePolicy.data?.relay_proof_ttl_seconds || 180),
           zones: attendanceZones.data || [],
         };
+    const revisionAfter = await attendanceScheduleRevision(srv, institutionId);
+    const snapshotComplete =
+      skipped.length === 0 &&
+      revisionBefore.revision === revisionAfter.revision;
 
     const snapshot = {
       protocol_version: 1,
       snapshot_id: `cloud-${institutionId}-${Date.now()}`,
       institution_id: institutionId,
+      snapshot_revision: revisionAfter.revision,
+      snapshot_completeness: snapshotComplete ? "complete" : "partial",
       generated_at: generatedAt,
       cursor: generatedAt,
+      schedule_manifest: {
+        class_teachers: normalizedClassTeachers.map((row) => ({
+          institution_id: institutionId,
+          class_id: text(row.class_id),
+          teacher_id: text(row.teacher_id),
+          subject_id: text(row.subject_id) || null,
+          start_date: text(row.start_date) || null,
+          end_date: text(row.end_date) || null,
+        })),
+      },
       institution: withMeta({
         id: institutionId,
         name: text((institution.data as any).name) || "Établissement",
@@ -396,6 +458,8 @@ export async function GET(request: NextRequest) {
         skipped,
         missing_profiles_requested: missingProfileIds.length,
         missing_profiles_found: referencedProfiles.length,
+        revision_changed_during_generation:
+          revisionBefore.revision !== revisionAfter.revision,
       },
     };
 

@@ -159,10 +159,21 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
     assert.equal(valid.status, 200);
     assert.equal(valid.headers.get("access-control-allow-origin"), "https://mon-cahier.com");
     const validBody = await valid.json() as Record<string, unknown>;
-    assert.deepEqual(Object.keys(validBody).sort(), ["institution_id", "ok", "relay_time"]);
     assert.equal(validBody.ok, true);
     assert.equal(validBody.institution_id, "inst-1");
     assert.ok(Number.isFinite(Date.parse(String(validBody.relay_time))));
+    assert.equal(validBody.relay_version, "0.1.0");
+    assert.equal(validBody.schema_version, 8);
+    assert.equal(validBody.protocol_version, 1);
+    assert.equal(validBody.teacher_attendance_writes_enabled, false);
+    assert.deepEqual(validBody.capabilities, {
+      attendance_session_open: true,
+      attendance_write: true,
+      attendance_session_close: true,
+      attendance_transition: true,
+    });
+    assert.equal(validBody.snapshot_revision, null);
+    assert.equal(validBody.schedule_status, "not_prepared");
 
     assert.equal((await connectivityPost(relay.url)).status, 401);
     assert.equal((await connectivityPost(relay.url, "not-a-signed-teacher-token")).status, 401);

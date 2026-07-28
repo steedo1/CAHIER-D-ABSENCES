@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -131,6 +132,26 @@ function noStoreJson(body: unknown, status = 200) {
   return response;
 }
 
+async function scheduleRevision(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+) {
+  const { data, error } = await srv
+    .from("attendance_schedule_revisions")
+    .select("revision,updated_at")
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+  if (error) throw error;
+  const revision = Number(data?.revision ?? 0);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("schedule_revision_invalid");
+  }
+  return {
+    revision,
+    generated_at: String(data?.updated_at || new Date().toISOString()),
+  };
+}
+
 export async function GET() {
   try {
     const supa = await getSupabaseServerClient();
@@ -153,6 +174,10 @@ export async function GET() {
     if (!institutionId) {
       return noStoreJson({
         version: 1,
+        web_release: MON_CAHIER_WEB_RELEASE,
+        institution_id: null,
+        schedule_revision: null,
+        snapshot_completeness: "partial",
         generated_at: new Date().toISOString(),
         source: "teacher_timetables",
         slots: [],
@@ -161,7 +186,9 @@ export async function GET() {
       });
     }
 
-    const [periodResult, timetableResult, classResult] = await Promise.all([
+    const revisionBefore = await scheduleRevision(srv, institutionId);
+    const [periodResult, timetableResult, classResult, assignmentResult] =
+      await Promise.all([
       srv
         .from("institution_periods")
         .select("id,institution_id,weekday,label,start_time,end_time,period_no")
@@ -177,7 +204,13 @@ export async function GET() {
         .from("classes")
         .select("id,institution_id,label,level")
         .eq("institution_id", institutionId),
-    ]);
+      srv
+        .from("class_teachers")
+        .select("institution_id,class_id,teacher_id,subject_id,start_date,end_date")
+        .eq("teacher_id", user.id)
+        .eq("institution_id", institutionId)
+        .is("end_date", null),
+      ]);
 
     if (periodResult.error) {
       return noStoreJson({ error: periodResult.error.message }, 400);
@@ -187,6 +220,9 @@ export async function GET() {
     }
     if (classResult.error) {
       return noStoreJson({ error: classResult.error.message }, 400);
+    }
+    if (assignmentResult.error) {
+      return noStoreJson({ error: assignmentResult.error.message }, 400);
     }
 
     const periods = ((periodResult.data || []) as any[]).filter(Boolean) as PeriodRow[];
@@ -272,11 +308,20 @@ export async function GET() {
     const classIds = new Set(
       slots.flatMap((slot) => slot.items.map((item) => item.class_id)),
     );
+    const revisionAfter = await scheduleRevision(srv, institutionId);
+    if (revisionBefore.revision !== revisionAfter.revision) {
+      return noStoreJson({ error: "schedule_changed_during_prepare" }, 409);
+    }
 
     return noStoreJson({
       version: 1,
-      generated_at: new Date().toISOString(),
+      web_release: MON_CAHIER_WEB_RELEASE,
+      institution_id: institutionId,
+      schedule_revision: revisionAfter.revision,
+      snapshot_completeness: "complete",
+      generated_at: revisionAfter.generated_at,
       source: "teacher_timetables",
+      assignments: assignmentResult.data || [],
       slots,
       class_count: classIds.size,
       slot_count: slots.length,
