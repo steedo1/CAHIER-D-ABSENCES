@@ -333,6 +333,8 @@ async function prepareBulletins(req: NextRequest, body: any) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
 
+  const institutionId = access.institutionId;
+
   const documents = Array.isArray(body?.documents)
     ? (body.documents as BulletinDocumentInput[])
     : [];
@@ -377,7 +379,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
     }
 
     const expectedSourceId = computeOfficialBulletinSourceId({
-      institutionId: access.institutionId,
+      institutionId: institutionId,
       classId,
       studentId,
       academicYear: academicYearSource == null ? null : String(academicYearSource),
@@ -409,7 +411,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
       const proof: any = verifyBulletinQR(qrToken);
       if (
         !proof ||
-        cleanOfficialText(proof.instId) !== access.institutionId ||
+        cleanOfficialText(proof.instId) !== institutionId ||
         cleanOfficialText(proof.classId) !== classId ||
         cleanOfficialText(proof.studentId) !== studentId ||
         cleanOfficialText(proof.academicYear) !== cleanOfficialText(academicYear) ||
@@ -467,7 +469,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
         !qr ||
         qr.revoked === true ||
         cleanOfficialText(qr.bulletin_key) !== row.sourceId ||
-        cleanOfficialText(payload?.instId) !== access.institutionId ||
+        cleanOfficialText(payload?.instId) !== institutionId ||
         cleanOfficialText(payload?.classId) !== cleanOfficialText(snapshotClass?.id) ||
         cleanOfficialText(payload?.studentId) !== cleanOfficialText(snapshotItem?.student_id) ||
         cleanOfficialText(payload?.academicYear) !== cleanOfficialText(academicYear) ||
@@ -495,7 +497,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
   }));
 
   const { data, error } = await admin.rpc("register_official_bulletin_batch", {
-    p_institution_id: access.institutionId,
+    p_institution_id: institutionId,
     p_documents: rpcDocuments,
     p_generated_by: access.userId || null,
     p_reason: reason || null,
