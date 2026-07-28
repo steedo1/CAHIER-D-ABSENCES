@@ -6,6 +6,16 @@ import {
   publishEvaluationOfficially,
   requestChangesForEvaluation,
 } from "@/lib/grades/publication";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassLevelCode,
+  getEducationScopeWriteError,
+  readEducationScopeFromRecord,
+  readEducationScopeFromSearchParams,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,13 +48,11 @@ type EvaluationRow = {
   reviewed_by: string | null;
   review_comment: string | null;
   publication_version: number | null;
+  grading_period_id: string | null;
 };
 
-type ClassRow = {
-  id: string;
-  label: string | null;
+type ClassRow = EducationScopedClass & {
   code?: string | null;
-  level?: string | null;
   institution_id: string | null;
 };
 
@@ -335,7 +343,9 @@ async function fetchClassMap(
 ) {
   let q = srv
     .from("classes")
-    .select("id,label,code,level,institution_id")
+    .select(
+      "id,label,code,level,institution_id,education_type,formation_code,formation_level_code"
+    )
     .eq("institution_id", institutionId);
 
   const ids = Array.from(new Set((classIds || []).filter(Boolean)));
@@ -363,6 +373,9 @@ async function fetchClassMap(
       code: (row as any).code ?? null,
       level: (row as any).level ?? null,
       institution_id: (row as any).institution_id ?? null,
+      education_type: (row as any).education_type ?? null,
+      formation_code: (row as any).formation_code ?? null,
+      formation_level_code: (row as any).formation_level_code ?? null,
     });
   }
 
@@ -1046,6 +1059,7 @@ async function loadEvaluationOrFail(params: {
         "reviewed_by",
         "review_comment",
         "publication_version",
+        "grading_period_id",
       ].join(",")
     )
     .eq("id", evaluationId)
@@ -1163,7 +1177,7 @@ async function buildRequestItems(params: {
       evaluation_id: ev.id,
       class_id: ev.class_id,
       class_label: cleanText(cls?.label) || cleanText(cls?.code) || "Classe",
-      class_level: cls?.level ?? null,
+      class_level: cls ? getClassLevelCode(cls) || null : null,
 
       subject_id: ev.subject_id,
       subject_name: ev.subject_id
@@ -1183,6 +1197,7 @@ async function buildRequestItems(params: {
       published_at: ev.published_at ?? null,
       publication_status: normalizeStatus(ev.publication_status),
       publication_version: toFiniteNumber(ev.publication_version, 0),
+      grading_period_id: ev.grading_period_id ?? null,
 
       submitted_at: ev.submitted_at ?? null,
       submitted_by: ev.submitted_by ?? null,
@@ -1291,7 +1306,24 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const evaluationId = cleanText(searchParams.get("evaluation_id"));
+    const hasEducationScope = [
+      "education_type",
+      "formation_code",
+      "formation_level_code",
+      "level_code",
+      "class_id",
+      "classId",
+    ].some((key) => searchParams.has(key));
+    const educationScope: EducationScopeValue = hasEducationScope
+      ? readEducationScopeFromSearchParams(searchParams)
+      : {
+          educationType: ALL_EDUCATION_TYPES,
+          formationCode: "",
+          levelCode: "",
+          classId: "",
+        };
     const classId = cleanText(searchParams.get("class_id"));
+    const gradingPeriodId = cleanText(searchParams.get("grading_period_id"));
     const statusRaw = cleanText(searchParams.get("status")) || "submitted";
     const includeScores =
       searchParams.get("include_scores") === "1" || !!evaluationId;
@@ -1310,6 +1342,20 @@ export async function GET(req: NextRequest) {
       });
 
       if (!loaded.ok) return bad(loaded.error, loaded.status);
+
+      if (
+        hasEducationScope &&
+        !classMatchesEducationScope(loaded.classRow, educationScope)
+      ) {
+        return bad("EVALUATION_OUTSIDE_EDUCATION_SCOPE", 403);
+      }
+
+      if (
+        gradingPeriodId &&
+        cleanText(loaded.evaluation.grading_period_id) !== gradingPeriodId
+      ) {
+        return bad("EVALUATION_OUTSIDE_GRADING_PERIOD", 403);
+      }
 
       const items = await buildRequestItems({
         srv,
@@ -1333,7 +1379,12 @@ export async function GET(req: NextRequest) {
     }
 
     const classMap = await fetchClassMap(srv, institutionId);
-    const allowedClassIds = Array.from(classMap.keys());
+    const scopedClassMap = new Map(
+      Array.from(classMap.entries()).filter(([, row]) =>
+        classMatchesEducationScope(row, educationScope),
+      ),
+    );
+    const allowedClassIds = Array.from(scopedClassMap.keys());
 
     if (!allowedClassIds.length) {
       return NextResponse.json({
@@ -1369,6 +1420,7 @@ export async function GET(req: NextRequest) {
           "reviewed_by",
           "review_comment",
           "publication_version",
+          "grading_period_id",
         ].join(",")
       )
       .in("class_id", allowedClassIds)
@@ -1377,7 +1429,7 @@ export async function GET(req: NextRequest) {
       .limit(limit);
 
     if (classId) {
-      if (!classMap.has(classId)) {
+      if (!scopedClassMap.has(classId)) {
         return bad("CLASS_NOT_FOUND_OR_FORBIDDEN", 403);
       }
 
@@ -1386,6 +1438,10 @@ export async function GET(req: NextRequest) {
 
     if (statusRaw !== "all") {
       q = q.eq("publication_status", statusRaw);
+    }
+
+    if (gradingPeriodId) {
+      q = q.eq("grading_period_id", gradingPeriodId);
     }
 
     const { data, error } = await q;
@@ -1415,6 +1471,8 @@ export async function GET(req: NextRequest) {
         count: items.length,
         status: statusRaw,
         limit,
+        education_scope: educationScope,
+        grading_period_id: gradingPeriodId || null,
       },
     });
   } catch (e: any) {
@@ -1436,14 +1494,36 @@ export async function POST(req: NextRequest) {
       action?: string;
       comment?: string | null;
       queue_push?: boolean;
+      education_type?: string | null;
+      formation_code?: string | null;
+      formation_level_code?: string | null;
+      level_code?: string | null;
+      class_id?: string | null;
+      grading_period_id?: string | null;
     };
 
     const evaluationId = cleanText(body.evaluation_id);
     const action = cleanText(body.action).toLowerCase();
     const comment = cleanText(body.comment);
+    const educationScope = readEducationScopeFromRecord(
+      body as Record<string, unknown>,
+    );
+    const educationScopeError = getEducationScopeWriteError(educationScope);
+    const gradingPeriodId = cleanText(body.grading_period_id);
 
     if (!evaluationId) return bad("MISSING_EVALUATION_ID", 400);
     if (!action) return bad("MISSING_ACTION", 400);
+    if (educationScopeError) {
+      return bad("EDUCATION_SCOPE_REQUIRED", 400, {
+        message: educationScopeError,
+      });
+    }
+    if (!educationScope.classId) {
+      return bad("CLASS_SCOPE_REQUIRED", 400, {
+        message:
+          "Sélectionnez exactement la classe concernée avant cette décision.",
+      });
+    }
 
     const loaded = await loadEvaluationOrFail({
       srv,
@@ -1452,6 +1532,20 @@ export async function POST(req: NextRequest) {
     });
 
     if (!loaded.ok) return bad(loaded.error, loaded.status);
+
+    if (
+      educationScope.classId !== loaded.evaluation.class_id ||
+      !classMatchesEducationScope(loaded.classRow, educationScope)
+    ) {
+      return bad("EVALUATION_OUTSIDE_EDUCATION_SCOPE", 403);
+    }
+
+    if (
+      gradingPeriodId &&
+      cleanText(loaded.evaluation.grading_period_id) !== gradingPeriodId
+    ) {
+      return bad("EVALUATION_OUTSIDE_GRADING_PERIOD", 409);
+    }
 
     const status = normalizeStatus(loaded.evaluation.publication_status);
 

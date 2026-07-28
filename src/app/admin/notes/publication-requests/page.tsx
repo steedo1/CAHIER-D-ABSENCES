@@ -17,6 +17,14 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  getEducationScopeWriteError,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type PublicationStatus =
   | "draft"
@@ -66,6 +74,7 @@ type RequestItem = {
 
   publication_status: PublicationStatus;
   publication_version: number;
+  grading_period_id?: string | null;
 
   submitted_at?: string | null;
   submitted_by?: string | null;
@@ -113,6 +122,22 @@ type Detail = {
 };
 
 type StatusFilter = "submitted" | "changes_requested" | "published" | "all";
+
+type GradePeriod = {
+  id: string;
+  code?: string | null;
+  label: string;
+  short_label?: string | null;
+  is_active?: boolean | null;
+  order_index?: number | null;
+};
+
+const INITIAL_READ_SCOPE: EducationScopeValue = {
+  educationType: ALL_EDUCATION_TYPES,
+  formationCode: "",
+  levelCode: "",
+  classId: "",
+};
 
 function Button(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -414,6 +439,12 @@ export default function AdminGradePublicationRequestsPage() {
   const [status, setStatus] = useState<StatusFilter>("submitted");
   const [items, setItems] = useState<RequestItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [classes, setClasses] = useState<EducationScopedClass[]>([]);
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(INITIAL_READ_SCOPE);
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState("");
+  const [periodsLoading, setPeriodsLoading] = useState(false);
 
   const [selected, setSelected] = useState<RequestItem | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -454,15 +485,22 @@ export default function AdminGradePublicationRequestsPage() {
     [items]
   );
 
-  const selectedCanApprove =
+  const writeScopeError = getEducationScopeWriteError(educationScope);
+  const selectedHasExactClassScope =
     !!selected &&
-    selected.publication_status !== "published" &&
-    selected.is_published !== true;
+    !!educationScope.classId &&
+    educationScope.classId === selected.class_id &&
+    !writeScopeError;
+
+  const selectedCanApprove =
+    selectedHasExactClassScope &&
+    selected?.publication_status !== "published" &&
+    selected?.is_published !== true;
 
   const selectedCanRequestChanges =
-    !!selected &&
-    selected.publication_status !== "published" &&
-    selected.is_published !== true;
+    selectedHasExactClassScope &&
+    selected?.publication_status !== "published" &&
+    selected?.is_published !== true;
 
   async function loadRequests(nextStatus: StatusFilter = status) {
     setLoading(true);
@@ -470,9 +508,12 @@ export default function AdminGradePublicationRequestsPage() {
     setMsg(null);
 
     try {
-      const params = new URLSearchParams();
+      const params = buildEducationScopeSearchParams(educationScope);
       params.set("status", nextStatus);
       params.set("limit", "200");
+      if (selectedPeriodId) {
+        params.set("grading_period_id", selectedPeriodId);
+      }
 
       const res = await fetch(
         `/api/admin/grades/publication-requests?${params.toString()}`,
@@ -510,9 +551,12 @@ export default function AdminGradePublicationRequestsPage() {
     setMsg(null);
 
     try {
-      const params = new URLSearchParams();
+      const params = buildEducationScopeSearchParams(educationScope);
       params.set("evaluation_id", item.evaluation_id);
       params.set("include_scores", "1");
+      if (selectedPeriodId) {
+        params.set("grading_period_id", selectedPeriodId);
+      }
 
       const res = await fetch(
         `/api/admin/grades/publication-requests?${params.toString()}`,
@@ -557,6 +601,11 @@ export default function AdminGradePublicationRequestsPage() {
           action,
           comment: cleanComment || null,
           queue_push: true,
+          education_type: educationScope.educationType,
+          formation_code: educationScope.formationCode || null,
+          formation_level_code: educationScope.levelCode || null,
+          class_id: educationScope.classId || null,
+          grading_period_id: selectedPeriodId || null,
         }),
       });
 
@@ -592,9 +641,86 @@ export default function AdminGradePublicationRequestsPage() {
   }
 
   useEffect(() => {
+    let cancelled = false;
+
+    void fetch("/api/admin/classes?education_type=all&limit=5000", {
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        const rows = Array.isArray(json?.items) ? json.items : [];
+        setClasses(rows as EducationScopedClass[]);
+      })
+      .catch(() => {
+        if (!cancelled) setClasses([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPeriods() {
+      try {
+        setPeriodsLoading(true);
+        const params = new URLSearchParams();
+        if (educationScope.classId) {
+          params.set("class_id", educationScope.classId);
+        }
+
+        const query = params.toString();
+        const res = await fetch(
+          `/api/admin/institution/grading-periods${query ? `?${query}` : ""}`,
+          { cache: "no-store" },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "PERIODS_LOAD_FAILED");
+
+        const rows: GradePeriod[] = Array.isArray(json?.items)
+          ? json.items
+          : Array.isArray(json)
+            ? json
+            : [];
+
+        if (cancelled) return;
+        setPeriods(rows);
+        setSelectedPeriodId((current) =>
+          current && rows.some((row) => row.id === current) ? current : "",
+        );
+      } catch {
+        if (!cancelled) {
+          setPeriods([]);
+          setSelectedPeriodId("");
+        }
+      } finally {
+        if (!cancelled) setPeriodsLoading(false);
+      }
+    }
+
+    void loadPeriods();
+    return () => {
+      cancelled = true;
+    };
+  }, [educationScope.classId]);
+
+  useEffect(() => {
+    setSelected(null);
+    setDetail(null);
+    setComment("");
     void loadRequests(status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [
+    status,
+    selectedPeriodId,
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+  ]);
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
@@ -633,8 +759,16 @@ export default function AdminGradePublicationRequestsPage() {
         </div>
       </header>
 
+      <EducationScopeFilter
+        value={educationScope}
+        onChange={setEducationScope}
+        classes={classes}
+        allowAllEducationTypes
+        title="Périmètre des demandes"
+      />
+
       <section className="rounded-2xl border border-emerald-100 bg-gradient-to-b from-emerald-50/70 to-white p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+        <div className="grid gap-3 md:grid-cols-[220px_280px_1fr]">
           <div>
             <div className="mb-1 text-xs font-medium text-slate-500">
               Statut
@@ -647,6 +781,24 @@ export default function AdminGradePublicationRequestsPage() {
               <option value="changes_requested">Corrections demandées</option>
               <option value="published">Publiées</option>
               <option value="all">Toutes</option>
+            </Select>
+          </div>
+
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-500">
+              Période de notes
+            </div>
+            <Select
+              value={selectedPeriodId}
+              onChange={(event) => setSelectedPeriodId(event.target.value)}
+              disabled={periodsLoading}
+            >
+              <option value="">Toutes les périodes</option>
+              {periods.map((period) => (
+                <option key={period.id} value={period.id}>
+                  {period.label || period.short_label || period.code || "Période"}
+                </option>
+              ))}
             </Select>
           </div>
 
@@ -1005,6 +1157,15 @@ export default function AdminGradePublicationRequestsPage() {
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    {!selectedHasExactClassScope && selected.publication_status !== "published" ? (
+                      <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
+                        Pour valider ou demander une correction, sélectionnez d’abord un
+                        type d’enseignement précis puis exactement la classe de cette
+                        évaluation ({selected.class_label}).
+                        {writeScopeError ? ` ${writeScopeError}` : ""}
+                      </div>
+                    ) : null}
+
                     <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
                       <Send className="h-4 w-4" />
                       Décision administrative

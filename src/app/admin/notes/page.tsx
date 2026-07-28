@@ -18,6 +18,13 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  ALL_EDUCATION_TYPES,
+  buildEducationScopeSearchParams,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* Types API */
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
@@ -116,6 +123,24 @@ type GradeDigestSendResult =
     };
 
 type DaysRange = 7 | 30 | 90;
+
+type GradePeriod = {
+  id: string;
+  code?: string | null;
+  label: string;
+  short_label?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_active?: boolean | null;
+  order_index?: number | null;
+};
+
+const INITIAL_READ_SCOPE: EducationScopeValue = {
+  educationType: ALL_EDUCATION_TYPES,
+  formationCode: "",
+  levelCode: "",
+  classId: "",
+};
 
 /* Mini UI helpers */
 function Skeleton({ className = "" }: { className?: string }) {
@@ -320,6 +345,12 @@ export default function AdminNotesOverviewPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [days, setDays] = useState<DaysRange>(30);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [classes, setClasses] = useState<EducationScopedClass[]>([]);
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(INITIAL_READ_SCOPE);
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState("");
+  const [periodsLoading, setPeriodsLoading] = useState(false);
 
   const [sendingGradeDigest, setSendingGradeDigest] = useState(false);
   const [gradeDigestResult, setGradeDigestResult] = useState<GradeDigestSendResult | null>(null);
@@ -328,7 +359,13 @@ export default function AdminNotesOverviewPage() {
     try {
       setRefreshing(true);
 
-      const res = await fetch(`/api/admin/notes/overview?days=${d}`, {
+      const params = buildEducationScopeSearchParams(educationScope);
+      params.set("days", String(d));
+      if (selectedPeriodId) {
+        params.set("grading_period_id", selectedPeriodId);
+      }
+
+      const res = await fetch(`/api/admin/notes/overview?${params.toString()}`, {
         cache: "no-store",
       });
 
@@ -393,9 +430,83 @@ export default function AdminNotesOverviewPage() {
   }
 
   useEffect(() => {
-    load(days);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+
+    void fetch("/api/admin/classes?education_type=all&limit=5000", {
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        const items = Array.isArray(json?.items) ? json.items : [];
+        setClasses(items as EducationScopedClass[]);
+      })
+      .catch(() => {
+        if (!cancelled) setClasses([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPeriods() {
+      try {
+        setPeriodsLoading(true);
+        const params = new URLSearchParams();
+        if (educationScope.classId) {
+          params.set("class_id", educationScope.classId);
+        }
+
+        const query = params.toString();
+        const res = await fetch(
+          `/api/admin/institution/grading-periods${query ? `?${query}` : ""}`,
+          { cache: "no-store" },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "PERIODS_LOAD_FAILED");
+
+        const rows: GradePeriod[] = Array.isArray(json?.items)
+          ? json.items
+          : Array.isArray(json)
+            ? json
+            : [];
+
+        if (cancelled) return;
+        setPeriods(rows);
+        setSelectedPeriodId((current) =>
+          current && rows.some((row) => row.id === current) ? current : "",
+        );
+      } catch {
+        if (!cancelled) {
+          setPeriods([]);
+          setSelectedPeriodId("");
+        }
+      } finally {
+        if (!cancelled) setPeriodsLoading(false);
+      }
+    }
+
+    void loadPeriods();
+    return () => {
+      cancelled = true;
+    };
+  }, [educationScope.classId]);
+
+  useEffect(() => {
+    void load(days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    days,
+    selectedPeriodId,
+    educationScope.educationType,
+    educationScope.formationCode,
+    educationScope.levelCode,
+    educationScope.classId,
+  ]);
 
   const isOk = !!data && "ok" in data && data.ok;
 
@@ -491,10 +602,7 @@ export default function AdminNotesOverviewPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               <Segmented
                 value={days}
-                onChange={(d) => {
-                  setDays(d);
-                  load(d);
-                }}
+                onChange={setDays}
               />
 
               <button
@@ -522,7 +630,7 @@ export default function AdminNotesOverviewPage() {
                 ].join(" ")}
               >
                 <Send className={`h-4 w-4 ${sendingGradeDigest ? "animate-pulse" : ""}`} />
-                {sendingGradeDigest ? "Envoi en cours..." : "Envoyer les notes"}
+                {sendingGradeDigest ? "Envoi en cours..." : "Envoyer le résumé global"}
               </button>
             </div>
 
@@ -667,6 +775,43 @@ export default function AdminNotesOverviewPage() {
           </div>
         )}
       </div>
+
+      <section className="space-y-4 rounded-3xl border border-sky-100 bg-white p-4 shadow-sm sm:p-5">
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={setEducationScope}
+          classes={classes}
+          allowAllEducationTypes
+          title="Périmètre des indicateurs"
+        />
+
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px] md:items-end">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+            Les cartes, niveaux, classes en difficulté et dernières évaluations sont
+            calculés uniquement dans le périmètre sélectionné. L’envoi SMS reste une
+            action globale de l’établissement et ne dépend pas de ces filtres.
+          </div>
+
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-slate-600">
+              Période de notes
+            </span>
+            <select
+              value={selectedPeriodId}
+              onChange={(event) => setSelectedPeriodId(event.target.value)}
+              disabled={periodsLoading}
+              className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+            >
+              <option value="">Toutes les périodes</option>
+              {periods.map((period) => (
+                <option key={period.id} value={period.id}>
+                  {period.label || period.short_label || period.code || "Période"}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KpiTile

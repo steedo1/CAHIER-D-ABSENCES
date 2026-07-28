@@ -1,6 +1,14 @@
 // src/app/api/admin/notes/overview/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassLevelCode,
+  readEducationScopeFromSearchParams,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +25,7 @@ type EvalRow = {
   scale: number;
   coeff: number;
   is_published: boolean;
+  grading_period_id?: string | null;
 };
 
 type FlatMarkRow = {
@@ -27,10 +36,7 @@ type FlatMarkRow = {
   mark_20: number | null;
 };
 
-type ClassMetaRow = {
-  id: string;
-  label?: string | null;
-  level?: string | null;
+type ClassMetaRow = EducationScopedClass & {
   institution_id: string;
 };
 
@@ -55,6 +61,25 @@ type TeacherRow = {
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
+  const hasEducationScope = [
+    "education_type",
+    "formation_code",
+    "formation_level_code",
+    "level_code",
+    "class_id",
+    "classId",
+  ].some((key) => url.searchParams.has(key));
+  const educationScope: EducationScopeValue = hasEducationScope
+    ? readEducationScopeFromSearchParams(url.searchParams)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
+  const gradingPeriodId = String(
+    url.searchParams.get("grading_period_id") || "",
+  ).trim();
   const daysParam = url.searchParams.get("days") || "30";
   let days = Number(daysParam);
   if (!Number.isFinite(days) || days <= 0) days = 30;
@@ -135,13 +160,19 @@ export async function GET(req: NextRequest) {
   const toYmd = toYMD(today);
 
   /* ───────── 1) Évaluations sur la période (toutes) ───────── */
-  const { data: evalsData, error: evalErr } = await supabase
+  let evaluationsQuery = supabase
     .from("grade_evaluations")
     .select(
-      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published"
+      "id, class_id, subject_id, teacher_id, eval_date, eval_kind, scale, coeff, is_published, grading_period_id"
     )
     .gte("eval_date", fromYmd)
     .lte("eval_date", toYmd);
+
+  if (gradingPeriodId) {
+    evaluationsQuery = evaluationsQuery.eq("grading_period_id", gradingPeriodId);
+  }
+
+  const { data: evalsData, error: evalErr } = await evaluationsQuery;
 
   if (evalErr) {
     console.error("[admin.notes.overview] grade_evaluations error", evalErr);
@@ -157,7 +188,7 @@ export async function GET(req: NextRequest) {
     // aucun contrôle sur la période, tous établissements confondus
     return NextResponse.json({
       ok: true,
-      meta: { days },
+      meta: { days, education_scope: educationScope, grading_period_id: gradingPeriodId || null },
       counts: {
         evaluations_total: 0,
         evaluations_published: 0,
@@ -211,7 +242,9 @@ export async function GET(req: NextRequest) {
   if (allClassIds.length) {
     const { data: classesData, error: classesErr } = await supabase
       .from("classes")
-      .select("id, label, level, institution_id")
+      .select(
+        "id, label, level, institution_id, education_type, formation_code, formation_level_code"
+      )
       .in("id", allClassIds)
       .eq("institution_id", institutionId);
 
@@ -224,10 +257,12 @@ export async function GET(req: NextRequest) {
     }
 
     for (const c of (classesData || []) as ClassMetaRow[]) {
+      if (!classMatchesEducationScope(c, educationScope)) continue;
+
       allowedClassIds.add(c.id);
       classesById[c.id] = {
-        label: (c.label || "Classe").trim(),
-        level: (c.level || null) ?? null,
+        label: (c.label || c.name || "Classe").trim(),
+        level: getClassLevelCode(c) || null,
       };
     }
   }
@@ -238,7 +273,7 @@ export async function GET(req: NextRequest) {
     // il existe des évaluations sur la période, mais aucune dans CET établissement
     return NextResponse.json({
       ok: true,
-      meta: { days },
+      meta: { days, education_scope: educationScope, grading_period_id: gradingPeriodId || null },
       counts: {
         evaluations_total: 0,
         evaluations_published: 0,
@@ -515,7 +550,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    meta: { days },
+    meta: { days, education_scope: educationScope, grading_period_id: gradingPeriodId || null },
     counts: {
       evaluations_total,
       evaluations_published,
