@@ -2,6 +2,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  classMatchesEducationScope,
+  getClassFormationCode,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromSearchParams,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +85,13 @@ export async function GET(req: NextRequest) {
     ? "tardy"
     : "absent") as "absent" | "tardy";
   const format = String(url.searchParams.get("format") || "").toLowerCase(); // "csv" | ""
+  const educationScope = readEducationScopeFromSearchParams(url.searchParams);
+  const contextFilteringRequested = [
+    "education_type",
+    "formation_code",
+    "formation_level_code",
+    "level_code",
+  ].some((key) => url.searchParams.has(key));
 
   if (!class_id) {
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
@@ -106,6 +120,47 @@ export async function GET(req: NextRequest) {
   if (!inst) {
     return NextResponse.json({ error: "no_institution" }, { status: 400 });
   }
+
+  const { data: classRow, error: classErr } = await srv
+    .from("classes")
+    .select(
+      "id,institution_id,label,level,academic_year,education_type,formation_code,formation_level_code",
+    )
+    .eq("id", class_id)
+    .eq("institution_id", inst)
+    .maybeSingle();
+
+  if (classErr) {
+    return NextResponse.json({ error: classErr.message }, { status: 400 });
+  }
+  if (!classRow) {
+    return NextResponse.json({ error: "class_not_found" }, { status: 404 });
+  }
+
+  if (
+    contextFilteringRequested &&
+    !classMatchesEducationScope(classRow as any, {
+      ...educationScope,
+      classId: class_id,
+    })
+  ) {
+    return NextResponse.json(
+      {
+        error: "class_context_mismatch",
+        message:
+          "La classe sélectionnée ne correspond pas au type d’enseignement, à la formation ou à l’année de formation demandés.",
+      },
+      { status: 409 },
+    );
+  }
+
+  const responseContext = {
+    class_id,
+    academic_year: (classRow as any).academic_year || null,
+    education_type: normalizeClassEducationType(classRow as any),
+    formation_code: getClassFormationCode(classRow as any) || null,
+    formation_level_code: getClassLevelCode(classRow as any) || null,
+  };
 
   // ── Lignes = élèves inscrits dans la classe
   const { data: enr, error: enrErr } = await srv
@@ -164,6 +219,7 @@ export async function GET(req: NextRequest) {
       });
     }
     return NextResponse.json({
+      context: responseContext,
       subjects: [],
       students: studentsBase.map((s, i) => ({ ...s, rank: i + 1 })),
       values: [],
@@ -362,6 +418,7 @@ export async function GET(req: NextRequest) {
 
   // ── JSON (ajouts non-bloquants: rank, totals, is_hot)
   return NextResponse.json({
+    context: responseContext,
     subjects,              // [{ id, name, total_minutes, is_hot }]
     students: studentsOut, // [{ id, full_name (Nom Prénom), rank, total_minutes, is_hot }]
     values,

@@ -3,6 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch";
+import {
+  classMatchesEducationScope,
+  getClassFormationCode,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromSearchParams,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +27,9 @@ type JustifItem = {
   class_id: string;
   class_label: string | null;
   class_level: string | null;
+  education_type: string;
+  formation_code: string | null;
+  formation_level_code: string | null;
   subject_id: string | null;
   subject_name: string | null;
   started_at: string;
@@ -431,9 +441,65 @@ export async function GET(req: NextRequest) {
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
     const class_id = url.searchParams.get("class_id") || "";
+    const educationScope = readEducationScopeFromSearchParams(url.searchParams);
+    const contextFilteringRequested = [
+      "education_type",
+      "formation_code",
+      "formation_level_code",
+      "level_code",
+    ].some((key) => url.searchParams.has(key));
     const statusParam = url.searchParams.get("status") || "all";
     const onlyUnjustified =
       (url.searchParams.get("only_unjustified") || "1") === "1";
+
+    let classScopeQuery = srv
+      .from("classes")
+      .select(
+        "id,label,level,academic_year,education_type,formation_code,formation_level_code",
+      )
+      .eq("institution_id", institution_id);
+
+    if (class_id) {
+      classScopeQuery = classScopeQuery.eq("id", class_id);
+    }
+
+    const { data: classScopeRows, error: classScopeErr } =
+      await classScopeQuery;
+
+    if (classScopeErr) {
+      return NextResponse.json(
+        { error: classScopeErr.message },
+        { status: 400 },
+      );
+    }
+
+    const scopedClasses = (classScopeRows || []).filter((row: any) =>
+      contextFilteringRequested
+        ? classMatchesEducationScope(row, {
+            ...educationScope,
+            classId: class_id || "",
+          })
+        : true,
+    );
+
+    const scopedClassIds = scopedClasses
+      .map((row: any) => String(row.id || "").trim())
+      .filter(Boolean);
+
+    if (class_id && scopedClassIds.length === 0) {
+      return NextResponse.json(
+        {
+          error: "class_context_mismatch",
+          message:
+            "La classe sélectionnée ne correspond pas au contexte pédagogique demandé.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (scopedClassIds.length === 0) {
+      return NextResponse.json({ items: [] as JustifItem[] });
+    }
 
     let q = srv
       .from("v_mark_minutes")
@@ -450,7 +516,7 @@ export async function GET(req: NextRequest) {
       q = q.neq("status", "present");
     }
 
-    if (class_id) q = q.eq("class_id", class_id);
+    q = q.in("class_id", scopedClassIds);
     if (from) q = q.gte("started_at", from);
     if (to) q = q.lt("started_at", endOfDayPlus1(to));
 
@@ -531,27 +597,29 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Classes
-    const { data: classes, error: classesErr } = await srv
-      .from("classes")
-      .select("id, label, level")
-      .in("id", classIds);
-
-    if (classesErr) {
-      return NextResponse.json(
-        { error: classesErr.message },
-        { status: 400 },
-      );
-    }
-
+    // Classes : le périmètre a déjà été validé avant la lecture des marques.
+    const returnedClassIds = new Set(classIds);
     const classesById = new Map<
       string,
-      { label: string | null; level: string | null }
+      {
+        label: string | null;
+        level: string | null;
+        education_type: string;
+        formation_code: string | null;
+        formation_level_code: string | null;
+      }
     >();
-    for (const c of classes || []) {
-      classesById.set(String((c as any).id), {
-        label: (c as any).label ?? null,
-        level: (c as any).level ?? null,
+
+    for (const c of scopedClasses as any[]) {
+      const id = String(c.id || "");
+      if (!returnedClassIds.has(id)) continue;
+
+      classesById.set(id, {
+        label: c.label ?? null,
+        level: c.level ?? null,
+        education_type: normalizeClassEducationType(c),
+        formation_code: getClassFormationCode(c) || null,
+        formation_level_code: getClassLevelCode(c) || null,
       });
     }
 
@@ -662,6 +730,9 @@ export async function GET(req: NextRequest) {
       const klass = classesById.get(class_id_row) || {
         label: null,
         level: null,
+        education_type: "general_secondary",
+        formation_code: null,
+        formation_level_code: null,
       };
 
       // Résolution du nom de matière
@@ -719,6 +790,9 @@ export async function GET(req: NextRequest) {
         class_id: class_id_row,
         class_label: klass.label,
         class_level: klass.level,
+        education_type: klass.education_type,
+        formation_code: klass.formation_code,
+        formation_level_code: klass.formation_level_code,
         subject_id,
         subject_name,
         started_at: r.started_at,
