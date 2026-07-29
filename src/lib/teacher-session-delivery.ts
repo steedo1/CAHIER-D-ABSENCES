@@ -30,6 +30,7 @@ export type TeacherSessionDeliveryRecord = {
   actual_call_at: string | null;
   scheduled_end_at: string | null;
   grace_expires_at: string | null;
+  relay_time: string | null;
   session_state: "open" | "finalizing" | "closed" | null;
   created_at: string;
   updated_at: string;
@@ -157,6 +158,7 @@ async function getOrCreateRecord(
     actual_call_at: null,
     scheduled_end_at: null,
     grace_expires_at: null,
+    relay_time: null,
     session_state: null,
     created_at: timestamp,
     updated_at: timestamp,
@@ -253,6 +255,7 @@ async function openInternal(
       actual_call_at: normalizedText(session?.actual_call_at) || null,
       scheduled_end_at: normalizedText(session?.scheduled_end_at) || null,
       grace_expires_at: normalizedText(session?.grace_expires_at) || null,
+      relay_time: normalizedText(response.body?.relay_time) || null,
       session_state: session?.session_state === "open" ||
           session?.session_state === "finalizing" || session?.session_state === "closed"
         ? session.session_state

@@ -15,10 +15,12 @@ type RelayProofPayload = {
 };
 
 type RelayAccessPayload = {
-  v: 1;
+  v: 1 | 2;
   purpose: "attendance_relay_access";
   institution_id: string;
   actor_profile_id: string;
+  actor_kind?: "teacher" | "class_device";
+  class_id?: string | null;
   issued_at: string;
   expires_at: string;
 };
@@ -56,14 +58,24 @@ export function createRelayAttendanceAccessToken(input: {
   actorProfileId: string;
   now?: Date;
   ttlDays?: number;
+  actorKind?: "teacher" | "class_device";
+  classId?: string | null;
 }) {
   const now = input.now || new Date();
   const ttlDays = Math.min(31, Math.max(1, Math.round(input.ttlDays || 30)));
+  const actorKind = input.actorKind || "teacher";
+  const classId = String(input.classId || "").trim() || null;
+  if (actorKind === "class_device" && !classId) {
+    throw new Error("class_id_required_for_class_device");
+  }
   const payload: RelayAccessPayload = {
-    v: 1,
+    v: actorKind === "class_device" ? 2 : 1,
     purpose: "attendance_relay_access",
     institution_id: input.institutionId,
     actor_profile_id: input.actorProfileId,
+    ...(actorKind === "class_device"
+      ? { actor_kind: actorKind, class_id: classId }
+      : {}),
     issued_at: now.toISOString(),
     expires_at: new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000).toISOString(),
   };

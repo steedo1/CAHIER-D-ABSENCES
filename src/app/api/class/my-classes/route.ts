@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
+import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -134,10 +135,19 @@ export async function GET(req: NextRequest) {
     );
 
     if (instIds.length > 0) {
-      const { data: insts, error: instErr } = await srv
-        .from("institutions")
-        .select("id,name,short_name,settings_json")
-        .in("id", instIds);
+      const [institutionsResult, policiesResult] = await Promise.all([
+        srv
+          .from("institutions")
+          .select("id,name,short_name,settings_json")
+          .in("id", instIds),
+        srv
+          .from("institution_attendance_policies")
+          .select("institution_id,enabled,allow_local_relay,relay_local_url,relay_presence_secret")
+          .in("institution_id", instIds),
+      ]);
+      const insts = institutionsResult.data || [];
+      const instErr = institutionsResult.error;
+      const policyMissing = (policiesResult.error as any)?.code === "42P01";
 
       if (!instErr && insts) {
         const instById: Record<
@@ -147,11 +157,32 @@ export async function GET(req: NextRequest) {
         for (const it of insts) {
           instById[it.id] = it;
         }
+        const policyByInstitution = new Map(
+          (policyMissing ? [] : policiesResult.data || []).map((row: any) => [
+            String(row.institution_id || ""),
+            row,
+          ]),
+        );
 
         enriched = (items || []).map((c: any) => {
           const inst = instById[c.institution_id] || {};
+          const policy: any = policyByInstitution.get(String(c.institution_id || "")) || {};
           const institution_name =
             (inst as any).name || (inst as any).short_name || null;
+          const relayEnabled =
+            policy.enabled === true &&
+            policy.allow_local_relay !== false &&
+            Boolean(String(policy.relay_local_url || "").trim()) &&
+            String(policy.relay_presence_secret || "").length >= 32;
+          const relayAccessToken = relayEnabled
+            ? createRelayAttendanceAccessToken({
+                secret: String(policy.relay_presence_secret || ""),
+                institutionId: String(c.institution_id || ""),
+                actorProfileId: user.id,
+                actorKind: "class_device",
+                classId: String(c.id || ""),
+              })
+            : null;
 
           const education = resolveAttendanceEducationContext({
             educationType: c.education_type,
@@ -173,6 +204,13 @@ export async function GET(req: NextRequest) {
             formation_level_label: education.formation_level_label,
             education_context_key: education.context_key,
             education_context_label: education.context_label,
+            actor_profile_id: user.id,
+            attendance_presence: {
+              enabled: relayEnabled,
+              allow_local_relay: policy.allow_local_relay !== false,
+              relay_local_url: relayEnabled ? String(policy.relay_local_url) : null,
+              relay_access_token: relayAccessToken,
+            },
           };
         });
       }

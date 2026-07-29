@@ -2,7 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { parseStoredJson } from "./json.mjs";
 
-type RelayAccessPayload = {
+export type RelayActorKind = "teacher" | "class_device";
+
+type RelayAccessPayloadV1 = {
   v: 1;
   purpose: "attendance_relay_access";
   institution_id: string;
@@ -11,6 +13,19 @@ type RelayAccessPayload = {
   expires_at: string;
 };
 
+type RelayAccessPayloadV2 = {
+  v: 2;
+  purpose: "attendance_relay_access";
+  institution_id: string;
+  actor_profile_id: string;
+  actor_kind: RelayActorKind;
+  class_id?: string | null;
+  issued_at: string;
+  expires_at: string;
+};
+
+type RelayAccessPayload = RelayAccessPayloadV1 | RelayAccessPayloadV2;
+
 type RelayAttendanceSettings = {
   relay_presence_secret?: string;
 };
@@ -18,7 +33,29 @@ type RelayAttendanceSettings = {
 export type AuthenticatedRelayTeacher = {
   institution_id: string;
   actor_profile_id: string;
+  /** Optional for source compatibility with existing relay callers/tests. */
+  actor_kind?: RelayActorKind;
+  /** Required only when actor_kind is class_device. */
+  class_id?: string | null;
 };
+
+export function relayActorKind(actor: AuthenticatedRelayTeacher): RelayActorKind {
+  return actor.actor_kind === "class_device" ? "class_device" : "teacher";
+}
+
+export function relayActorClassId(actor: AuthenticatedRelayTeacher): string | null {
+  return relayActorKind(actor) === "class_device"
+    ? String(actor.class_id || "").trim() || null
+    : null;
+}
+
+export function relayActorDeviceId(actor: AuthenticatedRelayTeacher): string {
+  const kind = relayActorKind(actor);
+  if (kind === "class_device") {
+    return `class_device:${relayActorClassId(actor) || actor.actor_profile_id}`;
+  }
+  return `teacher:${actor.actor_profile_id}`;
+}
 
 type ExpectedRelayTeacher = {
   institutionId?: string;
@@ -30,6 +67,11 @@ function requiredClaim(value: unknown, name: string) {
   if (!normalized) throw new Error(`${name}_required`);
   if (normalized.length > 256) throw new Error(`${name}_too_long`);
   return normalized;
+}
+
+function optionalClaim(value: unknown, name: string) {
+  if (value === undefined || value === null || value === "") return null;
+  return requiredClaim(value, name);
 }
 
 function parseUnverifiedAccessToken(token: string) {
@@ -57,6 +99,21 @@ export function authenticateRelayTeacherAccess(
   const parsed = parseUnverifiedAccessToken(token);
   const institutionId = requiredClaim(parsed.payload.institution_id, "institution_id");
   const actorProfileId = requiredClaim(parsed.payload.actor_profile_id, "actor_profile_id");
+  const actorKind: RelayActorKind = parsed.payload.v === 2
+    ? parsed.payload.actor_kind
+    : "teacher";
+  if (actorKind !== "teacher" && actorKind !== "class_device") {
+    throw new Error("relay_access_token_actor_kind_invalid");
+  }
+  const classId = parsed.payload.v === 2
+    ? optionalClaim(parsed.payload.class_id, "class_id")
+    : null;
+  if (actorKind === "class_device" && !classId) {
+    throw new Error("relay_access_token_class_required");
+  }
+  if (actorKind === "teacher" && classId) {
+    throw new Error("relay_access_token_class_not_allowed");
+  }
 
   const institution = db.prepare(`
     SELECT settings_json FROM institutions
@@ -90,7 +147,7 @@ export function authenticateRelayTeacherAccess(
   const issuedAt = new Date(parsed.payload.issued_at).getTime();
   const expiresAt = new Date(parsed.payload.expires_at).getTime();
   if (
-    parsed.payload.v !== 1 ||
+    (parsed.payload.v !== 1 && parsed.payload.v !== 2) ||
     parsed.payload.purpose !== "attendance_relay_access" ||
     institutionId !== parsed.payload.institution_id ||
     actorProfileId !== parsed.payload.actor_profile_id
@@ -114,24 +171,35 @@ export function authenticateRelayTeacherAccess(
     throw new Error("relay_access_token_mismatch");
   }
 
-  const actor = db.prepare(`
-    SELECT p.id
-    FROM profiles p
-    JOIN user_roles r
-      ON r.institution_id = p.institution_id
-     AND r.profile_id = p.id
-     AND r.deleted_at IS NULL
-    WHERE p.id = ?
-      AND p.institution_id = ?
-      AND p.deleted_at IS NULL
-      AND p.is_active = 1
-      AND r.role = 'teacher'
-    LIMIT 1
-  `).get(actorProfileId, institutionId) as { id: string } | undefined;
-  if (!actor) throw new Error("teacher_not_paired_with_relay");
+  if (actorKind === "teacher") {
+    const actor = db.prepare(`
+      SELECT p.id
+      FROM profiles p
+      JOIN user_roles r
+        ON r.institution_id = p.institution_id
+       AND r.profile_id = p.id
+       AND r.deleted_at IS NULL
+      WHERE p.id = ?
+        AND p.institution_id = ?
+        AND p.deleted_at IS NULL
+        AND p.is_active = 1
+        AND r.role = 'teacher'
+      LIMIT 1
+    `).get(actorProfileId, institutionId) as { id: string } | undefined;
+    if (!actor) throw new Error("teacher_not_paired_with_relay");
+  } else {
+    const boundClass = db.prepare(`
+      SELECT id FROM classes
+      WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+      LIMIT 1
+    `).get(institutionId, classId) as { id: string } | undefined;
+    if (!boundClass) throw new Error("class_device_not_paired_with_relay");
+  }
 
   return {
     institution_id: institutionId,
     actor_profile_id: actorProfileId,
+    actor_kind: actorKind,
+    class_id: classId,
   };
 }

@@ -100,6 +100,8 @@ export type DeliverTeacherAttendanceInput = {
     status?: unknown;
     comment?: unknown;
     reason?: unknown;
+    observed_at?: unknown;
+    late_observed_at?: unknown;
   }>;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
@@ -642,6 +644,7 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
             student_id: mark.student_id,
             status: mark.status,
             reason: mark.comment,
+            observed_at: mark.observed_at,
           })),
         }),
       });

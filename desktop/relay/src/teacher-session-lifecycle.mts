@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import { issueAttendancePresenceProofForTeacher } from "./presence-proof.mjs";
-import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import { relayActorClassId, relayActorDeviceId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
 import {
   resolveTeacherScheduledSlot,
   TeacherSessionRuleError,
@@ -280,6 +280,7 @@ function closeSessionInternal(
     operationId: string;
     fingerprint: string;
     requestedByProfileId: string | null;
+    deviceId?: string | null;
     source: ClosureSource;
     confirmation: ClosureConfirmation;
     requestedAt: string;
@@ -410,9 +411,9 @@ function closeSessionInternal(
   `).run(
     input.operationId,
     input.session.institution_id,
-    input.requestedByProfileId
+    input.deviceId || (input.requestedByProfileId
       ? `teacher:${input.requestedByProfileId}`
-      : "relay:automatic-session-maintenance",
+      : "relay:automatic-session-maintenance"),
     input.requestedByProfileId,
     input.session.id,
     input.session.server_version,
@@ -568,20 +569,27 @@ export function closeTeacherAttendanceSession(
   const operationFingerprint = fingerprint({
     ...operation,
     institution_id: teacher.institution_id,
-    teacher_profile_id: teacher.actor_profile_id,
+    auth_actor_profile_id: teacher.actor_profile_id,
+    auth_actor_kind: relayActorKind(teacher),
+    auth_class_id: relayActorClassId(teacher),
   });
   return db.transaction(() => {
     maintenanceInside(db, now);
     const session = teacherSessionLifecycleRow(db, teacher.institution_id, operation.session_id);
     if (!session) throw new TeacherSessionLifecycleError(404, "session_not_found");
-    if (session.teacher_id !== teacher.actor_profile_id) {
-      throw new TeacherSessionLifecycleError(403, "forbidden_not_owner");
+    if (relayActorKind(teacher) === "teacher") {
+      if (session.teacher_id !== teacher.actor_profile_id) {
+        throw new TeacherSessionLifecycleError(403, "forbidden_not_owner");
+      }
+    } else if (session.class_id !== relayActorClassId(teacher)) {
+      throw new TeacherSessionLifecycleError(403, "class_device_class_mismatch");
     }
     const result = closeSessionInternal(db, {
       session,
       operationId: operation.operation_id,
       fingerprint: operationFingerprint,
-      requestedByProfileId: teacher.actor_profile_id,
+      requestedByProfileId: session.teacher_id,
+      deviceId: relayActorDeviceId(teacher),
       source: "teacher_confirmed",
       confirmation: "confirmed",
       requestedAt,
@@ -819,6 +827,9 @@ export function transitionTeacherAttendanceSession(
   now = new Date(),
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ) {
+  if (relayActorKind(teacher) === "class_device") {
+    throw new TeacherSessionLifecycleError(403, "class_device_transition_not_supported");
+  }
   const requestedStartAt = now.toISOString();
   const operation = parseTransition(raw);
   const operationFingerprint = fingerprint({

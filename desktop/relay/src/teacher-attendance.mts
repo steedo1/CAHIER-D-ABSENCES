@@ -5,7 +5,7 @@ import {
   RelayPresenceProofError,
   verifyAttendancePresenceProof,
 } from "./presence-proof.mjs";
-import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import { relayActorClassId, relayActorDeviceId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
 import { maintainTeacherAttendanceSessions } from "./teacher-session-lifecycle.mjs";
 
 const PROTOCOL_VERSION = 1 as const;
@@ -17,6 +17,8 @@ type AttendanceStatus = "present" | "absent" | "late";
 type TeacherAttendanceMark = {
   student_id: string;
   status: AttendanceStatus;
+  /** Relay-adjusted observation time captured when Retard is checked. */
+  observed_at: string | null;
   comment: string | null;
 };
 
@@ -143,7 +145,7 @@ function parseOperation(raw: unknown): TeacherAttendanceOperation {
   const studentIds = new Set<string>();
   const marks = row.marks.map((value) => {
     const mark = object(value, "mark_must_be_object");
-    exactKeys(mark, ["student_id", "status", "comment"], "mark_field_not_supported");
+    exactKeys(mark, ["student_id", "status", "observed_at", "late_observed_at", "comment"], "mark_field_not_supported");
     const studentId = text(mark.student_id, "student_id_required");
     if (studentIds.has(studentId)) throw new TeacherAttendanceError(400, "student_mark_duplicated");
     studentIds.add(studentId);
@@ -151,11 +153,21 @@ function parseOperation(raw: unknown): TeacherAttendanceOperation {
       throw new TeacherAttendanceError(400, "attendance_status_not_supported");
     }
     const status = mark.status as AttendanceStatus;
+    const rawObservedAt = mark.observed_at ?? mark.late_observed_at;
+    let observedAt: string | null = null;
+    if (status === "late" && rawObservedAt !== undefined && rawObservedAt !== null) {
+      const normalized = text(rawObservedAt, "observed_at_invalid", 64);
+      const parsed = new Date(normalized);
+      if (!Number.isFinite(parsed.getTime())) {
+        throw new TeacherAttendanceError(400, "observed_at_invalid");
+      }
+      observedAt = parsed.toISOString();
+    }
     const rawComment = mark.comment;
     const comment = rawComment === undefined || rawComment === null
       ? null
       : text(rawComment, "comment_invalid", 500);
-    return { student_id: studentId, status, comment };
+    return { student_id: studentId, status, observed_at: observedAt, comment };
   }).sort((left, right) => left.student_id.localeCompare(right.student_id));
 
   const rawProof = row.presence_proof;
@@ -183,7 +195,9 @@ function fingerprint(
     operation_id: operation.operation_id,
     operation_type: operation.operation_type,
     institution_id: teacher.institution_id,
-    teacher_profile_id: teacher.actor_profile_id,
+    auth_actor_profile_id: teacher.actor_profile_id,
+    auth_actor_kind: relayActorKind(teacher),
+    auth_class_id: relayActorClassId(teacher),
     session_id: operation.session_id,
     class_id: operation.class_id,
     period_id: operation.period_id,
@@ -200,7 +214,6 @@ function idempotentResult(
   if (
     stored.protocol_version !== operation.protocol_version ||
     stored.operation_type !== operation.operation_type ||
-    stored.teacher_profile_id !== teacher.actor_profile_id ||
     stored.payload_fingerprint !== expectedFingerprint
   ) {
     throw new TeacherAttendanceError(409, "operation_id_reused_with_different_payload");
@@ -303,8 +316,12 @@ function validateBusinessRules(
     WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
   `).get(teacher.institution_id, operation.session_id) as SessionRow | undefined;
   if (!session) throw new TeacherAttendanceError(404, "session_not_found");
-  if (session.teacher_id !== teacher.actor_profile_id) {
-    throw new TeacherAttendanceError(403, "teacher_not_assigned_to_session");
+  if (relayActorKind(teacher) === "teacher") {
+    if (session.teacher_id !== teacher.actor_profile_id) {
+      throw new TeacherAttendanceError(403, "teacher_not_assigned_to_session");
+    }
+  } else if (session.class_id !== relayActorClassId(teacher)) {
+    throw new TeacherAttendanceError(403, "class_device_class_mismatch");
   }
   if (session.class_id !== operation.class_id) {
     throw new TeacherAttendanceError(403, "class_mismatch");
@@ -363,7 +380,7 @@ function validateBusinessRules(
     LIMIT 1
   `).get(
     teacher.institution_id,
-    teacher.actor_profile_id,
+    session.teacher_id,
     session.class_id,
     session.subject_id,
     operation.period_id,
@@ -407,7 +424,7 @@ function validateBusinessRules(
     try {
       verifyAttendancePresenceProof(db, operation.presence_proof, {
         institutionId: teacher.institution_id,
-        actorProfileId: teacher.actor_profile_id,
+        actorProfileId: session.teacher_id,
         clientSessionId: session.client_session_id || session.id,
       }, now);
     } catch (error) {
@@ -416,7 +433,7 @@ function validateBusinessRules(
     }
   }
 
-  return { session, periodStart };
+  return { session, period, periodStart, periodEnd, timezone };
 }
 
 function materializedMarkId(institutionId: string, sessionId: string, studentId: string) {
@@ -488,23 +505,60 @@ export function secureTeacherAttendanceOperation(
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) return idempotentResult(operation, teacher, operationFingerprint, existing);
 
-  const { session, periodStart } = validateBusinessRules(db, operation, teacher, now);
+  const { session, period, periodStart, periodEnd, timezone } = validateBusinessRules(
+    db,
+    operation,
+    teacher,
+    now,
+  );
   const acceptedAt = now.toISOString();
-  const localNow = localDateTime(now, String((db.prepare(`
-    SELECT timezone FROM institutions WHERE id = ?
-  `).get(teacher.institution_id) as { timezone: string }).timezone || "Africa/Abidjan"));
-  const lateMinutes = Math.max(0, localNow.minutes - periodStart);
-  const normalizedMarks = operation.marks.map((mark) => ({
-    student_id: mark.student_id,
-    status: mark.status,
-    late_minutes: mark.status === "late" ? lateMinutes : null,
-    comment: mark.comment,
-  }));
+  const localNow = localDateTime(now, timezone);
+  const normalizedMarks = operation.marks.map((mark) => {
+    if (mark.status !== "late") {
+      return {
+        student_id: mark.student_id,
+        status: mark.status,
+        observed_at: null,
+        late_minutes: null,
+        comment: mark.comment,
+      };
+    }
+
+    // Backward compatibility: old clients without observed_at use SAVE time.
+    const observedAt = mark.observed_at || acceptedAt;
+    const observedMs = new Date(observedAt).getTime();
+    if (!Number.isFinite(observedMs)) {
+      throw new TeacherAttendanceError(400, "observed_at_invalid");
+    }
+    if (observedMs > now.getTime() + 30_000) {
+      throw new TeacherAttendanceError(409, "observed_at_in_future");
+    }
+    const localObserved = localDateTime(observedAt, timezone);
+    const sessionDate = session.session_date || localDateTime(session.started_at, timezone).ymd;
+    if (
+      localObserved.ymd !== sessionDate ||
+      !weekdayMatches(period.weekday, localObserved.weekday) ||
+      localObserved.minutes < periodStart ||
+      localObserved.minutes >= periodEnd
+    ) {
+      throw new TeacherAttendanceError(409, "observed_at_outside_slot");
+    }
+    return {
+      student_id: mark.student_id,
+      status: mark.status,
+      observed_at: new Date(observedMs).toISOString(),
+      late_minutes: Math.max(0, localObserved.minutes - periodStart),
+      comment: mark.comment,
+    };
+  });
   const storedPayload = {
     protocol_version: operation.protocol_version,
     operation_type: operation.operation_type,
     institution_id: teacher.institution_id,
-    teacher_profile_id: teacher.actor_profile_id,
+    teacher_profile_id: session.teacher_id,
+    auth_actor_profile_id: teacher.actor_profile_id,
+    auth_actor_kind: relayActorKind(teacher),
+    auth_class_id: relayActorClassId(teacher),
     session_id: operation.session_id,
     class_id: operation.class_id,
     period_id: operation.period_id,
@@ -529,7 +583,7 @@ export function secureTeacherAttendanceOperation(
       teacher.institution_id,
       operation.protocol_version,
       operation.operation_type,
-      teacher.actor_profile_id,
+      session.teacher_id,
       session.id,
       session.class_id,
       operation.period_id,
@@ -549,8 +603,8 @@ export function secureTeacherAttendanceOperation(
     `).run(
       operation.operation_id,
       teacher.institution_id,
-      `teacher:${teacher.actor_profile_id}`,
-      teacher.actor_profile_id,
+      relayActorDeviceId(teacher),
+      session.teacher_id,
       session.id,
       session.server_version,
       payloadJson,
@@ -726,7 +780,7 @@ export function secureTeacherAttendanceOperation(
       ) VALUES (?, ?, 'attendance.operation_secured', ?, ?, ?)
     `).run(
       teacher.institution_id,
-      teacher.actor_profile_id,
+      session.teacher_id,
       session.id,
       canonicalJson({
         operation_id: operation.operation_id,

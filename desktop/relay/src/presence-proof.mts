@@ -3,6 +3,8 @@ import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import {
   authenticateRelayTeacherAccess,
+  relayActorClassId,
+  relayActorKind,
   type AuthenticatedRelayTeacher,
 } from "./teacher-auth.mjs";
 
@@ -142,12 +144,46 @@ export function issueAttendancePresenceProof(
   const clientSessionId = required(input.client_session_id, "client_session_id");
   const accessToken = required(input.access_token, "access_token", 2048);
 
-  const teacher = authenticateRelayTeacherAccess(db, accessToken, now, {
+  const actor = authenticateRelayTeacherAccess(db, accessToken, now, {
     institutionId,
-    actorProfileId,
   });
+  if (actor.actor_profile_id !== actorProfileId) {
+    throw new Error("relay_access_token_mismatch");
+  }
 
-  return issueAttendancePresenceProofForTeacher(db, teacher, clientSessionId, now);
+  if (relayActorKind(actor) === "teacher") {
+    return issueAttendancePresenceProofForTeacher(db, actor, clientSessionId, now);
+  }
+
+  const session = db.prepare(`
+    SELECT id, client_session_id, class_id, teacher_id
+    FROM teacher_sessions
+    WHERE institution_id = ?
+      AND (id = ? OR client_session_id = ?)
+      AND deleted_at IS NULL
+    ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END
+    LIMIT 1
+  `).get(
+    institutionId,
+    clientSessionId,
+    clientSessionId,
+    clientSessionId,
+  ) as {
+    id: string;
+    client_session_id: string | null;
+    class_id: string;
+    teacher_id: string;
+  } | undefined;
+  if (!session) throw new Error("session_not_found");
+  if (session.class_id !== relayActorClassId(actor)) {
+    throw new Error("class_device_class_mismatch");
+  }
+  return issueAttendancePresenceProofForTeacher(
+    db,
+    { institution_id: institutionId, actor_profile_id: session.teacher_id },
+    session.client_session_id || session.id,
+    now,
+  );
 }
 
 export function issueAttendancePresenceProofForTeacher(

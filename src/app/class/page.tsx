@@ -20,6 +20,19 @@ import {
   clearClassDeviceSnapshot,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import {
+  deliverTeacherAttendance,
+  stageTeacherAttendanceDraft,
+  teacherAttendanceDeliveryMessage,
+} from "@/lib/teacher-attendance-delivery";
+import {
+  openTeacherAttendanceSessionOnRelay,
+  teacherSessionDeliveryMessage,
+} from "@/lib/teacher-session-delivery";
+import {
+  closeTeacherAttendanceSessionOnRelay,
+  teacherSessionLifecycleDeliveryMessage,
+} from "@/lib/teacher-session-lifecycle-delivery";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -103,6 +116,13 @@ type MyClass = {
   formation_level_label?: string | null;
   education_context_key?: string | null;
   education_context_label?: string | null;
+  actor_profile_id?: string | null;
+  attendance_presence?: {
+    enabled?: boolean;
+    allow_local_relay?: boolean;
+    relay_local_url?: string | null;
+    relay_access_token?: string | null;
+  } | null;
 };
 type Subject = { id: string; label: string };
 type RosterItem = { id: string; full_name: string; matricule: string | null };
@@ -115,6 +135,11 @@ type OpenSession = {
   started_at: string;
   actual_call_at?: string | null;
   expected_minutes?: number | null;
+  local_relay?: boolean;
+  period_id?: string | null;
+  scheduled_end_at?: string | null;
+  grace_expires_at?: string | null;
+  session_state?: "open" | "finalizing" | "closed";
   education_type?: string | null;
   education_label?: string | null;
   education_short_label?: string | null;
@@ -133,7 +158,7 @@ type InstCfg = {
   institution_name?: string | null;
   academic_year_label?: string | null;
 };
-type Period = { weekday: number; label: string; start_time: string; end_time: string };
+type Period = { id: string | null; weekday: number; label: string; start_time: string; end_time: string };
 
 type ConductMax = {
   discipline: number;
@@ -377,7 +402,7 @@ export default function ClassDevicePage() {
   }, [open]);
 
   const [roster, setRoster] = useState<RosterItem[]>([]);
-  type Row = { absent?: boolean; late?: boolean; reason?: string };
+  type Row = { absent?: boolean; late?: boolean; reason?: string; late_observed_at?: string | null };
   type PenaltyRow = { points: number; reason?: string };
   type ClassPageSnapshotState = {
     classId: string;
@@ -395,6 +420,12 @@ export default function ClassDevicePage() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [saveUxState, setSaveUxState] = useState<SaveUxState>("idle");
   const saveUxTimerRef = useRef<number | null>(null);
+  const relayClockOffsetMsRef = useRef<number | null>(null);
+
+  function observedNowIso() {
+    const offset = relayClockOffsetMsRef.current;
+    return new Date(Date.now() + (Number.isFinite(offset) ? Number(offset) : 0)).toISOString();
+  }
 
   const changedCount = useMemo(
     () => Object.values(rows).filter((r) => r.absent || r.late).length,
@@ -951,6 +982,8 @@ export default function ClassDevicePage() {
               c.education_context_label ||
               c.education_label ||
               "Secondaire général",
+            actor_profile_id: c.actor_profile_id || null,
+            attendance_presence: c.attendance_presence || null,
           };
         });
 
@@ -1063,6 +1096,7 @@ export default function ClassDevicePage() {
         const w = Number(row.weekday || 1);
         if (!grouped[w]) grouped[w] = [];
         grouped[w].push({
+          id: safeStr(row.id),
           weekday: w,
           label: row.label || "Séance",
           start_time: String(row.start_time || "08:00").slice(0, 5),
@@ -1113,6 +1147,7 @@ export default function ClassDevicePage() {
         const w = Number(row.weekday || 1);
         if (!grouped[w]) grouped[w] = [];
         grouped[w].push({
+          id: safeStr(row.id),
           weekday: w,
           label: row.label || "Séance",
           start_time: String(row.start_time || "08:00").slice(0, 5),
@@ -1543,17 +1578,63 @@ export default function ClassDevicePage() {
     setRows((prev) => {
       const cur = prev[id] || {};
       const next: Row = { ...cur, absent: v };
-      if (v) next.late = false;
+      if (v) {
+        next.late = false;
+        next.late_observed_at = null;
+      }
       return { ...prev, [id]: next };
     });
   }
   function toggleLate(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
-      const next: Row = { ...cur, late: v, absent: v ? false : cur.absent };
+      const next: Row = {
+        ...cur,
+        late: v,
+        absent: v ? false : cur.absent,
+        late_observed_at: v ? observedNowIso() : null,
+      };
       return { ...prev, [id]: next };
     });
   }
+
+  function attendanceMarksFromRows(source: Record<string, Row>) {
+    return Object.entries(source).map(([student_id, row]) => {
+      if (row.absent) {
+        return { student_id, status: "absent" as const, reason: row.reason ?? null, observed_at: null };
+      }
+      if (row.late) {
+        return {
+          student_id,
+          status: "late" as const,
+          reason: row.reason ?? null,
+          observed_at: row.late_observed_at || observedNowIso(),
+        };
+      }
+      return { student_id, status: "present" as const, observed_at: null };
+    });
+  }
+
+  useEffect(() => {
+    if (!open?.local_relay || !selectedClass?.institution_id || !selectedClass.actor_profile_id) return;
+    const periodId = open.period_id || activeConfiguredSlot?.id || null;
+    if (!periodId || Object.keys(rows).length === 0) return;
+    const timer = window.setTimeout(() => {
+      void stageTeacherAttendanceDraft({
+        institutionId: selectedClass.institution_id,
+        actorProfileId: selectedClass.actor_profile_id || "class-device",
+        sessionId: open.id,
+        classId: open.class_id,
+        periodId,
+        marks: attendanceMarksFromRows(rows),
+        forceRelay: true,
+      }).catch(() => {
+        setMsg("Impossible de conserver les changements sur cet appareil. Ne fermez pas la séance.");
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, open?.id, open?.period_id, open?.local_relay, selectedClass?.institution_id]);
 
   /* actions */
   useEffect(() => {
@@ -1685,6 +1766,67 @@ export default function ClassDevicePage() {
       // ✅ OFFLINE-SAFE: heure réelle du clic "Démarrer l’appel"
       const actualCallAtISO = new Date().toISOString();
 
+      const relayPolicy = selectedClass?.attendance_presence;
+      if (
+        selectedClass?.institution_id &&
+        selectedClass.actor_profile_id &&
+        relayPolicy?.enabled &&
+        relayPolicy.allow_local_relay !== false &&
+        relayPolicy.relay_local_url &&
+        relayPolicy.relay_access_token &&
+        activeConfiguredSlot?.id
+      ) {
+        const local = await openTeacherAttendanceSessionOnRelay({
+          institutionId: selectedClass.institution_id,
+          classId,
+          periodId: activeConfiguredSlot.id,
+          attemptKey: clientSessionId,
+          relayBaseUrl: relayPolicy.relay_local_url,
+          relayAccessToken: relayPolicy.relay_access_token,
+        });
+        if (local.state === "blocked") {
+          setMsg(teacherSessionDeliveryMessage(local));
+          return;
+        }
+        if (local.state === "relay_opened" && local.session_id) {
+          if (local.relay_time) {
+            const relayTime = Date.parse(local.relay_time);
+            if (Number.isFinite(relayTime)) relayClockOffsetMsRef.current = relayTime - Date.now();
+          }
+          const cls = classes.find((c) => c.id === classId);
+          const subj = subjects.find((subject) => subject.id === (local.subject_id || subjectId));
+          const localOpen: OpenSession = {
+            id: local.session_id,
+            class_id: classId,
+            class_label: cls?.label || "Classe",
+            subject_id: local.subject_id || subjectId || null,
+            subject_name: subj?.label || null,
+            started_at: local.started_at || started.toISOString(),
+            actual_call_at: local.actual_call_at || actualCallAtISO,
+            expected_minutes: effectiveDuration,
+            local_relay: true,
+            period_id: activeConfiguredSlot.id,
+            scheduled_end_at: local.scheduled_end_at,
+            grace_expires_at: local.grace_expires_at,
+            session_state: local.session_state || "open",
+            education_type: cls?.education_type || "general_secondary",
+            education_label: cls?.education_label || "Secondaire général",
+            education_short_label: cls?.education_short_label || "Général",
+            formation_code: cls?.formation_code || null,
+            formation_label: cls?.formation_label || null,
+            formation_level_code: cls?.formation_level_code || null,
+            formation_level_label: cls?.formation_level_label || null,
+            education_context_key: cls?.education_context_key || cls?.education_type || "general_secondary",
+            education_context_label: cls?.education_context_label || cls?.education_label || "Secondaire général",
+          };
+          setOpen(localOpen);
+          await cacheSet("classDevice:local-open", localOpen);
+          setMsg(teacherSessionDeliveryMessage(local));
+          await refreshPending();
+          return;
+        }
+      }
+
       const body = {
         class_id: classId,
         subject_id: subjectId || null,
@@ -1774,11 +1916,37 @@ export default function ClassDevicePage() {
         sessionId = String(ensured.id);
       }
 
-      const marks = Object.entries(rows).map(([student_id, r]) => {
-        if (r.absent) return { student_id, status: "absent" as const, reason: r.reason ?? null };
-        if (r.late) return { student_id, status: "late" as const, reason: r.reason ?? null };
-        return { student_id, status: "present" as const };
-      });
+      const marks = attendanceMarksFromRows(rows);
+
+      if (cur.local_relay) {
+        const relayPolicy = selectedClass?.attendance_presence;
+        const periodId = cur.period_id || activeConfiguredSlot?.id || null;
+        if (!selectedClass?.institution_id || !selectedClass.actor_profile_id || !periodId) {
+          setMsg("Action requise : la préparation locale de cette classe doit être actualisée.");
+          pulseSaveUx("error", 2200);
+          return;
+        }
+        const delivery = await deliverTeacherAttendance({
+          institutionId: selectedClass.institution_id,
+          actorProfileId: selectedClass.actor_profile_id,
+          sessionId: cur.id,
+          classId: cur.class_id,
+          periodId,
+          marks,
+          relayBaseUrl: relayPolicy?.relay_local_url,
+          relayAccessToken: relayPolicy?.relay_access_token,
+          forceRelay: true,
+        });
+        setMsg(teacherAttendanceDeliveryMessage(delivery));
+        if (delivery.state === "relay_secured" || delivery.state === "cloud_synced") {
+          pulseSaveUx("saved");
+          vibrateIfPossible(80);
+        } else {
+          pulseSaveUx("error", 2200);
+        }
+        await refreshPending();
+        return;
+      }
 
       const r = await offlineMutateJson(
         "/api/teacher/attendance/bulk",
@@ -1831,18 +1999,94 @@ export default function ClassDevicePage() {
       const isClientLocal = isClientSessionId(openId);
       const actualEndAt = new Date().toISOString();
 
+      if (cur.local_relay) {
+        const relayPolicy = selectedClass?.attendance_presence;
+        const periodId = cur.period_id || activeConfiguredSlot?.id || null;
+        if (!selectedClass?.institution_id || !selectedClass.actor_profile_id || !periodId) {
+          setMsg("La séance reste ouverte : la préparation locale de cette classe doit être actualisée.");
+          return;
+        }
+        const marks = attendanceMarksFromRows(rows);
+        if (marks.length > 0) {
+          const attendance = await deliverTeacherAttendance({
+            institutionId: selectedClass.institution_id,
+            actorProfileId: selectedClass.actor_profile_id,
+            sessionId: cur.id,
+            classId: cur.class_id,
+            periodId,
+            marks,
+            relayBaseUrl: relayPolicy?.relay_local_url,
+            relayAccessToken: relayPolicy?.relay_access_token,
+            forceRelay: true,
+          });
+          if (attendance.state !== "relay_secured" && attendance.state !== "cloud_synced") {
+            setMsg(`${teacherAttendanceDeliveryMessage(attendance)} La séance reste affichée pour éviter toute perte.`);
+            return;
+          }
+        }
+        const closed = await closeTeacherAttendanceSessionOnRelay({
+          institutionId: selectedClass.institution_id,
+          sessionId: cur.id,
+          relayBaseUrl: relayPolicy?.relay_local_url,
+          relayAccessToken: relayPolicy?.relay_access_token,
+        });
+        if (closed.state !== "relay_confirmed") {
+          setMsg(`${teacherSessionLifecycleDeliveryMessage(closed)} La liste reste affichée jusqu’à confirmation.`);
+          return;
+        }
+        await finishLocal();
+        setMsg(teacherSessionLifecycleDeliveryMessage(closed));
+        await refreshPending();
+        return;
+      }
+
       // ✅ Si séance locale et en ligne : essayer de sync + récupérer la vraie séance serveur
       if (isClientLocal && isOnline) {
         const ensured = await ensureServerSessionOrExplain();
         if (ensured) {
           openId = String(ensured.id);
         } else {
+          const pendingMarks = attendanceMarksFromRows(rows);
+          if (pendingMarks.length > 0) {
+            const pendingAttendance = await offlineMutateJson(
+              "/api/teacher/attendance/bulk",
+              { method: "POST", body: { session_id: openId, marks: pendingMarks } },
+              { mergeKey: `attendance:${openId}` },
+            );
+            if (!(pendingAttendance as any).ok && !shouldTreatAsOffline(pendingAttendance)) {
+              const err = extractRespError(pendingAttendance);
+              setMsg(
+                err
+                  ? `La séance reste ouverte : ${err}`
+                  : "La séance reste ouverte : l’appel final n’a pas été enregistré.",
+              );
+              return;
+            }
+          }
           // On termine localement, et on garde un marqueur avec l'heure réelle de fin
           // pour fermer la séance serveur dès qu'elle existera.
           await cacheSet(PENDING_END_KEY, { actual_end_at: actualEndAt } satisfies PendingEndPayload);
           await finishLocal();
           setMsg("Séance terminée localement. La fin sera synchronisée dès que le réseau reviendra.");
           await refreshPending();
+          return;
+        }
+      }
+
+      const finalMarks = attendanceMarksFromRows(rows);
+      if (finalMarks.length > 0) {
+        const attendance = await offlineMutateJson(
+          "/api/teacher/attendance/bulk",
+          { method: "POST", body: { session_id: openId, marks: finalMarks } },
+          { mergeKey: `attendance:${openId}` },
+        );
+        if (!(attendance as any).ok && !shouldTreatAsOffline(attendance)) {
+          const err = extractRespError(attendance);
+          setMsg(
+            err
+              ? `La séance reste ouverte : ${err}`
+              : "La séance reste ouverte : l’appel final n’a pas été enregistré.",
+          );
           return;
         }
       }

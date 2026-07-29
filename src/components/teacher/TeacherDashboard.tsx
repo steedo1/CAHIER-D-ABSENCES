@@ -765,7 +765,7 @@ export default function TeacherDashboard() {
   }, [open]);
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [loadingRoster, setLoadingRoster] = useState(false);
-  type Row = { absent?: boolean; late?: boolean; reason?: string };
+  type Row = { absent?: boolean; late?: boolean; reason?: string; late_observed_at?: string | null };
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -792,6 +792,12 @@ export default function TeacherDashboard() {
   } | null>(null);
   const [finalizationDismissedFor, setFinalizationDismissedFor] = useState<string | null>(null);
   const saveMarksInFlightRef = useRef(false);
+  const relayClockOffsetMsRef = useRef<number | null>(null);
+
+  function observedNowIso() {
+    const offset = relayClockOffsetMsRef.current;
+    return new Date(Date.now() + (Number.isFinite(offset) ? Number(offset) : 0)).toISOString();
+  }
 
   const changedCount = useMemo(
     () => Object.values(rows).filter((r) => r.absent || r.late).length,
@@ -1319,6 +1325,7 @@ export default function TeacherDashboard() {
               absent: mark.status === "absent",
               late: mark.status === "late",
               reason: mark.comment || undefined,
+              late_observed_at: mark.observed_at || null,
             },
           ]))
         : {});
@@ -1332,12 +1339,17 @@ export default function TeacherDashboard() {
   function attendanceMarksFromRows(source: Record<string, Row>) {
     return Object.entries(source).map(([student_id, row]) => {
       if (row.absent) {
-        return { student_id, status: "absent" as const, reason: row.reason ?? null };
+        return { student_id, status: "absent" as const, reason: row.reason ?? null, observed_at: null };
       }
       if (row.late) {
-        return { student_id, status: "late" as const, reason: row.reason ?? null };
+        return {
+          student_id,
+          status: "late" as const,
+          reason: row.reason ?? null,
+          observed_at: row.late_observed_at || observedNowIso(),
+        };
       }
-      return { student_id, status: "present" as const };
+      return { student_id, status: "present" as const, observed_at: null };
     });
   }
 
@@ -1374,14 +1386,22 @@ export default function TeacherDashboard() {
     setRows((prev) => {
       const cur = prev[id] || {};
       const next: Row = { ...cur, absent: v };
-      if (v) next.late = false;
+      if (v) {
+        next.late = false;
+        next.late_observed_at = null;
+      }
       return { ...prev, [id]: next };
     });
   }
   function toggleLate(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
-      const next: Row = { ...cur, late: v, absent: v ? false : cur.absent };
+      const next: Row = {
+        ...cur,
+        late: v,
+        absent: v ? false : cur.absent,
+        late_observed_at: v ? observedNowIso() : null,
+      };
       return { ...prev, [id]: next };
     });
   }
@@ -1522,6 +1542,10 @@ export default function TeacherDashboard() {
             end_time: activeConfiguredSlot.end_time,
           },
         });
+        if (liveRelayCheck.status === "reachable" && liveRelayCheck.relay_time) {
+          const relayTime = Date.parse(liveRelayCheck.relay_time);
+          if (Number.isFinite(relayTime)) relayClockOffsetMsRef.current = relayTime - Date.now();
+        }
         const scheduleMismatch = relayScheduleMismatchMessage(
           liveRelayCheck,
           activeConfiguredSlot,
@@ -1801,6 +1825,33 @@ export default function TeacherDashboard() {
         setFinalizationDismissedFor(null);
         setMsg(teacherSessionLifecycleDeliveryMessage(closed));
         return;
+      }
+
+      const finalMarks = attendanceMarksFromRows(rows);
+      if (finalMarks.length > 0) {
+        if (!inst.institution_id || !inst.actor_profile_id) {
+          setMsg("La séance reste ouverte : l’identité de l’établissement doit être actualisée.");
+          return;
+        }
+        const attendance = await deliverTeacherAttendance({
+          institutionId: inst.institution_id,
+          actorProfileId: inst.actor_profile_id,
+          sessionId: open.id,
+          classId: open.class_id,
+          periodId: open.period_id || activeConfiguredSlot?.id || null,
+          marks: finalMarks,
+          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,
+          forceRelay: false,
+        });
+        setAttendanceDelivery(attendance);
+        if (!["cloud_synced", "device_pending", "relay_secured"].includes(attendance.state)) {
+          setMsg(
+            `${teacherAttendanceDeliveryMessage(attendance)} ` +
+            "La séance reste affichée pour éviter toute perte.",
+          );
+          return;
+        }
       }
 
       const openId = String(open.id || "");

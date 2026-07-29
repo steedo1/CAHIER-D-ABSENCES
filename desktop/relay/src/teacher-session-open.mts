@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson } from "./json.mjs";
 import { issueAttendancePresenceProofForTeacher } from "./presence-proof.mjs";
-import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import { relayActorDeviceId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
 import {
   activePreviousSessionConflict,
   maintainTeacherAttendanceSessions,
@@ -168,7 +168,9 @@ function fingerprint(
     operation_id: operation.operation_id,
     operation_type: operation.operation_type,
     institution_id: teacher.institution_id,
-    teacher_profile_id: teacher.actor_profile_id,
+    auth_actor_profile_id: teacher.actor_profile_id,
+    auth_actor_kind: relayActorKind(teacher),
+    auth_class_id: teacher.class_id || null,
     class_id: operation.class_id,
     period_id: operation.period_id,
   })).digest("hex");
@@ -325,7 +327,7 @@ function validateBusinessRules(
       throw new TeacherSessionOpenError(409, "session_slot_already_closed");
     }
     if (
-      existing.teacher_id !== teacher.actor_profile_id ||
+      existing.teacher_id !== schedule.teacherId ||
       existing.subject_id !== schedule.timetable.subject_id
     ) {
       throw new TeacherSessionOpenError(409, "session_slot_conflict");
@@ -334,8 +336,12 @@ function validateBusinessRules(
   }
 
   if (!reusable) {
+    const effectiveTeacher: AuthenticatedRelayTeacher = {
+      institution_id: teacher.institution_id,
+      actor_profile_id: schedule.teacherId,
+    };
     const previous = activePreviousSessionConflict(db, {
-      teacher,
+      teacher: effectiveTeacher,
       classId: operation.class_id,
       targetPeriodId: operation.period_id,
       sessionDate: schedule.sessionDate,
@@ -353,7 +359,7 @@ function validateBusinessRules(
       LIMIT 1
     `).get(
       teacher.institution_id,
-      teacher.actor_profile_id,
+      schedule.teacherId,
     ) as { id: string } | undefined;
     if (residualConcurrent) {
       throw new TeacherSessionOpenError(409, "concurrent_session_open");
@@ -381,7 +387,7 @@ function proofForSession(
   try {
     return issueAttendancePresenceProofForTeacher(
       db,
-      teacher,
+      { institution_id: teacher.institution_id, actor_profile_id: session.teacher_id },
       session.client_session_id || session.id,
       now,
     );
@@ -402,7 +408,6 @@ function resultFromReceipt(
   if (
     receipt.protocol_version !== operation.protocol_version ||
     receipt.operation_type !== operation.operation_type ||
-    receipt.teacher_profile_id !== teacher.actor_profile_id ||
     receipt.class_id !== operation.class_id ||
     receipt.period_id !== operation.period_id ||
     receipt.payload_fingerprint !== expectedFingerprint
@@ -516,7 +521,7 @@ export function openTeacherAttendanceSession(
           closed_at, payable_end_at, closure_source, closure_confirmation,
           requires_payroll_review, local_lifecycle_managed,
           attendance_snapshot_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'teacher', 0, ?, NULL,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, ?, NULL,
                   ?, 'open', ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, NULL,
                   0, 1, 'none')
       `).run(
@@ -525,10 +530,11 @@ export function openTeacherAttendanceSession(
         sessionId,
         operation.class_id,
         business.timetable.subject_id,
-        teacher.actor_profile_id,
+        business.timetable.teacher_id,
         operation.period_id,
         business.startedAt,
         acceptedAt,
+        relayActorKind(teacher) === "class_device" ? "class_device" : "teacher",
         acceptedAt,
         business.sessionDate,
         business.startedAt,
@@ -569,7 +575,10 @@ export function openTeacherAttendanceSession(
       protocol_version: operation.protocol_version,
       operation_type: operation.operation_type,
       institution_id: teacher.institution_id,
-      teacher_profile_id: teacher.actor_profile_id,
+      teacher_profile_id: session.teacher_id,
+      auth_actor_profile_id: teacher.actor_profile_id,
+      auth_actor_kind: relayActorKind(teacher),
+      auth_class_id: teacher.class_id || null,
       class_id: operation.class_id,
       period_id: operation.period_id,
       timetable_id: business.timetable.id,
@@ -591,7 +600,7 @@ export function openTeacherAttendanceSession(
       teacher.institution_id,
       operation.protocol_version,
       operation.operation_type,
-      teacher.actor_profile_id,
+      session.teacher_id,
       operation.class_id,
       operation.period_id,
       business.timetable.id,
@@ -622,8 +631,8 @@ export function openTeacherAttendanceSession(
       `).run(
         operation.operation_id,
         teacher.institution_id,
-        `teacher:${teacher.actor_profile_id}`,
-        teacher.actor_profile_id,
+        relayActorDeviceId(teacher),
+        session.teacher_id,
         session.id,
         canonicalJson({
           operation_type: "teacher_session.open",
@@ -695,7 +704,7 @@ export function openTeacherAttendanceSession(
       ) VALUES (?, ?, 'attendance.session_opened', 'teacher_session', ?, ?, ?)
     `).run(
       teacher.institution_id,
-      teacher.actor_profile_id,
+      session.teacher_id,
       session.id,
       canonicalJson({
         operation_id: operation.operation_id,

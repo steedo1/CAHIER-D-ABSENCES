@@ -15,6 +15,8 @@ type Mark = {
   status: "present" | "absent" | "late";
   minutes_late?: number; // ignoré si auto_lateness actif
   reason?: string | null;
+  observed_at?: string | null;
+  late_observed_at?: string | null;
 };
 
 function uniq<T>(arr: T[]) {
@@ -393,20 +395,46 @@ export async function POST(req: NextRequest) {
     )
   );
 
-  // minutes de retard calculées côté serveur (si auto_lateness)
-  function computeLateMinutes(): number {
+  // L'heure de la coche Retard est distincte de l'heure du bouton SAVE.
+  // Elle est contrôlée côté serveur avant d'être utilisée.
+  function validatedObservedAt(mark: Mark): Date {
+    const candidate =
+      parseIsoDate(mark?.observed_at) ||
+      parseIsoDate(mark?.late_observed_at) ||
+      null;
+    if (!candidate) return effectiveCallAt;
+
+    const notTooFuture = candidate.getTime() <= serverNow.getTime() + 5 * 60_000;
+    const inSessionWindow =
+      candidate.getTime() >= windowMin &&
+      candidate.getTime() <= windowMax;
+    if (!notTooFuture || !inSessionWindow) return effectiveCallAt;
+
+    const observedLocal = localHMAndWeekday(candidate.toISOString(), tz);
+    const observedMinutes = hmToMin(observedLocal.hm);
+    if (
+      currentPeriod &&
+      (observedLocal.weekday !== weekday ||
+        observedMinutes < currentPeriod.startMin ||
+        observedMinutes >= currentPeriod.endMin)
+    ) {
+      return effectiveCallAt;
+    }
+    return candidate;
+  }
+
+  function computeLateMinutes(mark: Mark): number {
+    const observedAt = validatedObservedAt(mark);
+    const { hm: observedHM } = localHMAndWeekday(observedAt.toISOString(), tz);
+    const observedMin = hmToMin(observedHM);
     if (!currentPeriod) {
-      // fallback : si pas de période trouvée, essayer vs started_at ; sinon 0
       if (session.started_at) {
         const { hm: startedHM } = localHMAndWeekday(String(session.started_at), tz);
-        const diff = callMin - hmToMin(startedHM);
-        return Math.max(0, Math.floor(diff));
+        return Math.max(0, Math.floor(observedMin - hmToMin(startedHM)));
       }
       return 0;
     }
-
-    const diff = callMin - currentPeriod.startMin;
-    return Math.max(0, Math.floor(diff));
+    return Math.max(0, Math.floor(observedMin - currentPeriod.startMin));
   }
 
   const toUpsert: any[] = [];
@@ -436,7 +464,7 @@ export async function POST(req: NextRequest) {
 
     if (m.status === "late") {
       const minLate = autoLateness
-        ? computeLateMinutes()
+        ? computeLateMinutes(m)
         : Math.max(0, Math.round(Number(m?.minutes_late || 0)));
 
       toUpsert.push({

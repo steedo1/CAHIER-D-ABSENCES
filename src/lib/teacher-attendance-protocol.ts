@@ -7,6 +7,7 @@ export type TeacherAttendanceMark = {
   student_id: string;
   status: TeacherAttendanceStatus;
   comment: string | null;
+  observed_at: string | null;
 };
 
 export type TeacherAttendanceRelayPayload = {
@@ -33,6 +34,8 @@ export function normalizeTeacherAttendanceMarks(
     status?: unknown;
     comment?: unknown;
     reason?: unknown;
+    observed_at?: unknown;
+    late_observed_at?: unknown;
   }>,
 ): TeacherAttendanceMark[] {
   const byStudent = new Map<string, TeacherAttendanceMark>();
@@ -50,10 +53,18 @@ export function normalizeTeacherAttendanceMarks(
     const comment = rawComment == null || String(rawComment).trim() === ""
       ? null
       : requiredText(rawComment, "comment", 500);
+    const rawObservedAt = value.observed_at ?? value.late_observed_at ?? null;
+    let observedAt: string | null = null;
+    if (value.status === "late" && rawObservedAt != null && String(rawObservedAt).trim()) {
+      const parsed = new Date(String(rawObservedAt));
+      if (!Number.isFinite(parsed.getTime())) throw new Error("observed_at_invalid");
+      observedAt = parsed.toISOString();
+    }
     byStudent.set(studentId, {
       student_id: studentId,
       status: value.status,
       comment,
+      observed_at: observedAt,
     });
   }
 

@@ -1,5 +1,5 @@
 import type { RelayDatabase } from "./db.mjs";
-import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import { relayActorClassId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
 
 export const SESSION_FINALIZATION_GRACE_MINUTES = 10;
 
@@ -16,7 +16,7 @@ export type TeacherScheduledSlot = {
     start_time: string;
     end_time: string;
   };
-  timetable: { id: string; subject_id: string };
+  timetable: { id: string; subject_id: string; teacher_id: string };
   scheduledStartAt: string;
   scheduledEndAt: string;
   graceExpiresAt: string;
@@ -144,6 +144,13 @@ export function resolveTeacherScheduledSlot(
   `).get(input.teacher.institution_id) as { timezone: string } | undefined;
   if (!institution) throw new TeacherSessionRuleError(404, "institution_not_initialized");
 
+  if (
+    relayActorKind(input.teacher) === "class_device" &&
+    relayActorClassId(input.teacher) !== input.classId
+  ) {
+    throw new TeacherSessionRuleError(403, "class_device_class_mismatch");
+  }
+
   const classRow = db.prepare(`
     SELECT 1 FROM classes
     WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
@@ -175,26 +182,48 @@ export function resolveTeacherScheduledSlot(
     throw new TeacherSessionRuleError(409, "attendance_outside_slot");
   }
 
+  const teacherFilter = relayActorKind(input.teacher) === "teacher"
+    ? "AND teacher_id = ?"
+    : "";
+  const params = relayActorKind(input.teacher) === "teacher"
+    ? [
+        input.teacher.institution_id,
+        input.teacher.actor_profile_id,
+        input.classId,
+        input.periodId,
+        localNow.weekday,
+        localNow.weekday,
+      ]
+    : [
+        input.teacher.institution_id,
+        input.classId,
+        input.periodId,
+        localNow.weekday,
+        localNow.weekday,
+      ];
   const timetables = db.prepare(`
-    SELECT id, subject_id
+    SELECT id, subject_id, teacher_id
     FROM teacher_timetables
-    WHERE institution_id = ? AND teacher_id = ? AND class_id = ?
+    WHERE institution_id = ? ${teacherFilter} AND class_id = ?
       AND period_id = ? AND deleted_at IS NULL
       AND (weekday = ? OR (? = 0 AND weekday = 7))
     ORDER BY id
-  `).all(
-    input.teacher.institution_id,
-    input.teacher.actor_profile_id,
-    input.classId,
-    input.periodId,
-    localNow.weekday,
-    localNow.weekday,
-  ) as Array<{ id: string; subject_id: string }>;
+  `).all(...params) as Array<{ id: string; subject_id: string; teacher_id: string }>;
   if (timetables.length === 0) {
-    throw new TeacherSessionRuleError(403, "teacher_not_scheduled_for_slot");
+    throw new TeacherSessionRuleError(
+      403,
+      relayActorKind(input.teacher) === "class_device"
+        ? "class_not_scheduled_for_slot"
+        : "teacher_not_scheduled_for_slot",
+    );
   }
   if (timetables.length > 1 || !timetables[0]) {
-    throw new TeacherSessionRuleError(409, "teacher_timetable_ambiguous");
+    throw new TeacherSessionRuleError(
+      409,
+      relayActorKind(input.teacher) === "class_device"
+        ? "class_timetable_ambiguous"
+        : "teacher_timetable_ambiguous",
+    );
   }
   const schedule = scheduledSlotTimes(
     localNow.ymd,
@@ -204,7 +233,7 @@ export function resolveTeacherScheduledSlot(
   );
   return {
     institutionId: input.teacher.institution_id,
-    teacherId: input.teacher.actor_profile_id,
+    teacherId: timetables[0].teacher_id,
     timezone,
     sessionDate: localNow.ymd,
     weekday: localNow.weekday,
