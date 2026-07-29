@@ -291,7 +291,7 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
     assert.notEqual(otherSchool.database_path, first.database_path);
 
     const file = JSON.parse(readFileSync(configPath, "utf8")) as any;
-    assert.equal(file.version, 2);
+    assert.equal(file.version, 3);
     assert.equal(file.institution_code, "TEST-000002");
     assert.deepEqual(file.institutions.map((item: any) => item.code), ["TEST-000002"]);
     assert.equal(file.database_path, otherSchool.database_path);

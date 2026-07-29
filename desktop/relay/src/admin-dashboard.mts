@@ -37,6 +37,14 @@ export function adminDashboard(
     pending_absence: rows.filter((row) => row.status === "pending_absence").length,
     justified_absence: rows.filter((row) => row.status === "justified_absence").length,
   };
+  const cloudPushState = db.prepare(`
+    SELECT last_error_at, last_error
+    FROM sync_cursors
+    WHERE institution_id = ? AND stream = 'cloud_push'
+  `).get(options.institutionId) as {
+    last_error_at: string | null;
+    last_error: string | null;
+  } | undefined;
   const sessionReviews = db.prepare(`
     SELECT ts.id AS session_id,
            COALESCE(NULLIF(TRIM(profile.display_name), ''), 'Enseignant') AS teacher_name,
@@ -122,6 +130,8 @@ export function adminDashboard(
         options.institutionId,
         "last_cloud_sync_at",
       ),
+      last_cloud_sync_error_at: cloudPushState?.last_error_at || null,
+      last_cloud_sync_error: cloudPushState?.last_error || null,
     },
   };
 }

@@ -74,11 +74,15 @@ export type RelayStatus = {
   unresolved_conflicts: number;
   materialization_failures: number;
   last_cloud_sync_at: string | null;
+  last_cloud_sync_error_at: string | null;
+  last_cloud_sync_error: string | null;
   institutions: Array<{
     institution_id: string;
     name: string;
     code: string | null;
     last_cloud_sync_at: string | null;
+    last_cloud_sync_error_at: string | null;
+    last_cloud_sync_error: string | null;
     pending_operations: number;
     blocked_operations: number;
     unresolved_conflicts: number;

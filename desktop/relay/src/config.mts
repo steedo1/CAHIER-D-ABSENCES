@@ -10,10 +10,18 @@ export const DEFAULT_RELAY_ALLOWED_ORIGINS = [
   "tauri://localhost",
 ] as const;
 
+export type RelayCloudSyncInstitutionConfig = {
+  enabled?: boolean;
+  endpoint?: string;
+  device_id?: string;
+  token?: string;
+};
+
 export type RelayInstitutionConfig = {
   code: string;
   name: string;
   admin_token?: string;
+  cloud_sync?: RelayCloudSyncInstitutionConfig;
 };
 
 export type RelayConfigFile = {
@@ -27,6 +35,9 @@ export type RelayConfigFile = {
   token?: string;
   allowed_origins?: string[];
   teacher_attendance_writes_enabled?: boolean;
+  cloud_sync_interval_seconds?: number;
+  cloud_sync_batch_size?: number;
+  cloud_sync_timeout_seconds?: number;
 };
 
 export type RelayConfig = {
@@ -41,6 +52,9 @@ export type RelayConfig = {
   institutions?: RelayInstitutionConfig[];
   institutionCodes?: string[];
   teacherAttendanceWritesEnabled?: boolean;
+  cloudSyncIntervalMs?: number;
+  cloudSyncBatchSize?: number;
+  cloudSyncTimeoutMs?: number;
 };
 
 function positivePort(value: string | number | undefined) {
@@ -87,6 +101,33 @@ function normalizedInstitutionCode(value: unknown) {
   return String(value || "").trim().toUpperCase();
 }
 
+function boundedInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, parsed));
+}
+
+function normalizedCloudSync(value: unknown): RelayCloudSyncInstitutionConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const endpoint = String(row.endpoint || "").trim().replace(/\/+$/, "");
+  const deviceId = String(row.device_id || "").trim();
+  const token = String(row.token || "").trim();
+  const enabled = row.enabled === true;
+  if (!endpoint && !deviceId && !token && !enabled) return undefined;
+  return {
+    enabled,
+    ...(endpoint ? { endpoint } : {}),
+    ...(deviceId ? { device_id: deviceId } : {}),
+    ...(token ? { token } : {}),
+  };
+}
+
 function teacherAttendanceWritesEnabled(file: RelayConfigFile, env: NodeJS.ProcessEnv) {
   const configured = String(env.MONCAHIER_RELAY_TEACHER_ATTENDANCE_WRITES_ENABLED || "")
     .trim()
@@ -101,12 +142,14 @@ export function relayInstitutionsFromConfigFile(file: RelayConfigFile) {
   for (const item of candidates) {
     const code = normalizedInstitutionCode(item?.code);
     if (!code) continue;
+    const cloudSync = normalizedCloudSync(item?.cloud_sync);
     result.set(code, {
       code,
       name: String(item?.name || code).trim() || code,
       ...(String(item?.admin_token || "").trim()
         ? { admin_token: String(item.admin_token).trim() }
         : {}),
+      ...(cloudSync ? { cloud_sync: cloudSync } : {}),
     });
   }
   const legacyCode = normalizedInstitutionCode(file.institution_code);
@@ -149,5 +192,23 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
     institutions,
     institutionCodes: institutions.map((item) => item.code),
     teacherAttendanceWritesEnabled: teacherAttendanceWritesEnabled(file, env),
+    cloudSyncIntervalMs: boundedInteger(
+      env.MONCAHIER_RELAY_CLOUD_SYNC_INTERVAL_SECONDS ?? file.cloud_sync_interval_seconds,
+      15,
+      5,
+      3600,
+    ) * 1000,
+    cloudSyncBatchSize: boundedInteger(
+      env.MONCAHIER_RELAY_CLOUD_SYNC_BATCH_SIZE ?? file.cloud_sync_batch_size,
+      25,
+      1,
+      100,
+    ),
+    cloudSyncTimeoutMs: boundedInteger(
+      env.MONCAHIER_RELAY_CLOUD_SYNC_TIMEOUT_SECONDS ?? file.cloud_sync_timeout_seconds,
+      20,
+      5,
+      120,
+    ) * 1000,
   };
 }

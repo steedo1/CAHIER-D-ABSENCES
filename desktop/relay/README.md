@@ -220,3 +220,100 @@ $env:MONCAHIER_RELAY_ALLOWED_ORIGINS = "https://votre-domaine.ci,http://localhos
 Dans le navigateur, l'URL et le jeton du relais sont enregistrés localement sous
 les clés `moncahier:relay:url` et `moncahier:relay:token`. Le jeton n'est jamais
 envoyé au Cloud : il sert uniquement aux requêtes directes vers le PC relais.
+
+## Synchronisation autonome Relais → Cloud — Lot 1A
+
+Le service `serve` démarre désormais un agent de synchronisation sortante. Il
+lit uniquement les opérations prêtes dans `sync_outbox`, respecte les
+`sync_outbox_dependencies`, puis les transmet au Cloud dans l'ordre métier :
+
+1. ouverture de la séance ;
+2. appel des élèves ;
+3. clôture de la séance.
+
+Une opération est supprimée de SQLite uniquement après un accusé Cloud
+individuel `acknowledged`. Une panne réseau, un délai dépassé, une erreur 5xx ou
+un jeton à corriger laisse l'opération en attente avec un backoff exponentiel.
+Une incohérence métier devient `blocked` ou `conflict` et reste visible dans le
+diagnostic ; elle n'est jamais écrasée silencieusement. Les opérations qui en
+dépendent sont elles aussi bloquées explicitement avec le statut HTTP 424 au
+lieu de rester indéfiniment en attente.
+
+Le Cloud vérifie l'empreinte SHA-256 canonique de chaque opération, réserve le
+traitement pour empêcher deux requêtes concurrentes d'appliquer la même action,
+puis conserve un reçu idempotent par couple `(institution_id, operation_id)`.
+Si une séance équivalente existe déjà dans le Cloud sous un autre UUID, le
+relais enregistre cet UUID dans
+`teacher_session_open_operations.remote_session_id` et l'utilise
+automatiquement pour l'appel et la clôture suivants.
+
+### Préparation Cloud
+
+Appliquer d'abord la migration :
+
+```text
+migrations/20260728_relay_cloud_push_v1.sql
+```
+
+La page **Admin → Paramètres → Périmètre des appels enseignants** permet de
+créer, suivre et révoquer les identités Cloud des PC relais. Le secret est
+affiché une seule fois avec une commande PowerShell prête à copier.
+
+L'API sous-jacente `POST /api/admin/offline/relay-devices?institution_id=...`
+crée une identité révocable pour le PC relais. Sa réponse contient :
+
+- `item.id` : identifiant du PC relais ;
+- `item.push_url` : route Cloud d'envoi ;
+- `item.token` : secret affiché une seule fois.
+
+Le jeton brut n'est jamais conservé dans Supabase. Seul son SHA-256 est stocké.
+`DELETE /api/admin/offline/relay-devices` permet de révoquer un poste perdu ou
+remplacé.
+
+### Configuration protégée du PC relais
+
+Sur le PC Windows, après avoir reçu les trois valeurs précédentes :
+
+```powershell
+cd C:\Projects\CAHIER-D-ABSENCES\desktop\relay
+node dist\src\cli.mjs sync-configure `
+  --institution-code "LMA-000101" `
+  --endpoint "https://www.mon-cahier.com/api/relay/sync/push" `
+  --device-id "UUID_DU_RELAIS" `
+  --token "JETON_AFFICHÉ_UNE_SEULE_FOIS"
+```
+
+La commande vérifie HTTPS, le format UUID et la correspondance entre le jeton
+et l'appareil, puis écrit atomiquement la configuration dans
+`%LOCALAPPDATA%\MonCahier\Relay\config.json`. Le jeton n'est jamais affiché par
+`doctor`.
+
+Commandes de contrôle :
+
+```powershell
+node dist\src\cli.mjs doctor
+node dist\src\cli.mjs sync-once
+node dist\src\cli.mjs serve
+```
+
+`doctor` et `/v1/status` exposent les compteurs en attente/bloqués, la dernière
+synchronisation réussie ainsi que la dernière erreur d'envoi, sans révéler le
+secret Cloud.
+
+Réglages facultatifs :
+
+- `MONCAHIER_RELAY_CLOUD_SYNC_INTERVAL_SECONDS` : 15 secondes par défaut,
+  borné entre 5 secondes et 1 heure ;
+- `MONCAHIER_RELAY_CLOUD_SYNC_BATCH_SIZE` : 25 opérations par défaut, maximum
+  100 ;
+- `MONCAHIER_RELAY_CLOUD_SYNC_TIMEOUT_SECONDS` : 20 secondes par défaut, borné
+  entre 5 et 120 secondes.
+
+Lorsque des changements d'appel sont réellement intégrés, la route Cloud
+déclenche aussi les workers de notifications push et SMS comme la route
+d'appel en ligne. Un accusé rejoué ne redéclenche pas ces workers. L'activation Cloud
+de la présence reste respectée : si la politique de l'établissement interdit
+le relais local, l'envoi est refusé et les données demeurent dans SQLite.
+
+Ce lot ferme le trajet **Relais → Cloud**. La récupération autonome et
+incrémentale **Cloud → Relais** reste volontairement séparée dans le Lot 1B.

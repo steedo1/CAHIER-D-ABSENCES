@@ -346,6 +346,26 @@ export class RelayStore {
     `).all() as Array<{ id: string; name: string; code: string | null }>;
     const scopedCount = (sql: string, institutionId: string) =>
       Number((this.db.prepare(sql).get(institutionId) as { count: number }).count || 0);
+    const cloudPushState = (institutionId?: string) => {
+      const row = institutionId
+        ? this.db.prepare(`
+            SELECT last_error_at, last_error
+            FROM sync_cursors
+            WHERE institution_id = ? AND stream = 'cloud_push'
+          `).get(institutionId)
+        : this.db.prepare(`
+            SELECT last_error_at, last_error
+            FROM sync_cursors
+            WHERE stream = 'cloud_push' AND last_error_at IS NOT NULL
+            ORDER BY last_error_at DESC
+            LIMIT 1
+          `).get();
+      const value = row as { last_error_at: string | null; last_error: string | null } | undefined;
+      return {
+        last_cloud_sync_error_at: value?.last_error_at || null,
+        last_cloud_sync_error: value?.last_error || null,
+      };
+    };
     return {
       ok: true,
       schema_version: schemaVersion(this.db),
@@ -355,11 +375,13 @@ export class RelayStore {
       unresolved_conflicts: count("SELECT COUNT(*) AS count FROM sync_conflicts WHERE resolved_at IS NULL"),
       materialization_failures: count("SELECT COUNT(*) AS count FROM sync_materialization_failures"),
       last_cloud_sync_at: latestInstitutionMeta(this.db, "last_cloud_sync_at"),
+      ...cloudPushState(),
       institutions: institutions.map((institution) => ({
         institution_id: institution.id,
         name: institution.name,
         code: institution.code,
         last_cloud_sync_at: getInstitutionMeta(this.db, institution.id, "last_cloud_sync_at"),
+        ...cloudPushState(institution.id),
         pending_operations: scopedCount(
           "SELECT COUNT(*) AS count FROM sync_outbox WHERE institution_id = ? AND state IN ('pending', 'sending')",
           institution.id,

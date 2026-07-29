@@ -6,6 +6,7 @@ import {
   saveRelayConfig,
   syncRelayBootstrap,
 } from "@/lib/local-relay";
+import RelayCloudSyncDevices from "@/components/admin/RelayCloudSyncDevices";
 
 type Zone = {
   id: string;
@@ -225,6 +226,8 @@ export default function AttendancePresenceSettings() {
           </button>
         </div>
       </div>
+
+      <RelayCloudSyncDevices />
 
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         <label className="text-xs font-semibold text-slate-600 md:col-span-2">
