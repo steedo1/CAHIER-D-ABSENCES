@@ -48,7 +48,7 @@ async function guard(
   } = await supa.auth.getUser();
   if (!user) return { error: "unauthorized" };
 
-  const { data: me } = await supa
+  const { data: me } = await srv
     .from("profiles")
     .select("id, role, institution_id")
     .eq("id", user.id)

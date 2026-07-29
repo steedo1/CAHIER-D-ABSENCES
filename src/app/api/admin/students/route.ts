@@ -65,7 +65,7 @@ async function requireReadableInstitution() {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
-  const { data: me, error: meErr } = await supa
+  const { data: me, error: meErr } = await srv
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)

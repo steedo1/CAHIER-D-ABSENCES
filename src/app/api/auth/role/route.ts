@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { AppRole } from "@/lib/auth/role";
 import { ROLE_PRIORITY } from "@/lib/auth/role";
 
@@ -18,12 +19,23 @@ export async function GET() {
     return NextResponse.json({ role: null }, { status: 401 });
   }
 
-  const { data: rows, error: rolesErr } = await supabase
-    .from("user_roles")
-    .select("role,institution_id")
-    .eq("profile_id", user.id);
+  const service = getSupabaseServiceClient();
+  const [
+    { data: rows, error: rolesErr },
+    { data: profile, error: profileErr },
+  ] = await Promise.all([
+    service
+      .from("user_roles")
+      .select("role,institution_id")
+      .eq("profile_id", user.id),
+    service
+      .from("profiles")
+      .select("institution_id")
+      .eq("id", user.id)
+      .maybeSingle(),
+  ]);
 
-  if (rolesErr) {
+  if (rolesErr || profileErr) {
     // On ne casse pas l'UI, on renvoie role=null
     return NextResponse.json({ role: null }, { status: 200 });
   }
@@ -44,6 +56,10 @@ export async function GET() {
   return NextResponse.json({
     user_id: user.id,
     role: primary,
-    institution_id: primaryRow?.institution_id ? String(primaryRow.institution_id) : null,
+    institution_id: primaryRow?.institution_id
+      ? String(primaryRow.institution_id)
+      : profile?.institution_id
+        ? String(profile.institution_id)
+        : null,
   });
 }

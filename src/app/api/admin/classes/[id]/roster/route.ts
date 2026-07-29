@@ -333,7 +333,7 @@ async function requireAdminContext(
 
   // Important : dans cette base, le rôle n’est pas dans profiles.
   // La source fiable des rôles est public.user_roles.
-  const { data: me, error: meErr } = await supa
+  const { data: me, error: meErr } = await srv
     .from("profiles")
     .select("id,institution_id")
     .eq("id", user.id)

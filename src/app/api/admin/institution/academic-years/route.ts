@@ -19,7 +19,8 @@ async function getMyInstitutionId() {
     };
   }
 
-  const { data: me, error: meErr } = await supabaseAuth
+  const supabaseService = getSupabaseServiceClient();
+  const { data: me, error: meErr } = await supabaseService
     .from("profiles")
     .select("institution_id")
     .eq("id", user.id)
