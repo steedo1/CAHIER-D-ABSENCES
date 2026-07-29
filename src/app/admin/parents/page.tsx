@@ -838,9 +838,7 @@ export default function AdminStudentsByClassPage() {
 
   const searchAbort = useRef<AbortController | null>(null);
 
-  const isFinanceManager = role === "finance_manager";
-  const canManageStudents = role !== undefined && !isFinanceManager;
-  const canTransferOrRemoveStudents = canManageStudents || isFinanceManager;
+  const canManageStudents = role !== undefined && role !== "finance_manager";
 
   useEffect(() => {
     let cancelled = false;
@@ -1330,10 +1328,7 @@ export default function AdminStudentsByClassPage() {
     try {
       let body: any;
 
-      const canCreateFromThisPage =
-        canManageStudents && assignMode === "new";
-
-      if (canCreateFromThisPage) {
+      if (assignMode === "new") {
         const first_name = form.new_first_name.trim();
         const last_name = form.new_last_name.trim();
         const matricule = form.new_matricule.trim();
@@ -1620,23 +1615,18 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canTransferOrRemoveStudents ? (
+            {canManageStudents ? (
               <Button
                 tone="slate"
-                onClick={() => {
-                  if (isFinanceManager) setAssignMode("transfer");
-                  setAssignOpen(true);
-                }}
+                onClick={() => setAssignOpen(true)}
                 disabled={!classId || loading}
                 title={
                   classId
-                    ? isFinanceManager
-                      ? "Transferer un eleve vers cette classe"
-                      : "Ajouter ou transferer un eleve dans cette classe"
+                    ? "Ajouter ou transferer un eleve dans cette classe"
                     : "Choisissez une classe d'abord"
                 }
               >
-                {isFinanceManager ? "Transferer" : "Ajouter / Transferer"}
+                Ajouter / Transferer
               </Button>
             ) : null}
 
@@ -1759,20 +1749,20 @@ export default function AdminStudentsByClassPage() {
                           </Button>
 
                           {canManageStudents ? (
-                            <Button tone="white" onClick={() => openEdit(student)}>
-                              Modifier
-                            </Button>
-                          ) : null}
+                            <>
+                              <Button tone="white" onClick={() => openEdit(student)}>
+                                Modifier
+                              </Button>
 
-                          {canTransferOrRemoveStudents ? (
-                            <Button
-                              tone="danger"
-                              onClick={() => removeFromClass(student)}
-                              disabled={!student.class_id || removingId === student.id}
-                              title="Retirer l'eleve de cette classe"
-                            >
-                              {removingId === student.id ? "Retrait..." : "Retirer"}
-                            </Button>
+                              <Button
+                                tone="danger"
+                                onClick={() => removeFromClass(student)}
+                                disabled={!student.class_id || removingId === student.id}
+                                title="Retirer l'eleve de cette classe"
+                              >
+                                {removingId === student.id ? "Retrait..." : "Retirer"}
+                              </Button>
+                            </>
                           ) : null}
                         </div>
                       </td>
@@ -1854,14 +1844,12 @@ export default function AdminStudentsByClassPage() {
         </div>
       )}
 
-      {canTransferOrRemoveStudents && assignOpen && (
+      {canManageStudents && assignOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
               <h3 className="text-base font-semibold">
-                {isFinanceManager
-                  ? "Transferer un eleve"
-                  : "Ajouter / Transferer un eleve"}
+                Ajouter / Transferer un eleve
               </h3>
 
               <button
@@ -1877,25 +1865,23 @@ export default function AdminStudentsByClassPage() {
             </div>
 
             <div className="mt-4">
-              {canManageStudents ? (
-                <div className="mb-3 grid grid-cols-2 gap-2">
-                  <Button
-                    tone={assignMode === "new" ? "emerald" : "white"}
-                    onClick={() => setAssignMode("new")}
-                  >
-                    Nouvel eleve
-                  </Button>
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                <Button
+                  tone={assignMode === "new" ? "emerald" : "white"}
+                  onClick={() => setAssignMode("new")}
+                >
+                  Nouvel eleve
+                </Button>
 
-                  <Button
-                    tone={assignMode === "transfer" ? "emerald" : "white"}
-                    onClick={() => setAssignMode("transfer")}
-                  >
-                    Transferer
-                  </Button>
-                </div>
-              ) : null}
+                <Button
+                  tone={assignMode === "transfer" ? "emerald" : "white"}
+                  onClick={() => setAssignMode("transfer")}
+                >
+                  Transferer
+                </Button>
+              </div>
 
-              {canManageStudents && assignMode === "new" ? (
+              {assignMode === "new" ? (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <div className="mb-1 text-xs text-slate-600">Nom</div>
@@ -2063,7 +2049,7 @@ export default function AdminStudentsByClassPage() {
                 <Button onClick={submitAssign} disabled={assigning || !classId}>
                   {assigning
                     ? "Traitement..."
-                    : canManageStudents && assignMode === "new"
+                    : assignMode === "new"
                     ? "Ajouter dans la classe"
                     : "Transferer vers la classe"}
                 </Button>

@@ -194,9 +194,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
     if (isFinanceManager) {
       return [
-        { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
-        { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
         { href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet },
+        { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
       ];
     }
 

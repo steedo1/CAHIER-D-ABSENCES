@@ -1021,8 +1021,11 @@ export default function SidebarNav() {
     isFounderFinance || (role === null && isFinancePath);
 
   const topLevelItems = React.useMemo(
-    () => (isFinanceOnlyShell || isInfirmier ? [] : TOP_LEVEL_ITEMS),
-    [isFinanceOnlyShell, isInfirmier],
+    () =>
+      isFinanceOnlyShell || isInfirmier || isFinanceManager
+        ? []
+        : TOP_LEVEL_ITEMS,
+    [isFinanceManager, isFinanceOnlyShell, isInfirmier],
   );
 
   const infirmaryItems = React.useMemo(

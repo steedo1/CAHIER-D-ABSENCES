@@ -1,7 +1,6 @@
 // src/app/api/admin/enrollments/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireStudentManagementAccess } from "@/lib/student-management-access";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -21,27 +20,15 @@ function requiredBoolean(value: unknown): boolean | null {
 }
 
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
-
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user)
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst)
-    return NextResponse.json({ error: "no_institution" }, { status: 400 });
-
   const body = await req.json().catch(() => ({}));
   const action: Action = (body?.action || "").trim();
+
+  const ctx = await requireStudentManagementAccess(
+    action === "create_and_assign" ? "create" : "transfer",
+  );
+  if ("error" in ctx) return ctx.error;
+
+  const { srv, user, institutionId: inst } = ctx;
   const class_id: string = String(body?.class_id || "");
 
   if (!action || (action !== "create_and_assign" && action !== "assign")) {

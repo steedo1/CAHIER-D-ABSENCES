@@ -29,6 +29,15 @@ type StudentRow = {
   enrollment_start_date: string | null;
 };
 
+type SearchStudentRow = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  matricule: string | null;
+  class_id: string | null;
+  class_label: string | null;
+};
+
 type ClassListPayload = {
   ok?: boolean;
   can_edit?: boolean;
@@ -327,6 +336,15 @@ export default function ClassListPrintPage() {
     is_affecte: "",
     is_boarder: "",
   });
+  const [showMovements, setShowMovements] = useState(false);
+  const [movementSearch, setMovementSearch] = useState("");
+  const [movementBusy, setMovementBusy] = useState(false);
+  const [movementItems, setMovementItems] = useState<SearchStudentRow[]>([]);
+  const [selectedMovementStudent, setSelectedMovementStudent] =
+    useState<SearchStudentRow | null>(null);
+  const [movementActionBusy, setMovementActionBusy] = useState(false);
+  const [removingStudentId, setRemovingStudentId] = useState<string | null>(null);
+  const [movementMsg, setMovementMsg] = useState<string | null>(null);
 
   async function load() {
     if (!classId) return;
@@ -374,6 +392,49 @@ export default function ClassListPrintPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
+
+  useEffect(() => {
+    if (!showMovements) return;
+
+    const query = movementSearch.trim();
+    if (query.length < 2) {
+      setMovementItems([]);
+      setSelectedMovementStudent(null);
+      setMovementBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setMovementBusy(true);
+      try {
+        const res = await fetch(
+          `/api/admin/students/search?q=${encodeURIComponent(query)}&limit=30`,
+          { cache: "no-store" },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) {
+          setMovementItems([]);
+          setMovementMsg(json?.error || "Recherche impossible.");
+          return;
+        }
+        setMovementItems(Array.isArray(json?.items) ? json.items : []);
+      } catch (e: any) {
+        if (!cancelled) {
+          setMovementItems([]);
+          setMovementMsg(e?.message || "Recherche impossible.");
+        }
+      } finally {
+        if (!cancelled) setMovementBusy(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [movementSearch, showMovements]);
 
   const selectedEducator = useMemo(() => {
     const custom = customEducatorName.trim();
@@ -567,6 +628,83 @@ export default function ClassListPrintPage() {
       setSaveMsg(e?.message || "Erreur d’enregistrement.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function transferSelectedStudent() {
+    if (!selectedMovementStudent || !data || !canEdit) return;
+    if (selectedMovementStudent.class_id === classId) {
+      setMovementMsg("Cet élève est déjà inscrit dans cette classe.");
+      return;
+    }
+
+    setMovementActionBusy(true);
+    setMovementMsg(null);
+    try {
+      const res = await fetch("/api/admin/enrollments/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "assign",
+          class_id: classId,
+          student_id: selectedMovementStudent.id,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error || "Impossible de transférer l’élève.");
+      }
+
+      const studentName = [
+        selectedMovementStudent.last_name,
+        selectedMovementStudent.first_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      setMovementMsg(
+        `${studentName || "L’élève"} a été transféré dans ${data.class.label}. Les encaissements existants ont été conservés.`,
+      );
+      setMovementSearch("");
+      setMovementItems([]);
+      setSelectedMovementStudent(null);
+      await load();
+    } catch (e: any) {
+      setMovementMsg(e?.message || "Erreur pendant le transfert.");
+    } finally {
+      setMovementActionBusy(false);
+    }
+  }
+
+  async function removeStudentFromClass(student: StudentRow) {
+    if (!data || !canEdit) return;
+    const label = formatTraditionalStudentName(student);
+    if (
+      !window.confirm(
+        `Retirer ${label} de la classe ${data.class.label} ?`,
+      )
+    ) {
+      return;
+    }
+
+    setRemovingStudentId(student.id);
+    setMovementMsg(null);
+    try {
+      const res = await fetch("/api/admin/enrollments/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_id: classId, student_id: student.id }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error || "Impossible de retirer l’élève.");
+      }
+      setMovementMsg(`${label} a été retiré de ${data.class.label}.`);
+      await load();
+    } catch (e: any) {
+      setMovementMsg(e?.message || "Erreur pendant le retrait.");
+    } finally {
+      setRemovingStudentId(null);
     }
   }
 
@@ -992,6 +1130,19 @@ export default function ClassListPrintPage() {
               Corriger les champs
             </button>
           ) : null}
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => {
+                setShowMovements((v) => !v);
+                setMovementMsg(null);
+              }}
+              disabled={loading || !!error || !data}
+              className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Transférer / Retirer
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => router.back()}
@@ -1013,6 +1164,126 @@ export default function ClassListPrintPage() {
       {newStudentMsg ? (
         <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900 shadow-sm">
           {newStudentMsg}
+        </div>
+      ) : null}
+
+      {showMovements && data && canEdit ? (
+        <div className="screen-toolbar mx-auto mb-4 max-w-6xl rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+          <div className="mb-4">
+            <div className="font-semibold">Mouvements de la classe {data.class.label}</div>
+            <div className="text-sm text-slate-600">
+              Recherchez un élève pour le transférer dans cette classe, ou retirez un élève actuellement inscrit.
+            </div>
+          </div>
+
+          {movementMsg ? (
+            <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-900">
+              {movementMsg}
+            </div>
+          ) : null}
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border p-3">
+              <div className="font-semibold">Transférer vers cette classe</div>
+              <label className="mt-3 block text-sm font-medium text-slate-700">
+                Nom ou matricule
+                <input
+                  value={movementSearch}
+                  onChange={(e) => {
+                    setMovementSearch(e.target.value);
+                    setSelectedMovementStudent(null);
+                    setMovementMsg(null);
+                  }}
+                  placeholder="Ex. KOUASSI / 20166309J"
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+                />
+              </label>
+
+              <div className="mt-3 max-h-56 overflow-auto rounded-xl border">
+                {movementBusy ? (
+                  <div className="p-3 text-sm text-slate-500">Recherche…</div>
+                ) : movementSearch.trim().length < 2 ? (
+                  <div className="p-3 text-sm text-slate-500">
+                    Saisissez au moins deux caractères.
+                  </div>
+                ) : movementItems.length === 0 ? (
+                  <div className="p-3 text-sm text-slate-500">Aucun élève trouvé.</div>
+                ) : (
+                  movementItems.map((student) => {
+                    const alreadyHere = student.class_id === classId;
+                    const selected = selectedMovementStudent?.id === student.id;
+                    const name = [student.last_name, student.first_name]
+                      .filter(Boolean)
+                      .join(" ")
+                      .trim();
+                    return (
+                      <button
+                        key={student.id}
+                        type="button"
+                        disabled={alreadyHere}
+                        onClick={() => setSelectedMovementStudent(student)}
+                        className={`block w-full border-b px-3 py-2 text-left text-sm last:border-b-0 ${
+                          selected ? "bg-emerald-50" : "hover:bg-slate-50"
+                        } disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`}
+                      >
+                        <span className="font-semibold">{name || "Élève"}</span>
+                        {student.matricule ? ` — ${student.matricule}` : ""}
+                        <span className="block text-xs">
+                          {alreadyHere
+                            ? "Déjà dans cette classe"
+                            : student.class_label
+                              ? `Classe actuelle : ${student.class_label}`
+                              : "Sans classe active"}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={transferSelectedStudent}
+                disabled={!selectedMovementStudent || movementActionBusy}
+                className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {movementActionBusy ? "Transfert…" : "Confirmer le transfert"}
+              </button>
+            </div>
+
+            <div className="rounded-xl border p-3">
+              <div className="font-semibold">Retirer de cette classe</div>
+              <div className="mt-3 max-h-72 overflow-auto rounded-xl border">
+                {students.length === 0 ? (
+                  <div className="p-3 text-sm text-slate-500">Aucun élève dans cette classe.</div>
+                ) : (
+                  students.map((student) => (
+                    <div
+                      key={student.id}
+                      className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0"
+                    >
+                      <div className="min-w-0 text-sm">
+                        <div className="truncate font-semibold">
+                          {formatTraditionalStudentName(student)}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {student.matricule || "Sans matricule"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeStudentFromClass(student)}
+                        disabled={removingStudentId === student.id}
+                        className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                      >
+                        {removingStudentId === student.id ? "Retrait…" : "Retirer"}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
 

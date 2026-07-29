@@ -1,28 +1,15 @@
 // src/app/api/admin/students/search/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireStudentManagementAccess } from "@/lib/student-management-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const ctx = await requireStudentManagementAccess("search");
+  if ("error" in ctx) return ctx.error;
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const { srv, institutionId: inst } = ctx;
 
   const url = new URL(req.url);
   const qRaw = (url.searchParams.get("q") || "").trim();

@@ -1,29 +1,15 @@
 // src/app/api/admin/enrollments/remove/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireStudentManagementAccess } from "@/lib/student-management-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const ctx = await requireStudentManagementAccess("remove");
+  if ("error" in ctx) return ctx.error;
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const { srv, institutionId: inst } = ctx;
 
   const { class_id, student_id } = await req.json().catch(() => ({}));
   if (!class_id || !student_id) {

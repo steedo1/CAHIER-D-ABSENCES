@@ -28,11 +28,17 @@ export async function GET() {
     return NextResponse.json({ role: null }, { status: 200 });
   }
 
-  const roles = (rows ?? []).map((r: any) => r.role as AppRole);
+  const normalizedRows = (rows ?? []).map((row: any) => ({
+    ...row,
+    role: String(row.role || "") === "finance" ? "finance_manager" : row.role,
+  }));
+  const roles = normalizedRows.map((r: any) => r.role as AppRole);
   const primary = ROLE_PRIORITY.find((r) => roles.includes(r)) ?? roles[0] ?? null;
   const primaryRow =
-    (rows ?? []).find((row: any) => row.role === primary && row.institution_id) ||
-    (rows ?? []).find((row: any) => row.institution_id) ||
+    normalizedRows.find(
+      (row: any) => row.role === primary && row.institution_id,
+    ) ||
+    normalizedRows.find((row: any) => row.institution_id) ||
     null;
 
   return NextResponse.json({
