@@ -317,3 +317,30 @@ le relais local, l'envoi est refusé et les données demeurent dans SQLite.
 
 Ce lot ferme le trajet **Relais → Cloud**. La récupération autonome et
 incrémentale **Cloud → Relais** reste volontairement séparée dans le Lot 1B.
+
+
+### Rejeu contrôlé après remplacement d'un UUID d'emploi du temps
+
+Lorsqu'une opération historique a été bloquée avec `timetable_not_found`, le
+Cloud recherche désormais un remplacement uniquement par l'identité métier
+complète : établissement, classe, matière, enseignant, créneau et jour ISO.
+
+Le remplacement n'est accepté que s'il existe exactement un créneau Cloud
+compatible. Zéro candidat conserve le blocage ; plusieurs candidats créent un
+conflit visible.
+
+Après déploiement du correctif Cloud, la chaîne locale peut être réarmée avec :
+
+```powershell
+node dist\src\cli.mjs sync-requeue-timetable-replacement `
+  --institution-code "LMA-000101" `
+  --root-operation-id "UUID_OPERATION_OUVERTURE" `
+  --expected-error "timetable_not_found"
+
+node dist\src\cli.mjs sync-once
+```
+
+La commande refuse toute opération qui ne correspond pas exactement à une
+ouverture bloquée en `422 timetable_not_found`. Elle exige que l'ancien créneau
+soit retiré, qu'un unique remplaçant actif existe, réarme uniquement la chaîne
+de dépendances concernée et inscrit l'action dans `audit_log`.

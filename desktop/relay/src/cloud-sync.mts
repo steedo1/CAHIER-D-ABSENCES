@@ -545,6 +545,276 @@ function isCloudPushResponse(
     Number.isFinite(Date.parse(String(row.server_time || "")));
 }
 
+
+export type RequeueTimetableReplacementChainResult = {
+  institution_id: string;
+  institution_code: string;
+  root_operation_id: string;
+  previous_timetable_id: string;
+  replacement_timetable_id: string;
+  requeued_operation_ids: string[];
+};
+
+function isoWeekdayFromDateText(value: unknown) {
+  const sessionDate = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) {
+    throw new Error("session_date_invalid");
+  }
+  const parsed = new Date(`${sessionDate}T12:00:00.000Z`);
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== sessionDate
+  ) {
+    throw new Error("session_date_invalid");
+  }
+  const weekday = parsed.getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+export function requeueTimetableReplacementChain(
+  db: RelayDatabase,
+  input: {
+    institutionCode: string;
+    rootOperationId: string;
+    expectedError?: string;
+    now?: Date;
+  },
+): RequeueTimetableReplacementChainResult {
+  const institutionCode = String(input.institutionCode || "").trim().toUpperCase();
+  const rootOperationId = String(input.rootOperationId || "").trim();
+  const expectedError = String(input.expectedError || "timetable_not_found").trim();
+  if (!institutionCode) throw new Error("institution_code_required");
+  if (!rootOperationId) throw new Error("root_operation_id_required");
+  if (expectedError !== "timetable_not_found") {
+    throw new Error("expected_error_not_supported");
+  }
+
+  const institution = db.prepare(`
+    SELECT id, code FROM institutions
+    WHERE UPPER(COALESCE(code, '')) = ?
+      AND deleted_at IS NULL
+    LIMIT 1
+  `).get(institutionCode) as { id: string; code: string } | undefined;
+  if (!institution) throw new Error("institution_not_configured");
+
+  const root = db.prepare(`
+    SELECT operation_id, institution_id, entity_type, entity_id, state,
+           last_status, last_error, payload_json
+    FROM sync_outbox
+    WHERE institution_id = ? AND operation_id = ?
+  `).get(
+    institution.id,
+    rootOperationId,
+  ) as {
+    operation_id: string;
+    institution_id: string;
+    entity_type: string;
+    entity_id: string;
+    state: string;
+    last_status: number | null;
+    last_error: string | null;
+    payload_json: string | null;
+  } | undefined;
+  if (!root) throw new Error("root_operation_not_found");
+  if (
+    root.entity_type !== "teacher_session" ||
+    root.state !== "blocked" ||
+    root.last_status !== 422 ||
+    root.last_error !== expectedError
+  ) {
+    throw new Error("root_operation_not_requeueable");
+  }
+
+  const payload = parseStoredJson<Record<string, unknown>>(root.payload_json);
+  if (String(payload?.operation_type || "").trim() !== "teacher_session.open") {
+    throw new Error("root_operation_type_invalid");
+  }
+  const required = (key: string) => {
+    const value = String(payload?.[key] || "").trim();
+    if (!value) throw new Error(`${key}_required`);
+    return value;
+  };
+  const previousTimetableId = required("timetable_id");
+  const classId = required("class_id");
+  const subjectId = required("subject_id");
+  const teacherId = required("teacher_id");
+  const periodId = required("period_id");
+  const weekday = isoWeekdayFromDateText(payload?.session_date);
+
+  const previous = db.prepare(`
+    SELECT id, deleted_at
+    FROM teacher_timetables
+    WHERE institution_id = ? AND id = ?
+  `).get(
+    institution.id,
+    previousTimetableId,
+  ) as { id: string; deleted_at: string | null } | undefined;
+  if (!previous || !previous.deleted_at) {
+    throw new Error("previous_timetable_not_retired");
+  }
+
+  const candidates = db.prepare(`
+    SELECT id
+    FROM teacher_timetables
+    WHERE institution_id = ?
+      AND class_id = ?
+      AND subject_id = ?
+      AND teacher_id = ?
+      AND period_id = ?
+      AND weekday = ?
+      AND deleted_at IS NULL
+    ORDER BY id
+    LIMIT 2
+  `).all(
+    institution.id,
+    classId,
+    subjectId,
+    teacherId,
+    periodId,
+    weekday,
+  ) as Array<{ id: string }>;
+  if (candidates.length === 0) throw new Error("replacement_timetable_not_found");
+  if (candidates.length > 1) throw new Error("replacement_timetable_ambiguous");
+  const replacementTimetableId = candidates[0]!.id;
+  if (replacementTimetableId === previousTimetableId) {
+    throw new Error("replacement_timetable_invalid");
+  }
+
+  const descendants = db.prepare(`
+    WITH RECURSIVE descendants(operation_id) AS (
+      SELECT dependency.operation_id
+      FROM sync_outbox_dependencies dependency
+      WHERE dependency.institution_id = ?
+        AND dependency.depends_on_operation_id = ?
+      UNION
+      SELECT dependency.operation_id
+      FROM sync_outbox_dependencies dependency
+      JOIN descendants parent
+        ON parent.operation_id = dependency.depends_on_operation_id
+      WHERE dependency.institution_id = ?
+    )
+    SELECT operation_id FROM descendants ORDER BY operation_id
+  `).all(
+    institution.id,
+    rootOperationId,
+    institution.id,
+  ) as Array<{ operation_id: string }>;
+
+  const operationIds = [
+    rootOperationId,
+    ...descendants.map((row) => row.operation_id),
+  ];
+  const placeholders = operationIds.map(() => "?").join(",");
+  const chain = db.prepare(`
+    SELECT operation_id, state, last_status, last_error
+    FROM sync_outbox
+    WHERE institution_id = ?
+      AND operation_id IN (${placeholders})
+    ORDER BY operation_id
+  `).all(
+    institution.id,
+    ...operationIds,
+  ) as Array<{
+    operation_id: string;
+    state: string;
+    last_status: number | null;
+    last_error: string | null;
+  }>;
+  if (chain.length !== operationIds.length) {
+    throw new Error("blocked_chain_incomplete");
+  }
+  for (const row of chain) {
+    if (row.operation_id === rootOperationId) continue;
+    if (
+      row.state !== "blocked" ||
+      row.last_status !== 424 ||
+      !String(row.last_error || "").startsWith(
+        `dependency_blocked:${rootOperationId}:${expectedError}`,
+      )
+    ) {
+      throw new Error(`dependent_operation_not_requeueable:${row.operation_id}`);
+    }
+  }
+
+  const nowIso = (input.now || new Date()).toISOString();
+  db.transaction(() => {
+    const updateOutbox = db.prepare(`
+      UPDATE sync_outbox
+      SET state = 'pending',
+          next_attempt_at = NULL,
+          last_attempt_at = NULL,
+          last_status = NULL,
+          last_error = NULL
+      WHERE institution_id = ? AND operation_id = ? AND state = 'blocked'
+    `);
+    for (const operationId of operationIds) {
+      const changed = updateOutbox.run(institution.id, operationId);
+      if (changed.changes !== 1) {
+        throw new Error(`operation_requeue_failed:${operationId}`);
+      }
+    }
+
+    db.prepare(`
+      UPDATE teacher_session_open_operations
+      SET state = 'opened_on_relay', updated_at = ?
+      WHERE institution_id = ? AND operation_id IN (${placeholders})
+        AND state = 'blocked'
+    `).run(nowIso, institution.id, ...operationIds);
+
+    db.prepare(`
+      UPDATE teacher_attendance_operations
+      SET state = 'secured_on_relay', last_error = NULL, updated_at = ?
+      WHERE institution_id = ? AND operation_id IN (${placeholders})
+        AND state = 'blocked'
+    `).run(nowIso, institution.id, ...operationIds);
+
+    db.prepare(`
+      UPDATE teacher_session_transition_operations
+      SET state = 'transitioned_on_relay', updated_at = ?
+      WHERE institution_id = ?
+        AND state = 'blocked'
+        AND (
+          close_operation_id IN (${placeholders})
+          OR open_operation_id IN (${placeholders})
+        )
+    `).run(
+      nowIso,
+      institution.id,
+      ...operationIds,
+      ...operationIds,
+    );
+
+    db.prepare(`
+      INSERT INTO audit_log(
+        institution_id, actor_profile_id, device_id, event_type,
+        entity_type, entity_id, details_json, occurred_at
+      ) VALUES (?, NULL, 'relay-maintenance',
+                'sync.blocked_chain_requeued',
+                'teacher_session', ?, ?, ?)
+    `).run(
+      institution.id,
+      root.entity_id,
+      canonicalJson({
+        root_operation_id: rootOperationId,
+        previous_timetable_id: previousTimetableId,
+        replacement_timetable_id: replacementTimetableId,
+        operation_ids: operationIds,
+        expected_error: expectedError,
+      }),
+      nowIso,
+    );
+  })();
+
+  return {
+    institution_id: institution.id,
+    institution_code: institution.code,
+    root_operation_id: rootOperationId,
+    previous_timetable_id: previousTimetableId,
+    replacement_timetable_id: replacementTimetableId,
+    requeued_operation_ids: operationIds,
+  };
+}
+
 export async function syncRelayOnce(
   config: RelayConfig,
   store: RelayStore,

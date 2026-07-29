@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { syncRelayOnce } from "../src/cloud-sync.mjs";
+import { requeueTimetableReplacementChain, syncRelayOnce } from "../src/cloud-sync.mjs";
 import type { RelayConfig } from "../src/config.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
 import { RelayStore } from "../src/store.mjs";
@@ -58,7 +58,11 @@ function enqueue(store: RelayStore, operationId: string, entityId: string) {
       class_id: "class-1",
       subject_id: "subject-1",
       teacher_id: "teacher-1",
+      period_id: "period-1",
       timetable_id: "timetable-1",
+      session_date: "2026-07-28",
+      scheduled_start_at: "2026-07-28T08:00:00.000Z",
+      scheduled_end_at: "2026-07-28T09:00:00.000Z",
       started_at: "2026-07-28T08:00:00.000Z",
       actual_call_at: "2026-07-28T08:01:00.000Z",
     },
@@ -384,5 +388,182 @@ test("un parent bloqué bloque explicitement tous ses descendants", async () => 
   ]);
   assert.match(rows[0]?.last_error || "", /dependency_blocked:parent-blocked/);
   assert.match(rows[1]?.last_error || "", /dependency_blocked:parent-blocked/);
+  db.close();
+});
+
+
+function seedBlockedTimetableReplacementChain(
+  db: ReturnType<typeof openRelayDatabase>,
+  store: RelayStore,
+  input: { ambiguous?: boolean } = {},
+) {
+  seedLocalSessionOpenReceipt(db);
+  db.prepare(`
+    UPDATE teacher_timetables
+    SET deleted_at = '2026-07-28T16:25:02.472Z',
+        updated_at = '2026-07-28T16:25:02.472Z'
+    WHERE institution_id = 'inst-1' AND id = 'timetable-1'
+  `).run();
+  db.prepare(`
+    INSERT INTO teacher_timetables(
+      id,institution_id,academic_year,class_id,subject_id,teacher_id,
+      period_id,weekday,updated_at
+    ) VALUES (
+      'timetable-current','inst-1','2026-2027','class-1','subject-1','teacher-1',
+      'period-1',2,'2026-07-29T02:56:04.530Z'
+    )
+  `).run();
+  if (input.ambiguous) {
+    db.prepare(`
+      INSERT INTO teacher_timetables(
+        id,institution_id,academic_year,class_id,subject_id,teacher_id,
+        period_id,weekday,updated_at
+      ) VALUES (
+        'timetable-current-2','inst-1','2026-2027','class-1','subject-1','teacher-1',
+        'period-1',2,'2026-07-29T02:56:05.530Z'
+      )
+    `).run();
+  }
+
+  enqueue(store, "op-open", "session-local");
+  enqueueAttendanceCall(db, "op-attendance", "session-local");
+  enqueue(store, "op-close", "session-local");
+  db.prepare(`
+    UPDATE sync_outbox
+    SET payload_json = json_set(
+      payload_json,
+      '$.operation_type',
+      'attendance.session.close',
+      '$.sync_operation_type',
+      'attendance.session.close',
+      '$.closed_at',
+      '2026-07-28T09:00:00.000Z'
+    )
+    WHERE institution_id = 'inst-1' AND operation_id = 'op-close'
+  `).run();
+  db.prepare(`
+    INSERT INTO sync_outbox_dependencies(
+      institution_id,operation_id,depends_on_operation_id,created_at
+    ) VALUES
+      ('inst-1','op-attendance','op-open','2026-07-28T08:00:00.000Z'),
+      ('inst-1','op-close','op-open','2026-07-28T08:00:00.000Z'),
+      ('inst-1','op-close','op-attendance','2026-07-28T08:00:00.000Z')
+  `).run();
+  db.prepare(`
+    UPDATE sync_outbox
+    SET state = 'blocked',
+        last_status = CASE WHEN operation_id = 'op-open' THEN 422 ELSE 424 END,
+        last_error = CASE
+          WHEN operation_id = 'op-open' THEN 'timetable_not_found'
+          ELSE 'dependency_blocked:op-open:timetable_not_found'
+        END
+    WHERE institution_id = 'inst-1'
+      AND operation_id IN ('op-open','op-attendance','op-close')
+  `).run();
+  db.prepare(`
+    UPDATE teacher_session_open_operations
+    SET state = 'blocked'
+    WHERE institution_id = 'inst-1' AND operation_id = 'op-open'
+  `).run();
+  db.prepare(`
+    INSERT INTO teacher_attendance_operations(
+      operation_id,institution_id,protocol_version,operation_type,
+      teacher_profile_id,session_id,class_id,period_id,payload_fingerprint,
+      payload_json,state,accepted_at,materialized_at,last_error,updated_at
+    ) VALUES (
+      'op-attendance','inst-1',1,'attendance.call.submit',
+      'teacher-1','session-local','class-1','period-1',?,
+      '{}','blocked','2026-07-28T08:06:00.000Z',
+      '2026-07-28T08:06:00.000Z',
+      'dependency_blocked:op-open:timetable_not_found',
+      '2026-07-28T08:06:00.000Z'
+    )
+  `).run('c'.repeat(64));
+}
+
+test("une chaîne bloquée par un ancien UUID est réarmée seulement avec un remplaçant sémantique unique", () => {
+  const { db, store } = setup();
+  seedBlockedTimetableReplacementChain(db, store);
+
+  const result = requeueTimetableReplacementChain(db, {
+    institutionCode: "SCH-000001",
+    rootOperationId: "op-open",
+    expectedError: "timetable_not_found",
+    now: new Date("2026-07-29T03:30:00.000Z"),
+  });
+
+  assert.equal(result.previous_timetable_id, "timetable-1");
+  assert.equal(result.replacement_timetable_id, "timetable-current");
+  assert.deepEqual(
+    [...result.requeued_operation_ids].sort(),
+    ["op-attendance", "op-close", "op-open"],
+  );
+
+  const rows = db.prepare(`
+    SELECT operation_id,state,last_status,last_error,last_attempt_at,next_attempt_at
+    FROM sync_outbox
+    WHERE institution_id = 'inst-1'
+    ORDER BY operation_id
+  `).all() as any[];
+  assert.deepEqual(
+    rows.map((row) => [
+      row.operation_id,
+      row.state,
+      row.last_status,
+      row.last_error,
+      row.last_attempt_at,
+      row.next_attempt_at,
+    ]),
+    [
+      ["op-attendance", "pending", null, null, null, null],
+      ["op-close", "pending", null, null, null, null],
+      ["op-open", "pending", null, null, null, null],
+    ],
+  );
+
+  const openReceipt = db.prepare(`
+    SELECT state FROM teacher_session_open_operations
+    WHERE institution_id = 'inst-1' AND operation_id = 'op-open'
+  `).get() as any;
+  const attendanceReceipt = db.prepare(`
+    SELECT state,last_error FROM teacher_attendance_operations
+    WHERE institution_id = 'inst-1' AND operation_id = 'op-attendance'
+  `).get() as any;
+  assert.equal(openReceipt.state, "opened_on_relay");
+  assert.deepEqual(attendanceReceipt, {
+    state: "secured_on_relay",
+    last_error: null,
+  });
+
+  const audit = db.prepare(`
+    SELECT event_type,details_json FROM audit_log
+    WHERE institution_id = 'inst-1'
+      AND event_type = 'sync.blocked_chain_requeued'
+  `).get() as any;
+  assert.equal(audit.event_type, "sync.blocked_chain_requeued");
+  assert.match(audit.details_json, /timetable-current/);
+  db.close();
+});
+
+test("une chaîne bloquée reste intacte si le remplaçant sémantique est ambigu", () => {
+  const { db, store } = setup();
+  seedBlockedTimetableReplacementChain(db, store, { ambiguous: true });
+
+  assert.throws(
+    () => requeueTimetableReplacementChain(db, {
+      institutionCode: "SCH-000001",
+      rootOperationId: "op-open",
+    }),
+    /replacement_timetable_ambiguous/,
+  );
+
+  const rows = db.prepare(`
+    SELECT operation_id,state,last_status,last_error
+    FROM sync_outbox
+    WHERE institution_id = 'inst-1'
+    ORDER BY operation_id
+  `).all() as any[];
+  assert.ok(rows.every((row) => row.state === "blocked"));
+  assert.equal(rows.find((row) => row.operation_id === "op-open")?.last_error, "timetable_not_found");
   db.close();
 });

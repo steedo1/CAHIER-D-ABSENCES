@@ -39,6 +39,7 @@ export type RelaySyncAcknowledgement = {
 
 type ReceiptRow = {
   payload_fingerprint: string;
+  entity_type: string;
   state: "processing" | "retryable" | "acknowledged" | "blocked" | "conflict";
   error_code: string | null;
   cloud_entity_id: string | null;
@@ -51,12 +52,19 @@ type ApplyOperationResult = {
 };
 
 class RelayOperationError extends Error {
+  readonly outcome: "retryable" | "blocked" | "conflict";
+  readonly status: number;
+  readonly code: string;
+
   constructor(
-    readonly outcome: "retryable" | "blocked" | "conflict",
-    readonly status: number,
-    readonly code: string,
+    outcome: "retryable" | "blocked" | "conflict",
+    status: number,
+    code: string,
   ) {
     super(code);
+    this.outcome = outcome;
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -198,7 +206,7 @@ async function loadReceipt(
 ) {
   const { data, error } = await service
     .from("relay_sync_operation_receipts")
-    .select("payload_fingerprint,state,error_code,cloud_entity_id,updated_at")
+    .select("payload_fingerprint,entity_type,state,error_code,cloud_entity_id,updated_at")
     .eq("institution_id", institutionId)
     .eq("operation_id", operationId)
     .maybeSingle();
@@ -238,6 +246,7 @@ async function claimExistingReceipt(
     operationId: string;
     receipt: ReceiptRow;
     nowIso: string;
+    reopenBlockedError?: string | null;
   },
 ) {
   let query = service
@@ -253,6 +262,14 @@ async function claimExistingReceipt(
 
   if (input.receipt.state === "retryable") {
     query = query.eq("state", "retryable");
+  } else if (
+    input.receipt.state === "blocked" &&
+    input.reopenBlockedError &&
+    input.receipt.error_code === input.reopenBlockedError
+  ) {
+    query = query
+      .eq("state", "blocked")
+      .eq("error_code", input.reopenBlockedError);
   } else if (input.receipt.state === "processing") {
     const staleBefore = new Date(
       Date.parse(input.nowIso) - RECEIPT_PROCESSING_STALE_MS,
@@ -305,6 +322,124 @@ function durationMinutes(start: unknown, end: unknown) {
   return Math.max(1, Math.round((endMs - startMs) / 60_000));
 }
 
+type TeacherTimetableRow = {
+  id: string;
+  institution_id: string;
+  class_id: string;
+  subject_id: string;
+  teacher_id: string;
+  period_id: string;
+  weekday: number;
+};
+
+function isoWeekdayFromSessionDate(value: unknown) {
+  const sessionDate = text(value, "session_date", 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) {
+    throw new RelayOperationError("blocked", 422, "session_date_invalid");
+  }
+  const parsed = new Date(`${sessionDate}T12:00:00.000Z`);
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== sessionDate
+  ) {
+    throw new RelayOperationError("blocked", 422, "session_date_invalid");
+  }
+  const weekday = parsed.getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+function timetableMatchesPayload(
+  timetable: TeacherTimetableRow,
+  input: {
+    institutionId: string;
+    classId: string;
+    subjectId: string;
+    teacherId: string;
+    periodId: string;
+    weekday: number;
+  },
+) {
+  return (
+    String(timetable.institution_id) === input.institutionId &&
+    String(timetable.class_id) === input.classId &&
+    String(timetable.subject_id) === input.subjectId &&
+    String(timetable.teacher_id) === input.teacherId &&
+    String(timetable.period_id) === input.periodId &&
+    Number(timetable.weekday) === input.weekday
+  );
+}
+
+async function resolveTeacherTimetable(
+  service: SupabaseClient,
+  input: {
+    institutionId: string;
+    timetableId: string;
+    classId: string;
+    subjectId: string;
+    teacherId: string;
+    periodId: string;
+    weekday: number;
+  },
+) {
+  const selectColumns = "id,institution_id,class_id,subject_id,teacher_id,period_id,weekday";
+  const { data: exact, error: exactError } = await service
+    .from("teacher_timetables")
+    .select(selectColumns)
+    .eq("id", input.timetableId)
+    .eq("institution_id", input.institutionId)
+    .maybeSingle();
+  if (exactError) {
+    throw new RelayOperationError("retryable", 503, "timetable_lookup_failed");
+  }
+  if (exact) {
+    const timetable = exact as TeacherTimetableRow;
+    if (!timetableMatchesPayload(timetable, input)) {
+      throw new RelayOperationError("conflict", 409, "timetable_payload_mismatch");
+    }
+    return timetable;
+  }
+
+  const { data: candidates, error: candidatesError } = await service
+    .from("teacher_timetables")
+    .select(selectColumns)
+    .eq("institution_id", input.institutionId)
+    .eq("class_id", input.classId)
+    .eq("subject_id", input.subjectId)
+    .eq("teacher_id", input.teacherId)
+    .eq("period_id", input.periodId)
+    .eq("weekday", input.weekday)
+    .limit(2);
+  if (candidatesError) {
+    throw new RelayOperationError("retryable", 503, "timetable_semantic_lookup_failed");
+  }
+  const compatible = (candidates || []) as TeacherTimetableRow[];
+  if (compatible.length === 0) {
+    throw new RelayOperationError("blocked", 422, "timetable_not_found");
+  }
+  if (compatible.length > 1) {
+    throw new RelayOperationError("conflict", 409, "timetable_semantic_ambiguous");
+  }
+  return compatible[0]!;
+}
+
+function reopenableBlockedReceipt(
+  receipt: ReceiptRow | null,
+  operation: RelaySyncOperation,
+) {
+  if (
+    receipt?.state !== "blocked" ||
+    receipt.error_code !== "timetable_not_found" ||
+    receipt.entity_type !== "teacher_session" ||
+    operation.entity_type !== "teacher_session"
+  ) {
+    return null;
+  }
+  const payload = operation.payload || {};
+  return String(payload.operation_type || "").trim() === "teacher_session.open"
+    ? "timetable_not_found"
+    : null;
+}
+
 async function applyTeacherSessionOpen(
   service: SupabaseClient,
   institutionId: string,
@@ -324,24 +459,20 @@ async function applyTeacherSessionOpen(
     throw new RelayOperationError("conflict", 409, "teacher_session_actor_mismatch");
   }
   const timetableId = text(payload.timetable_id, "timetable_id", 128);
+  const periodId = text(payload.period_id, "period_id", 128);
+  const weekday = isoWeekdayFromSessionDate(payload.session_date);
   const startedAt = iso(payload.started_at, "started_at");
   const actualCallAt = iso(payload.actual_call_at || payload.requested_start_at || operation.occurred_at, "actual_call_at");
 
-  const { data: timetable, error: timetableError } = await service
-    .from("teacher_timetables")
-    .select("id,institution_id,class_id,subject_id,teacher_id,period_id")
-    .eq("id", timetableId)
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-  if (timetableError) throw new RelayOperationError("retryable", 503, "timetable_lookup_failed");
-  if (!timetable) throw new RelayOperationError("blocked", 422, "timetable_not_found");
-  if (
-    String((timetable as any).class_id) !== classId ||
-    String((timetable as any).subject_id) !== subjectId ||
-    String((timetable as any).teacher_id) !== teacherId
-  ) {
-    throw new RelayOperationError("conflict", 409, "timetable_payload_mismatch");
-  }
+  await resolveTeacherTimetable(service, {
+    institutionId,
+    timetableId,
+    classId,
+    subjectId,
+    teacherId,
+    periodId,
+    weekday,
+  });
 
   const { data: existing, error: existingError } = await service
     .from("teacher_sessions")
@@ -650,7 +781,12 @@ export async function processRelaySyncOperation(
         attendance_changed: false,
       };
     }
-    if (receipt && ["acknowledged", "blocked", "conflict"].includes(receipt.state)) {
+    const reopenBlockedError = reopenableBlockedReceipt(receipt, input.operation);
+    if (
+      receipt &&
+      ["acknowledged", "blocked", "conflict"].includes(receipt.state) &&
+      !reopenBlockedError
+    ) {
       return receiptAck(input.operation.operation_id, receipt);
     }
 
@@ -661,6 +797,7 @@ export async function processRelaySyncOperation(
         operationId: input.operation.operation_id,
         receipt,
         nowIso,
+        reopenBlockedError,
       });
     } else {
       ownsProcessing = await reserveReceipt(service, {
@@ -685,7 +822,11 @@ export async function processRelaySyncOperation(
             attendance_changed: false,
           };
         }
-        if (["acknowledged", "blocked", "conflict"].includes(receipt.state)) {
+        const racedReopenBlockedError = reopenableBlockedReceipt(receipt, input.operation);
+        if (
+          ["acknowledged", "blocked", "conflict"].includes(receipt.state) &&
+          !racedReopenBlockedError
+        ) {
           return receiptAck(input.operation.operation_id, receipt);
         }
         ownsProcessing = await claimExistingReceipt(service, {
@@ -693,6 +834,7 @@ export async function processRelaySyncOperation(
           operationId: input.operation.operation_id,
           receipt,
           nowIso,
+          reopenBlockedError: racedReopenBlockedError,
         });
       }
     }

@@ -1,6 +1,6 @@
 import { loadRelayConfig } from "./config.mjs";
 import { openRelayDatabase } from "./db.mjs";
-import { createRelayCloudSyncAgent, syncRelayOnce } from "./cloud-sync.mjs";
+import { createRelayCloudSyncAgent, requeueTimetableReplacementChain, syncRelayOnce } from "./cloud-sync.mjs";
 import { createRelayServer } from "./server.mjs";
 import { configureCloudSync, configureRelay, relayLanUrls } from "./setup.mjs";
 import { RelayStore } from "./store.mjs";
@@ -123,6 +123,17 @@ async function main() {
     return;
   }
 
+  if (command === "sync-requeue-timetable-replacement") {
+    const result = requeueTimetableReplacementChain(db, {
+      institutionCode: flag("--institution-code"),
+      rootOperationId: flag("--root-operation-id"),
+      expectedError: flagOptional("--expected-error") || "timetable_not_found",
+    });
+    console.log(JSON.stringify({ ok: true, ...result }, null, 2));
+    db.close();
+    return;
+  }
+
   if (command === "serve") {
     const server = createRelayServer(config, store);
     const cloudSyncAgent = createRelayCloudSyncAgent(config, store);
@@ -150,7 +161,7 @@ async function main() {
 
   db.close();
   throw new Error(
-    "Commande attendue: configure, sync-configure, sync-once, access, init, status, doctor ou serve",
+    "Commande attendue: configure, sync-configure, sync-once, sync-requeue-timetable-replacement, access, init, status, doctor ou serve",
   );
 }
 
