@@ -2076,16 +2076,6 @@ function StudentBulletinCard({
         <div className="bulletin-unissued-print-warning mb-1 rounded-md border-2 border-amber-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.14em] text-amber-800">
           APERÇU — BULLETIN NON ÉMIS — UTILISER LE BOUTON IMPRIMER
         </div>
-      ) : item.official_print_kind === "duplicate" ? (
-        <div className="mb-1 rounded-md border-2 border-rose-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
-          DUPLICATA N° {item.official_duplicate_number || 1}
-          {item.official_issued_at
-            ? ` — original enregistré le ${formatOfficialDateTime(item.official_issued_at)}`
-            : ""}
-          {item.official_printed_at
-            ? ` — réédité le ${formatOfficialDateTime(item.official_printed_at)}`
-            : ""}
-        </div>
       ) : item.official_print_kind === "offline_copy" ? (
         <div className="mb-1 rounded-md border-2 border-amber-700 bg-white px-3 py-1 text-center text-[10px] font-black uppercase tracking-[0.14em] text-amber-800">
           COPIE HORS CONNEXION — ÉMISSION NON ENREGISTRÉE
@@ -3629,13 +3619,14 @@ function BulletinsPageContent() {
           position: absolute;
           inset: 0;
           z-index: 0;
-          width: 150mm;
-          height: 150mm;
+          width: 165mm;
+          height: 165mm;
           margin: auto;
           object-fit: contain;
-          opacity: 0.055;
+          opacity: 0.08;
           pointer-events: none;
           user-select: none;
+          filter: grayscale(100%) contrast(110%);
         }
 
         .bulletin-duplicata-watermark {
@@ -3647,11 +3638,11 @@ function BulletinsPageContent() {
           justify-content: center;
           pointer-events: none;
           user-select: none;
-          color: rgba(190, 24, 93, 0.11);
-          font-size: 72px;
+          color: rgba(190, 24, 93, 0.18);
+          font-size: 92px;
           font-weight: 1000;
-          letter-spacing: 0.16em;
-          transform: rotate(-24deg);
+          letter-spacing: 0.22em;
+          transform: rotate(-24deg) scale(1.05);
         }
 
         .print-page-content > :not(.bulletin-watermark):not(.bulletin-duplicata-watermark) {
