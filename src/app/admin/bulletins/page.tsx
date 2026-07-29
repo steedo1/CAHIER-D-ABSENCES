@@ -2647,6 +2647,15 @@ function BulletinsPageContent() {
   const { isOnline } = useOnlineStatus();
   const searchParams = useSearchParams();
   const duplicateIssueId = String(searchParams.get("duplicata") || "").trim();
+  const liveDuplicateMode = searchParams.get("duplicata_live") === "1";
+  const liveDuplicateStudentId = String(searchParams.get("student_id") || "").trim();
+  const liveDuplicateClassId = String(searchParams.get("class_id") || "").trim();
+  const liveDuplicateAcademicYear = String(
+    searchParams.get("academic_year") || "",
+  ).trim();
+  const liveDuplicatePeriodId = String(searchParams.get("period_id") || "").trim();
+  const isDuplicateRequest = Boolean(duplicateIssueId || liveDuplicateMode);
+  const liveDuplicateAutoLoadedRef = useRef(false);
   const [officialSnapshotOverrides, setOfficialSnapshotOverrides] = useState<
     Record<string, any>
   >({});
@@ -2660,12 +2669,18 @@ function BulletinsPageContent() {
   const [signaturesEnabled, setSignaturesEnabled] = useState<boolean | null>(null);
   const [signaturesToggling, setSignaturesToggling] = useState(false);
 
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [selectedClassId, setSelectedClassId] = useState<string>(
+    liveDuplicateClassId,
+  );
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>("");
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>(
+    liveDuplicateAcademicYear,
+  );
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(
+    liveDuplicatePeriodId,
+  );
 
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -2781,7 +2796,7 @@ function BulletinsPageContent() {
   }, [duplicateIssueId]);
 
   useEffect(() => {
-    if (duplicateIssueId) return;
+    if (duplicateIssueId || liveDuplicateMode) return;
     const cls = classes.find((c) => c.id === selectedClassId);
     if (cls?.academic_year) {
       setSelectedAcademicYear(cls.academic_year);
@@ -2899,12 +2914,33 @@ function BulletinsPageContent() {
       if (effectivePeriodCode) {
         params.set("period_code", effectivePeriodCode);
       }
+      if (liveDuplicateMode) {
+        params.set("active_only", "false");
+      }
 
       const [json, conductJson] = await Promise.all([
         getAdminBulletin<BulletinResponse>(params),
         getAdminBulletinConduct<ConductSummaryResponse>(params).catch(() => null),
       ]);
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
+      if (
+        liveDuplicateMode &&
+        liveDuplicateStudentId &&
+        !Array.isArray(json.items)
+      ) {
+        throw new Error("Le bulletin de cet élève est introuvable pour cette période.");
+      }
+      if (
+        liveDuplicateMode &&
+        liveDuplicateStudentId &&
+        !json.items.some(
+          (item: BulletinItemBase) => String(item.student_id || "") === liveDuplicateStudentId,
+        )
+      ) {
+        throw new Error(
+          "Cet élève n’était pas inscrit dans cette classe pendant la période sélectionnée.",
+        );
+      }
 
       const sigFromApi =
         (json as any)?.signatures &&
@@ -2930,6 +2966,36 @@ function BulletinsPageContent() {
       setBulletinLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!liveDuplicateMode || liveDuplicateAutoLoadedRef.current) return;
+    if (
+      !liveDuplicateStudentId ||
+      !selectedClassId ||
+      !selectedAcademicYear ||
+      !selectedPeriodId ||
+      !dateFrom ||
+      !dateTo ||
+      periodsLoading
+    ) {
+      return;
+    }
+
+    liveDuplicateAutoLoadedRef.current = true;
+    void handleLoadBulletin();
+    // Les paramètres de l'URL identifient un seul duplicata. On ne relance
+    // jamais automatiquement le chargement après la première tentative.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    liveDuplicateMode,
+    liveDuplicateStudentId,
+    selectedClassId,
+    selectedAcademicYear,
+    selectedPeriodId,
+    dateFrom,
+    dateTo,
+    periodsLoading,
+  ]);
 
   const handleToggleSignatures = async () => {
     try {
@@ -3104,8 +3170,14 @@ function BulletinsPageContent() {
       return String(a.student_id).localeCompare(String(b.student_id));
     });
 
+    if (liveDuplicateMode && liveDuplicateStudentId) {
+      return arr.filter(
+        (item) => String(item.student_id || "") === liveDuplicateStudentId,
+      );
+    }
+
     return arr;
-  }, [enriched]);
+  }, [enriched, liveDuplicateMode, liveDuplicateStudentId]);
 
   const stats = enriched?.stats ?? { highest: null, lowest: null, classAvg: null };
   const classInfo = enriched?.response.class;
@@ -3116,7 +3188,12 @@ function BulletinsPageContent() {
 
   const displayTotal = Math.max(
     1,
-    Number(enriched?.response.official_total_students || items.length || 1),
+    Number(
+      enriched?.response.official_total_students ||
+        enriched?.response.items?.length ||
+        items.length ||
+        1,
+    ),
   );
 
   const handlePrint = async () => {
@@ -3133,6 +3210,13 @@ function BulletinsPageContent() {
     };
 
     if (!isOnline) {
+      if (liveDuplicateMode) {
+        const message =
+          "Reconnectez Internet pour enregistrer et imprimer ce duplicata officiel.";
+        setErrorMsg(message);
+        window.alert(message);
+        return;
+      }
       const accepted = window.confirm(
         "Vous êtes hors connexion. Cette impression ne pourra pas être enregistrée comme original ou duplicata. Imprimer une copie hors connexion clairement marquée ?",
       );
@@ -3233,6 +3317,7 @@ function BulletinsPageContent() {
           document_type: "bulletin",
           documents,
           reason,
+          force_duplicate: liveDuplicateMode,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -3754,7 +3839,7 @@ function BulletinsPageContent() {
               Fermer
             </Button>
 
-            {!duplicateIssueId ? (
+            {!isDuplicateRequest ? (
               <Button
                 variant="ghost"
                 type="button"

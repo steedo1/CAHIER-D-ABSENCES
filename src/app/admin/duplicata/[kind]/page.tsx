@@ -8,7 +8,11 @@ import {
   Search,
 } from "lucide-react";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getOfficialDocumentAccess } from "@/lib/official-documents";
+import {
+  computeOfficialBulletinSourceId,
+  getOfficialDocumentAccess,
+} from "@/lib/official-documents";
+import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +20,9 @@ export const dynamic = "force-dynamic";
 type SearchParams = {
   q?: string;
   year?: string;
-  issue_id?: string;
+  student_id?: string;
+  class_id?: string;
+  period_id?: string;
 };
 
 type IssueRow = {
@@ -42,13 +48,46 @@ type StudentRow = {
   full_name: string | null;
 };
 
-type StudentBulletinGroup = {
+type AcademicYearRow = {
+  code: string;
+  label: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_current: boolean | null;
+};
+
+type ClassRow = {
+  id: string;
+  label: string | null;
+  level: string | null;
+  academic_year: string | null;
+};
+
+type EnrollmentRow = {
+  student_id: string;
+  class_id: string;
+  start_date: string | null;
+  end_date: string | null;
+};
+
+type PeriodRow = {
+  id: string;
+  academic_year: string;
+  code: string | null;
+  label: string | null;
+  short_label: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  order_index: number | null;
+  is_active: boolean | null;
+};
+
+type StudentSearchResult = {
   key: string;
-  studentId: string | null;
-  matricule: string;
-  beneficiaryName: string;
-  classLabel: string;
-  issues: IssueRow[];
+  student: StudentRow;
+  classRow: ClassRow;
+  enrollment: EnrollmentRow;
+  periods: PeriodRow[];
 };
 
 function clean(value: unknown) {
@@ -60,16 +99,6 @@ function normalizeSearch(value: unknown) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("fr-FR");
-}
-
-function uniqueSorted(values: string[], direction: "asc" | "desc" = "asc") {
-  const result = Array.from(new Set(values.filter(Boolean)));
-  result.sort((a, b) =>
-    direction === "desc"
-      ? b.localeCompare(a, "fr", { numeric: true })
-      : a.localeCompare(b, "fr", { numeric: true }),
-  );
-  return result;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -90,10 +119,6 @@ function studentDisplayName(student: StudentRow | undefined, fallback: string | 
     .filter(Boolean)
     .join(" ");
   return joined || clean(fallback) || "Élève";
-}
-
-function periodDisplay(issue: IssueRow) {
-  return clean(issue.period_label) || clean(issue.period_key) || "Période";
 }
 
 async function duplicateCounts(issueIds: string[]) {
@@ -344,7 +369,59 @@ export default async function DuplicataKindPage({
     );
   }
 
-  const { data: rawIssues, error: issuesError } = await admin
+  const [academicYearsResult, classYearsResult, periodYearsResult] = await Promise.all([
+    admin
+      .from("academic_years")
+      .select("code,label,start_date,end_date,is_current")
+      .eq("institution_id", access.institutionId)
+      .order("start_date", { ascending: false }),
+    admin
+      .from("classes")
+      .select("academic_year")
+      .eq("institution_id", access.institutionId),
+    admin
+      .from("grade_periods")
+      .select("academic_year")
+      .eq("institution_id", access.institutionId),
+  ]);
+
+  if (academicYearsResult.error) throw new Error(academicYearsResult.error.message);
+  if (classYearsResult.error) throw new Error(classYearsResult.error.message);
+  if (periodYearsResult.error) throw new Error(periodYearsResult.error.message);
+
+  const academicYearByCode = new Map<string, AcademicYearRow>();
+  for (const row of (academicYearsResult.data ?? []) as AcademicYearRow[]) {
+    const code = clean(row.code);
+    if (!code) continue;
+    academicYearByCode.set(code, { ...row, code });
+  }
+  for (const row of [
+    ...(classYearsResult.data ?? []),
+    ...(periodYearsResult.data ?? []),
+  ] as Array<{ academic_year?: string | null }>) {
+    const code = clean(row.academic_year);
+    if (!code || academicYearByCode.has(code)) continue;
+    academicYearByCode.set(code, {
+      code,
+      label: null,
+      start_date: null,
+      end_date: null,
+      is_current: false,
+    });
+  }
+
+  const academicYears = Array.from(academicYearByCode.values()).sort((a, b) =>
+    b.code.localeCompare(a.code, "fr", { numeric: true }),
+  );
+  const requestedYear = clean(requested.year);
+  const currentYear = academicYears.find((row) => row.is_current === true)?.code || "";
+  const selectedYear = academicYears.some((row) => row.code === requestedYear)
+    ? requestedYear
+    : currentYear || academicYears[0]?.code || "";
+  const queryText = clean(requested.q);
+  const normalizedTokens = normalizeSearch(queryText).split(/\s+/).filter(Boolean);
+
+  let issueQuery = admin
     .from("official_document_issues")
     .select(
       "id,document_type,source_id,official_number,beneficiary_id,beneficiary_name,academic_year,class_id,class_label,period_key,period_label,issued_at",
@@ -354,117 +431,199 @@ export default async function DuplicataKindPage({
     .order("issued_at", { ascending: false })
     .limit(10000);
 
+  if (selectedYear) issueQuery = issueQuery.eq("academic_year", selectedYear);
+
+  const { data: rawIssues, error: issuesError } = await issueQuery;
   if (issuesError) throw new Error(issuesError.message);
   const bulletinIssues = (rawIssues ?? []) as IssueRow[];
-
-  const years = uniqueSorted(
-    bulletinIssues.map((row) => clean(row.academic_year)),
-    "desc",
+  const issueBySourceId = new Map(
+    bulletinIssues.map((issue) => [clean(issue.source_id), issue] as const),
   );
-  const requestedYear = clean(requested.year);
-  const selectedYear = years.includes(requestedYear) ? requestedYear : years[0] || "";
-  const queryText = clean(requested.q);
-  const normalizedTokens = normalizeSearch(queryText).split(/\s+/).filter(Boolean);
-
-  const yearIssues = bulletinIssues.filter(
-    (issue) => !selectedYear || clean(issue.academic_year) === selectedYear,
-  );
-
-  const studentIds = Array.from(
-    new Set(yearIssues.map((row) => clean(row.beneficiary_id)).filter(Boolean)),
-  );
-  const studentById = new Map<string, StudentRow>();
-
-  if (studentIds.length) {
-    const { data: students, error: studentsError } = await admin
-      .from("students")
-      .select("id,matricule,first_name,last_name,full_name")
-      .eq("institution_id", access.institutionId)
-      .in("id", studentIds);
-
-    if (studentsError) throw new Error(studentsError.message);
-    for (const student of (students ?? []) as StudentRow[]) {
-      studentById.set(student.id, student);
-    }
+  const issueSearchByStudent = new Map<string, string[]>();
+  for (const issue of bulletinIssues) {
+    const studentId = clean(issue.beneficiary_id);
+    if (!studentId) continue;
+    const values = issueSearchByStudent.get(studentId) || [];
+    values.push(clean(issue.official_number));
+    issueSearchByStudent.set(studentId, values);
   }
 
-  const matchingIssues = queryText
-    ? yearIssues.filter((issue) => {
-        const studentId = clean(issue.beneficiary_id);
-        const student = studentId ? studentById.get(studentId) : undefined;
+  const counts = await duplicateCounts(bulletinIssues.map((row) => row.id));
+  const totalDuplicates = Array.from(counts.values()).reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+
+  let results: StudentSearchResult[] = [];
+  const periodsByClass = new Map<string, PeriodRow[]>();
+
+  if (queryText && selectedYear) {
+    const [{ data: classRows, error: classesError }, { data: studentRows, error: studentsError }] =
+      await Promise.all([
+        admin
+          .from("classes")
+          .select("id,label,level,academic_year")
+          .eq("institution_id", access.institutionId)
+          .eq("academic_year", selectedYear)
+          .order("level", { ascending: true })
+          .order("label", { ascending: true }),
+        admin
+          .from("students")
+          .select("id,matricule,first_name,last_name,full_name")
+          .eq("institution_id", access.institutionId)
+          .limit(10000),
+      ]);
+
+    if (classesError) throw new Error(classesError.message);
+    if (studentsError) throw new Error(studentsError.message);
+
+    const classes = (classRows ?? []) as ClassRow[];
+    const classById = new Map(classes.map((row) => [row.id, row] as const));
+    const classIds = classes.map((row) => row.id);
+
+    const candidates = ((studentRows ?? []) as StudentRow[])
+      .filter((student) => {
         const searchable = normalizeSearch(
           [
-            issue.official_number,
-            issue.beneficiary_name,
-            issue.class_label,
-            student?.matricule,
-            student?.first_name,
-            student?.last_name,
-            student?.full_name,
+            student.matricule,
+            student.full_name,
+            student.last_name,
+            student.first_name,
+            ...(issueSearchByStudent.get(student.id) || []),
           ]
             .filter(Boolean)
             .join(" "),
         );
         return normalizedTokens.every((token) => searchable.includes(token));
       })
-    : [];
+      .sort((a, b) =>
+        studentDisplayName(a, null).localeCompare(studentDisplayName(b, null), "fr"),
+      )
+      .slice(0, 80);
 
-  const groupsByStudent = matchingIssues.reduce<Map<string, StudentBulletinGroup>>(
-    (map, issue) => {
-      const studentId = clean(issue.beneficiary_id) || null;
-      const student = studentId ? studentById.get(studentId) : undefined;
-      const beneficiaryName = studentDisplayName(student, issue.beneficiary_name);
-      const matricule = clean(student?.matricule);
-      const classLabel = clean(issue.class_label) || "—";
-      const key = studentId || `${normalizeSearch(beneficiaryName)}|${normalizeSearch(classLabel)}`;
-      const current = map.get(key);
+    const candidateIds = candidates.map((student) => student.id);
+    const studentById = new Map(candidates.map((student) => [student.id, student] as const));
 
-      if (current) {
-        current.issues.push(issue);
-        if (!current.matricule && matricule) current.matricule = matricule;
-        if (current.classLabel === "—" && classLabel !== "—") {
-          current.classLabel = classLabel;
-        }
-      } else {
-        map.set(key, {
-          key,
-          studentId,
-          matricule,
-          beneficiaryName,
-          classLabel,
-          issues: [issue],
+    if (candidateIds.length && classIds.length) {
+      const { data: enrollmentRows, error: enrollmentsError } = await admin
+        .from("class_enrollments")
+        .select("student_id,class_id,start_date,end_date")
+        .eq("institution_id", access.institutionId)
+        .in("student_id", candidateIds)
+        .in("class_id", classIds)
+        .order("start_date", { ascending: false });
+
+      if (enrollmentsError) throw new Error(enrollmentsError.message);
+
+      const enrollments = (enrollmentRows ?? []) as EnrollmentRow[];
+      const distinctClassIds = Array.from(
+        new Set(enrollments.map((row) => clean(row.class_id)).filter(Boolean)),
+      );
+
+      await Promise.all(
+        distinctClassIds.map(async (classId) => {
+          const resolved = await listApplicableGradePeriods(
+            admin,
+            access.institutionId as string,
+            selectedYear,
+            classId,
+          );
+          periodsByClass.set(
+            classId,
+            (resolved.items || [])
+              .filter((period: PeriodRow) => period.is_active !== false)
+              .map((period: PeriodRow): PeriodRow => ({
+                id: period.id,
+                academic_year: period.academic_year,
+                code: period.code,
+                label: period.label,
+                short_label: period.short_label,
+                start_date: period.start_date,
+                end_date: period.end_date,
+                order_index: period.order_index,
+                is_active: period.is_active,
+              }))
+              .sort((a: PeriodRow, b: PeriodRow) =>
+                Number(a.order_index || 0) - Number(b.order_index || 0),
+              ),
+          );
+        }),
+      );
+
+      const seen = new Set<string>();
+      results = enrollments
+        .map((enrollment) => {
+          const student = studentById.get(enrollment.student_id);
+          const classRow = classById.get(enrollment.class_id);
+          if (!student || !classRow) return null;
+          const key = `${student.id}|${classRow.id}`;
+          if (seen.has(key)) return null;
+          seen.add(key);
+          return {
+            key,
+            student,
+            classRow,
+            enrollment,
+            periods: periodsByClass.get(classRow.id) || [],
+          } satisfies StudentSearchResult;
+        })
+        .filter((row): row is StudentSearchResult => Boolean(row))
+        .sort((a, b) => {
+          const nameCompare = studentDisplayName(a.student, null).localeCompare(
+            studentDisplayName(b.student, null),
+            "fr",
+          );
+          if (nameCompare !== 0) return nameCompare;
+          return clean(a.classRow.label).localeCompare(clean(b.classRow.label), "fr");
         });
-      }
-      return map;
-    },
-    new Map(),
+    }
+  }
+
+  const selectedStudentId = clean(requested.student_id);
+  const selectedClassId = clean(requested.class_id);
+  const selectedPeriodId = clean(requested.period_id);
+  const selectedResult = results.find(
+    (row) => row.student.id === selectedStudentId && row.classRow.id === selectedClassId,
+  );
+  const selectedPeriod = selectedResult?.periods.find(
+    (period) => period.id === selectedPeriodId,
   );
 
-  const groups = Array.from(groupsByStudent.values())
-    .map((group) => ({
-      ...group,
-      issues: [...group.issues].sort((a, b) =>
-        periodDisplay(a).localeCompare(periodDisplay(b), "fr", { numeric: true }),
-      ),
-    }))
-    .sort((a, b) => a.beneficiaryName.localeCompare(b.beneficiaryName, "fr"));
+  let selectedIssue: IssueRow | null = null;
+  let liveDuplicateHref = "";
 
-  const requestedIssueId = clean(requested.issue_id);
-  const selectedIssue = matchingIssues.find((issue) => issue.id === requestedIssueId) || null;
-  const selectedStudent = selectedIssue?.beneficiary_id
-    ? studentById.get(selectedIssue.beneficiary_id)
-    : undefined;
-  const counts = await duplicateCounts(matchingIssues.map((row) => row.id));
-  const totalDuplicates = Array.from(counts.values()).reduce(
-    (sum, value) => sum + value,
-    0,
-  );
+  if (selectedResult && selectedPeriod) {
+    const periodLabel =
+      clean(selectedPeriod.short_label) ||
+      clean(selectedPeriod.label) ||
+      clean(selectedPeriod.code) ||
+      null;
+    const sourceId = computeOfficialBulletinSourceId({
+      institutionId: access.institutionId,
+      classId: selectedResult.classRow.id,
+      studentId: selectedResult.student.id,
+      academicYear: selectedYear || null,
+      periodFrom: clean(selectedPeriod.start_date) || null,
+      periodTo: clean(selectedPeriod.end_date) || null,
+      periodLabel,
+    });
+    selectedIssue = issueBySourceId.get(sourceId) || null;
+
+    const liveParams = new URLSearchParams({
+      duplicata_live: "1",
+      student_id: selectedResult.student.id,
+      class_id: selectedResult.classRow.id,
+      academic_year: selectedYear,
+      period_id: selectedPeriod.id,
+    });
+    liveDuplicateHref = `/admin/bulletins?${liveParams.toString()}`;
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
       <PageHeader
         title="Bulletins"
-        originals={matchingIssues.length}
+        originals={bulletinIssues.length}
         duplicates={totalDuplicates}
       />
 
@@ -478,9 +637,12 @@ export default async function DuplicataKindPage({
             defaultValue={selectedYear}
             className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
           >
-            {years.map((year) => (
-              <option key={year} value={year}>
-                {year}
+            {academicYears.length === 0 ? (
+              <option value="">Aucune année scolaire configurée</option>
+            ) : null}
+            {academicYears.map((year) => (
+              <option key={year.code} value={year.code}>
+                {year.code}
               </option>
             ))}
           </select>
@@ -495,7 +657,7 @@ export default async function DuplicataKindPage({
             <input
               name="q"
               defaultValue={queryText}
-              placeholder="Matricule, nom, prénom, numéro de bulletin ou classe…"
+              placeholder="Matricule, nom ou prénom…"
               className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm font-semibold text-slate-800 outline-none focus:border-slate-400"
             />
           </div>
@@ -506,35 +668,38 @@ export default async function DuplicataKindPage({
         </button>
       </form>
 
-      {selectedIssue ? (
+      {selectedResult && selectedPeriod ? (
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Bulletin sélectionné
+                Duplicata sélectionné
               </div>
               <div className="mt-2 text-xl font-black text-slate-950">
-                {studentDisplayName(selectedStudent, selectedIssue.beneficiary_name)}
+                {studentDisplayName(selectedResult.student, null)}
               </div>
               <div className="mt-1 text-sm font-semibold text-slate-600">
                 {[
-                  clean(selectedStudent?.matricule)
-                    ? `Matricule ${clean(selectedStudent?.matricule)}`
+                  clean(selectedResult.student.matricule)
+                    ? `Matricule ${clean(selectedResult.student.matricule)}`
                     : null,
-                  clean(selectedIssue.class_label),
-                  periodDisplay(selectedIssue),
-                  clean(selectedIssue.academic_year),
+                  clean(selectedResult.classRow.label),
+                  clean(selectedPeriod.short_label) ||
+                    clean(selectedPeriod.label) ||
+                    clean(selectedPeriod.code),
+                  selectedYear,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
               </div>
-              <div className="mt-2 font-mono text-xs font-black text-slate-700">
-                {selectedIssue.official_number} · émis le {formatDateTime(selectedIssue.issued_at)}
-              </div>
             </div>
 
             <Link
-              href={`/admin/bulletins?duplicata=${encodeURIComponent(selectedIssue.id)}`}
+              href={
+                selectedIssue
+                  ? `/admin/bulletins?duplicata=${encodeURIComponent(selectedIssue.id)}`
+                  : liveDuplicateHref
+              }
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800"
@@ -560,37 +725,45 @@ export default async function DuplicataKindPage({
                 </tr>
               </thead>
               <tbody>
-                {groups.map((group) => (
-                  <tr key={group.key} className="border-t border-slate-100 align-middle">
+                {results.map((result) => (
+                  <tr key={result.key} className="border-t border-slate-100 align-middle">
                     <td className="px-5 py-4 font-mono text-xs font-black text-slate-700">
-                      {group.matricule || "—"}
+                      {clean(result.student.matricule) || "—"}
                     </td>
                     <td className="px-5 py-4 font-bold text-slate-900">
-                      {group.beneficiaryName}
+                      {studentDisplayName(result.student, null)}
                     </td>
                     <td className="px-5 py-4 font-semibold text-slate-600">
-                      {group.classLabel}
+                      {clean(result.classRow.label) || "—"}
                     </td>
                     <td className="px-5 py-4" colSpan={2}>
                       <form className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                         <input type="hidden" name="year" value={selectedYear} />
                         <input type="hidden" name="q" value={queryText} />
+                        <input type="hidden" name="student_id" value={result.student.id} />
+                        <input type="hidden" name="class_id" value={result.classRow.id} />
                         <select
-                          name="issue_id"
+                          name="period_id"
                           defaultValue={
-                            selectedIssue && group.issues.some((issue) => issue.id === selectedIssue.id)
-                              ? selectedIssue.id
-                              : group.issues[0]?.id || ""
+                            selectedResult?.key === result.key ? selectedPeriodId : ""
                           }
-                          className="h-11 min-w-[220px] rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
+                          required
+                          className="h-11 min-w-[230px] rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
                         >
-                          {group.issues.map((issue) => (
-                            <option key={issue.id} value={issue.id}>
-                              {periodDisplay(issue)}
+                          <option value="">Choisir le trimestre…</option>
+                          {result.periods.map((period) => (
+                            <option key={period.id} value={period.id}>
+                              {clean(period.short_label) ||
+                                clean(period.label) ||
+                                clean(period.code) ||
+                                `${clean(period.start_date)} → ${clean(period.end_date)}`}
                             </option>
                           ))}
                         </select>
-                        <button className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-xs font-black text-slate-900 hover:bg-slate-50">
+                        <button
+                          disabled={result.periods.length === 0}
+                          className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-xs font-black text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
                           Choisir
                         </button>
                       </form>
@@ -601,11 +774,11 @@ export default async function DuplicataKindPage({
             </table>
           </div>
 
-          {groups.length === 0 ? (
+          {results.length === 0 ? (
             <div className="px-6 py-16 text-center">
               <Search className="mx-auto h-10 w-10 text-slate-300" />
               <div className="mt-4 text-lg font-black text-slate-800">
-                Aucun bulletin trouvé
+                Aucun élève trouvé pour cette année scolaire
               </div>
             </div>
           ) : null}
@@ -617,7 +790,7 @@ export default async function DuplicataKindPage({
             Rechercher un élève
           </div>
           <p className="mt-2 text-sm text-slate-500">
-            Saisissez son matricule, son nom ou son prénom.
+            Sélectionnez l’année scolaire, puis saisissez le matricule, le nom ou le prénom.
           </p>
         </div>
       )}

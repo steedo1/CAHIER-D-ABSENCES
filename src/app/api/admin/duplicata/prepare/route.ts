@@ -335,6 +335,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
     ? (body.documents as BulletinDocumentInput[])
     : [];
   const reason = cleanOfficialText(body?.reason);
+  const forceDuplicate = body?.force_duplicate === true;
 
   if (documents.length === 0 || documents.length > 300) {
     return NextResponse.json(
@@ -499,6 +500,7 @@ async function prepareBulletins(req: NextRequest, body: any) {
     p_reason: reason || null,
     p_metadata: {
       document_type: "bulletin",
+      force_duplicate: forceDuplicate,
       user_agent: req.headers.get("user-agent") || null,
     },
   });
