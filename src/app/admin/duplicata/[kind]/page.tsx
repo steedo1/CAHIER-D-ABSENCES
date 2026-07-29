@@ -4,7 +4,6 @@ import {
   Copy,
   FileSpreadsheet,
   FileText,
-  Filter,
   Printer,
   Search,
 } from "lucide-react";
@@ -17,9 +16,7 @@ export const dynamic = "force-dynamic";
 type SearchParams = {
   q?: string;
   year?: string;
-  level?: string;
-  class_id?: string;
-  period?: string;
+  issue_id?: string;
 };
 
 type IssueRow = {
@@ -27,6 +24,7 @@ type IssueRow = {
   document_type: "receipt" | "bulletin";
   source_id: string;
   official_number: string;
+  beneficiary_id: string | null;
   beneficiary_name: string | null;
   academic_year: string | null;
   class_id: string | null;
@@ -36,24 +34,32 @@ type IssueRow = {
   issued_at: string | null;
 };
 
-type ClassRow = {
+type StudentRow = {
   id: string;
-  name: string | null;
-  label: string | null;
-  level: string | null;
-  academic_year: string | null;
+  matricule: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
 };
 
-type BulletinIssueRow = IssueRow & {
-  class_key: string;
-  display_class: string;
-  display_level: string;
-  display_period: string;
-  filter_period: string;
+type StudentBulletinGroup = {
+  key: string;
+  studentId: string | null;
+  matricule: string;
+  beneficiaryName: string;
+  classLabel: string;
+  issues: IssueRow[];
 };
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function normalizeSearch(value: unknown) {
+  return clean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("fr-FR");
 }
 
 function uniqueSorted(values: string[], direction: "asc" | "desc" = "asc") {
@@ -74,6 +80,20 @@ function formatDateTime(value: string | null | undefined) {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function studentDisplayName(student: StudentRow | undefined, fallback: string | null) {
+  const fullName = clean(student?.full_name);
+  if (fullName) return fullName;
+
+  const joined = [clean(student?.last_name), clean(student?.first_name)]
+    .filter(Boolean)
+    .join(" ");
+  return joined || clean(fallback) || "Élève";
+}
+
+function periodDisplay(issue: IssueRow) {
+  return clean(issue.period_label) || clean(issue.period_key) || "Période";
 }
 
 async function duplicateCounts(issueIds: string[]) {
@@ -267,7 +287,7 @@ export default async function DuplicataKindPage({
     let query = admin
       .from("official_document_issues")
       .select(
-        "id,document_type,source_id,official_number,beneficiary_name,academic_year,class_id,class_label,period_key,period_label,issued_at",
+        "id,document_type,source_id,official_number,beneficiary_id,beneficiary_name,academic_year,class_id,class_label,period_key,period_label,issued_at",
       )
       .eq("institution_id", access.institutionId)
       .eq("document_type", "receipt")
@@ -327,125 +347,114 @@ export default async function DuplicataKindPage({
   const { data: rawIssues, error: issuesError } = await admin
     .from("official_document_issues")
     .select(
-      "id,document_type,source_id,official_number,beneficiary_name,academic_year,class_id,class_label,period_key,period_label,issued_at",
+      "id,document_type,source_id,official_number,beneficiary_id,beneficiary_name,academic_year,class_id,class_label,period_key,period_label,issued_at",
     )
     .eq("institution_id", access.institutionId)
     .eq("document_type", "bulletin")
-    .order("beneficiary_name", { ascending: true })
-    .limit(5000);
+    .order("issued_at", { ascending: false })
+    .limit(10000);
 
   if (issuesError) throw new Error(issuesError.message);
   const bulletinIssues = (rawIssues ?? []) as IssueRow[];
 
-  const classIds = Array.from(
-    new Set(bulletinIssues.map((row) => clean(row.class_id)).filter(Boolean)),
-  );
-  const classById = new Map<string, ClassRow>();
-
-  if (classIds.length) {
-    const { data: classRows, error: classesError } = await admin
-      .from("classes")
-      .select("id,name,label,level,academic_year")
-      .eq("institution_id", access.institutionId)
-      .in("id", classIds);
-
-    if (classesError) throw new Error(classesError.message);
-    for (const row of (classRows ?? []) as ClassRow[]) {
-      classById.set(row.id, row);
-    }
-  }
-
-  const enriched: BulletinIssueRow[] = bulletinIssues.map((issue) => {
-    const classId = clean(issue.class_id);
-    const classRow = classId ? classById.get(classId) : null;
-    const displayClass =
-      clean(issue.class_label) || clean(classRow?.name) || clean(classRow?.label) || "Classe";
-    const displayLevel = clean(classRow?.level) || "Non renseigné";
-    const displayPeriod = clean(issue.period_label) || "Période non renseignée";
-    const filterPeriod = clean(issue.period_key) || displayPeriod;
-
-    return {
-      ...issue,
-      class_key: classId || `label:${displayClass}`,
-      display_class: displayClass,
-      display_level: displayLevel,
-      display_period: displayPeriod,
-      filter_period: filterPeriod,
-    };
-  });
-
   const years = uniqueSorted(
-    enriched.map((row) => clean(row.academic_year)),
+    bulletinIssues.map((row) => clean(row.academic_year)),
     "desc",
   );
   const requestedYear = clean(requested.year);
   const selectedYear = years.includes(requestedYear) ? requestedYear : years[0] || "";
+  const queryText = clean(requested.q);
+  const normalizedTokens = normalizeSearch(queryText).split(/\s+/).filter(Boolean);
 
-  const levels = uniqueSorted(
-    enriched
-      .filter((row) => !selectedYear || clean(row.academic_year) === selectedYear)
-      .map((row) => row.display_level),
-  );
-  const requestedLevel = clean(requested.level);
-  const selectedLevel = levels.includes(requestedLevel)
-    ? requestedLevel
-    : levels[0] || "";
-
-  const classOptions = Array.from(
-    enriched
-      .filter(
-        (row) =>
-          (!selectedYear || clean(row.academic_year) === selectedYear) &&
-          (!selectedLevel || row.display_level === selectedLevel),
-      )
-      .reduce<Map<string, { key: string; label: string }>>((map, row) => {
-        if (!map.has(row.class_key)) {
-          map.set(row.class_key, { key: row.class_key, label: row.display_class });
-        }
-        return map;
-      }, new Map())
-      .values(),
-  ).sort((a, b) => a.label.localeCompare(b.label, "fr", { numeric: true }));
-
-  const requestedClass = clean(requested.class_id);
-  const selectedClass = classOptions.some((row) => row.key === requestedClass)
-    ? requestedClass
-    : classOptions[0]?.key || "";
-
-  const periodOptions = Array.from(
-    enriched
-      .filter(
-        (row) =>
-          (!selectedYear || clean(row.academic_year) === selectedYear) &&
-          (!selectedLevel || row.display_level === selectedLevel) &&
-          (!selectedClass || row.class_key === selectedClass),
-      )
-      .reduce<Map<string, { key: string; label: string }>>((map, row) => {
-        if (!map.has(row.filter_period)) {
-          map.set(row.filter_period, {
-            key: row.filter_period,
-            label: row.display_period,
-          });
-        }
-        return map;
-      }, new Map())
-      .values(),
-  ).sort((a, b) => a.label.localeCompare(b.label, "fr", { numeric: true }));
-
-  const requestedPeriod = clean(requested.period);
-  const selectedPeriod = periodOptions.some((row) => row.key === requestedPeriod)
-    ? requestedPeriod
-    : periodOptions[0]?.key || "";
-
-  const filteredIssues = enriched.filter(
-    (row) =>
-      (!selectedYear || clean(row.academic_year) === selectedYear) &&
-      (!selectedLevel || row.display_level === selectedLevel) &&
-      (!selectedClass || row.class_key === selectedClass) &&
-      (!selectedPeriod || row.filter_period === selectedPeriod),
+  const yearIssues = bulletinIssues.filter(
+    (issue) => !selectedYear || clean(issue.academic_year) === selectedYear,
   );
 
-  const counts = await duplicateCounts(filteredIssues.map((row) => row.id));
+  const studentIds = Array.from(
+    new Set(yearIssues.map((row) => clean(row.beneficiary_id)).filter(Boolean)),
+  );
+  const studentById = new Map<string, StudentRow>();
+
+  if (studentIds.length) {
+    const { data: students, error: studentsError } = await admin
+      .from("students")
+      .select("id,matricule,first_name,last_name,full_name")
+      .eq("institution_id", access.institutionId)
+      .in("id", studentIds);
+
+    if (studentsError) throw new Error(studentsError.message);
+    for (const student of (students ?? []) as StudentRow[]) {
+      studentById.set(student.id, student);
+    }
+  }
+
+  const matchingIssues = queryText
+    ? yearIssues.filter((issue) => {
+        const studentId = clean(issue.beneficiary_id);
+        const student = studentId ? studentById.get(studentId) : undefined;
+        const searchable = normalizeSearch(
+          [
+            issue.official_number,
+            issue.beneficiary_name,
+            issue.class_label,
+            student?.matricule,
+            student?.first_name,
+            student?.last_name,
+            student?.full_name,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+        return normalizedTokens.every((token) => searchable.includes(token));
+      })
+    : [];
+
+  const groupsByStudent = matchingIssues.reduce<Map<string, StudentBulletinGroup>>(
+    (map, issue) => {
+      const studentId = clean(issue.beneficiary_id) || null;
+      const student = studentId ? studentById.get(studentId) : undefined;
+      const beneficiaryName = studentDisplayName(student, issue.beneficiary_name);
+      const matricule = clean(student?.matricule);
+      const classLabel = clean(issue.class_label) || "—";
+      const key = studentId || `${normalizeSearch(beneficiaryName)}|${normalizeSearch(classLabel)}`;
+      const current = map.get(key);
+
+      if (current) {
+        current.issues.push(issue);
+        if (!current.matricule && matricule) current.matricule = matricule;
+        if (current.classLabel === "—" && classLabel !== "—") {
+          current.classLabel = classLabel;
+        }
+      } else {
+        map.set(key, {
+          key,
+          studentId,
+          matricule,
+          beneficiaryName,
+          classLabel,
+          issues: [issue],
+        });
+      }
+      return map;
+    },
+    new Map(),
+  );
+
+  const groups = Array.from(groupsByStudent.values())
+    .map((group) => ({
+      ...group,
+      issues: [...group.issues].sort((a, b) =>
+        periodDisplay(a).localeCompare(periodDisplay(b), "fr", { numeric: true }),
+      ),
+    }))
+    .sort((a, b) => a.beneficiaryName.localeCompare(b.beneficiaryName, "fr"));
+
+  const requestedIssueId = clean(requested.issue_id);
+  const selectedIssue = matchingIssues.find((issue) => issue.id === requestedIssueId) || null;
+  const selectedStudent = selectedIssue?.beneficiary_id
+    ? studentById.get(selectedIssue.beneficiary_id)
+    : undefined;
+  const counts = await duplicateCounts(matchingIssues.map((row) => row.id));
   const totalDuplicates = Array.from(counts.values()).reduce(
     (sum, value) => sum + value,
     0,
@@ -455,11 +464,11 @@ export default async function DuplicataKindPage({
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
       <PageHeader
         title="Bulletins"
-        originals={filteredIssues.length}
+        originals={matchingIssues.length}
         duplicates={totalDuplicates}
       />
 
-      <form className="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.2fr_1.2fr_auto]">
+      <form className="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[240px_1fr_auto]">
         <label className="block">
           <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">
             Année scolaire
@@ -479,66 +488,139 @@ export default async function DuplicataKindPage({
 
         <label className="block">
           <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">
-            Niveau
+            Élève
           </span>
-          <select
-            name="level"
-            defaultValue={selectedLevel}
-            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
-          >
-            {levels.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              name="q"
+              defaultValue={queryText}
+              placeholder="Matricule, nom, prénom, numéro de bulletin ou classe…"
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-sm font-semibold text-slate-800 outline-none focus:border-slate-400"
+            />
+          </div>
         </label>
 
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">
-            Classe
-          </span>
-          <select
-            name="class_id"
-            defaultValue={selectedClass}
-            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
-          >
-            {classOptions.map((item) => (
-              <option key={item.key} value={item.key}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">
-            Période
-          </span>
-          <select
-            name="period"
-            defaultValue={selectedPeriod}
-            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
-          >
-            {periodOptions.map((item) => (
-              <option key={item.key} value={item.key}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button className="mt-auto inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800">
-          <Filter className="h-4 w-4" />
-          Afficher
+        <button className="mt-auto inline-flex h-12 items-center justify-center rounded-2xl bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800">
+          Rechercher
         </button>
       </form>
 
-      <DocumentsTable
-        issues={filteredIssues}
-        duplicateCountByIssue={counts}
-        documentType="bulletin"
-      />
+      {selectedIssue ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Bulletin sélectionné
+              </div>
+              <div className="mt-2 text-xl font-black text-slate-950">
+                {studentDisplayName(selectedStudent, selectedIssue.beneficiary_name)}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-600">
+                {[
+                  clean(selectedStudent?.matricule)
+                    ? `Matricule ${clean(selectedStudent?.matricule)}`
+                    : null,
+                  clean(selectedIssue.class_label),
+                  periodDisplay(selectedIssue),
+                  clean(selectedIssue.academic_year),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+              <div className="mt-2 font-mono text-xs font-black text-slate-700">
+                {selectedIssue.official_number} · émis le {formatDateTime(selectedIssue.issued_at)}
+              </div>
+            </div>
+
+            <Link
+              href={`/admin/bulletins?duplicata=${encodeURIComponent(selectedIssue.id)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 text-sm font-black text-white hover:bg-slate-800"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimer le duplicata
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {queryText ? (
+        <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-5 py-4">Matricule</th>
+                  <th className="px-5 py-4">Élève</th>
+                  <th className="px-5 py-4">Classe</th>
+                  <th className="px-5 py-4">Trimestre / période</th>
+                  <th className="px-5 py-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((group) => (
+                  <tr key={group.key} className="border-t border-slate-100 align-middle">
+                    <td className="px-5 py-4 font-mono text-xs font-black text-slate-700">
+                      {group.matricule || "—"}
+                    </td>
+                    <td className="px-5 py-4 font-bold text-slate-900">
+                      {group.beneficiaryName}
+                    </td>
+                    <td className="px-5 py-4 font-semibold text-slate-600">
+                      {group.classLabel}
+                    </td>
+                    <td className="px-5 py-4" colSpan={2}>
+                      <form className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                        <input type="hidden" name="year" value={selectedYear} />
+                        <input type="hidden" name="q" value={queryText} />
+                        <select
+                          name="issue_id"
+                          defaultValue={
+                            selectedIssue && group.issues.some((issue) => issue.id === selectedIssue.id)
+                              ? selectedIssue.id
+                              : group.issues[0]?.id || ""
+                          }
+                          className="h-11 min-w-[220px] rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-slate-400"
+                        >
+                          {group.issues.map((issue) => (
+                            <option key={issue.id} value={issue.id}>
+                              {periodDisplay(issue)}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 text-xs font-black text-slate-900 hover:bg-slate-50">
+                          Choisir
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {groups.length === 0 ? (
+            <div className="px-6 py-16 text-center">
+              <Search className="mx-auto h-10 w-10 text-slate-300" />
+              <div className="mt-4 text-lg font-black text-slate-800">
+                Aucun bulletin trouvé
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-[30px] border border-slate-200 bg-white px-6 py-16 text-center shadow-sm">
+          <Search className="mx-auto h-10 w-10 text-slate-300" />
+          <div className="mt-4 text-lg font-black text-slate-800">
+            Rechercher un élève
+          </div>
+          <p className="mt-2 text-sm text-slate-500">
+            Saisissez son matricule, son nom ou son prénom.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
