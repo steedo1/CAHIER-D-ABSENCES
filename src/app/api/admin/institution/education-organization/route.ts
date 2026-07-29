@@ -45,33 +45,45 @@ async function guard(
 
   const { data: profile } = await supa
     .from("profiles")
-    .select("id, role, institution_id")
+    .select("id, institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  let instId = String((profile as any)?.institution_id || "").trim() || null;
-  const profileRole = String((profile as any)?.role || "").trim();
-  let allowed = allowedRoles.has(profileRole);
+  const profileInstitutionId = String(
+    (profile as any)?.institution_id || "",
+  ).trim();
+  let instId = profileInstitutionId || null;
 
   const { data: userRoles } = await srv
     .from("user_roles")
     .select("role, institution_id")
     .eq("profile_id", user.id);
 
-  for (const row of userRoles || []) {
-    const role = String((row as any)?.role || "").trim();
-    if (!allowedRoles.has(role)) continue;
+  const allowedRows = (userRoles || []).filter((row: any) =>
+    allowedRoles.has(String(row?.role || "").trim()),
+  );
 
-    const roleInstitutionId = String((row as any)?.institution_id || "").trim();
-    if (!instId && roleInstitutionId) instId = roleInstitutionId;
-
-    if (role === "super_admin" || !roleInstitutionId || roleInstitutionId === instId) {
-      allowed = true;
-      break;
-    }
+  if (!instId) {
+    const rowWithInstitution = allowedRows.find((row: any) =>
+      String(row?.institution_id || "").trim(),
+    );
+    instId = String(rowWithInstitution?.institution_id || "").trim() || null;
   }
 
   if (!instId) return { error: "no_institution" };
+
+  const allowed = allowedRows.some((row: any) => {
+    const role = String(row?.role || "").trim();
+    if (role === "super_admin") return true;
+
+    const roleInstitutionId = String(row?.institution_id || "").trim();
+    if (roleInstitutionId) return roleInstitutionId === instId;
+
+    return Boolean(
+      profileInstitutionId && profileInstitutionId === instId,
+    );
+  });
+
   if (!allowed) return { error: "forbidden" };
 
   return { user: { id: user.id }, instId };

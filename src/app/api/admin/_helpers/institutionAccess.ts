@@ -11,15 +11,13 @@ function cleanId(value: unknown) {
 }
 
 /**
- * Résout de façon sûre l'établissement du compte connecté.
+ * Résout l'établissement du compte connecté sans dépendre d'une colonne
+ * profiles.role : dans le schéma de production, les rôles sont portés par
+ * public.user_roles.
  *
- * Source principale : profiles.institution_id.
+ * Source principale de l'établissement : profiles.institution_id.
  * Compatibilité : user_roles.institution_id pour les comptes historiques dont
  * le profil n'a pas encore été synchronisé.
- *
- * Une ancienne ligne user_roles sans institution_id n'est acceptée que si le
- * profil porte lui-même l'établissement. Cela évite qu'un rôle non rattaché
- * hérite accidentellement de l'établissement d'un autre rôle.
  */
 export async function requireInstitutionAccess(
   options: RequireInstitutionAccessOptions,
@@ -41,7 +39,7 @@ export async function requireInstitutionAccess(
     await Promise.all([
       supa
         .from("profiles")
-        .select("institution_id,role")
+        .select("institution_id")
         .eq("id", user.id)
         .maybeSingle(),
       srv
@@ -68,8 +66,6 @@ export async function requireInstitutionAccess(
   );
 
   const profileInstitutionId = cleanId((profile as any)?.institution_id);
-  const profileRole = String((profile as any)?.role || "").trim();
-  const profileRoleAllowed = allowedRoles.has(profileRole);
   let institutionId = profileInstitutionId;
 
   if (!institutionId) {
@@ -92,22 +88,16 @@ export async function requireInstitutionAccess(
     const roleInstitutionId = cleanId(row.institution_id);
     if (roleInstitutionId) return roleInstitutionId === institutionId;
 
-    return Boolean(profileInstitutionId && profileInstitutionId === institutionId);
+    // Une ligne historique sans institution n'est valable que lorsque le
+    // profil porte explicitement l'établissement courant.
+    return Boolean(
+      profileInstitutionId && profileInstitutionId === institutionId,
+    );
   });
 
   const applicableRoles = new Set(
     applicableRows.map((row: any) => String(row.role || "")),
   );
-
-  // Compatibilité avec les anciens comptes dont le rôle principal est encore
-  // porté uniquement par profiles.role.
-  if (
-    profileRoleAllowed &&
-    profileInstitutionId &&
-    profileInstitutionId === institutionId
-  ) {
-    applicableRoles.add(profileRole);
-  }
 
   if (!applicableRoles.size) {
     return {
