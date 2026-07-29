@@ -1418,22 +1418,17 @@ function StudentBulletinCard({
 
     // Zone utile A4 imprimée : 297 mm - marges @page 4 mm x 2 = 289 mm.
     const targetPx = (287 / 25.4) * 96;
-    const fitRatio = targetPx / naturalH;
 
-    // Si on est déjà très proche de la cible, on garde la taille normale.
-    if (fitRatio >= 0.995 && fitRatio <= 1.02) {
+    if (naturalH <= targetPx) {
       setScale(1);
       return;
     }
 
-    // Si le contenu est trop court, on l'agrandit légèrement pour mieux occuper la page.
-    // Si le contenu est trop long, on le réduit juste ce qu'il faut.
-    const adjusted =
-      fitRatio > 1
-        ? Math.min(1.08, fitRatio * 0.985)
-        : Math.max(0.72, Math.min(1, fitRatio * 0.995));
+    const raw = Math.min(1, targetPx / naturalH);
+    const safe = Math.min(1, raw * 0.998);
+    const clamped = Math.max(0.88, safe);
 
-    setScale(adjusted);
+    setScale(clamped);
   };
 
   useLayoutEffect(() => {
@@ -2570,13 +2565,13 @@ function StudentBulletinCard({
 
           <div
             className={[
-              "bdr visa-card grid min-h-[78px] overflow-hidden p-0",
+              "bdr visa-card grid min-h-[98px] overflow-hidden p-0",
               showEndOfYearDecision ? "grid-cols-2" : "grid-cols-1",
             ].join(" ")}
           >
-            <div className="flex min-h-[78px] flex-col justify-between p-1">
+            <div className="flex min-h-[98px] flex-col justify-between p-1">
               <div className="font-semibold text-[9px]">Visa du professeur principal</div>
-              <div className="h-[50px]" />
+              <div className="h-[68px]" />
               {classInfo.head_teacher?.display_name && (
                 <div className="text-center text-[9px]">
                   {classInfo.head_teacher.display_name}
@@ -2585,7 +2580,7 @@ function StudentBulletinCard({
             </div>
 
             {showEndOfYearDecision && (
-              <div className="flex min-h-[78px] flex-col border-l border-black p-1 text-center">
+              <div className="flex min-h-[98px] flex-col border-l border-black p-1 text-center">
                 <div className="text-[8px] font-bold uppercase leading-tight">
                   Décision de fin d’année
                 </div>
@@ -2623,7 +2618,7 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="bulletin-footer mt-auto pt-[1.5mm] text-center text-[8.6px] leading-tight text-black">
+      <div className="bulletin-footer mt-1 pb-[1mm] text-center text-[8.6px] leading-tight text-black">
         <div className="font-bold tracking-[0.03em]">www.mon-cahier.com</div>
         <div className="font-semibold">Bulletin sécurisé par code QR</div>
       </div>
@@ -3409,7 +3404,7 @@ function BulletinsPageContent() {
         }
 
         .bdr {
-          border: 1px solid var(--bulletin-border);
+          border: 1.35px solid var(--bulletin-border);
         }
 
         .bulletin-sheet,
@@ -3521,7 +3516,8 @@ function BulletinsPageContent() {
         .council-card,
         .visa-card {
           background: #ffffff;
-          border-color: var(--bulletin-muted-border);
+          border-color: #94a3b8;
+          border-width: 1.25px;
         }
 
         .bottom-card,
@@ -3565,7 +3561,7 @@ function BulletinsPageContent() {
         }
 
         .head-visa-card {
-          min-height: 132px;
+          min-height: 156px;
         }
 
         .bulletin-footer {
@@ -3628,8 +3624,6 @@ function BulletinsPageContent() {
         .print-page-content {
           width: 100%;
           min-height: 297mm;
-          display: flex;
-          flex-direction: column;
           padding: 8mm;
           box-sizing: border-box;
           transform-origin: top left;
@@ -3678,9 +3672,6 @@ function BulletinsPageContent() {
 
         .preview-overlay .print-page-content {
           min-height: 289mm;
-          height: 289mm;
-          display: flex;
-          flex-direction: column;
           padding: 2mm 6mm 4mm;
         }
 
@@ -3777,9 +3768,6 @@ function BulletinsPageContent() {
           .print-page-content {
             width: calc(100% / var(--print-fit-scale, 1)) !important;
             min-height: auto !important;
-            height: 289mm !important;
-            display: flex !important;
-            flex-direction: column !important;
             padding: 1.5mm 5mm 3mm !important;
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
