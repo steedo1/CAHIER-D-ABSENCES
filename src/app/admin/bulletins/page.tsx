@@ -3200,32 +3200,52 @@ function BulletinsPageContent() {
       });
     };
 
-    if (!isOnline) {
-      if (liveDuplicateMode) {
-        const message =
-          "Reconnectez Internet pour enregistrer et imprimer ce duplicata officiel.";
-        setErrorMsg(message);
-        window.alert(message);
-        return;
-      }
-      const accepted = window.confirm(
-        "Vous êtes hors connexion. Cette impression ne pourra pas être enregistrée comme original ou duplicata. Imprimer une copie hors connexion clairement marquée ?",
+    const launchOfficialPrintWithoutRegistry = (cause?: unknown) => {
+      console.error(
+        "[Bulletins] registre officiel indisponible, impression maintenue",
+        cause,
       );
-      if (!accepted) return;
+
+      const printedAt = new Date().toISOString();
       setBulletinRaw((current) =>
         current
           ? {
               ...current,
-              items: current.items.map((item) => ({
-                ...item,
-                official_print_kind: "offline_copy",
-                official_duplicate_number: null,
-                official_printed_at: new Date().toISOString(),
-              })),
+              items: current.items.map((item) => {
+                if (
+                  liveDuplicateMode &&
+                  liveDuplicateStudentId &&
+                  String(item.student_id || "") !== liveDuplicateStudentId
+                ) {
+                  return item;
+                }
+
+                return {
+                  ...item,
+                  official_print_kind: liveDuplicateMode ? "duplicate" : "original",
+                  official_duplicate_number: liveDuplicateMode
+                    ? Math.max(
+                        1,
+                        Number.isFinite(Number(item.official_duplicate_number))
+                          ? Number(item.official_duplicate_number || 0) + 1
+                          : 1,
+                      )
+                    : null,
+                  official_issued_at: item.official_issued_at || printedAt,
+                  official_printed_at: printedAt,
+                };
+              }),
             }
           : current,
       );
+
       window.setTimeout(launchBrowserPrint, 0);
+    };
+
+    if (!isOnline) {
+      launchOfficialPrintWithoutRegistry(
+        new Error("Connexion indisponible au moment de l’impression."),
+      );
       return;
     }
 
@@ -3361,10 +3381,7 @@ function BulletinsPageContent() {
 
       window.setTimeout(launchBrowserPrint, 0);
     } catch (error: any) {
-      const message =
-        error?.message || "Une erreur est survenue avant l’impression officielle.";
-      setErrorMsg(message);
-      window.alert(message);
+      launchOfficialPrintWithoutRegistry(error);
     } finally {
       setPrintPreparing(false);
     }
