@@ -40,7 +40,15 @@ type DetailRow = {
   subject_name: string | null;
   expected_minutes: number;
   real_minutes: number;
+  observed_minutes?: number;
   actual_call_iso?: string | null;
+  ended_at?: string | null;
+  session_state?: "open" | "closed";
+  status?: string | null;
+  presence_verified?: boolean | null;
+  presence_method?: string | null;
+  origin?: string | null;
+  late_minutes?: number;
   class_id?: string | null; // ✅ récupéré par l’API
   class_label?: string | null; // ✅ récupéré par l’API
 };
@@ -50,6 +58,19 @@ type SummaryRow = {
   teacher_name: string;
   total_minutes: number; // on le garde pour compat, même si non affiché
   sessions_count: number; // ✅ nouveau : nombre de séances (1 séance = 1h)
+  observed_minutes?: number;
+  scheduled_count?: number;
+  opened_count?: number;
+  closed_count?: number;
+  not_opened_count?: number;
+  not_closed_count?: number;
+  approved_absence_count?: number;
+  pending_absence_count?: number;
+  unjustified_absence_count?: number;
+  unplanned_opened_count?: number;
+  presence_rate?: number;
+  closure_rate?: number;
+  completion_rate?: number;
   subject_names?: string[];
 };
 
@@ -59,6 +80,8 @@ type InspectorWeekRow = {
   subject_name: string | null;
   class_label: string | null;
   sessions: number;
+  closed_sessions: number;
+  not_closed_sessions: number;
   total_minutes: number;
 };
 
@@ -235,6 +258,22 @@ function originEmoji(o?: string) {
   return "";
 }
 
+function presenceMethodLabel(value?: string | null) {
+  const method = String(value || "").trim().toLowerCase();
+  if (!method) return "Non renseignée";
+  if (method === "lan" || method === "relay" || method === "local_relay") {
+    return "Relais local / LAN";
+  }
+  if (method === "gps") return "GPS";
+  if (method === "manual" || method === "admin") return "Validation administrative";
+  return method.replaceAll("_", " ");
+}
+
+function percentLabel(value?: number | null) {
+  const n = Number(value || 0);
+  return `${Number.isFinite(n) ? n.toLocaleString("fr-FR", { maximumFractionDigits: 1 }) : "0"} %`;
+}
+
 /** Durée effective d’un créneau en minutes = longueur_slot − max(0, clic − début) */
 function effectiveSlotMinutes(times: string[], slot: TimesheetSlot) {
   const slotLen = Math.max(0, hhmmToMinutes(slot.end) - hhmmToMinutes(slot.start));
@@ -356,7 +395,13 @@ export default function AdminStatistiquesPage() {
     data: null,
   });
   const [detail, setDetail] = useState<
-    FetchState<{ rows: DetailRow[]; total_minutes: number; count: number }>
+    FetchState<{
+      rows: DetailRow[];
+      total_minutes: number;
+      total_observed_minutes?: number;
+      count: number;
+      payroll_basis?: boolean;
+    }>
   >({
     loading: false,
     error: null,
@@ -367,10 +412,45 @@ export default function AdminStatistiquesPage() {
 
   const showDetail = teacherId !== "ALL";
 
-  // ✅ total des séances sur la période (synthèse)
-  const totalSessionsSummary = useMemo(() => {
-    if (!summary.data) return 0;
-    return summary.data.reduce((acc, it) => acc + (it.sessions_count || 0), 0);
+  const controlTotals = useMemo(() => {
+    const initial = {
+      scheduled: 0,
+      opened: 0,
+      closed: 0,
+      notOpened: 0,
+      notClosed: 0,
+      approved: 0,
+      pending: 0,
+      unjustified: 0,
+      unplanned: 0,
+      observedMinutes: 0,
+    };
+
+    for (const row of summary.data || []) {
+      initial.scheduled += Number(row.scheduled_count || 0);
+      initial.opened += Number(row.opened_count ?? row.sessions_count ?? 0);
+      initial.closed += Number(row.closed_count || 0);
+      initial.notOpened += Number(row.not_opened_count || 0);
+      initial.notClosed += Number(row.not_closed_count || 0);
+      initial.approved += Number(row.approved_absence_count || 0);
+      initial.pending += Number(row.pending_absence_count || 0);
+      initial.unjustified += Number(row.unjustified_absence_count || 0);
+      initial.unplanned += Number(row.unplanned_opened_count || 0);
+      initial.observedMinutes += Number(row.observed_minutes || 0);
+    }
+
+    return {
+      ...initial,
+      presenceRate: initial.scheduled
+        ? Math.round((initial.opened / initial.scheduled) * 1000) / 10
+        : 0,
+      closureRate: initial.opened
+        ? Math.round((initial.closed / initial.opened) * 1000) / 10
+        : 0,
+      completionRate: initial.scheduled
+        ? Math.round((initial.closed / initial.scheduled) * 1000) / 10
+        : 0,
+    };
   }, [summary.data]);
 
   const disciplineHeader =
@@ -435,11 +515,14 @@ export default function AdminStatistiquesPage() {
       const classLabel = r.class_label || "—";
       const subjectName = r.subject_name || "Discipline non renseignée";
       const key = `${weekKey}|${classLabel}|${subjectName}`;
-      const minutes = r.real_minutes ?? r.expected_minutes ?? 0;
+      const minutes = r.observed_minutes ?? 0;
+      const closed = r.session_state === "closed";
 
       const existing = map.get(key);
       if (existing) {
         existing.sessions += 1;
+        if (closed) existing.closed_sessions += 1;
+        else existing.not_closed_sessions += 1;
         existing.total_minutes += minutes;
       } else {
         map.set(key, {
@@ -448,6 +531,8 @@ export default function AdminStatistiquesPage() {
           class_label: classLabel,
           subject_name: subjectName,
           sessions: 1,
+          closed_sessions: closed ? 1 : 0,
+          not_closed_sessions: closed ? 0 : 1,
           total_minutes: minutes,
         });
       }
@@ -620,7 +705,9 @@ export default function AdminStatistiquesPage() {
         const json = (await res.json()) as {
           rows: DetailRow[];
           total_minutes: number;
+          total_observed_minutes?: number;
           count: number;
+          payroll_basis?: boolean;
         };
         setDetail({ loading: false, error: null, data: json });
         setSummary({ loading: false, error: null, data: null });
@@ -676,7 +763,15 @@ export default function AdminStatistiquesPage() {
         <tr>
           <th>Enseignant</th>
           <th>${disciplineHeader}</th>
-          <th>Nombre de séances</th>
+          <th>Prévues</th>
+          <th>Ouvertes</th>
+          <th>Clôturées</th>
+          <th>Non ouvertes</th>
+          <th>Non clôturées</th>
+          <th>Autorisées</th>
+          <th>À justifier</th>
+          <th>Taux présence</th>
+          <th>Taux clôture</th>
         </tr>
       </thead>
     `;
@@ -693,7 +788,15 @@ export default function AdminStatistiquesPage() {
           <tr>
             <td>${it.teacher_name}</td>
             <td>${disciplineCell}</td>
-            <td style="text-align:right;">${it.sessions_count ?? 0}</td>
+            <td style="text-align:right;">${it.scheduled_count ?? 0}</td>
+            <td style="text-align:right;">${it.opened_count ?? it.sessions_count ?? 0}</td>
+            <td style="text-align:right;">${it.closed_count ?? 0}</td>
+            <td style="text-align:right;">${it.not_opened_count ?? 0}</td>
+            <td style="text-align:right;">${it.not_closed_count ?? 0}</td>
+            <td style="text-align:right;">${it.approved_absence_count ?? 0}</td>
+            <td style="text-align:right;">${it.unjustified_absence_count ?? 0}</td>
+            <td style="text-align:right;">${percentLabel(it.presence_rate)}</td>
+            <td style="text-align:right;">${percentLabel(it.closure_rate)}</td>
           </tr>
         `;
       })
@@ -703,7 +806,15 @@ export default function AdminStatistiquesPage() {
       <tfoot>
         <tr>
           <td colspan="2">Total</td>
-          <td style="text-align:right;">${totalSessionsSummary}</td>
+          <td style="text-align:right;">${controlTotals.scheduled}</td>
+          <td style="text-align:right;">${controlTotals.opened}</td>
+          <td style="text-align:right;">${controlTotals.closed}</td>
+          <td style="text-align:right;">${controlTotals.notOpened}</td>
+          <td style="text-align:right;">${controlTotals.notClosed}</td>
+          <td style="text-align:right;">${controlTotals.approved}</td>
+          <td style="text-align:right;">${controlTotals.unjustified}</td>
+          <td style="text-align:right;">${percentLabel(controlTotals.presenceRate)}</td>
+          <td style="text-align:right;">${percentLabel(controlTotals.closureRate)}</td>
         </tr>
       </tfoot>
     `;
@@ -711,8 +822,8 @@ export default function AdminStatistiquesPage() {
     const tableHtml = `<table>${headerHtml}<tbody>${bodyHtml}</tbody>${footerHtml}</table>`;
 
     openPdfPrintWindow(
-      "Synthèse des séances d'appel par enseignant",
-      `Période du ${from} au ${to} • ${educationScopeLabel}`,
+      "Contrôle de la présence des enseignants",
+      `Période du ${from} au ${to} • ${educationScopeLabel} • Indicateurs non utilisés automatiquement pour la paie`,
       tableHtml
     );
   }
@@ -728,8 +839,10 @@ export default function AdminStatistiquesPage() {
           <th>Plage horaire prévue</th>
           <th>Discipline</th>
           <th>Classe</th>
-          <th>Minutes effectives</th>
-          <th>Durée effective</th>
+          <th>Statut</th>
+          <th>Preuve</th>
+          <th>Retard</th>
+          <th>Durée constatée</th>
         </tr>
       </thead>
     `;
@@ -738,27 +851,28 @@ export default function AdminStatistiquesPage() {
       .map((r) => {
         const start = formatHHmm(r.dateISO);
         const end = formatHHmm(addMinutesISO(r.dateISO, r.expected_minutes || 0));
-        const eff = r.real_minutes ?? r.expected_minutes ?? 0;
+        const observed = r.observed_minutes ?? 0;
         return `
           <tr>
             <td>${formatDateFR(r.dateISO)}</td>
             <td>${start} → ${end}</td>
             <td>${r.subject_name || "Discipline non renseignée"}</td>
             <td>${r.class_label || ""}</td>
-            <td style="text-align:right;">${eff}</td>
-            <td style="text-align:right;">${minutesToHourLabel(eff)}</td>
+            <td>${r.session_state === "closed" ? "Clôturée" : "Ouverte non clôturée"}</td>
+            <td>${presenceMethodLabel(r.presence_method)}</td>
+            <td style="text-align:right;">${Math.max(0, Number(r.late_minutes || 0))} min</td>
+            <td style="text-align:right;">${minutesToHourLabel(observed)}</td>
           </tr>
         `;
       })
       .join("");
 
-    const total = d.total_minutes;
+    const totalObserved = Number(d.total_observed_minutes || 0);
     const footerHtml = `
       <tfoot>
         <tr>
-          <td colspan="4">Total</td>
-          <td style="text-align:right;">${total}</td>
-          <td style="text-align:right;">${minutesToHourLabel(total)}</td>
+          <td colspan="7">Total constaté sur les séances clôturées</td>
+          <td style="text-align:right;">${minutesToHourLabel(totalObserved)}</td>
         </tr>
       </tfoot>
     `;
@@ -784,8 +898,10 @@ export default function AdminStatistiquesPage() {
           <th>Semaine</th>
           <th>Classe</th>
           <th>Discipline</th>
-          <th>Nombre de séances (appels)</th>
-          <th>Durée totale effective</th>
+          <th>Ouvertes</th>
+          <th>Clôturées</th>
+          <th>Non clôturées</th>
+          <th>Durée constatée</th>
         </tr>
       </thead>
     `;
@@ -798,6 +914,8 @@ export default function AdminStatistiquesPage() {
           <td>${r.class_label || ""}</td>
           <td>${r.subject_name || ""}</td>
           <td style="text-align:right;">${r.sessions}</td>
+          <td style="text-align:right;">${r.closed_sessions}</td>
+          <td style="text-align:right;">${r.not_closed_sessions}</td>
           <td style="text-align:right;">${minutesToHourLabel(r.total_minutes)}</td>
         </tr>
       `
@@ -812,12 +930,22 @@ export default function AdminStatistiquesPage() {
       (acc, r) => acc + (r.sessions || 0),
       0
     );
+    const totalClosedSessions = inspectorRows.reduce(
+      (acc, r) => acc + (r.closed_sessions || 0),
+      0,
+    );
+    const totalNotClosedSessions = inspectorRows.reduce(
+      (acc, r) => acc + (r.not_closed_sessions || 0),
+      0,
+    );
 
     const footerHtml = `
       <tfoot>
         <tr>
           <td colspan="3">Total</td>
           <td style="text-align:right;">${totalSessions}</td>
+          <td style="text-align:right;">${totalClosedSessions}</td>
+          <td style="text-align:right;">${totalNotClosedSessions}</td>
           <td style="text-align:right;">${minutesToHourLabel(totalMinutes)}</td>
         </tr>
       </tfoot>
@@ -1221,16 +1349,15 @@ export default function AdminStatistiquesPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  Synthèse par enseignant
+                  Contrôle de présence par enseignant
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Vue globale du <strong>nombre de séances d’appel</strong> par enseignant
-                  sur la période.
+                  Compare les cours arrivés à échéance, les ouvertures et les clôtures.
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-xs md:text-sm rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 border border-emerald-100">
-                  Total période : <strong>{totalSessionsSummary}</strong> séance(s)
+                  Présence : <strong>{percentLabel(controlTotals.presenceRate)}</strong>
                 </div>
                 <Button
                   onClick={exportSummaryPDF}
@@ -1239,6 +1366,34 @@ export default function AdminStatistiquesPage() {
                   Export PDF
                 </Button>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Ces indicateurs servent au contrôle administratif. Ils ne déclenchent
+              aucun paiement et ne modifient pas automatiquement la paie des enseignants.
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {[
+                ["Cours prévus", controlTotals.scheduled, "Créneaux arrivés à échéance"],
+                ["Cours ouverts", controlTotals.opened, percentLabel(controlTotals.presenceRate)],
+                ["Cours clôturés", controlTotals.closed, percentLabel(controlTotals.closureRate)],
+                ["Non ouverts", controlTotals.notOpened, `${controlTotals.unjustified} à justifier`],
+                ["Non clôturés", controlTotals.notClosed, `${controlTotals.unplanned} hors planning`],
+              ].map(([label, value, hint]) => (
+                <div
+                  key={String(label)}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                >
+                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    {label}
+                  </div>
+                  <div className="mt-1 text-2xl font-semibold text-slate-900">
+                    {value}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">{hint}</div>
+                </div>
+              ))}
             </div>
 
             {summary.loading ? (
@@ -1256,7 +1411,15 @@ export default function AdminStatistiquesPage() {
                     <tr>
                       <th className="text-left px-3 py-2">Enseignant</th>
                       <th className="text-left px-3 py-2">{disciplineHeader}</th>
-                      <th className="text-right px-3 py-2">Nombre de séances</th>
+                      <th className="text-right px-3 py-2">Prévues</th>
+                      <th className="text-right px-3 py-2">Ouvertes</th>
+                      <th className="text-right px-3 py-2">Clôturées</th>
+                      <th className="text-right px-3 py-2">Non ouvertes</th>
+                      <th className="text-right px-3 py-2">Non clôturées</th>
+                      <th className="text-right px-3 py-2">Autorisées</th>
+                      <th className="text-right px-3 py-2">À justifier</th>
+                      <th className="text-right px-3 py-2">Présence</th>
+                      <th className="text-right px-3 py-2">Clôture</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1276,8 +1439,32 @@ export default function AdminStatistiquesPage() {
                             {row.teacher_name}
                           </td>
                           <td className="px-3 py-2 text-slate-700">{disciplineCell}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">
+                            {row.scheduled_count ?? 0}
+                          </td>
                           <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                            {row.sessions_count ?? 0}
+                            {row.opened_count ?? row.sessions_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                            {row.closed_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-rose-700">
+                            {row.not_opened_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-amber-700">
+                            {row.not_closed_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-700">
+                            {row.approved_absence_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-rose-700">
+                            {row.unjustified_absence_count ?? 0}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-800">
+                            {percentLabel(row.presence_rate)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-800">
+                            {percentLabel(row.closure_rate)}
                           </td>
                         </tr>
                       );
@@ -1285,7 +1472,7 @@ export default function AdminStatistiquesPage() {
                     {(!summary.data || summary.data.length === 0) && (
                       <tr className="odd:bg-white">
                         <td
-                          colSpan={3}
+                          colSpan={11}
                           className="px-3 py-4 text-center text-gray-500"
                         >
                           Aucune donnée sur la période.
@@ -1334,8 +1521,10 @@ export default function AdminStatistiquesPage() {
               <div className="flex flex-wrap items-center gap-2">
                 {detail.data && (
                   <div className="text-xs md:text-sm rounded-full bg-slate-100 text-slate-800 px-3 py-1 border border-slate-200">
-                    {detail.data.count} séance(s) • Total :{" "}
-                    <strong>{minutesToHourLabel(detail.data.total_minutes)}</strong>
+                    {detail.data.count} séance(s) ouverte(s) • Durée constatée :{" "}
+                    <strong>
+                      {minutesToHourLabel(detail.data.total_observed_minutes || 0)}
+                    </strong>
                   </div>
                 )}
                 {detailMode === "seances" ? (
@@ -1358,6 +1547,12 @@ export default function AdminStatistiquesPage() {
               </div>
             </div>
 
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Une séance ouverte n’est pas automatiquement une séance payable. La durée
+              constatée ci-dessous repose uniquement sur une ouverture valide et une clôture
+              enregistrée ; la règle finale de paie reste inchangée.
+            </div>
+
             {detail.loading ? (
               <div className="p-4 border border-slate-200 rounded-2xl bg-white text-slate-700">
                 Chargement…
@@ -1375,8 +1570,10 @@ export default function AdminStatistiquesPage() {
                       <th className="text-left px-3 py-2">Plage horaire</th>
                       <th className="text-left px-3 py-2">Discipline</th>
                       <th className="text-left px-3 py-2">Classe</th>
-                      <th className="text-right px-3 py-2">Minutes effectives</th>
-                      <th className="text-right px-3 py-2">Durée effective</th>
+                      <th className="text-left px-3 py-2">Statut</th>
+                      <th className="text-left px-3 py-2">Preuve</th>
+                      <th className="text-right px-3 py-2">Retard</th>
+                      <th className="text-right px-3 py-2">Durée constatée</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1385,7 +1582,7 @@ export default function AdminStatistiquesPage() {
                       const end = formatHHmm(
                         addMinutesISO(r.dateISO, r.expected_minutes || 0)
                       );
-                      const eff = r.real_minutes ?? r.expected_minutes ?? 0;
+                      const observed = r.observed_minutes ?? 0;
                       return (
                         <tr
                           key={r.id}
@@ -1403,11 +1600,29 @@ export default function AdminStatistiquesPage() {
                           <td className="px-3 py-2 text-slate-700">
                             {r.class_label || "—"}
                           </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={[
+                                "inline-flex rounded-full border px-2 py-1 text-xs font-medium",
+                                r.session_state === "closed"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                  : "border-amber-200 bg-amber-50 text-amber-800",
+                              ].join(" ")}
+                            >
+                              {r.session_state === "closed"
+                                ? "Clôturée"
+                                : "Ouverte non clôturée"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {presenceMethodLabel(r.presence_method)}
+                            {r.presence_verified === false ? " • non vérifiée" : ""}
+                          </td>
                           <td className="px-3 py-2 text-right text-slate-700">
-                            {eff}
+                            {Math.max(0, Number(r.late_minutes || 0))} min
                           </td>
                           <td className="px-3 py-2 text-right font-semibold text-slate-900">
-                            {minutesToHourLabel(eff)}
+                            {minutesToHourLabel(observed)}
                           </td>
                         </tr>
                       );
@@ -1415,7 +1630,7 @@ export default function AdminStatistiquesPage() {
                     {(!detail.data || detail.data.rows.length === 0) && (
                       <tr className="odd:bg-white">
                         <td
-                          colSpan={6}
+                          colSpan={8}
                           className="px-3 py-4 text-center text-gray-500"
                         >
                           Aucune donnée pour cet enseignant sur la période.
@@ -1433,12 +1648,10 @@ export default function AdminStatistiquesPage() {
                       <th className="text-left px-3 py-2">Semaine</th>
                       <th className="text-left px-3 py-2">Classe</th>
                       <th className="text-left px-3 py-2">Discipline</th>
-                      <th className="text-right px-3 py-2">
-                        Nombre de séances (appels)
-                      </th>
-                      <th className="text-right px-3 py-2">
-                        Durée totale effective
-                      </th>
+                      <th className="text-right px-3 py-2">Ouvertes</th>
+                      <th className="text-right px-3 py-2">Clôturées</th>
+                      <th className="text-right px-3 py-2">Non clôturées</th>
+                      <th className="text-right px-3 py-2">Durée constatée</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1457,6 +1670,12 @@ export default function AdminStatistiquesPage() {
                         <td className="px-3 py-2 text-right text-slate-700">
                           {r.sessions}
                         </td>
+                        <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                          {r.closed_sessions}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold text-amber-700">
+                          {r.not_closed_sessions}
+                        </td>
                         <td className="px-3 py-2 text-right font-semibold text-slate-900">
                           {minutesToHourLabel(r.total_minutes)}
                         </td>
@@ -1465,7 +1684,7 @@ export default function AdminStatistiquesPage() {
                     {inspectorRows.length === 0 && (
                       <tr className="odd:bg-white">
                         <td
-                          colSpan={5}
+                          colSpan={7}
                           className="px-3 py-4 text-center text-gray-500"
                         >
                           Aucune donnée agrégée pour cet enseignant sur la période.
@@ -1476,10 +1695,9 @@ export default function AdminStatistiquesPage() {
                 </table>
                 <p className="mt-3 text-xs text-slate-500 px-1 pb-1">
                   Chaque ligne représente une <strong>semaine</strong> pour une{" "}
-                  <strong>classe</strong> et une<strong> discipline</strong>. Le nombre
-                  de séances correspond aux appels effectués, et la durée totale est
-                  calculée à partir du <strong>temps réellement effectué</strong> (durée
-                  prévue du créneau − retard au premier appel).
+                  <strong>classe</strong> et une <strong>discipline</strong>. La durée
+                  constatée est calculée uniquement pour les séances clôturées et reste
+                  distincte de toute décision de paie.
                 </p>
               </div>
             )}

@@ -283,6 +283,70 @@ function rangeDates(from: string, to: string): string[] {
   return out;
 }
 
+type WeekdayMode = "iso" | "js" | "mon0";
+
+function normalizeDbTime(raw: unknown) {
+  const value = String(raw || "").trim();
+  const match = value.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function parseWeekday(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const parsed = Number.parseInt(String(raw ?? ""), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function detectWeekdayMode(rows: Array<{ weekday?: unknown }>): WeekdayMode {
+  const values = Array.from(
+    new Set(
+      rows
+        .map((row) => parseWeekday(row?.weekday))
+        .filter((value): value is number => value !== null),
+    ),
+  );
+
+  if (values.includes(7)) return "iso";
+  if (values.includes(6)) return "js";
+  if (values.includes(0) && !values.includes(5)) return "mon0";
+  return "js";
+}
+
+function jsDayToDbWeekday(jsDay0to6: number, mode: WeekdayMode) {
+  if (mode === "js") return jsDay0to6;
+  if (mode === "iso") return jsDay0to6 === 0 ? 7 : jsDay0to6;
+  return (jsDay0to6 + 6) % 7;
+}
+
+function weekdayForYmd(ymd: string) {
+  return new Date(`${ymd}T12:00:00.000Z`).getUTCDay();
+}
+
+function pct(part: number, total: number) {
+  if (!total) return 0;
+  return Math.round((part / total) * 1000) / 10;
+}
+
+function minutesBetweenIso(startIso: string | null, endIso: string | null) {
+  if (!startIso || !endIso) return 0;
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.max(0, Math.floor((end - start) / 60_000));
+}
+
+function observedClosedMinutes(input: {
+  actualCallAt: string | null;
+  endedAt: string | null;
+  expectedMinutes: number;
+}) {
+  const observed = minutesBetweenIso(input.actualCallAt, input.endedAt);
+  const expected = Math.max(0, Math.round(input.expectedMinutes || 0));
+  if (!observed) return 0;
+  return expected > 0 ? Math.min(observed, expected) : observed;
+}
+
 /* ───────── slots manuels ───────── */
 function buildUniformSlots(startHour: number, endHour: number, slotMin: number) {
   const out: { start: string; end: string }[] = [];
@@ -388,7 +452,7 @@ export async function GET(req: NextRequest) {
     }
 
     const scopeResult = readValidatedEducationScope(searchParams);
-    if (!scopeResult.ok) {
+    if (scopeResult.ok === false) {
       return NextResponse.json({ error: scopeResult.error }, { status: 400 });
     }
 
@@ -919,7 +983,7 @@ export async function GET(req: NextRequest) {
       let query = srv
         .from(sessionsTable2)
         .select(
-          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, institution_id",
+          "id, teacher_id, subject_id, class_id, started_at, actual_call_at, expected_minutes, ended_at, status, presence_verified, presence_method, origin, institution_id",
         )
         .eq("institution_id", inst)
         .gte("started_at", fromISO)
@@ -968,6 +1032,11 @@ export async function GET(req: NextRequest) {
       started_at: string;
       actual_call_at: string | null;
       expected_minutes: number;
+      ended_at: string | null;
+      status: string | null;
+      presence_verified: boolean | null;
+      presence_method: string | null;
+      origin: string | null;
     };
 
     const sessionsRaw: SessionRow[] = (sessRows || [])
@@ -980,6 +1049,12 @@ export async function GET(req: NextRequest) {
         started_at: String(s.started_at),
         actual_call_at: s.actual_call_at ? String(s.actual_call_at) : null,
         expected_minutes: Number(s.expected_minutes || 0),
+        ended_at: s.ended_at ? String(s.ended_at) : null,
+        status: s.status ? String(s.status) : null,
+        presence_verified:
+          typeof s.presence_verified === "boolean" ? s.presence_verified : null,
+        presence_method: s.presence_method ? String(s.presence_method) : null,
+        origin: s.origin ? String(s.origin) : null,
       }));
 
     /**
@@ -1071,6 +1146,16 @@ export async function GET(req: NextRequest) {
           existing.expected_minutes = s.expected_minutes;
         }
 
+        if (s.ended_at && (!existing.ended_at || s.ended_at > existing.ended_at)) {
+          existing.ended_at = s.ended_at;
+        }
+        if (!existing.status && s.status) existing.status = s.status;
+        if (s.presence_verified === true) existing.presence_verified = true;
+        if (!existing.presence_method && s.presence_method) {
+          existing.presence_method = s.presence_method;
+        }
+        if (!existing.origin && s.origin) existing.origin = s.origin;
+
         // 1er clic VALIDE (le plus tôt)
         if (validCall) {
           if (!existing._valid_call_at || validCall < existing._valid_call_at) {
@@ -1101,43 +1186,289 @@ export async function GET(req: NextRequest) {
 
     /* ======================== SUMMARY ======================== */
     if (mode === "summary") {
+      type ControlCounters = {
+        scheduled_count: number;
+        opened_count: number;
+        closed_count: number;
+        not_opened_count: number;
+        not_closed_count: number;
+        approved_absence_count: number;
+        pending_absence_count: number;
+        unjustified_absence_count: number;
+        unplanned_opened_count: number;
+        observed_minutes: number;
+      };
+
+      const emptyCounters = (): ControlCounters => ({
+        scheduled_count: 0,
+        opened_count: 0,
+        closed_count: 0,
+        not_opened_count: 0,
+        not_closed_count: 0,
+        approved_absence_count: 0,
+        pending_absence_count: 0,
+        unjustified_absence_count: 0,
+        unplanned_opened_count: 0,
+        observed_minutes: 0,
+      });
+
       const minutesByTeacher = new Map<string, number>();
-      const sessionsByTeacher = new Map<string, number>();
+      const controlByTeacher = new Map<string, ControlCounters>();
 
       for (const id of teacherScope) {
         minutesByTeacher.set(id, 0);
-        sessionsByTeacher.set(id, 0);
+        controlByTeacher.set(id, emptyCounters());
       }
 
-      for (const r of sessions) {
-        const tid = r.teacher_id || "";
-        if (!tid || !minutesByTeacher.has(tid)) continue;
+      for (const session of sessions) {
+        const teacherId = session.teacher_id || "";
+        if (!teacherId || !minutesByTeacher.has(teacherId)) continue;
 
-        const real = effectiveMinutesFromSession(
-          r.expected_minutes || 0,
-          r.started_at,
-          r.actual_call_at || null
+        const effective = effectiveMinutesFromSession(
+          session.expected_minutes || 0,
+          session.started_at,
+          session.actual_call_at || null,
         );
-
-        minutesByTeacher.set(tid, (minutesByTeacher.get(tid) || 0) + real);
-        sessionsByTeacher.set(tid, (sessionsByTeacher.get(tid) || 0) + 1);
+        minutesByTeacher.set(
+          teacherId,
+          (minutesByTeacher.get(teacherId) || 0) + effective,
+        );
       }
 
-      const items = teacherScope.map((id) => ({
-        teacher_id: id,
-        teacher_name: teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
-        total_minutes: minutesByTeacher.get(id) || 0,
-        sessions_count: sessionsByTeacher.get(id) || 0,
-        subject_names: subjectNamesPerTeacher[id] || [],
-      }));
+      const { data: periodRows, error: periodError } = await srv
+        .from("institution_periods")
+        .select("id,weekday,label,start_time,end_time")
+        .eq("institution_id", inst);
+      if (periodError) throw new Error(periodError.message);
+
+      let timetableQuery = srv
+        .from("teacher_timetables")
+        .select("id,teacher_id,class_id,subject_id,weekday,period_id")
+        .eq("institution_id", inst)
+        .in("teacher_id", teacherScope);
+      if (classScopeActive) {
+        timetableQuery = timetableQuery.in("class_id", scopedClassIds || []);
+      }
+      if (subject_id) {
+        timetableQuery = timetableQuery.in("subject_id", allowedSessionSubjectIds);
+      }
+      const { data: timetableRows, error: timetableError } = await timetableQuery;
+      if (timetableError) throw new Error(timetableError.message);
+
+      let absenceRows: any[] = [];
+      try {
+        const { data, error } = await srv
+          .from("teacher_absence_requests")
+          .select("teacher_profile_id,start_date,end_date,status")
+          .eq("institution_id", inst)
+          .in("teacher_profile_id", teacherScope)
+          .lte("start_date", to)
+          .gte("end_date", from);
+        if (!error) absenceRows = data || [];
+      } catch {
+        absenceRows = [];
+      }
+
+      type PeriodControlRow = {
+        id: string;
+        weekday: number | null;
+        start: string;
+        end: string;
+        startMin: number;
+        endMin: number;
+      };
+      const periodById = new Map<string, PeriodControlRow>();
+      for (const row of periodRows || []) {
+        const start = normalizeDbTime((row as any).start_time);
+        const end = normalizeDbTime((row as any).end_time);
+        if (!start || !end) continue;
+        periodById.set(String((row as any).id), {
+          id: String((row as any).id),
+          weekday: parseWeekday((row as any).weekday),
+          start,
+          end,
+          startMin: hmToMin(start),
+          endMin: hmToMin(end),
+        });
+      }
+
+      const weekdayMode = detectWeekdayMode(
+        (periodRows || []).length ? (periodRows as any[]) : (timetableRows || []),
+      );
+      const controlDates = rangeDates(from, to);
+      const todayYmd = getDateKeyFromISO(new Date().toISOString());
+      const now = new Date();
+      const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+      type PlannedOccurrence = {
+        key: string;
+        teacher_id: string;
+        ymd: string;
+        start: string;
+        end: string;
+        expected_minutes: number;
+        class_ids: Set<string>;
+        subject_ids: Set<string>;
+      };
+      const plannedByKey = new Map<string, PlannedOccurrence>();
+
+      for (const row of timetableRows || []) {
+        const teacherId = String((row as any).teacher_id || "");
+        const period = periodById.get(String((row as any).period_id || ""));
+        if (!teacherId || !period) continue;
+
+        const rawWeekday = period.weekday ?? parseWeekday((row as any).weekday);
+        if (rawWeekday === null) continue;
+
+        for (const ymd of controlDates) {
+          if (ymd > todayYmd) continue;
+          const dateWeekday = jsDayToDbWeekday(weekdayForYmd(ymd), weekdayMode);
+          if (dateWeekday !== rawWeekday) continue;
+          if (ymd === todayYmd && period.endMin > nowMinutes) continue;
+
+          const key = `${teacherId}|${ymd}|${period.start}`;
+          const existing = plannedByKey.get(key);
+          if (existing) {
+            const classId = String((row as any).class_id || "");
+            const subjectId = String((row as any).subject_id || "");
+            if (classId) existing.class_ids.add(classId);
+            if (subjectId) existing.subject_ids.add(subjectId);
+            continue;
+          }
+
+          const planned: PlannedOccurrence = {
+            key,
+            teacher_id: teacherId,
+            ymd,
+            start: period.start,
+            end: period.end,
+            expected_minutes: Math.max(0, period.endMin - period.startMin),
+            class_ids: new Set<string>(),
+            subject_ids: new Set<string>(),
+          };
+          const classId = String((row as any).class_id || "");
+          const subjectId = String((row as any).subject_id || "");
+          if (classId) planned.class_ids.add(classId);
+          if (subjectId) planned.subject_ids.add(subjectId);
+          plannedByKey.set(key, planned);
+        }
+      }
+
+      const absenceByTeacherDate = new Map<string, "approved" | "pending">();
+      for (const row of absenceRows) {
+        const teacherId = String(row.teacher_profile_id || "");
+        const startDate = String(row.start_date || "").slice(0, 10);
+        const endDate = String(row.end_date || "").slice(0, 10);
+        const status = String(row.status || "");
+        if (!teacherId || !startDate || !endDate || !["approved", "pending"].includes(status)) {
+          continue;
+        }
+        for (const ymd of controlDates) {
+          if (ymd < startDate || ymd > endDate) continue;
+          const key = `${teacherId}|${ymd}`;
+          const existing = absenceByTeacherDate.get(key);
+          if (status === "approved" || !existing) {
+            absenceByTeacherDate.set(key, status as "approved" | "pending");
+          }
+        }
+      }
+
+      const sessionByControlKey = new Map<string, SessionAggOut>();
+      for (const session of sessions) {
+        const teacherId = session.teacher_id || "";
+        if (!teacherId) continue;
+        const key = `${teacherId}|${getDateKeyFromISO(session.started_at)}|${getHMKeyFromISO(session.started_at)}`;
+        sessionByControlKey.set(key, session);
+      }
+
+      for (const planned of plannedByKey.values()) {
+        const counters = controlByTeacher.get(planned.teacher_id);
+        if (!counters) continue;
+        counters.scheduled_count += 1;
+
+        const session = sessionByControlKey.get(planned.key);
+        if (session) {
+          counters.opened_count += 1;
+          if (session.ended_at) {
+            counters.closed_count += 1;
+            counters.observed_minutes += observedClosedMinutes({
+              actualCallAt: session.actual_call_at,
+              endedAt: session.ended_at,
+              expectedMinutes:
+                session.expected_minutes || planned.expected_minutes,
+            });
+          } else {
+            counters.not_closed_count += 1;
+          }
+          continue;
+        }
+
+        counters.not_opened_count += 1;
+        const absence = absenceByTeacherDate.get(
+          `${planned.teacher_id}|${planned.ymd}`,
+        );
+        if (absence === "approved") counters.approved_absence_count += 1;
+        else if (absence === "pending") counters.pending_absence_count += 1;
+        else counters.unjustified_absence_count += 1;
+      }
+
+      for (const [key, session] of sessionByControlKey.entries()) {
+        if (plannedByKey.has(key)) continue;
+        const teacherId = session.teacher_id || "";
+        const counters = controlByTeacher.get(teacherId);
+        if (!counters) continue;
+        counters.unplanned_opened_count += 1;
+      }
+
+      const items = teacherScope.map((id) => {
+        const counters = controlByTeacher.get(id) || emptyCounters();
+        return {
+          teacher_id: id,
+          teacher_name:
+            teacherNameById.get(id) || `(enseignant ${id.slice(0, 6)})`,
+          total_minutes: minutesByTeacher.get(id) || 0,
+          observed_minutes: counters.observed_minutes,
+          sessions_count: counters.opened_count,
+          scheduled_count: counters.scheduled_count,
+          opened_count: counters.opened_count,
+          closed_count: counters.closed_count,
+          not_opened_count: counters.not_opened_count,
+          not_closed_count: counters.not_closed_count,
+          approved_absence_count: counters.approved_absence_count,
+          pending_absence_count: counters.pending_absence_count,
+          unjustified_absence_count: counters.unjustified_absence_count,
+          unplanned_opened_count: counters.unplanned_opened_count,
+          presence_rate: pct(counters.opened_count, counters.scheduled_count),
+          closure_rate: pct(counters.closed_count, counters.opened_count),
+          completion_rate: pct(counters.closed_count, counters.scheduled_count),
+          subject_names: subjectNamesPerTeacher[id] || [],
+        };
+      });
 
       items.sort(
         (a, b) =>
-          (b.sessions_count || 0) - (a.sessions_count || 0) ||
-          a.teacher_name.localeCompare(b.teacher_name, "fr")
+          (b.unjustified_absence_count || 0) -
+            (a.unjustified_absence_count || 0) ||
+          (b.not_closed_count || 0) - (a.not_closed_count || 0) ||
+          (a.presence_rate || 0) - (b.presence_rate || 0) ||
+          a.teacher_name.localeCompare(b.teacher_name, "fr"),
       );
 
-      return NextResponse.json({ items });
+      return NextResponse.json({
+        items,
+        definitions: {
+          scheduled_count:
+            "Cours arrivés à échéance selon les emplois du temps officiels.",
+          opened_count:
+            "Cours pour lesquels un démarrage valide a été enregistré dans le créneau.",
+          closed_count: "Cours ouverts puis clôturés.",
+          not_opened_count: "Cours prévus arrivés à échéance mais non ouverts.",
+          not_closed_count: "Cours ouverts mais non clôturés.",
+          unplanned_opened_count:
+            "Cours ouverts sans occurrence correspondante dans le planning filtré.",
+        },
+        payroll_basis: false,
+      });
     }
 
     /* ======================== DETAIL ======================== */
@@ -1225,6 +1556,16 @@ export async function GET(req: NextRequest) {
         );
         const subjJoined = subjNames.length ? subjNames.join(" / ") : "Discipline non renseignée";
 
+        const lateMinutes = Math.max(
+          0,
+          diffMinutes(r.started_at, r.actual_call_at || null),
+        );
+        const observedMinutes = observedClosedMinutes({
+          actualCallAt: r.actual_call_at || null,
+          endedAt: r.ended_at || null,
+          expectedMinutes: r.expected_minutes || 0,
+        });
+
         return {
           id: r.id,
           dateISO: r.started_at,
@@ -1235,16 +1576,30 @@ export async function GET(req: NextRequest) {
           class_ids: r.class_ids || [],
           expected_minutes: r.expected_minutes || 0,
           real_minutes: real,
+          observed_minutes: observedMinutes,
           actual_call_iso: r.actual_call_at || null,
+          ended_at: r.ended_at || null,
+          session_state: r.ended_at ? "closed" : "open",
+          status: r.status || null,
+          presence_verified: r.presence_verified,
+          presence_method: r.presence_method || null,
+          origin: r.origin || null,
+          late_minutes: lateMinutes,
         };
       });
 
     const total_minutes = detailed.reduce((acc, it) => acc + (it.real_minutes || 0), 0);
+    const total_observed_minutes = detailed.reduce(
+      (acc, it) => acc + (it.observed_minutes || 0),
+      0,
+    );
 
     return NextResponse.json({
       rows: detailed,
       count: detailed.length,
       total_minutes,
+      total_observed_minutes,
+      payroll_basis: false,
     });
   } catch (e: any) {
     console.error("/api/admin/statistics error", e);
