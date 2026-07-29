@@ -838,7 +838,7 @@ export default function AdminStudentsByClassPage() {
 
   const searchAbort = useRef<AbortController | null>(null);
 
-  const canManageStudents = role !== undefined && role !== "finance_manager";
+  const canManageStudents = role !== undefined;
 
   useEffect(() => {
     let cancelled = false;
