@@ -1,29 +1,26 @@
 // src/app/api/admin/enrollments/remove/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const ENROLLMENT_REMOVE_ROLES = [
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+  "finance",
+] as const;
+
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const access = await requireInstitutionAccess({
+    allowedRoles: ENROLLMENT_REMOVE_ROLES,
+  });
+  if ("error" in access) return access.error;
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const srv = access.srv;
+  const inst = access.institutionId;
 
   const { class_id, student_id } = await req.json().catch(() => ({}));
   if (!class_id || !student_id) {

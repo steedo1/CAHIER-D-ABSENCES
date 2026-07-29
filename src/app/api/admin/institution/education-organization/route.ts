@@ -20,7 +20,12 @@ type GuardOk = { user: { id: string }; instId: string };
 type GuardErr = { error: "unauthorized" | "no_institution" | "forbidden" };
 
 const WRITABLE_ROLES = new Set(["admin", "super_admin"]);
-const READABLE_ROLES = new Set(["admin", "super_admin", "founder"]);
+const READABLE_ROLES = new Set([
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+]);
 const MAX_CUSTOM_FORMATIONS = 100;
 const MAX_LEVELS_PER_FORMATION = 12;
 const MAX_LEVEL_CONFIGURATIONS = 200;

@@ -1,42 +1,30 @@
 // src/app/api/admin/institution/academic-years/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Récupère l'établissement du user courant (via profiles.institution_id) */
-async function getMyInstitutionId() {
-  const supabaseAuth = await getSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabaseAuth.auth.getUser();
+const ACADEMIC_YEAR_READ_ROLES = [
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+  "educator",
+  "infirmier",
+] as const;
+const ACADEMIC_YEAR_WRITE_ROLES = ["admin", "super_admin"] as const;
 
-  if (!user) {
-    return {
-      error: NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 }),
-    };
-  }
+async function getMyInstitutionId(options: { write?: boolean } = {}) {
+  const access = await requireInstitutionAccess({
+    allowedRoles: options.write
+      ? ACADEMIC_YEAR_WRITE_ROLES
+      : ACADEMIC_YEAR_READ_ROLES,
+  });
 
-  const { data: me, error: meErr } = await supabaseAuth
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr) {
-    return {
-      error: NextResponse.json({ ok: false, error: meErr.message }, { status: 400 }),
-    };
-  }
-  if (!me?.institution_id) {
-    return {
-      error: NextResponse.json({ ok: false, error: "no_institution" }, { status: 400 }),
-    };
-  }
-
-  return { institution_id: me.institution_id as string };
+  if ("error" in access) return { error: access.error };
+  return { institution_id: access.institutionId };
 }
 
 /* =========================
@@ -96,7 +84,7 @@ function isPersistedId(value?: string | null) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { institution_id, error } = await getMyInstitutionId();
+  const { institution_id, error } = await getMyInstitutionId({ write: true });
   if (error) return error;
 
   const body = (await req.json().catch(() => ({}))) as {

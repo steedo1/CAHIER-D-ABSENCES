@@ -838,7 +838,12 @@ export default function AdminStudentsByClassPage() {
 
   const searchAbort = useRef<AbortController | null>(null);
 
-  const canManageStudents = role !== undefined && role !== "finance_manager";
+  const canCreateOrEditStudents =
+    role === "admin" || role === "super_admin" || role === "founder";
+  const isFinanceRole = role === "finance_manager" || role === "finance";
+  const canTransferOrRemoveStudents =
+    canCreateOrEditStudents || isFinanceRole;
+  const financeTransferOnly = isFinanceRole && !canCreateOrEditStudents;
 
   useEffect(() => {
     let cancelled = false;
@@ -859,7 +864,7 @@ export default function AdminStudentsByClassPage() {
   }, []);
 
   function resetAssign() {
-    setAssignMode("new");
+    setAssignMode(financeTransferOnly ? "transfer" : "new");
     setForm({
       new_last_name: "",
       new_first_name: "",
@@ -1322,6 +1327,12 @@ export default function AdminStudentsByClassPage() {
       return;
     }
 
+    if (!canCreateOrEditStudents && assignMode === "new") {
+      setAssignMode("transfer");
+      setMsg("Le gestionnaire financier peut transferer un eleve existant, mais ne peut pas creer une nouvelle fiche eleve.");
+      return;
+    }
+
     setAssigning(true);
     setMsg(null);
 
@@ -1615,18 +1626,23 @@ export default function AdminStudentsByClassPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canManageStudents ? (
+            {canTransferOrRemoveStudents ? (
               <Button
                 tone="slate"
-                onClick={() => setAssignOpen(true)}
+                onClick={() => {
+                  setAssignMode(financeTransferOnly ? "transfer" : "new");
+                  setAssignOpen(true);
+                }}
                 disabled={!classId || loading}
                 title={
                   classId
-                    ? "Ajouter ou transferer un eleve dans cette classe"
+                    ? financeTransferOnly
+                      ? "Transferer un eleve existant dans cette classe"
+                      : "Ajouter ou transferer un eleve dans cette classe"
                     : "Choisissez une classe d'abord"
                 }
               >
-                Ajouter / Transferer
+                {financeTransferOnly ? "Transferer un eleve" : "Ajouter / Transferer"}
               </Button>
             ) : null}
 
@@ -1748,11 +1764,13 @@ export default function AdminStudentsByClassPage() {
                             Attestation
                           </Button>
 
-                          {canManageStudents ? (
+                          {canTransferOrRemoveStudents ? (
                             <>
-                              <Button tone="white" onClick={() => openEdit(student)}>
-                                Modifier
-                              </Button>
+                              {canCreateOrEditStudents ? (
+                                <Button tone="white" onClick={() => openEdit(student)}>
+                                  Modifier
+                                </Button>
+                              ) : null}
 
                               <Button
                                 tone="danger"
@@ -1781,7 +1799,7 @@ export default function AdminStudentsByClassPage() {
         )}
       </section>
 
-      {canManageStudents && editing && (
+      {canCreateOrEditStudents && editing && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
@@ -1844,12 +1862,14 @@ export default function AdminStudentsByClassPage() {
         </div>
       )}
 
-      {canManageStudents && assignOpen && (
+      {canTransferOrRemoveStudents && assignOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl border bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between">
               <h3 className="text-base font-semibold">
-                Ajouter / Transferer un eleve
+                {financeTransferOnly
+                  ? "Transferer un eleve"
+                  : "Ajouter / Transferer un eleve"}
               </h3>
 
               <button
@@ -1865,23 +1885,29 @@ export default function AdminStudentsByClassPage() {
             </div>
 
             <div className="mt-4">
-              <div className="mb-3 grid grid-cols-2 gap-2">
-                <Button
-                  tone={assignMode === "new" ? "emerald" : "white"}
-                  onClick={() => setAssignMode("new")}
-                >
-                  Nouvel eleve
-                </Button>
+              {canCreateOrEditStudents ? (
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <Button
+                    tone={assignMode === "new" ? "emerald" : "white"}
+                    onClick={() => setAssignMode("new")}
+                  >
+                    Nouvel eleve
+                  </Button>
 
-                <Button
-                  tone={assignMode === "transfer" ? "emerald" : "white"}
-                  onClick={() => setAssignMode("transfer")}
-                >
-                  Transferer
-                </Button>
-              </div>
+                  <Button
+                    tone={assignMode === "transfer" ? "emerald" : "white"}
+                    onClick={() => setAssignMode("transfer")}
+                  >
+                    Transferer
+                  </Button>
+                </div>
+              ) : (
+                <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  Selectionnez un eleve existant : sa classe et ses donnees financieres seront transferees vers la classe choisie.
+                </div>
+              )}
 
-              {assignMode === "new" ? (
+              {assignMode === "new" && canCreateOrEditStudents ? (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
                     <div className="mb-1 text-xs text-slate-600">Nom</div>

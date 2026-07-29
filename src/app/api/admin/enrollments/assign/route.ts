@@ -1,7 +1,6 @@
 // src/app/api/admin/enrollments/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -12,6 +11,15 @@ export const dynamic = "force-dynamic";
 
 type Action = "create_and_assign" | "assign";
 
+const ENROLLMENT_MANAGE_ROLES = [
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+  "finance",
+] as const;
+const STUDENT_CREATE_ROLES = new Set(["admin", "super_admin", "founder"]);
+
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -21,31 +29,28 @@ function requiredBoolean(value: unknown): boolean | null {
 }
 
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const access = await requireInstitutionAccess({
+    allowedRoles: ENROLLMENT_MANAGE_ROLES,
+  });
+  if ("error" in access) return access.error;
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user)
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const inst = (me?.institution_id ?? null) as string | null;
-  if (!inst)
-    return NextResponse.json({ error: "no_institution" }, { status: 400 });
-
+  const { srv, user, roles } = access;
+  const inst = access.institutionId;
   const body = await req.json().catch(() => ({}));
   const action: Action = (body?.action || "").trim();
   const class_id: string = String(body?.class_id || "");
 
   if (!action || (action !== "create_and_assign" && action !== "assign")) {
     return NextResponse.json({ error: "bad_action" }, { status: 400 });
+  }
+  if (
+    action === "create_and_assign" &&
+    !Array.from(roles).some((role) => STUDENT_CREATE_ROLES.has(role))
+  ) {
+    return NextResponse.json(
+      { error: "forbidden_create_student" },
+      { status: 403 },
+    );
   }
   if (!class_id)
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });

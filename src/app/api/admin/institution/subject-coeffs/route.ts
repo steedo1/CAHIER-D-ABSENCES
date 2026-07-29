@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { getMyInstitutionId } from "../../_helpers/getMyInstitution";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import {
   EDUCATION_ORGANIZATION_SETTINGS_KEY,
   EDUCATION_TYPE_OPTIONS,
@@ -15,6 +14,14 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const SUBJECT_COEFF_READ_ROLES = [
+  "admin",
+  "super_admin",
+  "founder",
+  "finance_manager",
+] as const;
+const SUBJECT_COEFF_WRITE_ROLES = ["admin", "super_admin"] as const;
 
 type IncomingCoeff = {
   level: string;
@@ -254,10 +261,13 @@ function slug(value: string) {
 }
 
 export async function GET(_req: NextRequest) {
-  const { institution_id, error } = await getMyInstitutionId();
-  if (error) return error;
+  const access = await requireInstitutionAccess({
+    allowedRoles: SUBJECT_COEFF_READ_ROLES,
+  });
+  if ("error" in access) return access.error;
 
-  const supabase = getSupabaseServiceClient();
+  const institution_id = access.institutionId;
+  const supabase = access.srv;
 
   const [institutionResult, classResult, subjectResult, coeffResult, assignmentResult] =
     await Promise.all([
@@ -498,9 +508,13 @@ export async function GET(_req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { institution_id, error } = await getMyInstitutionId();
-  if (error) return error;
+  const access = await requireInstitutionAccess({
+    allowedRoles: SUBJECT_COEFF_WRITE_ROLES,
+  });
+  if ("error" in access) return access.error;
 
+  const institution_id = access.institutionId;
+  const supabase = access.srv;
   const body = await req.json().catch(() => ({}));
   const educationType = body?.education_type;
   const formationCode = String(body?.formation_code || "").trim();
@@ -521,7 +535,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = getSupabaseServiceClient();
   let subjectId = subjectIdRaw;
   let resolvedName = subjectName;
 
@@ -645,9 +658,13 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { institution_id, error } = await getMyInstitutionId();
-  if (error) return error;
+  const access = await requireInstitutionAccess({
+    allowedRoles: SUBJECT_COEFF_WRITE_ROLES,
+  });
+  if ("error" in access) return access.error;
 
+  const institution_id = access.institutionId;
+  const supabase = access.srv;
   const body = await req.json().catch(() => ({}) as any);
   const incoming = Array.isArray(body.items)
     ? (body.items as IncomingCoeff[])
@@ -692,7 +709,6 @@ export async function PUT(req: NextRequest) {
     );
   }
 
-  const supabase = getSupabaseServiceClient();
   const { data, error: dbErr } = await supabase
     .from("institution_subject_coeffs")
     .upsert(rows, { onConflict: "institution_id,level,subject_id" })

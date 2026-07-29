@@ -1,27 +1,20 @@
 // src/app/api/admin/students/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
+
+const STUDENT_EDIT_ROLES = ["admin", "super_admin", "founder"] as const;
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
+  const access = await requireInstitutionAccess({
+    allowedRoles: STUDENT_EDIT_ROLES,
+  });
+  if ("error" in access) return access.error;
 
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-
-  const inst = me?.institution_id as string | null;
-  if (!inst) return NextResponse.json({ error: "no_institution" }, { status: 400 });
+  const srv = access.srv;
+  const inst = access.institutionId;
 
   const id = (await params).id;
   const body = await req.json().catch(() => ({}));
