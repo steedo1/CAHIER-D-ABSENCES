@@ -35,6 +35,7 @@ export type ConfigureCloudSyncResult = {
   config_path: string;
   institution_code: string;
   endpoint: string;
+  pull_endpoint: string;
   device_id: string;
   enabled: boolean;
   token_configured: true;
@@ -120,10 +121,14 @@ export function configureCloudSync(
   const env = input.env || process.env;
   const institutionCode = String(input.institutionCode || "").trim().toUpperCase();
   const endpoint = String(input.endpoint || "").trim().replace(/\/+$/, "");
+  const pullEndpoint = endpoint.endsWith("/push")
+    ? `${endpoint.slice(0, -"/push".length)}/pull`
+    : "";
   const deviceId = String(input.deviceId || "").trim();
   const token = String(input.token || "").trim();
   if (!institutionCode) throw new Error("institution_code_required");
   if (!endpoint) throw new Error("cloud_sync_endpoint_required");
+  if (!pullEndpoint) throw new Error("cloud_sync_pull_endpoint_unavailable");
   if (!/^https:\/\//i.test(endpoint) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(endpoint)) {
     throw new Error("cloud_sync_endpoint_must_use_https");
   }
@@ -150,6 +155,7 @@ export function configureCloudSync(
     cloud_sync: {
       enabled: input.enabled !== false,
       endpoint,
+      pull_endpoint: pullEndpoint,
       device_id: deviceId,
       token,
     },
@@ -165,6 +171,7 @@ export function configureCloudSync(
     config_path: configPath,
     institution_code: institutionCode,
     endpoint,
+    pull_endpoint: pullEndpoint,
     device_id: deviceId,
     enabled: input.enabled !== false,
     token_configured: true,
@@ -213,7 +220,12 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
     : sameInstitution
       ? existingInstitutions.map((item) =>
           item.code === institutionCode
-            ? { code: institutionCode, name: institutionName, admin_token: schoolToken }
+            ? {
+                ...item,
+                code: institutionCode,
+                name: institutionName,
+                admin_token: schoolToken,
+              }
             : item
         )
       : [{ code: institutionCode, name: institutionName, admin_token: schoolToken }];

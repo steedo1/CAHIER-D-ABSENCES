@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RelayConfig, RelayInstitutionConfig } from "./config.mjs";
-import { setInstitutionMeta, type RelayDatabase } from "./db.mjs";
+import { getInstitutionMeta, setInstitutionMeta, type RelayDatabase } from "./db.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import type { RelayStore } from "./store.mjs";
 
@@ -40,6 +40,26 @@ type CloudPushResponse = {
   acknowledgements: CloudAcknowledgement[];
 };
 
+type CloudPullResponse =
+  | {
+      protocol_version: 1;
+      status: "not_modified";
+      institution_id: string;
+      device_id: string;
+      server_time: string;
+      cloud_revision: number;
+      revision_updated_at?: string | null;
+    }
+  | {
+      protocol_version: 1;
+      status: "snapshot";
+      institution_id: string;
+      device_id: string;
+      server_time: string;
+      cloud_revision: number;
+      snapshot: Record<string, unknown>;
+    };
+
 export type RelayCloudSyncRunResult = {
   configured_institutions: number;
   attempted_institutions: number;
@@ -48,6 +68,10 @@ export type RelayCloudSyncRunResult = {
   retryable_operations: number;
   blocked_operations: number;
   conflict_operations: number;
+  pull_attempted_institutions: number;
+  pull_not_modified: number;
+  pull_snapshots_applied: number;
+  pull_retryable_institutions: number;
   skipped_institutions: Array<{ code: string; reason: string }>;
 };
 
@@ -73,7 +97,8 @@ function configuredCloudSync(institution: RelayInstitutionConfig) {
   const deviceId = String(cloud.device_id || "").trim();
   const token = String(cloud.token || "").trim();
   if (!endpoint || !deviceId || token.length < 32) return null;
-  return { endpoint, deviceId, token };
+  const pullEndpoint = String(cloud.pull_endpoint || "").trim().replace(/\/+$/, "") || null;
+  return { endpoint, pullEndpoint, deviceId, token };
 }
 
 function institutionIdForCode(db: RelayDatabase, code: string) {
@@ -545,6 +570,194 @@ function isCloudPushResponse(
     Number.isFinite(Date.parse(String(row.server_time || "")));
 }
 
+function nonNegativeSafeInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function storedScheduleRevision(db: RelayDatabase, institutionId: string) {
+  const raw = getInstitutionMeta(db, institutionId, "attendance_schedule_revision");
+  return raw === null ? null : nonNegativeSafeInteger(raw);
+}
+
+function isCloudPullResponse(
+  value: unknown,
+  expectedDeviceId: string,
+): value is CloudPullResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const revision = nonNegativeSafeInteger(row.cloud_revision);
+  if (
+    row.protocol_version !== SYNC_PROTOCOL_VERSION ||
+    row.device_id !== expectedDeviceId ||
+    typeof row.institution_id !== "string" ||
+    !row.institution_id.trim() ||
+    revision === null ||
+    !Number.isFinite(Date.parse(String(row.server_time || "")))
+  ) {
+    return false;
+  }
+  if (row.status === "not_modified") return true;
+  if (row.status !== "snapshot") return false;
+  if (!row.snapshot || typeof row.snapshot !== "object" || Array.isArray(row.snapshot)) {
+    return false;
+  }
+  const snapshot = row.snapshot as Record<string, unknown>;
+  return snapshot.institution_id === row.institution_id &&
+    nonNegativeSafeInteger(snapshot.snapshot_revision) === revision &&
+    snapshot.snapshot_completeness === "complete";
+}
+
+function writePullSuccess(
+  db: RelayDatabase,
+  institutionId: string,
+  now: Date,
+  revision: number,
+) {
+  const nowIso = now.toISOString();
+  db.prepare(`
+    INSERT INTO sync_cursors(institution_id, stream, cursor, last_success_at, last_error_at, last_error)
+    VALUES (?, 'cloud_pull', ?, ?, NULL, NULL)
+    ON CONFLICT(institution_id, stream) DO UPDATE SET
+      cursor = excluded.cursor,
+      last_success_at = excluded.last_success_at,
+      last_error_at = NULL,
+      last_error = NULL
+  `).run(institutionId, String(revision), nowIso);
+  setInstitutionMeta(db, institutionId, "last_cloud_pull_at", nowIso);
+  setInstitutionMeta(db, institutionId, "last_cloud_pull_revision", String(revision));
+}
+
+function writePullError(
+  db: RelayDatabase,
+  institutionId: string,
+  now: Date,
+  error: unknown,
+) {
+  const nowIso = now.toISOString();
+  db.prepare(`
+    INSERT INTO sync_cursors(institution_id, stream, cursor, last_success_at, last_error_at, last_error)
+    VALUES (?, 'cloud_pull', NULL, NULL, ?, ?)
+    ON CONFLICT(institution_id, stream) DO UPDATE SET
+      last_error_at = excluded.last_error_at,
+      last_error = excluded.last_error
+  `).run(institutionId, nowIso, safeError(error, "cloud_pull_failed"));
+}
+
+async function pullInstitutionSnapshot(
+  config: RelayConfig,
+  store: RelayStore,
+  input: {
+    institution: RelayInstitutionConfig;
+    localInstitutionId: string | null;
+    cloud: NonNullable<ReturnType<typeof configuredCloudSync>>;
+    fetchImpl: typeof fetch;
+    now: () => Date;
+  },
+) {
+  const { institution, cloud, fetchImpl, now } = input;
+  if (!cloud.pullEndpoint) {
+    return { status: "skipped" as const, reason: "cloud_pull_endpoint_unavailable" };
+  }
+
+  const knownRevision = input.localInstitutionId
+    ? storedScheduleRevision(store.db, input.localInstitutionId)
+    : null;
+  const endpoint = new URL(cloud.pullEndpoint);
+  if (knownRevision !== null) {
+    endpoint.searchParams.set("known_revision", String(knownRevision));
+  }
+
+  const attemptAt = now();
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${cloud.token}`,
+        Accept: "application/json",
+        "X-MonCahier-Relay-Device": cloud.deviceId,
+      },
+      signal: AbortSignal.timeout(config.cloudSyncTimeoutMs || 20_000),
+    });
+    const body = await response.json().catch(() => null) as unknown;
+    if (!response.ok) {
+      const error = safeError(
+        (body as Record<string, unknown> | null)?.error,
+        `cloud_pull_http_${response.status}`,
+      );
+      if (input.localInstitutionId) {
+        writePullError(store.db, input.localInstitutionId, attemptAt, error);
+      }
+      return { status: "retryable" as const, error };
+    }
+    if (!isCloudPullResponse(body, cloud.deviceId)) {
+      if (input.localInstitutionId) {
+        writePullError(store.db, input.localInstitutionId, attemptAt, "cloud_pull_response_invalid");
+      }
+      return { status: "retryable" as const, error: "cloud_pull_response_invalid" };
+    }
+
+    const institutionId = body.institution_id;
+    if (
+      input.localInstitutionId &&
+      institutionId !== input.localInstitutionId
+    ) {
+      writePullError(store.db, input.localInstitutionId, attemptAt, "cloud_pull_institution_mismatch");
+      return { status: "retryable" as const, error: "cloud_pull_institution_mismatch" };
+    }
+
+    if (body.status === "not_modified") {
+      if (!input.localInstitutionId) {
+        return { status: "retryable" as const, error: "cloud_pull_snapshot_required" };
+      }
+      writePullSuccess(store.db, institutionId, attemptAt, body.cloud_revision);
+      return {
+        status: "not_modified" as const,
+        institution_id: institutionId,
+        cloud_revision: body.cloud_revision,
+      };
+    }
+
+    const snapshot = body.snapshot;
+    const snapshotInstitution = snapshot.institution as Record<string, unknown> | undefined;
+    const snapshotCode = String(snapshotInstitution?.code || "").trim().toUpperCase();
+    if (
+      snapshotCode &&
+      snapshotCode !== String(institution.code || "").trim().toUpperCase()
+    ) {
+      if (input.localInstitutionId) {
+        writePullError(store.db, input.localInstitutionId, attemptAt, "cloud_pull_institution_code_mismatch");
+      }
+      return { status: "retryable" as const, error: "cloud_pull_institution_code_mismatch" };
+    }
+
+    const bootstrapResult = store.bootstrap(snapshot);
+    if (
+      (bootstrapResult.status !== "applied" && bootstrapResult.status !== "duplicate") ||
+      bootstrapResult.applied_snapshot_revision !== body.cloud_revision
+    ) {
+      writePullError(store.db, institutionId, attemptAt, "cloud_pull_snapshot_not_acknowledged");
+      return { status: "retryable" as const, error: "cloud_pull_snapshot_not_acknowledged" };
+    }
+    writePullSuccess(store.db, institutionId, attemptAt, body.cloud_revision);
+    return {
+      status: "applied" as const,
+      institution_id: institutionId,
+      cloud_revision: body.cloud_revision,
+      bootstrap_status: bootstrapResult.status,
+    };
+  } catch (error) {
+    if (input.localInstitutionId) {
+      writePullError(store.db, input.localInstitutionId, attemptAt, error);
+    }
+    return {
+      status: "retryable" as const,
+      error: safeError(error instanceof Error ? error.message : error, "cloud_pull_network_failed"),
+    };
+  }
+}
+
+
 
 export type RequeueTimetableReplacementChainResult = {
   institution_id: string;
@@ -830,6 +1043,10 @@ export async function syncRelayOnce(
     retryable_operations: 0,
     blocked_operations: 0,
     conflict_operations: 0,
+    pull_attempted_institutions: 0,
+    pull_not_modified: 0,
+    pull_snapshots_applied: 0,
+    pull_retryable_institutions: 0,
     skipped_institutions: [],
   };
 
@@ -837,74 +1054,125 @@ export async function syncRelayOnce(
     const cloud = configuredCloudSync(institution);
     if (!cloud) continue;
     result.configured_institutions += 1;
-    const institutionId = institutionIdForCode(store.db, institution.code);
-    if (!institutionId) {
-      result.skipped_institutions.push({ code: institution.code, reason: "institution_not_bootstrapped" });
+
+    let institutionId = institutionIdForCode(store.db, institution.code);
+    if (institutionId) {
+      const operations = claimBatch(
+        store.db,
+        institutionId,
+        config.cloudSyncBatchSize || 25,
+        now(),
+      );
+      if (operations.length) {
+        result.attempted_institutions += 1;
+        result.claimed_operations += operations.length;
+        const attemptAt = now();
+        try {
+          const response = await fetchImpl(cloud.endpoint, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${cloud.token}`,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "X-MonCahier-Relay-Device": cloud.deviceId,
+            },
+            body: JSON.stringify({
+              protocol_version: SYNC_PROTOCOL_VERSION,
+              institution_id: institutionId,
+              device_id: cloud.deviceId,
+              sent_at: attemptAt.toISOString(),
+              operations: operations.map((operation) => wireOperation(store.db, operation)),
+            }),
+            signal: AbortSignal.timeout(config.cloudSyncTimeoutMs || 20_000),
+          });
+          const body = await response.json().catch(() => null) as unknown;
+          if (!response.ok) {
+            const error = safeError(
+              (body as Record<string, unknown> | null)?.error,
+              `cloud_http_${response.status}`,
+            );
+            retryOperations(
+              store.db,
+              institutionId,
+              operations,
+              attemptAt,
+              error,
+              response.status,
+            );
+            result.retryable_operations += operations.length;
+          } else if (!isCloudPushResponse(body, institutionId, cloud.deviceId)) {
+            retryOperations(
+              store.db,
+              institutionId,
+              operations,
+              attemptAt,
+              "cloud_response_invalid",
+              response.status,
+            );
+            result.retryable_operations += operations.length;
+          } else {
+            const counters = applyAcknowledgements(
+              store.db,
+              institutionId,
+              operations,
+              body.acknowledgements,
+              attemptAt,
+            );
+            result.acknowledged_operations += counters.acknowledged;
+            result.retryable_operations += counters.retryable;
+            result.blocked_operations += counters.blocked;
+            result.conflict_operations += counters.conflict;
+            writePushSuccess(store.db, institutionId, attemptAt);
+          }
+        } catch (error) {
+          retryOperations(
+            store.db,
+            institutionId,
+            operations,
+            attemptAt,
+            error instanceof Error ? error.message : "cloud_sync_network_failed",
+            null,
+          );
+          result.retryable_operations += operations.length;
+        }
+      }
+    }
+
+    const pull = await pullInstitutionSnapshot(config, store, {
+      institution,
+      localInstitutionId: institutionId,
+      cloud,
+      fetchImpl,
+      now,
+    });
+    if (pull.status === "skipped") {
+      if (!institutionId) {
+        result.skipped_institutions.push({
+          code: institution.code,
+          reason: pull.reason,
+        });
+      }
       continue;
     }
-    const operations = claimBatch(
-      store.db,
-      institutionId,
-      config.cloudSyncBatchSize || 25,
-      now(),
-    );
-    if (!operations.length) continue;
-    result.attempted_institutions += 1;
-    result.claimed_operations += operations.length;
-    const attemptAt = now();
-    try {
-      const response = await fetchImpl(cloud.endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cloud.token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "X-MonCahier-Relay-Device": cloud.deviceId,
-        },
-        body: JSON.stringify({
-          protocol_version: SYNC_PROTOCOL_VERSION,
-          institution_id: institutionId,
-          device_id: cloud.deviceId,
-          sent_at: attemptAt.toISOString(),
-          operations: operations.map((operation) => wireOperation(store.db, operation)),
-        }),
-        signal: AbortSignal.timeout(config.cloudSyncTimeoutMs || 20_000),
-      });
-      const body = await response.json().catch(() => null) as unknown;
-      if (!response.ok) {
-        const error = safeError((body as Record<string, unknown> | null)?.error, `cloud_http_${response.status}`);
-        retryOperations(store.db, institutionId, operations, attemptAt, error, response.status);
-        result.retryable_operations += operations.length;
-        continue;
+
+    result.pull_attempted_institutions += 1;
+    if (pull.status === "retryable") {
+      result.pull_retryable_institutions += 1;
+      if (!institutionId) {
+        result.skipped_institutions.push({
+          code: institution.code,
+          reason: pull.error,
+        });
       }
-      if (!isCloudPushResponse(body, institutionId, cloud.deviceId)) {
-        retryOperations(store.db, institutionId, operations, attemptAt, "cloud_response_invalid", response.status);
-        result.retryable_operations += operations.length;
-        continue;
-      }
-      const counters = applyAcknowledgements(
-        store.db,
-        institutionId,
-        operations,
-        body.acknowledgements,
-        attemptAt,
-      );
-      result.acknowledged_operations += counters.acknowledged;
-      result.retryable_operations += counters.retryable;
-      result.blocked_operations += counters.blocked;
-      result.conflict_operations += counters.conflict;
-      writePushSuccess(store.db, institutionId, attemptAt);
-    } catch (error) {
-      retryOperations(
-        store.db,
-        institutionId,
-        operations,
-        attemptAt,
-        error instanceof Error ? error.message : "cloud_sync_network_failed",
-        null,
-      );
-      result.retryable_operations += operations.length;
+      continue;
     }
+    if (pull.status === "not_modified") {
+      result.pull_not_modified += 1;
+      continue;
+    }
+
+    result.pull_snapshots_applied += 1;
+    institutionId = pull.institution_id;
   }
   return result;
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { requeueTimetableReplacementChain, syncRelayOnce } from "../src/cloud-sync.mjs";
 import type { RelayConfig } from "../src/config.mjs";
-import { openRelayDatabase } from "../src/db.mjs";
+import { getInstitutionMeta, openRelayDatabase } from "../src/db.mjs";
 import { RelayStore } from "../src/store.mjs";
 import { SYNC_PROTOCOL_VERSION } from "../src/types.mjs";
 
@@ -30,6 +30,36 @@ function config(): RelayConfig {
     cloudSyncTimeoutMs: 20_000,
     cloudSyncIntervalMs: 15_000,
   };
+}
+
+function configWithPull(): RelayConfig {
+  const value = config();
+  value.institutions![0]!.cloud_sync!.pull_endpoint =
+    "https://mon-cahier.com/api/relay/sync/pull";
+  return value;
+}
+
+function bootstrapRevision(
+  store: RelayStore,
+  revision: number,
+  snapshotId = `snapshot-${revision}`,
+) {
+  return store.bootstrap({
+    protocol_version: 1,
+    snapshot_id: snapshotId,
+    institution_id: "inst-1",
+    snapshot_revision: revision,
+    snapshot_completeness: "complete",
+    schedule_manifest: { class_teachers: [] },
+    generated_at: `2026-07-28T08:${String(revision).padStart(2, "0")}:00.000Z`,
+    institution: {
+      id: "inst-1",
+      name: "École test",
+      code: "SCH-000001",
+    },
+    entities: {},
+    diagnostics: { skipped_count: 0 },
+  });
 }
 
 function setup() {
@@ -565,5 +595,226 @@ test("une chaîne bloquée reste intacte si le remplaçant sémantique est ambig
   `).all() as any[];
   assert.ok(rows.every((row) => row.state === "blocked"));
   assert.equal(rows.find((row) => row.operation_id === "op-open")?.last_error, "timetable_not_found");
+  db.close();
+});
+
+
+test("le relais vérifie automatiquement la révision Cloud sans retélécharger un snapshot identique", async () => {
+  const { db, store } = setup();
+  bootstrapRevision(store, 7);
+  const requests: Array<{ method: string; url: string }> = [];
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:00:00.000Z"),
+    fetchImpl: async (input, init) => {
+      requests.push({
+        method: String(init?.method || "GET"),
+        url: String(input),
+      });
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        status: "not_modified",
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-29T10:00:00.500Z",
+        cloud_revision: 7,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  assert.deepEqual(requests.map((row) => row.method), ["GET"]);
+  assert.match(requests[0]!.url, /known_revision=7/);
+  assert.equal(result.pull_attempted_institutions, 1);
+  assert.equal(result.pull_not_modified, 1);
+  assert.equal(result.pull_snapshots_applied, 0);
+  assert.equal(result.pull_retryable_institutions, 0);
+  assert.equal(
+    getInstitutionMeta(db, "inst-1", "last_cloud_pull_revision"),
+    "7",
+  );
+  assert.equal(store.status().institutions[0]?.schedule_revision, 7);
+  assert.equal(store.status().last_cloud_pull_error, null);
+  db.close();
+});
+
+test("un snapshot Cloud plus récent est appliqué atomiquement par l'agent autonome", async () => {
+  const { db, store } = setup();
+  bootstrapRevision(store, 7);
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:05:00.000Z"),
+    fetchImpl: async (input, init) => {
+      assert.equal(String(init?.method || "GET"), "GET");
+      assert.match(String(input), /known_revision=7/);
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        status: "snapshot",
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-29T10:05:00.500Z",
+        cloud_revision: 8,
+        snapshot: {
+          protocol_version: 1,
+          snapshot_id: "snapshot-cloud-8",
+          institution_id: "inst-1",
+          snapshot_revision: 8,
+          snapshot_completeness: "complete",
+          schedule_manifest: { class_teachers: [] },
+          generated_at: "2026-07-29T10:04:59.000Z",
+          cursor: "2026-07-29T10:04:59.000Z",
+          institution: {
+            id: "inst-1",
+            name: "École test actualisée",
+            code: "SCH-000001",
+          },
+          entities: {},
+          diagnostics: { skipped_count: 0 },
+        },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal(result.pull_snapshots_applied, 1);
+  assert.equal(result.pull_retryable_institutions, 0);
+  assert.equal(
+    getInstitutionMeta(db, "inst-1", "attendance_schedule_revision"),
+    "8",
+  );
+  const institution = db.prepare(
+    "SELECT name FROM institutions WHERE id = 'inst-1'",
+  ).get() as { name: string };
+  assert.equal(institution.name, "École test actualisée");
+  assert.equal(store.status().institutions[0]?.schedule_revision, 8);
+  db.close();
+});
+
+test("le cycle pousse les écritures locales avant de récupérer le Cloud", async () => {
+  const { db, store } = setup();
+  bootstrapRevision(store, 3);
+  enqueue(store, "op-push-before-pull", "session-push-before-pull");
+  const order: string[] = [];
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:10:00.000Z"),
+    fetchImpl: async (input, init) => {
+      const method = String(init?.method || "GET");
+      order.push(method);
+      if (method === "POST") {
+        const body = JSON.parse(String(init?.body || "{}"));
+        return new Response(JSON.stringify({
+          protocol_version: 1,
+          institution_id: "inst-1",
+          device_id: DEVICE_ID,
+          server_time: "2026-07-29T10:10:00.200Z",
+          acknowledgements: body.operations.map((operation: any) => ({
+            operation_id: operation.operation_id,
+            status: "acknowledged",
+            http_status: 200,
+          })),
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      assert.match(String(input), /known_revision=3/);
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        status: "not_modified",
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-29T10:10:00.500Z",
+        cloud_revision: 3,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  assert.deepEqual(order, ["POST", "GET"]);
+  assert.equal(result.acknowledged_operations, 1);
+  assert.equal(result.pull_not_modified, 1);
+  assert.equal(store.status().pending_operations, 0);
+  db.close();
+});
+
+test("une panne du pull n'altère ni l'outbox ni la dernière révision locale", async () => {
+  const { db, store } = setup();
+  bootstrapRevision(store, 11);
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:15:00.000Z"),
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: "schedule_revision_unavailable",
+    }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    }),
+  });
+
+  assert.equal(result.pull_retryable_institutions, 1);
+  assert.equal(
+    getInstitutionMeta(db, "inst-1", "attendance_schedule_revision"),
+    "11",
+  );
+  const status = store.status();
+  assert.equal(status.pending_operations, 0);
+  assert.equal(status.last_cloud_pull_error, "schedule_revision_unavailable");
+  assert.equal(status.last_cloud_pull_error_at, "2026-07-29T10:15:00.000Z");
+  db.close();
+});
+
+test("un relais configuré mais vide reçoit son premier snapshot sans bootstrap navigateur", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:20:00.000Z"),
+    fetchImpl: async (input, init) => {
+      assert.equal(String(init?.method || "GET"), "GET");
+      assert.doesNotMatch(String(input), /known_revision=/);
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        status: "snapshot",
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-29T10:20:00.500Z",
+        cloud_revision: 1,
+        snapshot: {
+          protocol_version: 1,
+          snapshot_id: "snapshot-initial-cloud-1",
+          institution_id: "inst-1",
+          snapshot_revision: 1,
+          snapshot_completeness: "complete",
+          schedule_manifest: { class_teachers: [] },
+          generated_at: "2026-07-29T10:19:59.000Z",
+          cursor: "2026-07-29T10:19:59.000Z",
+          institution: {
+            id: "inst-1",
+            name: "École test initiale",
+            code: "SCH-000001",
+          },
+          entities: {},
+          diagnostics: { skipped_count: 0 },
+        },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal(result.pull_attempted_institutions, 1);
+  assert.equal(result.pull_snapshots_applied, 1);
+  assert.equal(result.pull_retryable_institutions, 0);
+  assert.equal(result.skipped_institutions.length, 0);
+  assert.equal(store.status().institution_count, 1);
+  assert.equal(store.status().institutions[0]?.schedule_revision, 1);
   db.close();
 });

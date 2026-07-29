@@ -109,6 +109,8 @@ async function main() {
           institution.cloud_sync?.token,
         ),
         endpoint: institution.cloud_sync?.endpoint || null,
+        pull_endpoint: institution.cloud_sync?.pull_endpoint || null,
+        pull_configured: Boolean(institution.cloud_sync?.pull_endpoint),
         device_id: institution.cloud_sync?.device_id || null,
       })),
       status: store.status(),

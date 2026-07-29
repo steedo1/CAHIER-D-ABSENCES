@@ -13,6 +13,7 @@ export const DEFAULT_RELAY_ALLOWED_ORIGINS = [
 export type RelayCloudSyncInstitutionConfig = {
   enabled?: boolean;
   endpoint?: string;
+  pull_endpoint?: string;
   device_id?: string;
   token?: string;
 };
@@ -116,13 +117,20 @@ function normalizedCloudSync(value: unknown): RelayCloudSyncInstitutionConfig | 
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
   const endpoint = String(row.endpoint || "").trim().replace(/\/+$/, "");
+  const explicitPullEndpoint = String(row.pull_endpoint || "").trim().replace(/\/+$/, "");
+  const pullEndpoint = explicitPullEndpoint || (
+    endpoint.endsWith("/push")
+      ? `${endpoint.slice(0, -"/push".length)}/pull`
+      : ""
+  );
   const deviceId = String(row.device_id || "").trim();
   const token = String(row.token || "").trim();
   const enabled = row.enabled === true;
-  if (!endpoint && !deviceId && !token && !enabled) return undefined;
+  if (!endpoint && !pullEndpoint && !deviceId && !token && !enabled) return undefined;
   return {
     enabled,
     ...(endpoint ? { endpoint } : {}),
+    ...(pullEndpoint ? { pull_endpoint: pullEndpoint } : {}),
     ...(deviceId ? { device_id: deviceId } : {}),
     ...(token ? { token } : {}),
   };

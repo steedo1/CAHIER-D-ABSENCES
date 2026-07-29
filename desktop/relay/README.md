@@ -344,3 +344,48 @@ La commande refuse toute opération qui ne correspond pas exactement à une
 ouverture bloquée en `422 timetable_not_found`. Elle exige que l'ancien créneau
 soit retiré, qu'un unique remplaçant actif existe, réarme uniquement la chaîne
 de dépendances concernée et inscrit l'action dans `audit_log`.
+
+## Lot 1B-A — Actualisation autonome Cloud vers relais
+
+Appliquer également la migration :
+
+```text
+migrations/20260729_relay_cloud_pull_v1.sql
+```
+
+Le même jeton révocable que pour l'envoi protège désormais la route :
+
+```text
+GET /api/relay/sync/pull?known_revision=...
+```
+
+À chaque cycle, le PC relais respecte cet ordre :
+
+1. envoyer d'abord les écritures locales prêtes vers le Cloud ;
+2. lire la révision pédagogique Cloud ;
+3. ne rien télécharger si cette révision est déjà présente dans SQLite ;
+4. télécharger et appliquer transactionnellement un snapshot complet si la
+   révision a avancé.
+
+L'URL de récupération est dérivée automatiquement de l'URL d'envoi configurée :
+`/api/relay/sync/push` devient `/api/relay/sync/pull`. Aucun nouveau secret ni
+nouvel appairage n'est nécessaire.
+
+Le snapshot conserve les protections déjà validées : une entité marquée
+`local_dirty`, référencée par l'outbox ou nécessaire à une opération locale
+n'est pas écrasée silencieusement. Un snapshot incomplet, une révision
+incohérente ou une réponse Cloud invalide est refusé et réessayé au cycle
+suivant.
+
+`sync-once`, `doctor` et `status` exposent notamment :
+
+- `pull_attempted_institutions` ;
+- `pull_not_modified` ;
+- `pull_snapshots_applied` ;
+- `pull_retryable_institutions` ;
+- `last_cloud_pull_at` et `last_cloud_pull_error` ;
+- `schedule_revision` par établissement.
+
+Le service lancé par `serve` effectue ce contrôle automatiquement toutes les
+15 secondes par défaut. La page Admin peut toujours forcer un bootstrap
+immédiat ; elle n'est plus indispensable pour maintenir le PC relais à jour.
