@@ -1417,22 +1417,23 @@ function StudentBulletinCard({
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
 
     // Zone utile A4 imprimée : 297 mm - marges @page 4 mm x 2 = 289 mm.
-    // On garde une petite réserve, mais on évite de réduire inutilement la police.
     const targetPx = (287 / 25.4) * 96;
+    const fitRatio = targetPx / naturalH;
 
-    if (naturalH <= targetPx) {
+    // Si on est déjà très proche de la cible, on garde la taille normale.
+    if (fitRatio >= 0.995 && fitRatio <= 1.02) {
       setScale(1);
       return;
     }
 
-    const raw = Math.min(1, targetPx / naturalH);
-    const safe = Math.min(1, raw * 0.995);
+    // Si le contenu est trop court, on l'agrandit légèrement pour mieux occuper la page.
+    // Si le contenu est trop long, on le réduit juste ce qu'il faut.
+    const adjusted =
+      fitRatio > 1
+        ? Math.min(1.08, fitRatio * 0.985)
+        : Math.max(0.72, Math.min(1, fitRatio * 0.995));
 
-    // En dessous de 0.55, le bulletin deviendrait illisible : on préfère garder
-    // le maximum possible tout en évitant les coupes ordinaires.
-    const clamped = Math.max(0.55, safe);
-
-    setScale(clamped);
+    setScale(adjusted);
   };
 
   useLayoutEffect(() => {
@@ -2622,8 +2623,8 @@ function StudentBulletinCard({
         </div>
       </div>
 
-      <div className="bulletin-footer mt-1 pb-[2mm] text-center text-[9px] leading-tight text-black">
-        <div className="font-bold tracking-[0.04em]">www.mon-cahier.com</div>
+      <div className="bulletin-footer mt-auto pt-[1.5mm] text-center text-[8.6px] leading-tight text-black">
+        <div className="font-bold tracking-[0.03em]">www.mon-cahier.com</div>
         <div className="font-semibold">Bulletin sécurisé par code QR</div>
       </div>
       </div>
@@ -3552,9 +3553,9 @@ function BulletinsPageContent() {
 
         .bulletin-footer {
           color: var(--bulletin-navy);
-          border-top: 1.5px solid var(--bulletin-gold);
-          padding-top: 3px;
-          background: linear-gradient(180deg, #ffffff 0%, #fffaf0 100%);
+          border-top: 1px solid rgba(148, 163, 184, 0.55);
+          padding-top: 2px;
+          background: transparent;
         }
 
         .sig-img {
@@ -3610,6 +3611,8 @@ function BulletinsPageContent() {
         .print-page-content {
           width: 100%;
           min-height: 297mm;
+          display: flex;
+          flex-direction: column;
           padding: 8mm;
           box-sizing: border-box;
           transform-origin: top left;
@@ -3658,6 +3661,9 @@ function BulletinsPageContent() {
 
         .preview-overlay .print-page-content {
           min-height: 289mm;
+          height: 289mm;
+          display: flex;
+          flex-direction: column;
           padding: 2mm 6mm 4mm;
         }
 
@@ -3754,7 +3760,10 @@ function BulletinsPageContent() {
           .print-page-content {
             width: calc(100% / var(--print-fit-scale, 1)) !important;
             min-height: auto !important;
-            padding: 1.5mm 5mm 3.5mm !important;
+            height: 289mm !important;
+            display: flex !important;
+            flex-direction: column !important;
+            padding: 1.5mm 5mm 3mm !important;
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
             transform-origin: top left !important;
