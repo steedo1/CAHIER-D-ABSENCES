@@ -1405,7 +1405,12 @@ function StudentBulletinCard({
     const contentTop = rect.top;
     const realBottom = Array.from(contentEl.children).reduce((bottom, child) => {
       const el = child as HTMLElement;
-      if (el.classList.contains("bulletin-watermark")) return bottom;
+      if (
+        el.classList.contains("bulletin-watermark") ||
+        el.classList.contains("bulletin-duplicata-watermark")
+      ) {
+        return bottom;
+      }
       const childRect = el.getBoundingClientRect();
       return Math.max(bottom, childRect.bottom - contentTop);
     }, 0);
