@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, BookOpen, Clock, Play, Save, Square, LogOut, Loader2 } from "lucide-react";
+import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
   registerServiceWorker,
@@ -33,6 +33,10 @@ import {
   closeTeacherAttendanceSessionOnRelay,
   teacherSessionLifecycleDeliveryMessage,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import {
+  fetchRelayTeacherOfflineSchedule,
+  type RelayTeacherOfflineSchedule,
+} from "@/lib/local-relay";
 
 /* ───────── UI helpers ───────── */
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -167,6 +171,7 @@ type ConductMax = {
 };
 
 type SubjectLoadMode =
+  | "relay"
   | "auto"
   | "auto-offline"
   | "legacy-fallback"
@@ -174,7 +179,6 @@ type SubjectLoadMode =
   | "closed-online"
   | "empty";
 
-type SaveUxState = "idle" | "saving" | "saved" | "queued" | "error";
 
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
@@ -317,6 +321,70 @@ const weekdayInTZ1to7 = (d: Date, tz: string): number => {
   return map[w] ?? 7;
 };
 
+function periodsFromRelayClassSchedule(
+  schedule: RelayTeacherOfflineSchedule,
+  classId: string,
+): Record<number, Period[]> {
+  const byDay: Record<number, Period[]> = {};
+  for (const slot of schedule.slots || []) {
+    const hasClass = (slot.items || []).some((item) => item.class_id === classId);
+    if (!hasClass) continue;
+    const weekday = Number(slot.weekday);
+    if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7) continue;
+    const period: Period = {
+      id: String(slot.period_id || "").trim() || null,
+      weekday,
+      label: String(slot.label || "Séance"),
+      start_time: String(slot.start_time || "00:00").slice(0, 5),
+      end_time: String(slot.end_time || "00:00").slice(0, 5),
+    };
+    if (!period.id || toMinutes(period.end_time) <= toMinutes(period.start_time)) continue;
+    const day = byDay[weekday] || [];
+    if (!day.some((candidate) => candidate.id === period.id)) day.push(period);
+    byDay[weekday] = day.sort((left, right) =>
+      left.start_time.localeCompare(right.start_time) ||
+      left.end_time.localeCompare(right.end_time),
+    );
+  }
+  return byDay;
+}
+
+function relaySubjectsForSlot(
+  schedule: RelayTeacherOfflineSchedule | null,
+  classId: string,
+  period: Period | null,
+): Subject[] | null {
+  if (!schedule || !period?.id) return null;
+  const slot = (schedule.slots || []).find((candidate) =>
+    String(candidate.period_id || "") === period.id &&
+    (candidate.items || []).some((item) => item.class_id === classId),
+  );
+  if (!slot) return [];
+  const seen = new Set<string>();
+  const subjects: Subject[] = [];
+  for (const item of slot.items || []) {
+    if (item.class_id !== classId || !item.subject_id || seen.has(item.subject_id)) continue;
+    seen.add(item.subject_id);
+    subjects.push({ id: item.subject_id, label: item.subject_name || "Discipline" });
+  }
+  return subjects;
+}
+
+function relayRosterForClass(
+  schedule: RelayTeacherOfflineSchedule | null,
+  classId: string,
+): RosterItem[] | null {
+  const raw = schedule?.rosters?.[classId]?.items;
+  if (!Array.isArray(raw)) return null;
+  return raw
+    .map((item: any) => ({
+      id: String(item?.id || ""),
+      full_name: String(item?.full_name || item?.display_name || ""),
+      matricule: String(item?.matricule || item?.registration_number || "").trim() || null,
+    }))
+    .filter((item) => item.id && item.full_name);
+}
+
 /* Sanctions */
 const ALLOWED_RUBRICS = ["discipline", "tenue", "moralite"] as const;
 type Rubric = (typeof ALLOWED_RUBRICS)[number];
@@ -418,19 +486,81 @@ export default function ClassDevicePage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingRoster, setLoadingRoster] = useState(false);
-  const [saveUxState, setSaveUxState] = useState<SaveUxState>("idle");
-  const saveUxTimerRef = useRef<number | null>(null);
+  const [relayClassSchedule, setRelayClassSchedule] =
+    useState<RelayTeacherOfflineSchedule | null>(null);
+  const relayClassScheduleRef = useRef<RelayTeacherOfflineSchedule | null>(null);
+  const relayScheduleRefreshRef = useRef<Promise<RelayTeacherOfflineSchedule | null> | null>(null);
   const relayClockOffsetMsRef = useRef<number | null>(null);
 
-  function observedNowIso() {
+  function relayAdjustedDate(baseMs = Date.now()) {
     const offset = relayClockOffsetMsRef.current;
-    return new Date(Date.now() + (Number.isFinite(offset) ? Number(offset) : 0)).toISOString();
+    return new Date(baseMs + (Number.isFinite(offset) ? Number(offset) : 0));
+  }
+
+  function observedNowIso() {
+    return relayAdjustedDate().toISOString();
   }
 
   const changedCount = useMemo(
     () => Object.values(rows).filter((r) => r.absent || r.late).length,
     [rows]
   );
+
+
+  async function refreshClassScheduleFromRelay(
+    target: MyClass | null = selectedClass,
+  ): Promise<RelayTeacherOfflineSchedule | null> {
+    const relay = target?.attendance_presence;
+    if (
+      !target?.institution_id ||
+      !relay?.enabled ||
+      relay.allow_local_relay === false ||
+      !relay.relay_local_url ||
+      !relay.relay_access_token
+    ) {
+      return null;
+    }
+    if (relayScheduleRefreshRef.current) return await relayScheduleRefreshRef.current;
+
+    const run = (async () => {
+      try {
+        const schedule = await fetchRelayTeacherOfflineSchedule({
+          institutionId: target.institution_id,
+          baseUrl: relay.relay_local_url!,
+          accessToken: relay.relay_access_token!,
+        });
+        if (
+          schedule.actor_kind !== "class_device" ||
+          String(schedule.class_id || "") !== target.id
+        ) {
+          throw new Error("relay_class_schedule_scope_mismatch");
+        }
+        if (schedule.relay_time) {
+          const relayTime = Date.parse(schedule.relay_time);
+          if (Number.isFinite(relayTime)) {
+            relayClockOffsetMsRef.current = relayTime - Date.now();
+          }
+        }
+        const relayPeriods = periodsFromRelayClassSchedule(schedule, target.id);
+        relayClassScheduleRef.current = schedule;
+        setRelayClassSchedule(schedule);
+        setPeriodsByDay(relayPeriods);
+
+        const relayRoster = relayRosterForClass(schedule, target.id);
+        if (relayRoster) {
+          await cacheSet(`classDevice:roster:${target.id}`, { items: relayRoster });
+          if (openRef.current?.class_id === target.id) setRoster(relayRoster);
+        }
+        return schedule;
+      } catch {
+        return null;
+      } finally {
+        relayScheduleRefreshRef.current = null;
+      }
+    })();
+    relayScheduleRefreshRef.current = run;
+    return await run;
+  }
 
   /* ───────── Offline state (sync/outbox) ───────── */
   const [isOnline, setIsOnline] = useState(
@@ -684,13 +814,6 @@ export default function ClassDevicePage() {
     return () => window.clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      clearSaveUxTimer();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // ✅ Helpers : distinguer offline / erreur serveur
   function extractRespError(r: any): string | null {
     const cands = [r?.error, r?.message, r?.data?.error, r?.data?.message, r?.data?.details];
@@ -707,25 +830,6 @@ export default function ClassDevicePage() {
     if (r?.queued === true) return true;
     if (r?.status === 0) return true;
     return false;
-  }
-
-  function clearSaveUxTimer() {
-    if (saveUxTimerRef.current != null && typeof window !== "undefined") {
-      window.clearTimeout(saveUxTimerRef.current);
-      saveUxTimerRef.current = null;
-    }
-  }
-
-  function pulseSaveUx(next: SaveUxState, timeoutMs = 2200) {
-    setSaveUxState(next);
-    clearSaveUxTimer();
-    if (next === "idle") return;
-    if (typeof window !== "undefined") {
-      saveUxTimerRef.current = window.setTimeout(() => {
-        setSaveUxState("idle");
-        saveUxTimerRef.current = null;
-      }, timeoutMs);
-    }
   }
 
   /* ───────── Sanctions (inline) ───────── */
@@ -1040,6 +1144,37 @@ export default function ClassDevicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!selectedClass) {
+      relayClassScheduleRef.current = null;
+      setRelayClassSchedule(null);
+      return;
+    }
+    relayClassScheduleRef.current = null;
+    setRelayClassSchedule(null);
+    let cancelled = false;
+    const refresh = async () => {
+      const schedule = await refreshClassScheduleFromRelay(selectedClass);
+      if (cancelled || !schedule) return;
+      setNowTick(Date.now());
+    };
+    void refresh();
+    const interval = window.setInterval(() => {
+      if (!openRef.current) void refresh();
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+    // Le jeton est borné à la classe ; toute variation impose une nouvelle lecture relais.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedClass?.id,
+    selectedClass?.institution_id,
+    selectedClass?.attendance_presence?.relay_local_url,
+    selectedClass?.attendance_presence?.relay_access_token,
+  ]);
+
   /* 1bis) charger paramètres + périodes + réglages de conduite */
   async function loadInstitutionBasics() {
     async function getJson(url: string, key: string) {
@@ -1192,7 +1327,7 @@ export default function ClassDevicePage() {
         instConfig.institution_name || prev.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: instConfig.academic_year_label || prev.academic_year_label || null,
     }));
-    setPeriodsByDay(grouped);
+    if (!relayClassScheduleRef.current) setPeriodsByDay(grouped);
 
     // 2) config de conduite (maxima) — loader ultra défensif
     const defaults: ConductMax = { discipline: 7, tenue: 3, moralite: 4 };
@@ -1353,12 +1488,12 @@ export default function ClassDevicePage() {
   }, []);
 
   // Calcul du créneau par défaut « du moment » (timezone-aware)
-  function computeDefaultsForNow() {
+  function computeDefaultsForNow(sourcePeriods: Record<number, Period[]> = periodsByDay) {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date(nowTick);
+    const now = relayAdjustedDate(nowTick);
     const nowHM = hmInTZ(now, tz);
     const wd = weekdayInTZ1to7(now, tz);
-    const slots = periodsByDay[wd] || [];
+    const slots = sourcePeriods[wd] || [];
 
     if (wd === 7 || slots.length === 0) {
       setStartTime(nowHM);
@@ -1392,7 +1527,7 @@ export default function ClassDevicePage() {
 
   const activeConfiguredSlot = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = new Date(nowTick);
+    const now = relayAdjustedDate(nowTick);
     const wd = weekdayInTZ1to7(now, tz);
     const slots = periodsByDay[wd] || [];
     if (!slots.length) return null;
@@ -1406,13 +1541,13 @@ export default function ClassDevicePage() {
 
   const hasConfiguredSlotsToday = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
+    const wd = weekdayInTZ1to7(relayAdjustedDate(nowTick), tz);
     return (periodsByDay[wd] || []).length > 0;
   }, [periodsByDay, inst?.tz, nowTick]);
 
   const activeSlotKey = useMemo(() => {
     const tz = inst?.tz || "Africa/Abidjan";
-    const wd = weekdayInTZ1to7(new Date(nowTick), tz);
+    const wd = weekdayInTZ1to7(relayAdjustedDate(nowTick), tz);
     if (!hasConfiguredSlotsToday) return `no-config|${wd}`;
     if (!activeConfiguredSlot) return `closed|${wd}`;
     return `${wd}|${activeConfiguredSlot.start_time}|${activeConfiguredSlot.end_time}`;
@@ -1483,6 +1618,20 @@ export default function ClassDevicePage() {
         return;
       }
 
+      const relayList = relaySubjectsForSlot(
+        relayClassSchedule,
+        classId,
+        activeConfiguredSlot,
+      );
+      if (relayList !== null) {
+        await cacheSet(
+          `classDevice:subjects:${classId}:${activeSlotKey}`,
+          { items: relayList },
+        ).catch(() => null);
+        applyList(relayList, "relay");
+        return;
+      }
+
       if (!isOnline) {
         const preparedResp = await offlineGetJson(
           `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
@@ -1537,7 +1686,15 @@ export default function ClassDevicePage() {
     return () => {
       cancelled = true;
     };
-  }, [classId, activeSlotKey, activeConfiguredSlot, canUseFallbackLegacyFlow, isOnline, open]);
+  }, [
+    classId,
+    activeSlotKey,
+    activeConfiguredSlot,
+    canUseFallbackLegacyFlow,
+    isOnline,
+    open,
+    relayClassSchedule?.schedule_revision,
+  ]);
 
   /* 2bis) préchauffer la liste des élèves dès que la classe est connue en ligne
         pour que l'ouverture de séance hors réseau retrouve un roster déjà en cache */
@@ -1559,11 +1716,17 @@ export default function ClassDevicePage() {
     (async () => {
       try {
         setLoadingRoster(true);
-        const j = await offlineGetJson(
-          `/api/class/roster?class_id=${open.class_id}`,
-          `classDevice:roster:${open.class_id}`
-        ).catch(() => null as any);
-        setRoster(((j?.items || []) as RosterItem[]) ?? []);
+        const relayRoster = relayRosterForClass(relayClassSchedule, open.class_id);
+        if (relayRoster !== null) {
+          setRoster(relayRoster);
+          await cacheSet(`classDevice:roster:${open.class_id}`, { items: relayRoster });
+        } else {
+          const j = await offlineGetJson(
+            `/api/class/roster?class_id=${open.class_id}`,
+            `classDevice:roster:${open.class_id}`
+          ).catch(() => null as any);
+          setRoster(((j?.items || []) as RosterItem[]) ?? []);
+        }
 
         const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(open.class_id);
         setRows(snap?.state?.rows || {});
@@ -1571,7 +1734,7 @@ export default function ClassDevicePage() {
         setLoadingRoster(false);
       }
     })();
-  }, [open?.class_id]);
+  }, [open?.class_id, relayClassSchedule?.schedule_revision]);
 
   /* helpers saisie */
   function toggleAbsent(id: string, v: boolean) {
@@ -1617,7 +1780,7 @@ export default function ClassDevicePage() {
 
   useEffect(() => {
     if (!open?.local_relay || !selectedClass?.institution_id || !selectedClass.actor_profile_id) return;
-    const periodId = open.period_id || activeConfiguredSlot?.id || null;
+    const periodId = open.period_id || null;
     if (!periodId || Object.keys(rows).length === 0) return;
     const timer = window.setTimeout(() => {
       void stageTeacherAttendanceDraft({
@@ -1651,22 +1814,6 @@ export default function ClassDevicePage() {
     !open &&
     (subjectLoadMode === "empty" || subjectLoadMode === "auto-offline") &&
     subjects.length === 0;
-
-  const saveButtonLabel = busy && saveUxState === "saving"
-    ? "Enregistrement…"
-    : saveUxState === "queued"
-      ? "Enregistré hors ligne ✓"
-      : saveUxState === "saved"
-        ? "Enregistré ✓"
-        : saveUxState === "error"
-          ? "Réessayer l’enregistrement"
-          : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`;
-
-  const saveButtonClassName = [
-    saveUxState === "queued" ? "ring-4 ring-amber-400/40 animate-pulse" : "",
-    saveUxState === "saved" ? "ring-4 ring-emerald-400/35" : "",
-    saveUxState === "error" ? "ring-4 ring-red-300/40" : "",
-  ].join(" ").trim();
 
   useEffect(() => {
     clearReminderLoop();
@@ -1846,7 +1993,11 @@ export default function ClassDevicePage() {
       );
 
       if ((r as any).ok) {
-        setOpen((r as any).data.item as OpenSession);
+        const serverOpen = (r as any).data.item as OpenSession;
+        setOpen({
+          ...serverOpen,
+          period_id: serverOpen.period_id || activeConfiguredSlot?.id || null,
+        });
         await cacheSet("classDevice:local-open", null);
         setMsg("Séance démarrée.");
         await refreshPending();
@@ -1864,6 +2015,7 @@ export default function ClassDevicePage() {
           started_at: started.toISOString(),
           actual_call_at: actualCallAtISO,
           expected_minutes: effectiveDuration,
+          period_id: activeConfiguredSlot?.id || null,
           education_type: cls?.education_type || "general_secondary",
           education_label: cls?.education_label || "Secondaire général",
           education_short_label: cls?.education_short_label || "Général",
@@ -1896,112 +2048,44 @@ export default function ClassDevicePage() {
     }
   }
 
-  async function saveMarks() {
-    const cur = openRef.current;
-    if (!cur) return;
-
-    setBusy(true);
-    setMsg(null);
-    setSaveUxState("saving");
-
-    try {
-      // ✅ Si on a une séance "client:*" et qu’on est en ligne, on doit d’abord la confirmer côté serveur
-      let sessionId = String(cur.id || "");
-      if (isClientSessionId(sessionId) && isOnline) {
-        const ensured = await ensureServerSessionOrExplain();
-        if (!ensured) {
-          pulseSaveUx("error", 1800);
-          return;
-        }
-        sessionId = String(ensured.id);
-      }
-
-      const marks = attendanceMarksFromRows(rows);
-
-      if (cur.local_relay) {
-        const relayPolicy = selectedClass?.attendance_presence;
-        const periodId = cur.period_id || activeConfiguredSlot?.id || null;
-        if (!selectedClass?.institution_id || !selectedClass.actor_profile_id || !periodId) {
-          setMsg("Action requise : la préparation locale de cette classe doit être actualisée.");
-          pulseSaveUx("error", 2200);
-          return;
-        }
-        const delivery = await deliverTeacherAttendance({
-          institutionId: selectedClass.institution_id,
-          actorProfileId: selectedClass.actor_profile_id,
-          sessionId: cur.id,
-          classId: cur.class_id,
-          periodId,
-          marks,
-          relayBaseUrl: relayPolicy?.relay_local_url,
-          relayAccessToken: relayPolicy?.relay_access_token,
-          forceRelay: true,
-        });
-        setMsg(teacherAttendanceDeliveryMessage(delivery));
-        if (delivery.state === "relay_secured" || delivery.state === "cloud_synced") {
-          pulseSaveUx("saved");
-          vibrateIfPossible(80);
-        } else {
-          pulseSaveUx("error", 2200);
-        }
-        await refreshPending();
-        return;
-      }
-
-      const r = await offlineMutateJson(
-        "/api/teacher/attendance/bulk",
-        { method: "POST", body: { session_id: sessionId, marks } },
-        { mergeKey: `attendance:${sessionId}` }
-      );
-
-      if ((r as any).ok) {
-        const j = (r as any).data;
-        setMsg(`Enregistré : ${j.upserted} abs./ret. — ${j.deleted} suppressions (présent).`);
-        pulseSaveUx("saved");
-        vibrateIfPossible(80);
-        await refreshPending();
-      } else if (shouldTreatAsOffline(r)) {
-        setMsg("Hors connexion : enregistrement mis en attente (sync auto).");
-        pulseSaveUx("queued", 2600);
-        vibrateIfPossible([70, 60, 70]);
-        await refreshPending();
-      } else {
-        const err = extractRespError(r);
-        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : échec de l’enregistrement.");
-        pulseSaveUx("error", 2200);
-      }
-    } catch (e: any) {
-      setMsg(e?.message || "Échec enregistrement");
-      pulseSaveUx("error", 2200);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function endSession() {
     const cur = openRef.current;
     if (!cur) return;
+
+    const finalMarksPreview = attendanceMarksFromRows(rows);
+    const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
+    const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
+    const confirmed = typeof window === "undefined" || window.confirm(
+      `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
+      "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur.",
+    );
+    if (!confirmed) return;
 
     setBusy(true);
     setMsg(null);
 
     const finishLocal = async () => {
+      const freshSchedule = await refreshClassScheduleFromRelay(selectedClass);
+      const sourcePeriods = freshSchedule && selectedClass
+        ? periodsFromRelayClassSchedule(freshSchedule, selectedClass.id)
+        : periodsByDay;
       clearReminderLoop();
       setOpen(null);
       setRoster([]);
       setRows({});
       await cacheSet("classDevice:local-open", null);
-      computeDefaultsForNow();
+      computeDefaultsForNow(sourcePeriods);
+      setNowTick(Date.now());
     };
 
     try {
       let openId = String(cur.id || "");
       const isClientLocal = isClientSessionId(openId);
-      const actualEndAt = new Date().toISOString();
+      const actualEndAt = observedNowIso();
 
       if (cur.local_relay) {
         const relayPolicy = selectedClass?.attendance_presence;
-        const periodId = cur.period_id || activeConfiguredSlot?.id || null;
+        const periodId = cur.period_id || null;
         if (!selectedClass?.institution_id || !selectedClass.actor_profile_id || !periodId) {
           setMsg("La séance reste ouverte : la préparation locale de cette classe doit être actualisée.");
           return;
@@ -2035,7 +2119,7 @@ export default function ClassDevicePage() {
           return;
         }
         await finishLocal();
-        setMsg(teacherSessionLifecycleDeliveryMessage(closed));
+        setMsg(`Appel enregistré et séance terminée. ${teacherSessionLifecycleDeliveryMessage(closed)}`);
         await refreshPending();
         return;
       }
@@ -2403,6 +2487,12 @@ export default function ClassDevicePage() {
           </div>
         )}
 
+        {open && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            Les coches sont conservées automatiquement sur l’appareil. « Terminer l’appel » enregistre l’état final puis ferme la séance.
+          </div>
+        )}
+
         {/* Actions */}
         {!open ? (
           <div className="flex items-center gap-2">
@@ -2420,10 +2510,6 @@ export default function ClassDevicePage() {
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <Button onClick={saveMarks} disabled={busy} className={saveButtonClassName}>
-              <Save className="h-4 w-4" />
-              {saveButtonLabel}
-            </Button>
             <GhostButton
               tone="red"
               onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
@@ -2431,22 +2517,12 @@ export default function ClassDevicePage() {
             >
               Sanctions
             </GhostButton>
-            <GhostButton tone="red" onClick={endSession} disabled={busy}>
+            <Button onClick={() => void endSession()} disabled={busy}>
               <Square className="h-4 w-4" />
-              Terminer
-            </GhostButton>
-          </div>
-        )}
-
-        {!busy && saveUxState === "queued" && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" aria-live="polite">
-            Enregistrement bien pris en compte sur l’appareil. Il sera synchronisé dès que le réseau revient.
-          </div>
-        )}
-
-        {!busy && saveUxState === "saved" && (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800" aria-live="polite">
-            Appel enregistré avec succès.
+              {busy
+                ? "Enregistrement et fermeture…"
+                : `Terminer l’appel${changedCount ? ` (${changedCount})` : ""}`}
+            </Button>
           </div>
         )}
 

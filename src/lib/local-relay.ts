@@ -899,12 +899,16 @@ export async function checkRelayTeacherConnectivity(input: {
 export type RelayTeacherOfflineSchedule = {
   version: 1;
   institution_id: string;
+  actor_kind?: "teacher" | "class_device";
+  class_id?: string | null;
   schedule_revision: number;
   generated_at: string | null;
+  relay_time?: string | null;
   snapshot_completeness: "complete";
   source: "relay";
   slots: Array<{
     key: string;
+    period_id: string;
     weekday: number;
     label: string;
     start_time: string;
@@ -915,6 +919,7 @@ export type RelayTeacherOfflineSchedule = {
       level: string;
       subject_id: string;
       subject_name: string;
+      teacher_id?: string;
     }>;
   }>;
   class_count: number;

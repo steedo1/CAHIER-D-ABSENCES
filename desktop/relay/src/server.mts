@@ -114,15 +114,16 @@ export function createRelayServer(
         const token = teacherBearerToken(request);
         if (!token) return json(response, 401, { error: "unauthorized" });
         try {
+          const requestNow = options.now?.() ?? new Date();
           const teacher = authenticateRelayTeacherAccess(
             store.db,
             token,
-            options.now?.() ?? new Date(),
+            requestNow,
           );
           if (!configuredInstitutionAllows(config, store, teacher.institution_id)) {
             return json(response, 403, { error: "institution_not_allowed" });
           }
-          return json(response, 200, teacherOfflineSchedule(store.db, teacher));
+          return json(response, 200, teacherOfflineSchedule(store.db, teacher, requestNow));
         } catch (error) {
           const code = error instanceof Error
             ? error.message

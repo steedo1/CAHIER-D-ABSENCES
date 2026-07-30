@@ -1,7 +1,11 @@
 import { getInstitutionMeta, type RelayDatabase } from "./db.mjs";
 import { parseStoredJson } from "./json.mjs";
 import { institutionScheduleContract } from "./schedule-contract.mjs";
-import type { AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
+import {
+  relayActorClassId,
+  relayActorKind,
+  type AuthenticatedRelayTeacher,
+} from "./teacher-auth.mjs";
 
 type TimetableRow = {
   period_id: string;
@@ -14,6 +18,7 @@ type TimetableRow = {
   level: string | null;
   subject_id: string;
   subject_name: string;
+  teacher_id: string;
 };
 
 type RosterRow = {
@@ -22,6 +27,7 @@ type RosterRow = {
   first_name: string | null;
   last_name: string | null;
   display_name: string;
+  registration_number: string | null;
   gender: string | null;
 };
 
@@ -40,10 +46,23 @@ function hm(value: string) {
 export function teacherOfflineSchedule(
   db: RelayDatabase,
   teacher: AuthenticatedRelayTeacher,
+  now = new Date(),
 ) {
   const contract = institutionScheduleContract(db, teacher.institution_id);
   if (contract.snapshot_revision === null) {
     throw new Error("schedule_snapshot_not_prepared");
+  }
+
+  const actorKind = relayActorKind(teacher);
+  const boundClassId = relayActorClassId(teacher);
+  const actorFilter = actorKind === "class_device"
+    ? "AND tt.class_id = ?"
+    : "AND tt.teacher_id = ?";
+  const actorFilterValue = actorKind === "class_device"
+    ? boundClassId
+    : teacher.actor_profile_id;
+  if (!actorFilterValue) {
+    throw new Error("class_device_not_paired_with_relay");
   }
 
   const rows = db.prepare(`
@@ -57,7 +76,8 @@ export function teacherOfflineSchedule(
       c.label AS class_label,
       c.level,
       tt.subject_id,
-      s.name AS subject_name
+      s.name AS subject_name,
+      tt.teacher_id
     FROM teacher_timetables tt
     JOIN institution_periods p
       ON p.institution_id = tt.institution_id
@@ -72,16 +92,17 @@ export function teacherOfflineSchedule(
      AND s.id = tt.subject_id
      AND s.deleted_at IS NULL
     WHERE tt.institution_id = ?
-      AND tt.teacher_id = ?
+      ${actorFilter}
       AND tt.deleted_at IS NULL
     ORDER BY p.weekday, p.start_time, c.label, s.name
   `).all(
     teacher.institution_id,
-    teacher.actor_profile_id,
+    actorFilterValue,
   ) as TimetableRow[];
 
   const grouped = new Map<string, {
     key: string;
+    period_id: string;
     weekday: number;
     label: string;
     start_time: string;
@@ -92,6 +113,7 @@ export function teacherOfflineSchedule(
       level: string;
       subject_id: string;
       subject_name: string;
+      teacher_id: string;
     }>;
   }>();
   for (const row of rows) {
@@ -99,8 +121,10 @@ export function teacherOfflineSchedule(
     const startTime = hm(row.start_time);
     const endTime = hm(row.end_time);
     const key = `${weekday}|${startTime}|${endTime}`;
-    const slot = grouped.get(key) || {
+    const groupKey = actorKind === "class_device" ? `${key}|${row.period_id}` : key;
+    const slot = grouped.get(groupKey) || {
       key,
+      period_id: row.period_id,
       weekday,
       label: String(row.label || "Séance"),
       start_time: startTime,
@@ -111,7 +135,8 @@ export function teacherOfflineSchedule(
       !slot.items.some(
         (item) =>
           item.class_id === row.class_id &&
-          item.subject_id === row.subject_id,
+          item.subject_id === row.subject_id &&
+          item.teacher_id === row.teacher_id,
       )
     ) {
       slot.items.push({
@@ -120,12 +145,15 @@ export function teacherOfflineSchedule(
         level: String(row.level || ""),
         subject_id: row.subject_id,
         subject_name: row.subject_name,
+        teacher_id: row.teacher_id,
       });
     }
-    grouped.set(key, slot);
+    grouped.set(groupKey, slot);
   }
 
-  const classIds = Array.from(new Set(rows.map((row) => row.class_id)));
+  const classIds = actorKind === "class_device" && boundClassId
+    ? [boundClassId]
+    : Array.from(new Set(rows.map((row) => row.class_id)));
   const rosterRows = classIds.length === 0
     ? []
     : db.prepare(`
@@ -135,6 +163,7 @@ export function teacherOfflineSchedule(
           s.first_name,
           s.last_name,
           s.display_name,
+          s.registration_number,
           s.gender
         FROM class_enrollments ce
         JOIN students s
@@ -159,6 +188,7 @@ export function teacherOfflineSchedule(
             first_name: row.first_name,
             last_name: row.last_name,
             full_name: row.display_name,
+            matricule: row.registration_number,
             gender: row.gender,
           })),
       },
@@ -183,11 +213,15 @@ export function teacherOfflineSchedule(
   const manifestAssignments = Array.isArray(manifest.class_teachers)
     ? manifest.class_teachers
     : [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = now.toISOString().slice(0, 10);
   const assignments = manifestAssignments.filter(
     (row) =>
       String(row.institution_id || "") === teacher.institution_id &&
-      String(row.teacher_id || "") === teacher.actor_profile_id &&
+      (
+        actorKind === "class_device"
+          ? String(row.class_id || "") === boundClassId
+          : String(row.teacher_id || "") === teacher.actor_profile_id
+      ) &&
       (!row.start_date || String(row.start_date) <= today) &&
       (!row.end_date || String(row.end_date) >= today),
   );
@@ -195,8 +229,11 @@ export function teacherOfflineSchedule(
   return {
     version: 1,
     institution_id: teacher.institution_id,
+    actor_kind: actorKind,
+    class_id: boundClassId,
     schedule_revision: contract.snapshot_revision,
     generated_at: contract.generated_at,
+    relay_time: now.toISOString(),
     snapshot_completeness: "complete" as const,
     source: "relay" as const,
     slots: Array.from(grouped.values()),

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, Clock, Save, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
+import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
@@ -791,7 +791,6 @@ export default function TeacherDashboard() {
     educationContextLabel?: string | null;
   } | null>(null);
   const [finalizationDismissedFor, setFinalizationDismissedFor] = useState<string | null>(null);
-  const saveMarksInFlightRef = useRef(false);
   const relayClockOffsetMsRef = useRef<number | null>(null);
 
   function observedNowIso() {
@@ -1355,7 +1354,7 @@ export default function TeacherDashboard() {
 
   async function persistAttendanceDraft(source: Record<string, Row>) {
     if (!open || !inst.institution_id || !inst.actor_profile_id) return null;
-    const periodId = open.period_id || activeConfiguredSlot?.id || null;
+    const periodId = open.period_id || null;
     const marks = attendanceMarksFromRows(source);
     if (!periodId || marks.length === 0) return null;
     return await stageTeacherAttendanceDraft({
@@ -1674,7 +1673,11 @@ export default function TeacherDashboard() {
 
       if (r?.ok) {
         setAttendanceDelivery(null);
-        setOpen(r.data.item as OpenSession);
+        const serverOpen = r.data.item as OpenSession;
+        setOpen({
+          ...serverOpen,
+          period_id: serverOpen.period_id || activeConfiguredSlot?.id || null,
+        });
         await cacheSet("teacher:local-open", null);
         setMsg(`Séance démarrée ✅ • présence confirmée par ${presence.label}`);
       } else if (shouldTreatAsOffline(r)) {
@@ -1687,6 +1690,7 @@ export default function TeacherDashboard() {
           started_at: started.toISOString(),
           actual_call_at: actualCallAt,
           expected_minutes: effectiveDuration,
+          period_id: activeConfiguredSlot?.id || null,
           presence_method: presence.evidence?.method || "not_required",
           education_type: sel.education_type || "general_secondary",
           education_label: sel.education_label || "Secondaire général",
@@ -1725,47 +1729,18 @@ export default function TeacherDashboard() {
     }
   }
 
-  async function saveMarks() {
-    if (!open || saveMarksInFlightRef.current) return;
-    saveMarksInFlightRef.current = true;
-    setBusy(true);
-    setMsg(null);
-
-    try {
-      const marks = attendanceMarksFromRows(rows);
-
-      if (!marks.length) {
-        setMsg("Aucune modification d’appel à enregistrer.");
-        return;
-      }
-      if (!inst.institution_id || !inst.actor_profile_id) {
-        setMsg("Action requise : l’identité de l’établissement doit être actualisée.");
-        return;
-      }
-
-      const delivery = await deliverTeacherAttendance({
-        institutionId: inst.institution_id,
-        actorProfileId: inst.actor_profile_id,
-        sessionId: open.id,
-        classId: open.class_id,
-        periodId: open.period_id || activeConfiguredSlot?.id || null,
-        marks,
-        relayBaseUrl: inst.attendance_presence?.relay_local_url,
-        relayAccessToken: inst.attendance_presence?.relay_access_token,
-        forceRelay: open.local_relay === true,
-      });
-      setAttendanceDelivery(delivery);
-      setMsg(teacherAttendanceDeliveryMessage(delivery));
-    } catch (e: any) {
-      setMsg(e?.message || "Échec enregistrement");
-    } finally {
-      saveMarksInFlightRef.current = false;
-      setBusy(false);
-    }
-  }
-
   async function endSession() {
     if (!open) return;
+
+    const finalMarksPreview = attendanceMarksFromRows(rows);
+    const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
+    const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
+    const confirmed = typeof window === "undefined" || window.confirm(
+      `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
+      "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur.",
+    );
+    if (!confirmed) return;
+
     setBusy(true);
     setMsg(null);
 
@@ -1793,7 +1768,7 @@ export default function TeacherDashboard() {
             actorProfileId: inst.actor_profile_id,
             sessionId: open.id,
             classId: open.class_id,
-            periodId: open.period_id || activeConfiguredSlot?.id || null,
+            periodId: open.period_id || null,
             marks,
             relayBaseUrl: inst.attendance_presence?.relay_local_url,
             relayAccessToken: inst.attendance_presence?.relay_access_token,
@@ -1838,7 +1813,7 @@ export default function TeacherDashboard() {
           actorProfileId: inst.actor_profile_id,
           sessionId: open.id,
           classId: open.class_id,
-          periodId: open.period_id || activeConfiguredSlot?.id || null,
+          periodId: open.period_id || null,
           marks: finalMarks,
           relayBaseUrl: inst.attendance_presence?.relay_local_url,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
@@ -2218,11 +2193,7 @@ export default function TeacherDashboard() {
             </GhostButton>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-2">
-            <Button onClick={saveMarks} disabled={busy || !!openLifecycle?.expired} aria-label="Enregistrer">
-              <Save className="h-4 w-4" />
-              {busy ? "…" : `Save${changedCount ? ` (${changedCount})` : ""}`}
-            </Button>
+          <div className="grid grid-cols-2 gap-2">
             <GhostButton
               tone="red"
               onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
@@ -2231,10 +2202,14 @@ export default function TeacherDashboard() {
             >
               Sanctions
             </GhostButton>
-            <GhostButton tone="red" onClick={endSession} disabled={busy} aria-label="Terminer la séance">
+            <Button
+              onClick={() => void endSession()}
+              disabled={busy}
+              aria-label="Enregistrer l’appel et terminer la séance"
+            >
               <Square className="h-4 w-4" />
-              Stop
-            </GhostButton>
+              {busy ? "Fermeture…" : `Terminer${changedCount ? ` (${changedCount})` : ""}`}
+            </Button>
           </div>
         )}
       </div>
@@ -2501,6 +2476,12 @@ export default function TeacherDashboard() {
           </div>
         )}
 
+        {open && (
+          <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Les coches sont conservées automatiquement sur cet appareil. « Terminer la séance » enregistre l’état final puis ferme le cours.
+          </div>
+        )}
+
         {/* Actions desktop */}
         {!open ? (
           <div className="hidden md:flex items-center gap-2">
@@ -2519,10 +2500,6 @@ export default function TeacherDashboard() {
           </div>
         ) : (
           <div className="hidden md:flex items-center gap-2">
-            <Button onClick={saveMarks} disabled={busy || !!openLifecycle?.expired} aria-label="Enregistrer">
-              <Save className="h-4 w-4" />
-              {busy ? "Enregistrement…" : `Enregistrer${changedCount ? ` (${changedCount})` : ""}`}
-            </Button>
             <GhostButton
               tone="red"
               onClick={() => (penaltyOpen ? setPenaltyOpen(false) : openPenalty())}
@@ -2531,10 +2508,16 @@ export default function TeacherDashboard() {
             >
               Sanctions
             </GhostButton>
-            <GhostButton tone="red" onClick={endSession} disabled={busy} aria-label="Terminer la séance">
+            <Button
+              onClick={() => void endSession()}
+              disabled={busy}
+              aria-label="Enregistrer l’appel et terminer la séance"
+            >
               <Square className="h-4 w-4" />
-              Terminer la séance
-            </GhostButton>
+              {busy
+                ? "Enregistrement et fermeture…"
+                : `Terminer la séance${changedCount ? ` (${changedCount})` : ""}`}
+            </Button>
           </div>
         )}
         {msg && (
