@@ -27,6 +27,8 @@ export type TeacherSessionLifecycleDeliveryRecord = {
   session_id: string | null;
   class_id: string | null;
   period_id: string | null;
+  /** Absent sur les enregistrements v1 créés avant la reprise ordonnée appel → fermeture. */
+  attendance_operation_id?: string | null;
   attempt_key: string;
   state: TeacherSessionLifecycleDeliveryState;
   device_requested_at: string;
@@ -75,7 +77,11 @@ type BaseInput = {
   relayAccessToken?: string | null;
 };
 
-export type CloseTeacherSessionInput = BaseInput & { sessionId: string };
+export type CloseTeacherSessionInput = BaseInput & {
+  sessionId: string;
+  classId?: string | null;
+  attendanceOperationId?: string | null;
+};
 export type TransitionTeacherSessionInput = BaseInput & {
   classId: string;
   periodId: string;
@@ -130,6 +136,7 @@ async function getOrCreate(
     sessionId: string | null;
     classId: string | null;
     periodId: string | null;
+    attendanceOperationId: string | null;
     attemptKey: string;
   },
 ) {
@@ -149,6 +156,7 @@ async function getOrCreate(
     session_id: input.sessionId,
     class_id: input.classId,
     period_id: input.periodId,
+    attendance_operation_id: input.attendanceOperationId,
     attempt_key: input.attemptKey,
     state: "device_pending",
     device_requested_at: now,
@@ -283,17 +291,31 @@ async function postCloseInternal(
 ) {
   const institutionId = normalizedText(input.institutionId);
   const sessionId = normalizedText(input.sessionId);
+  const classId = normalizedText(input.classId) || null;
+  const attendanceOperationId =
+    normalizedText(input.attendanceOperationId) || null;
   if (!institutionId) throw new Error("institution_id_required");
   if (!sessionId) throw new Error("session_id_required");
-  const current = await getOrCreate(deps, {
+  let current = await getOrCreate(deps, {
     institutionId,
     kind: "close",
     contentKey: JSON.stringify({ session_id: sessionId }),
     sessionId,
-    classId: null,
+    classId,
     periodId: null,
+    attendanceOperationId,
     attemptKey: sessionId,
   });
+  if (
+    (!current.class_id && classId) ||
+    (!current.attendance_operation_id && attendanceOperationId)
+  ) {
+    current = await patchRecord(deps, current, {
+      class_id: current.class_id || classId,
+      attendance_operation_id:
+        current.attendance_operation_id || attendanceOperationId,
+    });
+  }
   if (current.state === "relay_confirmed") return current;
   const baseUrl = normalizedText(input.relayBaseUrl);
   const accessToken = normalizedText(input.relayAccessToken);
@@ -338,6 +360,40 @@ export async function closeTeacherAttendanceSessionWithDependencies(
   );
 }
 
+export async function stageTeacherAttendanceSessionCloseWithDependencies(
+  input: CloseTeacherSessionInput,
+  deps: TeacherSessionLifecycleDependencies,
+) {
+  const institutionId = normalizedText(input.institutionId);
+  const sessionId = normalizedText(input.sessionId);
+  const classId = normalizedText(input.classId) || null;
+  const attendanceOperationId =
+    normalizedText(input.attendanceOperationId) || null;
+  if (!institutionId) throw new Error("institution_id_required");
+  if (!sessionId) throw new Error("session_id_required");
+  let current = await getOrCreate(deps, {
+    institutionId,
+    kind: "close",
+    contentKey: JSON.stringify({ session_id: sessionId }),
+    sessionId,
+    classId,
+    periodId: null,
+    attendanceOperationId,
+    attemptKey: sessionId,
+  });
+  if (
+    (!current.class_id && classId) ||
+    (!current.attendance_operation_id && attendanceOperationId)
+  ) {
+    current = await patchRecord(deps, current, {
+      class_id: current.class_id || classId,
+      attendance_operation_id:
+        current.attendance_operation_id || attendanceOperationId,
+    });
+  }
+  return current;
+}
+
 async function postTransitionInternal(
   input: TransitionTeacherSessionInput,
   deps: TeacherSessionLifecycleDependencies,
@@ -356,6 +412,7 @@ async function postTransitionInternal(
     sessionId: null,
     classId,
     periodId,
+    attendanceOperationId: null,
     attemptKey,
   });
   if (current.state === "relay_confirmed") return current;
@@ -456,6 +513,61 @@ async function locked(
 
 export async function closeTeacherAttendanceSessionOnRelay(input: CloseTeacherSessionInput) {
   return await closeTeacherAttendanceSessionWithDependencies(input, productionDependencies());
+}
+
+export async function stageTeacherAttendanceSessionClose(input: CloseTeacherSessionInput) {
+  return await locked(
+    `close:${normalizedText(input.institutionId)}:${normalizedText(input.sessionId)}`,
+    () => stageTeacherAttendanceSessionCloseWithDependencies(
+      input,
+      productionDependencies(),
+    ),
+  );
+}
+
+export async function listTeacherSessionLifecycleOperations(
+  institutionId: string,
+) {
+  const normalizedInstitutionId = normalizedText(institutionId);
+  if (!normalizedInstitutionId) return [];
+  return await createIndexedDbTeacherSessionLifecycleStore().list(
+    normalizedInstitutionId,
+  );
+}
+
+export async function isTeacherSessionLocallyFinalized(
+  institutionId: string,
+  sessionId: string,
+) {
+  const normalizedInstitutionId = normalizedText(institutionId);
+  const normalizedSessionId = normalizedText(sessionId);
+  if (!normalizedInstitutionId || !normalizedSessionId) return false;
+  const records = await listTeacherSessionLifecycleOperations(
+    normalizedInstitutionId,
+  );
+  return records.some(
+    (record) =>
+      record.kind === "close" &&
+      record.session_id === normalizedSessionId,
+  );
+}
+
+export async function retryTeacherSessionCloseOnRelay(
+  record: TeacherSessionLifecycleDeliveryRecord,
+  input: Pick<
+    CloseTeacherSessionInput,
+    "relayBaseUrl" | "relayAccessToken"
+  >,
+) {
+  if (record.kind !== "close" || !record.session_id) return record;
+  return await closeTeacherAttendanceSessionOnRelay({
+    institutionId: record.institution_id,
+    sessionId: record.session_id,
+    classId: record.class_id,
+    attendanceOperationId: record.attendance_operation_id,
+    relayBaseUrl: input.relayBaseUrl,
+    relayAccessToken: input.relayAccessToken,
+  });
 }
 
 export async function transitionTeacherAttendanceSessionOnRelay(

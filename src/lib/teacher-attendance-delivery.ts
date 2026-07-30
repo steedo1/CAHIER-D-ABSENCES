@@ -761,6 +761,43 @@ export async function getLatestTeacherAttendanceOperation(
   return latestForSession(records, resolved.sessionReference);
 }
 
+export async function listTeacherAttendanceOperations(
+  institutionId: string,
+) {
+  const normalizedInstitution = normalizedText(institutionId);
+  if (!normalizedInstitution) return [];
+  return await createIndexedDbTeacherAttendanceStore().list(
+    normalizedInstitution,
+  );
+}
+
+export async function retryTeacherAttendanceOperationOnRelay(
+  record: TeacherAttendanceDeliveryRecord,
+  input: {
+    actorProfileId: string;
+    relayBaseUrl?: string | null;
+    relayAccessToken?: string | null;
+  },
+) {
+  const retryable =
+    record.state === "device_pending" ||
+    (record.state === "blocked" && record.last_error === "session_not_found");
+  if (!retryable || record.channel === "cloud" || record.cloud_attempted_at) {
+    return record;
+  }
+  return await deliverTeacherAttendance({
+    institutionId: record.institution_id,
+    actorProfileId: input.actorProfileId,
+    sessionId: record.session_reference,
+    classId: record.class_id,
+    periodId: record.period_id,
+    marks: record.marks,
+    relayBaseUrl: input.relayBaseUrl,
+    relayAccessToken: input.relayAccessToken,
+    forceRelay: true,
+  });
+}
+
 export async function countUnresolvedTeacherAttendanceOperations(knownInstitutionId?: string | null) {
   if (typeof window === "undefined") return 0;
   const cachedInstitutionId = normalizedText(

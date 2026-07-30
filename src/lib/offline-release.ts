@@ -4,4 +4,4 @@ export const MON_CAHIER_WEB_RELEASE =
   "development";
 
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-07-30-class-device-scope-v5-1";
+  "2026-07-30-class-device-lifecycle-v5-2";

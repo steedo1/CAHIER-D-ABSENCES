@@ -14,7 +14,7 @@ import {
 } from "../src/lib/offlineClassDevice";
 
 const WEB_RELEASE = "web-current";
-const WORKER_RELEASE = "2026-07-30-class-device-scope-v5-1";
+const WORKER_RELEASE = "2026-07-30-class-device-lifecycle-v5-2";
 
 const readiness: ClassDeviceReadinessLike = {
   version: 5,

@@ -30,7 +30,6 @@ import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import {
   deliverTeacherAttendance,
   stageTeacherAttendanceDraft,
-  teacherAttendanceDeliveryMessage,
 } from "@/lib/teacher-attendance-delivery";
 import {
   openTeacherAttendanceSessionOnRelay,
@@ -38,8 +37,15 @@ import {
 } from "@/lib/teacher-session-delivery";
 import {
   closeTeacherAttendanceSessionOnRelay,
+  isTeacherSessionLocallyFinalized,
+  stageTeacherAttendanceSessionClose,
   teacherSessionLifecycleDeliveryMessage,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import {
+  countClassDeviceAttendanceRecovery,
+  recoverClassDeviceAttendance,
+  type ClassDeviceAttendanceRecoverySummary,
+} from "@/lib/class-device-attendance-recovery";
 import {
   fetchRelayTeacherOfflineSchedule,
   type RelayTeacherOfflineSchedule,
@@ -279,6 +285,21 @@ type PendingEndPayload = {
 
 /** Marqueur local : quand l’utilisateur termine une séance locale avant que la séance serveur existe. */
 const PENDING_END_KEY = "classDevice:pending-end";
+const LAST_COMPLETION_KEY = "classDevice:last-completion:v1";
+
+type ClassDeviceCompletion = {
+  version: 1;
+  institution_id: string;
+  class_id: string;
+  class_label: string;
+  session_id: string;
+  subject_name: string | null;
+  planned_range: string;
+  ended_at: string;
+  absent_count: number;
+  late_count: number;
+  relay_state: "relay_confirmed" | "device_pending";
+};
 
 /* ───────── Institution identity helpers (même méthode que le fichier qui marche) ───────── */
 const INSTITUTION_NAME_KEYS = [
@@ -574,6 +595,8 @@ export default function ClassDevicePage() {
   };
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  const [lastCompletion, setLastCompletion] =
+    useState<ClassDeviceCompletion | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [relayClassSchedule, setRelayClassSchedule] =
@@ -707,6 +730,7 @@ export default function ClassDevicePage() {
   );
   const [pendingSync, setPendingSync] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [nowTick, setNowTick] = useState<number>(Date.now());
 
@@ -823,12 +847,19 @@ export default function ClassDevicePage() {
     }
   }
 
+  async function countPendingForCurrentClass() {
+    const legacyPending = await outboxCount().catch(() => 0);
+    const relayPending = selectedClass?.institution_id && selectedClass.id
+      ? await countClassDeviceAttendanceRecovery({
+          institutionId: selectedClass.institution_id,
+          classId: selectedClass.id,
+        }).catch(() => 0)
+      : 0;
+    return legacyPending + relayPending;
+  }
+
   async function refreshPending() {
-    try {
-      setPendingSync(await outboxCount());
-    } catch {
-      setPendingSync(0);
-    }
+    setPendingSync(await countPendingForCurrentClass());
   }
 
   // 🔁 Tente de récupérer une séance serveur et remplace une séance locale "client:*"
@@ -838,6 +869,22 @@ export default function ClassDevicePage() {
       const serverOpen = (os?.item as OpenSession) || null;
 
       if (serverOpen && serverOpen.id && !isClientSessionId(serverOpen.id)) {
+        const institutionId =
+          classes.find((candidate) => candidate.id === serverOpen.class_id)
+            ?.institution_id ||
+          selectedClass?.institution_id ||
+          "";
+        if (
+          institutionId &&
+          await isTeacherSessionLocallyFinalized(
+            institutionId,
+            serverOpen.id,
+          )
+        ) {
+          await cacheSet("classDevice:open-session", { item: null });
+          await cacheSet("classDevice:local-open", null);
+          return null;
+        }
         setOpen(serverOpen);
         await cacheSet("classDevice:local-open", null);
         return serverOpen;
@@ -888,14 +935,36 @@ export default function ClassDevicePage() {
   }
 
   async function syncNow() {
-    if (syncing) return;
+    if (syncingRef.current) return;
+    syncingRef.current = true;
     setSyncing(true);
     let result: Awaited<ReturnType<typeof flushOutbox>> | null = null;
+    let recovery: ClassDeviceAttendanceRecoverySummary | null = null;
     try {
-      result = await flushOutbox();
+      if (typeof navigator === "undefined" || navigator.onLine !== false) {
+        result = await flushOutbox();
+      }
+      const relay = selectedClass?.attendance_presence;
+      if (
+        selectedClass?.institution_id &&
+        selectedClass.id &&
+        selectedClass.actor_profile_id &&
+        relay?.relay_local_url &&
+        relay.relay_access_token
+      ) {
+        recovery = await recoverClassDeviceAttendance({
+          institutionId: selectedClass.institution_id,
+          classId: selectedClass.id,
+          actorProfileId: selectedClass.actor_profile_id,
+          relayBaseUrl: relay.relay_local_url,
+          relayAccessToken: relay.relay_access_token,
+        });
+      }
+      await processPendingEnd();
     } catch (e: any) {
       setMsg(e?.message || "Synchronisation interrompue. Les données restent conservées.");
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
       await refreshPending();
 
@@ -904,11 +973,41 @@ export default function ClassDevicePage() {
       if (cur?.id && isClientSessionId(cur.id)) {
         await refreshServerOpenSession();
       }
-
-      // et si on avait un "end" en attente, on essaie de le rejouer
-      await processPendingEnd();
     }
 
+    if (recovery?.pending_before) {
+      const completion = lastCompletion;
+      if (
+        recovery.closes_confirmed > 0 &&
+        completion &&
+        completion.class_id === selectedClass?.id
+      ) {
+        const confirmedCompletion: ClassDeviceCompletion = {
+          ...completion,
+          relay_state: "relay_confirmed",
+        };
+        setLastCompletion(confirmedCompletion);
+        await cacheSet(LAST_COMPLETION_KEY, confirmedCompletion);
+      }
+      if (recovery.pending_after === 0) {
+        setMsg(
+          "Appel et fin de séance transmis au relais local dans le bon ordre.",
+        );
+      } else if (recovery.requires_attention > 0) {
+        setMsg(
+          `${recovery.pending_after} opération(s) restent conservées sur cet appareil et nécessitent une vérification.`,
+        );
+      } else if (recovery.relay_unreachable) {
+        setMsg(
+          "Appel et fin de séance conservés sur cet appareil. Le relais local sera réessayé automatiquement.",
+        );
+      } else if (recovery.closes_waiting_for_attendance > 0) {
+        setMsg(
+          "L’appel reste en attente sur cet appareil ; sa fermeture ne sera envoyée qu’après les marques.",
+        );
+      }
+      return;
+    }
     if (!result) return;
     if (result.authRequired) {
       setMsg(
@@ -946,6 +1045,29 @@ export default function ClassDevicePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    void refreshPending();
+    if (!selectedClass?.id || pendingSync <= 0) return;
+    const retry = () => {
+      if (document.visibilityState === "visible") void syncNow();
+    };
+    const interval = window.setInterval(retry, 20_000);
+    document.addEventListener("visibilitychange", retry);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", retry);
+    };
+    // Le relais LAN peut redevenir disponible sans événement "online".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedClass?.id,
+    selectedClass?.institution_id,
+    selectedClass?.actor_profile_id,
+    selectedClass?.attendance_presence?.relay_local_url,
+    selectedClass?.attendance_presence?.relay_access_token,
+    pendingSync,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1215,7 +1337,7 @@ export default function ClassDevicePage() {
   useEffect(() => {
     (async () => {
       try {
-        const [cls, os, localOpenRaw] = await Promise.all([
+        const [cls, os, localOpenRaw, completionRaw] = await Promise.all([
           offlineGetJson(
             "/api/class/my-classes?offline_contract=v5",
             "classDevice:my-classes",
@@ -1224,7 +1346,11 @@ export default function ClassDevicePage() {
             () => ({ item: null })
           ),
           cacheGet("classDevice:local-open"),
+          cacheGet<ClassDeviceCompletion | null>(LAST_COMPLETION_KEY),
         ]);
+        if (completionRaw?.version === 1) {
+          setLastCompletion(completionRaw);
+        }
 
         const mappedContext = mapClassDeviceItems(
           Array.isArray(cls?.items) ? cls.items : [],
@@ -1242,7 +1368,24 @@ export default function ClassDevicePage() {
         if (localOpenCandidate && !localOpen) {
           await cacheSet("classDevice:local-open", null);
         }
-        const restoredOpen = serverOpen || localOpen || null;
+        let restoredOpen: OpenSession | null =
+          serverOpen || localOpen || null;
+        if (restoredOpen) {
+          const restoredInstitutionId =
+            mapped.find((item) => item.id === restoredOpen?.class_id)
+              ?.institution_id || "";
+          if (
+            restoredInstitutionId &&
+            await isTeacherSessionLocallyFinalized(
+              restoredInstitutionId,
+              restoredOpen.id,
+            )
+          ) {
+            restoredOpen = null;
+            await cacheSet("classDevice:open-session", { item: null });
+            await cacheSet("classDevice:local-open", null);
+          }
+        }
 
         if (restoredOpen) {
           setOpen(restoredOpen);
@@ -1256,7 +1399,30 @@ export default function ClassDevicePage() {
         if (initialClassId) {
           const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(initialClassId);
           if (snap?.state) {
-            applySnapshotState(snap.state, { restoreOpen: !restoredOpen });
+            let snapshotState = snap.state;
+            const snapshotOpen = snapshotState.open;
+            const snapshotInstitutionId =
+              mapped.find((item) => item.id === initialClassId)
+                ?.institution_id || "";
+            if (
+              snapshotOpen &&
+              snapshotInstitutionId &&
+              await isTeacherSessionLocallyFinalized(
+                snapshotInstitutionId,
+                snapshotOpen.id,
+              )
+            ) {
+              snapshotState = {
+                ...snapshotState,
+                subjectId: "",
+                open: null,
+                rows: {},
+              };
+              saveClassDeviceSnapshot(initialClassId, snapshotState);
+            }
+            applySnapshotState(snapshotState, {
+              restoreOpen: !restoredOpen,
+            });
           }
         }
 
@@ -1281,11 +1447,26 @@ export default function ClassDevicePage() {
         const localOpenCandidate = (await cacheGet(
           "classDevice:local-open",
         )) as OpenSession | null;
-        const localOpen =
+        const completion = await cacheGet<ClassDeviceCompletion | null>(
+          LAST_COMPLETION_KEY,
+        );
+        if (completion?.version === 1) {
+          setLastCompletion(completion);
+        }
+        let localOpen =
           localOpenCandidate?.local_relay === true &&
           !isClientSessionId(localOpenCandidate.id)
             ? localOpenCandidate
             : null;
+        if (
+          localOpen &&
+          completion?.version === 1 &&
+          completion.session_id === localOpen.id
+        ) {
+          localOpen = null;
+          await cacheSet("classDevice:local-open", null);
+          await cacheSet("classDevice:open-session", { item: null });
+        }
         if (localOpenCandidate && !localOpen) {
           await cacheSet("classDevice:local-open", null);
         }
@@ -1295,10 +1476,30 @@ export default function ClassDevicePage() {
           if (snap?.state) {
             applySnapshotState(snap.state, { restoreOpen: false });
           }
-        } else if (classId) {
-          const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(classId);
+        } else if (classId || completion?.class_id) {
+          const fallbackClassId = classId || completion?.class_id || "";
+          if (!classId && fallbackClassId) setClassId(fallbackClassId);
+          const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(
+            fallbackClassId,
+          );
           if (snap?.state) {
-            applySnapshotState(snap.state, { restoreOpen: true });
+            const snapshotAlreadyFinished =
+              completion?.version === 1 &&
+              snap.state.open?.id === completion.session_id;
+            const safeSnapshot = snapshotAlreadyFinished
+              ? {
+                  ...snap.state,
+                  subjectId: "",
+                  open: null,
+                  rows: {},
+                }
+              : snap.state;
+            if (snapshotAlreadyFinished) {
+              saveClassDeviceSnapshot(fallbackClassId, safeSnapshot);
+            }
+            applySnapshotState(safeSnapshot, {
+              restoreOpen: !snapshotAlreadyFinished,
+            });
           }
         }
       } finally {
@@ -1653,9 +1854,12 @@ export default function ClassDevicePage() {
   }, []);
 
   // Calcul du créneau par défaut « du moment » (timezone-aware)
-  function computeDefaultsForNow(sourcePeriods: Record<number, Period[]> = periodsByDay) {
+  function computeDefaultsForNow(
+    sourcePeriods: Record<number, Period[]> = periodsByDay,
+    baseMs = Date.now(),
+  ) {
     const tz = inst?.tz || "Africa/Abidjan";
-    const now = relayAdjustedDate(nowTick);
+    const now = relayAdjustedDate(baseMs);
     const nowHM = hmInTZ(now, tz);
     const wd = weekdayInTZ1to7(now, tz);
     const slots = sourcePeriods[wd] || [];
@@ -2229,18 +2433,84 @@ export default function ClassDevicePage() {
     setBusy(true);
     setMsg(null);
 
-    const finishLocal = async () => {
-      const freshSchedule = await refreshClassScheduleFromRelay(selectedClass);
-      const sourcePeriods = freshSchedule && selectedClass
-        ? periodsFromRelayClassSchedule(freshSchedule, selectedClass.id)
+    const finishLocal = async (input: {
+      actualEndAt: string;
+      relayState: "relay_confirmed" | "device_pending";
+      message: string;
+    }) => {
+      let preparedSchedule = relayClassScheduleRef.current;
+      if (
+        selectedClass?.institution_id &&
+        selectedClass.id &&
+        selectedClass.actor_profile_id
+      ) {
+        preparedSchedule = await getClassDeviceCoherentSchedule({
+          institutionId: selectedClass.institution_id,
+          classId: selectedClass.id,
+          actorProfileId: selectedClass.actor_profile_id,
+        }).catch(() => preparedSchedule);
+      }
+      const sourcePeriods = preparedSchedule && selectedClass
+        ? periodsFromRelayClassSchedule(
+            preparedSchedule,
+            selectedClass.id,
+          )
         : periodsByDay;
+      if (preparedSchedule) {
+        relayClassScheduleRef.current = preparedSchedule;
+        setRelayClassSchedule(preparedSchedule);
+        setPeriodsByDay(sourcePeriods);
+      }
+      const completion: ClassDeviceCompletion = {
+        version: 1,
+        institution_id: selectedClass?.institution_id || "",
+        class_id: cur.class_id,
+        class_label: cur.class_label,
+        session_id: cur.id,
+        subject_name: cur.subject_name || null,
+        planned_range: buildPlannedRangeLabel(
+          cur.started_at,
+          cur.expected_minutes ??
+            duration ??
+            inst.default_session_minutes ??
+            60,
+        ),
+        ended_at: input.actualEndAt,
+        absent_count: absentCount,
+        late_count: lateCount,
+        relay_state: input.relayState,
+      };
+      await Promise.all([
+        cacheSet("classDevice:local-open", null),
+        cacheSet("classDevice:open-session", { item: null }),
+        cacheSet(LAST_COMPLETION_KEY, completion),
+      ]);
+      saveClassDeviceSnapshot<ClassPageSnapshotState>(cur.class_id, {
+        classId: cur.class_id,
+        subjectId: "",
+        open: null,
+        rows: {},
+        penaltyOpen: false,
+        penRubric,
+        penRows: {},
+        msg: input.message,
+      });
       clearReminderLoop();
       setOpen(null);
       setRoster([]);
       setRows({});
-      await cacheSet("classDevice:local-open", null);
-      computeDefaultsForNow(sourcePeriods);
-      setNowTick(Date.now());
+      setPenaltyOpen(false);
+      setPenRows({});
+      setSubjectId("");
+      pendingSnapshotSubjectRef.current = "";
+      setLastCompletion(completion);
+      setMsg(input.message);
+      const currentMs = Date.now();
+      computeDefaultsForNow(sourcePeriods, currentMs);
+      setNowTick(currentMs);
+      void refreshClassScheduleFromRelay(selectedClass).then(() => {
+        setNowTick(Date.now());
+      });
     };
 
     try {
@@ -2256,6 +2526,9 @@ export default function ClassDevicePage() {
           return;
         }
         const marks = attendanceMarksFromRows(rows);
+        let attendanceOperationId: string | null = null;
+        let attendanceSecured = marks.length === 0;
+        let attendanceNeedsAttention = false;
         if (marks.length > 0) {
           const attendance = await deliverTeacherAttendance({
             institutionId: selectedClass.institution_id,
@@ -2268,23 +2541,43 @@ export default function ClassDevicePage() {
             relayAccessToken: relayPolicy?.relay_access_token,
             forceRelay: true,
           });
-          if (attendance.state !== "relay_secured" && attendance.state !== "cloud_synced") {
-            setMsg(`${teacherAttendanceDeliveryMessage(attendance)} La séance reste affichée pour éviter toute perte.`);
-            return;
-          }
+          attendanceOperationId = attendance.operation_id;
+          attendanceSecured =
+            attendance.state === "relay_secured" ||
+            attendance.state === "cloud_synced";
+          attendanceNeedsAttention =
+            attendance.state === "blocked" ||
+            attendance.state === "conflict" ||
+            attendance.state === "delivery_unknown";
         }
-        const closed = await closeTeacherAttendanceSessionOnRelay({
-          institutionId: selectedClass.institution_id,
-          sessionId: cur.id,
-          relayBaseUrl: relayPolicy?.relay_local_url,
-          relayAccessToken: relayPolicy?.relay_access_token,
+        const closed = attendanceSecured
+          ? await closeTeacherAttendanceSessionOnRelay({
+              institutionId: selectedClass.institution_id,
+              sessionId: cur.id,
+              classId: cur.class_id,
+              attendanceOperationId,
+              relayBaseUrl: relayPolicy?.relay_local_url,
+              relayAccessToken: relayPolicy?.relay_access_token,
+            })
+          : await stageTeacherAttendanceSessionClose({
+              institutionId: selectedClass.institution_id,
+              sessionId: cur.id,
+              classId: cur.class_id,
+              attendanceOperationId,
+            });
+        const relayConfirmed = closed.state === "relay_confirmed";
+        const message = relayConfirmed
+          ? `Appel enregistré et séance terminée. ${teacherSessionLifecycleDeliveryMessage(closed)}`
+          : attendanceNeedsAttention || closed.state === "blocked"
+            ? "Appel et fin conservés sur cet appareil. Une vérification est requise, mais le cours suivant peut commencer."
+            : "Appel et fin conservés sur cet appareil. Le relais sera réessayé automatiquement ; le cours suivant peut commencer.";
+        await finishLocal({
+          actualEndAt,
+          relayState: relayConfirmed
+            ? "relay_confirmed"
+            : "device_pending",
+          message,
         });
-        if (closed.state !== "relay_confirmed") {
-          setMsg(`${teacherSessionLifecycleDeliveryMessage(closed)} La liste reste affichée jusqu’à confirmation.`);
-          return;
-        }
-        await finishLocal();
-        setMsg(`Appel enregistré et séance terminée. ${teacherSessionLifecycleDeliveryMessage(closed)}`);
         await refreshPending();
         return;
       }
@@ -2315,8 +2608,12 @@ export default function ClassDevicePage() {
           // On termine localement, et on garde un marqueur avec l'heure réelle de fin
           // pour fermer la séance serveur dès qu'elle existera.
           await cacheSet(PENDING_END_KEY, { actual_end_at: actualEndAt } satisfies PendingEndPayload);
-          await finishLocal();
-          setMsg("Séance terminée localement. La fin sera synchronisée dès que le réseau reviendra.");
+          await finishLocal({
+            actualEndAt,
+            relayState: "device_pending",
+            message:
+              "Séance terminée localement. La fin sera synchronisée dès que le réseau reviendra.",
+          });
           await refreshPending();
           return;
         }
@@ -2354,12 +2651,19 @@ export default function ClassDevicePage() {
       );
 
       if ((r as any).ok) {
-        await finishLocal();
-        setMsg("Séance terminée.");
+        await finishLocal({
+          actualEndAt,
+          relayState: "relay_confirmed",
+          message: "Séance terminée.",
+        });
         await refreshPending();
       } else if (shouldTreatAsOffline(r)) {
-        await finishLocal();
-        setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
+        await finishLocal({
+          actualEndAt,
+          relayState: "device_pending",
+          message:
+            "Hors connexion : fin de séance mise en attente (sync auto).",
+        });
         await refreshPending();
       } else {
         const err = extractRespError(r);
@@ -2375,17 +2679,36 @@ export default function ClassDevicePage() {
   async function logout() {
     if (loggingOut) return;
 
-    let remaining = await outboxCount().catch(() => 0);
+    let remaining = await countPendingForCurrentClass();
 
-    if (remaining > 0 && typeof navigator !== "undefined" && navigator.onLine) {
-      setMsg("Synchronisation des données avant déconnexion…");
+    if (remaining > 0) {
+      setMsg("Tentative de sécurisation des données avant déconnexion…");
       try {
-        const result = await flushOutbox();
-        remaining = result.remaining;
-        await refreshPending();
-      } catch {
-        remaining = await outboxCount().catch(() => remaining);
-      }
+        if (
+          typeof navigator === "undefined" ||
+          navigator.onLine !== false
+        ) {
+          await flushOutbox();
+        }
+        const relay = selectedClass?.attendance_presence;
+        if (
+          selectedClass?.institution_id &&
+          selectedClass.id &&
+          selectedClass.actor_profile_id &&
+          relay?.relay_local_url &&
+          relay.relay_access_token
+        ) {
+          await recoverClassDeviceAttendance({
+            institutionId: selectedClass.institution_id,
+            classId: selectedClass.id,
+            actorProfileId: selectedClass.actor_profile_id,
+            relayBaseUrl: relay.relay_local_url,
+            relayAccessToken: relay.relay_access_token,
+          });
+        }
+      } catch {}
+      remaining = await countPendingForCurrentClass();
+      setPendingSync(remaining);
     }
 
     if (remaining > 0) {
@@ -2396,7 +2719,7 @@ export default function ClassDevicePage() {
       );
       if (!discard) {
         setMsg(
-          `${remaining} action(s) conservées sur cet appareil. Reconnectez Internet puis appuyez sur Sync.`
+          `${remaining} action(s) conservées sur cet appareil. Rejoignez le réseau local du relais puis appuyez sur Sync.`
         );
         return;
       }
@@ -2492,9 +2815,9 @@ export default function ClassDevicePage() {
 
             <button
               onClick={() => void syncNow()}
-              disabled={!isOnline || syncing || pendingSync === 0}
+              disabled={syncing || pendingSync === 0}
               className="rounded-full border border-white/20 px-3 py-1 text-xs text-white/90 hover:bg-white/10 disabled:opacity-50"
-              title="Synchroniser les actions en attente"
+              title="Réessayer le relais local et, si Internet est disponible, le Cloud"
             >
               {syncing ? "Sync..." : `Sync (${pendingSync})`}
             </button>
@@ -2541,6 +2864,39 @@ export default function ClassDevicePage() {
             : relayScheduleIssue}
         </div>
       )}
+      {!open &&
+        lastCompletion &&
+        (!classId || lastCompletion.class_id === classId) && (
+          <div
+            className={[
+              "rounded-2xl border px-4 py-3 text-sm",
+              lastCompletion.relay_state === "relay_confirmed"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                : "border-amber-200 bg-amber-50 text-amber-950",
+            ].join(" ")}
+            aria-live="polite"
+          >
+            <div className="font-semibold">
+              Séance précédente terminée — {lastCompletion.class_label}
+              {lastCompletion.subject_name
+                ? ` • ${lastCompletion.subject_name}`
+                : ""}
+              {" • "}
+              {lastCompletion.planned_range}
+            </div>
+            <div className="mt-1 text-xs">
+              Fin enregistrée à {formatTimeLabel(lastCompletion.ended_at)} •
+              {" "}
+              {lastCompletion.absent_count} absent(s) •
+              {" "}
+              {lastCompletion.late_count} retard(s).
+              {" "}
+              {lastCompletion.relay_state === "relay_confirmed"
+                ? "Le relais local a confirmé la fermeture."
+                : "L’appareil conserve l’appel et réessaiera le relais automatiquement."}
+            </div>
+          </div>
+        )}
 
       {/* Sélection */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
@@ -2598,7 +2954,7 @@ export default function ClassDevicePage() {
                       : "— Hors créneau —"
                     : subjectLoadMode === "auto-offline"
                       ? "— Aucun cours prévu —"
-                      : "— Aucune discipline en cache (préparez le mode hors ligne) —"}
+                      : "— Aucun cours vérifié pour ce créneau —"}
                 </option>
               ) : null}
               {subjects.map((s) => (
