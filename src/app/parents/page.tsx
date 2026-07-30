@@ -533,6 +533,22 @@ async function ensurePushSubscription() {
   });
 }
 
+async function hasActivePushSubscription() {
+  if (
+    typeof window === "undefined" ||
+    !("Notification" in window) ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window) ||
+    Notification.permission !== "granted"
+  ) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.getRegistration();
+  if (!registration) return false;
+  return Boolean(await registration.pushManager.getSubscription());
+}
+
 function PageLoader({ label = "Chargement…" }: { label?: string }) {
   return (
     <div className="grid min-h-[240px] place-items-center rounded-[30px] border border-slate-200 bg-white p-8 shadow-sm">
@@ -641,17 +657,11 @@ function ChildIdentity({
 
 function ModuleCard({
   title,
-  description,
-  value,
-  note,
   icon,
   tone,
   onClick,
 }: {
   title: string;
-  description: string;
-  value: string;
-  note?: string;
   icon: IconName;
   tone: "emerald" | "sky" | "amber" | "violet" | "rose" | "slate";
   onClick: () => void;
@@ -669,22 +679,12 @@ function ModuleCard({
     <button
       type="button"
       onClick={onClick}
-      className="group relative overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5"
+      className="group relative flex min-h-[132px] flex-col items-center justify-center overflow-hidden rounded-[24px] border border-slate-200 bg-white p-4 text-center shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg active:translate-y-0 active:scale-[0.97]"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${tones[tone]}`}>
-          <Icon name={icon} size={23} />
-        </div>
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-slate-900 group-hover:text-white">
-          <Icon name="arrow" size={17} />
-        </span>
+      <div className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 transition duration-150 group-hover:scale-105 group-active:scale-95 ${tones[tone]}`}>
+        <Icon name={icon} size={23} />
       </div>
-      <div className="mt-5 text-xs font-black uppercase tracking-[0.16em] text-slate-500">{title}</div>
-      <div className="mt-2 text-2xl font-black tracking-tight text-slate-950">{value}</div>
-      <p className="mt-2 text-sm font-semibold leading-5 text-slate-500">{description}</p>
-      {note ? (
-        <div className="mt-4 truncate rounded-2xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">{note}</div>
-      ) : null}
+      <div className="mt-3 text-sm font-black leading-5 text-slate-900 sm:text-base">{title}</div>
     </button>
   );
 }
@@ -706,6 +706,7 @@ export default function ParentPage() {
   const [attachMessage, setAttachMessage] = useState<string | null>(null);
   const [messageBusy, setMessageBusy] = useState(false);
   const [messageNotice, setMessageNotice] = useState<string | null>(null);
+  const [pushEnabled, setPushEnabled] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [textbookSubject, setTextbookSubject] = useState("");
   const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
@@ -883,6 +884,9 @@ export default function ParentPage() {
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
     loadInitialData();
+    void hasActivePushSubscription()
+      .then(setPushEnabled)
+      .catch(() => setPushEnabled(false));
     return () => {
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
@@ -1014,6 +1018,7 @@ export default function ParentPage() {
     setMessageNotice(null);
     try {
       await ensurePushSubscription();
+      setPushEnabled(true);
       setMessageNotice("Les notifications sont activées sur cet appareil.");
     } catch (error: any) {
       setMessageNotice(error?.message || "Activation impossible.");
@@ -1048,26 +1053,6 @@ export default function ParentPage() {
     0,
   );
   const overallAverage = weightedAverage(selectedData.grades);
-  const latestGrade = [...selectedData.grades].sort((a, b) =>
-    String(b.eval_date).localeCompare(String(a.eval_date)),
-  )[0];
-  const latestTextbook = selectedData.textbook
-    .flatMap((progression) =>
-      progression.items.flatMap((item) =>
-        (item.sessions || []).map((session) => ({
-          ...session,
-          subject_name: progression.subject_name,
-          item_title: item.title,
-        })),
-      ),
-    )
-    .sort((a, b) =>
-      String(b.session_date || b.created_at || "").localeCompare(
-        String(a.session_date || a.created_at || ""),
-      ),
-    )[0];
-  const latestBulletin = kidBulletins[0] || null;
-  const timetableCount = selectedData.timetable?.items?.length || 0;
 
   function renderHome() {
     return (
@@ -1200,23 +1185,37 @@ export default function ParentPage() {
           }
         />
 
-        <div className="mb-5 flex flex-col gap-3 rounded-[26px] border border-emerald-100 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className={`mb-5 flex flex-col gap-3 rounded-[26px] border p-4 sm:flex-row sm:items-center sm:justify-between ${
+          pushEnabled
+            ? "border-slate-200 bg-slate-100"
+            : "border-emerald-100 bg-emerald-50"
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-700 shadow-sm">
+            <div className={`grid h-11 w-11 place-items-center rounded-2xl bg-white shadow-sm ${pushEnabled ? "text-slate-500" : "text-emerald-700"}`}>
               <Icon name="bell" size={21} />
             </div>
             <div>
-              <div className="text-sm font-black text-emerald-950">Recevoir les nouvelles alertes</div>
-              <div className="mt-1 text-xs font-semibold text-emerald-800/70">Activez les notifications sur cet appareil.</div>
+              <div className={`text-sm font-black ${pushEnabled ? "text-slate-700" : "text-emerald-950"}`}>
+                {pushEnabled ? "Notifications activées" : "Recevoir les nouvelles alertes"}
+              </div>
+              <div className={`mt-1 text-xs font-semibold ${pushEnabled ? "text-slate-500" : "text-emerald-800/70"}`}>
+                {pushEnabled
+                  ? "Cet appareil recevra les nouvelles alertes."
+                  : "Activez les notifications sur cet appareil."}
+              </div>
             </div>
           </div>
           <button
             type="button"
             onClick={activatePush}
-            disabled={messageBusy}
-            className="rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-60"
+            disabled={messageBusy || pushEnabled}
+            className={`rounded-2xl px-4 py-3 text-sm font-black transition ${
+              pushEnabled
+                ? "cursor-default bg-slate-300 text-slate-600"
+                : "bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-60"
+            }`}
           >
-            Activer
+            {pushEnabled ? "Activées" : "Activer"}
           </button>
         </div>
 
@@ -1291,57 +1290,39 @@ export default function ParentPage() {
         ) : selectedData.error ? (
           <EmptyState icon="wifi" title="Données indisponibles" text={selectedData.error} />
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             <ModuleCard
               title="Absences et retards"
-              value={`${absencesCount} absence${absencesCount > 1 ? "s" : ""}`}
-              description={`${latesCount} retard${latesCount > 1 ? "s" : ""}${lateMinutes ? ` · ${lateMinutes} min` : ""}`}
-              note={selectedData.events[0] ? `Dernier événement : ${dateFr(selectedData.events[0].when)}` : "Aucun événement récent"}
               icon="clock"
               tone="amber"
               onClick={() => openChildModule("absences")}
             />
             <ModuleCard
               title="Cahier de notes"
-              value={`${formatAverage(overallAverage)}/20`}
-              description={selectedPeriod?.short_label || selectedPeriod?.label || "Période en cours"}
-              note={latestGrade ? `${latestGrade.subject_name || "Matière"} · ${latestGrade.score ?? "—"}/${latestGrade.scale || 20}` : "Aucune note publiée"}
               icon="notes"
               tone="sky"
               onClick={() => openChildModule("notes")}
             />
             <ModuleCard
               title="Cahier de texte"
-              value={`${selectedData.textbook.length} matière${selectedData.textbook.length > 1 ? "s" : ""}`}
-              description="Leçons réalisées et taux d’exécution"
-              note={latestTextbook ? `${latestTextbook.subject_name} · ${latestTextbook.item_title}` : "Aucune leçon publiée"}
               icon="book"
               tone="emerald"
               onClick={() => openChildModule("textbook")}
             />
             <ModuleCard
               title="Bulletin"
-              value={latestBulletin ? "Disponible" : "Non disponible"}
-              description={latestBulletin?.period_label || "Dernier bulletin publié"}
-              note={latestBulletin?.general_avg != null ? `Moyenne : ${formatAverage(Number(latestBulletin.general_avg))}/20` : undefined}
               icon="bulletin"
               tone="slate"
               onClick={() => openChildModule("bulletins")}
             />
             <ModuleCard
               title="Emploi du temps"
-              value={`${timetableCount} cours`}
-              description="Consulter l’emploi du temps jour par jour"
-              note={selectedData.timetable?.academic_year || selectedKid.class_label || undefined}
               icon="calendar"
               tone="violet"
               onClick={() => openChildModule("timetable")}
             />
             <ModuleCard
               title="Sanctions"
-              value={`${selectedData.penalties.length}`}
-              description={selectedData.conduct?.appreciation || "Conduite et sanctions récentes"}
-              note={selectedData.conduct ? `Note de conduite : ${formatAverage(selectedData.conduct.total)}` : "Aucune donnée de conduite"}
               icon="shield"
               tone="rose"
               onClick={() => openChildModule("sanctions")}
