@@ -47,8 +47,10 @@ import {
 import {
   checkRelayTeacherConnectivity,
   fetchRelayTeacherOfflineSchedule,
+  LocalRelayHttpError,
   type RelayCapabilities,
   type RelayTeacherConnectivityResult,
+  type RelayTeacherOfflineSchedule,
 } from "@/lib/local-relay";
 import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
@@ -56,6 +58,14 @@ import {
   decideOfflineSchedulePolicy,
   type SchedulePolicyStatus,
 } from "@/lib/offline-schedule-policy";
+import {
+  CLASS_DEVICE_COHERENT_BUNDLE_KEY,
+  classDeviceReadinessMessage,
+  evaluateClassDeviceCoherence,
+  validateClassDeviceScheduleScope,
+  type ClassDeviceCoherentBundle,
+  type ClassDeviceReadinessStatus,
+} from "@/lib/offlineClassDevice";
 
 export type OfflineRole = "teacher" | "class-device" | "admin" | "parent";
 
@@ -90,6 +100,12 @@ export type OfflineReadiness = {
   };
   relay_capabilities?: RelayCapabilities;
   schedule_compatibility?: TeacherScheduleCompatibilityStatus;
+  institution_id?: string | null;
+  authorized_class_id?: string | null;
+  relay_revision?: number | null;
+  cloud_revision?: number | null;
+  checked_at?: string | null;
+  class_device_compatibility?: ClassDeviceReadinessStatus;
 };
 
 export type TeacherScheduleCompatibilityStatus =
@@ -105,13 +121,25 @@ export type TeacherScheduleAssessment = {
   cloud_revision: number | null;
 };
 
-type ProgressCallback = (message: string) => void;
-
-type PeriodLike = {
-  weekday?: number | null;
-  start_time?: string | null;
-  end_time?: string | null;
+export type ClassDeviceScheduleAssessment = {
+  status: ClassDeviceReadinessStatus;
+  message: string;
+  readiness: OfflineReadiness | null;
+  cloud_reachable: boolean;
+  phone_revision: number | null;
+  relay_revision: number | null;
+  cloud_revision: number | null;
+  schedule: RelayTeacherOfflineSchedule | null;
 };
+
+export type ClassDeviceAssessmentContext = {
+  institutionId?: string | null;
+  classId?: string | null;
+  relayBaseUrl?: string | null;
+  relayAccessToken?: string | null;
+};
+
+type ProgressCallback = (message: string) => void;
 
 type TeacherBootstrap = {
   version?: number;
@@ -230,25 +258,6 @@ async function mapLimit<T>(
     }
   });
   await Promise.all(workers);
-}
-
-function slotKey(period: PeriodLike): string | null {
-  const rawWeekday = Number(period.weekday);
-  const weekday = rawWeekday === 0 ? 7 : rawWeekday;
-  const start = String(period.start_time || "").slice(0, 5);
-  const end = String(period.end_time || "").slice(0, 5);
-  if (!Number.isFinite(weekday) || weekday < 1 || weekday > 7) return null;
-  if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return null;
-  return `${weekday}|${start}|${end}`;
-}
-
-function uniquePeriods(payload: any): Array<{ key: string; period: PeriodLike }> {
-  const map = new Map<string, PeriodLike>();
-  for (const period of (Array.isArray(payload?.periods) ? payload.periods : []) as PeriodLike[]) {
-    const key = slotKey(period);
-    if (key) map.set(key, period);
-  }
-  return Array.from(map, ([key, period]) => ({ key, period }));
 }
 
 function uniqueIds(values: Array<string | null | undefined>) {
@@ -451,6 +460,18 @@ async function prepareTextbook(
 }
 
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
+  if (role === "class-device") {
+    const bundle = await cacheGet<
+      ClassDeviceCoherentBundle<OfflineReadiness, RelayTeacherOfflineSchedule>
+    >(CLASS_DEVICE_COHERENT_BUNDLE_KEY).catch(() => null);
+    if (
+      bundle?.schema_version === 1 &&
+      bundle.readiness?.version === 5 &&
+      bundle.readiness.role === "class-device"
+    ) {
+      return bundle.readiness;
+    }
+  }
   const value = await cacheGet<OfflineReadiness>(readinessKey(role));
   return (value?.version === 4 || value?.version === 5) && value.role === role
     ? value
@@ -703,6 +724,392 @@ export async function assessTeacherOfflineReadiness(
   };
 }
 
+type CachedClassDevice = {
+  id?: string | null;
+  institution_id?: string | null;
+  attendance_presence?: {
+    enabled?: boolean;
+    allow_local_relay?: boolean;
+    relay_local_url?: string | null;
+    relay_access_token?: string | null;
+  } | null;
+};
+
+type ResolvedClassDeviceContext = {
+  institutionId: string;
+  classId: string;
+  relayBaseUrl: string;
+  relayAccessToken: string;
+};
+
+async function readClassDeviceBundle() {
+  const bundle = await cacheGet<
+    ClassDeviceCoherentBundle<OfflineReadiness, RelayTeacherOfflineSchedule>
+  >(CLASS_DEVICE_COHERENT_BUNDLE_KEY).catch(() => null);
+  return bundle?.schema_version === 1 ? bundle : null;
+}
+
+async function resolveClassDeviceContext(
+  readiness: OfflineReadiness | null,
+  requested: ClassDeviceAssessmentContext,
+): Promise<ResolvedClassDeviceContext | null> {
+  const payload = await cacheGet<{ items?: CachedClassDevice[] }>(
+    "classDevice:my-classes",
+  ).catch(() => null);
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const requestedClassId = String(
+    requested.classId || readiness?.authorized_class_id || "",
+  ).trim();
+  const cached = items.find(
+    (item) => String(item?.id || "").trim() === requestedClassId,
+  );
+  const institutionId = String(
+    requested.institutionId ||
+      readiness?.institution_id ||
+      cached?.institution_id ||
+      "",
+  ).trim();
+  const relay = cached?.attendance_presence;
+  const relayBaseUrl = String(
+    requested.relayBaseUrl || relay?.relay_local_url || "",
+  ).trim();
+  const relayAccessToken = String(
+    requested.relayAccessToken || relay?.relay_access_token || "",
+  ).trim();
+  if (
+    !institutionId ||
+    !requestedClassId ||
+    !relayBaseUrl ||
+    !relayAccessToken ||
+    relay?.enabled === false ||
+    relay?.allow_local_relay === false
+  ) {
+    return null;
+  }
+  return {
+    institutionId,
+    classId: requestedClassId,
+    relayBaseUrl,
+    relayAccessToken,
+  };
+}
+
+function classDeviceAssessment(
+  status: ClassDeviceReadinessStatus,
+  state: Omit<ClassDeviceScheduleAssessment, "status" | "message">,
+  message = classDeviceReadinessMessage(status),
+): ClassDeviceScheduleAssessment {
+  return { ...state, status, message };
+}
+
+function scheduleFetchFailureStatus(error: unknown): ClassDeviceReadinessStatus {
+  if (error instanceof LocalRelayHttpError) {
+    if (error.status === 401 || error.status === 403) {
+      return "relay_access_denied";
+    }
+    if (
+      error.code === "schedule_snapshot_not_prepared" ||
+      error.code === "teacher_offline_schedule_failed"
+    ) {
+      return "schedule_not_prepared";
+    }
+  }
+  if (
+    error instanceof Error &&
+    (error.message === "relay_schedule_snapshot_invalid" ||
+      error.message === "schedule_snapshot_not_prepared")
+  ) {
+    return "schedule_not_prepared";
+  }
+  return "relay_unreachable";
+}
+
+async function persistClassDeviceBundle(
+  readiness: OfflineReadiness,
+  schedule: RelayTeacherOfflineSchedule,
+) {
+  const bundle: ClassDeviceCoherentBundle<
+    OfflineReadiness,
+    RelayTeacherOfflineSchedule
+  > = {
+    schema_version: 1,
+    readiness,
+    schedule,
+  };
+  // Cette écriture KV unique est le point de validation atomique. Les caches
+  // historiques ci-dessous ne sont que des projections de consultation.
+  await cacheSet(CLASS_DEVICE_COHERENT_BUNDLE_KEY, bundle);
+  await cacheSet(readinessKey("class-device"), readiness).catch(() => undefined);
+}
+
+async function projectClassDeviceScheduleCaches(
+  schedule: RelayTeacherOfflineSchedule,
+  classId: string,
+) {
+  const roster = schedule.rosters?.[classId];
+  if (roster) {
+    await cacheSet(`classDevice:roster:${classId}`, roster).catch(
+      () => undefined,
+    );
+  }
+  await Promise.all(
+    schedule.slots.map(async (slot) => {
+      const subjects = slot.items
+        .filter((item) => item.class_id === classId)
+        .map((item) => ({
+          id: item.subject_id,
+          label: item.subject_name,
+        }));
+      await cacheSet(`classDevice:subjects:${classId}:${slot.key}`, {
+        items: subjects,
+      }).catch(() => undefined);
+    }),
+  );
+}
+
+function refreshedClassDeviceReadiness(
+  readiness: OfflineReadiness,
+  schedule: RelayTeacherOfflineSchedule,
+  relay: RelayTeacherConnectivityResult,
+  cloudRevision: number | null,
+  serviceWorkerRelease: string,
+) {
+  const classId = String(schedule.class_id || "");
+  const roster = schedule.rosters?.[classId];
+  const studentCount = Array.isArray(roster?.items) ? roster.items.length : 0;
+  return {
+    ...readiness,
+    version: 5 as const,
+    role: "class-device" as const,
+    prepared_at: new Date().toISOString(),
+    checked_at: new Date().toISOString(),
+    class_count: 1,
+    student_count: studentCount,
+    slot_count: schedule.slot_count,
+    shell_ready: true,
+    service_worker_release: serviceWorkerRelease,
+    institution_id: schedule.institution_id,
+    authorized_class_id: classId,
+    schedule_revision: schedule.schedule_revision,
+    schedule_generated_at: schedule.generated_at,
+    relay_revision: safeRevision(relay.snapshot_revision),
+    cloud_revision: cloudRevision,
+    relay_connectivity: relay,
+    relay_capabilities: relay.capabilities,
+    class_device_compatibility: "ready" as const,
+    data_presence: {
+      classes: 1,
+      students: studentCount,
+      slots: schedule.slot_count,
+      grades: readiness.evaluation_count,
+      textbook_assignments: readiness.textbook_assignment_count,
+      assignments: schedule.assignments.length,
+    },
+  } satisfies OfflineReadiness;
+}
+
+export async function getClassDeviceCoherentSchedule(input: {
+  institutionId: string;
+  classId: string;
+}) {
+  const bundle = await readClassDeviceBundle();
+  const validation = validateClassDeviceScheduleScope(bundle?.schedule, input);
+  return validation.ok ? bundle!.schedule : null;
+}
+
+export async function assessClassDeviceOfflineReadiness(
+  initial: OfflineReadiness | null,
+  requested: ClassDeviceAssessmentContext = {},
+): Promise<ClassDeviceScheduleAssessment> {
+  const bundle = await readClassDeviceBundle();
+  const readiness =
+    bundle?.readiness?.version === 5 &&
+    bundle.readiness.role === "class-device"
+      ? bundle.readiness
+      : initial;
+  const context = await resolveClassDeviceContext(readiness, requested);
+  const institutionId = String(
+    requested.institutionId || readiness?.institution_id || "",
+  ).trim();
+  const classId = String(
+    requested.classId || readiness?.authorized_class_id || "",
+  ).trim();
+  const [cloud, activeServiceWorkerRelease] = await Promise.all([
+    probeCloudSchedule(),
+    getActiveOfflineWorkerRelease(),
+  ]);
+  const cloudRevision = safeRevision(cloud?.schedule_revision);
+  const bundleValidation = validateClassDeviceScheduleScope(
+    bundle?.schedule,
+    { institutionId, classId },
+  );
+  const baseState = {
+    readiness,
+    cloud_reachable: Boolean(cloud),
+    phone_revision: safeRevision(readiness?.schedule_revision),
+    relay_revision: null,
+    cloud_revision: cloudRevision,
+    schedule: bundleValidation.ok ? bundle!.schedule : null,
+  };
+
+  const preflight = evaluateClassDeviceCoherence({
+    readiness,
+    expected_web_release: MON_CAHIER_WEB_RELEASE,
+    expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
+    active_service_worker_release: activeServiceWorkerRelease,
+    expected_institution_id: institutionId,
+    expected_class_id: classId,
+    bundle_present: Boolean(bundle),
+    bundle_schedule_revision: bundleValidation.ok
+      ? bundleValidation.revision
+      : null,
+    bundle_scope_valid: bundleValidation.ok,
+    relay_status: "unreachable",
+    relay_institution_id: null,
+    relay_actor_kind: null,
+    relay_class_id: null,
+    relay_schedule_available: false,
+    relay_revision: null,
+    cloud_revision: cloudRevision,
+    relay_writes_enabled: false,
+    relay_capabilities: null,
+  });
+  if (preflight !== "relay_unreachable") {
+    return classDeviceAssessment(preflight, baseState);
+  }
+  if (!context) {
+    return classDeviceAssessment(
+      "not_prepared",
+      baseState,
+      "Les données d’accès de la classe autorisée au relais sont absentes. Relancez la préparation.",
+    );
+  }
+
+  const relay = await checkRelayTeacherConnectivity({
+    institutionId: context.institutionId,
+    baseUrl: context.relayBaseUrl,
+    accessToken: context.relayAccessToken,
+  });
+  const relayRevision = safeRevision(relay.snapshot_revision);
+  const withRelay = {
+    ...baseState,
+    relay_revision: relayRevision,
+  };
+  if (relay.status !== "reachable") {
+    const status =
+      relay.status === "access_denied"
+        ? "relay_access_denied"
+        : relay.status === "permission_denied"
+          ? "relay_permission_denied"
+          : relay.status === "incompatible_browser"
+            ? "browser_incompatible"
+            : "relay_unreachable";
+    return classDeviceAssessment(status, withRelay);
+  }
+
+  let relaySchedule: RelayTeacherOfflineSchedule;
+  try {
+    relaySchedule = await fetchRelayTeacherOfflineSchedule({
+      institutionId: context.institutionId,
+      baseUrl: context.relayBaseUrl,
+      accessToken: context.relayAccessToken,
+    });
+  } catch (error) {
+    return classDeviceAssessment(scheduleFetchFailureStatus(error), withRelay);
+  }
+  const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
+    institutionId: context.institutionId,
+    classId: context.classId,
+  });
+  if (!relayScope.ok) {
+    return classDeviceAssessment(relayScope.status, {
+      ...withRelay,
+      schedule: null,
+    });
+  }
+
+  const evaluated = evaluateClassDeviceCoherence({
+    readiness,
+    expected_web_release: MON_CAHIER_WEB_RELEASE,
+    expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
+    active_service_worker_release: activeServiceWorkerRelease,
+    expected_institution_id: context.institutionId,
+    expected_class_id: context.classId,
+    bundle_present: Boolean(bundle),
+    bundle_schedule_revision: bundleValidation.ok
+      ? bundleValidation.revision
+      : null,
+    bundle_scope_valid: bundleValidation.ok,
+    relay_status: relay.status,
+    relay_institution_id: relaySchedule.institution_id,
+    relay_actor_kind: relaySchedule.actor_kind || null,
+    relay_class_id: relaySchedule.class_id || null,
+    relay_schedule_available: true,
+    relay_revision: relayScope.revision,
+    cloud_revision: cloudRevision,
+    relay_writes_enabled: relay.teacher_attendance_writes_enabled === true,
+    relay_capabilities: relay.capabilities,
+  });
+
+  if (evaluated === "refresh_from_relay") {
+    try {
+      const refreshed = refreshedClassDeviceReadiness(
+        readiness!,
+        relaySchedule,
+        relay,
+        cloudRevision,
+        activeServiceWorkerRelease!,
+      );
+      await persistClassDeviceBundle(refreshed, relaySchedule);
+      await projectClassDeviceScheduleCaches(relaySchedule, context.classId);
+      return classDeviceAssessment("ready", {
+        readiness: refreshed,
+        cloud_reachable: Boolean(cloud),
+        phone_revision: relayScope.revision,
+        relay_revision: relayScope.revision,
+        cloud_revision: cloudRevision,
+        schedule: relaySchedule,
+      });
+    } catch {
+      return classDeviceAssessment("phone_stale", {
+        ...withRelay,
+        schedule: null,
+      });
+    }
+  }
+
+  const observed =
+    readiness?.version === 5
+      ? {
+          ...readiness,
+          checked_at: new Date().toISOString(),
+          relay_revision: relayScope.revision,
+          cloud_revision: cloudRevision,
+          relay_connectivity: relay,
+          relay_capabilities: relay.capabilities,
+          class_device_compatibility: evaluated,
+        }
+      : readiness;
+  if (observed && bundleValidation.ok) {
+    try {
+      await persistClassDeviceBundle(observed, bundle!.schedule);
+    } catch {
+      return classDeviceAssessment("phone_stale", {
+        ...withRelay,
+        schedule: null,
+      }, "La vérification est correcte, mais sa conservation atomique a échoué. Relancez la préparation.");
+    }
+  }
+  return classDeviceAssessment(evaluated, {
+    readiness: observed,
+    cloud_reachable: Boolean(cloud),
+    phone_revision: safeRevision(observed?.schedule_revision),
+    relay_revision: relayScope.revision,
+    cloud_revision: cloudRevision,
+    schedule: evaluated === "ready" ? relaySchedule : null,
+  });
+}
+
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
   onProgress("Téléchargement de l’emploi du temps…");
   const bootstrap = await fetchAndCache<TeacherBootstrap>(
@@ -834,59 +1241,136 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   };
 }
 
-async function prepareClassDevice(onProgress: ProgressCallback): Promise<OfflineReadiness> {
-  onProgress("Téléchargement des classes du cahier…");
+async function prepareClassDevice(
+  onProgress: ProgressCallback,
+  cloudRevision: number | null,
+): Promise<OfflineReadiness> {
+  onProgress("Téléchargement de la classe autorisée…");
   const classPayload: any = await fetchAndCache(
     "/api/class/my-classes",
-    "classDevice:my-classes"
+    "classDevice:my-classes",
   );
-  const classes = Array.isArray(classPayload?.items) ? classPayload.items : [];
-  const classIds = uniqueIds(classes.map((item: any) => item?.id));
+  const classes = Array.isArray(classPayload?.items)
+    ? classPayload.items as CachedClassDevice[]
+    : [];
+  const classIds = uniqueIds(classes.map((item) => item?.id));
+  if (classIds.length !== 1) {
+    throw new Error(classDeviceReadinessMessage("class_data_missing"));
+  }
+  const classId = classIds[0];
+  const selectedClass = classes.find(
+    (item) => String(item?.id || "").trim() === classId,
+  );
+  const institutionId = String(selectedClass?.institution_id || "").trim();
+  const relayPolicy = selectedClass?.attendance_presence;
+  if (
+    !institutionId ||
+    !relayPolicy?.enabled ||
+    relayPolicy.allow_local_relay === false ||
+    !relayPolicy.relay_local_url ||
+    !relayPolicy.relay_access_token
+  ) {
+    throw new Error(
+      "Les données d’accès de la classe autorisée au relais sont absentes.",
+    );
+  }
+
+  onProgress("Vérification du relais et du planning de la classe…");
+  const relayConnectivity = await checkRelayTeacherConnectivity({
+    institutionId,
+    baseUrl: relayPolicy.relay_local_url,
+    accessToken: relayPolicy.relay_access_token,
+  });
+  if (relayConnectivity.status !== "reachable") {
+    const status =
+      relayConnectivity.status === "access_denied"
+        ? "relay_access_denied"
+        : relayConnectivity.status === "permission_denied"
+          ? "relay_permission_denied"
+          : relayConnectivity.status === "incompatible_browser"
+            ? "browser_incompatible"
+            : "relay_unreachable";
+    throw new Error(classDeviceReadinessMessage(status));
+  }
+
+  let relaySchedule: RelayTeacherOfflineSchedule;
+  try {
+    relaySchedule = await fetchRelayTeacherOfflineSchedule({
+      institutionId,
+      baseUrl: relayPolicy.relay_local_url,
+      accessToken: relayPolicy.relay_access_token,
+    });
+  } catch (error) {
+    throw new Error(classDeviceReadinessMessage(scheduleFetchFailureStatus(error)));
+  }
+  const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
+    institutionId,
+    classId,
+  });
+  if (!relayScope.ok) {
+    throw new Error(classDeviceReadinessMessage(relayScope.status));
+  }
 
   try {
     await fetchAndCache("/api/teacher/sessions/open", "classDevice:open-session");
   } catch {
-    // L'absence d'une séance serveur ouverte ne bloque pas la préparation.
+    // L'absence d'une séance déjà ouverte ne bloque pas la préparation.
     await cacheSet("classDevice:open-session", { item: null });
   }
 
-  onProgress("Téléchargement des créneaux…");
-  const basics: any = await fetchFirstAndCache([
-    { url: "/api/teacher/institution/basics", key: "classDevice:inst:basics:teacher" },
-    { url: "/api/institution/basics", key: "classDevice:inst:basics:institution" },
-  ], (payload: any) => Array.isArray(payload?.periods) && payload.periods.length > 0);
-  const periods = uniquePeriods(basics);
-  const studentIds = new Set<string>();
-
-  onProgress(`Téléchargement de ${classIds.length} liste(s) d’élèves…`);
-  await mapLimit(classIds, 4, async (classId, index) => {
-    onProgress(`Classe ${index + 1}/${classIds.length} : élèves et matières…`);
-    const roster: any = await fetchAndCache(
-      `/api/class/roster?class_id=${encodeURIComponent(classId)}`,
-      `classDevice:roster:${classId}`
-    );
-    for (const student of Array.isArray(roster?.items) ? roster.items : []) {
-      const id = String(student?.id || "").trim();
-      if (id) studentIds.add(id);
-    }
-
-    await fetchAndCache(
-      `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
-      `classDevice:subjects:${classId}`
-    );
-  });
-
-  const resources = classIds.flatMap((classId) =>
-    periods.map(({ key }) => ({ classId, key }))
+  onProgress("Téléchargement des paramètres de l’établissement…");
+  await fetchFirstAndCache(
+    [
+      {
+        url: "/api/teacher/institution/basics",
+        key: "classDevice:inst:basics:teacher",
+      },
+      {
+        url: "/api/institution/basics",
+        key: "classDevice:inst:basics:institution",
+      },
+    ],
+    (payload: any) =>
+      Array.isArray(payload?.periods) && payload.periods.length > 0,
   );
-  onProgress(`Préparation de ${resources.length} combinaison(s) classe-créneau…`);
-  await mapLimit(resources, 4, async ({ classId, key }, index) => {
-    if (index === 0 || (index + 1) % 5 === 0 || index + 1 === resources.length) {
-      onProgress(`Créneaux ${index + 1}/${resources.length}…`);
+
+  const studentIds = new Set<string>();
+  const relayRoster = relaySchedule.rosters?.[classId];
+  for (const student of Array.isArray(relayRoster?.items)
+    ? relayRoster.items
+    : []) {
+    const id = String(student?.id || "").trim();
+    if (id) studentIds.add(id);
+  }
+
+  onProgress("Téléchargement des élèves et matières de la classe…");
+  const roster: any = await fetchAndCache(
+    `/api/class/roster?class_id=${encodeURIComponent(classId)}`,
+    `classDevice:roster:${classId}`,
+  );
+  for (const student of Array.isArray(roster?.items) ? roster.items : []) {
+    const id = String(student?.id || "").trim();
+    if (id) studentIds.add(id);
+  }
+  await fetchAndCache(
+    `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
+    `classDevice:subjects:${classId}`,
+  );
+
+  onProgress(
+    `Préparation de ${relaySchedule.slots.length} créneau(x) vérifié(s)…`,
+  );
+  await mapLimit(relaySchedule.slots, 4, async (slot, index) => {
+    if (
+      index === 0 ||
+      (index + 1) % 5 === 0 ||
+      index + 1 === relaySchedule.slots.length
+    ) {
+      onProgress(`Créneaux ${index + 1}/${relaySchedule.slots.length}…`);
     }
     await fetchAndCache(
-      `/api/class/subjects?class_id=${encodeURIComponent(classId)}&slot=${encodeURIComponent(key)}`,
-      `classDevice:subjects:${classId}:${key}`
+      `/api/class/subjects?class_id=${encodeURIComponent(classId)}&slot=${encodeURIComponent(slot.key)}`,
+      `classDevice:subjects:${classId}:${slot.key}`,
     );
   });
 
@@ -894,7 +1378,7 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
   for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
   const preparedTextbook = await prepareTextbook(onProgress);
 
-  onProgress("Préparation de l’application…");
+  onProgress("Préparation et vérification du shell hors ligne…");
   await warmOfflineShell([
     "/choose-book",
     "/class",
@@ -905,18 +1389,19 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
     attendance: "/class",
     grades: "/grades/class-device",
   });
+  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
+  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+    throw new Error(classDeviceReadinessMessage("service_worker_stale"));
+  }
 
-  return {
-    version: 4,
+  const readiness: OfflineReadiness = {
+    version: 5,
     role: "class-device",
     prepared_at: new Date().toISOString(),
-    class_count: uniqueIds([
-      ...classIds,
-      ...preparedGrades.classIds,
-      ...preparedTextbook.classIds,
-    ]).length,
+    checked_at: new Date().toISOString(),
+    class_count: 1,
     student_count: studentIds.size,
-    slot_count: periods.length,
+    slot_count: relaySchedule.slot_count,
     evaluation_count: preparedGrades.evaluationCount,
     textbook_assignment_count: preparedTextbook.assignmentCount,
     bulletin_count: 0,
@@ -926,7 +1411,56 @@ async function prepareClassDevice(onProgress: ProgressCallback): Promise<Offline
     consultation_ready: false,
     communication_ready: false,
     shell_ready: true,
+    relay_connectivity: relayConnectivity,
+    web_release: MON_CAHIER_WEB_RELEASE,
+    service_worker_release: activeServiceWorkerRelease,
+    schedule_revision: relayScope.revision,
+    schedule_generated_at: relaySchedule.generated_at,
+    institution_id: institutionId,
+    authorized_class_id: classId,
+    relay_revision: safeRevision(relayConnectivity.snapshot_revision),
+    cloud_revision: cloudRevision,
+    relay_capabilities: relayConnectivity.capabilities,
+    class_device_compatibility: "ready",
+    data_presence: {
+      classes: 1,
+      students: Array.isArray(relayRoster?.items)
+        ? relayRoster.items.length
+        : 0,
+      slots: relaySchedule.slot_count,
+      grades: preparedGrades.evaluationCount,
+      textbook_assignments: preparedTextbook.assignmentCount,
+      assignments: relaySchedule.assignments.length,
+    },
   };
+  const status = evaluateClassDeviceCoherence({
+    readiness,
+    expected_web_release: MON_CAHIER_WEB_RELEASE,
+    expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
+    active_service_worker_release: activeServiceWorkerRelease,
+    expected_institution_id: institutionId,
+    expected_class_id: classId,
+    bundle_present: true,
+    bundle_schedule_revision: relayScope.revision,
+    bundle_scope_valid: true,
+    relay_status: relayConnectivity.status,
+    relay_institution_id: relaySchedule.institution_id,
+    relay_actor_kind: relaySchedule.actor_kind || null,
+    relay_class_id: relaySchedule.class_id || null,
+    relay_schedule_available: true,
+    relay_revision: relayScope.revision,
+    cloud_revision: cloudRevision,
+    relay_writes_enabled:
+      relayConnectivity.teacher_attendance_writes_enabled === true,
+    relay_capabilities: relayConnectivity.capabilities,
+  });
+  if (status !== "ready") {
+    throw new Error(classDeviceReadinessMessage(status));
+  }
+
+  await persistClassDeviceBundle(readiness, relaySchedule);
+  await projectClassDeviceScheduleCaches(relaySchedule, classId);
+  return readiness;
 }
 
 type AdminBulletinClass = {
@@ -1137,7 +1671,10 @@ export async function prepareOffline(
     role === "teacher"
       ? await prepareTeacher(onProgress)
       : role === "class-device"
-        ? await prepareClassDevice(onProgress)
+        ? await prepareClassDevice(
+            onProgress,
+            safeRevision(cloud.schedule_revision),
+          )
         : role === "admin"
           ? await prepareAdmin(onProgress)
           : await prepareParent(onProgress);

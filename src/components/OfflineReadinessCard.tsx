@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CloudDownload, RefreshCcw, ShieldCheck, WifiOff } from "lucide-react";
 import {
+  assessClassDeviceOfflineReadiness,
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
   prepareOffline,
+  type ClassDeviceScheduleAssessment,
   type OfflineReadiness,
   type OfflineRole,
   type TeacherScheduleAssessment,
@@ -40,7 +42,9 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [assessment, setAssessment] =
-    useState<TeacherScheduleAssessment | null>(null);
+    useState<TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null>(
+      null,
+    );
 
   useEffect(() => {
     let cancelled = false;
@@ -48,8 +52,11 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
       const stored = await getOfflineReadiness(role).catch(() => null);
       if (cancelled) return;
       setReadiness(stored);
-      if (role === "teacher") {
-        const next = await assessTeacherOfflineReadiness(stored);
+      if (role === "teacher" || role === "class-device") {
+        const next =
+          role === "teacher"
+            ? await assessTeacherOfflineReadiness(stored)
+            : await assessClassDeviceOfflineReadiness(stored);
         if (cancelled) return;
         setAssessment(next);
         setReadiness(next.readiness);
@@ -73,7 +80,8 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
       !Number.isFinite(preparedAt) ||
       Date.now() - preparedAt > 24 * 60 * 60 * 1000;
     const scheduleStale =
-      role === "teacher" && assessment?.status !== "ready";
+      (role === "teacher" || role === "class-device") &&
+      assessment?.status !== "ready";
     return ageStale || scheduleStale;
   }, [assessment?.status, readiness, role]);
 
@@ -84,8 +92,11 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
     setProgress("Démarrage de la préparation…");
     try {
       const next = await prepareOffline(role, setProgress);
-      if (role === "teacher") {
-        const checked = await assessTeacherOfflineReadiness(next);
+      if (role === "teacher" || role === "class-device") {
+        const checked =
+          role === "teacher"
+            ? await assessTeacherOfflineReadiness(next)
+            : await assessClassDeviceOfflineReadiness(next);
         setAssessment(checked);
         setReadiness(checked.readiness);
         setProgress(
@@ -118,16 +129,21 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
       ? "Télécharge les bulletins officiels, leurs images et l’historique des communications sur cet appareil."
       : role === "parent"
         ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
-        : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
+        : role === "class-device"
+          ? "Télécharge le planning borné à la classe autorisée, les élèves, les notes et le shell vérifié de cet appareil."
+          : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
 
-  const relayConnectivity = role === "teacher" ? readiness?.relay_connectivity : undefined;
+  const relayConnectivity =
+    role === "teacher" || role === "class-device"
+      ? readiness?.relay_connectivity
+      : undefined;
   const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
   const relayConnectivityMessage = assessment
     ? assessment.message
     : relayConnectivity?.status === "reachable"
     ? `Relais joignable lors de la dernière actualisation${relayCheckedAt ? ` (${relayCheckedAt})` : ""}, cohérence non encore vérifiée.`
     : relayConnectivity?.status === "access_denied"
-      ? "Accès enseignant au relais refusé. Actualisez les données d’accès."
+      ? "Accès au relais refusé. Actualisez les données d’accès."
       : relayConnectivity?.status === "permission_denied"
       ? "Permission réseau local refusée."
       : relayConnectivity?.status === "incompatible_browser"
@@ -163,7 +179,7 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
             )}
             {readiness
               ? stale
-                ? role === "teacher"
+                ? role === "teacher" || role === "class-device"
                   ? "Mode hors ligne non compatible"
                   : "Mode hors ligne prêt — actualisation conseillée"
                 : "Mode hors ligne prêt"

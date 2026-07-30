@@ -4,4 +4,4 @@ export const MON_CAHIER_WEB_RELEASE =
   "development";
 
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-07-28-schedule-coherence-v1";
+  "2026-07-30-class-device-coherence-v5";

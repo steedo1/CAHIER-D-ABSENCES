@@ -15,6 +15,12 @@ import {
   clearOfflineAll,
 } from "@/lib/offline";
 import {
+  assessClassDeviceOfflineReadiness,
+  getClassDeviceCoherentSchedule,
+  getOfflineReadiness,
+  type ClassDeviceScheduleAssessment,
+} from "@/lib/offline-readiness";
+import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
   clearClassDeviceSnapshot,
@@ -182,6 +188,29 @@ type SubjectLoadMode =
 
 /* Nom par défaut (fallback local / dev) */
 const DEFAULT_INSTITUTION_NAME = "NOM DE L'ETABLISSEMENT";
+
+function relayScheduleErrorMessage(error: unknown) {
+  const code = String(
+    error instanceof Error ? error.message : error || "",
+  ).trim();
+  if (
+    code === "unauthorized" ||
+    code === "institution_not_allowed" ||
+    code === "relay_access_denied"
+  ) {
+    return "Le relais refuse l’autorisation de cet appareil.";
+  }
+  if (
+    code === "schedule_snapshot_not_prepared" ||
+    code === "relay_schedule_snapshot_invalid"
+  ) {
+    return "Le planning de la classe n’est pas préparé sur le relais.";
+  }
+  if (code === "relay_class_schedule_scope_mismatch") {
+    return "Le relais a répondu pour une autre classe ou un autre appareil.";
+  }
+  return "Le relais local est inaccessible ; le planning affiché ne permet pas d’ouvrir un nouvel appel.";
+}
 
 type PendingEndPayload = {
   actual_end_at: string;
@@ -488,6 +517,11 @@ export default function ClassDevicePage() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [relayClassSchedule, setRelayClassSchedule] =
     useState<RelayTeacherOfflineSchedule | null>(null);
+  const [classReadinessAssessment, setClassReadinessAssessment] =
+    useState<ClassDeviceScheduleAssessment | null>(null);
+  const [relayScheduleIssue, setRelayScheduleIssue] = useState<string | null>(
+    null,
+  );
   const relayClassScheduleRef = useRef<RelayTeacherOfflineSchedule | null>(null);
   const relayScheduleRefreshRef = useRef<Promise<RelayTeacherOfflineSchedule | null> | null>(null);
   const relayClockOffsetMsRef = useRef<number | null>(null);
@@ -510,6 +544,44 @@ export default function ClassDevicePage() {
   async function refreshClassScheduleFromRelay(
     target: MyClass | null = selectedClass,
   ): Promise<RelayTeacherOfflineSchedule | null> {
+    const applySchedule = async (schedule: RelayTeacherOfflineSchedule) => {
+      if (
+        schedule.actor_kind !== "class_device" ||
+        String(schedule.institution_id || "") !==
+          String(target?.institution_id || "") ||
+        String(schedule.class_id || "") !== target?.id
+      ) {
+        throw new Error("relay_class_schedule_scope_mismatch");
+      }
+      if (schedule.relay_time) {
+        const relayTime = Date.parse(schedule.relay_time);
+        if (Number.isFinite(relayTime)) {
+          relayClockOffsetMsRef.current = relayTime - Date.now();
+        }
+      }
+      const relayPeriods = periodsFromRelayClassSchedule(schedule, target!.id);
+      relayClassScheduleRef.current = schedule;
+      setRelayClassSchedule(schedule);
+      setPeriodsByDay(relayPeriods);
+
+      const relayRoster = relayRosterForClass(schedule, target!.id);
+      if (relayRoster) {
+        await cacheSet(`classDevice:roster:${target!.id}`, {
+          items: relayRoster,
+        });
+        if (openRef.current?.class_id === target!.id) setRoster(relayRoster);
+      }
+      return schedule;
+    };
+    const loadPreparedSchedule = async () => {
+      if (!target?.institution_id || !target.id) return null;
+      const prepared = await getClassDeviceCoherentSchedule({
+        institutionId: target.institution_id,
+        classId: target.id,
+      }).catch(() => null);
+      return prepared ? await applySchedule(prepared) : null;
+    };
+
     const relay = target?.attendance_presence;
     if (
       !target?.institution_id ||
@@ -518,7 +590,10 @@ export default function ClassDevicePage() {
       !relay.relay_local_url ||
       !relay.relay_access_token
     ) {
-      return null;
+      setRelayScheduleIssue(
+        "Les données d’accès au relais de cette classe sont absentes.",
+      );
+      return await loadPreparedSchedule();
     }
     if (relayScheduleRefreshRef.current) return await relayScheduleRefreshRef.current;
 
@@ -529,31 +604,12 @@ export default function ClassDevicePage() {
           baseUrl: relay.relay_local_url!,
           accessToken: relay.relay_access_token!,
         });
-        if (
-          schedule.actor_kind !== "class_device" ||
-          String(schedule.class_id || "") !== target.id
-        ) {
-          throw new Error("relay_class_schedule_scope_mismatch");
-        }
-        if (schedule.relay_time) {
-          const relayTime = Date.parse(schedule.relay_time);
-          if (Number.isFinite(relayTime)) {
-            relayClockOffsetMsRef.current = relayTime - Date.now();
-          }
-        }
-        const relayPeriods = periodsFromRelayClassSchedule(schedule, target.id);
-        relayClassScheduleRef.current = schedule;
-        setRelayClassSchedule(schedule);
-        setPeriodsByDay(relayPeriods);
-
-        const relayRoster = relayRosterForClass(schedule, target.id);
-        if (relayRoster) {
-          await cacheSet(`classDevice:roster:${target.id}`, { items: relayRoster });
-          if (openRef.current?.class_id === target.id) setRoster(relayRoster);
-        }
-        return schedule;
-      } catch {
-        return null;
+        const applied = await applySchedule(schedule);
+        setRelayScheduleIssue(null);
+        return applied;
+      } catch (error) {
+        setRelayScheduleIssue(relayScheduleErrorMessage(error));
+        return await loadPreparedSchedule();
       } finally {
         relayScheduleRefreshRef.current = null;
       }
@@ -853,7 +909,11 @@ export default function ClassDevicePage() {
     if (snapState.classId) setClassId(snapState.classId);
     if (snapState.subjectId) pendingSnapshotSubjectRef.current = snapState.subjectId;
 
-    if (opts?.restoreOpen !== false && snapState.open) {
+    if (
+      opts?.restoreOpen !== false &&
+      snapState.open?.local_relay === true &&
+      !isClientSessionId(snapState.open.id)
+    ) {
       setOpen(snapState.open);
     }
 
@@ -1094,7 +1154,15 @@ export default function ClassDevicePage() {
         setClasses(mapped);
 
         const serverOpen = (os?.item as OpenSession) || null;
-        const localOpen = (localOpenRaw as OpenSession) || null;
+        const localOpenCandidate = (localOpenRaw as OpenSession) || null;
+        const localOpen =
+          localOpenCandidate?.local_relay === true &&
+          !isClientSessionId(localOpenCandidate.id)
+            ? localOpenCandidate
+            : null;
+        if (localOpenCandidate && !localOpen) {
+          await cacheSet("classDevice:local-open", null);
+        }
         const restoredOpen = serverOpen || localOpen || null;
 
         if (restoredOpen) {
@@ -1124,7 +1192,17 @@ export default function ClassDevicePage() {
         }
       } catch {
         setClasses([]);
-        const localOpen = (await cacheGet("classDevice:local-open")) as OpenSession | null;
+        const localOpenCandidate = (await cacheGet(
+          "classDevice:local-open",
+        )) as OpenSession | null;
+        const localOpen =
+          localOpenCandidate?.local_relay === true &&
+          !isClientSessionId(localOpenCandidate.id)
+            ? localOpenCandidate
+            : null;
+        if (localOpenCandidate && !localOpen) {
+          await cacheSet("classDevice:local-open", null);
+        }
         if (localOpen) {
           setOpen(localOpen);
           const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(localOpen.class_id);
@@ -1148,6 +1226,7 @@ export default function ClassDevicePage() {
     if (!selectedClass) {
       relayClassScheduleRef.current = null;
       setRelayClassSchedule(null);
+      setRelayScheduleIssue(null);
       return;
     }
     relayClassScheduleRef.current = null;
@@ -1193,7 +1272,7 @@ export default function ClassDevicePage() {
       institution_name: inst.institution_name || DEFAULT_INSTITUTION_NAME,
       academic_year_label: inst.academic_year_label || null,
     };
-    let grouped: Record<number, Period[]> = {};
+    const grouped: Record<number, Period[]> = {};
 
     const all =
       (await getJson("/api/teacher/institution/basics", "classDevice:inst:basics:teacher")) ||
@@ -1554,7 +1633,11 @@ export default function ClassDevicePage() {
   }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
 
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
-  const canStartAttendanceNow = !!activeConfiguredSlot;
+  const usingUnverifiedLegacySubjects =
+    subjectLoadMode === "legacy-offline" ||
+    subjectLoadMode === "legacy-fallback";
+  const canStartAttendanceNow =
+    !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
 
   /* 2) charger les matières selon le mode courant
         - en ligne + créneau actif : nouveau système (slot)
@@ -1802,7 +1885,6 @@ export default function ClassDevicePage() {
   /* actions */
   useEffect(() => {
     void ensureAlarmReady();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const usingLegacyOfflineMode = !open && subjectLoadMode === "legacy-offline";
@@ -1879,7 +1961,6 @@ export default function ClassDevicePage() {
 
     void ensureAlarmReady();
 
-    // ✅ backend exige subject_id : on évite un rejet serveur (400)
     if (!subjectId) {
       setMsg("Choisissez une discipline avant de démarrer l’appel.");
       return;
@@ -1889,158 +1970,155 @@ export default function ClassDevicePage() {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
+    if (usingUnverifiedLegacySubjects) {
+      setMsg(
+        "Cet ancien cache reste consultable, mais ne peut pas ouvrir un appel. Actualisez la préparation v5.",
+      );
+      return;
+    }
 
     setBusy(true);
-    setMsg(null);
+    setMsg("Vérification de la cohérence du téléphone, du relais et du planning…");
 
     try {
+      const storedReadiness = await getOfflineReadiness("class-device").catch(
+        () => null,
+      );
+      const relayPolicy = selectedClass?.attendance_presence;
+      const assessment = await assessClassDeviceOfflineReadiness(
+        storedReadiness,
+        {
+          institutionId: selectedClass?.institution_id,
+          classId,
+          relayBaseUrl: relayPolicy?.relay_local_url,
+          relayAccessToken: relayPolicy?.relay_access_token,
+        },
+      );
+      setClassReadinessAssessment(assessment);
+      if (assessment.status !== "ready" || !assessment.schedule) {
+        setMsg(assessment.message);
+        return;
+      }
+
+      const verifiedPeriods = periodsFromRelayClassSchedule(
+        assessment.schedule,
+        classId,
+      );
+      const verifiedPeriod = Object.values(verifiedPeriods)
+        .flat()
+        .find((period) => period.id === activeConfiguredSlot.id);
+      const verifiedSubjects = relaySubjectsForSlot(
+        assessment.schedule,
+        classId,
+        verifiedPeriod || null,
+      );
+      if (
+        !verifiedPeriod ||
+        !verifiedSubjects ||
+        !verifiedSubjects.some((subject) => subject.id === subjectId)
+      ) {
+        setMsg(
+          "Le créneau ou la discipline ne figure pas dans le planning vérifié de la classe. Actualisez l’appareil.",
+        );
+        return;
+      }
+
+      relayClassScheduleRef.current = assessment.schedule;
+      setRelayClassSchedule(assessment.schedule);
+      setPeriodsByDay(verifiedPeriods);
+      setRelayScheduleIssue(null);
+
       const today = new Date();
-      const useLegacyTiming =
-        subjectLoadMode === "legacy-offline" || subjectLoadMode === "legacy-fallback";
-      const effectiveStart = useLegacyTiming
-        ? startTime || activeConfiguredSlot?.start_time || "08:00"
-        : activeConfiguredSlot?.start_time || startTime || "08:00";
-      const effectiveDuration = useLegacyTiming
-        ? duration
-        : activeConfiguredSlot
-          ? Math.max(1, minutesDiff(activeConfiguredSlot.start_time, activeConfiguredSlot.end_time))
-          : duration;
+      const effectiveStart = verifiedPeriod.start_time;
+      const effectiveDuration = Math.max(
+        1,
+        minutesDiff(verifiedPeriod.start_time, verifiedPeriod.end_time),
+      );
       const [hh, mm] = effectiveStart.split(":").map((x) => +x);
       const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
 
       const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
-
-      // ✅ OFFLINE-SAFE: heure réelle du clic "Démarrer l’appel"
-      const actualCallAtISO = new Date().toISOString();
-
-      const relayPolicy = selectedClass?.attendance_presence;
+      const actualCallAtISO = observedNowIso();
       if (
-        selectedClass?.institution_id &&
-        selectedClass.actor_profile_id &&
-        relayPolicy?.enabled &&
-        relayPolicy.allow_local_relay !== false &&
-        relayPolicy.relay_local_url &&
-        relayPolicy.relay_access_token &&
-        activeConfiguredSlot?.id
+        !selectedClass?.institution_id ||
+        !relayPolicy?.enabled ||
+        relayPolicy.allow_local_relay === false ||
+        !relayPolicy.relay_local_url ||
+        !relayPolicy.relay_access_token
       ) {
-        const local = await openTeacherAttendanceSessionOnRelay({
-          institutionId: selectedClass.institution_id,
-          classId,
-          periodId: activeConfiguredSlot.id,
-          attemptKey: clientSessionId,
-          relayBaseUrl: relayPolicy.relay_local_url,
-          relayAccessToken: relayPolicy.relay_access_token,
-        });
-        if (local.state === "blocked") {
-          setMsg(teacherSessionDeliveryMessage(local));
-          return;
-        }
-        if (local.state === "relay_opened" && local.session_id) {
-          if (local.relay_time) {
-            const relayTime = Date.parse(local.relay_time);
-            if (Number.isFinite(relayTime)) relayClockOffsetMsRef.current = relayTime - Date.now();
-          }
-          const cls = classes.find((c) => c.id === classId);
-          const subj = subjects.find((subject) => subject.id === (local.subject_id || subjectId));
-          const localOpen: OpenSession = {
-            id: local.session_id,
-            class_id: classId,
-            class_label: cls?.label || "Classe",
-            subject_id: local.subject_id || subjectId || null,
-            subject_name: subj?.label || null,
-            started_at: local.started_at || started.toISOString(),
-            actual_call_at: local.actual_call_at || actualCallAtISO,
-            expected_minutes: effectiveDuration,
-            local_relay: true,
-            period_id: activeConfiguredSlot.id,
-            scheduled_end_at: local.scheduled_end_at,
-            grace_expires_at: local.grace_expires_at,
-            session_state: local.session_state || "open",
-            education_type: cls?.education_type || "general_secondary",
-            education_label: cls?.education_label || "Secondaire général",
-            education_short_label: cls?.education_short_label || "Général",
-            formation_code: cls?.formation_code || null,
-            formation_label: cls?.formation_label || null,
-            formation_level_code: cls?.formation_level_code || null,
-            formation_level_label: cls?.formation_level_label || null,
-            education_context_key: cls?.education_context_key || cls?.education_type || "general_secondary",
-            education_context_label: cls?.education_context_label || cls?.education_label || "Secondaire général",
-          };
-          setOpen(localOpen);
-          await cacheSet("classDevice:local-open", localOpen);
-          setMsg(teacherSessionDeliveryMessage(local));
-          await refreshPending();
-          return;
-        }
+        setMsg("Les données d’accès au relais de cette classe sont absentes.");
+        return;
       }
 
-      const body = {
-        class_id: classId,
-        subject_id: subjectId || null,
-        started_at: started.toISOString(),
-        expected_minutes: effectiveDuration,
-        client_session_id: clientSessionId,
-        actual_call_at: actualCallAtISO,
-      };
-
-      const r = await offlineMutateJson(
-        "/api/class/sessions/start",
-        { method: "POST", body },
-        {
-          mergeKey: `start:${clientSessionId}`,
-          meta: { clientSessionId, operationType: "session-start" },
+      const local = await openTeacherAttendanceSessionOnRelay({
+        institutionId: selectedClass.institution_id,
+        classId,
+        periodId: verifiedPeriod.id!,
+        attemptKey: clientSessionId,
+        relayBaseUrl: relayPolicy.relay_local_url,
+        relayAccessToken: relayPolicy.relay_access_token,
+      });
+      if (local.state !== "relay_opened" || !local.session_id) {
+        const deliveryMessage = teacherSessionDeliveryMessage(local);
+        const blockedStatus =
+          local.last_error === "authentication_required" ||
+          local.last_error === "relay_unauthorized"
+            ? "relay_access_denied"
+            : "relay_unreachable";
+        setClassReadinessAssessment({
+          ...assessment,
+          status: blockedStatus,
+          message: deliveryMessage,
+          schedule: null,
+        });
+        setRelayScheduleIssue(deliveryMessage);
+        setMsg(deliveryMessage);
+        return;
+      }
+      if (local.relay_time) {
+        const relayTime = Date.parse(local.relay_time);
+        if (Number.isFinite(relayTime)) {
+          relayClockOffsetMsRef.current = relayTime - Date.now();
         }
+      }
+      const cls = classes.find((candidate) => candidate.id === classId);
+      const subj = verifiedSubjects.find(
+        (subject) => subject.id === (local.subject_id || subjectId),
       );
-
-      if ((r as any).ok) {
-        const serverOpen = (r as any).data.item as OpenSession;
-        setOpen({
-          ...serverOpen,
-          period_id: serverOpen.period_id || activeConfiguredSlot?.id || null,
-        });
-        await cacheSet("classDevice:local-open", null);
-        setMsg("Séance démarrée.");
-        await refreshPending();
-      } else if (shouldTreatAsOffline(r)) {
-        // ✅ uniquement si offline/queued : on crée une séance locale
-        const cls = classes.find((c) => c.id === classId);
-        const subj = subjects.find((s) => s.id === subjectId);
-
-        const localOpen: OpenSession = {
-          id: `client:${clientSessionId}`,
-          class_id: classId,
-          class_label: cls?.label || "Classe",
-          subject_id: subjectId || null,
-          subject_name: subj?.label || null,
-          started_at: started.toISOString(),
-          actual_call_at: actualCallAtISO,
-          expected_minutes: effectiveDuration,
-          period_id: activeConfiguredSlot?.id || null,
-          education_type: cls?.education_type || "general_secondary",
-          education_label: cls?.education_label || "Secondaire général",
-          education_short_label: cls?.education_short_label || "Général",
-          formation_code: cls?.formation_code || null,
-          formation_label: cls?.formation_label || null,
-          formation_level_code: cls?.formation_level_code || null,
-          formation_level_label: cls?.formation_level_label || null,
-          education_context_key:
-            cls?.education_context_key ||
-            cls?.education_type ||
-            "general_secondary",
-          education_context_label:
-            cls?.education_context_label ||
-            cls?.education_label ||
-            "Secondaire général",
-        };
-
-        setOpen(localOpen);
-        await cacheSet("classDevice:local-open", localOpen);
-        setMsg("Hors connexion : séance enregistrée (sync dès que le réseau revient).");
-        await refreshPending();
-      } else {
-        const err = extractRespError(r);
-        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de démarrer la séance.");
-      }
+      const localOpen: OpenSession = {
+        id: local.session_id,
+        class_id: classId,
+        class_label: cls?.label || "Classe",
+        subject_id: local.subject_id || subjectId || null,
+        subject_name: subj?.label || null,
+        started_at: local.started_at || started.toISOString(),
+        actual_call_at: local.actual_call_at || actualCallAtISO,
+        expected_minutes: effectiveDuration,
+        local_relay: true,
+        period_id: verifiedPeriod.id,
+        scheduled_end_at: local.scheduled_end_at,
+        grace_expires_at: local.grace_expires_at,
+        session_state: local.session_state || "open",
+        education_type: cls?.education_type || "general_secondary",
+        education_label: cls?.education_label || "Secondaire général",
+        education_short_label: cls?.education_short_label || "Général",
+        formation_code: cls?.formation_code || null,
+        formation_label: cls?.formation_label || null,
+        formation_level_code: cls?.formation_level_code || null,
+        formation_level_label: cls?.formation_level_label || null,
+        education_context_key:
+          cls?.education_context_key ||
+          cls?.education_type ||
+          "general_secondary",
+        education_context_label:
+          cls?.education_context_label ||
+          cls?.education_label ||
+          "Secondaire général",
+      };
+      setOpen(localOpen);
+      await cacheSet("classDevice:local-open", localOpen);
+      setMsg(teacherSessionDeliveryMessage(local));
+      await refreshPending();
     } catch (e: any) {
       setMsg(e?.message || "Échec démarrage séance");
     } finally {
@@ -2354,6 +2432,16 @@ export default function ClassDevicePage() {
       </header>
 
       <OfflineReadinessCard role="class-device" />
+      {(relayScheduleIssue ||
+        (classReadinessAssessment &&
+          classReadinessAssessment.status !== "ready")) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+          {classReadinessAssessment &&
+          classReadinessAssessment.status !== "ready"
+            ? classReadinessAssessment.message
+            : relayScheduleIssue}
+        </div>
+      )}
 
       {/* Sélection */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
@@ -2465,13 +2553,15 @@ export default function ClassDevicePage() {
 
         {usingLegacyOfflineMode && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            
+            Ancien cache consultable hors connexion. Il ne peut pas autoriser
+            l’ouverture d’un appel sans préparation v5 cohérente.
           </div>
         )}
 
         {usingLegacyFallbackMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-           
+            Données legacy affichées en secours uniquement. Actualisez le
+            planning vérifié avant de démarrer l’appel.
           </div>
         )}
 

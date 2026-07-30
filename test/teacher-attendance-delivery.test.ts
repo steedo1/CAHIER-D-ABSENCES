@@ -450,15 +450,35 @@ test("24 - crash après départ Cloud devient inconnu au rechargement", async ()
     class_id: "class-a",
     period_id: "period-a",
     marks: [
-      { student_id: "student-a", status: "absent", comment: null },
-      { student_id: "student-b", status: "late", comment: "2 min" },
+      {
+        student_id: "student-a",
+        status: "absent",
+        comment: null,
+        observed_at: null,
+      },
+      {
+        student_id: "student-b",
+        status: "late",
+        comment: "2 min",
+        observed_at: null,
+      },
     ],
     content_key: JSON.stringify({
       class_id: "class-a",
       period_id: "period-a",
       marks: [
-        { student_id: "student-a", status: "absent", comment: null },
-        { student_id: "student-b", status: "late", comment: "2 min" },
+        {
+          student_id: "student-a",
+          status: "absent",
+          comment: null,
+          observed_at: null,
+        },
+        {
+          student_id: "student-b",
+          status: "late",
+          comment: "2 min",
+          observed_at: null,
+        },
       ],
     }),
     state: "device_pending",

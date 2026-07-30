@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-28-schedule-coherence-v1";
+const VERSION = "2026-07-30-class-device-coherence-v5";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
@@ -171,24 +171,35 @@ async function warmDocument(rawUrl) {
   await Promise.all(
     Array.from(assets).map(async (assetUrl) => {
       const assetRequest = new Request(assetUrl, { credentials: "include" });
-      try {
-        const assetResponseValue = await fetch(assetRequest);
-        if (isCacheable(assetResponseValue)) {
-          await assetCache.put(assetRequest, assetResponseValue.clone());
-        }
-      } catch {
-        // Un asset déjà présent pourra toujours être servi par le cache runtime.
+      const assetResponseValue = await fetch(assetRequest);
+      if (!isCacheable(assetResponseValue)) {
+        throw new Error(
+          `Ressource essentielle indisponible (${assetResponseValue.status}) : ${new URL(assetUrl).pathname}`,
+        );
       }
+      await assetCache.put(assetRequest, assetResponseValue.clone());
     })
   );
+
+  if (!(await shell.match(request))) {
+    throw new Error(`Page essentielle absente du cache : ${url.pathname}`);
+  }
+  const missingAsset = (
+    await Promise.all(
+      Array.from(assets).map(async (assetUrl) => {
+        const cached = await assetCache.match(assetUrl);
+        return cached ? null : new URL(assetUrl).pathname;
+      }),
+    )
+  ).find(Boolean);
+  if (missingAsset) {
+    throw new Error(`Ressource essentielle absente du cache : ${missingAsset}`);
+  }
+
+  return { pathname: url.pathname, asset_count: assets.size };
 }
 
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
-    event.ports?.[0]?.postMessage({ ok: true, release: VERSION });
-    return;
-  }
-
   if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
     event.ports?.[0]?.postMessage({ ok: true, release: VERSION });
     return;
@@ -242,8 +253,9 @@ self.addEventListener("message", (event) => {
   event.waitUntil(
     (async () => {
       try {
-        for (const url of urls) await warmDocument(url);
-        port?.postMessage({ ok: true });
+        const verified = [];
+        for (const url of urls) verified.push(await warmDocument(url));
+        port?.postMessage({ ok: true, verified });
       } catch (error) {
         port?.postMessage({ ok: false, error: String(error?.message || error) });
       }

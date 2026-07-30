@@ -1,6 +1,332 @@
 //src/lib/offlineClassDevice.ts
 "use client";
 
+export const CLASS_DEVICE_COHERENT_BUNDLE_KEY =
+  "classDevice:coherent-bundle:v1";
+
+export type ClassDeviceRelayStatus =
+  | "reachable"
+  | "access_denied"
+  | "permission_denied"
+  | "incompatible_browser"
+  | "unreachable";
+
+export type ClassDeviceReadinessStatus =
+  | "ready"
+  | "refresh_from_relay"
+  | "not_prepared"
+  | "web_release_stale"
+  | "service_worker_stale"
+  | "shell_not_ready"
+  | "relay_unreachable"
+  | "relay_access_denied"
+  | "relay_permission_denied"
+  | "browser_incompatible"
+  | "schedule_not_prepared"
+  | "relay_capability_missing"
+  | "class_data_missing"
+  | "institution_mismatch"
+  | "class_mismatch"
+  | "phone_stale"
+  | "relay_stale"
+  | "sources_diverged";
+
+export type ClassDeviceReadinessLike = {
+  version?: number;
+  role?: string;
+  web_release?: string;
+  service_worker_release?: string;
+  shell_ready?: boolean;
+  institution_id?: string | null;
+  authorized_class_id?: string | null;
+  class_count?: number;
+  slot_count?: number;
+  schedule_revision?: number | null;
+  data_presence?: {
+    classes?: number;
+    students?: number;
+    slots?: number;
+    assignments?: number;
+  };
+};
+
+export type ClassDeviceCoherenceInput = {
+  readiness: ClassDeviceReadinessLike | null;
+  expected_web_release: string;
+  expected_service_worker_release: string;
+  active_service_worker_release: string | null;
+  expected_institution_id: string;
+  expected_class_id: string;
+  bundle_present: boolean;
+  bundle_schedule_revision: number | null;
+  bundle_scope_valid: boolean;
+  relay_status: ClassDeviceRelayStatus;
+  relay_institution_id: string | null;
+  relay_actor_kind: string | null;
+  relay_class_id: string | null;
+  relay_schedule_available: boolean;
+  relay_revision: number | null;
+  cloud_revision: number | null;
+  relay_writes_enabled: boolean;
+  relay_capabilities?: {
+    attendance_session_open?: boolean;
+    attendance_write?: boolean;
+    attendance_session_close?: boolean;
+  } | null;
+};
+
+export type ClassDeviceScheduleScope = {
+  version?: unknown;
+  institution_id?: unknown;
+  actor_kind?: unknown;
+  class_id?: unknown;
+  schedule_revision?: unknown;
+  snapshot_completeness?: unknown;
+  class_count?: unknown;
+  slot_count?: unknown;
+  slots?: unknown;
+  rosters?: unknown;
+  assignments?: unknown;
+};
+
+export type ClassDeviceCoherentBundle<
+  TReadiness extends ClassDeviceReadinessLike = ClassDeviceReadinessLike,
+  TSchedule extends ClassDeviceScheduleScope = ClassDeviceScheduleScope,
+> = {
+  schema_version: 1;
+  readiness: TReadiness;
+  schedule: TSchedule;
+};
+
+function normalizedId(value: unknown) {
+  return String(value || "").trim();
+}
+
+export function safeClassDeviceRevision(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+export function hasClassDeviceRelayCapabilities(
+  capabilities: ClassDeviceCoherenceInput["relay_capabilities"],
+) {
+  return Boolean(
+    capabilities?.attendance_session_open &&
+      capabilities.attendance_write &&
+      capabilities.attendance_session_close,
+  );
+}
+
+export function validateClassDeviceScheduleScope(
+  schedule: ClassDeviceScheduleScope | null | undefined,
+  expected: { institutionId: string; classId: string },
+): { ok: true; revision: number } | {
+  ok: false;
+  status: "schedule_not_prepared" | "institution_mismatch" | "class_mismatch" | "class_data_missing";
+} {
+  if (
+    !schedule ||
+    schedule.version !== 1 ||
+    schedule.snapshot_completeness !== "complete"
+  ) {
+    return { ok: false, status: "schedule_not_prepared" };
+  }
+
+  const institutionId = normalizedId(schedule.institution_id);
+  const classId = normalizedId(schedule.class_id);
+  if (institutionId !== normalizedId(expected.institutionId)) {
+    return { ok: false, status: "institution_mismatch" };
+  }
+  if (
+    schedule.actor_kind !== "class_device" ||
+    classId !== normalizedId(expected.classId)
+  ) {
+    return { ok: false, status: "class_mismatch" };
+  }
+
+  const revision = safeClassDeviceRevision(schedule.schedule_revision);
+  const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
+  const rosters =
+    schedule.rosters && typeof schedule.rosters === "object" && !Array.isArray(schedule.rosters)
+      ? schedule.rosters as Record<string, unknown>
+      : null;
+  const assignments = Array.isArray(schedule.assignments)
+    ? schedule.assignments
+    : [];
+  const rosterKeys = rosters ? Object.keys(rosters) : [];
+  const roster = rosters?.[classId] as { items?: unknown } | undefined;
+  const slotsAreScoped = slots.every((slot) => {
+    if (!slot || typeof slot !== "object") return false;
+    const row = slot as {
+      period_id?: unknown;
+      items?: unknown;
+    };
+    return (
+      normalizedId(row.period_id) !== "" &&
+      Array.isArray(row.items) &&
+      row.items.length > 0 &&
+      row.items.every(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          normalizedId((item as { class_id?: unknown }).class_id) === classId,
+      )
+    );
+  });
+  const assignmentsAreScoped = assignments.every(
+    (assignment) =>
+      assignment &&
+      typeof assignment === "object" &&
+      normalizedId((assignment as { class_id?: unknown }).class_id) === classId,
+  );
+
+  if (
+    revision === null ||
+    Number(schedule.class_count) !== 1 ||
+    Number(schedule.slot_count) !== slots.length ||
+    slots.length <= 0 ||
+    !slotsAreScoped ||
+    !rosters ||
+    rosterKeys.length !== 1 ||
+    rosterKeys[0] !== classId ||
+    !Array.isArray(roster?.items) ||
+    !assignmentsAreScoped
+  ) {
+    return { ok: false, status: "class_data_missing" };
+  }
+
+  return { ok: true, revision };
+}
+
+export function evaluateClassDeviceCoherence(
+  input: ClassDeviceCoherenceInput,
+): ClassDeviceReadinessStatus {
+  const readiness = input.readiness;
+  if (
+    !readiness ||
+    readiness.version !== 5 ||
+    readiness.role !== "class-device" ||
+    safeClassDeviceRevision(readiness.schedule_revision) === null
+  ) {
+    return "not_prepared";
+  }
+  if (readiness.web_release !== input.expected_web_release) {
+    return "web_release_stale";
+  }
+  if (
+    readiness.service_worker_release !== input.expected_service_worker_release ||
+    input.active_service_worker_release !== input.expected_service_worker_release ||
+    readiness.service_worker_release !== input.active_service_worker_release ||
+    !input.active_service_worker_release
+  ) {
+    return "service_worker_stale";
+  }
+  if (readiness.shell_ready !== true) return "shell_not_ready";
+
+  const expectedInstitutionId = normalizedId(input.expected_institution_id);
+  const expectedClassId = normalizedId(input.expected_class_id);
+  if (
+    !expectedInstitutionId ||
+    normalizedId(readiness.institution_id) !== expectedInstitutionId
+  ) {
+    return "institution_mismatch";
+  }
+  if (
+    !expectedClassId ||
+    normalizedId(readiness.authorized_class_id) !== expectedClassId
+  ) {
+    return "class_mismatch";
+  }
+
+  const phoneRevision = safeClassDeviceRevision(readiness.schedule_revision);
+  if (
+    readiness.class_count !== 1 ||
+    Number(readiness.data_presence?.classes) !== 1 ||
+    Number(readiness.data_presence?.slots) !== Number(readiness.slot_count) ||
+    Number(readiness.slot_count) <= 0 ||
+    !input.bundle_present ||
+    !input.bundle_scope_valid ||
+    input.bundle_schedule_revision !== phoneRevision
+  ) {
+    return "class_data_missing";
+  }
+
+  if (input.relay_status === "access_denied") return "relay_access_denied";
+  if (input.relay_status === "permission_denied") return "relay_permission_denied";
+  if (input.relay_status === "incompatible_browser") return "browser_incompatible";
+  if (input.relay_status !== "reachable") return "relay_unreachable";
+  if (!input.relay_schedule_available) return "schedule_not_prepared";
+  if (normalizedId(input.relay_institution_id) !== expectedInstitutionId) {
+    return "institution_mismatch";
+  }
+  if (
+    input.relay_actor_kind !== "class_device" ||
+    normalizedId(input.relay_class_id) !== expectedClassId
+  ) {
+    return "class_mismatch";
+  }
+  if (
+    !input.relay_writes_enabled ||
+    !hasClassDeviceRelayCapabilities(input.relay_capabilities)
+  ) {
+    return "relay_capability_missing";
+  }
+
+  const relayRevision = safeClassDeviceRevision(input.relay_revision);
+  if (relayRevision === null) return "schedule_not_prepared";
+  const cloudRevision = safeClassDeviceRevision(input.cloud_revision);
+  if (cloudRevision !== null && relayRevision !== cloudRevision) {
+    return relayRevision < cloudRevision ? "relay_stale" : "sources_diverged";
+  }
+  if (phoneRevision! < relayRevision) return "refresh_from_relay";
+  if (phoneRevision! > relayRevision) return "relay_stale";
+  return "ready";
+}
+
+export function classDeviceReadinessMessage(
+  status: ClassDeviceReadinessStatus,
+) {
+  const messages: Record<ClassDeviceReadinessStatus, string> = {
+    ready: "Le shell, le relais et les données de cette classe sont cohérents.",
+    refresh_from_relay:
+      "Le relais possède un planning plus récent. Actualisation sécurisée requise.",
+    not_prepared:
+      "Cet appareil doit être préparé avec le nouveau contrat hors ligne v5.",
+    web_release_stale:
+      "La version Web de cet appareil est ancienne. Rechargez l’application.",
+    service_worker_stale:
+      "Le service worker actif est ancien. Rechargez l’application puis relancez la préparation.",
+    shell_not_ready:
+      "Le shell hors ligne est incomplet. Relancez la préparation de l’appareil.",
+    relay_unreachable:
+      "Le relais local est inaccessible. Rejoignez le Wi-Fi local avant d’ouvrir l’appel.",
+    relay_access_denied:
+      "Le relais refuse l’autorisation de cet appareil. Réactualisez son association.",
+    relay_permission_denied:
+      "La permission d’accès au réseau local est refusée pour ce navigateur.",
+    browser_incompatible:
+      "Ce navigateur ne peut pas vérifier le relais local.",
+    schedule_not_prepared:
+      "Le planning d’appel n’est pas préparé sur le relais.",
+    relay_capability_missing:
+      "Le relais ne confirme pas les capacités requises d’ouverture, d’écriture et de fermeture.",
+    class_data_missing:
+      "Les données pédagogiques vérifiées de cette classe sont absentes ou incomplètes.",
+    institution_mismatch:
+      "L’établissement de l’appareil ne correspond pas à celui du relais.",
+    class_mismatch:
+      "La classe autorisée par le relais ne correspond pas à cet appareil.",
+    phone_stale:
+      "Le relais est plus récent, mais l’actualisation atomique du téléphone a échoué.",
+    relay_stale:
+      "Le relais est en retard sur le téléphone ou sur le Cloud. L’administration doit l’actualiser.",
+    sources_diverged:
+      "Les révisions du Cloud et du relais divergent. L’ouverture de l’appel est bloquée.",
+  };
+  return messages[status];
+}
+
 export type ClassDeviceSnapshot<TState = any> = {
   classId: string;
   updatedAt: string; // ISO
