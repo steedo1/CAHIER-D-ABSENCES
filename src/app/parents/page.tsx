@@ -241,6 +241,22 @@ const DAY_NAMES: Record<number, string> = {
   6: "Samedi",
 };
 
+const DAY_SHORT_NAMES: Record<number, string> = {
+  1: "Lun",
+  2: "Mar",
+  3: "Mer",
+  4: "Jeu",
+  5: "Ven",
+  6: "Sam",
+};
+
+function preferredTimetableDay(items: TimetableItem[] = []): number {
+  const current = new Date().getDay();
+  const today = current >= 1 && current <= 6 ? current : 1;
+  if (items.some((item) => item.weekday === today)) return today;
+  return items.find((item) => item.weekday >= 1 && item.weekday <= 6)?.weekday || today;
+}
+
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     home: (
@@ -583,16 +599,16 @@ function ChildIdentity({
   onChange: (id: string) => void;
 }) {
   return (
-    <div className="mb-5 overflow-hidden rounded-[30px] bg-gradient-to-br from-[#003766] via-[#00558f] to-[#0b7b69] p-5 text-white shadow-xl shadow-slate-900/10 sm:p-6">
+    <div className="mb-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[22px] bg-white/15 text-xl font-black ring-1 ring-white/20">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[18px] bg-[#003766] text-base font-black text-white sm:h-14 sm:w-14">
             {initials(kid.full_name)}
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-black uppercase tracking-[0.2em] text-emerald-100">Enfant sélectionné</div>
-            <div className="mt-1 truncate text-2xl font-black">{kid.full_name}</div>
-            <div className="mt-1 text-sm font-semibold text-white/75">
+            <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Enfant sélectionné</div>
+            <div className="mt-1 truncate text-xl font-black text-slate-950">{kid.full_name}</div>
+            <div className="mt-1 text-sm font-semibold text-slate-500">
               {kid.class_label || "Classe non renseignée"}
               {kid.matricule ? ` · ${kid.matricule}` : ""}
             </div>
@@ -600,20 +616,20 @@ function ChildIdentity({
         </div>
 
         {kids.length > 1 ? (
-          <label className="relative block min-w-[220px]">
+          <label className="relative block w-full sm:w-auto sm:min-w-[230px]">
             <span className="sr-only">Changer d’enfant</span>
             <select
               value={kid.id}
               onChange={(event) => onChange(event.target.value)}
-              className="w-full appearance-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3 pr-10 text-sm font-bold text-white outline-none backdrop-blur focus:ring-2 focus:ring-white/40"
+              className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 pr-10 text-sm font-bold text-slate-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
             >
               {kids.map((item) => (
-                <option key={item.id} value={item.id} className="text-slate-900">
+                <option key={item.id} value={item.id}>
                   {item.full_name} — {item.class_label || "Sans classe"}
                 </option>
               ))}
             </select>
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
               <Icon name="chevron" size={18} />
             </span>
           </label>
@@ -694,6 +710,7 @@ export default function ParentPage() {
   const [textbookSubject, setTextbookSubject] = useState("");
   const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
   const [showProgression, setShowProgression] = useState(false);
+  const [selectedTimetableDay, setSelectedTimetableDay] = useState(1);
 
   const selectedKid = useMemo(
     () => kids.find((kid) => kid.id === selectedKidId) || kids[0] || null,
@@ -900,6 +917,9 @@ export default function ParentPage() {
     setTextbookSubject("");
     setExpandedLessons({});
     setShowProgression(false);
+    setSelectedTimetableDay(
+      preferredTimetableDay(childData[selectedKid.id]?.timetable?.items || []),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKid?.id, selectedPeriodId]);
 
@@ -916,6 +936,11 @@ export default function ParentPage() {
   }
 
   function openChildModule(next: ChildScreen) {
+    if (next === "timetable") {
+      setSelectedTimetableDay(
+        preferredTimetableDay(selectedData.timetable?.items || []),
+      );
+    }
     setScreen(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1011,7 +1036,7 @@ export default function ParentPage() {
   }> = [
     { key: "home", label: "Accueil", icon: "home" },
     { key: "children", label: "Mes enfants", icon: "children" },
-    { key: "attach", label: "Ajouter un enfant", icon: "plus" },
+    { key: "attach", label: "Ajouter", icon: "plus" },
     { key: "messages", label: "Messages", icon: "message", badge: unreadCount },
   ];
 
@@ -1046,74 +1071,18 @@ export default function ParentPage() {
 
   function renderHome() {
     return (
-      <>
-        <section className="overflow-hidden rounded-[34px] bg-gradient-to-br from-[#003766] via-[#00558f] to-[#0b7b69] p-6 text-white shadow-xl shadow-slate-900/10 sm:p-8">
-          <div className="max-w-2xl">
-            <div className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100">Mon Cahier</div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Bienvenue cher parent</h1>
-            <p className="mt-3 text-sm font-semibold leading-6 text-white/75 sm:text-base">
-              Choisissez un enfant pour retrouver immédiatement les informations essentielles de sa scolarité.
-            </p>
+      <div className="mx-auto max-w-3xl pt-3 sm:pt-10">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-9 text-center shadow-sm sm:px-10 sm:py-12">
+          <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-[#003766] text-white shadow-sm">
+            <Icon name="children" size={28} />
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => openPrimary("children")}
-              className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-[#003766] shadow-sm transition hover:-translate-y-0.5"
-            >
-              <Icon name="children" size={19} />
-              Voir mes enfants
-            </button>
-            <button
-              type="button"
-              onClick={() => openPrimary("messages")}
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-black text-white backdrop-blur transition hover:bg-white/15"
-            >
-              <Icon name="message" size={19} />
-              {unreadCount ? `${unreadCount} nouveau${unreadCount > 1 ? "x" : ""} message${unreadCount > 1 ? "s" : ""}` : "Voir les messages"}
-            </button>
-          </div>
+          <div className="mt-6 text-xs font-black uppercase tracking-[0.2em] text-emerald-700">Mon Cahier</div>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Bienvenue cher parent</h1>
+          <p className="mx-auto mt-4 max-w-xl text-sm font-medium leading-6 text-slate-500 sm:text-base">
+            Consultez simplement le suivi scolaire de vos enfants depuis le menu principal.
+          </p>
         </section>
-
-        <div className="mt-7">
-          <SectionHeader
-            eyebrow="Accès rapide"
-            title="Mes enfants"
-            description="Un clic suffit pour ouvrir le tableau de bord de l’enfant."
-          />
-          {kids.length ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {kids.map((kid) => (
-                <button
-                  key={kid.id}
-                  type="button"
-                  onClick={() => openKid(kid.id)}
-                  className="group rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-1 hover:border-emerald-200 hover:shadow-xl hover:shadow-slate-900/5"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="grid h-14 w-14 place-items-center rounded-[20px] bg-emerald-50 text-lg font-black text-emerald-700 ring-1 ring-emerald-100">
-                      {initials(kid.full_name)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-lg font-black text-slate-950">{kid.full_name}</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-500">{kid.class_label || "Classe non renseignée"}</div>
-                    </div>
-                    <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-emerald-600 group-hover:text-white">
-                      <Icon name="arrow" size={17} />
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon="plus"
-              title="Aucun enfant ajouté"
-              text="Ajoutez votre enfant avec son matricule pour accéder à son suivi scolaire."
-            />
-          )}
-        </div>
-      </>
+      </div>
     );
   }
 
@@ -1123,17 +1092,7 @@ export default function ParentPage() {
         <SectionHeader
           eyebrow="Famille"
           title="Mes enfants"
-          description="Sélectionnez un enfant pour consulter son suivi."
-          action={
-            <button
-              type="button"
-              onClick={() => openPrimary("attach")}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
-            >
-              <Icon name="plus" size={18} />
-              Ajouter un enfant
-            </button>
-          }
+          description="Sélectionnez un enfant pour afficher les six rubriques de son suivi."
         />
         {kids.length ? (
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -1361,7 +1320,7 @@ export default function ParentPage() {
               onClick={() => openChildModule("textbook")}
             />
             <ModuleCard
-              title="Bulletins"
+              title="Bulletin"
               value={latestBulletin ? "Disponible" : "Non disponible"}
               description={latestBulletin?.period_label || "Dernier bulletin publié"}
               note={latestBulletin?.general_avg != null ? `Moyenne : ${formatAverage(Number(latestBulletin.general_avg))}/20` : undefined}
@@ -1372,7 +1331,7 @@ export default function ParentPage() {
             <ModuleCard
               title="Emploi du temps"
               value={`${timetableCount} cours`}
-              description="Tableau hebdomadaire de la classe"
+              description="Consulter l’emploi du temps jour par jour"
               note={selectedData.timetable?.academic_year || selectedKid.class_label || undefined}
               icon="calendar"
               tone="violet"
@@ -1786,71 +1745,124 @@ export default function ParentPage() {
     const timetable = selectedData.timetable;
     const timetablePeriods = timetable?.periods || [];
     const timetableItems = timetable?.items || [];
-    const byCell = new Map<string, TimetableItem[]>();
-    for (const item of timetableItems) {
-      const key = `${item.weekday}|${item.period_key}`;
-      if (!byCell.has(key)) byCell.set(key, []);
-      byCell.get(key)!.push(item);
+    const selectedDayItems = timetableItems.filter(
+      (item) => item.weekday === selectedTimetableDay,
+    );
+    const byPeriod = new Map<string, TimetableItem[]>();
+    for (const item of selectedDayItems) {
+      if (!byPeriod.has(item.period_key)) byPeriod.set(item.period_key, []);
+      byPeriod.get(item.period_key)!.push(item);
     }
 
     return (
       <>
         <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
-        {moduleBackHeader("Emploi du temps", "Le tableau hebdomadaire officiel de la classe.", "Organisation")}
+        {moduleBackHeader(
+          "Emploi du temps",
+          "Choisissez un jour pour afficher un tableau clair et entièrement visible à l’écran.",
+          "Organisation",
+        )}
+
         {timetablePeriods.length ? (
-          <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-lg font-black text-slate-950">{timetable?.class_label || selectedKid.class_label || "Classe"}</div>
-                <div className="mt-1 text-xs font-bold text-slate-400">{timetable?.academic_year || "Année scolaire en cours"}</div>
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-lg font-black text-slate-950">
+                    {timetable?.class_label || selectedKid.class_label || "Classe"}
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-slate-400">
+                    {timetable?.academic_year || "Année scolaire en cours"}
+                  </div>
+                </div>
+                <div className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-black text-violet-700">
+                  {DAY_NAMES[selectedTimetableDay]}
+                </div>
               </div>
-              <div className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-black text-violet-700">Lundi à samedi</div>
+
+              <div className="mt-4 grid grid-cols-6 gap-1.5 sm:gap-2" aria-label="Choisir le jour">
+                {[1, 2, 3, 4, 5, 6].map((day) => {
+                  const active = selectedTimetableDay === day;
+                  const hasCourse = timetableItems.some((item) => item.weekday === day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setSelectedTimetableDay(day)}
+                      aria-pressed={active}
+                      className={`relative rounded-xl px-1 py-2.5 text-xs font-black transition sm:px-3 sm:text-sm ${
+                        active
+                          ? "bg-violet-700 text-white shadow-sm"
+                          : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                      }`}
+                    >
+                      <span className="sm:hidden">{DAY_SHORT_NAMES[day]}</span>
+                      <span className="hidden sm:inline">{DAY_NAMES[day]}</span>
+                      {hasCourse ? (
+                        <span
+                          className={`absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full ${
+                            active ? "bg-white/80" : "bg-violet-500"
+                          }`}
+                        />
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1060px] border-collapse table-fixed text-left">
-                <thead>
-                  <tr className="bg-[#003766] text-white">
-                    <th className="w-[125px] border-r border-white/15 px-3 py-4 text-center text-xs font-black uppercase tracking-wide">Horaires</th>
-                    {[1, 2, 3, 4, 5, 6].map((day) => (
-                      <th key={day} className="border-r border-white/15 px-3 py-4 text-center text-sm font-black last:border-r-0">{DAY_NAMES[day]}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {timetablePeriods.map((period, rowIndex) => (
-                    <tr key={period.key} className={rowIndex % 2 ? "bg-slate-50/60" : "bg-white"}>
-                      <th className="border-r border-t border-slate-200 px-3 py-4 text-center align-middle">
-                        <div className="text-sm font-black text-slate-900">{period.start_time}</div>
-                        <div className="my-1 text-[10px] font-black uppercase tracking-wide text-slate-300">à</div>
-                        <div className="text-sm font-black text-slate-900">{period.end_time}</div>
-                      </th>
-                      {[1, 2, 3, 4, 5, 6].map((day) => {
-                        const cellItems = byCell.get(`${day}|${period.key}`) || [];
-                        return (
-                          <td key={`${day}-${period.key}`} className="h-[112px] border-r border-t border-slate-200 p-2 align-top last:border-r-0">
-                            {cellItems.length ? (
+
+            {selectedDayItems.length ? (
+              <div className="p-3 sm:p-5">
+                <table className="w-full table-fixed border-separate border-spacing-0 overflow-hidden rounded-2xl border border-slate-200 text-left">
+                  <colgroup>
+                    <col className="w-[108px] sm:w-[145px]" />
+                    <col />
+                  </colgroup>
+                  <thead>
+                    <tr className="bg-[#003766] text-white">
+                      <th className="px-3 py-3 text-xs font-black uppercase tracking-wide sm:px-4">Horaire</th>
+                      <th className="border-l border-white/15 px-3 py-3 text-xs font-black uppercase tracking-wide sm:px-4">Cours</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timetablePeriods.map((period, rowIndex) => {
+                      const periodItems = byPeriod.get(period.key) || [];
+                      return (
+                        <tr key={period.key} className={rowIndex % 2 ? "bg-slate-50/70" : "bg-white"}>
+                          <th className="border-t border-slate-200 px-3 py-3 align-middle sm:px-4">
+                            <div className="whitespace-nowrap text-xs font-black text-slate-900 sm:text-sm">
+                              {period.start_time} – {period.end_time}
+                            </div>
+                          </th>
+                          <td className="border-l border-t border-slate-200 px-3 py-2.5 align-middle sm:px-4 sm:py-3">
+                            {periodItems.length ? (
                               <div className="space-y-2">
-                                {cellItems.map((item) => (
-                                  <div key={item.id} className="rounded-2xl border border-violet-100 bg-violet-50 p-3 shadow-sm">
-                                    <div className="text-sm font-black leading-5 text-violet-950">{item.subject_name}</div>
-                                    <div className="mt-2 text-[11px] font-bold leading-4 text-violet-700/75">{item.teacher_name}</div>
+                                {periodItems.map((item) => (
+                                  <div key={item.id} className="rounded-xl bg-violet-50 px-3 py-2.5 ring-1 ring-violet-100">
+                                    <div className="text-sm font-black leading-5 text-violet-950 sm:text-base">{item.subject_name}</div>
+                                    <div className="mt-0.5 text-xs font-bold leading-4 text-violet-700/75 sm:text-sm">{item.teacher_name}</div>
                                   </div>
                                 ))}
                               </div>
                             ) : (
-                              <div className="grid h-full min-h-[88px] place-items-center text-xs font-bold text-slate-300">—</div>
+                              <span className="text-xs font-bold text-slate-300 sm:text-sm">Aucun cours</span>
                             )}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-center text-xs font-semibold text-slate-400 sm:hidden">
-              Faites glisser le tableau horizontalement pour voir toute la semaine.
-            </div>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-4 py-10 text-center sm:px-6">
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
+                  <Icon name="calendar" size={22} />
+                </div>
+                <div className="mt-3 text-base font-black text-slate-900">Aucun cours le {DAY_NAMES[selectedTimetableDay].toLowerCase()}</div>
+                <div className="mt-1 text-sm font-medium text-slate-500">Sélectionnez un autre jour pour consulter l’emploi du temps.</div>
+              </div>
+            )}
           </section>
         ) : (
           <EmptyState icon="calendar" title="Emploi du temps indisponible" text="Aucun créneau publié n’a été trouvé pour cette classe." />
@@ -1944,20 +1956,20 @@ export default function ParentPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[280px] flex-col bg-[#003766] text-white lg:flex">
-        <div className="border-b border-white/10 px-6 py-6">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-200 bg-white md:flex">
+        <div className="border-b border-slate-100 px-5 py-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-[18px] bg-white/15 text-white ring-1 ring-white/15">
-              <Icon name="children" size={24} />
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#003766] text-white shadow-sm">
+              <Icon name="children" size={23} />
             </div>
-            <div>
-              <div className="text-lg font-black">Espace parent</div>
-              <div className="mt-0.5 text-xs font-semibold text-white/60">Mon Cahier</div>
+            <div className="min-w-0">
+              <div className="text-base font-black text-slate-950">Mon Cahier</div>
+              <div className="mt-0.5 text-xs font-bold text-slate-400">Espace parent</div>
             </div>
           </div>
         </div>
 
-        <nav className="flex-1 space-y-2 px-4 py-6">
+        <nav className="flex-1 space-y-2 px-4 py-5">
           {navItems.map((item) => {
             const active = primaryActive === item.key;
             return (
@@ -1965,17 +1977,24 @@ export default function ParentPage() {
                 key={item.key}
                 type="button"
                 onClick={() => openPrimary(item.key)}
-                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left text-sm font-black transition ${
+                aria-current={active ? "page" : undefined}
+                className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm font-black transition ${
                   active
-                    ? "bg-white text-[#003766] shadow-lg shadow-black/10"
-                    : "text-white/75 hover:bg-white/10 hover:text-white"
+                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                 }`}
               >
-                <Icon name={item.icon} size={20} />
-                <span className="flex-1">{item.label}</span>
+                <span
+                  className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition ${
+                    active ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  <Icon name={item.icon} size={20} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.badge ? (
-                  <span className={`grid min-w-6 place-items-center rounded-full px-1.5 py-1 text-[11px] font-black ${active ? "bg-emerald-100 text-emerald-800" : "bg-rose-500 text-white"}`}>
-                    {item.badge > 99 ? "99+" : item.badge}
+                  <span className="grid min-w-6 place-items-center rounded-full bg-rose-500 px-1.5 py-1 text-[10px] font-black text-white">
+                    {item.badge > 9 ? "9+" : item.badge}
                   </span>
                 ) : null}
               </button>
@@ -1983,69 +2002,103 @@ export default function ParentPage() {
           })}
         </nav>
 
-        <div className="border-t border-white/10 p-4">
+        <div className="border-t border-slate-100 p-4">
+          <div
+            className={`mb-3 flex items-center gap-2 rounded-2xl px-3 py-2.5 text-xs font-black ${
+              isOnline
+                ? "bg-emerald-50 text-emerald-800"
+                : "bg-amber-50 text-amber-900"
+            }`}
+          >
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}
+            />
+            {isOnline ? "Connexion active" : "Internet requis"}
+          </div>
           <button
             type="button"
             onClick={logout}
             disabled={loggingOut}
-            className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-black text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-600 transition hover:bg-slate-50 disabled:opacity-60"
           >
-            <Icon name="logout" size={19} />
-            {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+            <Icon name="logout" size={18} />
+            {loggingOut ? "Déconnexion…" : "Déconnexion"}
           </button>
         </div>
       </aside>
 
-      <div className="lg:pl-[280px]">
-        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+      <div className="min-h-screen md:pl-64">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#003766] text-white"><Icon name="children" size={20} /></div>
-              <div>
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#003766] text-white">
+                <Icon name="children" size={20} />
+              </div>
+              <div className="min-w-0">
                 <div className="text-sm font-black text-slate-950">Espace parent</div>
                 <div className="text-[11px] font-bold text-slate-400">Mon Cahier</div>
               </div>
             </div>
-            {selectedKid && !["home", "children", "attach", "messages"].includes(screen) ? (
-              <div className="max-w-[160px] truncate rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">{selectedKid.full_name}</div>
-            ) : null}
+
+            <button
+              type="button"
+              onClick={logout}
+              disabled={loggingOut}
+              className="inline-flex h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 text-slate-600 transition hover:bg-slate-50 disabled:opacity-60"
+              aria-label="Se déconnecter"
+            >
+              <Icon name="logout" size={18} />
+            </button>
           </div>
         </header>
 
         {!isOnline ? (
-          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-black text-amber-900 lg:px-8">
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-black text-amber-900">
             Connexion Internet requise pour utiliser l’espace parent.
           </div>
         ) : null}
 
-        <main className="mx-auto max-w-[1500px] px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-10 lg:pt-7">
+        <main className="mx-auto max-w-[1180px] px-4 pb-28 pt-5 sm:px-6 md:pb-10 md:pt-8 xl:px-8">
           {renderScreen()}
         </main>
-      </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
-        {navItems.map((item) => {
-          const active = primaryActive === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => openPrimary(item.key)}
-              className={`relative flex flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-black transition ${active ? "text-emerald-700" : "text-slate-400"}`}
-            >
-              <span className={`grid h-9 w-9 place-items-center rounded-2xl ${active ? "bg-emerald-50" : "bg-transparent"}`}>
-                <Icon name={item.icon} size={20} />
-              </span>
-              <span className="max-w-[82px] truncate">{item.key === "attach" ? "Ajouter" : item.label}</span>
-              {item.badge ? (
-                <span className="absolute right-[18%] top-1 grid min-w-5 place-items-center rounded-full bg-rose-500 px-1 py-0.5 text-[9px] font-black text-white">
-                  {item.badge > 9 ? "9+" : item.badge}
+        <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur md:hidden">
+          {navItems.map((item) => {
+            const active = primaryActive === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => openPrimary(item.key)}
+                aria-current={active ? "page" : undefined}
+                className={`relative flex flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-black transition ${
+                  active ? "text-emerald-700" : "text-slate-400"
+                }`}
+              >
+                <span
+                  className={`absolute -top-2 h-1 w-9 rounded-b-full transition ${
+                    active ? "bg-emerald-600" : "bg-transparent"
+                  }`}
+                />
+                <span
+                  className={`grid h-9 w-9 place-items-center rounded-2xl transition ${
+                    active ? "bg-emerald-50 ring-1 ring-emerald-100" : "bg-transparent"
+                  }`}
+                >
+                  <Icon name={item.icon} size={20} />
                 </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </nav>
+                <span className="max-w-[76px] truncate">{item.label}</span>
+                {item.badge ? (
+                  <span className="absolute right-[14%] top-1 grid min-w-5 place-items-center rounded-full bg-rose-500 px-1 py-0.5 text-[9px] font-black text-white">
+                    {item.badge > 9 ? "9+" : item.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
+
 }
