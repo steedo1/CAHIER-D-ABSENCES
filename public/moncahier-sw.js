@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-07-30-class-device-coherence-v5";
+const VERSION = "2026-07-30-class-device-scope-v5-1";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;

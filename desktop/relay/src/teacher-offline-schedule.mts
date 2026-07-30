@@ -228,9 +228,11 @@ export function teacherOfflineSchedule(
 
   return {
     version: 1,
+    scope_version: 1,
     institution_id: teacher.institution_id,
     actor_kind: actorKind,
     class_id: boundClassId,
+    actor_profile_id: teacher.actor_profile_id,
     schedule_revision: contract.snapshot_revision,
     generated_at: contract.generated_at,
     relay_time: now.toISOString(),

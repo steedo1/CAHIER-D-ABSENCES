@@ -62,6 +62,7 @@ import {
   CLASS_DEVICE_COHERENT_BUNDLE_KEY,
   classDeviceReadinessMessage,
   evaluateClassDeviceCoherence,
+  validateClassDeviceRelayAccessTokenScope,
   validateClassDeviceScheduleScope,
   type ClassDeviceCoherentBundle,
   type ClassDeviceReadinessStatus,
@@ -102,6 +103,7 @@ export type OfflineReadiness = {
   schedule_compatibility?: TeacherScheduleCompatibilityStatus;
   institution_id?: string | null;
   authorized_class_id?: string | null;
+  authorized_actor_profile_id?: string | null;
   relay_revision?: number | null;
   cloud_revision?: number | null;
   checked_at?: string | null;
@@ -135,6 +137,7 @@ export type ClassDeviceScheduleAssessment = {
 export type ClassDeviceAssessmentContext = {
   institutionId?: string | null;
   classId?: string | null;
+  actorProfileId?: string | null;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
 };
@@ -727,9 +730,14 @@ export async function assessTeacherOfflineReadiness(
 type CachedClassDevice = {
   id?: string | null;
   institution_id?: string | null;
+  actor_profile_id?: string | null;
   attendance_presence?: {
     enabled?: boolean;
     allow_local_relay?: boolean;
+    access_contract_version?: number | null;
+    actor_kind?: "class_device" | null;
+    authorized_class_id?: string | null;
+    authorized_actor_profile_id?: string | null;
     relay_local_url?: string | null;
     relay_access_token?: string | null;
     diagnostic?: string | null;
@@ -739,6 +747,7 @@ type CachedClassDevice = {
 type ResolvedClassDeviceContext = {
   institutionId: string;
   classId: string;
+  actorProfileId: string;
   relayBaseUrl: string;
   relayAccessToken: string;
 };
@@ -761,6 +770,10 @@ export function classDeviceAccessDiagnosticMessage(value: unknown) {
       "La clé de signature du relais est absente de la politique.",
     relay_secret_too_short:
       "La clé de signature du relais est invalide ou trop courte.",
+    relay_access_contract_stale:
+      "Le serveur Web fournit encore un ancien contrat d’accès pour ce téléphone de classe.",
+    relay_access_scope_mismatch:
+      "Le jeton signé ne correspond pas à la classe ou à l’appareil actuellement connecté.",
   };
   return messages[String(value || "")] || null;
 }
@@ -777,9 +790,13 @@ export function resolveClassDevicePreparationAccess(classPayload: unknown) {
     (item) => String(item?.id || "").trim() === classId,
   );
   const institutionId = String(selectedClass?.institution_id || "").trim();
+  const actorProfileId = String(
+    selectedClass?.actor_profile_id || "",
+  ).trim();
   const relayPolicy = selectedClass?.attendance_presence;
   if (
     !institutionId ||
+    !actorProfileId ||
     !relayPolicy?.enabled ||
     relayPolicy.allow_local_relay === false ||
     !relayPolicy.relay_local_url ||
@@ -790,11 +807,36 @@ export function resolveClassDevicePreparationAccess(classPayload: unknown) {
         "Les données d’accès signées de la classe autorisée au relais sont absentes.",
     );
   }
+  if (
+    relayPolicy.access_contract_version !== 2 ||
+    relayPolicy.actor_kind !== "class_device"
+  ) {
+    throw new Error(
+      classDeviceAccessDiagnosticMessage("relay_access_contract_stale")!,
+    );
+  }
+  if (
+    String(relayPolicy.authorized_class_id || "").trim() !== classId ||
+    String(relayPolicy.authorized_actor_profile_id || "").trim() !==
+      actorProfileId
+  ) {
+    throw new Error(
+      classDeviceAccessDiagnosticMessage("relay_access_scope_mismatch")!,
+    );
+  }
+  const tokenScope = validateClassDeviceRelayAccessTokenScope(
+    relayPolicy.relay_access_token,
+    { institutionId, classId, actorProfileId },
+  );
+  if (!tokenScope.ok) {
+    throw new Error(classDeviceReadinessMessage(tokenScope.status));
+  }
   return {
     classes,
     classId,
     selectedClass,
     institutionId,
+    actorProfileId,
     relayPolicy: {
       relayLocalUrl: relayPolicy.relay_local_url,
       relayAccessToken: relayPolicy.relay_access_token,
@@ -829,6 +871,12 @@ async function resolveClassDeviceContext(
       cached?.institution_id ||
       "",
   ).trim();
+  const actorProfileId = String(
+    requested.actorProfileId ||
+      readiness?.authorized_actor_profile_id ||
+      cached?.actor_profile_id ||
+      "",
+  ).trim();
   const relay = cached?.attendance_presence;
   const relayBaseUrl = String(
     requested.relayBaseUrl || relay?.relay_local_url || "",
@@ -839,6 +887,7 @@ async function resolveClassDeviceContext(
   if (
     !institutionId ||
     !requestedClassId ||
+    !actorProfileId ||
     !relayBaseUrl ||
     !relayAccessToken ||
     relay?.enabled === false ||
@@ -846,9 +895,27 @@ async function resolveClassDeviceContext(
   ) {
     return null;
   }
+  if (
+    relay?.access_contract_version !== 2 ||
+    relay.actor_kind !== "class_device" ||
+    String(relay.authorized_class_id || "").trim() !== requestedClassId ||
+    String(relay.authorized_actor_profile_id || "").trim() !== actorProfileId
+  ) {
+    return null;
+  }
+  const tokenScope = validateClassDeviceRelayAccessTokenScope(
+    relayAccessToken,
+    {
+      institutionId,
+      classId: requestedClassId,
+      actorProfileId,
+    },
+  );
+  if (!tokenScope.ok) return null;
   return {
     institutionId,
     classId: requestedClassId,
+    actorProfileId,
     relayBaseUrl,
     relayAccessToken,
   };
@@ -950,6 +1017,9 @@ function refreshedClassDeviceReadiness(
     service_worker_release: serviceWorkerRelease,
     institution_id: schedule.institution_id,
     authorized_class_id: classId,
+    authorized_actor_profile_id: String(
+      schedule.actor_profile_id || "",
+    ).trim(),
     schedule_revision: schedule.schedule_revision,
     schedule_generated_at: schedule.generated_at,
     relay_revision: safeRevision(relay.snapshot_revision),
@@ -971,6 +1041,7 @@ function refreshedClassDeviceReadiness(
 export async function getClassDeviceCoherentSchedule(input: {
   institutionId: string;
   classId: string;
+  actorProfileId: string;
 }) {
   const bundle = await readClassDeviceBundle();
   const validation = validateClassDeviceScheduleScope(bundle?.schedule, input);
@@ -994,6 +1065,11 @@ export async function assessClassDeviceOfflineReadiness(
   const classId = String(
     requested.classId || readiness?.authorized_class_id || "",
   ).trim();
+  const actorProfileId = String(
+    requested.actorProfileId ||
+      readiness?.authorized_actor_profile_id ||
+      "",
+  ).trim();
   const [cloud, activeServiceWorkerRelease] = await Promise.all([
     probeCloudSchedule(),
     getActiveOfflineWorkerRelease(),
@@ -1001,7 +1077,7 @@ export async function assessClassDeviceOfflineReadiness(
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const bundleValidation = validateClassDeviceScheduleScope(
     bundle?.schedule,
-    { institutionId, classId },
+    { institutionId, classId, actorProfileId },
   );
   const baseState = {
     readiness,
@@ -1019,6 +1095,7 @@ export async function assessClassDeviceOfflineReadiness(
     active_service_worker_release: activeServiceWorkerRelease,
     expected_institution_id: institutionId,
     expected_class_id: classId,
+    expected_actor_profile_id: actorProfileId,
     bundle_present: Boolean(bundle),
     bundle_schedule_revision: bundleValidation.ok
       ? bundleValidation.revision
@@ -1028,6 +1105,7 @@ export async function assessClassDeviceOfflineReadiness(
     relay_institution_id: null,
     relay_actor_kind: null,
     relay_class_id: null,
+    relay_actor_profile_id: null,
     relay_schedule_available: false,
     relay_revision: null,
     cloud_revision: cloudRevision,
@@ -1080,6 +1158,7 @@ export async function assessClassDeviceOfflineReadiness(
   const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
     institutionId: context.institutionId,
     classId: context.classId,
+    actorProfileId: context.actorProfileId,
   });
   if (!relayScope.ok) {
     return classDeviceAssessment(relayScope.status, {
@@ -1095,6 +1174,7 @@ export async function assessClassDeviceOfflineReadiness(
     active_service_worker_release: activeServiceWorkerRelease,
     expected_institution_id: context.institutionId,
     expected_class_id: context.classId,
+    expected_actor_profile_id: context.actorProfileId,
     bundle_present: Boolean(bundle),
     bundle_schedule_revision: bundleValidation.ok
       ? bundleValidation.revision
@@ -1104,6 +1184,7 @@ export async function assessClassDeviceOfflineReadiness(
     relay_institution_id: relaySchedule.institution_id,
     relay_actor_kind: relaySchedule.actor_kind || null,
     relay_class_id: relaySchedule.class_id || null,
+    relay_actor_profile_id: relaySchedule.actor_profile_id || null,
     relay_schedule_available: true,
     relay_revision: relayScope.revision,
     cloud_revision: cloudRevision,
@@ -1307,11 +1388,11 @@ async function prepareClassDevice(
 ): Promise<OfflineReadiness> {
   onProgress("Téléchargement de la classe autorisée…");
   const classPayload: any = await fetchAndCache(
-    "/api/class/my-classes",
+    "/api/class/my-classes?offline_contract=v5",
     "classDevice:my-classes",
   );
   const preparedAccess = resolveClassDevicePreparationAccess(classPayload);
-  const { classId, institutionId } = preparedAccess;
+  const { classId, institutionId, actorProfileId } = preparedAccess;
   const relayPolicy = preparedAccess.relayPolicy;
 
   onProgress("Vérification du relais et du planning de la classe…");
@@ -1331,6 +1412,21 @@ async function prepareClassDevice(
             : "relay_unreachable";
     throw new Error(classDeviceReadinessMessage(status));
   }
+  if (relayConnectivity.capabilities?.class_device_scope_v1 !== true) {
+    throw new Error(classDeviceReadinessMessage("relay_contract_stale"));
+  }
+  if (relayConnectivity.actor_kind !== "class_device") {
+    throw new Error(classDeviceReadinessMessage("relay_contract_stale"));
+  }
+  if (String(relayConnectivity.class_id || "").trim() !== classId) {
+    throw new Error(classDeviceReadinessMessage("class_mismatch"));
+  }
+  if (
+    String(relayConnectivity.actor_profile_id || "").trim() !==
+    actorProfileId
+  ) {
+    throw new Error(classDeviceReadinessMessage("device_mismatch"));
+  }
 
   let relaySchedule: RelayTeacherOfflineSchedule;
   try {
@@ -1345,6 +1441,7 @@ async function prepareClassDevice(
   const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
     institutionId,
     classId,
+    actorProfileId,
   });
   if (!relayScope.ok) {
     throw new Error(classDeviceReadinessMessage(relayScope.status));
@@ -1457,6 +1554,7 @@ async function prepareClassDevice(
     schedule_generated_at: relaySchedule.generated_at,
     institution_id: institutionId,
     authorized_class_id: classId,
+    authorized_actor_profile_id: actorProfileId,
     relay_revision: safeRevision(relayConnectivity.snapshot_revision),
     cloud_revision: cloudRevision,
     relay_capabilities: relayConnectivity.capabilities,
@@ -1479,6 +1577,7 @@ async function prepareClassDevice(
     active_service_worker_release: activeServiceWorkerRelease,
     expected_institution_id: institutionId,
     expected_class_id: classId,
+    expected_actor_profile_id: actorProfileId,
     bundle_present: true,
     bundle_schedule_revision: relayScope.revision,
     bundle_scope_valid: true,
@@ -1486,6 +1585,7 @@ async function prepareClassDevice(
     relay_institution_id: relaySchedule.institution_id,
     relay_actor_kind: relaySchedule.actor_kind || null,
     relay_class_id: relaySchedule.class_id || null,
+    relay_actor_profile_id: relaySchedule.actor_profile_id || null,
     relay_schedule_available: true,
     relay_revision: relayScope.revision,
     cloud_revision: cloudRevision,

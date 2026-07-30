@@ -47,6 +47,7 @@ export type RelayCapabilities = {
   attendance_write?: boolean;
   attendance_session_close?: boolean;
   attendance_transition?: boolean;
+  class_device_scope_v1?: boolean;
 };
 
 export type RelayTeacherExpectedPeriod = {
@@ -68,6 +69,9 @@ export type RelayTeacherConnectivityResult = {
   status: RelayTeacherConnectivityStatus;
   checked_at: string;
   institution_id?: string;
+  actor_kind?: "teacher" | "class_device";
+  class_id?: string | null;
+  actor_profile_id?: string | null;
   relay_time?: string;
   schedule_status?: RelayTeacherScheduleStatus;
   relay_period?: RelayTeacherPeriodSummary | null;
@@ -827,6 +831,9 @@ export async function checkRelayTeacherConnectivity(input: {
     const response = await relayJson<{
       ok: true;
       institution_id: string;
+      actor_kind?: "teacher" | "class_device";
+      class_id?: string | null;
+      actor_profile_id?: string | null;
       relay_time: string;
       schedule_status?: RelayTeacherScheduleStatus;
       relay_period?: RelayTeacherPeriodSummary | null;
@@ -864,6 +871,9 @@ export async function checkRelayTeacherConnectivity(input: {
       status: "reachable",
       checked_at: checkedAt,
       institution_id: institutionId,
+      actor_kind: response.actor_kind,
+      class_id: response.class_id,
+      actor_profile_id: response.actor_profile_id,
       relay_time: response.relay_time,
       schedule_status: response.schedule_status,
       relay_period: response.relay_period,
@@ -898,9 +908,11 @@ export async function checkRelayTeacherConnectivity(input: {
 
 export type RelayTeacherOfflineSchedule = {
   version: 1;
+  scope_version?: number;
   institution_id: string;
   actor_kind?: "teacher" | "class_device";
   class_id?: string | null;
+  actor_profile_id?: string | null;
   schedule_revision: number;
   generated_at: string | null;
   relay_time?: string | null;

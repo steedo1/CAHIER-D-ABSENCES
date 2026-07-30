@@ -321,6 +321,7 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(body.schedule_status, "ready");
     assert.equal(body.teacher_attendance_writes_enabled, true);
     assert.equal(body.capabilities.attendance_transition, true);
+    assert.equal(body.capabilities.class_device_scope_v1, true);
     assert.equal(JSON.stringify(body).includes(SCHOOL_ONE_SECRET), false);
     assert.equal(totalChanges(db), before);
   } finally {

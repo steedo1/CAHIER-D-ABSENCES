@@ -22,11 +22,13 @@ export type ClassDeviceReadinessStatus =
   | "relay_access_denied"
   | "relay_permission_denied"
   | "browser_incompatible"
+  | "relay_contract_stale"
   | "schedule_not_prepared"
   | "relay_capability_missing"
   | "class_data_missing"
   | "institution_mismatch"
   | "class_mismatch"
+  | "device_mismatch"
   | "phone_stale"
   | "relay_stale"
   | "sources_diverged";
@@ -39,6 +41,7 @@ export type ClassDeviceReadinessLike = {
   shell_ready?: boolean;
   institution_id?: string | null;
   authorized_class_id?: string | null;
+  authorized_actor_profile_id?: string | null;
   class_count?: number;
   slot_count?: number;
   schedule_revision?: number | null;
@@ -57,6 +60,7 @@ export type ClassDeviceCoherenceInput = {
   active_service_worker_release: string | null;
   expected_institution_id: string;
   expected_class_id: string;
+  expected_actor_profile_id: string;
   bundle_present: boolean;
   bundle_schedule_revision: number | null;
   bundle_scope_valid: boolean;
@@ -64,6 +68,7 @@ export type ClassDeviceCoherenceInput = {
   relay_institution_id: string | null;
   relay_actor_kind: string | null;
   relay_class_id: string | null;
+  relay_actor_profile_id: string | null;
   relay_schedule_available: boolean;
   relay_revision: number | null;
   cloud_revision: number | null;
@@ -72,14 +77,17 @@ export type ClassDeviceCoherenceInput = {
     attendance_session_open?: boolean;
     attendance_write?: boolean;
     attendance_session_close?: boolean;
+    class_device_scope_v1?: boolean;
   } | null;
 };
 
 export type ClassDeviceScheduleScope = {
   version?: unknown;
+  scope_version?: unknown;
   institution_id?: unknown;
   actor_kind?: unknown;
   class_id?: unknown;
+  actor_profile_id?: unknown;
   schedule_revision?: unknown;
   snapshot_completeness?: unknown;
   class_count?: unknown;
@@ -102,6 +110,83 @@ function normalizedId(value: unknown) {
   return String(value || "").trim();
 }
 
+type ClassDeviceRelayAccessPayload = {
+  v?: unknown;
+  purpose?: unknown;
+  institution_id?: unknown;
+  actor_profile_id?: unknown;
+  actor_kind?: unknown;
+  class_id?: unknown;
+};
+
+function decodeBase64UrlJson(value: string): ClassDeviceRelayAccessPayload | null {
+  try {
+    const normalized = String(value || "")
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "=",
+    );
+    const binary = globalThis.atob(padded);
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
+    return JSON.parse(
+      new TextDecoder().decode(bytes),
+    ) as ClassDeviceRelayAccessPayload;
+  } catch {
+    return null;
+  }
+}
+
+export function validateClassDeviceRelayAccessTokenScope(
+  token: unknown,
+  expected: {
+    institutionId: string;
+    classId: string;
+    actorProfileId: string;
+  },
+):
+  | { ok: true }
+  | {
+      ok: false;
+      status: "relay_contract_stale" | "institution_mismatch" | "class_mismatch" | "device_mismatch";
+    } {
+  const [encodedPayload, encodedSignature, extra] = String(token || "")
+    .trim()
+    .split(".");
+  if (!encodedPayload || !encodedSignature || extra) {
+    return { ok: false, status: "relay_contract_stale" };
+  }
+  const payload = decodeBase64UrlJson(encodedPayload);
+  if (
+    !payload ||
+    payload.v !== 2 ||
+    payload.purpose !== "attendance_relay_access" ||
+    payload.actor_kind !== "class_device"
+  ) {
+    return { ok: false, status: "relay_contract_stale" };
+  }
+  if (
+    normalizedId(payload.institution_id) !==
+    normalizedId(expected.institutionId)
+  ) {
+    return { ok: false, status: "institution_mismatch" };
+  }
+  if (normalizedId(payload.class_id) !== normalizedId(expected.classId)) {
+    return { ok: false, status: "class_mismatch" };
+  }
+  if (
+    !normalizedId(payload.actor_profile_id) ||
+    normalizedId(payload.actor_profile_id) !==
+      normalizedId(expected.actorProfileId)
+  ) {
+    return { ok: false, status: "device_mismatch" };
+  }
+  return { ok: true };
+}
+
 export function safeClassDeviceRevision(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   const revision = Number(value);
@@ -114,16 +199,27 @@ export function hasClassDeviceRelayCapabilities(
   return Boolean(
     capabilities?.attendance_session_open &&
       capabilities.attendance_write &&
-      capabilities.attendance_session_close,
+      capabilities.attendance_session_close &&
+      capabilities.class_device_scope_v1,
   );
 }
 
 export function validateClassDeviceScheduleScope(
   schedule: ClassDeviceScheduleScope | null | undefined,
-  expected: { institutionId: string; classId: string },
+  expected: {
+    institutionId: string;
+    classId: string;
+    actorProfileId: string;
+  },
 ): { ok: true; revision: number } | {
   ok: false;
-  status: "schedule_not_prepared" | "institution_mismatch" | "class_mismatch" | "class_data_missing";
+  status:
+    | "schedule_not_prepared"
+    | "relay_contract_stale"
+    | "institution_mismatch"
+    | "class_mismatch"
+    | "device_mismatch"
+    | "class_data_missing";
 } {
   if (
     !schedule ||
@@ -135,14 +231,24 @@ export function validateClassDeviceScheduleScope(
 
   const institutionId = normalizedId(schedule.institution_id);
   const classId = normalizedId(schedule.class_id);
+  const actorProfileId = normalizedId(schedule.actor_profile_id);
+  if (
+    schedule.scope_version !== 1 ||
+    schedule.actor_kind !== "class_device"
+  ) {
+    return { ok: false, status: "relay_contract_stale" };
+  }
   if (institutionId !== normalizedId(expected.institutionId)) {
     return { ok: false, status: "institution_mismatch" };
   }
-  if (
-    schedule.actor_kind !== "class_device" ||
-    classId !== normalizedId(expected.classId)
-  ) {
+  if (classId !== normalizedId(expected.classId)) {
     return { ok: false, status: "class_mismatch" };
+  }
+  if (
+    !actorProfileId ||
+    actorProfileId !== normalizedId(expected.actorProfileId)
+  ) {
+    return { ok: false, status: "device_mismatch" };
   }
 
   const revision = safeClassDeviceRevision(schedule.schedule_revision);
@@ -226,6 +332,9 @@ export function evaluateClassDeviceCoherence(
 
   const expectedInstitutionId = normalizedId(input.expected_institution_id);
   const expectedClassId = normalizedId(input.expected_class_id);
+  const expectedActorProfileId = normalizedId(
+    input.expected_actor_profile_id,
+  );
   if (
     !expectedInstitutionId ||
     normalizedId(readiness.institution_id) !== expectedInstitutionId
@@ -237,6 +346,13 @@ export function evaluateClassDeviceCoherence(
     normalizedId(readiness.authorized_class_id) !== expectedClassId
   ) {
     return "class_mismatch";
+  }
+  if (
+    !expectedActorProfileId ||
+    normalizedId(readiness.authorized_actor_profile_id) !==
+      expectedActorProfileId
+  ) {
+    return "device_mismatch";
   }
 
   const phoneRevision = safeClassDeviceRevision(readiness.schedule_revision);
@@ -256,15 +372,24 @@ export function evaluateClassDeviceCoherence(
   if (input.relay_status === "permission_denied") return "relay_permission_denied";
   if (input.relay_status === "incompatible_browser") return "browser_incompatible";
   if (input.relay_status !== "reachable") return "relay_unreachable";
+  if (input.relay_capabilities?.class_device_scope_v1 !== true) {
+    return "relay_contract_stale";
+  }
   if (!input.relay_schedule_available) return "schedule_not_prepared";
   if (normalizedId(input.relay_institution_id) !== expectedInstitutionId) {
     return "institution_mismatch";
   }
-  if (
-    input.relay_actor_kind !== "class_device" ||
-    normalizedId(input.relay_class_id) !== expectedClassId
-  ) {
+  if (input.relay_actor_kind !== "class_device") {
+    return "relay_contract_stale";
+  }
+  if (normalizedId(input.relay_class_id) !== expectedClassId) {
     return "class_mismatch";
+  }
+  if (
+    normalizedId(input.relay_actor_profile_id) !==
+    expectedActorProfileId
+  ) {
+    return "device_mismatch";
   }
   if (
     !input.relay_writes_enabled ||
@@ -307,6 +432,8 @@ export function classDeviceReadinessMessage(
       "La permission d’accès au réseau local est refusée pour ce navigateur.",
     browser_incompatible:
       "Ce navigateur ne peut pas vérifier le relais local.",
+    relay_contract_stale:
+      "Le relais actif utilise encore un ancien contrat pour les téléphones de classe. Il doit être recompilé puis redémarré.",
     schedule_not_prepared:
       "Le planning d’appel n’est pas préparé sur le relais.",
     relay_capability_missing:
@@ -317,6 +444,8 @@ export function classDeviceReadinessMessage(
       "L’établissement de l’appareil ne correspond pas à celui du relais.",
     class_mismatch:
       "La classe autorisée par le relais ne correspond pas à cet appareil.",
+    device_mismatch:
+      "L’autorisation du relais appartient à un autre appareil de classe.",
     phone_stale:
       "Le relais est plus récent, mais l’actualisation atomique du téléphone a échoué.",
     relay_stale:

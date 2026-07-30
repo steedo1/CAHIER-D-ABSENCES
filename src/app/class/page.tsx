@@ -24,6 +24,7 @@ import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
   clearClassDeviceSnapshot,
+  validateClassDeviceScheduleScope,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import {
@@ -132,6 +133,10 @@ type MyClass = {
     allow_local_relay?: boolean;
     relay_local_url?: string | null;
     relay_access_token?: string | null;
+    access_contract_version?: number | null;
+    actor_kind?: "class_device" | null;
+    authorized_class_id?: string | null;
+    authorized_actor_profile_id?: string | null;
     diagnostic?: string | null;
   } | null;
 };
@@ -247,8 +252,23 @@ function relayScheduleErrorMessage(error: unknown) {
   ) {
     return "Le planning de la classe n’est pas préparé sur le relais.";
   }
-  if (code === "relay_class_schedule_scope_mismatch") {
-    return "Le relais a répondu pour une autre classe ou un autre appareil.";
+  if (code === "relay_class_schedule_contract_stale") {
+    return "Le relais actif utilise encore un ancien contrat pour les téléphones de classe. Il doit être recompilé puis redémarré.";
+  }
+  if (code === "relay_class_schedule_institution_mismatch") {
+    return "Le relais a répondu pour un autre établissement.";
+  }
+  if (code === "relay_class_schedule_class_mismatch") {
+    return "Le relais a répondu pour une autre classe.";
+  }
+  if (code === "relay_class_schedule_device_mismatch") {
+    return "Le relais a répondu pour un autre appareil de classe.";
+  }
+  if (
+    code === "relay_class_schedule_scope_mismatch" ||
+    code === "relay_class_schedule_snapshot_invalid"
+  ) {
+    return "Le planning borné renvoyé par le relais est invalide.";
   }
   return "Le relais local est inaccessible ; le planning affiché ne permet pas d’ouvrir un nouvel appel.";
 }
@@ -587,12 +607,27 @@ export default function ClassDevicePage() {
   ): Promise<RelayTeacherOfflineSchedule | null> {
     const applySchedule = async (schedule: RelayTeacherOfflineSchedule) => {
       if (
-        schedule.actor_kind !== "class_device" ||
-        String(schedule.institution_id || "") !==
-          String(target?.institution_id || "") ||
-        String(schedule.class_id || "") !== target?.id
+        !target?.institution_id ||
+        !target.id ||
+        !target.actor_profile_id
       ) {
         throw new Error("relay_class_schedule_scope_mismatch");
+      }
+      const scope = validateClassDeviceScheduleScope(schedule, {
+        institutionId: target.institution_id,
+        classId: target.id,
+        actorProfileId: target.actor_profile_id,
+      });
+      if (!scope.ok) {
+        const codeByStatus = {
+          relay_contract_stale: "relay_class_schedule_contract_stale",
+          institution_mismatch: "relay_class_schedule_institution_mismatch",
+          class_mismatch: "relay_class_schedule_class_mismatch",
+          device_mismatch: "relay_class_schedule_device_mismatch",
+          schedule_not_prepared: "relay_schedule_snapshot_invalid",
+          class_data_missing: "relay_class_schedule_snapshot_invalid",
+        } as const;
+        throw new Error(codeByStatus[scope.status]);
       }
       if (schedule.relay_time) {
         const relayTime = Date.parse(schedule.relay_time);
@@ -615,10 +650,17 @@ export default function ClassDevicePage() {
       return schedule;
     };
     const loadPreparedSchedule = async () => {
-      if (!target?.institution_id || !target.id) return null;
+      if (
+        !target?.institution_id ||
+        !target.id ||
+        !target.actor_profile_id
+      ) {
+        return null;
+      }
       const prepared = await getClassDeviceCoherentSchedule({
         institutionId: target.institution_id,
         classId: target.id,
+        actorProfileId: target.actor_profile_id,
       }).catch(() => null);
       return prepared ? await applySchedule(prepared) : null;
     };
@@ -1174,7 +1216,10 @@ export default function ClassDevicePage() {
     (async () => {
       try {
         const [cls, os, localOpenRaw] = await Promise.all([
-          offlineGetJson("/api/class/my-classes", "classDevice:my-classes"),
+          offlineGetJson(
+            "/api/class/my-classes?offline_contract=v5",
+            "classDevice:my-classes",
+          ),
           offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session").catch(
             () => ({ item: null })
           ),
@@ -2031,6 +2076,7 @@ export default function ClassDevicePage() {
         {
           institutionId: selectedClass?.institution_id,
           classId,
+          actorProfileId: selectedClass?.actor_profile_id,
           relayBaseUrl: relayPolicy?.relay_local_url,
           relayAccessToken: relayPolicy?.relay_access_token,
         },
@@ -2474,6 +2520,15 @@ export default function ClassDevicePage() {
 
       <OfflineReadinessCard
         role="class-device"
+        classDeviceContext={{
+          institutionId: selectedClass?.institution_id,
+          classId: selectedClass?.id,
+          actorProfileId: selectedClass?.actor_profile_id,
+          relayBaseUrl:
+            selectedClass?.attendance_presence?.relay_local_url,
+          relayAccessToken:
+            selectedClass?.attendance_presence?.relay_access_token,
+        }}
         onPrepared={refreshClassContextAfterPreparation}
       />
       {(relayScheduleIssue ||

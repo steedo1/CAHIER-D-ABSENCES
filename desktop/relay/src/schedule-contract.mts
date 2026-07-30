@@ -11,6 +11,7 @@ export const RELAY_CAPABILITIES = {
   attendance_write: true,
   attendance_session_close: true,
   attendance_transition: true,
+  class_device_scope_v1: true,
 } as const;
 
 function storedRevision(db: RelayDatabase, institutionId: string) {

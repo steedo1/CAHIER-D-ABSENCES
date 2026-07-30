@@ -8,6 +8,7 @@ import {
   getOfflineReadiness,
   prepareOffline,
   type ClassDeviceScheduleAssessment,
+  type ClassDeviceAssessmentContext,
   type OfflineReadiness,
   type OfflineRole,
   type TeacherScheduleAssessment,
@@ -16,6 +17,7 @@ import {
 type Props = {
   role: OfflineRole;
   className?: string;
+  classDeviceContext?: ClassDeviceAssessmentContext;
   onPrepared?: (readiness: OfflineReadiness) => void | Promise<void>;
 };
 
@@ -40,6 +42,7 @@ function formatCheckedAt(value: string | undefined) {
 export default function OfflineReadinessCard({
   role,
   className = "",
+  classDeviceContext,
   onPrepared,
 }: Props) {
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
@@ -61,7 +64,10 @@ export default function OfflineReadinessCard({
         const next =
           role === "teacher"
             ? await assessTeacherOfflineReadiness(stored)
-            : await assessClassDeviceOfflineReadiness(stored);
+            : await assessClassDeviceOfflineReadiness(
+                stored,
+                classDeviceContext,
+              );
         if (cancelled) return;
         setAssessment(next);
         setReadiness(next.readiness);
@@ -76,7 +82,14 @@ export default function OfflineReadinessCard({
       window.removeEventListener("online", handleNetworkChange);
       window.removeEventListener("offline", handleNetworkChange);
     };
-  }, [role]);
+  }, [
+    role,
+    classDeviceContext?.institutionId,
+    classDeviceContext?.classId,
+    classDeviceContext?.actorProfileId,
+    classDeviceContext?.relayBaseUrl,
+    classDeviceContext?.relayAccessToken,
+  ]);
 
   const stale = useMemo(() => {
     if (!readiness) return false;
@@ -98,10 +111,22 @@ export default function OfflineReadinessCard({
     try {
       const next = await prepareOffline(role, setProgress);
       if (role === "teacher" || role === "class-device") {
+        const preparedClassDeviceContext =
+          role === "class-device"
+            ? {
+                institutionId: next.institution_id || undefined,
+                classId: next.authorized_class_id || undefined,
+                actorProfileId:
+                  next.authorized_actor_profile_id || undefined,
+              }
+            : undefined;
         const checked =
           role === "teacher"
             ? await assessTeacherOfflineReadiness(next)
-            : await assessClassDeviceOfflineReadiness(next);
+            : await assessClassDeviceOfflineReadiness(
+                next,
+                preparedClassDeviceContext,
+              );
         setAssessment(checked);
         setReadiness(checked.readiness);
         setProgress(
@@ -109,6 +134,9 @@ export default function OfflineReadinessCard({
             ? "Préparation et cohérence vérifiées."
             : "Données téléchargées, mais cohérence hors ligne non confirmée.",
         );
+        if (checked.status !== "ready") {
+          throw new Error(checked.message);
+        }
         await onPrepared?.(checked.readiness || next);
       } else {
         setReadiness(next);

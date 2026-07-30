@@ -157,6 +157,10 @@ export async function enrichClassDeviceAccess(input: {
             allow_local_relay: false,
             relay_local_url: null,
             relay_access_token: null,
+            access_contract_version: 2 as const,
+            actor_kind: "class_device" as const,
+            authorized_class_id: text(row.id) || null,
+            authorized_actor_profile_id: input.actorProfileId,
             diagnostic: "institution_id_missing" as const,
           },
           metadata_diagnostics: ["institution_id_missing"],
@@ -300,6 +304,10 @@ export async function enrichClassDeviceAccess(input: {
       attendance_presence: {
         enabled: accessDiagnostic === null,
         allow_local_relay: accessDiagnostic === null,
+        access_contract_version: 2 as const,
+        actor_kind: "class_device" as const,
+        authorized_class_id: classId || null,
+        authorized_actor_profile_id: input.actorProfileId,
         relay_local_url:
           accessDiagnostic === null
             ? text(policy?.relay_local_url)

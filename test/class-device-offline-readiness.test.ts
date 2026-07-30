@@ -6,6 +6,7 @@ import {
   CLASS_DEVICE_COHERENT_BUNDLE_KEY,
   classDeviceReadinessMessage,
   evaluateClassDeviceCoherence,
+  validateClassDeviceRelayAccessTokenScope,
   validateClassDeviceScheduleScope,
   type ClassDeviceCoherenceInput,
   type ClassDeviceReadinessLike,
@@ -13,7 +14,7 @@ import {
 } from "../src/lib/offlineClassDevice";
 
 const WEB_RELEASE = "web-current";
-const WORKER_RELEASE = "2026-07-30-class-device-coherence-v5";
+const WORKER_RELEASE = "2026-07-30-class-device-scope-v5-1";
 
 const readiness: ClassDeviceReadinessLike = {
   version: 5,
@@ -23,6 +24,7 @@ const readiness: ClassDeviceReadinessLike = {
   shell_ready: true,
   institution_id: "school-a",
   authorized_class_id: "class-a",
+  authorized_actor_profile_id: "device-a",
   class_count: 1,
   slot_count: 1,
   schedule_revision: 10,
@@ -41,6 +43,7 @@ const readyInput: ClassDeviceCoherenceInput = {
   active_service_worker_release: WORKER_RELEASE,
   expected_institution_id: "school-a",
   expected_class_id: "class-a",
+  expected_actor_profile_id: "device-a",
   bundle_present: true,
   bundle_schedule_revision: 10,
   bundle_scope_valid: true,
@@ -48,6 +51,7 @@ const readyInput: ClassDeviceCoherenceInput = {
   relay_institution_id: "school-a",
   relay_actor_kind: "class_device",
   relay_class_id: "class-a",
+  relay_actor_profile_id: "device-a",
   relay_schedule_available: true,
   relay_revision: 10,
   cloud_revision: 10,
@@ -56,14 +60,17 @@ const readyInput: ClassDeviceCoherenceInput = {
     attendance_session_open: true,
     attendance_write: true,
     attendance_session_close: true,
+    class_device_scope_v1: true,
   },
 };
 
 const schedule: ClassDeviceScheduleScope = {
   version: 1,
+  scope_version: 1,
   institution_id: "school-a",
   actor_kind: "class_device",
   class_id: "class-a",
+  actor_profile_id: "device-a",
   schedule_revision: 10,
   snapshot_completeness: "complete",
   class_count: 1,
@@ -97,12 +104,17 @@ const schedule: ClassDeviceScheduleScope = {
   ],
 };
 
+function accessToken(payload: Record<string, unknown>) {
+  return `${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}.signature`;
+}
+
 test("appareil v5 correctement préparé", () => {
   assert.equal(evaluateClassDeviceCoherence(readyInput), "ready");
   assert.deepEqual(
     validateClassDeviceScheduleScope(schedule, {
       institutionId: "school-a",
       classId: "class-a",
+      actorProfileId: "device-a",
     }),
     { ok: true, revision: 10 },
   );
@@ -237,6 +249,102 @@ test("classe absente et capacité d’écriture manquante bloquent", () => {
   );
 });
 
+test("ancien relais sans portée appareil de classe est identifié explicitement", () => {
+  assert.equal(
+    evaluateClassDeviceCoherence({
+      ...readyInput,
+      relay_capabilities: {
+        ...readyInput.relay_capabilities,
+        class_device_scope_v1: false,
+      },
+    }),
+    "relay_contract_stale",
+  );
+  const legacySchedule = structuredClone(schedule) as any;
+  delete legacySchedule.scope_version;
+  delete legacySchedule.actor_profile_id;
+  assert.deepEqual(
+    validateClassDeviceScheduleScope(legacySchedule, {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    }),
+    { ok: false, status: "relay_contract_stale" },
+  );
+});
+
+test("planning d’un autre appareil est distingué d’une autre classe", () => {
+  const otherDevice = structuredClone(schedule) as any;
+  otherDevice.actor_profile_id = "device-b";
+  assert.deepEqual(
+    validateClassDeviceScheduleScope(otherDevice, {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    }),
+    { ok: false, status: "device_mismatch" },
+  );
+  assert.equal(
+    evaluateClassDeviceCoherence({
+      ...readyInput,
+      relay_actor_profile_id: "device-b",
+    }),
+    "device_mismatch",
+  );
+});
+
+test("le jeton v2 doit porter exactement établissement, classe et appareil", () => {
+  const exact = {
+    v: 2,
+    purpose: "attendance_relay_access",
+    institution_id: "school-a",
+    actor_profile_id: "device-a",
+    actor_kind: "class_device",
+    class_id: "class-a",
+  };
+  assert.deepEqual(
+    validateClassDeviceRelayAccessTokenScope(accessToken(exact), {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    }),
+    { ok: true },
+  );
+  assert.deepEqual(
+    validateClassDeviceRelayAccessTokenScope(
+      accessToken({ ...exact, v: 1, actor_kind: undefined, class_id: undefined }),
+      {
+        institutionId: "school-a",
+        classId: "class-a",
+        actorProfileId: "device-a",
+      },
+    ),
+    { ok: false, status: "relay_contract_stale" },
+  );
+  assert.deepEqual(
+    validateClassDeviceRelayAccessTokenScope(
+      accessToken({ ...exact, class_id: "class-b" }),
+      {
+        institutionId: "school-a",
+        classId: "class-a",
+        actorProfileId: "device-a",
+      },
+    ),
+    { ok: false, status: "class_mismatch" },
+  );
+  assert.deepEqual(
+    validateClassDeviceRelayAccessTokenScope(
+      accessToken({ ...exact, actor_profile_id: "device-b" }),
+      {
+        institutionId: "school-a",
+        classId: "class-a",
+        actorProfileId: "device-a",
+      },
+    ),
+    { ok: false, status: "device_mismatch" },
+  );
+});
+
 test("shell incomplet ne peut jamais être déclaré prêt", () => {
   assert.equal(
     evaluateClassDeviceCoherence({
@@ -362,6 +470,7 @@ test("bundle atomique reste cohérent après sérialisation et réouverture", ()
   const scope = validateClassDeviceScheduleScope(reopened.schedule, {
     institutionId: "school-a",
     classId: "class-a",
+    actorProfileId: "device-a",
   });
   assert.equal(CLASS_DEVICE_COHERENT_BUNDLE_KEY, "classDevice:coherent-bundle:v1");
   assert.deepEqual(scope, { ok: true, revision: 10 });
@@ -381,6 +490,7 @@ test("isolation stricte entre écoles et classes", () => {
     validateClassDeviceScheduleScope(schedule, {
       institutionId: "school-b",
       classId: "class-a",
+      actorProfileId: "device-a",
     }),
     { ok: false, status: "institution_mismatch" },
   );
@@ -388,6 +498,7 @@ test("isolation stricte entre écoles et classes", () => {
     validateClassDeviceScheduleScope(schedule, {
       institutionId: "school-a",
       classId: "class-b",
+      actorProfileId: "device-a",
     }),
     { ok: false, status: "class_mismatch" },
   );
@@ -397,6 +508,7 @@ test("isolation stricte entre écoles et classes", () => {
     validateClassDeviceScheduleScope(contaminated, {
       institutionId: "school-a",
       classId: "class-a",
+      actorProfileId: "device-a",
     }),
     { ok: false, status: "class_data_missing" },
   );

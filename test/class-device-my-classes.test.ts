@@ -90,6 +90,23 @@ function tokenPayload(token: string) {
   return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
 }
 
+function unsignedClassDeviceToken(input: {
+  institutionId?: string;
+  classId?: string;
+  actorProfileId?: string;
+  version?: number;
+}) {
+  const payload = {
+    v: input.version ?? 2,
+    purpose: "attendance_relay_access",
+    institution_id: input.institutionId || "school-a",
+    actor_profile_id: input.actorProfileId || "device-profile",
+    actor_kind: "class_device",
+    class_id: input.classId || "class-a",
+  };
+  return `${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}.signature`;
+}
+
 test("politique valide retourne URL et jeton class_device v2 borné", async () => {
   const result = await enrichClassDeviceAccess({
     items: [classRow("class-a", "school-a")],
@@ -105,6 +122,13 @@ test("politique valide retourne URL et jeton class_device v2 borné", async () =
   const item: any = result.items[0];
   assert.equal(item.attendance_presence.enabled, true);
   assert.equal(item.attendance_presence.allow_local_relay, true);
+  assert.equal(item.attendance_presence.access_contract_version, 2);
+  assert.equal(item.attendance_presence.actor_kind, "class_device");
+  assert.equal(item.attendance_presence.authorized_class_id, "class-a");
+  assert.equal(
+    item.attendance_presence.authorized_actor_profile_id,
+    "device-profile-a",
+  );
   assert.equal(
     item.attendance_presence.relay_local_url,
     "http://relay-school-a.local:4317",
@@ -321,21 +345,86 @@ test("la préparation v5 accepte la réponse corrigée et conserve les accès si
         attendance_presence: {
           enabled: true,
           allow_local_relay: true,
+          access_contract_version: 2,
+          actor_kind: "class_device",
+          authorized_class_id: "class-a",
+          authorized_actor_profile_id: "device-profile",
           relay_local_url: "http://relay-school-a.local:4317",
-          relay_access_token: "payload.signature",
+          relay_access_token: unsignedClassDeviceToken({}),
         },
       },
     ],
   });
   assert.equal(access.classId, "class-a");
   assert.equal(access.institutionId, "school-a");
+  assert.equal(access.actorProfileId, "device-profile");
   assert.equal(
     access.relayPolicy.relayLocalUrl,
     "http://relay-school-a.local:4317",
   );
   assert.equal(
     access.relayPolicy.relayAccessToken,
-    "payload.signature",
+    unsignedClassDeviceToken({}),
+  );
+});
+
+test("ancien contrat ou jeton d’une autre classe/appareil est refusé avant le relais", () => {
+  const base = {
+    ...classRow("class-a", "school-a"),
+    actor_profile_id: "device-profile",
+    attendance_presence: {
+      enabled: true,
+      allow_local_relay: true,
+      access_contract_version: 2,
+      actor_kind: "class_device",
+      authorized_class_id: "class-a",
+      authorized_actor_profile_id: "device-profile",
+      relay_local_url: "http://relay-school-a.local:4317",
+      relay_access_token: unsignedClassDeviceToken({}),
+    },
+  };
+  assert.throws(
+    () =>
+      resolveClassDevicePreparationAccess({
+        items: [{
+          ...base,
+          attendance_presence: {
+            ...base.attendance_presence,
+            access_contract_version: 1,
+          },
+        }],
+      }),
+    /ancien contrat/i,
+  );
+  assert.throws(
+    () =>
+      resolveClassDevicePreparationAccess({
+        items: [{
+          ...base,
+          attendance_presence: {
+            ...base.attendance_presence,
+            relay_access_token: unsignedClassDeviceToken({
+              classId: "class-b",
+            }),
+          },
+        }],
+      }),
+    /classe autorisée/i,
+  );
+  assert.throws(
+    () =>
+      resolveClassDevicePreparationAccess({
+        items: [{
+          ...base,
+          attendance_presence: {
+            ...base.attendance_presence,
+            relay_access_token: unsignedClassDeviceToken({
+              actorProfileId: "device-other",
+            }),
+          },
+        }],
+      }),
+    /autre appareil/i,
   );
 });
 

@@ -97,6 +97,9 @@ export function createRelayServer(
           return json(response, 200, {
             ok: true,
             institution_id: teacher.institution_id,
+            actor_kind: teacher.actor_kind || "teacher",
+            class_id: teacher.class_id || null,
+            actor_profile_id: teacher.actor_profile_id,
             relay_time: requestNow.toISOString(),
             ...relayRuntimeContract(
               store.db,

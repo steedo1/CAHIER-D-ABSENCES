@@ -176,8 +176,10 @@ test("le planning relais du téléphone de classe suit sa classe et expose le cr
       classActor(),
       new Date("2026-07-22T09:31:00.000Z"),
     );
+    assert.equal(schedule.scope_version, 1);
     assert.equal(schedule.actor_kind, "class_device");
     assert.equal(schedule.class_id, CLASS_ID);
+    assert.equal(schedule.actor_profile_id, "class-device-user");
     assert.equal(schedule.class_count, 1);
     assert.equal(schedule.relay_time, "2026-07-22T09:31:00.000Z");
     assert.deepEqual(

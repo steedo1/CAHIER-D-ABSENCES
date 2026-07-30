@@ -18,6 +18,16 @@ function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
 
+function noStoreJson(body: unknown, init?: { status?: number }) {
+  const response = NextResponse.json(body, init);
+  response.headers.set(
+    "Cache-Control",
+    "private, no-store, no-cache, max-age=0, must-revalidate",
+  );
+  response.headers.set("Pragma", "no-cache");
+  return response;
+}
+
 type PhoneVariants = {
   variants: string[];
   likePatterns: string[];
@@ -162,7 +172,7 @@ export async function GET(req: NextRequest) {
 
   // Debug optionnel
   const wantDebug = (new URL(req.url).searchParams.get("debug") || "") === "1";
-  return NextResponse.json(
+  return noStoreJson(
     wantDebug
       ? {
           items: enriched,
