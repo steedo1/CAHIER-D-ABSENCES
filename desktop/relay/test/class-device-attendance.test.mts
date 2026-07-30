@@ -221,6 +221,43 @@ test("le planning relais du téléphone de classe suit sa classe et expose le cr
   }
 });
 
+test("le planning du téléphone écarte l'ancienne matière restée sur le même créneau", () => {
+  const db = openRelayDatabase(":memory:");
+  try {
+    seed(db);
+    db.prepare(`
+      INSERT INTO teacher_timetables(
+        id, institution_id, class_id, subject_id, teacher_id,
+        period_id, weekday, updated_at
+      ) VALUES ('timetable-stale-subject', ?, ?, ?, ?, ?, 3, ?)
+    `).run(
+      INSTITUTION_ID,
+      CLASS_ID,
+      SUBJECT_ID,
+      TEACHER_ID,
+      NEXT_PERIOD_ID,
+      "2026-07-22T08:00:00.000Z",
+    );
+
+    const schedule = teacherOfflineSchedule(
+      db,
+      classActor(),
+      new Date("2026-07-22T09:31:00.000Z"),
+    );
+    const nextSlot = schedule.slots.find(
+      (slot) => slot.period_id === NEXT_PERIOD_ID,
+    );
+
+    assert.ok(nextSlot);
+    assert.deepEqual(
+      nextSlot.items.map((item) => item.subject_name),
+      ["Français"],
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("le téléphone de classe ouvre, enregistre 17 minutes puis ferme via le relais", () => {
   const db = openRelayDatabase(":memory:");
   try {

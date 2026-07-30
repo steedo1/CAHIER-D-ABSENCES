@@ -21,6 +21,29 @@ type SlotSpec = {
   endHM: string;
 };
 
+type TimetableSubjectRow = {
+  id?: string | null;
+  subject_id?: string | null;
+  updated_at?: string | null;
+};
+
+function currentTimetableSubjectIds(rows: TimetableSubjectRow[]): string[] {
+  const ranked = (rows || [])
+    .map((row) => ({
+      id: String(row?.id || "").trim(),
+      subjectId: String(row?.subject_id || "").trim(),
+      updatedAt: Date.parse(String(row?.updated_at || "")),
+    }))
+    .filter((row) => row.subjectId)
+    .sort((left, right) => {
+      const leftTime = Number.isFinite(left.updatedAt) ? left.updatedAt : 0;
+      const rightTime = Number.isFinite(right.updatedAt) ? right.updatedAt : 0;
+      return rightTime - leftTime || right.id.localeCompare(left.id);
+    });
+
+  return ranked[0]?.subjectId ? [ranked[0].subjectId] : [];
+}
+
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
 }
@@ -118,9 +141,39 @@ async function resolveAutoPeriodIds(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   tz: string,
-  slotRaw: string | null
+  slotRaw: string | null,
+  periodIdRaw: string | null = null
 ): Promise<string[]> {
   const parsed = parseSlot(slotRaw);
+  const requestedPeriodId = String(periodIdRaw || "").trim();
+
+  // Le téléphone connaît l'identifiant exact du créneau affiché. On l'utilise
+  // en priorité pour ne jamais fusionner deux anciens créneaux ayant les mêmes
+  // heures après une modification d'emploi du temps.
+  if (requestedPeriodId) {
+    const { data: requested, error: requestedError } = await srv
+      .from("institution_periods")
+      .select("id,weekday,start_time,end_time")
+      .eq("institution_id", institutionId)
+      .eq("id", requestedPeriodId)
+      .maybeSingle();
+
+    if (requestedError) throw requestedError;
+    if (!requested) return [];
+
+    if (parsed) {
+      const requestedWeekday = Number((requested as any).weekday);
+      const weekdayMatches =
+        requestedWeekday === parsed.weekday ||
+        (parsed.weekday === 7 && requestedWeekday === 0);
+      const timeMatches =
+        hmsToMin((requested as any).start_time) === hmsToMin(`${parsed.startHM}:00`) &&
+        hmsToMin((requested as any).end_time) === hmsToMin(`${parsed.endHM}:00`);
+      if (!weekdayMatches || !timeMatches) return [];
+    }
+
+    return [requestedPeriodId];
+  }
 
   let weekdayValues: number[] = [];
   let wantedStartMin: number | null = null;
@@ -338,6 +391,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const class_id = (url.searchParams.get("class_id") ?? "").trim();
     const slotRaw = (url.searchParams.get("slot") ?? "").trim() || null;
+    const periodIdRaw = (url.searchParams.get("period_id") ?? "").trim() || null;
 
     if (!class_id) {
       return NextResponse.json({ items: [] as SubjectItem[] });
@@ -433,12 +487,18 @@ export async function GET(req: NextRequest) {
     //    Une réponse vide signifie qu'aucun cours n'est prévu : ne jamais exposer
     //    toutes les matières de la classe dans ce cas.
     if (slotRaw && !slotRaw.startsWith("closed|") && !slotRaw.startsWith("no-config|")) {
-      const periodIds = await resolveAutoPeriodIds(srv, institutionId, tz, slotRaw);
+      const periodIds = await resolveAutoPeriodIds(
+        srv,
+        institutionId,
+        tz,
+        slotRaw,
+        periodIdRaw,
+      );
 
       if (periodIds.length > 0) {
         const { data: ttRows, error: ttErr } = await srv
           .from("teacher_timetables")
-          .select("subject_id")
+          .select("id,subject_id,updated_at")
           .eq("institution_id", institutionId)
           .eq("class_id", class_id)
           .in("period_id", periodIds);
@@ -447,10 +507,11 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: ttErr.message }, { status: 400 });
         }
 
-        const autoSubjectIds = uniq(
-          ((ttRows || []) as any[])
-            .map((row) => String(row?.subject_id || "").trim())
-            .filter(Boolean)
+        // Une classe ne peut avoir qu'une matière active dans un créneau.
+        // En cas d'ancienne ligne restée active après une modification, la ligne
+        // la plus récente gagne et l'ancienne matière n'est plus exposée.
+        const autoSubjectIds = currentTimetableSubjectIds(
+          (ttRows || []) as TimetableSubjectRow[],
         );
 
         if (autoSubjectIds.length > 0) {

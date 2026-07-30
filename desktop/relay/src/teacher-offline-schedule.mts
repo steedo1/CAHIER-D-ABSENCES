@@ -8,6 +8,7 @@ import {
 } from "./teacher-auth.mjs";
 
 type TimetableRow = {
+  id: string;
   period_id: string;
   weekday: number | null;
   label: string | null;
@@ -19,7 +20,39 @@ type TimetableRow = {
   subject_id: string;
   subject_name: string;
   teacher_id: string;
+  server_version: number;
+  updated_at: string;
 };
+
+function timetableFreshnessCompare(left: TimetableRow, right: TimetableRow) {
+  const leftTime = Date.parse(left.updated_at);
+  const rightTime = Date.parse(right.updated_at);
+  const timeDiff =
+    (Number.isFinite(leftTime) ? leftTime : 0) -
+    (Number.isFinite(rightTime) ? rightTime : 0);
+  if (timeDiff !== 0) return timeDiff;
+
+  const versionDiff = Number(left.server_version || 0) - Number(right.server_version || 0);
+  if (versionDiff !== 0) return versionDiff;
+  return left.id.localeCompare(right.id);
+}
+
+function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
+  const winnerBySlot = new Map<string, TimetableRow>();
+
+  for (const row of rows) {
+    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
+    const current = winnerBySlot.get(key);
+    if (!current || timetableFreshnessCompare(row, current) > 0) {
+      winnerBySlot.set(key, row);
+    }
+  }
+
+  return rows.filter((row) => {
+    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
+    return winnerBySlot.get(key)?.subject_id === row.subject_id;
+  });
+}
 
 type RosterRow = {
   class_id: string;
@@ -67,6 +100,7 @@ export function teacherOfflineSchedule(
 
   const rows = db.prepare(`
     SELECT
+      tt.id,
       tt.period_id,
       p.weekday,
       p.label,
@@ -77,7 +111,9 @@ export function teacherOfflineSchedule(
       c.level,
       tt.subject_id,
       s.name AS subject_name,
-      tt.teacher_id
+      tt.teacher_id,
+      tt.server_version,
+      tt.updated_at
     FROM teacher_timetables tt
     JOIN institution_periods p
       ON p.institution_id = tt.institution_id
@@ -94,11 +130,15 @@ export function teacherOfflineSchedule(
     WHERE tt.institution_id = ?
       ${actorFilter}
       AND tt.deleted_at IS NULL
-    ORDER BY p.weekday, p.start_time, c.label, s.name
+    ORDER BY p.weekday, p.start_time, c.label, tt.updated_at DESC, tt.id DESC
   `).all(
     teacher.institution_id,
     actorFilterValue,
   ) as TimetableRow[];
+
+  const scheduleRows = actorKind === "class_device"
+    ? currentClassDeviceTimetableRows(rows)
+    : rows;
 
   const grouped = new Map<string, {
     key: string;
@@ -116,7 +156,7 @@ export function teacherOfflineSchedule(
       teacher_id: string;
     }>;
   }>();
-  for (const row of rows) {
+  for (const row of scheduleRows) {
     const weekday = normalizedWeekday(row.weekday);
     const startTime = hm(row.start_time);
     const endTime = hm(row.end_time);
@@ -153,7 +193,7 @@ export function teacherOfflineSchedule(
 
   const classIds = actorKind === "class_device" && boundClassId
     ? [boundClassId]
-    : Array.from(new Set(rows.map((row) => row.class_id)));
+    : Array.from(new Set(scheduleRows.map((row) => row.class_id)));
   const rosterRows = classIds.length === 0
     ? []
     : db.prepare(`

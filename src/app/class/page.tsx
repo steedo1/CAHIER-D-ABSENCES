@@ -1954,16 +1954,19 @@ export default function ClassDevicePage() {
       const snapSubjectId = pendingSnapshotSubjectRef.current || snap?.state?.subjectId || "";
 
       setSubjectId((prev) => {
-        if (mode === "auto" || mode === "auto-offline") {
-          if (snapSubjectId && list.some((s) => s.id === snapSubjectId)) {
-            return snapSubjectId;
-          }
-          if (prev && list.some((s) => s.id === prev)) {
-            return prev;
-          }
+        const automaticMode =
+          mode === "relay" || mode === "auto" || mode === "auto-offline";
+
+        // Dans un créneau automatique, l'emploi du temps est la source de vérité.
+        // On ne conserve jamais la matière du créneau précédent, même si une
+        // ancienne ligne conflictuelle la fait encore apparaître dans la réponse.
+        if (automaticMode) {
           return list[0]?.id || "";
         }
 
+        if (snapSubjectId && list.some((s) => s.id === snapSubjectId)) {
+          return snapSubjectId;
+        }
         if (prev && list.some((s) => s.id === prev)) {
           return prev;
         }
@@ -2006,8 +2009,11 @@ export default function ClassDevicePage() {
       }
 
       if (!isOnline) {
+        const periodParam = activeConfiguredSlot.id
+          ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
+          : "";
         const preparedResp = await offlineGetJson(
-          `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
+          `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`,
           `classDevice:subjects:${classId}:${activeSlotKey}`
         ).catch(() => null as any);
 
@@ -2028,8 +2034,11 @@ export default function ClassDevicePage() {
       // n'a pas encore été exécutée sur cet appareil.
       const legacyWarmPromise = loadLegacySubjects();
 
+      const periodParam = activeConfiguredSlot.id
+        ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
+        : "";
       const autoResp = await offlineGetJson(
-        `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}`,
+        `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`,
         `classDevice:subjects:${classId}:${activeSlotKey}`
       ).catch(() => null as any);
 
