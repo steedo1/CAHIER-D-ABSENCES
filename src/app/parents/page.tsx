@@ -1,297 +1,21 @@
-// src/app/parents/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
-import OfflineReadinessCard from "@/components/OfflineReadinessCard";
-import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import {
-  clearParentOfflineData,
-  getParentBulletins,
-  getParentChildren,
-  getParentConduct,
-  getParentEvents,
-  getParentGradePeriods,
-  getParentGrades,
-  getParentNotifications,
-  getParentPenalties,
-  getParentTextbook,
-} from "@/lib/offline-parent";
 
-/* ————————— routes dédiées parents + fallbacks ————————— */
 const LOGOUT_PARENTS = "/parents/logout";
-const LOGIN_PARENTS = "/parents/login";
 
-/* ————————— helpers ————————— */
-function urlBase64ToUint8Array(base64: string) {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(base64url);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
+type PrimaryScreen = "home" | "children" | "attach" | "messages";
+type ChildScreen =
+  | "child"
+  | "absences"
+  | "notes"
+  | "textbook"
+  | "bulletins"
+  | "timetable"
+  | "sanctions";
+type Screen = PrimaryScreen | ChildScreen;
 
-const fmt = (iso: string) =>
-  new Date(iso).toLocaleString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-
-function slotLabel(iso: string, expectedMinutes?: number | null): string {
-  const start = new Date(iso);
-  const minutes = Number.isFinite(Number(expectedMinutes))
-    ? Number(expectedMinutes)
-    : 60;
-  const end = new Date(start.getTime() + minutes * 60_000);
-
-  const sh = String(start.getHours()).padStart(2, "0");
-  const sm = String(start.getMinutes()).padStart(2, "0");
-  const eh = String(end.getHours()).padStart(2, "0");
-  const em = String(end.getMinutes()).padStart(2, "0");
-
-  const left = sm === "00" ? `${sh}h` : `${sh}h${sm}`;
-  const right = em === "00" ? `${eh}h` : `${eh}h${em}`;
-  return `${left}-${right}`;
-}
-
-function dayKey(iso: string) {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-
-function dayLabel(iso: string) {
-  const d = new Date(iso);
-  const today = new Date();
-  const yday = new Date(today.getTime() - 24 * 3600 * 1000);
-  const same = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate();
-  if (same(d, today)) return "Aujourd’hui";
-  if (same(d, yday)) return "Hier";
-  return d.toLocaleDateString([], {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
-function rubricLabel(r: "discipline" | "tenue" | "moralite") {
-  if (r === "tenue") return "Tenue";
-  if (r === "moralite") return "Moralité";
-  return "Discipline";
-}
-
-function gradeKindLabel(kind: "devoir" | "interro_ecrite" | "interro_orale") {
-  if (kind === "devoir") return "Devoir";
-  if (kind === "interro_ecrite") return "Interrogation écrite";
-  return "Interrogation orale";
-}
-
-function yyyyMMdd(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-
-function getInitials(name: string) {
-  const parts = (name || "").trim().split(/\s+/);
-  const pick = (s: string) => (s ? s[0].toUpperCase() : "");
-  if (parts.length === 1) return pick(parts[0]);
-  return pick(parts[0]) + pick(parts[parts.length - 1]);
-}
-
-function dateFr(value?: string | null) {
-  if (!value) return "";
-  try {
-    return new Date(`${value}T00:00:00`).toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return value;
-  }
-}
-
-
-function isInDateRange(iso: string, from?: string | null, to?: string | null) {
-  const d = new Date(iso);
-  if (from) {
-    const f = new Date(from + "T00:00:00");
-    if (d < f) return false;
-  }
-  if (to) {
-    const t = new Date(to + "T23:59:59");
-    if (d > t) return false;
-  }
-  return true;
-}
-
-function formatPhoneForDisplay(phone?: string | null) {
-  const s = String(phone || "").trim();
-  if (!s) return "Non configuré";
-  if (!s.startsWith("+")) return s;
-  const digits = s.slice(1);
-  if (digits.startsWith("225") && digits.length >= 11) {
-    const core = digits.slice(3);
-    if (core.length === 10) {
-      return `+225 ${core.slice(0, 2)} ${core.slice(2, 4)} ${core.slice(
-        4,
-        6,
-      )} ${core.slice(6, 8)} ${core.slice(8, 10)}`;
-    }
-    if (core.length === 8) {
-      return `+225 ${core.slice(0, 2)} ${core.slice(2, 4)} ${core.slice(
-        4,
-        6,
-      )} ${core.slice(6, 8)}`;
-    }
-  }
-  return s;
-}
-
-function notificationKindLabel(payload: any) {
-  const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
-  if (kind === "finance_reminder") return "Rappel financier";
-  if (kind === "communication") return "Communication";
-  if (kind === "infirmary_visit" || kind === "infirmary_visit_created") return "Infirmerie";
-  if (kind === "attendance" || kind === "absent" || kind === "late") return "Absence / retard";
-  if (kind === "penalty" || kind === "conduct_penalty") return "Conduite";
-  return "Notification";
-}
-
-function notificationTone(payload: any, severity?: string | null) {
-  const kind = String(payload?.kind || payload?.event || payload?.type || "").toLowerCase();
-  if (kind === "finance_reminder") return "amber" as const;
-  if (kind === "communication") return "emerald" as const;
-  if (kind === "infirmary_visit" || kind === "infirmary_visit_created") return "sky" as const;
-  if (severity === "error" || severity === "warning") return "rose" as const;
-  return "slate" as const;
-}
-
-function formatNotificationDate(value?: string | null) {
-  if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return value;
-  }
-}
-
-/* ————————— thèmes (couleurs différentes par enfant / matière) ————————— */
-const THEMES = [
-  {
-    name: "emerald",
-    ring: "hover:ring-emerald-300",
-    border: "border-emerald-200",
-    bar: "from-emerald-500 to-teal-500",
-    chipBg: "bg-emerald-100",
-    chipText: "text-emerald-800",
-  },
-  {
-    name: "indigo",
-    ring: "hover:ring-indigo-300",
-    border: "border-indigo-200",
-    bar: "from-indigo-500 to-blue-500",
-    chipBg: "bg-indigo-100",
-    chipText: "text-indigo-800",
-  },
-  {
-    name: "violet",
-    ring: "hover:ring-violet-300",
-    border: "border-violet-200",
-    bar: "from-violet-500 to-fuchsia-500",
-    chipBg: "bg-violet-100",
-    chipText: "text-violet-800",
-  },
-  {
-    name: "sky",
-    ring: "hover:ring-sky-300",
-    border: "border-sky-200",
-    bar: "from-sky-500 to-cyan-500",
-    chipBg: "bg-sky-100",
-    chipText: "text-sky-800",
-  },
-  {
-    name: "amber",
-    ring: "hover:ring-amber-300",
-    border: "border-amber-200",
-    bar: "from-amber-500 to-orange-500",
-    chipBg: "bg-amber-100",
-    chipText: "text-amber-900",
-  },
-  {
-    name: "rose",
-    ring: "hover:ring-rose-300",
-    border: "border-rose-200",
-    bar: "from-rose-500 to-pink-500",
-    chipBg: "bg-rose-100",
-    chipText: "text-rose-800",
-  },
-  {
-    name: "teal",
-    ring: "hover:ring-teal-300",
-    border: "border-teal-200",
-    bar: "from-teal-500 to-emerald-500",
-    chipBg: "bg-teal-100",
-    chipText: "text-teal-800",
-  },
-  {
-    name: "cyan",
-    ring: "hover:ring-cyan-300",
-    border: "border-cyan-200",
-    bar: "from-cyan-500 to-sky-500",
-    chipBg: "bg-cyan-100",
-    chipText: "text-cyan-800",
-  },
-] as const;
-
-function themeFor(i: number) {
-  return THEMES[i % THEMES.length];
-}
-
-/* ————————— thèmes par rubrique (pour jauges verticales) ————————— */
-const RUBRIC_THEMES = {
-  assiduite: {
-    bg: "bg-emerald-100",
-    fill: "bg-emerald-500",
-    text: "text-emerald-700",
-  },
-  tenue: {
-    bg: "bg-sky-100",
-    fill: "bg-sky-500",
-    text: "text-sky-700",
-  },
-  moralite: {
-    bg: "bg-violet-100",
-    fill: "bg-violet-500",
-    text: "text-violet-700",
-  },
-  discipline: {
-    bg: "bg-amber-100",
-    fill: "bg-amber-500",
-    text: "text-amber-800",
-  },
-} as const;
-
-type RubricKey = keyof typeof RUBRIC_THEMES;
-
-/* ————————— types ————————— */
 type Kid = {
   id: string;
   full_name: string;
@@ -300,7 +24,7 @@ type Kid = {
   institution_id?: string | null;
 };
 
-type Ev = {
+type AttendanceEvent = {
   id: string;
   when: string;
   expected_minutes?: number | null;
@@ -320,7 +44,6 @@ type KidPenalty = {
   subject_name?: string | null;
   author_subject_name?: string | null;
   author_name?: string | null;
-  author_role?: string | null;
   author_role_label?: string | null;
 };
 
@@ -353,160 +76,6 @@ type KidGradeRow = {
   subject_id?: string | null;
 };
 
-type SubjectGradeSummary = {
-  key: string;
-  label: string;
-  grades: KidGradeRow[];
-  average: number | null;
-  latest: KidGradeRow | null;
-};
-
-function formatMoney(value?: number | null) {
-  const n = Number(value || 0);
-  return `${Math.round(n).toLocaleString("fr-FR")} F`;
-}
-
-function scoreOn20(g: KidGradeRow) {
-  const score = Number(g.score);
-  const scale = Number(g.scale || 20);
-  if (!Number.isFinite(score) || !Number.isFinite(scale) || scale <= 0) return null;
-  return (score / scale) * 20;
-}
-
-function weightedAverageOn20(grades: KidGradeRow[]) {
-  let total = 0;
-  let coeffSum = 0;
-  for (const g of grades) {
-    const value = scoreOn20(g);
-    if (value == null) continue;
-    const coeff = Number(g.coeff || 1) > 0 ? Number(g.coeff || 1) : 1;
-    total += value * coeff;
-    coeffSum += coeff;
-  }
-  return coeffSum > 0 ? total / coeffSum : null;
-}
-
-function formatAverage(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return value.toFixed(2).replace(".", ",");
-}
-
-function formatHoursFromMinutes(value?: number | null) {
-  const minutes = Number(value || 0);
-  if (!Number.isFinite(minutes) || minutes <= 0) return "0h";
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  if (!h) return `${m} min`;
-  return m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`;
-}
-
-function itemTypeLabel(type?: string | null) {
-  const t = String(type || "").toLowerCase();
-  if (t === "regulation") return "Régulation";
-  if (t === "revision") return "Révision";
-  if (t === "evaluation") return "Évaluation";
-  if (t === "remediation") return "Remédiation";
-  return "Leçon";
-}
-
-function visibleParentSessions(items: ParentTextbookItem[] = []) {
-  return items
-    .flatMap((item) =>
-      (item.sessions || []).map((session) => ({
-        ...session,
-        item_title: item.title,
-        item_type: item.item_type,
-      })),
-    )
-    .sort((a, b) =>
-      String(b.session_date || "").localeCompare(String(a.session_date || "")) ||
-      String(b.created_at || "").localeCompare(String(a.created_at || "")),
-    );
-}
-
-function averageFromBulletin(b?: ParentBulletin | null) {
-  if (!b || b.general_avg === null || b.general_avg === undefined) return null;
-  const n = Number(b.general_avg);
-  return Number.isFinite(n) ? n : null;
-}
-
-function findBulletinForPeriod(
-  list: ParentBulletin[],
-  from?: string | null,
-  to?: string | null,
-  periodLabel?: string | null,
-) {
-  if (!list.length) return null;
-  const exact = list.find((b) => {
-    if (from && to && b.period_from && b.period_to) {
-      return b.period_from === from && b.period_to === to;
-    }
-    return false;
-  });
-  if (exact) return exact;
-
-  const label = String(periodLabel || "").trim().toLowerCase();
-  if (label) {
-    const byLabel = list.find((b) =>
-      String(b.period_label || "").trim().toLowerCase() === label,
-    );
-    if (byLabel) return byLabel;
-  }
-
-  return list[0] || null;
-}
-
-function formatGradeScore(g?: KidGradeRow | null) {
-  if (!g || g.score == null) return "—";
-  return `${Number(g.score).toFixed(2).replace(".", ",")}/${g.scale || 20}`;
-}
-
-function subjectKeyOf(g: KidGradeRow) {
-  return g.subject_id || g.subject_name || "__unknown__";
-}
-
-function buildSubjectGradeSummaries(grades: KidGradeRow[]): SubjectGradeSummary[] {
-  const map = new Map<string, SubjectGradeSummary>();
-  for (const g of grades) {
-    const key = subjectKeyOf(g);
-    const label = g.subject_name || "Matière non précisée";
-    if (!map.has(key)) {
-      map.set(key, { key, label, grades: [], average: null, latest: null });
-    }
-    map.get(key)!.grades.push(g);
-  }
-
-  const list = Array.from(map.values()).map((item) => {
-    const ordered = [...item.grades].sort((a, b) => b.eval_date.localeCompare(a.eval_date));
-    return {
-      ...item,
-      grades: ordered,
-      latest: ordered[0] || null,
-      average: weightedAverageOn20(ordered),
-    };
-  });
-
-  list.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-  return list;
-}
-
-function latestGradeOf(grades: KidGradeRow[]) {
-  return [...grades].sort((a, b) => b.eval_date.localeCompare(a.eval_date))[0] || null;
-}
-
-type ParentPaymentProvider = {
-  id: string;
-  provider: string;
-  label: string;
-  environment: string;
-};
-
-type ParentPaymentChild = {
-  student_id: string;
-  providers?: ParentPaymentProvider[];
-  charges?: Array<{ id: string; balance_due?: number }>;
-};
-
 type GradePeriod = {
   id: string;
   institution_id: string;
@@ -514,11 +83,9 @@ type GradePeriod = {
   code: string | null;
   label: string;
   short_label: string;
-  kind: string | null;
   start_date: string | null;
   end_date: string | null;
   order_index: number;
-  coeff: number | null;
 };
 
 type ParentBulletin = {
@@ -567,13 +134,6 @@ type ParentTextbookProgression = {
   assignment_id: string;
   class_id: string;
   class_label?: string | null;
-  education_type?: string | null;
-  education_label?: string | null;
-  formation_code?: string | null;
-  formation_label?: string | null;
-  formation_level_code?: string | null;
-  formation_level_label?: string | null;
-  education_context_label?: string | null;
   subject_name: string;
   teacher_name?: string | null;
   planned_total_minutes: number;
@@ -592,21 +152,33 @@ type ParentTextbookProgression = {
   items: ParentTextbookItem[];
 };
 
-type ParentTextbookPayload = {
-  ok?: boolean;
-  items?: ParentTextbookProgression[];
-  class_label?: string | null;
-  education_type?: string | null;
-  education_label?: string | null;
-  formation_code?: string | null;
-  formation_label?: string | null;
-  formation_level_code?: string | null;
-  formation_level_label?: string | null;
-  education_context_label?: string | null;
-  error?: string;
+type TimetablePeriod = {
+  key: string;
+  start_time: string;
+  end_time: string;
+  label: string;
+  period_no: number;
 };
 
-type NavSection = "home" | "textbook" | "conduct" | "absences" | "notes" | "notifications";
+type TimetableItem = {
+  id: string;
+  weekday: number;
+  period_id: string;
+  period_key: string;
+  start_time: string;
+  end_time: string;
+  subject_name: string;
+  teacher_name: string;
+};
+
+type TimetablePayload = {
+  ok?: boolean;
+  class_label?: string | null;
+  academic_year?: string | null;
+  periods?: TimetablePeriod[];
+  items?: TimetableItem[];
+  error?: string;
+};
 
 type ParentNotification = {
   id: string;
@@ -616,3414 +188,1864 @@ type ParentNotification = {
   created_at: string;
   read_at: string | null;
   status?: string | null;
-  payload?: any;
+  payload?: Record<string, unknown> | null;
 };
 
-type ParentNotificationContact = {
-  id: string;
-  institution_id: string | null;
-  profile_id: string;
-  phone_e164: string;
-  sms_enabled: boolean;
-  whatsapp_enabled: boolean;
-  is_primary: boolean;
-  verified_at: string | null;
-  last_used_at: string | null;
-  created_at: string;
-  updated_at: string;
+type ChildData = {
+  loading: boolean;
+  error: string | null;
+  events: AttendanceEvent[];
+  penalties: KidPenalty[];
+  grades: KidGradeRow[];
+  conduct: Conduct | null;
+  textbook: ParentTextbookProgression[];
+  timetable: TimetablePayload | null;
 };
 
-type InstitutionNotificationSetting = {
-  institution_id: string;
-  push_enabled: boolean;
-  sms_premium_enabled: boolean;
-  sms_provider: string | null;
-  sms_sender_name: string | null;
-  sms_absence_enabled: boolean;
-  sms_late_enabled: boolean;
-  sms_notes_digest_enabled: boolean;
-  sms_communication_enabled: boolean;
-  sms_finance_reminders_enabled: boolean;
-  sms_notes_digest_weekday: number | null;
-  sms_notes_digest_hour: number | null;
-  whatsapp_premium_enabled: boolean;
+type IconName =
+  | "home"
+  | "children"
+  | "plus"
+  | "message"
+  | "book"
+  | "notes"
+  | "calendar"
+  | "clock"
+  | "shield"
+  | "bulletin"
+  | "arrow"
+  | "logout"
+  | "bell"
+  | "chevron"
+  | "refresh"
+  | "wifi"
+  | "check";
+
+const EMPTY_CHILD_DATA: ChildData = {
+  loading: false,
+  error: null,
+  events: [],
+  penalties: [],
+  grades: [],
+  conduct: null,
+  textbook: [],
+  timetable: null,
 };
 
-type ParentNotificationContactsResponse = {
-  ok: boolean;
-  profile_id?: string;
-  source?: string;
-  preferred_institution_id?: string | null;
-  institution_ids?: string[];
-  contacts?: ParentNotificationContact[];
-  primary_contact?: ParentNotificationContact | null;
-  institution_settings?: InstitutionNotificationSetting[];
-  sms_premium_any_enabled?: boolean;
-  error?: string;
+const DAY_NAMES: Record<number, string> = {
+  1: "Lundi",
+  2: "Mardi",
+  3: "Mercredi",
+  4: "Jeudi",
+  5: "Vendredi",
+  6: "Samedi",
 };
 
-/* ————————— UI ————————— */
-function Button(
-  p: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-    tone?: "emerald" | "slate" | "red" | "white" | "outline";
-    iconLeft?: React.ReactNode;
-  },
-) {
-  const tone = p.tone ?? "emerald";
-  const map: Record<NonNullable<typeof p.tone>, string> = {
-    emerald:
-      "bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800 focus:ring-emerald-500",
-    slate:
-      "bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-900 focus:ring-slate-700",
-    red: "bg-rose-600 text-white hover:bg-rose-700 active:bg-rose-800 focus:ring-rose-500",
-    white:
-      "bg-white text-slate-900 hover:bg-white/90 ring-1 ring-slate-200 focus:ring-slate-300 active:bg-slate-50",
-    outline:
-      "bg-transparent text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-50 focus:ring-emerald-400",
+function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
+  const paths: Record<IconName, React.ReactNode> = {
+    home: (
+      <>
+        <path d="M3 11.5 12 4l9 7.5" />
+        <path d="M5.5 10.5V20h13v-9.5" />
+        <path d="M9.5 20v-5.5h5V20" />
+      </>
+    ),
+    children: (
+      <>
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3.5 20v-2a5.5 5.5 0 0 1 11 0v2" />
+        <path d="M16 5.5a3 3 0 0 1 0 5.8" />
+        <path d="M18 14a4.5 4.5 0 0 1 2.5 4v2" />
+      </>
+    ),
+    plus: (
+      <>
+        <path d="M12 5v14" />
+        <path d="M5 12h14" />
+      </>
+    ),
+    message: (
+      <>
+        <path d="M4 5.5h16v11H8l-4 3v-14Z" />
+        <path d="M8 10h8" />
+        <path d="M8 13h5" />
+      </>
+    ),
+    book: (
+      <>
+        <path d="M4 5a2 2 0 0 1 2-2h6v16H6a2 2 0 0 0-2 2V5Z" />
+        <path d="M20 5a2 2 0 0 0-2-2h-6v16h6a2 2 0 0 1 2 2V5Z" />
+      </>
+    ),
+    notes: (
+      <>
+        <path d="M6 3h12v18H6z" />
+        <path d="M9 7h6" />
+        <path d="M9 11h6" />
+        <path d="M9 15h4" />
+      </>
+    ),
+    calendar: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M7 3v4M17 3v4M3 10h18" />
+      </>
+    ),
+    clock: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </>
+    ),
+    shield: (
+      <>
+        <path d="m12 3 7 4v5c0 5-3.4 8.4-7 10-3.6-1.6-7-5-7-10V7l7-4Z" />
+        <path d="m9 12 2 2 4-4" />
+      </>
+    ),
+    bulletin: (
+      <>
+        <path d="M6 3h9l3 3v15H6z" />
+        <path d="M15 3v4h4" />
+        <path d="M9 11h6M9 15h6" />
+      </>
+    ),
+    arrow: <path d="m9 18 6-6-6-6" />,
+    logout: (
+      <>
+        <path d="M10 5H5v14h5" />
+        <path d="M13 8l4 4-4 4M17 12H9" />
+      </>
+    ),
+    bell: (
+      <>
+        <path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+        <path d="M10 21h4" />
+      </>
+    ),
+    chevron: <path d="m8 10 4 4 4-4" />,
+    refresh: (
+      <>
+        <path d="M20 6v5h-5" />
+        <path d="M4 18v-5h5" />
+        <path d="M18.5 9A7 7 0 0 0 6 6l-2 3M5.5 15A7 7 0 0 0 18 18l2-3" />
+      </>
+    ),
+    wifi: (
+      <>
+        <path d="M5 12.5a10 10 0 0 1 14 0" />
+        <path d="M8 15.5a6 6 0 0 1 8 0" />
+        <path d="M11 18.5a2 2 0 0 1 2 0" />
+      </>
+    ),
+    check: <path d="m5 12 4 4L19 6" />,
   };
-  const { tone: _t, className, iconLeft, children, ...rest } = p;
+
   return (
-    <button
-      {...rest}
-      className={[
-        "inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-[15px] font-semibold shadow-sm transition-all",
-        "focus:outline-none focus:ring-2 focus:ring-offset-1",
-        "disabled:opacity-60 disabled:cursor-not-allowed",
-        map[tone],
-        className ?? "",
-      ].join(" ")}
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0"
     >
-      {iconLeft}
-      {children}
-    </button>
+      {paths[name]}
+    </svg>
   );
 }
 
-function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
+function initials(value: string) {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function dateFr(value?: string | null, withTime = false) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
+  });
+}
+
+function formatAverage(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(2).replace(".", ",");
+}
+
+function scoreOn20(grade: KidGradeRow) {
+  if (grade.score == null) return null;
+  const score = Number(grade.score);
+  const scale = Number(grade.scale || 20);
+  if (!Number.isFinite(score) || !Number.isFinite(scale) || scale <= 0) return null;
+  return (score / scale) * 20;
+}
+
+function weightedAverage(grades: KidGradeRow[]) {
+  let sum = 0;
+  let weights = 0;
+  for (const grade of grades) {
+    const score = scoreOn20(grade);
+    if (score == null) continue;
+    const coeff = Math.max(1, Number(grade.coeff || 1));
+    sum += score * coeff;
+    weights += coeff;
+  }
+  return weights ? sum / weights : null;
+}
+
+function gradeKindLabel(value: KidGradeRow["eval_kind"]) {
+  if (value === "devoir") return "Devoir";
+  if (value === "interro_ecrite") return "Interrogation écrite";
+  return "Interrogation orale";
+}
+
+function rubricLabel(value: KidPenalty["rubric"]) {
+  if (value === "tenue") return "Tenue";
+  if (value === "moralite") return "Moralité";
+  return "Discipline";
+}
+
+function lessonTypeLabel(value?: string | null) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "revision") return "Révision";
+  if (normalized === "evaluation") return "Évaluation";
+  if (normalized === "remediation") return "Remédiation";
+  if (normalized === "regulation") return "Régulation";
+  return "Leçon";
+}
+
+function lessonTone(value?: string | null) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "revision") return "border-sky-200 bg-sky-50 text-sky-800";
+  if (normalized === "evaluation") return "border-violet-200 bg-violet-50 text-violet-800";
+  if (normalized === "remediation") return "border-amber-200 bg-amber-50 text-amber-800";
+  return "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
+function notificationLabel(item: ParentNotification) {
+  const payload = item.payload || {};
+  const kind = String(
+    payload.kind || payload.event || payload.type || payload.category || "",
+  ).toLowerCase();
+  if (kind.includes("finance") || kind.includes("payment")) return "Finance";
+  if (kind.includes("attendance") || kind.includes("absent") || kind.includes("late")) {
+    return "Absence / retard";
+  }
+  if (kind.includes("penalty") || kind.includes("conduct")) return "Conduite";
+  if (kind.includes("grade") || kind.includes("note")) return "Note";
+  return "Message";
+}
+
+function currentDateOnly() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    credentials: "include",
+    cache: "no-store",
+    ...init,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || payload?.message || "Données indisponibles.");
+  }
+  return payload as T;
+}
+
+function urlBase64ToUint8Array(base64: string) {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const safe = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(safe);
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+
+async function ensurePushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    throw new Error("Les notifications push ne sont pas prises en charge sur cet appareil.");
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("L’autorisation de notification n’a pas été accordée.");
+  }
+
+  let registration = await navigator.serviceWorker.getRegistration();
+  if (!registration) {
+    registration = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, {
+      scope: "/",
+    });
+  }
+  registration = await navigator.serviceWorker.ready;
+
+  const vapid = await fetchJson<{ key?: string }>("/api/push/vapid");
+  if (!vapid.key) throw new Error("Clé de notification indisponible.");
+
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapid.key),
+    });
+  }
+
+  await fetchJson("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      platform: "web",
+      device_id: subscription.endpoint,
+      subscription: subscription.toJSON(),
+    }),
+  });
+}
+
+function PageLoader({ label = "Chargement…" }: { label?: string }) {
   return (
-    <input
-      {...p}
-      className={[
-        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[15px] shadow-sm outline-none transition",
-        "placeholder:text-slate-400",
-        "focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 focus:border-emerald-500",
-        "disabled:cursor-not-allowed disabled:bg-slate-50",
-        p.className ?? "",
-      ].join(" ")}
-    />
+    <div className="grid min-h-[240px] place-items-center rounded-[30px] border border-slate-200 bg-white p-8 shadow-sm">
+      <div className="text-center">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-600" />
+        <div className="mt-4 text-sm font-bold text-slate-600">{label}</div>
+      </div>
+    </div>
   );
 }
 
-function Badge({
-  children,
-  tone = "slate",
+function EmptyState({
+  title,
+  text,
+  icon = "book",
 }: {
-  children: React.ReactNode;
-  tone?: "slate" | "emerald" | "amber" | "rose" | "sky";
+  title: string;
+  text: string;
+  icon?: IconName;
 }) {
-  const toneMap: Record<string, string> = {
-    slate: "bg-slate-100 text-slate-700 ring-slate-200",
-    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    amber: "bg-amber-50 text-amber-800 ring-amber-200",
-    rose: "bg-rose-50 text-rose-700 ring-rose-200",
-    sky: "bg-sky-50 text-sky-700 ring-sky-200",
-  };
   return (
-    <span
-      className={[
-        "inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-semibold ring-1",
-        toneMap[tone],
-      ].join(" ")}
-    >
-      {children}
-    </span>
+    <div className="rounded-[30px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">
+        <Icon name={icon} size={26} />
+      </div>
+      <h3 className="mt-4 text-lg font-black text-slate-900">{title}</h3>
+      <p className="mx-auto mt-2 max-w-lg text-sm font-medium leading-6 text-slate-500">{text}</p>
+    </div>
   );
 }
 
-function Skeleton({ className = "" }: { className?: string }) {
-  return (
-    <div className={`animate-pulse rounded-2xl bg-slate-200/70 ${className}`} />
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
+function SectionHeader({
+  eyebrow,
+  title,
   description,
-  disabled,
+  action,
 }: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
+  eyebrow: string;
+  title: string;
   description?: string;
-  disabled?: boolean;
+  action?: React.ReactNode;
 }) {
+  return (
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">{eyebrow}</div>
+        <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">{title}</h1>
+        {description ? (
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-500">{description}</p>
+        ) : null}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function ChildIdentity({
+  kid,
+  kids,
+  onChange,
+}: {
+  kid: Kid;
+  kids: Kid[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="mb-5 overflow-hidden rounded-[30px] bg-gradient-to-br from-[#003766] via-[#00558f] to-[#0b7b69] p-5 text-white shadow-xl shadow-slate-900/10 sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="grid h-16 w-16 shrink-0 place-items-center rounded-[22px] bg-white/15 text-xl font-black ring-1 ring-white/20">
+            {initials(kid.full_name)}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-black uppercase tracking-[0.2em] text-emerald-100">Enfant sélectionné</div>
+            <div className="mt-1 truncate text-2xl font-black">{kid.full_name}</div>
+            <div className="mt-1 text-sm font-semibold text-white/75">
+              {kid.class_label || "Classe non renseignée"}
+              {kid.matricule ? ` · ${kid.matricule}` : ""}
+            </div>
+          </div>
+        </div>
+
+        {kids.length > 1 ? (
+          <label className="relative block min-w-[220px]">
+            <span className="sr-only">Changer d’enfant</span>
+            <select
+              value={kid.id}
+              onChange={(event) => onChange(event.target.value)}
+              className="w-full appearance-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3 pr-10 text-sm font-bold text-white outline-none backdrop-blur focus:ring-2 focus:ring-white/40"
+            >
+              {kids.map((item) => (
+                <option key={item.id} value={item.id} className="text-slate-900">
+                  {item.full_name} — {item.class_label || "Sans classe"}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+              <Icon name="chevron" size={18} />
+            </span>
+          </label>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ModuleCard({
+  title,
+  description,
+  value,
+  note,
+  icon,
+  tone,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  value: string;
+  note?: string;
+  icon: IconName;
+  tone: "emerald" | "sky" | "amber" | "violet" | "rose" | "slate";
+  onClick: () => void;
+}) {
+  const tones = {
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    sky: "bg-sky-50 text-sky-700 ring-sky-100",
+    amber: "bg-amber-50 text-amber-800 ring-amber-100",
+    violet: "bg-violet-50 text-violet-700 ring-violet-100",
+    rose: "bg-rose-50 text-rose-700 ring-rose-100",
+    slate: "bg-slate-100 text-slate-700 ring-slate-200",
+  } as const;
+
   return (
     <button
       type="button"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={[
-        "flex w-full items-center justify-between gap-3 rounded-2xl border p-3 text-left transition",
-        checked
-          ? "border-emerald-200 bg-emerald-50"
-          : "border-slate-200 bg-white hover:bg-slate-50",
-        disabled ? "opacity-60 cursor-not-allowed" : "",
-      ].join(" ")}
+      onClick={onClick}
+      className="group relative overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5"
     >
-      <div className="min-w-0">
-        <div className="text-[14px] font-bold text-slate-900">{label}</div>
-        {description && (
-          <div className="mt-1 text-[12px] text-slate-600">{description}</div>
-        )}
+      <div className="flex items-start justify-between gap-4">
+        <div className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${tones[tone]}`}>
+          <Icon name={icon} size={23} />
+        </div>
+        <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-slate-900 group-hover:text-white">
+          <Icon name="arrow" size={17} />
+        </span>
       </div>
-
-      <div
-        className={[
-          "relative h-7 w-12 shrink-0 rounded-full transition",
-          checked ? "bg-emerald-500" : "bg-slate-300",
-        ].join(" ")}
-      >
-        <span
-          className={[
-            "absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all",
-            checked ? "left-6" : "left-1",
-          ].join(" ")}
-        />
-      </div>
+      <div className="mt-5 text-xs font-black uppercase tracking-[0.16em] text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-black tracking-tight text-slate-950">{value}</div>
+      <p className="mt-2 text-sm font-semibold leading-5 text-slate-500">{description}</p>
+      {note ? (
+        <div className="mt-4 truncate rounded-2xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-600">{note}</div>
+      ) : null}
     </button>
   );
 }
 
-const IconBell = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-    <path d="M13.73 21a2 2 0 01-3.46 0" />
-  </svg>
-);
-const IconFamily = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M16 20v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-    <circle cx="10" cy="7" r="3" />
-    <path d="M22 20v-2a4 4 0 00-3-3.87" />
-    <path d="M16 4.13a4 4 0 010 7.75" />
-  </svg>
-);
-const IconChild = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <circle cx="12" cy="6.5" r="2.5" />
-    <path d="M9 22v-5l-2.1-1.7A2 2 0 016 13.8l1.2-4A2.2 2.2 0 019.3 8.2h5.4a2.2 2.2 0 012.1 1.6l1.2 4a2 2 0 01-.9 2.5L15 17v5" />
-    <path d="M12 11v11" />
-  </svg>
-);
-const IconPower = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M12 2v10" />
-    <path d="M5.5 7a7 7 0 1013 0" />
-  </svg>
-);
-const IconHome = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M3 11l9-8 9 8" />
-    <path d="M5 12v8h14v-8" />
-  </svg>
-);
-const IconClipboard = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <rect x="8" y="3" width="8" height="4" rx="1" />
-    <rect x="5" y="7" width="14" height="14" rx="2" />
-  </svg>
-);
-const IconBook = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M4 4h10a2 2 0 012 2v14H6a2 2 0 01-2-2V4z" />
-    <path d="M14 4h2a2 2 0 012 2v14" />
-  </svg>
-);
-const IconMenu = () => (
-  <svg
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2.2"
-  >
-    <path d="M4 6h16" />
-    <path d="M4 12h16" />
-    <path d="M4 18h16" />
-  </svg>
-);
-const IconX = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M6 6l12 12" />
-    <path d="M18 6l-12 12" />
-  </svg>
-);
-const IconLock = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M7 11V8a5 5 0 0110 0v3" />
-    <rect x="5" y="11" width="14" height="10" rx="2" />
-  </svg>
-);
-const IconPhone = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.8 19.8 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.8 19.8 0 012.08 4.18 2 2 0 014.06 2h3a2 2 0 012 1.72c.12.9.35 1.77.68 2.6a2 2 0 01-.45 2.11L8.1 9.91a16 16 0 006 6l1.48-1.17a2 2 0 012.11-.45c.83.33 1.7.56 2.6.68A2 2 0 0122 16.92z" />
-  </svg>
-);
-const IconSparkles = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-    <path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16z" />
-    <path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9L5 14z" />
-  </svg>
-);
-const IconShield = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    className="shrink-0"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <path d="M12 3l7 4v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V7l7-4z" />
-  </svg>
-);
-
-/* ————————— Carte “tilt” ————————— */
-function TiltCard({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  const [style, setStyle] = useState<React.CSSProperties>({});
-  const [shineStyle, setShineStyle] = useState<React.CSSProperties>({});
-  const [hasFinePointer, setHasFinePointer] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setHasFinePointer(
-        window.matchMedia?.("(pointer: fine)")?.matches ?? false,
-      );
-    }
-  }, []);
-
-  function onMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (!hasFinePointer) return;
-    const el = e.currentTarget;
-    const rect = el.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width;
-    const py = (e.clientY - rect.top) / rect.height;
-
-    const rotMax = 6;
-    const rx = (py - 0.5) * -2 * rotMax;
-    const ry = (px - 0.5) * 2 * rotMax;
-
-    setStyle({
-      transform: `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(
-        2,
-      )}deg) translateZ(0)`,
-      transition: "transform 60ms linear",
-      transformStyle: "preserve-3d",
-    });
-
-    const x = Math.round(px * rect.width);
-    const y = Math.round(py * rect.height);
-    setShineStyle({
-      background: `radial-gradient(280px circle at ${x}px ${y}px, rgba(255,255,255,0.16), transparent 45%)`,
-    });
-  }
-
-  function onLeave() {
-    setStyle({
-      transform: "rotateX(0deg) rotateY(0deg) translateZ(0)",
-      transition: "transform 160ms ease",
-      transformStyle: "preserve-3d",
-    });
-    setShineStyle({});
-  }
-
-  return (
-    <div
-      style={{ perspective: "1000px" }}
-      className="[transform-style:preserve-3d]"
-      onMouseMove={onMove}
-      onMouseLeave={onLeave}
-    >
-      <div
-        className={`relative rounded-2xl bg-white transition-shadow will-change-transform ${className}`}
-        style={style}
-      >
-        <div
-          className="pointer-events-none absolute inset-0 rounded-2xl"
-          style={shineStyle}
-        />
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/* ————————— PUSH: ensure registration + subscribe + server upsert ————————— */
-async function ensurePushSubscription() {
-  if (typeof window === "undefined") return { ok: false, reason: "ssr" };
-  if (!("serviceWorker" in navigator) || !("PushManager" in window))
-    return { ok: false, reason: "browser_no_push" };
-
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") return { ok: false, reason: "denied" };
-
-  let reg = await navigator.serviceWorker.getRegistration();
-  if (!reg) {
-    try {
-      reg = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
-    } catch (e: any) {
-      return {
-        ok: false,
-        reason: "sw_register_failed:" + (e?.message || e),
-      };
-    }
-  }
-  reg = await navigator.serviceWorker.ready;
-
-  let key = "";
-  try {
-    const r = await fetch("/api/push/vapid", { cache: "no-store" });
-    const j = await r.json();
-    key = String(j?.key || "");
-  } catch {}
-  if (!key) return { ok: false, reason: "no_vapid_key" };
-
-  let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    try {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(key),
-      });
-    } catch (e: any) {
-      return {
-        ok: false,
-        reason: "subscribe_failed:" + (e?.message || e),
-      };
-    }
-  }
-
-  const res = await fetch("/api/push/subscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({
-      platform: "web",
-      device_id: sub.endpoint,
-      subscription: sub.toJSON(),
-    }),
-  });
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-  if (!res.ok) {
-    const err = `${res.status} ${body?.error || ""}${
-      body?.stage ? ` [${body.stage}]` : ""
-    }`;
-    return { ok: false, reason: "server_upsert_failed:" + err };
-  }
-  return { ok: true };
-}
-
-/* ————————— group by day ————————— */
-type DayGroup = {
-  day: string;
-  label: string;
-  absentCount: number;
-  lateCount: number;
-  items: Ev[];
-};
-
-function groupByDay(events: Ev[]): DayGroup[] {
-  const buckets = new Map<string, Ev[]>();
-  for (const ev of events) {
-    const k = dayKey(ev.when);
-    if (!buckets.has(k)) buckets.set(k, []);
-    buckets.get(k)!.push(ev);
-  }
-  const groups: DayGroup[] = [];
-  for (const [k, arr] of buckets) {
-    const ordered = [...arr].sort((a, b) => b.when.localeCompare(a.when));
-    const absentCount = ordered.filter((e) => e.type === "absent").length;
-    const lateCount = ordered.filter((e) => e.type === "late").length;
-    groups.push({
-      day: k,
-      label: dayLabel(ordered[0].when),
-      absentCount,
-      lateCount,
-      items: ordered,
-    });
-  }
-  groups.sort((a, b) => b.day.localeCompare(a.day));
-  return groups;
-}
-
-/* ————————— fetch helpers (notes robustes) ————————— */
-/* ————————— Jauge verticale par rubrique (mobile) ————————— */
-function VerticalGauge({
-  label,
-  value,
-  max,
-  rubric,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  rubric: RubricKey;
-}) {
-  const disabled = !(Number.isFinite(max) && max > 0);
-  const theme = disabled
-    ? { bg: "bg-slate-100", fill: "bg-slate-300", text: "text-slate-500" }
-    : RUBRIC_THEMES[rubric];
-
-  const safeMax = max > 0 ? max : 1;
-  const pct = disabled
-    ? 0
-    : Math.max(0, Math.min(100, (value / safeMax) * 100));
-
-  const fmtNumber = (n: number) => {
-    if (Number.isInteger(n)) return String(n);
-    return n.toFixed(1).replace(".", ",");
-  };
-
-  const vLabel = disabled
-    ? "Désactivée"
-    : `${fmtNumber(value)} / ${fmtNumber(max)} pt${
-        Math.abs(max - 1) < 0.001 ? "" : "s"
-      }`;
-
-  return (
-    <div className="flex min-w-0 flex-1 flex-col items-center">
-      <div className="relative flex h-28 w-10 overflow-hidden rounded-full">
-        <div className={`absolute inset-0 ${theme.bg}`} />
-        <div
-          className={`absolute bottom-0 left-0 right-0 ${theme.fill}`}
-          style={{ height: `${pct}%` }}
-        />
-        {disabled && (
-          <div className="absolute inset-0 grid place-items-center text-slate-500">
-            <IconLock />
-          </div>
-        )}
-      </div>
-      <div className={`mt-2 text-[13px] font-bold leading-tight ${theme.text}`}>
-        {label}
-      </div>
-      <div className="text-[12px] text-slate-600">{vLabel}</div>
-    </div>
-  );
-}
-
-/* ————————— component ————————— */
 export default function ParentPage() {
-  const { isOnline } = useOnlineStatus();
+  const [screen, setScreen] = useState<Screen>("home");
   const [kids, setKids] = useState<Kid[]>([]);
-  const [feed, setFeed] = useState<Record<string, Ev[]>>({});
-  const [kidPenalties, setKidPenalties] = useState<
-    Record<string, KidPenalty[]>
-  >({});
-  const [conduct, setConduct] = useState<Record<string, Conduct>>({});
-  const [kidGrades, setKidGrades] = useState<Record<string, KidGradeRow[]>>(
-    {},
-  );
-  const [kidGradesErr, setKidGradesErr] = useState<Record<string, string>>({});
-
-  const [loadingKids, setLoadingKids] = useState(true);
-  const [loadingConduct, setLoadingConduct] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  // Filtre période conduite (90 jours)
-  const [conductFrom, setConductFrom] = useState<string>("");
-  const [conductTo, setConductTo] = useState<string>("");
-
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showAllDaysForKid, setShowAllDaysForKid] = useState<
-    Record<string, boolean>
-  >({});
-  const [showAllPenForKid, setShowAllPenForKid] = useState<
-    Record<string, boolean>
-  >({});
-
-  // Périodes parent : on travaille par trimestre, pas par semaine/mois.
-  const [gradePeriods, setGradePeriods] = useState<GradePeriod[]>([]);
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
-  const [gradeFrom, setGradeFrom] = useState<string>("");
-  const [gradeTo, setGradeTo] = useState<string>("");
-
-  // Bulletins + cahier de texte visibles côté parent
+  const [selectedKidId, setSelectedKidId] = useState("");
+  const [childData, setChildData] = useState<Record<string, ChildData>>({});
   const [bulletins, setBulletins] = useState<ParentBulletin[]>([]);
-  const [textbookByKid, setTextbookByKid] = useState<Record<string, ParentTextbookProgression[]>>({});
-  const [textbookLoading, setTextbookLoading] = useState(false);
-  const [textbookMsg, setTextbookMsg] = useState<string | null>(null);
-  const [activeTextbookSubject, setActiveTextbookSubject] = useState<string>("");
-
-  // Matière sélectionnée par enfant + détails ouverts dans le cahier de notes
-  const [activeSubjectPerKid, setActiveSubjectPerKid] = useState<
-    Record<string, string | "all" | null>
-  >({});
-  const [expandedGradeSubjects, setExpandedGradeSubjects] = useState<Record<string, boolean>>({});
-
-  // Notifications parent
-  const [granted, setGranted] = useState(false);
+  const [periods, setPeriods] = useState<GradePeriod[]>([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [notifications, setNotifications] = useState<ParentNotification[]>([]);
-  const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsMsg, setNotificationsMsg] = useState<string | null>(null);
-
-  // iOS / standalone
-  const [isiOS, setIsiOS] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
-
-  // logout
-  const [loggingOut, setLoggingOut] = useState(false);
-
-  // Drawer mobile
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-
-  // Sélection enfant + section
-  const [activeChildId, setActiveChildId] = useState<string>("");
-  const [activeSection, setActiveSection] = useState<NavSection>("home");
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
   const [attachMatricule, setAttachMatricule] = useState("");
   const [attachBusy, setAttachBusy] = useState(false);
-  const [attachMsg, setAttachMsg] = useState<string | null>(null);
+  const [attachMessage, setAttachMessage] = useState<string | null>(null);
+  const [messageBusy, setMessageBusy] = useState(false);
+  const [messageNotice, setMessageNotice] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [textbookSubject, setTextbookSubject] = useState("");
+  const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
+  const [showProgression, setShowProgression] = useState(false);
 
-  // SMS premium
-  const [smsLoading, setSmsLoading] = useState(false);
-  const [smsSaving, setSmsSaving] = useState(false);
-  const [smsMsg, setSmsMsg] = useState<string | null>(null);
-  const [smsContacts, setSmsContacts] = useState<ParentNotificationContact[]>(
-    [],
+  const selectedKid = useMemo(
+    () => kids.find((kid) => kid.id === selectedKidId) || kids[0] || null,
+    [kids, selectedKidId],
   );
-  const [smsPrimaryContact, setSmsPrimaryContact] =
-    useState<ParentNotificationContact | null>(null);
-  const [smsSettings, setSmsSettings] = useState<
-    InstitutionNotificationSetting[]
-  >([]);
-  const [smsPreferredInstitutionId, setSmsPreferredInstitutionId] = useState<
-    string | null
-  >(null);
-  const [smsInstitutionId, setSmsInstitutionId] = useState<string>("");
-  const [smsPhone, setSmsPhone] = useState<string>("");
-  const [smsEnabled, setSmsEnabled] = useState<boolean>(true);
 
-  const hasKids = kids.length > 0;
+  const selectedData = selectedKid
+    ? childData[selectedKid.id] || EMPTY_CHILD_DATA
+    : EMPTY_CHILD_DATA;
 
-  const selectedKid = useMemo(() => {
-    if (!kids.length) return null;
-    return kids.find((k) => k.id === activeChildId) || kids[0] || null;
-  }, [kids, activeChildId]);
+  const selectedKidPeriods = useMemo(() => {
+    if (!selectedKid?.institution_id) return periods;
+    const own = periods.filter(
+      (period) => period.institution_id === selectedKid.institution_id,
+    );
+    return own.length ? own : periods;
+  }, [periods, selectedKid?.institution_id]);
 
-  const filteredKids = useMemo(() => {
-    return selectedKid ? [selectedKid] : [];
-  }, [selectedKid]);
+  const selectedPeriod = useMemo(
+    () =>
+      selectedKidPeriods.find((period) => period.id === selectedPeriodId) ||
+      selectedKidPeriods[0] ||
+      null,
+    [selectedKidPeriods, selectedPeriodId],
+  );
 
-  const unreadNotificationsCount = useMemo(
+  const kidBulletins = useMemo(
+    () =>
+      selectedKid
+        ? bulletins.filter((bulletin) => bulletin.student_id === selectedKid.id)
+        : [],
+    [bulletins, selectedKid],
+  );
+
+  const unreadCount = useMemo(
     () => notifications.filter((item) => !item.read_at).length,
     [notifications],
   );
 
+  const primaryActive: PrimaryScreen =
+    screen === "home"
+      ? "home"
+      : screen === "attach"
+        ? "attach"
+        : screen === "messages"
+          ? "messages"
+          : "children";
 
-  const financeReminderCount = useMemo(() => {
-    return notifications.filter((item: any) => {
-      const payload = (item?.payload ?? {}) as Record<string, unknown>;
-      const kind = String(
-        payload.kind ?? payload.event ?? payload.type ?? payload.category ?? "",
-      ).toLowerCase();
+  async function loadInitialData() {
+    setLoadingInitial(true);
+    setGlobalError(null);
+    try {
+      const [kidsPayload, periodPayload, bulletinPayload, notificationPayload] =
+        await Promise.all([
+          fetchJson<{ items?: Kid[] }>("/api/parent/children"),
+          fetchJson<{ items?: GradePeriod[] }>("/api/parent/grading-periods").catch(
+            () => ({ items: [] }),
+          ),
+          fetchJson<{ items?: ParentBulletin[] }>("/api/parent/bulletins").catch(
+            () => ({ items: [] }),
+          ),
+          fetchJson<{ items?: ParentNotification[] }>("/api/parent/notifications").catch(
+            () => ({ items: [] }),
+          ),
+        ]);
 
-      if (
-        kind.includes("finance") ||
-        kind.includes("payment") ||
-        kind.includes("school_fee")
-      ) {
-        return true;
-      }
-
-      const text = `${item?.title ?? ""} ${item?.body ?? ""} ${item?.message ?? ""}`.toLowerCase();
-
-      return (
-        text.includes("rappel financier") ||
-        text.includes("scolarité") ||
-        text.includes("scolarite") ||
-        text.includes("écolage") ||
-        text.includes("ecolage") ||
-        text.includes("solde") ||
-        text.includes("reste à payer") ||
-        text.includes("reste a payer") ||
-        text.includes("internat")
+      const nextKids = Array.isArray(kidsPayload.items) ? kidsPayload.items : [];
+      setKids(nextKids);
+      setSelectedKidId((current) => {
+        if (current && nextKids.some((kid) => kid.id === current)) return current;
+        return nextKids[0]?.id || "";
+      });
+      setPeriods(Array.isArray(periodPayload.items) ? periodPayload.items : []);
+      setBulletins(Array.isArray(bulletinPayload.items) ? bulletinPayload.items : []);
+      setNotifications(
+        Array.isArray(notificationPayload.items) ? notificationPayload.items : [],
       );
-    }).length;
-  }, [notifications]);
-
-  const bulletinsByKid = useMemo(() => {
-    const map = new Map<string, ParentBulletin[]>();
-    for (const item of bulletins) {
-      if (!map.has(item.student_id)) map.set(item.student_id, []);
-      map.get(item.student_id)!.push(item);
+    } catch (error: any) {
+      setGlobalError(error?.message || "Impossible de charger l’espace parent.");
+    } finally {
+      setLoadingInitial(false);
     }
-    return map;
-  }, [bulletins]);
+  }
 
-  const selectedKidBulletins = useMemo(() => {
-    return selectedKid ? bulletinsByKid.get(selectedKid.id) || [] : [];
-  }, [bulletinsByKid, selectedKid]);
+  async function loadNotifications() {
+    const payload = await fetchJson<{ items?: ParentNotification[] }>(
+      "/api/parent/notifications",
+    );
+    setNotifications(Array.isArray(payload.items) ? payload.items : []);
+  }
 
-  const selectedKidTextbook = useMemo(() => {
-    return selectedKid ? textbookByKid[selectedKid.id] || [] : [];
-  }, [textbookByKid, selectedKid]);
+  async function loadChildData(kidId: string, force = false) {
+    const previous = childData[kidId];
+    if (previous?.loading) return;
+    if (!force && previous && !previous.error && previous.timetable) return;
 
-  const selectedKidPeriods = useMemo(() => {
-    if (!selectedKid?.institution_id) return gradePeriods;
-    const own = gradePeriods.filter((p) => p.institution_id === selectedKid.institution_id);
-    return own.length ? own : gradePeriods;
-  }, [gradePeriods, selectedKid?.institution_id]);
+    setChildData((current) => ({
+      ...current,
+      [kidId]: {
+        ...(current[kidId] || EMPTY_CHILD_DATA),
+        loading: true,
+        error: null,
+      },
+    }));
 
-  const activeGradePeriod = useMemo(() => {
-    return selectedKidPeriods.find((p) => p.id === selectedPeriodId) || selectedKidPeriods[0] || null;
-  }, [selectedKidPeriods, selectedPeriodId]);
+    const params = new URLSearchParams({ student_id: kidId });
+    if (selectedPeriod?.id) params.set("period_id", selectedPeriod.id);
+    if (selectedPeriod?.start_date) params.set("from", selectedPeriod.start_date);
+    if (selectedPeriod?.end_date) params.set("to", selectedPeriod.end_date);
 
-  const isHome = activeSection === "home";
-  const isTextbook = activeSection === "textbook";
-  const isConduct = activeSection === "conduct";
-  const isAbsences = activeSection === "absences";
-  const isNotes = activeSection === "notes";
-  const isNotifications = activeSection === "notifications";
+    const eventParams = new URLSearchParams({
+      student_id: kidId,
+      limit: "100",
+      days: "180",
+    });
+    const penaltyParams = new URLSearchParams({ student_id: kidId, limit: "50" });
+    if (selectedPeriod?.start_date) penaltyParams.set("from", selectedPeriod.start_date);
+    if (selectedPeriod?.end_date) penaltyParams.set("to", selectedPeriod.end_date);
 
-  const showTextbookSection = isTextbook;
-  const showConductSection = isConduct;
-  const showEventsSection = isAbsences;
-  const showNotesSection = isNotes;
+    const results = await Promise.allSettled([
+      fetchJson<{ items?: AttendanceEvent[] }>(
+        `/api/parent/children/events?${eventParams.toString()}`,
+      ),
+      fetchJson<{ items?: KidPenalty[] }>(
+        `/api/parent/children/penalties?${penaltyParams.toString()}`,
+      ),
+      fetchJson<{ items?: KidGradeRow[] }>(
+        `/api/parent/children/grades?${params.toString()}`,
+      ),
+      fetchJson<Conduct>(`/api/parent/children/conduct?${params.toString()}`),
+      fetchJson<{ items?: ParentTextbookProgression[] }>(
+        `/api/parent/textbook?student_id=${encodeURIComponent(kidId)}`,
+      ),
+      fetchJson<TimetablePayload>(
+        `/api/parent/timetable?student_id=${encodeURIComponent(kidId)}`,
+      ),
+    ]);
 
-  const sectionMeta: Record<NavSection, { breadcrumb: string; title: string; tab: string }> = {
-    home: { breadcrumb: "Accueil", title: "Bienvenue cher parent", tab: "Accueil" },
-    textbook: { breadcrumb: "Cahier de texte", title: "Cours et progression", tab: "Cahier de texte" },
-    conduct: { breadcrumb: "Conduite", title: "Conduite en temps réel", tab: "Conduite" },
-    absences: { breadcrumb: "Assiduité", title: "Absences et retards", tab: "Assiduité" },
-    notes: { breadcrumb: "Notes", title: "Notes, moyennes et bulletins", tab: "Notes" },
-    notifications: { breadcrumb: "Notifications", title: "Centre de notifications", tab: "Notifications" },
-  };
-
-  const tabs: Array<{
-    key: NavSection;
-    label: string;
-    icon: React.ReactNode;
-    activeClass: string;
-    idleClass: string;
-  }> = [
-    {
-      key: "textbook",
-      label: "Cahier de texte",
-      icon: <IconBook />,
-      activeClass:
-        "bg-gradient-to-r from-[#006633] to-[#0f9f6e] text-white shadow-lg shadow-emerald-900/20",
-      idleClass: "bg-[#e8f8ef] text-[#166534] hover:bg-[#d7f1e2]",
-    },
-    {
-      key: "absences",
-      label: "Absences",
-      icon: <IconClipboard />,
-      activeClass:
-        "bg-gradient-to-r from-[#a16207] to-[#d97706] text-white shadow-lg shadow-amber-900/20",
-      idleClass: "bg-[#fff3db] text-[#9a5d00] hover:bg-[#fde8ba]",
-    },
-    {
-      key: "notes",
-      label: "Notes",
-      icon: <IconBook />,
-      activeClass:
-        "bg-gradient-to-r from-[#003766] to-[#0057a8] text-white shadow-lg shadow-[#003766]/20",
-      idleClass: "bg-[#e7f0fa] text-[#003766] hover:bg-[#d9e8f7]",
-    },
-    {
-      key: "conduct",
-      label: "Conduite",
-      icon: <IconShield />,
-      activeClass:
-        "bg-gradient-to-r from-[#5b21b6] to-[#7c3aed] text-white shadow-lg shadow-violet-900/20",
-      idleClass: "bg-[#f3e8ff] text-[#6d28d9] hover:bg-[#ead8ff]",
-    },
-  ];
-
-  const sideNavItems: Array<{ key: NavSection; label: string; icon: React.ReactNode; tone: string }> = [
-    { key: "home", label: "Accueil", icon: <IconHome />, tone: "bg-sky-100 text-[#003766]" },
-    { key: "textbook", label: "Cahier de texte", icon: <IconBook />, tone: "bg-emerald-100 text-emerald-800" },
-    { key: "absences", label: "Absences & retards", icon: <IconClipboard />, tone: "bg-amber-100 text-amber-800" },
-    { key: "notes", label: "Notes & moyennes", icon: <IconBook />, tone: "bg-blue-100 text-[#003766]" },
-    { key: "conduct", label: "Conduite", icon: <IconShield />, tone: "bg-violet-100 text-violet-800" },
-    { key: "notifications", label: "Notifications", icon: <IconBell />, tone: "bg-orange-100 text-orange-800" },
-  ];
-
-  const currentSectionMeta = sectionMeta[activeSection];
-
-  const smsAnyPremiumEnabled = useMemo(
-    () => smsSettings.some((s) => s.sms_premium_enabled),
-    [smsSettings],
-  );
-
-  const smsActiveSetting = useMemo(() => {
-    if (!smsSettings.length) return null;
-    if (smsInstitutionId) {
-      const byId = smsSettings.find((s) => s.institution_id === smsInstitutionId);
-      if (byId) return byId;
-    }
-    if (smsPreferredInstitutionId) {
-      const preferred = smsSettings.find(
-        (s) => s.institution_id === smsPreferredInstitutionId,
-      );
-      if (preferred) return preferred;
-    }
-    return smsSettings[0] || null;
-  }, [smsSettings, smsInstitutionId, smsPreferredInstitutionId]);
-
-  const smsSummaryLabel = useMemo(() => {
-    if (!smsSettings.length) return "Chargement de la configuration SMS…";
-    if (!smsAnyPremiumEnabled)
-      return "Le module SMS premium n’est pas encore activé par votre établissement.";
-    if (!smsPrimaryContact?.phone_e164)
-      return "Ajoutez votre numéro pour recevoir les alertes SMS premium.";
-    if (!smsPrimaryContact.sms_enabled)
-      return "Votre numéro est enregistré, mais l’envoi SMS est désactivé.";
-    return "Votre numéro principal est prêt pour les alertes SMS premium.";
-  }, [smsSettings, smsAnyPremiumEnabled, smsPrimaryContact]);
-
-  // lock body scroll when drawer open
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const prev = document.body.style.overflow;
-    if (mobileNavOpen) document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
+    const value = <T,>(index: number, fallback: T): T => {
+      const result = results[index];
+      return result.status === "fulfilled" ? (result.value as T) : fallback;
     };
-  }, [mobileNavOpen]);
 
-  // init dates + push states
+    const rejected = results.find((result) => result.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined;
+
+    setChildData((current) => ({
+      ...current,
+      [kidId]: {
+        loading: false,
+        error:
+          results.every((result) => result.status === "rejected")
+            ? rejected?.reason?.message || "Données indisponibles."
+            : null,
+        events: value<{ items?: AttendanceEvent[] }>(0, {}).items || [],
+        penalties: value<{ items?: KidPenalty[] }>(1, {}).items || [],
+        grades: value<{ items?: KidGradeRow[] }>(2, {}).items || [],
+        conduct: value<Conduct | null>(3, null),
+        textbook: value<{ items?: ParentTextbookProgression[] }>(4, {}).items || [],
+        timetable: value<TimetablePayload | null>(5, null),
+      },
+    }));
+  }
+
   useEffect(() => {
-    const today = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 90);
-    const f = yyyyMMdd(start);
-    const t = yyyyMMdd(today);
-    setConductFrom(f);
-    setConductTo(t);
-
-    const refresh = () =>
-      setGranted(
-        typeof Notification !== "undefined" &&
-          Notification.permission === "granted",
-      );
-    refresh();
-
-    setIsiOS(/iphone|ipad|ipod/i.test(navigator.userAgent));
-    const mq = window.matchMedia?.("(display-mode: standalone)");
-    setIsStandalone(!!(mq?.matches || (navigator as any).standalone === true));
-
-    document.addEventListener("visibilitychange", refresh);
-    return () => document.removeEventListener("visibilitychange", refresh);
+    setIsOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+    const online = () => setIsOnline(true);
+    const offline = () => setIsOnline(false);
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    loadInitialData();
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-
-  async function loadConductForAll(
-    kidsList: Kid[] = kids,
-    from?: string,
-    to?: string,
-  ) {
-    setLoadingConduct(true);
-    try {
-      const condEntries: Array<[string, Conduct]> = [];
-      for (const k of kidsList) {
-        const c = await getParentConduct<any>(k.id, from, to).catch(() => ({}));
-        if (c && (c as any).total != null) condEntries.push([k.id, c as Conduct]);
-      }
-      setConduct(Object.fromEntries(condEntries));
-    } finally {
-      setLoadingConduct(false);
-    }
-  }
-
-  async function loadSmsContacts(silent = false) {
-    if (!silent) setSmsLoading(true);
-    try {
-      const res = await fetch("/api/parent/notification-contacts", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const j = (await res.json().catch(() => ({}))) as ParentNotificationContactsResponse;
-
-      if (!res.ok || !j?.ok) {
-        setSmsMsg(j?.error || "Impossible de charger la configuration SMS.");
-        return;
-      }
-
-      const contacts = j.contacts || [];
-      const primary = j.primary_contact || contacts.find((c) => c.is_primary) || null;
-      const settings = j.institution_settings || [];
-      const preferred = j.preferred_institution_id || null;
-
-      setSmsContacts(contacts);
-      setSmsPrimaryContact(primary);
-      setSmsSettings(settings);
-      setSmsPreferredInstitutionId(preferred);
-      setSmsPhone(primary?.phone_e164 || "");
-      setSmsEnabled(primary?.sms_enabled ?? true);
-
-      const chosenInstitutionId =
-        (primary?.institution_id as string | null) ||
-        preferred ||
-        settings[0]?.institution_id ||
-        "";
-
-      setSmsInstitutionId(chosenInstitutionId);
-      if (!silent) setSmsMsg(null);
-    } catch (e: any) {
-      setSmsMsg(e?.message || "Erreur de chargement SMS.");
-    } finally {
-      if (!silent) setSmsLoading(false);
-    }
-  }
-
-  async function loadGradePeriods() {
-    try {
-      const j: any = await getParentGradePeriods();
-      setGradePeriods(Array.isArray(j?.items) ? j.items : []);
-    } catch {
-      setGradePeriods([]);
-    }
-  }
-
-  async function loadBulletins() {
-    try {
-      const j: any = await getParentBulletins();
-      setBulletins(Array.isArray(j?.items) ? j.items : []);
-    } catch {
-      setBulletins([]);
-    }
-  }
-
-  async function loadTextbookForKid(studentId: string, silent = false) {
-    if (!studentId) return;
-    if (!silent) setTextbookLoading(true);
-    setTextbookMsg(null);
-    try {
-      const j = await getParentTextbook<ParentTextbookPayload>(studentId);
-      if (j?.ok === false) throw new Error(j?.error || "Cahier de texte indisponible.");
-      setTextbookByKid((prev) => ({
-        ...prev,
-        [studentId]: Array.isArray(j?.items) ? j.items : [],
-      }));
-    } catch (e: any) {
-      setTextbookMsg(e?.message || "Impossible de charger le cahier de texte.");
-      setTextbookByKid((prev) => ({ ...prev, [studentId]: [] }));
-    } finally {
-      if (!silent) setTextbookLoading(false);
-    }
-  }
-
-
-  async function loadParentNotifications(silent = false) {
-    if (!silent) setNotificationsLoading(true);
-    setNotificationsMsg(null);
-    try {
-      const j: any = await getParentNotifications();
-      setNotifications(Array.isArray(j?.items) ? j.items : []);
-    } catch (e: any) {
-      setNotificationsMsg(e?.message || "Notifications indisponibles.");
-    } finally {
-      if (!silent) setNotificationsLoading(false);
-    }
-  }
-
-  async function markNotificationsRead(ids?: string[]) {
-    const targetIds = (ids?.length ? ids : notifications.filter((item) => !item.read_at).map((item) => item.id)).filter(Boolean);
-    if (!targetIds.length) return;
-    const readAt = new Date().toISOString();
-    setNotifications((prev) =>
-      prev.map((item) =>
-        targetIds.includes(item.id) ? { ...item, read_at: item.read_at || readAt } : item,
-      ),
-    );
-    try {
-      await fetch("/api/parent/notifications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ ids: targetIds }),
-      });
-    } catch {}
-  }
-
-  async function saveSmsContact() {
-    if (!isOnline) {
-      setSmsMsg("Reconnectez Internet pour modifier le numéro SMS.");
+  useEffect(() => {
+    if (!selectedKidPeriods.length) {
+      setSelectedPeriodId("");
       return;
     }
-    setSmsSaving(true);
-    setSmsMsg(null);
-
-    try {
-      const hasExisting = !!smsPrimaryContact?.id;
-      const method = hasExisting ? "PATCH" : "POST";
-
-      const body: any = {
-        phone: smsPhone,
-        institution_id: smsInstitutionId || null,
-        sms_enabled: smsEnabled,
-        is_primary: true,
-      };
-
-      if (hasExisting) body.id = smsPrimaryContact!.id;
-
-      const res = await fetch("/api/parent/notification-contacts", {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(body),
-      });
-
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j?.ok) {
-        setSmsMsg(j?.error || "Impossible d’enregistrer le numéro SMS.");
-        return;
+    setSelectedPeriodId((current) => {
+      if (current && selectedKidPeriods.some((period) => period.id === current)) {
+        return current;
       }
+      const today = currentDateOnly();
+      const active = selectedKidPeriods.find(
+        (period) =>
+          period.start_date &&
+          period.end_date &&
+          period.start_date <= today &&
+          today <= period.end_date,
+      );
+      return (active || selectedKidPeriods[0]).id;
+    });
+  }, [selectedKidPeriods]);
 
-      setSmsMsg("Numéro SMS enregistré avec succès âœ…");
-      await loadSmsContacts(true);
-    } catch (e: any) {
-      setSmsMsg(e?.message || "Erreur lors de l’enregistrement du numéro.");
-    } finally {
-      setSmsSaving(false);
-    }
+  useEffect(() => {
+    if (!selectedKid?.id) return;
+    loadChildData(selectedKid.id, true);
+    setTextbookSubject("");
+    setExpandedLessons({});
+    setShowProgression(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKid?.id, selectedPeriodId]);
+
+  function openPrimary(next: PrimaryScreen) {
+    setScreen(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (next === "messages") loadNotifications().catch(() => undefined);
   }
 
-  async function removeSmsContact() {
-    if (!smsPrimaryContact?.id) return;
+  function openKid(kidId: string) {
+    setSelectedKidId(kidId);
+    setScreen("child");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openChildModule(next: ChildScreen) {
+    setScreen(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function attachChild(event: React.FormEvent) {
+    event.preventDefault();
+    const matricule = attachMatricule.trim().toUpperCase();
+    if (!matricule) return;
     if (!isOnline) {
-      setSmsMsg("Reconnectez Internet pour supprimer le contact SMS.");
-      return;
-    }
-
-    setSmsSaving(true);
-    setSmsMsg(null);
-
-    try {
-      const res = await fetch("/api/parent/notification-contacts", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ id: smsPrimaryContact.id }),
-      });
-
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j?.ok) {
-        setSmsMsg(j?.error || "Impossible de supprimer le contact SMS.");
-        return;
-      }
-
-      setSmsMsg("Contact SMS supprimé.");
-      await loadSmsContacts(true);
-    } catch (e: any) {
-      setSmsMsg(e?.message || "Erreur lors de la suppression du contact.");
-    } finally {
-      setSmsSaving(false);
-    }
-  }
-
-  async function loadKids(from?: string, to?: string): Promise<Kid[]> {
-    setLoadingKids(true);
-    setMsg(null);
-    try {
-      const j: any = await getParentChildren();
-      const ks = (j.items || []) as Kid[];
-      setKids(ks);
-
-      setActiveChildId((prev) => {
-        if (prev && ks.some((k) => k.id === prev)) return prev;
-        if (ks.length > 0) return ks[0].id;
-        return "";
-      });
-
-      const feedEntries: Array<[string, Ev[]]> = [];
-      const penEntries: Array<[string, KidPenalty[]]> = [];
-      const gradeEntries: Array<[string, KidGradeRow[]]> = [];
-      const gradeErrs: Record<string, string> = {};
-
-      for (const k of ks) {
-        const f: any = await getParentEvents(k.id);
-        feedEntries.push([k.id, (f.items || []) as Ev[]]);
-
-        const p: any = await getParentPenalties(k.id).catch(() => ({ items: [] }));
-        penEntries.push([k.id, (p.items || []) as KidPenalty[]]);
-
-        try {
-          const gRes: any = await getParentGrades(k.id);
-          gradeEntries.push([k.id, (gRes?.items || []) as KidGradeRow[]]);
-        } catch (cause: any) {
-          gradeEntries.push([k.id, []]);
-          gradeErrs[k.id] = cause?.message || "Notes indisponibles.";
-        }
-      }
-
-      setFeed(Object.fromEntries(feedEntries));
-      setKidPenalties(Object.fromEntries(penEntries));
-      setKidGrades(Object.fromEntries(gradeEntries));
-      setKidGradesErr(gradeErrs);
-
-      const initialExpanded: Record<string, boolean> = {};
-      for (const [kidId, list] of feedEntries) {
-        const groups = groupByDay(list);
-        for (const g of groups)
-          if (g.items.length === 1) initialExpanded[`${kidId}|${g.day}`] = true;
-      }
-      setExpanded(initialExpanded);
-
-      const useFrom = from || conductFrom;
-      const useTo = to || conductTo;
-      await loadConductForAll(ks, useFrom, useTo);
-      return ks;
-    } catch (e: any) {
-      setMsg(e?.message || "Erreur de chargement.");
-      return [];
-    } finally {
-      setLoadingKids(false);
-    }
-  }
-
-  async function attachChildByMatricule(e?: React.FormEvent) {
-    e?.preventDefault?.();
-    const cleanMatricule = attachMatricule.trim().toUpperCase();
-    if (!cleanMatricule) return;
-    if (!isOnline) {
-      setAttachMsg("Reconnectez Internet pour ajouter un enfant.");
+      setAttachMessage("Une connexion Internet est nécessaire pour ajouter un enfant.");
       return;
     }
 
     setAttachBusy(true);
-    setAttachMsg(null);
-    const beforeIds = new Set(kids.map((k) => k.id));
-
+    setAttachMessage(null);
     try {
-      const res = await fetch("/api/parent/children/attach", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ matricule: cleanMatricule }),
-      });
-
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const err = String(j?.error || "ATTACH_FAILED");
-        setAttachMsg(err === "MATRICULE_NOT_FOUND" ? "Matricule introuvable." : "Impossible d’ajouter cet enfant pour le moment.");
-        return;
-      }
-
-      const refreshedKids = await loadKids(conductFrom, conductTo);
-      const hintedId = String(j?.child?.id || j?.item?.id || j?.student_id || "").trim();
-      const added =
-        refreshedKids.find((k) => k.id === hintedId) ||
-        refreshedKids.find((k) => !beforeIds.has(k.id)) ||
-        refreshedKids.find((k) => k.id !== activeChildId) ||
-        null;
-
-      if (added) {
-        setActiveChildId(added.id);
-        setActiveSection("textbook");
-      }
+      const payload = await fetchJson<{ student_id?: string }>(
+        "/api/parent/children/attach",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ matricule }),
+        },
+      );
+      await loadInitialData();
       setAttachMatricule("");
-      setAttachMsg("Enfant ajouté avec succès.");
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+      setAttachMessage("Enfant ajouté avec succès.");
+      if (payload.student_id) {
+        setSelectedKidId(payload.student_id);
+        setScreen("child");
       }
-    } catch (e: any) {
-      setAttachMsg(e?.message || "Échec de l’ajout. Réessayez.");
+    } catch (error: any) {
+      const message = String(error?.message || "");
+      setAttachMessage(
+        message === "MATRICULE_NOT_FOUND"
+          ? "Matricule introuvable. Vérifiez-le puis réessayez."
+          : "Impossible d’ajouter cet enfant pour le moment.",
+      );
     } finally {
       setAttachBusy(false);
     }
   }
 
-
-  // premier chargement
-  useEffect(() => {
-    if (!conductFrom || !conductTo) return;
-    loadKids(conductFrom, conductTo);
-    loadGradePeriods();
-    loadBulletins();
-    loadParentNotifications(true);
-    if (isOnline) {
-      loadSmsContacts(true);
-      ensurePushSubscription().then((r) => {
-        if (r.ok) setGranted(true);
+  async function markMessagesRead(ids?: string[]) {
+    const targetIds = ids?.length
+      ? ids
+      : notifications.filter((item) => !item.read_at).map((item) => item.id);
+    if (!targetIds.length) return;
+    setMessageBusy(true);
+    try {
+      await fetchJson("/api/parent/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: targetIds }),
       });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conductFrom, conductTo, isOnline]);
-
-  useEffect(() => {
-    if (!selectedKidPeriods.length) return;
-    setSelectedPeriodId((prev) => {
-      if (prev && selectedKidPeriods.some((p) => p.id === prev)) return prev;
-      const today = yyyyMMdd(new Date());
-      const current = selectedKidPeriods.find(
-        (p) => p.start_date && p.end_date && p.start_date <= today && today <= p.end_date,
+      const now = new Date().toISOString();
+      setNotifications((current) =>
+        current.map((item) =>
+          targetIds.includes(item.id) ? { ...item, read_at: now } : item,
+        ),
       );
-      return (current || selectedKidPeriods[0]).id;
-    });
-  }, [selectedKidPeriods]);
-
-  useEffect(() => {
-    if (!activeGradePeriod) return;
-    setGradeFrom(activeGradePeriod.start_date || "");
-    setGradeTo(activeGradePeriod.end_date || "");
-    if (activeGradePeriod.start_date && activeGradePeriod.end_date && kids.length) {
-      loadConductForAll(kids, activeGradePeriod.start_date, activeGradePeriod.end_date);
-      setConductFrom(activeGradePeriod.start_date);
-      setConductTo(activeGradePeriod.end_date);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGradePeriod?.id]);
-
-  useEffect(() => {
-    if (!selectedKid?.id) return;
-    loadTextbookForKid(selectedKid.id, true);
-    setActiveTextbookSubject("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKid?.id]);
-
-  async function enablePush() {
-    setMsg(null);
-    if (!isOnline) {
-      setMsg("Reconnectez Internet pour activer les notifications push.");
-      return;
-    }
-    const r = await ensurePushSubscription();
-    if (r.ok) {
-      setGranted(true);
-      setMsg("Notifications push activées.");
-    } else {
-      setMsg("Activation push impossible: " + r.reason);
+    } catch (error: any) {
+      setMessageNotice(error?.message || "Impossible de mettre les messages à jour.");
+    } finally {
+      setMessageBusy(false);
     }
   }
 
-  /* ————————— Déconnexion “propre” ————————— */
-  async function safeLogout() {
+  async function activatePush() {
+    setMessageBusy(true);
+    setMessageNotice(null);
+    try {
+      await ensurePushSubscription();
+      setMessageNotice("Les notifications sont activées sur cet appareil.");
+    } catch (error: any) {
+      setMessageNotice(error?.message || "Activation impossible.");
+    } finally {
+      setMessageBusy(false);
+    }
+  }
+
+  async function logout() {
     if (loggingOut) return;
     setLoggingOut(true);
-    setMsg("Déconnexion en cours…");
-
-    try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        const sub = await reg?.pushManager.getSubscription();
-        const device_id = sub?.endpoint || "";
-
-        if (device_id) {
-          try {
-            await fetch("/api/push/subscribe", {
-              method: "DELETE",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ device_id }),
-            });
-          } catch {}
-          try {
-            await fetch("/api/push/unsubscribe", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ device_id }),
-            });
-          } catch {}
-        }
-        try {
-          await sub?.unsubscribe();
-        } catch {}
-      }
-
-      try {
-        await fetch("/api/auth/sync", {
-          method: "DELETE",
-          credentials: "include",
-        });
-      } catch {}
-    } finally {
-      await clearParentOfflineData();
-      if (!isOnline) {
-        window.location.replace("/moncahier-offline.html");
-        return;
-      }
-      window.location.assign(LOGOUT_PARENTS);
-      setTimeout(() => {
-        if (document.visibilityState === "visible") {
-          window.location.replace(LOGIN_PARENTS);
-        }
-      }, 1500);
-    }
+    window.location.assign(LOGOUT_PARENTS);
   }
 
-  function selectSection(section: NavSection) {
-    setActiveSection(section);
-    if (section === "notifications") loadParentNotifications(true);
-    if (section === "textbook" && selectedKid) loadTextbookForKid(selectedKid.id, true);
-    setMobileNavOpen(false);
-    if (typeof window !== "undefined")
-      window.scrollTo({ top: 0, behavior: "smooth" });
+  const navItems: Array<{
+    key: PrimaryScreen;
+    label: string;
+    icon: IconName;
+    badge?: number;
+  }> = [
+    { key: "home", label: "Accueil", icon: "home" },
+    { key: "children", label: "Mes enfants", icon: "children" },
+    { key: "attach", label: "Ajouter un enfant", icon: "plus" },
+    { key: "messages", label: "Messages", icon: "message", badge: unreadCount },
+  ];
+
+  const absencesCount = selectedData.events.filter((event) => event.type === "absent").length;
+  const lateEvents = selectedData.events.filter((event) => event.type === "late");
+  const latesCount = lateEvents.length;
+  const lateMinutes = lateEvents.reduce(
+    (sum, event) => sum + Number(event.minutes_late || 0),
+    0,
+  );
+  const overallAverage = weightedAverage(selectedData.grades);
+  const latestGrade = [...selectedData.grades].sort((a, b) =>
+    String(b.eval_date).localeCompare(String(a.eval_date)),
+  )[0];
+  const latestTextbook = selectedData.textbook
+    .flatMap((progression) =>
+      progression.items.flatMap((item) =>
+        (item.sessions || []).map((session) => ({
+          ...session,
+          subject_name: progression.subject_name,
+          item_title: item.title,
+        })),
+      ),
+    )
+    .sort((a, b) =>
+      String(b.session_date || b.created_at || "").localeCompare(
+        String(a.session_date || a.created_at || ""),
+      ),
+    )[0];
+  const latestBulletin = kidBulletins[0] || null;
+  const timetableCount = selectedData.timetable?.items?.length || 0;
+
+  function renderHome() {
+    return (
+      <>
+        <section className="overflow-hidden rounded-[34px] bg-gradient-to-br from-[#003766] via-[#00558f] to-[#0b7b69] p-6 text-white shadow-xl shadow-slate-900/10 sm:p-8">
+          <div className="max-w-2xl">
+            <div className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100">Mon Cahier</div>
+            <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Bienvenue cher parent</h1>
+            <p className="mt-3 text-sm font-semibold leading-6 text-white/75 sm:text-base">
+              Choisissez un enfant pour retrouver immédiatement les informations essentielles de sa scolarité.
+            </p>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => openPrimary("children")}
+              className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-[#003766] shadow-sm transition hover:-translate-y-0.5"
+            >
+              <Icon name="children" size={19} />
+              Voir mes enfants
+            </button>
+            <button
+              type="button"
+              onClick={() => openPrimary("messages")}
+              className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-black text-white backdrop-blur transition hover:bg-white/15"
+            >
+              <Icon name="message" size={19} />
+              {unreadCount ? `${unreadCount} nouveau${unreadCount > 1 ? "x" : ""} message${unreadCount > 1 ? "s" : ""}` : "Voir les messages"}
+            </button>
+          </div>
+        </section>
+
+        <div className="mt-7">
+          <SectionHeader
+            eyebrow="Accès rapide"
+            title="Mes enfants"
+            description="Un clic suffit pour ouvrir le tableau de bord de l’enfant."
+          />
+          {kids.length ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {kids.map((kid) => (
+                <button
+                  key={kid.id}
+                  type="button"
+                  onClick={() => openKid(kid.id)}
+                  className="group rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-1 hover:border-emerald-200 hover:shadow-xl hover:shadow-slate-900/5"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="grid h-14 w-14 place-items-center rounded-[20px] bg-emerald-50 text-lg font-black text-emerald-700 ring-1 ring-emerald-100">
+                      {initials(kid.full_name)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-lg font-black text-slate-950">{kid.full_name}</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-500">{kid.class_label || "Classe non renseignée"}</div>
+                    </div>
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-emerald-600 group-hover:text-white">
+                      <Icon name="arrow" size={17} />
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              icon="plus"
+              title="Aucun enfant ajouté"
+              text="Ajoutez votre enfant avec son matricule pour accéder à son suivi scolaire."
+            />
+          )}
+        </div>
+      </>
+    );
   }
 
-  function openChildSection(childId: string, section: NavSection = "textbook") {
-    setActiveChildId(childId);
-    setActiveSection(section);
-    setMobileNavOpen(false);
-    if (typeof window !== "undefined")
-      window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-
-  function rubricCellValue(val: number, max: number) {
-    if (!(Number.isFinite(max) && max > 0)) return "Désactivée";
-    return val.toFixed(2).replace(".", ",");
-  }
-
-  /* ————————— RENDER ————————— */
-  return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-900 text-[15px]">
-      {/* ————— Drawer mobile ————— */}
-      {mobileNavOpen && (
-        <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative flex h-full w-80 max-w-[86%] flex-col overflow-y-auto overscroll-contain bg-[#003766] text-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/15 px-4 py-4">
-              <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-white">
-                  <IconFamily />
+  function renderChildren() {
+    return (
+      <>
+        <SectionHeader
+          eyebrow="Famille"
+          title="Mes enfants"
+          description="Sélectionnez un enfant pour consulter son suivi."
+          action={
+            <button
+              type="button"
+              onClick={() => openPrimary("attach")}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700"
+            >
+              <Icon name="plus" size={18} />
+              Ajouter un enfant
+            </button>
+          }
+        />
+        {kids.length ? (
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {kids.map((kid, index) => (
+              <button
+                key={kid.id}
+                type="button"
+                onClick={() => openKid(kid.id)}
+                className="group overflow-hidden rounded-[30px] border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-900/5"
+              >
+                <div className={`h-2 ${index % 3 === 0 ? "bg-emerald-500" : index % 3 === 1 ? "bg-sky-500" : "bg-violet-500"}`} />
+                <div className="p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-slate-100 text-xl font-black text-slate-700">
+                      {initials(kid.full_name)}
+                    </div>
+                    <span className="grid h-10 w-10 place-items-center rounded-full bg-slate-50 text-slate-400 transition group-hover:bg-slate-900 group-hover:text-white">
+                      <Icon name="arrow" size={18} />
+                    </span>
+                  </div>
+                  <div className="mt-5 text-xl font-black text-slate-950">{kid.full_name}</div>
+                  <div className="mt-2 inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">
+                    {kid.class_label || "Classe non renseignée"}
+                  </div>
+                  {kid.matricule ? (
+                    <div className="mt-4 text-xs font-bold text-slate-400">Matricule : {kid.matricule}</div>
+                  ) : null}
                 </div>
-                <div className="min-w-0 leading-tight">
-                  <div className="text-[12px] opacity-90">Bienvenue cher parent</div>
-                  <div className="text-[15px] font-extrabold truncate">
-                    Espace parent Mon Cahier
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-white/80">
-                    Cahier de texte, assiduité, notes et bulletins.
-                  </div>
-                  <div className={`mt-1 flex items-center gap-2 text-[12px] ${isOnline ? "text-emerald-200" : "text-amber-200"}`}>
-                    <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`} />
-                    <span>{isOnline ? "En ligne" : "Hors connexion"}</span>
-                  </div>
-                </div>
-              </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            icon="children"
+            title="Aucun enfant lié"
+            text="Utilisez la rubrique Ajouter un enfant pour commencer."
+          />
+        )}
+      </>
+    );
+  }
 
+  function renderAttach() {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <SectionHeader
+          eyebrow="Association"
+          title="Ajouter un enfant"
+          description="Saisissez uniquement le matricule communiqué par l’établissement."
+        />
+        <form
+          onSubmit={attachChild}
+          className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm sm:p-7"
+        >
+          <div className="grid h-16 w-16 place-items-center rounded-[22px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+            <Icon name="plus" size={28} />
+          </div>
+          <label className="mt-6 block text-sm font-black text-slate-800" htmlFor="parent-matricule">
+            Matricule de l’enfant
+          </label>
+          <input
+            id="parent-matricule"
+            value={attachMatricule}
+            onChange={(event) => setAttachMatricule(event.target.value.toUpperCase())}
+            placeholder="Ex. LMA-000101"
+            autoComplete="off"
+            className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-base font-black uppercase tracking-wide text-slate-900 outline-none transition placeholder:font-semibold placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+          />
+          <button
+            type="submit"
+            disabled={attachBusy || !attachMatricule.trim()}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-4 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {attachBusy ? "Ajout en cours…" : "Ajouter l’enfant"}
+          </button>
+          {attachMessage ? (
+            <div className="mt-4 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-bold text-slate-700">{attachMessage}</div>
+          ) : null}
+          <p className="mt-5 text-xs font-semibold leading-5 text-slate-400">
+            Une connexion Internet est obligatoire. Aucune donnée parent n’est enregistrée pour une consultation hors connexion.
+          </p>
+        </form>
+      </div>
+    );
+  }
+
+  function renderMessages() {
+    return (
+      <>
+        <SectionHeader
+          eyebrow="Communication"
+          title="Messages"
+          description="Les alertes et communications de l’établissement sont regroupées ici."
+          action={
+            unreadCount ? (
               <button
                 type="button"
-                aria-label="Fermer le menu"
-                onClick={() => setMobileNavOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10"
+                onClick={() => markMessagesRead()}
+                disabled={messageBusy}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
               >
-                <IconX />
+                Tout marquer comme lu
               </button>
+            ) : null
+          }
+        />
+
+        <div className="mb-5 flex flex-col gap-3 rounded-[26px] border border-emerald-100 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-emerald-700 shadow-sm">
+              <Icon name="bell" size={21} />
             </div>
-
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-                  Navigation
-                </div>
-                <div className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-black text-white/80">
-                  Suivi scolaire
-                </div>
-              </div>
-              <div className="grid gap-2">
-                {sideNavItems.map((item) => {
-                  const active = activeSection === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => selectSection(item.key)}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-[14px] font-extrabold transition",
-                        active ? "bg-white text-[#003766] shadow-sm" : "bg-white/10 text-white hover:bg-white/15",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
-                          active ? item.tone : "bg-white/15 text-white",
-                        ].join(" ")}
-                      >
-                        {item.icon}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.key === "notifications" && unreadNotificationsCount > 0 ? (
-                        <span className="grid min-h-6 min-w-6 place-items-center rounded-full bg-amber-300 px-2 text-[12px] font-black text-[#003766]">
-                          {unreadNotificationsCount > 99 ? "99+" : unreadNotificationsCount}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-                Ajouter un enfant
-              </div>
-              <form onSubmit={attachChildByMatricule} className="space-y-2">
-                <Input
-                  value={attachMatricule}
-                  onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
-                  placeholder="Matricule élève"
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  inputMode="text"
-                  className="border-white/15 bg-white text-slate-900"
-                />
-                <Button
-                  type="submit"
-                  tone="white"
-                  disabled={attachBusy || !attachMatricule.trim()}
-                  className="w-full justify-center rounded-2xl"
-                >
-                  {attachBusy ? "Ajout…" : "Ajouter l’enfant"}
-                </Button>
-              </form>
-              {attachMsg && (
-                <div className="mt-3 rounded-2xl bg-white/10 px-3 py-3 text-[13px] text-white/90">
-                  {attachMsg}
-                </div>
-              )}
-            </div>
-
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-                Enfants
-              </div>
-              <div className="space-y-2">
-                {kids.map((k) => {
-                  const active = activeChildId === k.id;
-                  return (
-                    <button
-                      key={k.id}
-                      onClick={() => {
-                        openChildSection(k.id);
-                      }}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                        active
-                          ? "bg-white/90 text-[#003766]"
-                          : "text-white hover:bg-white/10",
-                      ].join(" ")}
-                    >
-                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-white">
-                        <IconChild />
-                      </div>
-                      <div className="min-w-0 text-left">
-                        <div className="truncate">{k.full_name}</div>
-                        <div className="truncate text-[12px] text-emerald-100">
-                          {k.class_label || "—"}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="h-3 shrink-0" />
-
-            <div className="sticky bottom-0 mt-auto border-t border-white/15 bg-[#003766]/95 px-4 py-4 backdrop-blur">
-              <Button
-                tone="white"
-                onClick={safeLogout}
-                disabled={loggingOut}
-                iconLeft={<IconPower />}
-                className="w-full justify-start rounded-2xl"
-              >
-                {loggingOut ? "Déconnexion…" : "Se déconnecter"}
-              </Button>
-              <div className="mt-4 leading-tight text-white/80">
-                <div className="text-[12px] opacity-80">Développé par</div>
-                <div className="text-[15px] font-extrabold text-amber-300">
-                  Nexa Digital SARL
-                </div>
-              </div>
+            <div>
+              <div className="text-sm font-black text-emerald-950">Recevoir les nouvelles alertes</div>
+              <div className="mt-1 text-xs font-semibold text-emerald-800/70">Activez les notifications sur cet appareil.</div>
             </div>
           </div>
-
           <button
             type="button"
-            aria-label="Fermer le menu"
-            className="flex-1 bg-black/30"
-            onClick={() => setMobileNavOpen(false)}
-          />
+            onClick={activatePush}
+            disabled={messageBusy}
+            className="rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-60"
+          >
+            Activer
+          </button>
         </div>
-      )}
 
-      {/* ————— HEADER PRINCIPAL sticky ————— */}
-      <header className="sticky top-0 z-30 bg-[#003766] text-white shadow">
-        <div className="mx-auto flex w-full max-w-[1680px] items-center justify-between px-3 py-3 sm:px-4 lg:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setMobileNavOpen(true)}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#006633] text-white lg:hidden"
-              aria-label="Ouvrir le menu"
-            >
-              <IconMenu />
-            </button>
+        {messageNotice ? (
+          <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">{messageNotice}</div>
+        ) : null}
 
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 text-white">
-                <IconFamily />
-              </div>
-              <div className="min-w-0 leading-tight">
-                <div className="text-[13px] font-extrabold uppercase tracking-wide">
-                  Mon Cahier
-                </div>
-                <div className="text-[12px] opacity-80 truncate">
-                  Espace parent
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => selectSection("notifications")}
-              className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 text-white transition hover:bg-white/15"
-              aria-label="Ouvrir les notifications"
-            >
-              <IconBell />
-              {unreadNotificationsCount > 0 ? (
-                <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-amber-300 px-1 text-[11px] font-black text-[#003766] ring-2 ring-[#003766]">
-                  {unreadNotificationsCount > 9 ? "9+" : unreadNotificationsCount}
-                </span>
-              ) : null}
-            </button>
-            <div className="text-right leading-tight">
-              <div className="font-extrabold uppercase tracking-[0.25em] text-amber-300 text-[12px]">
-                PARENT
-              </div>
-              <div className="text-[13px] font-bold">2025-2026</div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* ————— CORPS ————— */}
-      <div className="mx-auto grid w-full max-w-[1680px] min-w-0 grid-cols-1 gap-0 px-0 lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-8 lg:px-8">
-        {/* Sidebar desktop */}
-        <aside className="hidden w-full shrink-0 bg-[#003766] text-white lg:sticky lg:top-[88px] lg:my-5 lg:flex lg:max-h-[calc(100vh-108px)] lg:flex-col lg:overflow-y-auto lg:overscroll-contain lg:rounded-[30px] lg:shadow-xl lg:shadow-slate-900/10">
-          <div className="border-b border-white/15 px-4 py-3">
-            <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-white">
-                <IconFamily />
-              </div>
-              <div className="min-w-0 leading-tight">
-                <div className="text-[12px]">Bienvenue cher parent</div>
-                <div className="text-[15px] font-extrabold truncate">
-                  Espace parent Mon Cahier
-                </div>
-                <div className="mt-1 truncate text-[11px] text-white/80">
-                  Cahier de texte, assiduité, notes et bulletins.
-                </div>
-                <div className={`mt-1 flex items-center gap-2 text-[12px] ${isOnline ? "text-emerald-200" : "text-amber-200"}`}>
-                  <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-400" : "bg-amber-300"}`} />
-                  <span>{isOnline ? "En ligne" : "Hors connexion"}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-b border-white/15 px-4 py-3">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-                  Navigation
-                </div>
-                <div className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-black text-white/80">
-                  Suivi scolaire
-                </div>
-              </div>
-              <div className="grid gap-2">
-                {sideNavItems.map((item) => {
-                  const active = activeSection === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => selectSection(item.key)}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-[14px] font-extrabold transition",
-                        active ? "bg-white text-[#003766] shadow-sm" : "bg-white/10 text-white hover:bg-white/15",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "grid h-10 w-10 shrink-0 place-items-center rounded-2xl",
-                          active ? item.tone : "bg-white/15 text-white",
-                        ].join(" ")}
-                      >
-                        {item.icon}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.key === "notifications" && unreadNotificationsCount > 0 ? (
-                        <span className="grid min-h-6 min-w-6 place-items-center rounded-full bg-amber-300 px-2 text-[12px] font-black text-[#003766]">
-                          {unreadNotificationsCount > 99 ? "99+" : unreadNotificationsCount}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-          <div className="border-b border-white/15 px-4 py-3">
-            <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-              Ajouter un enfant
-            </div>
-            <form onSubmit={attachChildByMatricule} className="space-y-2">
-              <Input
-                value={attachMatricule}
-                onChange={(e) => setAttachMatricule(e.target.value.toUpperCase())}
-                placeholder="Matricule élève"
-                autoCapitalize="characters"
-                autoCorrect="off"
-                spellCheck={false}
-                inputMode="text"
-                className="border-white/15 bg-white text-slate-900"
-              />
-              <Button
-                type="submit"
-                tone="white"
-                disabled={attachBusy || !attachMatricule.trim()}
-                className="w-full justify-center rounded-2xl"
+        {notifications.length ? (
+          <div className="space-y-3">
+            {notifications.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => !item.read_at && markMessagesRead([item.id])}
+                className={`w-full rounded-[26px] border p-4 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md ${
+                  item.read_at
+                    ? "border-slate-200 bg-white"
+                    : "border-emerald-200 bg-emerald-50/70"
+                }`}
               >
-                {attachBusy ? "Ajout…" : "Ajouter l’enfant"}
-              </Button>
-            </form>
-            {attachMsg && (
-              <div className="mt-3 rounded-2xl bg-white/10 px-3 py-3 text-[13px] text-white/90">
-                {attachMsg}
-              </div>
-            )}
-          </div>
-
-          <div className="border-b border-white/15 px-4 py-3">
-            <div className="mb-3 text-[12px] font-extrabold uppercase tracking-wide text-amber-200">
-              Enfants
-            </div>
-            <div className="space-y-2">
-              {kids.map((k) => {
-                const active = activeChildId === k.id;
-                return (
-                  <button
-                    key={k.id}
-                    onClick={() => openChildSection(k.id)}
-                    className={[
-                      "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-[14px] font-semibold",
-                      active
-                        ? "bg-white/90 text-[#003766]"
-                        : "text-white hover:bg-white/10",
-                    ].join(" ")}
-                  >
-                    <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-[12px] font-extrabold">
-                      {getInitials(k.full_name)}
-                    </div>
-                    <div className="min-w-0 text-left">
-                      <div className="truncate">{k.full_name}</div>
-                      <div className="truncate text-[12px] text-emerald-100">
-                        {k.class_label || "—"}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="h-3 shrink-0" />
-
-          <div className="sticky bottom-0 mt-auto border-t border-white/15 bg-[#003766]/95 px-4 py-4 backdrop-blur">
-            <Button
-              tone="white"
-              onClick={safeLogout}
-              disabled={loggingOut}
-              iconLeft={<IconPower />}
-              className="w-full justify-start rounded-2xl"
-            >
-              {loggingOut ? "Déconnexion…" : "Se déconnecter"}
-            </Button>
-            <div className="mt-4 leading-tight text-white/80">
-              <div className="text-[12px] opacity-80">Développé par</div>
-              <div className="text-[15px] font-extrabold text-amber-300">
-                Nexa Digital SARL
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* Contenu principal */}
-        <main className="min-w-0 px-3 py-5 pb-8 sm:px-4 lg:px-0 lg:py-6">
-          <OfflineReadinessCard role="parent" className="mb-5" />
-
-          <div className="mb-5 flex flex-col gap-2 rounded-[28px] border border-slate-200 bg-white/95 px-4 py-4 shadow-sm ring-1 ring-white/60 lg:px-5">
-            <div className="text-[12px] text-slate-500">
-              Vous êtes ici : <span className="mx-1">›</span> {currentSectionMeta.breadcrumb}
-            </div>
-            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-              <h1 className="text-2xl font-extrabold text-slate-900">
-                {currentSectionMeta.title}
-              </h1>
-              <div className="text-[14px] font-semibold text-slate-600">
-                {isHome
-                  ? "Cahier de texte, assiduité, notes et bulletins."
-                  : selectedKid?.full_name || "Aucun enfant sélectionné"}
-                {!isHome && selectedKid?.class_label
-                  ? ` · ${selectedKid.class_label}`
-                  : ""}
-              </div>
-            </div>
-          </div>
-
-          {msg && (
-            <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] text-emerald-800">
-              {msg}
-            </div>
-          )}
-
-          {isHome && (
-            <>
-              {(() => {
-                const k = selectedKid;
-                const periodLabel = activeGradePeriod?.short_label || activeGradePeriod?.label || "Période en cours";
-                const periodGrades = k
-                  ? (kidGrades[k.id] || []).filter((g) =>
-                      isInDateRange(g.eval_date, gradeFrom || undefined, gradeTo || undefined),
-                    )
-                  : [];
-                const bulletinForPeriod = k
-                  ? findBulletinForPeriod(
-                      bulletinsByKid.get(k.id) || [],
-                      gradeFrom || undefined,
-                      gradeTo || undefined,
-                      periodLabel,
-                    )
-                  : null;
-                const officialAverage = averageFromBulletin(bulletinForPeriod);
-                const overallAverage = officialAverage ?? weightedAverageOn20(periodGrades);
-                const averageCaption = officialAverage !== null ? "Moyenne bulletin" : "Moyenne provisoire";
-                const latestGrade = latestGradeOf(periodGrades);
-                const periodEvents = k
-                  ? (feed[k.id] || []).filter((ev) =>
-                      isInDateRange(ev.when, conductFrom || undefined, conductTo || undefined),
-                    )
-                  : [];
-                const conductForKid = k ? conduct[k.id] || null : null;
-                const absencesCount = periodEvents.filter((ev) => ev.type === "absent").length;
-                const latesCount = periodEvents.filter((ev) => ev.type === "late").length;
-                const totalLateMinutes = periodEvents.reduce(
-                  (sum, ev) => sum + (ev.type === "late" ? Number(ev.minutes_late || 0) : 0),
-                  0,
-                );
-                const kidTextbook = k ? textbookByKid[k.id] || [] : [];
-                const totalProgressions = kidTextbook.length;
-                const averageProgress = totalProgressions
-                  ? Math.round(kidTextbook.reduce((sum, item) => sum + Number(item.progress_percent || 0), 0) / totalProgressions)
-                  : 0;
-                const latestTextbookSession = kidTextbook
-                  .flatMap((item) => visibleParentSessions(item.items).map((session) => ({ ...session, subject_name: item.subject_name })))
-                  .sort((a, b) => String(b.session_date || "").localeCompare(String(a.session_date || "")) || String(b.created_at || "").localeCompare(String(a.created_at || "")))[0] || null;
-                const homeworkCount = kidTextbook
-                  .flatMap((item) => visibleParentSessions(item.items))
-                  .filter((session) => String(session.homework || "").trim()).length;
-                const latestBulletin = bulletinForPeriod || (k ? (bulletinsByKid.get(k.id) || [])[0] || null : null);
-
-                return (
-                  <>
-                    <section className="mb-5 rounded-[32px] bg-gradient-to-r from-[#003766] via-[#0057a8] to-[#0c7d70] p-5 text-white shadow-sm lg:p-6">
-                      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                        <div className="flex min-w-0 items-start gap-4">
-                          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-[24px] bg-white/15 text-white sm:h-16 sm:w-16">
-                            <IconFamily />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[12px] font-black uppercase tracking-[0.22em] text-amber-300">Espace parent</div>
-                            <h2 className="mt-1 text-2xl font-black">Suivi de votre enfant</h2>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Badge tone="emerald">{kids.length} enfant{kids.length > 1 ? "s" : ""}</Badge>
-                          {periodLabel ? <span className="rounded-full bg-white/12 px-3 py-1 text-[12px] font-bold text-white ring-1 ring-white/10">{periodLabel}</span> : null}
-                        </div>
-                      </div>
-
-                      {k ? (
-                        <div className="mt-5 rounded-[28px] bg-white/10 p-4 ring-1 ring-white/10">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="min-w-0">
-                              <div className="truncate text-lg font-black">{k.full_name}</div>
-                              <div className="mt-1 text-sm text-white/80">{k.class_label || "Classe non précisée"}</div>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => openChildSection(k.id, "textbook")}
-                                className="rounded-2xl bg-white px-4 py-2 text-[13px] font-black text-[#003766] transition hover:bg-white/90"
-                              >
-                                Cahier de texte
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openChildSection(k.id, "absences")}
-                                className="rounded-2xl bg-white/10 px-4 py-2 text-[13px] font-black text-white ring-1 ring-white/15 transition hover:bg-white/15"
-                              >
-                                Absences
-                              </button>
-                              {latestBulletin ? (
-                                <a
-                                  href={latestBulletin.url}
-                                  className="rounded-2xl bg-amber-300 px-4 py-2 text-[13px] font-black text-[#003766] transition hover:bg-amber-200"
-                                >
-                                  Bulletin
-                                </a>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </section>
-
-                    {loadingKids ? (
-                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                        <Skeleton className="h-32 w-full" />
-                        <Skeleton className="h-32 w-full" />
-                        <Skeleton className="h-32 w-full" />
-                        <Skeleton className="h-32 w-full" />
-                      </section>
-                    ) : !hasKids ? (
-                      <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 text-sm text-slate-600 shadow-sm">
-                        Aucun enfant lié à votre compte pour l’instant. Ajoutez un enfant avec son matricule depuis le menu.
-                      </section>
-                    ) : (
-                      <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                        <button
-                          type="button"
-                          onClick={() => k && openChildSection(k.id, "textbook")}
-                          className="rounded-[28px] border border-emerald-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md xl:col-span-2"
-                        >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">Cahier de texte</div>
-                          <div className="mt-2 flex items-end gap-2">
-                            <span className="text-3xl font-black text-slate-950">{averageProgress}%</span>
-                            <span className="pb-1 text-[13px] font-bold text-slate-500">progression</span>
-                          </div>
-                          <div className="mt-2 h-2 rounded-full bg-slate-100">
-                            <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, averageProgress))}%` }} />
-                          </div>
-                          <div className="mt-3 rounded-2xl bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800">
-                            {latestTextbookSession
-                              ? `${latestTextbookSession.subject_name || "Matière"} · ${latestTextbookSession.item_title}`
-                              : totalProgressions
-                                ? `${totalProgressions} progression${totalProgressions > 1 ? "s" : ""} suivie${totalProgressions > 1 ? "s" : ""}`
-                                : "Aucune progression affectée"}
-                          </div>
-                          <div className="mt-2 text-[12px] font-semibold text-slate-500">
-                            {homeworkCount} devoir{homeworkCount > 1 ? "s" : ""} / travail à faire renseigné{homeworkCount > 1 ? "s" : ""}
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => k && openChildSection(k.id, "absences")}
-                          className="rounded-[28px] border border-amber-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                        >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-amber-700">Assiduité</div>
-                          <div className="mt-2 flex items-end gap-2">
-                            <span className="text-2xl font-black text-slate-950">{absencesCount}</span>
-                            <span className="pb-1 text-[13px] font-bold text-slate-500">absence{absencesCount > 1 ? "s" : ""}</span>
-                          </div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                            {latesCount} retard{latesCount > 1 ? "s" : ""}{totalLateMinutes ? ` · ${totalLateMinutes} min` : ""}
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => k && openChildSection(k.id, "notes")}
-                          className="rounded-[28px] border border-sky-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                        >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-sky-700">Notes</div>
-                          <div className="mt-2 text-2xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{averageCaption}</div>
-                          <div className="mt-3 rounded-2xl bg-sky-50 px-3 py-2 text-[13px] font-bold text-sky-800">
-                            {latestGrade ? `${latestGrade.subject_name || "Matière"} · ${formatGradeScore(latestGrade)}` : "Aucune note publiée"}
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => k && openChildSection(k.id, "conduct")}
-                          className="rounded-[28px] border border-violet-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                        >
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-violet-700">Conduite</div>
-                          <div className="mt-2 text-2xl font-black text-slate-950">{conductForKid ? conductForKid.total.toFixed(2).replace(".", ",") : "—"}</div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">{conductForKid?.appreciation || "Temps réel"}</div>
-                        </button>
-
-                        <div className="rounded-[28px] border border-slate-200 bg-white p-4 text-left shadow-sm">
-                          <div className="text-[12px] font-black uppercase tracking-[0.16em] text-slate-600">Bulletin</div>
-                          <div className="mt-2 text-lg font-black text-slate-950">
-                            {latestBulletin ? "Disponible" : "Non disponible"}
-                          </div>
-                          <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                            {latestBulletin?.period_label || "Dernier bulletin publié"}
-                          </div>
-                          {latestBulletin ? (
-                            <a
-                              href={latestBulletin.url}
-                              className="mt-3 inline-flex rounded-2xl bg-slate-900 px-3 py-2 text-[13px] font-black text-white transition hover:bg-slate-800"
-                            >
-                              Ouvrir
-                            </a>
-                          ) : null}
-                        </div>
-                      </section>
-                    )}
-
-                  </>
-                );
-              })()}
-            </>
-          )}
-
-          {selectedKid && !isHome && (
-            <div className="mb-5 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-4 sm:overflow-visible sm:pb-0">
-                {tabs.map((tab) => {
-                  const active = activeSection === tab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => selectSection(tab.key)}
-                      className={[
-                        "flex min-w-[132px] items-center justify-center gap-2 rounded-2xl px-4 py-3 text-center text-[14px] font-extrabold transition-transform duration-150 hover:-translate-y-0.5 sm:min-h-[76px] sm:w-full sm:justify-start sm:gap-3 sm:rounded-[24px] sm:px-5 sm:py-4 sm:text-left",
-                        active ? tab.activeClass : tab.idleClass,
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "grid h-9 w-9 shrink-0 place-items-center rounded-xl sm:h-12 sm:w-12 sm:rounded-2xl",
-                          active ? "bg-white/15 text-white" : "bg-white/70",
-                        ].join(" ")}
-                      >
-                        {tab.icon}
+                <div className="flex items-start gap-3">
+                  <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${item.read_at ? "bg-slate-300" : "bg-emerald-500"}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                        {notificationLabel(item)}
                       </span>
-                      <span className="text-[14px] leading-none sm:text-[17px]">{tab.label}</span>
-                    </button>
-                  );
-                })}
+                      <span className="text-xs font-bold text-slate-400">{dateFr(item.created_at, true)}</span>
+                    </div>
+                    <div className="mt-3 text-base font-black text-slate-950">{item.title || "Information"}</div>
+                    {item.body ? (
+                      <p className="mt-2 whitespace-pre-line text-sm font-medium leading-6 text-slate-600">{item.body}</p>
+                    ) : null}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="message" title="Aucun message" text="Les communications de l’établissement apparaîtront ici." />
+        )}
+      </>
+    );
+  }
+
+  function renderChildDashboard() {
+    if (!selectedKid) {
+      return <EmptyState icon="children" title="Aucun enfant sélectionné" text="Choisissez un enfant dans la rubrique Mes enfants." />;
+    }
+
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        <SectionHeader
+          eyebrow="Tableau de bord"
+          title="Suivi scolaire"
+          description="Toutes les informations sont organisées en six rubriques simples."
+          action={
+            <button
+              type="button"
+              onClick={() => loadChildData(selectedKid.id, true)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <Icon name="refresh" size={17} />
+              Actualiser
+            </button>
+          }
+        />
+
+        {selectedData.loading && !selectedData.timetable ? (
+          <PageLoader label="Chargement du suivi…" />
+        ) : selectedData.error ? (
+          <EmptyState icon="wifi" title="Données indisponibles" text={selectedData.error} />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <ModuleCard
+              title="Absences et retards"
+              value={`${absencesCount} absence${absencesCount > 1 ? "s" : ""}`}
+              description={`${latesCount} retard${latesCount > 1 ? "s" : ""}${lateMinutes ? ` · ${lateMinutes} min` : ""}`}
+              note={selectedData.events[0] ? `Dernier événement : ${dateFr(selectedData.events[0].when)}` : "Aucun événement récent"}
+              icon="clock"
+              tone="amber"
+              onClick={() => openChildModule("absences")}
+            />
+            <ModuleCard
+              title="Cahier de notes"
+              value={`${formatAverage(overallAverage)}/20`}
+              description={selectedPeriod?.short_label || selectedPeriod?.label || "Période en cours"}
+              note={latestGrade ? `${latestGrade.subject_name || "Matière"} · ${latestGrade.score ?? "—"}/${latestGrade.scale || 20}` : "Aucune note publiée"}
+              icon="notes"
+              tone="sky"
+              onClick={() => openChildModule("notes")}
+            />
+            <ModuleCard
+              title="Cahier de texte"
+              value={`${selectedData.textbook.length} matière${selectedData.textbook.length > 1 ? "s" : ""}`}
+              description="Leçons réalisées et taux d’exécution"
+              note={latestTextbook ? `${latestTextbook.subject_name} · ${latestTextbook.item_title}` : "Aucune leçon publiée"}
+              icon="book"
+              tone="emerald"
+              onClick={() => openChildModule("textbook")}
+            />
+            <ModuleCard
+              title="Bulletins"
+              value={latestBulletin ? "Disponible" : "Non disponible"}
+              description={latestBulletin?.period_label || "Dernier bulletin publié"}
+              note={latestBulletin?.general_avg != null ? `Moyenne : ${formatAverage(Number(latestBulletin.general_avg))}/20` : undefined}
+              icon="bulletin"
+              tone="slate"
+              onClick={() => openChildModule("bulletins")}
+            />
+            <ModuleCard
+              title="Emploi du temps"
+              value={`${timetableCount} cours`}
+              description="Tableau hebdomadaire de la classe"
+              note={selectedData.timetable?.academic_year || selectedKid.class_label || undefined}
+              icon="calendar"
+              tone="violet"
+              onClick={() => openChildModule("timetable")}
+            />
+            <ModuleCard
+              title="Sanctions"
+              value={`${selectedData.penalties.length}`}
+              description={selectedData.conduct?.appreciation || "Conduite et sanctions récentes"}
+              note={selectedData.conduct ? `Note de conduite : ${formatAverage(selectedData.conduct.total)}` : "Aucune donnée de conduite"}
+              icon="shield"
+              tone="rose"
+              onClick={() => openChildModule("sanctions")}
+            />
+          </div>
+        )}
+      </>
+    );
+  }
+
+  function moduleBackHeader(title: string, description: string, eyebrow: string) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => openChildModule("child")}
+          className="mb-4 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-600 shadow-sm transition hover:bg-slate-50"
+        >
+          <span className="rotate-180"><Icon name="arrow" size={16} /></span>
+          Retour au suivi
+        </button>
+        <SectionHeader eyebrow={eyebrow} title={title} description={description} />
+      </>
+    );
+  }
+
+  function renderAbsences() {
+    if (!selectedKid) return null;
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Absences et retards", "Les événements récents sont présentés du plus récent au plus ancien.", "Assiduité")}
+        <div className="mb-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-[24px] border border-rose-100 bg-rose-50 p-4">
+            <div className="text-xs font-black uppercase tracking-wide text-rose-700">Absences</div>
+            <div className="mt-2 text-3xl font-black text-rose-950">{absencesCount}</div>
+          </div>
+          <div className="rounded-[24px] border border-amber-100 bg-amber-50 p-4">
+            <div className="text-xs font-black uppercase tracking-wide text-amber-700">Retards</div>
+            <div className="mt-2 text-3xl font-black text-amber-950">{latesCount}</div>
+          </div>
+          <div className="rounded-[24px] border border-sky-100 bg-sky-50 p-4">
+            <div className="text-xs font-black uppercase tracking-wide text-sky-700">Minutes de retard</div>
+            <div className="mt-2 text-3xl font-black text-sky-950">{lateMinutes}</div>
+          </div>
+        </div>
+        {selectedData.events.length ? (
+          <div className="space-y-3">
+            {selectedData.events.map((event) => (
+              <div key={event.id} className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className={`grid h-11 w-11 place-items-center rounded-2xl ${event.type === "absent" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                    <Icon name="clock" size={21} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${event.type === "absent" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                        {event.type === "absent" ? "Absence" : `Retard${event.minutes_late ? ` · ${event.minutes_late} min` : ""}`}
+                      </span>
+                      <span className="text-xs font-bold text-slate-400">{dateFr(event.when, true)}</span>
+                    </div>
+                    <div className="mt-2 text-base font-black text-slate-950">{event.subject_name || "Matière non précisée"}</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-500">{event.class_label || selectedKid.class_label || "Classe"}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="clock" title="Aucune absence ni aucun retard" text="Aucun événement récent n’a été enregistré pour cet enfant." />
+        )}
+      </>
+    );
+  }
+
+  function renderPeriodSelector() {
+    if (!selectedKidPeriods.length) return null;
+    return (
+      <label className="relative block w-full sm:w-auto sm:min-w-[230px]">
+        <span className="sr-only">Période</span>
+        <select
+          value={selectedPeriodId}
+          onChange={(event) => setSelectedPeriodId(event.target.value)}
+          className="w-full appearance-none rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-sm font-black text-slate-700 shadow-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+        >
+          {selectedKidPeriods.map((period) => (
+            <option key={period.id} value={period.id}>
+              {period.short_label || period.label} · {period.academic_year}
+            </option>
+          ))}
+        </select>
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+          <Icon name="chevron" size={17} />
+        </span>
+      </label>
+    );
+  }
+
+  function renderNotes() {
+    if (!selectedKid) return null;
+    const grouped = new Map<string, KidGradeRow[]>();
+    for (const grade of selectedData.grades) {
+      const key = grade.subject_id || grade.subject_name || "unknown";
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(grade);
+    }
+    const subjects = Array.from(grouped.entries())
+      .map(([key, grades]) => ({
+        key,
+        label: grades[0]?.subject_name || "Matière non précisée",
+        grades: [...grades].sort((a, b) => b.eval_date.localeCompare(a.eval_date)),
+        average: weightedAverage(grades),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Cahier de notes", "Les notes sont organisées par matière et par trimestre.", "Résultats")}
+        <div className="mb-5 flex flex-col gap-3 rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-xs font-black uppercase tracking-wide text-slate-500">Moyenne des notes publiées</div>
+            <div className="mt-1 text-3xl font-black text-slate-950">{formatAverage(overallAverage)}/20</div>
+          </div>
+          {renderPeriodSelector()}
+        </div>
+        {subjects.length ? (
+          <div className="space-y-4">
+            {subjects.map((subject) => (
+              <section key={subject.key} className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-4">
+                  <div>
+                    <div className="text-lg font-black text-slate-950">{subject.label}</div>
+                    <div className="mt-1 text-xs font-bold text-slate-400">{subject.grades.length} note{subject.grades.length > 1 ? "s" : ""}</div>
+                  </div>
+                  <div className="rounded-2xl bg-sky-50 px-4 py-2 text-lg font-black text-sky-800 ring-1 ring-sky-100">
+                    {formatAverage(subject.average)}/20
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[650px] border-collapse text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-5 py-3 font-black">Date</th>
+                        <th className="px-5 py-3 font-black">Évaluation</th>
+                        <th className="px-5 py-3 font-black">Intitulé</th>
+                        <th className="px-5 py-3 text-center font-black">Coefficient</th>
+                        <th className="px-5 py-3 text-right font-black">Note</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {subject.grades.map((grade) => (
+                        <tr key={grade.id} className="hover:bg-slate-50/70">
+                          <td className="px-5 py-4 font-semibold text-slate-500">{dateFr(grade.eval_date)}</td>
+                          <td className="px-5 py-4 font-bold text-slate-700">{gradeKindLabel(grade.eval_kind)}</td>
+                          <td className="px-5 py-4 font-semibold text-slate-500">{grade.title || "—"}</td>
+                          <td className="px-5 py-4 text-center font-black text-slate-600">{grade.coeff || 1}</td>
+                          <td className="px-5 py-4 text-right text-base font-black text-slate-950">{grade.score == null ? "—" : `${Number(grade.score).toFixed(2).replace(".", ",")}/${grade.scale || 20}`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="notes" title="Aucune note publiée" text="Les notes apparaîtront ici après leur publication par l’établissement." />
+        )}
+      </>
+    );
+  }
+
+  function renderTextbook() {
+    if (!selectedKid) return null;
+    const subjects = Array.from(
+      new Set<string>(selectedData.textbook.map((item) => String(item.subject_name || "")).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b, "fr"));
+    const subject = subjects.includes(textbookSubject) ? textbookSubject : subjects[0] || "";
+    const progressions = selectedData.textbook.filter((item) => item.subject_name === subject);
+    const planned = progressions.reduce(
+      (sum, item) => sum + Number(item.planned_total_minutes || 0),
+      0,
+    );
+    const completed = progressions.reduce(
+      (sum, item) => sum + Number(item.completed_total_minutes || 0),
+      0,
+    );
+    const progress = planned > 0 ? Math.min(100, Math.round((completed / planned) * 100)) : 0;
+    const items = progressions
+      .flatMap((progression) =>
+        progression.items.map((item) => ({
+          ...item,
+          teacher_name: progression.teacher_name,
+          progression_title: progression.progression.title,
+          document: progression.progression.document,
+        })),
+      )
+      .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+    const lessons = items
+      .flatMap((item) =>
+        (item.sessions || []).map((session) => ({
+          ...session,
+          item_id: item.id,
+          item_title: item.title,
+          item_type: item.item_type,
+          teacher_name: session.teacher_name || item.teacher_name,
+        })),
+      )
+      .sort((a, b) =>
+        String(b.session_date || b.created_at || "").localeCompare(
+          String(a.session_date || a.created_at || ""),
+        ),
+      );
+
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Cahier de texte", "Choisissez une matière, puis ouvrez la leçon qui vous intéresse.", "Cours")}
+        {subjects.length ? (
+          <>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <label className="block text-xs font-black uppercase tracking-[0.16em] text-slate-500" htmlFor="textbook-subject">
+                  Matière
+                </label>
+                <div className="relative mt-2">
+                  <select
+                    id="textbook-subject"
+                    value={subject}
+                    onChange={(event) => {
+                      setTextbookSubject(event.target.value);
+                      setExpandedLessons({});
+                      setShowProgression(false);
+                    }}
+                    className="w-full appearance-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 pr-10 text-base font-black text-slate-900 outline-none focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+                  >
+                    {subjects.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"><Icon name="chevron" size={18} /></span>
+                </div>
+                <div className="mt-4 text-sm font-semibold text-slate-500">
+                  Enseignant : {progressions.map((item) => item.teacher_name).filter(Boolean).join(", ") || "Non renseigné"}
+                </div>
+              </div>
+
+              <div className="rounded-[28px] bg-gradient-to-br from-emerald-600 to-teal-700 p-5 text-white shadow-lg shadow-emerald-900/10">
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-emerald-100">Taux d’exécution</div>
+                <div className="mt-2 text-4xl font-black">{progress}%</div>
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/20">
+                  <div className="h-full rounded-full bg-white transition-all" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mt-3 text-xs font-semibold text-white/75">Avancement de la matière sélectionnée</div>
               </div>
             </div>
-          )}
 
-          {!selectedKid && !loadingKids && !isHome && (
-            <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-6 text-center text-[15px] text-slate-600 shadow-sm">
-              Sélectionnez un enfant pour afficher son tableau de bord.
-            </div>
-          )}
+            <button
+              type="button"
+              onClick={() => setShowProgression((value) => !value)}
+              className="mt-4 inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <Icon name="calendar" size={18} />
+              {showProgression ? "Masquer la progression" : "Voir la progression"}
+            </button>
 
-          {showTextbookSection && selectedKid && (
-            <section className="mb-6 space-y-4">
-              {(() => {
-                const progressions = selectedKidTextbook;
-                const subjects = Array.from(
-                  new Set(progressions.map((p) => p.subject_name).filter(Boolean)),
-                ).sort((a, b) => a.localeCompare(b, "fr"));
-
-                const selectedSubject = subjects.includes(activeTextbookSubject)
-                  ? activeTextbookSubject
-                  : subjects[0] || "";
-                const selectedProgressions = progressions.filter(
-                  (p) => p.subject_name === selectedSubject,
-                );
-                const primaryProgression = selectedProgressions[0] || null;
-
-                const selectedItems = selectedProgressions.flatMap((prog) =>
-                  prog.items.map((item) => ({
-                    ...item,
-                    assignment_id: prog.assignment_id,
-                    progression_title: prog.progression.title,
-                  })),
-                );
-                const sessions = selectedProgressions
-                  .flatMap((prog) =>
-                    visibleParentSessions(prog.items).map((session) => ({
-                      ...session,
-                      subject_name: prog.subject_name,
-                      progression_title: prog.progression.title,
-                    })),
-                  )
-                  .slice(0, 16);
-
-                const plannedMinutes = selectedProgressions.reduce(
-                  (sum, p) => sum + Number(p.planned_total_minutes || 0),
-                  0,
-                );
-                const completedMinutes = selectedProgressions.reduce(
-                  (sum, p) => sum + Number(p.completed_total_minutes || 0),
-                  0,
-                );
-                const progressPercent = plannedMinutes > 0
-                  ? Math.round((completedMinutes / plannedMinutes) * 100)
-                  : 0;
-                const completedItems = selectedItems.filter(
-                  (item) => item.completion?.status === "completed",
-                ).length;
-                const currentItem =
-                  selectedItems.find(
-                    (item) =>
-                      item.completion?.status !== "completed" &&
-                      (item.sessions?.length || 0) > 0,
-                  ) ||
-                  selectedItems.find(
-                    (item) => item.completion?.status !== "completed",
-                  ) ||
-                  null;
-
-                return (
-                  <>
-                    <div className="overflow-hidden rounded-[30px] border border-emerald-100 bg-white shadow-sm">
-                      <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end lg:p-6">
-                        <div className="min-w-0">
-                          <div className="text-[12px] font-black uppercase tracking-[0.18em] text-emerald-700">
-                            Cahier de texte
-                          </div>
-                          <h2 className="mt-1 text-2xl font-black text-slate-950 sm:text-3xl">
-                            Cours et progression
-                          </h2>
-                          <p className="mt-1 text-[14px] font-semibold text-slate-500">
-                            Choisissez une matière pour consulter le cours réalisé et le travail à faire.
-                          </p>
-
-                          {primaryProgression &&
-                          String(primaryProgression.education_type || "general_secondary") !==
-                            "general_secondary" ? (
-                            <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[12px] font-black text-indigo-800">
-                              <span>{primaryProgression.education_label || "Enseignement"}</span>
-                              <span className="text-indigo-400">•</span>
-                              <span>
-                                {primaryProgression.education_context_label ||
-                                  [
-                                    primaryProgression.formation_label,
-                                    primaryProgression.formation_level_label,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" • ")}
-                              </span>
-                            </div>
-                          ) : null}
-
-                          <label className="mt-5 block max-w-xl">
-                            <span className="mb-2 block text-[12px] font-black uppercase tracking-[0.14em] text-slate-600">
-                              Matière
-                            </span>
-                            <select
-                              value={selectedSubject}
-                              onChange={(event) => setActiveTextbookSubject(event.target.value)}
-                              disabled={!subjects.length}
-                              className="h-13 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] font-black text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:bg-slate-100 disabled:text-slate-400"
-                            >
-                              {!subjects.length ? (
-                                <option value="">Aucune matière disponible</option>
-                              ) : null}
-                              {subjects.map((subject) => (
-                                <option key={subject} value={subject}>
-                                  {subject}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+            {showProgression ? (
+              <section className="mt-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Progression</div>
+                    <h2 className="mt-1 text-xl font-black text-slate-950">Étapes de {subject}</h2>
+                  </div>
+                  <div className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-black text-emerald-700">{progress}%</div>
+                </div>
+                <div className="mt-5 space-y-3">
+                  {items.map((item) => {
+                    const completedItem = item.completion?.status === "completed";
+                    const started = (item.sessions?.length || 0) > 0;
+                    return (
+                      <div key={item.id} className="flex items-start gap-3">
+                        <div className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-black ${completedItem ? "bg-emerald-600 text-white" : started ? "bg-amber-100 text-amber-800 ring-1 ring-amber-200" : "bg-slate-100 text-slate-400"}`}>
+                          {completedItem ? <Icon name="check" size={15} /> : started ? "●" : "○"}
                         </div>
+                        <div className="min-w-0 flex-1 border-b border-slate-100 pb-3">
+                          <div className="font-black text-slate-900">{item.title}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-400">{completedItem ? "Terminée" : started ? "En cours" : "À venir"}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {progressions.find((item) => item.progression.document?.signed_url)?.progression.document?.signed_url ? (
+                  <a
+                    href={progressions.find((item) => item.progression.document?.signed_url)?.progression.document?.signed_url || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800"
+                  >
+                    <Icon name="bulletin" size={17} />
+                    Consulter le document de progression
+                  </a>
+                ) : null}
+              </section>
+            ) : null}
 
-                        {primaryProgression ? (
-                          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-                            <div className="min-w-[150px] rounded-3xl bg-emerald-50 px-5 py-4 text-center ring-1 ring-emerald-100">
-                              <div className="text-3xl font-black text-emerald-700">
-                                {progressPercent}%
+            <section className="mt-5">
+              <div className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Leçons réalisées</div>
+              {lessons.length ? (
+                <div className="space-y-3">
+                  {lessons.map((lesson) => {
+                    const open = !!expandedLessons[lesson.id];
+                    return (
+                      <article key={lesson.id} className="overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedLessons((current) => ({
+                              ...Object.fromEntries(Object.keys(current).map((key) => [key, false])),
+                              [lesson.id]: !open,
+                            }))
+                          }
+                          className="flex w-full items-start gap-4 p-4 text-left sm:p-5"
+                        >
+                          <div className={`mt-0.5 rounded-2xl border px-3 py-2 text-xs font-black ${lessonTone(lesson.item_type)}`}>
+                            {lessonTypeLabel(lesson.item_type)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-slate-400">{dateFr(lesson.session_date || lesson.created_at)}</div>
+                            <h3 className="mt-1 text-lg font-black text-slate-950">{lesson.session_title || lesson.item_title}</h3>
+                            <div className="mt-1 text-sm font-semibold text-slate-500">{lesson.teacher_name || "Enseignant non renseigné"}</div>
+                          </div>
+                          <span className={`mt-2 text-slate-400 transition ${open ? "rotate-180" : ""}`}><Icon name="chevron" size={19} /></span>
+                        </button>
+                        {open ? (
+                          <div className="border-t border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+                            <div className="grid gap-4 lg:grid-cols-2">
+                              <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+                                <div className="text-xs font-black uppercase tracking-wide text-emerald-700">Contenu du cours</div>
+                                <div className="mt-3 whitespace-pre-line text-sm font-medium leading-6 text-slate-700">{lesson.content || "Aucun contenu détaillé n’a été renseigné."}</div>
                               </div>
-                              <div className="mt-1 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-800">
-                                Progression
-                              </div>
+                              {lesson.homework ? (
+                                <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
+                                  <div className="text-xs font-black uppercase tracking-wide text-amber-800">Travail à faire</div>
+                                  <div className="mt-3 whitespace-pre-line text-sm font-medium leading-6 text-amber-950">{lesson.homework}</div>
+                                </div>
+                              ) : null}
                             </div>
-                            {primaryProgression.progression.document?.signed_url ? (
-                              <a
-                                href={primaryProgression.progression.document.signed_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex h-12 items-center justify-center rounded-2xl bg-slate-950 px-5 text-[13px] font-black text-white transition hover:bg-slate-800"
-                              >
-                                PDF officiel
-                              </a>
-                            ) : null}
                           </div>
                         ) : null}
-                      </div>
-                    </div>
-
-                    {textbookLoading ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-36" />
-                        <Skeleton className="h-52" />
-                      </div>
-                    ) : textbookMsg ? (
-                      <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5 text-sm font-bold text-rose-700">
-                        {textbookMsg}
-                      </div>
-                    ) : !selectedProgressions.length ? (
-                      <div className="rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-sm">
-                        <div className="text-xl font-black text-slate-950">
-                          Aucune progression disponible
-                        </div>
-                        <p className="mt-2 text-sm font-semibold text-slate-500">
-                          L’établissement doit affecter les progressions à la classe de votre enfant.
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="rounded-[30px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                            <div>
-                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-[#003766]">
-                                {selectedSubject}
-                              </div>
-                              <h3 className="mt-1 text-2xl font-black text-slate-950">
-                                Cours réalisés et devoirs
-                              </h3>
-                            </div>
-                            <div className="text-[13px] font-bold text-slate-500">
-                              {sessions.length} séance{sessions.length > 1 ? "s" : ""} récente{sessions.length > 1 ? "s" : ""}
-                            </div>
-                          </div>
-
-                          <div className="mt-5 space-y-3">
-                            {sessions.length ? (
-                              sessions.map((session) => (
-                                <article
-                                  key={session.id}
-                                  className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
-                                >
-                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div className="min-w-0">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <Badge tone="emerald">
-                                          {itemTypeLabel(session.item_type)}
-                                        </Badge>
-                                        <span className="text-[12px] font-black text-slate-500">
-                                          {dateFr(session.session_date)}
-                                          {session.session_period_label
-                                            ? ` · ${session.session_period_label}`
-                                            : ""}
-                                        </span>
-                                      </div>
-                                      <h4 className="mt-2 text-lg font-black text-slate-950 sm:text-xl">
-                                        {session.item_title}
-                                      </h4>
-                                      {session.teacher_name ? (
-                                        <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                                          {session.teacher_name}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </div>
-
-                                  <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.42fr)]">
-                                    <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-                                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
-                                        Contenu du cours
-                                      </div>
-                                      <p className="mt-2 whitespace-pre-wrap text-[15px] font-semibold leading-7 text-slate-800">
-                                        {String(session.content || "Aucun contenu détaillé n’a encore été renseigné.")}
-                                      </p>
-                                    </div>
-                                    <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
-                                      <div className="text-[11px] font-black uppercase tracking-[0.14em] text-amber-700">
-                                        Travail à faire
-                                      </div>
-                                      <p className="mt-2 whitespace-pre-wrap text-[15px] font-bold leading-7 text-amber-950">
-                                        {String(session.homework || "Aucun exercice indiqué pour cette séance.")}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </article>
-                              ))
-                            ) : (
-                              <div className="rounded-3xl bg-slate-50 p-7 text-center ring-1 ring-slate-200">
-                                <div className="text-lg font-black text-slate-900">
-                                  Aucun cours renseigné pour le moment
-                                </div>
-                                <p className="mt-2 text-sm font-semibold text-slate-500">
-                                  Les séances saisies par l’enseignant apparaîtront ici.
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="rounded-[30px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6">
-                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="min-w-0">
-                              <div className="text-[12px] font-black uppercase tracking-[0.16em] text-emerald-700">
-                                Avancement
-                              </div>
-                              <h3 className="mt-1 text-2xl font-black text-slate-950">
-                                Progression de la classe
-                              </h3>
-                              <p className="mt-1 text-sm font-semibold text-slate-500">
-                                {primaryProgression?.progression.title}
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 sm:min-w-[330px]">
-                              <div className="rounded-2xl bg-slate-50 p-3 text-center ring-1 ring-slate-200">
-                                <div className="text-xl font-black text-slate-950">
-                                  {completedItems}/{selectedItems.length}
-                                </div>
-                                <div className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">
-                                  Étapes terminées
-                                </div>
-                              </div>
-                              <div className="rounded-2xl bg-emerald-50 p-3 text-center ring-1 ring-emerald-100">
-                                <div className="text-xl font-black text-emerald-800">
-                                  {formatHoursFromMinutes(completedMinutes)} / {formatHoursFromMinutes(plannedMinutes)}
-                                </div>
-                                <div className="text-[10px] font-black uppercase tracking-[0.1em] text-emerald-700">
-                                  Volume prévu
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
-                            <div
-                              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all"
-                              style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }}
-                            />
-                          </div>
-
-                          {currentItem ? (
-                            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                              <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
-                                Étape actuelle
-                              </div>
-                              <div className="mt-1 text-[16px] font-black text-emerald-950">
-                                {currentItem.title}
-                              </div>
-                              <div className="mt-1 text-[13px] font-semibold text-emerald-800">
-                                {[currentItem.trimester, currentItem.month_label, currentItem.week_label]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <details className="group mt-4 rounded-2xl border border-slate-200 bg-white">
-                            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 text-[14px] font-black text-slate-900">
-                              <span>Voir toute la progression</span>
-                              <span className="text-slate-400 transition group-open:rotate-180">⌄</span>
-                            </summary>
-                            <div className="border-t border-slate-100 p-3 sm:p-4">
-                              <div className="space-y-2">
-                                {selectedItems.map((item, index) => {
-                                  const done = item.completion?.status === "completed";
-                                  const started = (item.sessions?.length || 0) > 0;
-                                  return (
-                                    <div
-                                      key={`${item.assignment_id}-${item.id}`}
-                                      className="grid gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3 sm:grid-cols-[42px_minmax(0,1fr)_auto] sm:items-center"
-                                    >
-                                      <div
-                                        className={[
-                                          "grid h-9 w-9 place-items-center rounded-full text-[12px] font-black",
-                                          done
-                                            ? "bg-emerald-600 text-white"
-                                            : started
-                                              ? "bg-amber-100 text-amber-800"
-                                              : "bg-white text-slate-500 ring-1 ring-slate-200",
-                                        ].join(" ")}
-                                      >
-                                        {done ? "✓" : index + 1}
-                                      </div>
-                                      <div className="min-w-0">
-                                        <div className="text-[14px] font-black text-slate-900">
-                                          {item.title}
-                                        </div>
-                                        <div className="mt-1 text-[12px] font-semibold text-slate-500">
-                                          {[itemTypeLabel(item.item_type), item.trimester, item.week_label]
-                                            .filter(Boolean)
-                                            .join(" · ")}
-                                        </div>
-                                      </div>
-                                      <div
-                                        className={[
-                                          "w-fit rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em]",
-                                          done
-                                            ? "bg-emerald-100 text-emerald-800"
-                                            : started
-                                              ? "bg-amber-100 text-amber-800"
-                                              : "bg-slate-200 text-slate-600",
-                                        ].join(" ")}
-                                      >
-                                        {done ? "Terminée" : started ? "En cours" : "À venir"}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          </details>
-                        </div>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-            </section>
-          )}
-
-          {isNotifications && (
-            <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
-              <div className="flex items-center gap-4">
-                <div className="grid h-14 w-14 place-items-center rounded-3xl bg-[#e7f0fa] text-[#003766]">
-                  <IconPhone />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-extrabold text-slate-900">
-                    Préférences notifications
-                  </h2>
-                  <div className="mt-1 text-[14px] text-slate-500">
-                    {smsPrimaryContact?.phone_e164
-                      ? formatPhoneForDisplay(smsPrimaryContact.phone_e164)
-                      : "Aucun numéro enregistré"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div
-                      className={[
-                        "grid h-12 w-12 shrink-0 place-items-center rounded-2xl shadow-sm",
-                        granted ? "bg-emerald-100 text-emerald-700" : "bg-white text-[#003766]",
-                      ].join(" ")}
-                    >
-                      <IconBell />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-[16px] font-extrabold text-slate-900">
-                        Notifications push
-                      </div>
-                      <div className="mt-1 text-[14px] text-slate-500">
-                        {granted
-                          ? "Activées sur cet appareil"
-                          : "Non activées sur cet appareil"}
-                      </div>
-                    </div>
-                  </div>
-
-                  {granted ? (
-                    <Badge tone="emerald">Activées</Badge>
-                  ) : (
-                    <Button
-                      type="button"
-                      tone="outline"
-                      onClick={enablePush}
-                      iconLeft={<IconBell />}
-                      className="sm:min-w-[220px]"
-                    >
-                      Activer les push
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-5">
-                <label className="mb-2 block text-[13px] font-extrabold uppercase tracking-wide text-slate-600">
-                  Numéro à rattacher
-                </label>
-                <Input
-                  value={smsPhone}
-                  onChange={(e) => setSmsPhone(e.target.value)}
-                  placeholder="Ex : +2250713023762"
-                  inputMode="tel"
-                  className="h-14 text-[16px]"
-                />
-              </div>
-
-              <div className="mt-4">
-                <Toggle
-                  checked={smsEnabled}
-                  onChange={setSmsEnabled}
-                  label={smsEnabled ? "SMS activés" : "SMS désactivés"}
-                  description="Activer ou couper les SMS sur ce numéro."
-                />
-              </div>
-
-              <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-                <Button
-                  type="button"
-                  tone="emerald"
-                  onClick={saveSmsContact}
-                  disabled={smsSaving || smsLoading || !smsPhone.trim()}
-                  iconLeft={<IconPhone />}
-                  className="sm:min-w-[220px]"
-                >
-                  {smsSaving ? "Enregistrement…" : "Enregistrer"}
-                </Button>
-
-                {smsPrimaryContact?.id ? (
-                  <Button
-                    type="button"
-                    tone="white"
-                    onClick={removeSmsContact}
-                    disabled={smsSaving}
-                    className="sm:min-w-[190px]"
-                  >
-                    Supprimer
-                  </Button>
-                ) : null}
-              </div>
-
-              {smsMsg && (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                  {smsMsg}
-                </div>
-              )}
-            </section>
-          )}
-
-          {isNotifications && (
-            <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-[12px] font-black uppercase tracking-[0.16em] text-amber-800 ring-1 ring-amber-200">
-                    <IconBell />
-                    Notifications parent
-                  </div>
-                  <h2 className="mt-3 text-xl font-black text-slate-900">Alertes, messages et rappels financiers</h2>
-                  <p className="mt-1 max-w-2xl text-[14px] leading-6 text-slate-600">
-                    Les rappels de solde scolarité et internat apparaissent ici chaque mois.
-                    Si l’établissement a activé le SMS premium pour les rappels financiers, le parent peut aussi recevoir le rappel par SMS.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" tone="outline" onClick={() => loadParentNotifications(false)} disabled={notificationsLoading}>
-                    {notificationsLoading ? "Actualisation…" : "Actualiser"}
-                  </Button>
-                  <Button type="button" tone="slate" onClick={() => markNotificationsRead()} disabled={!unreadNotificationsCount}>
-                    Tout marquer lu
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mb-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">Total</div>
-                  <div className="mt-1 text-2xl font-black text-slate-900">{notifications.length}</div>
-                </div>
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-amber-700">Non lues</div>
-                  <div className="mt-1 text-2xl font-black text-amber-900">{unreadNotificationsCount}</div>
-                </div>
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <div className="text-[12px] font-bold uppercase tracking-wide text-emerald-700">Rappels financiers</div>
-                  <div className="mt-1 text-2xl font-black text-emerald-900">{financeReminderCount}</div>
-                </div>
-              </div>
-
-              {notificationsMsg ? (
-                <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[14px] text-rose-800">
-                  {notificationsMsg}
-                </div>
-              ) : null}
-
-              {notificationsLoading && !notifications.length ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                </div>
-              ) : !notifications.length ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-[14px] text-slate-600">
-                  Aucune notification pour le moment.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {notifications.map((item) => {
-                    const tone = notificationTone(item.payload, item.severity);
-                    const isUnread = !item.read_at;
-                    return (
-                      <article
-                        key={item.id}
-                        className={[
-                          "rounded-2xl border px-4 py-4 transition",
-                          isUnread ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white",
-                        ].join(" ")}
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <Badge tone={tone}>{notificationKindLabel(item.payload)}</Badge>
-                              {isUnread ? <Badge tone="amber">Non lue</Badge> : <Badge>Déjà lue</Badge>}
-                              <span className="text-[12px] font-semibold text-slate-500">
-                                {formatNotificationDate(item.created_at)}
-                              </span>
-                            </div>
-                            <h3 className="text-[16px] font-black text-slate-900">
-                              {item.title || "Notification"}
-                            </h3>
-                            {item.body ? (
-                              <p className="mt-1 text-[14px] leading-6 text-slate-700">{item.body}</p>
-                            ) : null}
-                            {item.payload?.url ? (
-                              <a
-                                href={String(item.payload.url)}
-                                className="mt-3 inline-flex text-[13px] font-black text-[#003766] underline-offset-4 hover:underline"
-                              >
-                                Ouvrir le détail
-                              </a>
-                            ) : null}
-                          </div>
-                          {isUnread ? (
-                            <Button
-                              type="button"
-                              tone="white"
-                              className="shrink-0 rounded-2xl px-3 py-2 text-[13px]"
-                              onClick={() => markNotificationsRead([item.id])}
-                            >
-                              Marquer lu
-                            </Button>
-                          ) : null}
-                        </div>
                       </article>
                     );
                   })}
                 </div>
+              ) : (
+                <EmptyState icon="book" title="Aucune leçon publiée" text="Les leçons réalisées dans cette matière apparaîtront ici." />
               )}
             </section>
-          )}
+          </>
+        ) : (
+          <EmptyState icon="book" title="Cahier de texte vide" text="Aucune matière n’est encore disponible pour cet enfant." />
+        )}
+      </>
+    );
+  }
 
-          {/* ————— CONDUITE ————— */}
+  function renderBulletins() {
+    if (!selectedKid) return null;
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Bulletins", "Consultez les bulletins publiés par l’établissement.", "Documents")}
+        {kidBulletins.length ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {kidBulletins.map((bulletin) => (
+              <article key={bulletin.code} className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-700"><Icon name="bulletin" size={23} /></div>
+                <div className="mt-5 text-xs font-black uppercase tracking-[0.16em] text-slate-500">{bulletin.academic_year || "Année scolaire"}</div>
+                <div className="mt-2 text-xl font-black text-slate-950">{bulletin.period_label}</div>
+                {bulletin.general_avg != null ? (
+                  <div className="mt-3 text-sm font-bold text-slate-600">Moyenne générale : <span className="text-lg font-black text-slate-950">{formatAverage(Number(bulletin.general_avg))}/20</span></div>
+                ) : null}
+                <div className="mt-2 text-xs font-semibold text-slate-400">Publié le {dateFr(bulletin.created_at)}</div>
+                <a href={bulletin.url} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800">
+                  Ouvrir le bulletin
+                  <Icon name="arrow" size={16} />
+                </a>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="bulletin" title="Aucun bulletin disponible" text="Les bulletins apparaîtront ici après leur publication." />
+        )}
+      </>
+    );
+  }
 
-          {showConductSection && (
-            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
-                    Conduite — points par rubrique
-                  </div>
-                  <div className="mt-1 text-[13px] text-slate-500">
-                    Filtre par trimestre de l’année scolaire.
-                  </div>
-                </div>
+  function renderTimetable() {
+    if (!selectedKid) return null;
+    const timetable = selectedData.timetable;
+    const timetablePeriods = timetable?.periods || [];
+    const timetableItems = timetable?.items || [];
+    const byCell = new Map<string, TimetableItem[]>();
+    for (const item of timetableItems) {
+      const key = `${item.weekday}|${item.period_key}`;
+      if (!byCell.has(key)) byCell.set(key, []);
+      byCell.get(key)!.push(item);
+    }
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {selectedKidPeriods.length ? (
-                    <select
-                      value={activeGradePeriod?.id || ""}
-                      onChange={(e) => setSelectedPeriodId(e.target.value)}
-                      className="h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 sm:min-w-[190px]"
-                    >
-                      {selectedKidPeriods.map((period) => (
-                        <option key={period.id} value={period.id}>
-                          {period.short_label || period.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="rounded-2xl bg-slate-100 px-4 py-2 text-[13px] font-bold text-slate-600">
-                      Trimestres non configurés
-                    </div>
-                  )}
-                  {conductFrom && conductTo ? (
-                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-center text-[12px] font-bold text-slate-600 sm:text-left">
-                      {dateFr(conductFrom)} au {dateFr(conductTo)}
-                    </span>
-                  ) : null}
-                </div>
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Emploi du temps", "Le tableau hebdomadaire officiel de la classe.", "Organisation")}
+        {timetablePeriods.length ? (
+          <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-lg font-black text-slate-950">{timetable?.class_label || selectedKid.class_label || "Classe"}</div>
+                <div className="mt-1 text-xs font-bold text-slate-400">{timetable?.academic_year || "Année scolaire en cours"}</div>
               </div>
-
-
-              {loadingKids ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                </div>
-              ) : !hasKids ? (
-                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant lié à votre compte pour l’instant.
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-4 md:hidden">
-                    {filteredKids.map((k) => {
-                      const c = conduct[k.id];
-                      return (
-                        <div
-                          key={k.id}
-                          className="rounded-2xl border border-slate-200 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-extrabold text-slate-900 text-[16px]">
-                                {k.full_name}
-                              </div>
-                              <div className="text-[13px] text-slate-600">
-                                {k.class_label || "—"}
-                              </div>
-                            </div>
-                            {c ? (
-                              <Badge tone="emerald">Points de conduite</Badge>
-                            ) : (
-                              <Badge>—</Badge>
-                            )}
-                          </div>
-
-                          {c ? (
-                            <div className="mt-4 space-y-4">
-                              <div className="grid grid-cols-2 gap-4">
-                                <VerticalGauge
-                                  label="Assiduité"
-                                  value={c.breakdown.assiduite}
-                                  max={c.rubric_max.assiduite}
-                                  rubric="assiduite"
-                                />
-                                <VerticalGauge
-                                  label="Tenue"
-                                  value={c.breakdown.tenue}
-                                  max={c.rubric_max.tenue}
-                                  rubric="tenue"
-                                />
-                                <VerticalGauge
-                                  label="Moralité"
-                                  value={c.breakdown.moralite}
-                                  max={c.rubric_max.moralite}
-                                  rubric="moralite"
-                                />
-                                <VerticalGauge
-                                  label="Discipline"
-                                  value={c.breakdown.discipline}
-                                  max={c.rubric_max.discipline}
-                                  rubric="discipline"
-                                />
-                              </div>
-
-                              <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[14px] text-slate-700">
-                                <span className="font-extrabold">
-                                  Appréciation :{" "}
-                                </span>
-                                {c.appreciation}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="mt-3 text-[15px] text-slate-600">
-                              —
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-3 hidden overflow-x-auto rounded-2xl border md:block">
-                    {(() => {
-                      const anyConduct = filteredKids
-                        .map((k) => conduct[k.id])
-                        .find(Boolean);
-                      const rubricMax =
-                        anyConduct?.rubric_max ?? {
-                          assiduite: 6,
-                          tenue: 3,
-                          moralite: 4,
-                          discipline: 7,
-                        };
-
-                      return (
-                        <table className="min-w-full text-[14px]">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="px-4 py-3 text-left">Enfant</th>
-                              <th className="px-4 py-3 text-left">Classe</th>
-                              <th className="px-4 py-3 text-left">
-                                Assiduité (/{rubricMax.assiduite})
-                              </th>
-                              <th className="px-4 py-3 text-left">
-                                Tenue (/{rubricMax.tenue})
-                              </th>
-                              <th className="px-4 py-3 text-left">
-                                Moralité (/{rubricMax.moralite})
-                              </th>
-                              <th className="px-4 py-3 text-left">
-                                Discipline (/{rubricMax.discipline})
-                              </th>
-                              <th className="px-4 py-3 text-left">
-                                Appréciation
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white">
-                            {filteredKids.map((k) => {
-                              const c = conduct[k.id];
-                              return (
-                                <tr
-                                  key={k.id}
-                                  className="border-t last:border-b-0"
-                                >
-                                  <td className="px-4 py-3 font-semibold">
-                                    {k.full_name}
-                                  </td>
-                                  <td className="px-4 py-3">
-                                    {k.class_label || "—"}
-                                  </td>
-                                  {c ? (
-                                    <>
-                                      <td className="px-4 py-3">
-                                        {rubricCellValue(
-                                          c.breakdown.assiduite,
-                                          c.rubric_max.assiduite,
-                                        )}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {rubricCellValue(
-                                          c.breakdown.tenue,
-                                          c.rubric_max.tenue,
-                                        )}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {rubricCellValue(
-                                          c.breakdown.moralite,
-                                          c.rubric_max.moralite,
-                                        )}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {rubricCellValue(
-                                          c.breakdown.discipline,
-                                          c.rubric_max.discipline,
-                                        )}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {c.appreciation}
-                                      </td>
-                                    </>
-                                  ) : (
-                                    <td
-                                      className="px-4 py-3 text-slate-600"
-                                      colSpan={5}
-                                    >
-                                      —
-                                    </td>
-                                  )}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      );
-                    })()}
-                  </div>
-                </>
-              )}
-            </section>
-          )}
-
-          {/* ————— ABSENCES / SANCTIONS ————— */}
-          {showEventsSection && (
-            <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              {(() => {
-                const title = "Assiduité — absences et retards du trimestre";
-
-                return (
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div className="text-[13px] font-extrabold uppercase tracking-wide text-slate-700">
-                      {title}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {granted ? (
-                        <Badge tone="emerald">Push activées</Badge>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {loadingKids ? (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <Skeleton className="h-44 w-full" />
-                  <Skeleton className="h-44 w-full" />
-                  <Skeleton className="h-44 w-full" />
-                </div>
-              ) : !hasKids ? (
-                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant lié à votre compte pour l’instant.
-                </div>
-              ) : (
-                <div className="space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0 xl:grid-cols-3">
-                  {filteredKids.map((k, i) => {
-                    const periodEvents = (feed[k.id] || []).filter((ev) =>
-                      isInDateRange(ev.when, conductFrom || undefined, conductTo || undefined),
-                    );
-                    const groups = groupByDay(periodEvents);
-                    const absencesCount = periodEvents.filter((ev) => ev.type === "absent").length;
-                    const latesCount = periodEvents.filter((ev) => ev.type === "late").length;
-                    const totalLateMinutes = periodEvents.reduce(
-                      (sum, ev) => sum + (ev.type === "late" ? Number(ev.minutes_late || 0) : 0),
-                      0,
-                    );
-                    const sanctionsCount = kidPenalties[k.id]?.length || 0;
-                    const showAll = !!showAllDaysForKid[k.id];
-                    const visibleGroups = showAll ? groups : groups.slice(0, 3);
-                    const t = themeFor(i);
-                    const gradesForKid = kidGrades[k.id] || [];
-
-                    const showEventsBlock = true;
-                    const showSanctionsBlock = true;
-                    const showNotesBlock = false;
-
-                    return (
-                      <TiltCard key={k.id} className={t.ring}>
-                        <div
-                          className={`relative rounded-2xl border ${t.border} bg-white p-4 shadow-sm`}
-                        >
-                          <div
-                            className={`absolute inset-x-0 top-0 h-1.5 rounded-t-2xl bg-gradient-to-r ${t.bar}`}
-                          />
-
-                          <div className="mt-2 flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <div
-                                className={`grid h-10 w-10 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
-                              >
-                                {getInitials(k.full_name)}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="truncate font-extrabold text-slate-900 text-[15px]">
-                                  {k.full_name}{" "}
-                                  <span className="text-[13px] font-semibold text-slate-600">
-                                    ({k.class_label || "—"})
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            {groups.length > 3 && showEventsBlock && (
-                              <button
-                                onClick={() =>
-                                  setShowAllDaysForKid((m) => ({
-                                    ...m,
-                                    [k.id]: !m[k.id],
-                                  }))
-                                }
-                                className="shrink-0 text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
-                              >
-                                {showAll ? "Réduire" : "Voir plus"}
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                            <div className="rounded-2xl bg-rose-50 px-3 py-3 ring-1 ring-rose-100">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-rose-700">Absences</div>
-                              <div className="mt-1 text-xl font-black text-rose-900">{absencesCount}</div>
-                            </div>
-                            <div className="rounded-2xl bg-amber-50 px-3 py-3 ring-1 ring-amber-100">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-amber-700">Retards</div>
-                              <div className="mt-1 text-xl font-black text-amber-900">{latesCount}</div>
-                            </div>
-                            <div className="rounded-2xl bg-slate-50 px-3 py-3 ring-1 ring-slate-200">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Minutes</div>
-                              <div className="mt-1 text-xl font-black text-slate-950">{totalLateMinutes}</div>
-                            </div>
-                            <div className="rounded-2xl bg-violet-50 px-3 py-3 ring-1 ring-violet-100">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-violet-700">Sanctions</div>
-                              <div className="mt-1 text-xl font-black text-violet-900">{sanctionsCount}</div>
-                            </div>
-                          </div>
-
-                          {showEventsBlock && (
-                            <ul className="mt-4 space-y-3">
-                              {visibleGroups.map((g) => {
-                                const key = `${k.id}|${g.day}`;
-                                const isOpen = !!expanded[key];
-                                const hasSingle = g.items.length === 1;
-
-                                const parts: string[] = [];
-                                if (g.absentCount)
-                                  parts.push(
-                                    `${g.absentCount} absence${
-                                      g.absentCount > 1 ? "s" : ""
-                                    }`,
-                                  );
-                                if (g.lateCount)
-                                  parts.push(
-                                    `${g.lateCount} retard${
-                                      g.lateCount > 1 ? "s" : ""
-                                    }`,
-                                  );
-                                const summary = parts.length
-                                  ? parts.join(" · ")
-                                  : "Aucun évènement";
-
-                                return (
-                                  <li
-                                    key={g.day}
-                                    className="rounded-2xl border p-3 transition hover:bg-slate-50/70"
-                                  >
-                                    <div className="flex items-center justify-between gap-3">
-                                      <div className="min-w-0 text-[15px] font-bold text-slate-800">
-                                        {g.label} :{" "}
-                                        <span className="font-semibold text-slate-700">
-                                          {summary}
-                                        </span>
-                                      </div>
-                                      {g.items.length > 0 && (
-                                        <button
-                                          onClick={() =>
-                                            setExpanded((m) => ({
-                                              ...m,
-                                              [key]: !m[key],
-                                            }))
-                                          }
-                                          className="shrink-0 text-[13px] font-bold text-emerald-700 underline-offset-2 hover:underline"
-                                        >
-                                          {isOpen || hasSingle
-                                            ? "Masquer"
-                                            : "Voir détails"}
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {(isOpen || hasSingle) &&
-                                      g.items.length > 0 && (
-                                        <ul className="mt-3 divide-y">
-                                          {g.items.map((ev) => (
-                                            <li
-                                              key={ev.id}
-                                              className="flex items-start justify-between gap-3 py-3"
-                                            >
-                                              <div className="min-w-0">
-                                                <div className="truncate text-[15px] text-slate-800">
-                                                  {ev.type === "absent" ? (
-                                                    <Badge tone="rose">
-                                                      Absence
-                                                    </Badge>
-                                                  ) : (
-                                                    <Badge tone="amber">
-                                                      Retard
-                                                    </Badge>
-                                                  )}
-                                                  <span className="ml-2 font-semibold">
-                                                    {ev.subject_name || "—"}
-                                                  </span>
-                                                </div>
-                                                <div className="mt-1 text-[13px] text-slate-600">
-                                                  {slotLabel(
-                                                    ev.when,
-                                                    ev.expected_minutes,
-                                                  )}{" "}
-                                                  {ev.type === "late" &&
-                                                  ev.minutes_late
-                                                    ? `· ${ev.minutes_late} min`
-                                                    : ""}
-                                                </div>
-                                              </div>
-                                              <div className="shrink-0 text-[13px] text-slate-500">
-                                                {ev.class_label || ""}
-                                              </div>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
-                                  </li>
-                                );
-                              })}
-
-                              {visibleGroups.length === 0 && (
-                                <li className="py-2 text-[15px] text-slate-600">
-                                  Aucun évènement récent.
-                                </li>
-                              )}
-                            </ul>
-                          )}
-
-                          {showSanctionsBlock && (
-                            <div className="mt-4 rounded-2xl border bg-amber-50/40 p-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-[15px] font-extrabold text-slate-800">
-                                  Sanctions récentes
-                                </div>
-                                {(kidPenalties[k.id]?.length || 0) > 5 && (
-                                  <button
-                                    onClick={() =>
-                                      setShowAllPenForKid((m) => ({
-                                        ...m,
-                                        [k.id]: !m[k.id],
-                                      }))
-                                    }
-                                    className="text-[13px] font-semibold text-slate-700 underline-offset-2 hover:underline"
-                                  >
-                                    {showAllPenForKid[k.id]
-                                      ? "Réduire"
-                                      : "Voir plus"}
-                                  </button>
-                                )}
-                              </div>
-
-                              {(kidPenalties[k.id]?.length || 0) === 0 ? (
-                                <div className="mt-3 text-[15px] text-slate-600">
-                                  Aucune sanction récente.
-                                </div>
-                              ) : (
-                                <ul className="mt-3 divide-y">
-                                  {(showAllPenForKid[k.id]
-                                    ? kidPenalties[k.id] || []
-                                    : (kidPenalties[k.id] || []).slice(0, 5)
-                                  ).map((p) => (
-                                    <li key={p.id} className="py-3">
-                                      <div className="text-[15px] text-slate-800">
-                                        <span className="mr-2">
-                                          <Badge tone="amber">
-                                            {rubricLabel(p.rubric)}
-                                          </Badge>
-                                        </span>
-                                        <span className="font-extrabold">
-                                          âˆ’
-                                          {Number(p.points || 0)
-                                            .toFixed(2)
-                                            .replace(".", ",")}{" "}
-                                          pt
-                                        </span>
-                                        {p.reason?.trim() ? (
-                                          <span className="ml-2 text-[13px] text-slate-600">
-                                            — {p.reason.trim()}
-                                          </span>
-                                        ) : null}
-                                      </div>
-
-                                      <div className="mt-1 text-[13px] text-slate-500">
-                                        {fmt(p.when)}
-                                        {p.class_label ? ` · ${p.class_label}` : ""}
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-                          )}
-
-                          {showNotesBlock && (
-                            <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
-                              <div className="mb-2 text-[15px] font-extrabold text-slate-800">
-                                Notes publiées (aperçu)
-                              </div>
-                              <ul className="space-y-2 text-[14px] text-slate-700">
-                                {gradesForKid.slice(0, 3).map((g) => (
-                                  <li
-                                    key={g.id}
-                                    className="flex items-start justify-between gap-3"
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="truncate font-semibold">
-                                        {g.subject_name || "—"} ·{" "}
-                                        {gradeKindLabel(g.eval_kind)}
-                                      </div>
-                                      <div className="text-[13px] text-slate-500">
-                                        {fmt(g.eval_date)}
-                                      </div>
-                                    </div>
-                                    <div className="shrink-0 text-right">
-                                      {g.score == null ? (
-                                        <span className="text-[13px] text-slate-500">
-                                          —
-                                        </span>
-                                      ) : (
-                                        <span className="text-[15px] font-extrabold text-slate-900">
-                                          {g.score.toFixed(2).replace(".", ",")}/
-                                          {g.scale}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {kidGradesErr[k.id] && (
-                            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[13px] text-rose-800">
-                              <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
-                            </div>
-                          )}
-                        </div>
-                      </TiltCard>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* ————— CAHIER DE NOTES — onglet dédié ————— */}
-          {showNotesSection && (
-            <section className="mb-6 rounded-[32px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-[13px] font-extrabold uppercase tracking-wide text-emerald-700">
-                    Cahier de notes
-                  </div>
-                </div>
-
-                <div className="grid w-full gap-2 text-[13px] sm:w-auto sm:grid-flow-col sm:auto-cols-max sm:items-center">
-                  {selectedKidPeriods.length ? (
-                    <select
-                      value={activeGradePeriod?.id || ""}
-                      onChange={(e) => setSelectedPeriodId(e.target.value)}
-                      className="h-12 w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 sm:min-w-[190px]"
-                    >
-                      {selectedKidPeriods.map((period) => (
-                        <option key={period.id} value={period.id}>
-                          {period.short_label || period.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="rounded-2xl bg-slate-100 px-4 py-2 text-[13px] font-bold text-slate-600">
-                      Trimestres non configurés
-                    </div>
-                  )}
-
-                  {gradeFrom && gradeTo ? (
-                    <span className="rounded-2xl bg-slate-100 px-3 py-2 text-center text-[12px] font-bold text-slate-600 sm:text-left">
-                      {dateFr(gradeFrom)} au {dateFr(gradeTo)}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-
-              {selectedKidBulletins.length ? (
-                <div className="mb-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="text-[13px] font-black uppercase tracking-wide text-emerald-700">
-                        Bulletin trimestriel disponible
-                      </div>
-                      <div className="mt-1 text-[13px] text-emerald-800">
-                        Le bulletin est le document officiel avec QR code sécurisé.
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedKidBulletins.slice(0, 3).map((b) => (
-                        <a
-                          key={b.code}
-                          href={b.url}
-                          className="rounded-2xl bg-white px-4 py-2 text-sm font-extrabold text-emerald-800 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
-                        >
-                          {b.period_label || "Bulletin"}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {loadingKids ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-24 w-full" />
-                  <Skeleton className="h-24 w-full" />
-                </div>
-              ) : !hasKids ? (
-                <div className="rounded-2xl border bg-slate-50 p-4 text-[15px] text-slate-700">
-                  Aucun enfant lié à votre compte pour l’instant.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {filteredKids.map((k, idx) => {
-                    const allGrades = kidGrades[k.id] || [];
-                    const byDate = allGrades.filter((g) =>
-                      isInDateRange(
-                        g.eval_date,
-                        gradeFrom || undefined,
-                        gradeTo || undefined,
-                      ),
-                    );
-                    const summaries = buildSubjectGradeSummaries(byDate);
-                    const subjectList = summaries.map((item) => [item.key, item.label] as const);
-                    const activeSubject = activeSubjectPerKid[k.id] || "";
-                    const visibleSummaries =
-                      activeSubject === "all"
-                        ? summaries
-                        : activeSubject
-                          ? summaries.filter((item) => item.key === activeSubject)
-                          : [];
-                    const bulletinForPeriod = findBulletinForPeriod(
-                      bulletinsByKid.get(k.id) || [],
-                      gradeFrom || undefined,
-                      gradeTo || undefined,
-                      activeGradePeriod?.short_label || activeGradePeriod?.label || null,
-                    );
-                    const officialAverage = averageFromBulletin(bulletinForPeriod);
-                    const totalAverage = officialAverage ?? weightedAverageOn20(byDate);
-                    const averageCaption = officialAverage !== null ? "Moyenne bulletin" : "Moyenne provisoire";
-                    const latestGrade = latestGradeOf(byDate);
-                    const t = themeFor(idx);
-
-                    return (
-                      <div
-                        key={k.id}
-                        className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4"
-                      >
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div
-                              className={`grid h-11 w-11 place-items-center rounded-2xl text-[13px] font-extrabold ${t.chipBg} ${t.chipText}`}
-                            >
-                              {getInitials(k.full_name)}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="truncate text-[17px] font-black text-slate-900">
-                                {k.full_name}
-                              </div>
-                              <div className="text-[13px] text-slate-600">
-                                {k.class_label || "—"}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">{averageCaption}</div>
-                              <div className="mt-1 text-xl font-black text-slate-950">{formatAverage(totalAverage)}/20</div>
-                            </div>
-                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Notes publiées</div>
-                              <div className="mt-1 text-xl font-black text-slate-950">{byDate.length}</div>
-                            </div>
-                            <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
-                              <div className="text-[11px] font-black uppercase tracking-wide text-slate-500">Dernière note</div>
-                              <div className="mt-1 text-xl font-black text-slate-950">{formatGradeScore(latestGrade)}</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {kidGradesErr[k.id] && (
-                          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">
-                            <b>Notes indisponibles :</b> {kidGradesErr[k.id]}
-                          </div>
-                        )}
-
-                        <div className="mt-4">
-                          <label className="mb-2 block text-[12px] font-black uppercase tracking-wide text-slate-500">
-                            Discipline
-                          </label>
-                          <select
-                            value={activeSubject}
-                            onChange={(e) =>
-                              setActiveSubjectPerKid((m) => ({
-                                ...m,
-                                [k.id]: e.target.value,
-                              }))
-                            }
-                            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] font-bold text-slate-800 shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                          >
-                            <option value="">Choisir une discipline</option>
-                            <option value="all">Toutes les disciplines</option>
-                            {subjectList.map(([id, label]) => (
-                              <option key={id} value={id}>
-                                {label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {visibleSummaries.length === 0 ? (
-                          <div className="mt-4 rounded-2xl bg-white px-4 py-4 text-[14px] text-slate-600 ring-1 ring-slate-200">
-                            {summaries.length
-                              ? "Choisissez une discipline pour afficher les notes."
-                              : "Aucune note publiée pour cette période."}
-                          </div>
-                        ) : (
-                          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                            {visibleSummaries.map((item) => {
-                              const detailKey = `${k.id}|${item.key}`;
-                              const isOpen = !!expandedGradeSubjects[detailKey] || (activeSubject !== "all" && activeSubject !== "");
-                              return (
-                                <article key={item.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <h3 className="truncate text-[16px] font-black text-slate-950">{item.label}</h3>
-                                      <div className="mt-1 text-[13px] font-semibold text-slate-500">
-                                        {item.grades.length} note{item.grades.length > 1 ? "s" : ""} publiée{item.grades.length > 1 ? "s" : ""}
-                                      </div>
-                                    </div>
-                                    <div className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-right ring-1 ring-emerald-100">
-                                      <div className="text-lg font-black text-emerald-800">{formatAverage(item.average)}/20</div>
-                                      <div className="text-[11px] font-bold text-emerald-700">provisoire</div>
-                                    </div>
+              <div className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-black text-violet-700">Lundi à samedi</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1060px] border-collapse table-fixed text-left">
+                <thead>
+                  <tr className="bg-[#003766] text-white">
+                    <th className="w-[125px] border-r border-white/15 px-3 py-4 text-center text-xs font-black uppercase tracking-wide">Horaires</th>
+                    {[1, 2, 3, 4, 5, 6].map((day) => (
+                      <th key={day} className="border-r border-white/15 px-3 py-4 text-center text-sm font-black last:border-r-0">{DAY_NAMES[day]}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {timetablePeriods.map((period, rowIndex) => (
+                    <tr key={period.key} className={rowIndex % 2 ? "bg-slate-50/60" : "bg-white"}>
+                      <th className="border-r border-t border-slate-200 px-3 py-4 text-center align-middle">
+                        <div className="text-sm font-black text-slate-900">{period.start_time}</div>
+                        <div className="my-1 text-[10px] font-black uppercase tracking-wide text-slate-300">à</div>
+                        <div className="text-sm font-black text-slate-900">{period.end_time}</div>
+                      </th>
+                      {[1, 2, 3, 4, 5, 6].map((day) => {
+                        const cellItems = byCell.get(`${day}|${period.key}`) || [];
+                        return (
+                          <td key={`${day}-${period.key}`} className="h-[112px] border-r border-t border-slate-200 p-2 align-top last:border-r-0">
+                            {cellItems.length ? (
+                              <div className="space-y-2">
+                                {cellItems.map((item) => (
+                                  <div key={item.id} className="rounded-2xl border border-violet-100 bg-violet-50 p-3 shadow-sm">
+                                    <div className="text-sm font-black leading-5 text-violet-950">{item.subject_name}</div>
+                                    <div className="mt-2 text-[11px] font-bold leading-4 text-violet-700/75">{item.teacher_name}</div>
                                   </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="grid h-full min-h-[88px] place-items-center text-xs font-bold text-slate-300">—</div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-center text-xs font-semibold text-slate-400 sm:hidden">
+              Faites glisser le tableau horizontalement pour voir toute la semaine.
+            </div>
+          </section>
+        ) : (
+          <EmptyState icon="calendar" title="Emploi du temps indisponible" text="Aucun créneau publié n’a été trouvé pour cette classe." />
+        )}
+      </>
+    );
+  }
 
-                                  {item.latest ? (
-                                    <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-[13px] text-slate-700">
-                                      Dernière note : <b>{formatGradeScore(item.latest)}</b> · {gradeKindLabel(item.latest.eval_kind)}
-                                      {item.latest.title ? ` · ${item.latest.title}` : ""}
-                                    </div>
-                                  ) : null}
+  function renderSanctions() {
+    if (!selectedKid) return null;
+    const conduct = selectedData.conduct;
+    const rubrics: Array<{
+      key: keyof Conduct["breakdown"];
+      label: string;
+      tone: string;
+    }> = [
+      { key: "assiduite", label: "Assiduité", tone: "bg-emerald-50 text-emerald-800" },
+      { key: "tenue", label: "Tenue", tone: "bg-sky-50 text-sky-800" },
+      { key: "moralite", label: "Moralité", tone: "bg-violet-50 text-violet-800" },
+      { key: "discipline", label: "Discipline", tone: "bg-amber-50 text-amber-800" },
+    ];
 
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setExpandedGradeSubjects((m) => ({
-                                        ...m,
-                                        [detailKey]: !m[detailKey],
-                                      }))
-                                    }
-                                    className="mt-3 rounded-2xl bg-[#e7f0fa] px-3 py-2 text-[13px] font-black text-[#003766] transition hover:bg-[#d9e8f7]"
-                                  >
-                                    {isOpen ? "Masquer le détail" : "Voir le détail"}
-                                  </button>
+    return (
+      <>
+        <ChildIdentity kid={selectedKid} kids={kids} onChange={openKid} />
+        {moduleBackHeader("Sanctions", "La conduite reste visible de façon synthétique, puis les sanctions sont détaillées.", "Conduite")}
+        {conduct ? (
+          <section className="mb-5 rounded-[30px] bg-gradient-to-br from-violet-700 to-indigo-800 p-5 text-white shadow-lg shadow-violet-900/10 sm:p-6">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Note de conduite</div>
+                <div className="mt-2 text-4xl font-black">{formatAverage(conduct.total)}</div>
+                <div className="mt-2 text-sm font-bold text-white/75">{conduct.appreciation}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {rubrics.map((rubric) => (
+                  <div key={rubric.key} className={`rounded-2xl px-3 py-3 ${rubric.tone}`}>
+                    <div className="text-[10px] font-black uppercase tracking-wide opacity-70">{rubric.label}</div>
+                    <div className="mt-1 text-lg font-black">{formatAverage(conduct.breakdown[rubric.key])}/{formatAverage(conduct.rubric_max[rubric.key])}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
-                                  {isOpen ? (
-                                    <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
-                                      <div className="hidden bg-slate-50 px-3 py-2 text-[12px] font-black uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[120px_1fr_90px_90px] md:gap-3">
-                                        <span>Date</span>
-                                        <span>Évaluation</span>
-                                        <span>Coeff.</span>
-                                        <span className="text-right">Note</span>
-                                      </div>
-                                      <div className="divide-y divide-slate-100">
-                                        {item.grades.map((g) => (
-                                          <div key={g.id} className="grid gap-2 px-3 py-3 text-[13px] md:grid-cols-[120px_1fr_90px_90px] md:gap-3 md:items-center">
-                                            <div className="font-semibold text-slate-600">{fmt(g.eval_date)}</div>
-                                            <div className="min-w-0">
-                                              <div className="font-bold text-slate-900">{gradeKindLabel(g.eval_kind)}</div>
-                                              {g.title ? <div className="truncate text-slate-500">{g.title}</div> : null}
-                                            </div>
-                                            <div className="text-slate-600">Coeff. {g.coeff || 1}</div>
-                                            <div className="text-right text-[15px] font-black text-slate-950">{formatGradeScore(g)}</div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                </article>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+        {selectedData.penalties.length ? (
+          <div className="space-y-3">
+            {selectedData.penalties.map((penalty) => (
+              <article key={penalty.id} className="rounded-[26px] border border-rose-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start gap-4">
+                  <div className="grid h-11 w-11 place-items-center rounded-2xl bg-rose-50 text-rose-700"><Icon name="shield" size={21} /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-black text-rose-800">{rubricLabel(penalty.rubric)}</span>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-600">-{Number(penalty.points || 0).toFixed(1).replace(".", ",")} pt</span>
+                      <span className="text-xs font-bold text-slate-400">{dateFr(penalty.when, true)}</span>
+                    </div>
+                    <div className="mt-3 text-base font-black text-slate-950">{penalty.reason || "Motif non renseigné"}</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-500">
+                      {penalty.author_name || penalty.author_role_label || "Administration"}
+                      {penalty.author_subject_name ? ` · ${penalty.author_subject_name}` : ""}
+                    </div>
+                  </div>
                 </div>
-              )}
-            </section>
-          )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon="shield" title="Aucune sanction" text="Aucune sanction n’a été enregistrée pour cette période." />
+        )}
+      </>
+    );
+  }
+
+  function renderScreen() {
+    if (loadingInitial) return <PageLoader label="Ouverture de l’espace parent…" />;
+    if (globalError) return <EmptyState icon="wifi" title="Connexion impossible" text={globalError} />;
+    if (screen === "home") return renderHome();
+    if (screen === "children") return renderChildren();
+    if (screen === "attach") return renderAttach();
+    if (screen === "messages") return renderMessages();
+    if (screen === "child") return renderChildDashboard();
+    if (screen === "absences") return renderAbsences();
+    if (screen === "notes") return renderNotes();
+    if (screen === "textbook") return renderTextbook();
+    if (screen === "bulletins") return renderBulletins();
+    if (screen === "timetable") return renderTimetable();
+    return renderSanctions();
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[280px] flex-col bg-[#003766] text-white lg:flex">
+        <div className="border-b border-white/10 px-6 py-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-12 w-12 place-items-center rounded-[18px] bg-white/15 text-white ring-1 ring-white/15">
+              <Icon name="children" size={24} />
+            </div>
+            <div>
+              <div className="text-lg font-black">Espace parent</div>
+              <div className="mt-0.5 text-xs font-semibold text-white/60">Mon Cahier</div>
+            </div>
+          </div>
+        </div>
+
+        <nav className="flex-1 space-y-2 px-4 py-6">
+          {navItems.map((item) => {
+            const active = primaryActive === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => openPrimary(item.key)}
+                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left text-sm font-black transition ${
+                  active
+                    ? "bg-white text-[#003766] shadow-lg shadow-black/10"
+                    : "text-white/75 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Icon name={item.icon} size={20} />
+                <span className="flex-1">{item.label}</span>
+                {item.badge ? (
+                  <span className={`grid min-w-6 place-items-center rounded-full px-1.5 py-1 text-[11px] font-black ${active ? "bg-emerald-100 text-emerald-800" : "bg-rose-500 text-white"}`}>
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-white/10 p-4">
+          <button
+            type="button"
+            onClick={logout}
+            disabled={loggingOut}
+            className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-black text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-60"
+          >
+            <Icon name="logout" size={19} />
+            {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+          </button>
+        </div>
+      </aside>
+
+      <div className="lg:pl-[280px]">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#003766] text-white"><Icon name="children" size={20} /></div>
+              <div>
+                <div className="text-sm font-black text-slate-950">Espace parent</div>
+                <div className="text-[11px] font-bold text-slate-400">Mon Cahier</div>
+              </div>
+            </div>
+            {selectedKid && !["home", "children", "attach", "messages"].includes(screen) ? (
+              <div className="max-w-[160px] truncate rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">{selectedKid.full_name}</div>
+            ) : null}
+          </div>
+        </header>
+
+        {!isOnline ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-black text-amber-900 lg:px-8">
+            Connexion Internet requise pour utiliser l’espace parent.
+          </div>
+        ) : null}
+
+        <main className="mx-auto max-w-[1500px] px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-10 lg:pt-7">
+          {renderScreen()}
         </main>
       </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+        {navItems.map((item) => {
+          const active = primaryActive === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => openPrimary(item.key)}
+              className={`relative flex flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-black transition ${active ? "text-emerald-700" : "text-slate-400"}`}
+            >
+              <span className={`grid h-9 w-9 place-items-center rounded-2xl ${active ? "bg-emerald-50" : "bg-transparent"}`}>
+                <Icon name={item.icon} size={20} />
+              </span>
+              <span className="max-w-[82px] truncate">{item.key === "attach" ? "Ajouter" : item.label}</span>
+              {item.badge ? (
+                <span className="absolute right-[18%] top-1 grid min-w-5 place-items-center rounded-full bg-rose-500 px-1 py-0.5 text-[9px] font-black text-white">
+                  {item.badge > 9 ? "9+" : item.badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
