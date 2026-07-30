@@ -16,6 +16,7 @@ import {
 type Props = {
   role: OfflineRole;
   className?: string;
+  onPrepared?: (readiness: OfflineReadiness) => void | Promise<void>;
 };
 
 function formatPreparedAt(value: string) {
@@ -36,7 +37,11 @@ function formatCheckedAt(value: string | undefined) {
   }).format(date);
 }
 
-export default function OfflineReadinessCard({ role, className = "" }: Props) {
+export default function OfflineReadinessCard({
+  role,
+  className = "",
+  onPrepared,
+}: Props) {
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
@@ -104,9 +109,11 @@ export default function OfflineReadinessCard({ role, className = "" }: Props) {
             ? "Préparation et cohérence vérifiées."
             : "Données téléchargées, mais cohérence hors ligne non confirmée.",
         );
+        await onPrepared?.(checked.readiness || next);
       } else {
         setReadiness(next);
         setProgress("Préparation terminée.");
+        await onPrepared?.(next);
       }
     } catch (cause: any) {
       setError(String(cause?.message || "La préparation hors ligne a échoué."));

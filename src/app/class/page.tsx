@@ -132,6 +132,7 @@ type MyClass = {
     allow_local_relay?: boolean;
     relay_local_url?: string | null;
     relay_access_token?: string | null;
+    diagnostic?: string | null;
   } | null;
 };
 type Subject = { id: string; label: string };
@@ -184,6 +185,46 @@ type SubjectLoadMode =
   | "legacy-offline"
   | "closed-online"
   | "empty";
+
+function mapClassDeviceItems(items: any[]) {
+  let institutionName: string | null = null;
+  const classes: MyClass[] = items.map((item: any) => {
+    if (institutionName == null) {
+      const candidate =
+        item.institution_name ||
+        item.institution_label ||
+        item.institution?.name ||
+        item.institution?.label ||
+        item.institution?.short_name ||
+        null;
+      if (candidate) institutionName = String(candidate);
+    }
+    return {
+      id: item.id,
+      label: item.label,
+      level: item.level ?? null,
+      institution_id: item.institution_id,
+      education_type: item.education_type || "general_secondary",
+      education_label: item.education_label || "Secondaire général",
+      education_short_label: item.education_short_label || "Général",
+      formation_code: item.formation_code || null,
+      formation_label: item.formation_label || null,
+      formation_level_code: item.formation_level_code || null,
+      formation_level_label: item.formation_level_label || null,
+      education_context_key:
+        item.education_context_key ||
+        item.education_type ||
+        "general_secondary",
+      education_context_label:
+        item.education_context_label ||
+        item.education_label ||
+        "Secondaire général",
+      actor_profile_id: item.actor_profile_id || null,
+      attendance_presence: item.attendance_presence || null,
+    };
+  });
+  return { classes, institutionName };
+}
 
 
 /* Nom par défaut (fallback local / dev) */
@@ -1100,6 +1141,33 @@ export default function ClassDevicePage() {
     }
   }
 
+  async function refreshClassContextAfterPreparation() {
+    const payload = await cacheGet<{ items?: any[] }>(
+      "classDevice:my-classes",
+    );
+    const fresh = mapClassDeviceItems(
+      Array.isArray(payload?.items) ? payload.items : [],
+    );
+    if (fresh.classes.length === 0) {
+      throw new Error(
+        "La préparation a réussi, mais le contexte de classe actualisé est absent.",
+      );
+    }
+    setClasses(fresh.classes);
+    setClassId((current) =>
+      fresh.classes.some((item) => item.id === current)
+        ? current
+        : fresh.classes[0]?.id || "",
+    );
+    if (fresh.institutionName) {
+      setInst((current) => ({
+        ...current,
+        institution_name: fresh.institutionName,
+      }));
+    }
+    setRelayScheduleIssue(null);
+  }
+
   /* 1) charger mes classes (liées au téléphone) + éventuelle séance ouverte
        + récupérer un nom d’établissement si disponible */
   useEffect(() => {
@@ -1113,44 +1181,10 @@ export default function ClassDevicePage() {
           cacheGet("classDevice:local-open"),
         ]);
 
-        const items = (cls?.items || []) as Array<any>;
-        let firstInstName: string | null = null;
-
-        const mapped: MyClass[] = items.map((c: any) => {
-          if (firstInstName == null) {
-            const candidate =
-              c.institution_name ||
-              c.institution_label ||
-              c.institution?.name ||
-              c.institution?.label ||
-              c.institution?.short_name ||
-              null;
-            if (candidate) firstInstName = String(candidate);
-          }
-
-          return {
-            id: c.id,
-            label: c.label,
-            level: c.level ?? null,
-            institution_id: c.institution_id,
-            education_type: c.education_type || "general_secondary",
-            education_label: c.education_label || "Secondaire général",
-            education_short_label: c.education_short_label || "Général",
-            formation_code: c.formation_code || null,
-            formation_label: c.formation_label || null,
-            formation_level_code: c.formation_level_code || null,
-            formation_level_label: c.formation_level_label || null,
-            education_context_key:
-              c.education_context_key || c.education_type || "general_secondary",
-            education_context_label:
-              c.education_context_label ||
-              c.education_label ||
-              "Secondaire général",
-            actor_profile_id: c.actor_profile_id || null,
-            attendance_presence: c.attendance_presence || null,
-          };
-        });
-
+        const mappedContext = mapClassDeviceItems(
+          Array.isArray(cls?.items) ? cls.items : [],
+        );
+        const mapped = mappedContext.classes;
         setClasses(mapped);
 
         const serverOpen = (os?.item as OpenSession) || null;
@@ -1181,17 +1215,24 @@ export default function ClassDevicePage() {
           }
         }
 
-        if (firstInstName) {
+        if (mappedContext.institutionName) {
           setInst((prev) => ({
             ...prev,
             institution_name:
               !prev.institution_name || prev.institution_name === DEFAULT_INSTITUTION_NAME
-                ? firstInstName
+                ? mappedContext.institutionName
                 : prev.institution_name,
           }));
         }
-      } catch {
+      } catch (error) {
         setClasses([]);
+        setMsg(
+          String(
+            error instanceof Error
+              ? error.message
+              : "Impossible de charger le contexte signé de la classe.",
+          ),
+        );
         const localOpenCandidate = (await cacheGet(
           "classDevice:local-open",
         )) as OpenSession | null;
@@ -2431,7 +2472,10 @@ export default function ClassDevicePage() {
         </div>
       </header>
 
-      <OfflineReadinessCard role="class-device" />
+      <OfflineReadinessCard
+        role="class-device"
+        onPrepared={refreshClassContextAfterPreparation}
+      />
       {(relayScheduleIssue ||
         (classReadinessAssessment &&
           classReadinessAssessment.status !== "ready")) && (

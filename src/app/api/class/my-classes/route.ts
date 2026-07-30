@@ -2,8 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
-import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
+import {
+  ClassDeviceAccessError,
+  enrichClassDeviceAccess,
+  type ClassDeviceMetadataReader,
+} from "@/lib/class-device-access-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -127,123 +130,45 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  /* 5) Enrichir avec le nom d’établissement (sans casser l’ancien format) */
+  /* 5) L'accès relais signé est obligatoire et indépendant des métadonnées
+        d'affichage facultatives de l'établissement. */
   let enriched = items;
+  let enrichmentDiagnostics: string[] = [];
   try {
-    const instIds = uniq<string>(
-      (items || []).map((c: any) => c?.institution_id).filter(Boolean) as string[]
-    );
-
-    if (instIds.length > 0) {
-      const [institutionsResult, policiesResult] = await Promise.all([
-        srv
-          .from("institutions")
-          .select("id,name,short_name,settings_json")
-          .in("id", instIds),
-        srv
-          .from("institution_attendance_policies")
-          .select("institution_id,enabled,allow_local_relay,relay_local_url,relay_presence_secret")
-          .in("institution_id", instIds),
-      ]);
-      const insts = institutionsResult.data || [];
-      const instErr = institutionsResult.error;
-      const policyMissing = (policiesResult.error as any)?.code === "42P01";
-
-      if (!instErr && insts) {
-        const instById: Record<
-          string,
-          { id: string; name?: string | null; short_name?: string | null }
-        > = {};
-        for (const it of insts) {
-          instById[it.id] = it;
-        }
-        const policyByInstitution = new Map(
-          (policyMissing ? [] : policiesResult.data || []).map((row: any) => [
-            String(row.institution_id || ""),
-            row,
-          ]),
-        );
-
-        enriched = (items || []).map((c: any) => {
-          const inst = instById[c.institution_id] || {};
-          const policy: any = policyByInstitution.get(String(c.institution_id || "")) || {};
-          const institution_name =
-            (inst as any).name || (inst as any).short_name || null;
-          const relayEnabled =
-            policy.enabled === true &&
-            policy.allow_local_relay !== false &&
-            Boolean(String(policy.relay_local_url || "").trim()) &&
-            String(policy.relay_presence_secret || "").length >= 32;
-          const relayAccessToken = relayEnabled
-            ? createRelayAttendanceAccessToken({
-                secret: String(policy.relay_presence_secret || ""),
-                institutionId: String(c.institution_id || ""),
-                actorProfileId: user.id,
-                actorKind: "class_device",
-                classId: String(c.id || ""),
-              })
-            : null;
-
-          const education = resolveAttendanceEducationContext({
-            educationType: c.education_type,
-            formationCode: c.formation_code,
-            formationLevelCode: c.formation_level_code,
-            classLevel: c.level,
-            settingsJson: (inst as any).settings_json,
-          });
-
-          return {
-            ...c,
-            institution_name,
-            education_type: education.education_type,
-            education_label: education.education_label,
-            education_short_label: education.education_short_label,
-            formation_code: education.formation_code,
-            formation_label: education.formation_label,
-            formation_level_code: education.formation_level_code,
-            formation_level_label: education.formation_level_label,
-            education_context_key: education.context_key,
-            education_context_label: education.context_label,
-            actor_profile_id: user.id,
-            attendance_presence: {
-              enabled: relayEnabled,
-              allow_local_relay: policy.allow_local_relay !== false,
-              relay_local_url: relayEnabled ? String(policy.relay_local_url) : null,
-              relay_access_token: relayAccessToken,
-            },
-          };
-        });
-      }
-    }
-  } catch {
-    // En cas de souci, on garde les classes et on fournit au moins le type brut.
-    enriched = (items || []).map((c: any) => {
-      const education = resolveAttendanceEducationContext({
-        educationType: c.education_type,
-        formationCode: c.formation_code,
-        formationLevelCode: c.formation_level_code,
-        classLevel: c.level,
+    if (items.length > 0) {
+      const access = await enrichClassDeviceAccess({
+        items,
+        actorProfileId: user.id,
+        service: srv as unknown as ClassDeviceMetadataReader,
       });
-      return {
-        ...c,
-        education_type: education.education_type,
-        education_label: education.education_label,
-        education_short_label: education.education_short_label,
-        formation_code: education.formation_code,
-        formation_label: education.formation_label,
-        formation_level_code: education.formation_level_code,
-        formation_level_label: education.formation_level_label,
-        education_context_key: education.context_key,
-        education_context_label: education.context_label,
-      };
-    });
+      enriched = access.items;
+      enrichmentDiagnostics = access.diagnostics;
+    }
+  } catch (error) {
+    if (error instanceof ClassDeviceAccessError) {
+      return NextResponse.json(
+        { error: error.code, diagnostic: error.code },
+        { status: error.status },
+      );
+    }
+    return NextResponse.json(
+      {
+        error: "class_relay_access_enrichment_failed",
+        diagnostic: "class_relay_access_enrichment_failed",
+      },
+      { status: 500 },
+    );
   }
 
   // Debug optionnel
   const wantDebug = (new URL(req.url).searchParams.get("debug") || "") === "1";
   return NextResponse.json(
     wantDebug
-      ? { items: enriched, debug: { phone, ...debug, variants, likePatterns } }
-      : { items: enriched }
+      ? {
+          items: enriched,
+          diagnostics: enrichmentDiagnostics,
+          debug: { phone, ...debug, variants, likePatterns },
+        }
+      : { items: enriched, diagnostics: enrichmentDiagnostics }
   );
 }

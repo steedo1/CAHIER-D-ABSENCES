@@ -732,6 +732,7 @@ type CachedClassDevice = {
     allow_local_relay?: boolean;
     relay_local_url?: string | null;
     relay_access_token?: string | null;
+    diagnostic?: string | null;
   } | null;
 };
 
@@ -741,6 +742,65 @@ type ResolvedClassDeviceContext = {
   relayBaseUrl: string;
   relayAccessToken: string;
 };
+
+export function classDeviceAccessDiagnosticMessage(value: unknown) {
+  const messages: Record<string, string> = {
+    institution_id_missing:
+      "L’identifiant de l’établissement de la classe est absent.",
+    class_id_missing:
+      "L’identifiant de la classe autorisée est absent.",
+    relay_policy_missing:
+      "La politique d’accès au relais est absente pour cet établissement.",
+    relay_disabled:
+      "L’accès au relais est désactivé pour cet établissement.",
+    relay_local_access_disabled:
+      "L’accès local au relais n’est pas autorisé pour cet établissement.",
+    relay_url_missing:
+      "L’adresse locale du relais est absente de la politique.",
+    relay_secret_missing:
+      "La clé de signature du relais est absente de la politique.",
+    relay_secret_too_short:
+      "La clé de signature du relais est invalide ou trop courte.",
+  };
+  return messages[String(value || "")] || null;
+}
+
+export function resolveClassDevicePreparationAccess(classPayload: unknown) {
+  const payload = classPayload as { items?: CachedClassDevice[] } | null;
+  const classes = Array.isArray(payload?.items) ? payload.items : [];
+  const classIds = uniqueIds(classes.map((item) => item?.id));
+  if (classIds.length !== 1) {
+    throw new Error(classDeviceReadinessMessage("class_data_missing"));
+  }
+  const classId = classIds[0];
+  const selectedClass = classes.find(
+    (item) => String(item?.id || "").trim() === classId,
+  );
+  const institutionId = String(selectedClass?.institution_id || "").trim();
+  const relayPolicy = selectedClass?.attendance_presence;
+  if (
+    !institutionId ||
+    !relayPolicy?.enabled ||
+    relayPolicy.allow_local_relay === false ||
+    !relayPolicy.relay_local_url ||
+    !relayPolicy.relay_access_token
+  ) {
+    throw new Error(
+      classDeviceAccessDiagnosticMessage(relayPolicy?.diagnostic) ||
+        "Les données d’accès signées de la classe autorisée au relais sont absentes.",
+    );
+  }
+  return {
+    classes,
+    classId,
+    selectedClass,
+    institutionId,
+    relayPolicy: {
+      relayLocalUrl: relayPolicy.relay_local_url,
+      relayAccessToken: relayPolicy.relay_access_token,
+    },
+  };
+}
 
 async function readClassDeviceBundle() {
   const bundle = await cacheGet<
@@ -1250,36 +1310,15 @@ async function prepareClassDevice(
     "/api/class/my-classes",
     "classDevice:my-classes",
   );
-  const classes = Array.isArray(classPayload?.items)
-    ? classPayload.items as CachedClassDevice[]
-    : [];
-  const classIds = uniqueIds(classes.map((item) => item?.id));
-  if (classIds.length !== 1) {
-    throw new Error(classDeviceReadinessMessage("class_data_missing"));
-  }
-  const classId = classIds[0];
-  const selectedClass = classes.find(
-    (item) => String(item?.id || "").trim() === classId,
-  );
-  const institutionId = String(selectedClass?.institution_id || "").trim();
-  const relayPolicy = selectedClass?.attendance_presence;
-  if (
-    !institutionId ||
-    !relayPolicy?.enabled ||
-    relayPolicy.allow_local_relay === false ||
-    !relayPolicy.relay_local_url ||
-    !relayPolicy.relay_access_token
-  ) {
-    throw new Error(
-      "Les données d’accès de la classe autorisée au relais sont absentes.",
-    );
-  }
+  const preparedAccess = resolveClassDevicePreparationAccess(classPayload);
+  const { classId, institutionId } = preparedAccess;
+  const relayPolicy = preparedAccess.relayPolicy;
 
   onProgress("Vérification du relais et du planning de la classe…");
   const relayConnectivity = await checkRelayTeacherConnectivity({
     institutionId,
-    baseUrl: relayPolicy.relay_local_url,
-    accessToken: relayPolicy.relay_access_token,
+    baseUrl: relayPolicy.relayLocalUrl,
+    accessToken: relayPolicy.relayAccessToken,
   });
   if (relayConnectivity.status !== "reachable") {
     const status =
@@ -1297,8 +1336,8 @@ async function prepareClassDevice(
   try {
     relaySchedule = await fetchRelayTeacherOfflineSchedule({
       institutionId,
-      baseUrl: relayPolicy.relay_local_url,
-      accessToken: relayPolicy.relay_access_token,
+      baseUrl: relayPolicy.relayLocalUrl,
+      accessToken: relayPolicy.relayAccessToken,
     });
   } catch (error) {
     throw new Error(classDeviceReadinessMessage(scheduleFetchFailureStatus(error)));
