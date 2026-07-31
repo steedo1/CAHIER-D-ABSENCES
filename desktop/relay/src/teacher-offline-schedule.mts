@@ -25,15 +25,16 @@ type TimetableRow = {
 };
 
 function timetableFreshnessCompare(left: TimetableRow, right: TimetableRow) {
+  const versionDiff =
+    Number(left.server_version || 0) - Number(right.server_version || 0);
+  if (versionDiff !== 0) return versionDiff;
+
   const leftTime = Date.parse(left.updated_at);
   const rightTime = Date.parse(right.updated_at);
   const timeDiff =
     (Number.isFinite(leftTime) ? leftTime : 0) -
     (Number.isFinite(rightTime) ? rightTime : 0);
   if (timeDiff !== 0) return timeDiff;
-
-  const versionDiff = Number(left.server_version || 0) - Number(right.server_version || 0);
-  if (versionDiff !== 0) return versionDiff;
   return left.id.localeCompare(right.id);
 }
 
@@ -50,7 +51,7 @@ function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
 
   return rows.filter((row) => {
     const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
-    return winnerBySlot.get(key)?.subject_id === row.subject_id;
+    return winnerBySlot.get(key)?.id === row.id;
   });
 }
 
@@ -130,7 +131,7 @@ export function teacherOfflineSchedule(
     WHERE tt.institution_id = ?
       ${actorFilter}
       AND tt.deleted_at IS NULL
-    ORDER BY p.weekday, p.start_time, c.label, tt.updated_at DESC, tt.id DESC
+    ORDER BY p.weekday, p.start_time, c.label, tt.server_version DESC, tt.updated_at DESC, tt.id DESC
   `).all(
     teacher.institution_id,
     actorFilterValue,

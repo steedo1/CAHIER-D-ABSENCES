@@ -606,7 +606,11 @@ export default function ClassDevicePage() {
   const [relayScheduleIssue, setRelayScheduleIssue] = useState<string | null>(
     null,
   );
+  const [subjectScheduleIssue, setSubjectScheduleIssue] = useState<string | null>(
+    null,
+  );
   const relayClassScheduleRef = useRef<RelayTeacherOfflineSchedule | null>(null);
+  const subjectSelectionSlotRef = useRef<string>("");
   const relayScheduleRefreshRef = useRef<Promise<RelayTeacherOfflineSchedule | null> | null>(null);
   const relayClockOffsetMsRef = useRef<number | null>(null);
 
@@ -1922,6 +1926,12 @@ export default function ClassDevicePage() {
     return `${wd}|${activeConfiguredSlot.start_time}|${activeConfiguredSlot.end_time}`;
   }, [activeConfiguredSlot, hasConfiguredSlotsToday, inst?.tz, nowTick]);
 
+  const activeSubjectScopeKey = useMemo(() => {
+    const periodId = String(activeConfiguredSlot?.id || "no-period");
+    const revision = String(relayClassSchedule?.schedule_revision ?? "no-revision");
+    return `${activeSlotKey}|${periodId}|${revision}`;
+  }, [activeConfiguredSlot?.id, activeSlotKey, relayClassSchedule?.schedule_revision]);
+
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
   const usingUnverifiedLegacySubjects =
     subjectLoadMode === "legacy-offline" ||
@@ -1930,44 +1940,72 @@ export default function ClassDevicePage() {
     !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
 
   /* 2) charger les matières selon le mode courant
-        - en ligne + créneau actif : nouveau système (slot)
-        - en ligne + échec technique auto : fallback ancien système
-        - hors ligne : cache strict du créneau, puis ancien cache en dernier recours */
+        - en ligne : le Cloud strict du créneau est prioritaire
+        - en ligne + échec technique : relais, puis ancien cache en dernier recours
+        - hors ligne : relais/cache strict du créneau, jamais une liste ambiguë */
   useEffect(() => {
     if (!classId) {
       setSubjects([]);
       setSubjectId("");
       setSubjectLoadMode("empty");
+      setSubjectScheduleIssue(null);
+      subjectSelectionSlotRef.current = "";
       return;
     }
     if (open) return;
 
     let cancelled = false;
 
-    const applyList = (list: Subject[], mode: SubjectLoadMode) => {
+    const normalizeSubjects = (list: Subject[]) => {
+      const seen = new Set<string>();
+      return (list || []).filter((subject) => {
+        const id = String(subject?.id || "").trim();
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+    };
+
+    const applyList = (rawList: Subject[], mode: SubjectLoadMode) => {
       if (cancelled) return;
 
+      const automaticMode =
+        mode === "relay" || mode === "auto" || mode === "auto-offline";
+      const normalizedList = normalizeSubjects(rawList);
+      const automaticConflict = automaticMode && normalizedList.length > 1;
+      const list = automaticConflict ? [] : normalizedList;
+
       setSubjects(list);
-      setSubjectLoadMode(mode);
+      setSubjectLoadMode(automaticConflict ? "empty" : mode);
+      setSubjectScheduleIssue(
+        automaticConflict
+          ? "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez le relais avant de démarrer le nouvel appel."
+          : null,
+      );
 
       const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(classId);
       const snapSubjectId = pendingSnapshotSubjectRef.current || snap?.state?.subjectId || "";
 
-      setSubjectId((prev) => {
-        const automaticMode =
-          mode === "relay" || mode === "auto" || mode === "auto-offline";
+      const slotChanged = automaticMode
+        ? subjectSelectionSlotRef.current !== activeSubjectScopeKey
+        : false;
+      subjectSelectionSlotRef.current = automaticMode
+        ? activeSubjectScopeKey
+        : "";
 
-        // Dans un créneau automatique, l'emploi du temps est la source de vérité.
-        // On ne conserve jamais la matière du créneau précédent, même si une
-        // ancienne ligne conflictuelle la fait encore apparaître dans la réponse.
+      setSubjectId((prev) => {
         if (automaticMode) {
-          return list[0]?.id || "";
+          const soleSubjectId = list.length === 1 ? list[0]!.id : "";
+          if (slotChanged || !prev || !list.some((subject) => subject.id === prev)) {
+            return soleSubjectId;
+          }
+          return prev;
         }
 
-        if (snapSubjectId && list.some((s) => s.id === snapSubjectId)) {
+        if (snapSubjectId && list.some((subject) => subject.id === snapSubjectId)) {
           return snapSubjectId;
         }
-        if (prev && list.some((s) => s.id === prev)) {
+        if (prev && list.some((subject) => subject.id === prev)) {
           return prev;
         }
         return list[0]?.id || "";
@@ -1977,11 +2015,11 @@ export default function ClassDevicePage() {
     };
 
     const loadLegacySubjects = async () => {
-      const j = await offlineGetJson(
+      const payload = await offlineGetJson(
         `/api/class/subjects?class_id=${classId}`,
-        `classDevice:subjects:${classId}`
+        `classDevice:subjects:${classId}`,
       ).catch(() => ({ items: [] as Subject[] }));
-      return (j?.items || []) as Subject[];
+      return (payload?.items || []) as Subject[];
     };
 
     (async () => {
@@ -1990,6 +2028,8 @@ export default function ClassDevicePage() {
         setSubjects([]);
         setSubjectId("");
         setSubjectLoadMode("closed-online");
+        setSubjectScheduleIssue(null);
+        subjectSelectionSlotRef.current = "";
         pendingSnapshotSubjectRef.current = "";
         return;
       }
@@ -1999,29 +2039,41 @@ export default function ClassDevicePage() {
         classId,
         activeConfiguredSlot,
       );
-      if (relayList !== null) {
-        await cacheSet(
-          `classDevice:subjects:${classId}:${activeSlotKey}`,
-          { items: relayList },
-        ).catch(() => null);
-        applyList(relayList, "relay");
-        return;
-      }
+      const normalizedRelayList =
+        relayList === null ? null : normalizeSubjects(relayList);
+      const periodParam = activeConfiguredSlot.id
+        ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
+        : "";
+      const strictUrl =
+        `/api/class/subjects?class_id=${classId}` +
+        `&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`;
+      const strictCacheKey =
+        `classDevice:subjects:${classId}:${activeSubjectScopeKey}`;
 
       if (!isOnline) {
-        const periodParam = activeConfiguredSlot.id
-          ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
-          : "";
+        if (normalizedRelayList !== null && normalizedRelayList.length <= 1) {
+          await cacheSet(strictCacheKey, { items: normalizedRelayList }).catch(
+            () => null,
+          );
+          applyList(normalizedRelayList, "relay");
+          return;
+        }
+
         const preparedResp = await offlineGetJson(
-          `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`,
-          `classDevice:subjects:${classId}:${activeSlotKey}`
+          strictUrl,
+          strictCacheKey,
         ).catch(() => null as any);
 
-        // Même une liste vide est une donnée valide : elle signifie qu'aucun cours
-        // n'est prévu. Le cache général n'est utilisé que si ce créneau n'a jamais
-        // été préparé sur l'appareil.
         if (preparedResp != null) {
-          applyList(((preparedResp?.items || []) as Subject[]) ?? [], "auto-offline");
+          applyList(
+            ((preparedResp?.items || []) as Subject[]) ?? [],
+            "auto-offline",
+          );
+          return;
+        }
+
+        if (normalizedRelayList !== null) {
+          applyList(normalizedRelayList, "relay");
           return;
         }
 
@@ -2030,31 +2082,25 @@ export default function ClassDevicePage() {
         return;
       }
 
-      // On préchauffe le cache général comme secours si la préparation complète
-      // n'a pas encore été exécutée sur cet appareil.
+      // En ligne, le Cloud du créneau courant est la source de vérité.
+      // Un planning relais mémorisé avant une modification ne doit jamais
+      // réintroduire la matière du créneau précédent.
       const legacyWarmPromise = loadLegacySubjects();
+      const autoResp = await offlineGetJson(strictUrl, strictCacheKey).catch(
+        () => null as any,
+      );
 
-      const periodParam = activeConfiguredSlot.id
-        ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
-        : "";
-      const autoResp = await offlineGetJson(
-        `/api/class/subjects?class_id=${classId}&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`,
-        `classDevice:subjects:${classId}:${activeSlotKey}`
-      ).catch(() => null as any);
-
-      // IMPORTANT :
-      // - autoResp === null  => échec technique (réseau / timeout / cache indisponible)
-      // - autoResp.items=[]  => réponse valide du backend : aucune matière prévue sur ce créneau
-      // Dans le 2e cas, on NE DOIT PAS retomber sur l'ancien système.
-      const autoRequestFailed = autoResp == null;
-      const autoList = ((autoResp?.items || []) as Subject[]) ?? [];
-
-      if (autoList.length > 0) {
-        applyList(autoList, "auto");
+      if (autoResp != null) {
+        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
         return;
       }
 
-      if (autoRequestFailed && canUseFallbackLegacyFlow) {
+      if (normalizedRelayList !== null) {
+        applyList(normalizedRelayList, "relay");
+        return;
+      }
+
+      if (canUseFallbackLegacyFlow) {
         const legacyList = await legacyWarmPromise;
         if (legacyList.length > 0) {
           applyList(legacyList, "legacy-fallback");
@@ -2071,6 +2117,7 @@ export default function ClassDevicePage() {
   }, [
     classId,
     activeSlotKey,
+    activeSubjectScopeKey,
     activeConfiguredSlot,
     canUseFallbackLegacyFlow,
     isOnline,
@@ -2505,6 +2552,9 @@ export default function ClassDevicePage() {
         msg: input.message,
       });
       clearReminderLoop();
+      setSubjects([]);
+      setSubjectScheduleIssue(null);
+      subjectSelectionSlotRef.current = "";
       setOpen(null);
       setRoster([]);
       setRows({});
@@ -2863,14 +2913,15 @@ export default function ClassDevicePage() {
         }}
         onPrepared={refreshClassContextAfterPreparation}
       />
-      {(relayScheduleIssue ||
+      {(subjectScheduleIssue ||
+        relayScheduleIssue ||
         (classReadinessAssessment &&
           classReadinessAssessment.status !== "ready")) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
           {classReadinessAssessment &&
           classReadinessAssessment.status !== "ready"
             ? classReadinessAssessment.message
-            : relayScheduleIssue}
+            : subjectScheduleIssue || relayScheduleIssue}
         </div>
       )}
       {!open &&

@@ -258,6 +258,44 @@ test("le planning du téléphone écarte l'ancienne matière restée sur le mêm
   }
 });
 
+test("le téléphone de classe ouvre la matière la plus récente malgré une ancienne ligne active", () => {
+  const db = openRelayDatabase(":memory:");
+  try {
+    seed(db);
+    db.prepare(`
+      INSERT INTO teacher_timetables(
+        id, institution_id, class_id, subject_id, teacher_id,
+        period_id, weekday, server_version, updated_at
+      ) VALUES ('timetable-stale-open', ?, ?, ?, ?, ?, 3, 0, ?)
+    `).run(
+      INSTITUTION_ID,
+      CLASS_ID,
+      SUBJECT_ID,
+      TEACHER_ID,
+      NEXT_PERIOD_ID,
+      "2026-07-22T08:00:00.000Z",
+    );
+
+    const opened = openTeacherAttendanceSession(db, {
+      protocol_version: 1,
+      operation_id: "class-device-open-current-subject",
+      operation_type: "attendance.session.open",
+      class_id: CLASS_ID,
+      period_id: NEXT_PERIOD_ID,
+    }, classActor(), new Date("2026-07-22T09:31:00.000Z"));
+
+    assert.equal(opened.session.subject_id, NEXT_SUBJECT_ID);
+    const stored = db.prepare(`
+      SELECT teacher_id
+      FROM teacher_sessions
+      WHERE institution_id = ? AND id = ?
+    `).get(INSTITUTION_ID, opened.session.id) as { teacher_id: string };
+    assert.equal(stored.teacher_id, NEXT_TEACHER_ID);
+  } finally {
+    db.close();
+  }
+});
+
 test("le téléphone de classe ouvre, enregistre 17 minutes puis ferme via le relais", () => {
   const db = openRelayDatabase(":memory:");
   try {

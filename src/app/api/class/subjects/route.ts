@@ -147,9 +147,10 @@ async function resolveAutoPeriodIds(
   const parsed = parseSlot(slotRaw);
   const requestedPeriodId = String(periodIdRaw || "").trim();
 
-  // Le téléphone connaît l'identifiant exact du créneau affiché. On l'utilise
-  // en priorité pour ne jamais fusionner deux anciens créneaux ayant les mêmes
-  // heures après une modification d'emploi du temps.
+  // L'identifiant transmis par le téléphone valide le créneau affiché.
+  // On ne s'arrête toutefois pas à cet UUID : après une modification d'emploi
+  // du temps, un ancien et un nouveau créneau peuvent encore partager les mêmes
+  // heures. Les lignes correspondantes seront ensuite départagées par fraîcheur.
   if (requestedPeriodId) {
     const { data: requested, error: requestedError } = await srv
       .from("institution_periods")
@@ -161,18 +162,16 @@ async function resolveAutoPeriodIds(
     if (requestedError) throw requestedError;
     if (!requested) return [];
 
-    if (parsed) {
-      const requestedWeekday = Number((requested as any).weekday);
-      const weekdayMatches =
-        requestedWeekday === parsed.weekday ||
-        (parsed.weekday === 7 && requestedWeekday === 0);
-      const timeMatches =
-        hmsToMin((requested as any).start_time) === hmsToMin(`${parsed.startHM}:00`) &&
-        hmsToMin((requested as any).end_time) === hmsToMin(`${parsed.endHM}:00`);
-      if (!weekdayMatches || !timeMatches) return [];
-    }
+    if (!parsed) return [requestedPeriodId];
 
-    return [requestedPeriodId];
+    const requestedWeekday = Number((requested as any).weekday);
+    const weekdayMatches =
+      requestedWeekday === parsed.weekday ||
+      (parsed.weekday === 7 && requestedWeekday === 0);
+    const timeMatches =
+      hmsToMin((requested as any).start_time) === hmsToMin(`${parsed.startHM}:00`) &&
+      hmsToMin((requested as any).end_time) === hmsToMin(`${parsed.endHM}:00`);
+    if (!weekdayMatches || !timeMatches) return [];
   }
 
   let weekdayValues: number[] = [];
@@ -220,7 +219,10 @@ async function resolveAutoPeriodIds(
     });
 
     if (exact.length > 0) {
-      return uniq(exact.map((p) => String(p.id || "")).filter(Boolean));
+      return uniq([
+        requestedPeriodId,
+        ...exact.map((p) => String(p.id || "")),
+      ].filter(Boolean));
     }
 
     const covering = rows.filter((p) => {

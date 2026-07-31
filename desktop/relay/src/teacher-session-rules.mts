@@ -182,10 +182,11 @@ export function resolveTeacherScheduledSlot(
     throw new TeacherSessionRuleError(409, "attendance_outside_slot");
   }
 
-  const teacherFilter = relayActorKind(input.teacher) === "teacher"
+  const actorKind = relayActorKind(input.teacher);
+  const teacherFilter = actorKind === "teacher"
     ? "AND teacher_id = ?"
     : "";
-  const params = relayActorKind(input.teacher) === "teacher"
+  const params = actorKind === "teacher"
     ? [
         input.teacher.institution_id,
         input.teacher.actor_profile_id,
@@ -202,28 +203,36 @@ export function resolveTeacherScheduledSlot(
         localNow.weekday,
       ];
   const timetables = db.prepare(`
-    SELECT id, subject_id, teacher_id
+    SELECT id, subject_id, teacher_id, server_version, updated_at
     FROM teacher_timetables
     WHERE institution_id = ? ${teacherFilter} AND class_id = ?
       AND period_id = ? AND deleted_at IS NULL
       AND (weekday = ? OR (? = 0 AND weekday = 7))
-    ORDER BY id
-  `).all(...params) as Array<{ id: string; subject_id: string; teacher_id: string }>;
+    ORDER BY server_version DESC, updated_at DESC, id DESC
+  `).all(...params) as Array<{
+    id: string;
+    subject_id: string;
+    teacher_id: string;
+    server_version: number;
+    updated_at: string;
+  }>;
   if (timetables.length === 0) {
     throw new TeacherSessionRuleError(
       403,
-      relayActorKind(input.teacher) === "class_device"
+      actorKind === "class_device"
         ? "class_not_scheduled_for_slot"
         : "teacher_not_scheduled_for_slot",
     );
   }
-  if (timetables.length > 1 || !timetables[0]) {
+  if (actorKind === "teacher" && (timetables.length > 1 || !timetables[0])) {
     throw new TeacherSessionRuleError(
       409,
-      relayActorKind(input.teacher) === "class_device"
-        ? "class_timetable_ambiguous"
-        : "teacher_timetable_ambiguous",
+      "teacher_timetable_ambiguous",
     );
+  }
+  const selectedTimetable = timetables[0];
+  if (!selectedTimetable) {
+    throw new TeacherSessionRuleError(409, "class_timetable_ambiguous");
   }
   const schedule = scheduledSlotTimes(
     localNow.ymd,
@@ -233,12 +242,12 @@ export function resolveTeacherScheduledSlot(
   );
   return {
     institutionId: input.teacher.institution_id,
-    teacherId: timetables[0].teacher_id,
+    teacherId: selectedTimetable.teacher_id,
     timezone,
     sessionDate: localNow.ymd,
     weekday: localNow.weekday,
     period,
-    timetable: timetables[0],
+    timetable: selectedTimetable,
     ...schedule,
   };
 }
