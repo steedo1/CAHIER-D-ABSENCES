@@ -16,6 +16,9 @@ type Body = {
   started_at?: string;
   expected_minutes?: number | null;
   actual_call_at?: string;
+  period_id?: string | null;
+  client_session_id?: string | null;
+  operation_id?: string | null;
 };
 
 function uniq<T>(arr: T[]): T[] {
@@ -125,8 +128,8 @@ function dateInTZFromYMDHM(ymd: string, hm: string, tz: string) {
   const [Y, M, D] = ymd.split("-").map((x) => parseInt(x, 10));
   const [h, m] = hm.split(":").map((x) => parseInt(x, 10));
 
-  let guessUTC = new Date(Date.UTC(Y, M - 1, D, h, m, 0, 0));
-  let off = tzOffsetMinutes(guessUTC, tz);
+  const guessUTC = new Date(Date.UTC(Y, M - 1, D, h, m, 0, 0));
+  const off = tzOffsetMinutes(guessUTC, tz);
   let realUTC = new Date(guessUTC.getTime() - off * 60_000);
 
   const off2 = tzOffsetMinutes(realUTC, tz);
@@ -176,24 +179,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "subject_id_required" }, { status: 400 });
     }
 
-    const startedAtRaw = b?.started_at ? new Date(b.started_at) : new Date();
-    const startedAt = isNaN(startedAtRaw.getTime()) ? new Date() : startedAtRaw;
     const serverNow = new Date();
-
-    const candidateClientCall =
+    const actualCallAt = serverNow;
+    const requestedPeriodId = String(b?.period_id || "").trim();
+    const operationId = String(
+      req.headers.get("x-mon-cahier-operation-id") ||
+        b?.operation_id ||
+        "",
+    ).trim();
+    if (
+      operationId &&
+      (!/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+        operationId.startsWith("client:"))
+    ) {
+      return NextResponse.json(
+        { error: "invalid_operation_id" },
+        { status: 400 },
+      );
+    }
+    const clientObservedAt =
       parseIsoDate((b as any)?.actual_call_at) ||
       parseIsoDate((b as any)?.client_call_at) ||
-      parseIsoDate((b as any)?.click_at) ||
-      parseIsoDate((b as any)?.clicked_at) ||
       null;
-
-    let actualCallAt: Date = serverNow;
-    if (candidateClientCall) {
-      const maxFutureMs = 5 * 60_000;
-      if (candidateClientCall.getTime() <= serverNow.getTime() + maxFutureMs) {
-        actualCallAt = candidateClientCall;
-      }
-    }
+    const clientClockSkewMs = clientObservedAt
+      ? clientObservedAt.getTime() - serverNow.getTime()
+      : null;
 
     let phone = String((user as any).phone || "").trim();
     if (!phone) {
@@ -434,6 +444,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const requestedPeriodMismatch = Boolean(
+      requestedPeriodId && requestedPeriodId !== currentPeriod.periodId,
+    );
+
     const { data: scheduledRows, error: scheduledErr } = await srv
       .from("teacher_timetables")
       .select("teacher_id")
@@ -501,6 +515,7 @@ export async function POST(req: NextRequest) {
       subject_name = (subj as any)?.custom_name ?? (subj as any)?.subjects?.name ?? null;
     }
 
+    let idempotent = false;
     let session:
       | {
           id: string;
@@ -555,6 +570,7 @@ export async function POST(req: NextRequest) {
 
       if (selErr) return NextResponse.json({ error: selErr.message }, { status: 400 });
       session = (rows as any[])?.[0] ?? null;
+      idempotent = Boolean(session);
     }
 
     if (session) {
@@ -628,9 +644,25 @@ export async function POST(req: NextRequest) {
         class_label: cls.label as string,
         subject_id,
         subject_name,
+        period_id: currentPeriod.periodId,
         started_at: session.started_at,
         actual_call_at: session.actual_call_at ?? callISO,
         expected_minutes: session.expected_minutes ?? expected_minutes ?? null,
+        delivery_origin: "cloud_fallback",
+        operation_id: operationId || null,
+        server_time: serverNow.toISOString(),
+        idempotent,
+        clock_anomaly:
+          requestedPeriodMismatch ||
+          (clientClockSkewMs != null &&
+            Math.abs(clientClockSkewMs) > 5 * 60_000)
+            ? {
+                client_server_skew_ms: clientClockSkewMs,
+                requested_period_id: requestedPeriodId || null,
+                cloud_period_id: currentPeriod.periodId,
+                action: "cloud_time_applied_without_gps_or_blocking",
+              }
+            : null,
         education_type: educationContext.education_type,
         education_label: educationContext.education_label,
         education_short_label: educationContext.education_short_label,

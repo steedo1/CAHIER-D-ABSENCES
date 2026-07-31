@@ -13,13 +13,9 @@ import {
   cacheGet,
   cacheSet,
   clearOfflineAll,
+  resolveOfflineSessionReference,
 } from "@/lib/offline";
-import {
-  assessClassDeviceOfflineReadiness,
-  getClassDeviceCoherentSchedule,
-  getOfflineReadiness,
-  type ClassDeviceScheduleAssessment,
-} from "@/lib/offline-readiness";
+import { getClassDeviceCoherentSchedule } from "@/lib/offline-readiness";
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
@@ -148,6 +144,19 @@ type MyClass = {
 };
 type Subject = { id: string; label: string };
 type RosterItem = { id: string; full_name: string; matricule: string | null };
+type SessionDeliveryOrigin = "relay" | "cloud_fallback" | "local_pending";
+type SessionRuntimeState =
+  | "idle"
+  | "opening"
+  | "open_relay"
+  | "open_cloud_fallback"
+  | "open_local_pending"
+  | "closing"
+  | "closed_pending_sync"
+  | "closed_synced"
+  | "recoverable_error";
+type ConnectivityState = "checking" | "connected" | "slow" | "unavailable";
+
 type OpenSession = {
   id: string;
   class_id: string;
@@ -158,6 +167,8 @@ type OpenSession = {
   actual_call_at?: string | null;
   expected_minutes?: number | null;
   local_relay?: boolean;
+  delivery_origin?: SessionDeliveryOrigin;
+  open_operation_id?: string | null;
   period_id?: string | null;
   scheduled_end_at?: string | null;
   grace_expires_at?: string | null;
@@ -281,6 +292,7 @@ function relayScheduleErrorMessage(error: unknown) {
 
 type PendingEndPayload = {
   actual_end_at: string;
+  client_session_id?: string | null;
 };
 
 /** Marqueur local : quand l’utilisateur termine une séance locale avant que la séance serveur existe. */
@@ -512,6 +524,43 @@ function isClientSessionId(id: any): boolean {
   return typeof id === "string" && id.startsWith("client:");
 }
 
+function isRestorableClassDeviceOpen(value: OpenSession | null | undefined): value is OpenSession {
+  if (!value?.id || !value.class_id) return false;
+  return (
+    value.local_relay === true ||
+    value.delivery_origin === "relay" ||
+    value.delivery_origin === "cloud_fallback" ||
+    value.delivery_origin === "local_pending" ||
+    isClientSessionId(value.id)
+  );
+}
+
+function runtimeStateForOpen(value: OpenSession | null | undefined): SessionRuntimeState {
+  if (!value) return "idle";
+  if (value.delivery_origin === "local_pending" || isClientSessionId(value.id)) {
+    return "open_local_pending";
+  }
+  if (
+    value.delivery_origin === "cloud_fallback" ||
+    value.local_relay === false
+  ) {
+    return "open_cloud_fallback";
+  }
+  return "open_relay";
+}
+
+function dateKeyInTZ(d: Date, tz: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 function formatReminderCountdown(ms: number): string | null {
   if (!Number.isFinite(ms)) return null;
   if (ms <= 0) return "Séance au-delà de l’heure prévue";
@@ -601,8 +650,6 @@ export default function ClassDevicePage() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [relayClassSchedule, setRelayClassSchedule] =
     useState<RelayTeacherOfflineSchedule | null>(null);
-  const [classReadinessAssessment, setClassReadinessAssessment] =
-    useState<ClassDeviceScheduleAssessment | null>(null);
   const [relayScheduleIssue, setRelayScheduleIssue] = useState<string | null>(
     null,
   );
@@ -613,6 +660,14 @@ export default function ClassDevicePage() {
   const subjectSelectionSlotRef = useRef<string>("");
   const relayScheduleRefreshRef = useRef<Promise<RelayTeacherOfflineSchedule | null> | null>(null);
   const relayClockOffsetMsRef = useRef<number | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<ConnectivityState>(
+    typeof navigator !== "undefined" && navigator.onLine === false
+      ? "unavailable"
+      : "checking",
+  );
+  const [relayStatus, setRelayStatus] = useState<ConnectivityState>("checking");
+  const [sessionRuntimeState, setSessionRuntimeState] =
+    useState<SessionRuntimeState>("idle");
 
   function relayAdjustedDate(baseMs = Date.now()) {
     const offset = relayClockOffsetMsRef.current;
@@ -700,6 +755,7 @@ export default function ClassDevicePage() {
       !relay.relay_local_url ||
       !relay.relay_access_token
     ) {
+      setRelayStatus("unavailable");
       setRelayScheduleIssue(
         "Les données d’accès au relais de cette classe sont absentes.",
       );
@@ -708,6 +764,8 @@ export default function ClassDevicePage() {
     if (relayScheduleRefreshRef.current) return await relayScheduleRefreshRef.current;
 
     const run = (async () => {
+      const startedAt = performance.now();
+      setRelayStatus("checking");
       try {
         const schedule = await fetchRelayTeacherOfflineSchedule({
           institutionId: target.institution_id,
@@ -715,9 +773,13 @@ export default function ClassDevicePage() {
           accessToken: relay.relay_access_token!,
         });
         const applied = await applySchedule(schedule);
+        setRelayStatus("connected");
         setRelayScheduleIssue(null);
         return applied;
       } catch (error) {
+        setRelayStatus(
+          performance.now() - startedAt >= 2_500 ? "slow" : "unavailable",
+        );
         setRelayScheduleIssue(relayScheduleErrorMessage(error));
         return await loadPreparedSchedule();
       } finally {
@@ -869,10 +931,24 @@ export default function ClassDevicePage() {
   // 🔁 Tente de récupérer une séance serveur et remplace une séance locale "client:*"
   async function refreshServerOpenSession(): Promise<OpenSession | null> {
     try {
-      const os = await offlineGetJson("/api/teacher/sessions/open", "classDevice:open-session");
+      const os = await offlineGetJson(
+        "/api/teacher/sessions/open",
+        "classDevice:open-session",
+      );
       const serverOpen = (os?.item as OpenSession) || null;
 
       if (serverOpen && serverOpen.id && !isClientSessionId(serverOpen.id)) {
+        const current = openRef.current;
+        if (
+          current &&
+          (String(serverOpen.class_id || "") !== String(current.class_id || "") ||
+            (current.subject_id &&
+              serverOpen.subject_id &&
+              String(serverOpen.subject_id) !== String(current.subject_id)))
+        ) {
+          return null;
+        }
+
         const institutionId =
           classes.find((candidate) => candidate.id === serverOpen.class_id)
             ?.institution_id ||
@@ -889,9 +965,24 @@ export default function ClassDevicePage() {
           await cacheSet("classDevice:local-open", null);
           return null;
         }
-        setOpen(serverOpen);
-        await cacheSet("classDevice:local-open", null);
-        return serverOpen;
+
+        const normalizedOpen: OpenSession = {
+          ...current,
+          ...serverOpen,
+          local_relay: false,
+          delivery_origin:
+            serverOpen.delivery_origin ||
+            (current?.delivery_origin === "relay"
+              ? "relay"
+              : "cloud_fallback"),
+          open_operation_id:
+            current?.open_operation_id || serverOpen.open_operation_id || null,
+          period_id: serverOpen.period_id || current?.period_id || null,
+        };
+        setOpen(normalizedOpen);
+        setSessionRuntimeState(runtimeStateForOpen(normalizedOpen));
+        await cacheSet("classDevice:local-open", normalizedOpen);
+        return normalizedOpen;
       }
 
       return serverOpen;
@@ -909,10 +1000,17 @@ export default function ClassDevicePage() {
       // si pas en ligne, on attend
       if (typeof navigator !== "undefined" && !navigator.onLine) return;
 
-      // récupérer la séance serveur ouverte (si elle existe maintenant)
-      const srv = await refreshServerOpenSession();
-      const srvId = srv?.id && !isClientSessionId(srv.id) ? String(srv.id) : "";
+      // Ancien marqueur sans identité : ne jamais risquer de fermer le cours suivant.
+      const clientSessionId = String(pending.client_session_id || "").trim();
+      if (!clientSessionId) {
+        setMsg(
+          "Une ancienne fin de séance locale ne contient pas assez d’informations pour être rejouée automatiquement. Elle reste conservée pour vérification.",
+        );
+        return;
+      }
 
+      const resolved = await resolveOfflineSessionReference(clientSessionId);
+      const srvId = resolved.serverSessionId || "";
       if (!srvId) return;
 
       // tenter de fermer côté serveur avec l'heure réelle de fin capturée localement
@@ -938,6 +1036,39 @@ export default function ClassDevicePage() {
     }
   }
 
+  async function probeCloudAvailability(): Promise<boolean> {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setCloudStatus("unavailable");
+      return false;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(new DOMException("cloud_probe_timeout", "TimeoutError")),
+      3_500,
+    );
+    setCloudStatus("checking");
+    try {
+      const response = await fetch(
+        "/api/class/my-classes?offline_contract=v5&connectivity_probe=1",
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        },
+      );
+      const reachable = response.status < 500;
+      setCloudStatus(reachable ? "connected" : "unavailable");
+      return reachable;
+    } catch {
+      setCloudStatus("unavailable");
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   async function syncNow() {
     if (syncingRef.current) return;
     syncingRef.current = true;
@@ -945,7 +1076,9 @@ export default function ClassDevicePage() {
     let result: Awaited<ReturnType<typeof flushOutbox>> | null = null;
     let recovery: ClassDeviceAttendanceRecoverySummary | null = null;
     try {
-      if (typeof navigator === "undefined" || navigator.onLine !== false) {
+      const cloudReachable =
+        typeof window === "undefined" ? true : await probeCloudAvailability();
+      if (cloudReachable) {
         result = await flushOutbox();
       }
       const relay = selectedClass?.attendance_presence;
@@ -963,6 +1096,9 @@ export default function ClassDevicePage() {
           relayBaseUrl: relay.relay_local_url,
           relayAccessToken: relay.relay_access_token,
         });
+        setRelayStatus(
+          recovery.relay_unreachable ? "unavailable" : "connected",
+        );
       }
       await processPendingEnd();
     } catch (e: any) {
@@ -1033,12 +1169,17 @@ export default function ClassDevicePage() {
   useEffect(() => {
     void registerServiceWorker();
     void refreshPending();
+    void probeCloudAvailability();
 
     const onOn = () => {
       setIsOnline(true);
+      setCloudStatus("checking");
       void syncNow();
     };
-    const onOff = () => setIsOnline(false);
+    const onOff = () => {
+      setIsOnline(false);
+      setCloudStatus("unavailable");
+    };
 
     window.addEventListener("online", onOn);
     window.addEventListener("offline", onOff);
@@ -1053,6 +1194,7 @@ export default function ClassDevicePage() {
   useEffect(() => {
     void refreshPending();
     if (!selectedClass?.id || pendingSync <= 0) return;
+    void syncNow();
     const retry = () => {
       if (document.visibilityState === "visible") void syncNow();
     };
@@ -1120,10 +1262,10 @@ export default function ClassDevicePage() {
 
     if (
       opts?.restoreOpen !== false &&
-      snapState.open?.local_relay === true &&
-      !isClientSessionId(snapState.open.id)
+      isRestorableClassDeviceOpen(snapState.open)
     ) {
       setOpen(snapState.open);
+      setSessionRuntimeState(runtimeStateForOpen(snapState.open));
     }
 
     if (snapState.rows) setRows(snapState.rows);
@@ -1164,7 +1306,22 @@ export default function ClassDevicePage() {
       await syncNow();
     }
 
-    // 2) même si pendingSync==0, on tente un refresh serveur (cas séance serveur créée mais UI restée locale)
+    // 2) le rejeu de l'ouverture mémorise client:* -> UUID serveur.
+    const resolved = await resolveOfflineSessionReference(cur.id);
+    if (resolved.serverSessionId) {
+      const mappedOpen: OpenSession = {
+        ...cur,
+        id: resolved.serverSessionId,
+        local_relay: false,
+        delivery_origin: "cloud_fallback",
+      };
+      setOpen(mappedOpen);
+      setSessionRuntimeState("open_cloud_fallback");
+      await cacheSet("classDevice:local-open", mappedOpen);
+      return mappedOpen;
+    }
+
+    // 3) même si pendingSync==0, on tente un refresh serveur.
     const srv = await refreshServerOpenSession();
     if (srv && srv.id && !isClientSessionId(srv.id)) return srv;
 
@@ -1174,6 +1331,39 @@ export default function ClassDevicePage() {
     );
     return null;
   }
+
+  useEffect(() => {
+    const cur = openRef.current;
+    if (!cur || !isClientSessionId(cur.id) || !isOnline || pendingSync > 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      const resolved = await resolveOfflineSessionReference(cur.id);
+      if (cancelled) return;
+
+      if (resolved.serverSessionId) {
+        const mappedOpen: OpenSession = {
+          ...cur,
+          id: resolved.serverSessionId,
+          local_relay: false,
+          delivery_origin: "cloud_fallback",
+        };
+        openRef.current = mappedOpen;
+        setOpen(mappedOpen);
+        setSessionRuntimeState("open_cloud_fallback");
+        await cacheSet("classDevice:local-open", mappedOpen);
+        return;
+      }
+
+      // L'ouverture peut avoir été confirmée avant que l'onglet ne reçoive la réponse.
+      await refreshServerOpenSession();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open?.id, isOnline, pendingSync]);
 
   // options de rubriques basées sur la config de conduite
   const rubricOptions = useMemo(() => {
@@ -1364,16 +1554,17 @@ export default function ClassDevicePage() {
 
         const serverOpen = (os?.item as OpenSession) || null;
         const localOpenCandidate = (localOpenRaw as OpenSession) || null;
-        const localOpen =
-          localOpenCandidate?.local_relay === true &&
-          !isClientSessionId(localOpenCandidate.id)
-            ? localOpenCandidate
-            : null;
+        const localOpen = isRestorableClassDeviceOpen(localOpenCandidate)
+          ? localOpenCandidate
+          : null;
         if (localOpenCandidate && !localOpen) {
           await cacheSet("classDevice:local-open", null);
         }
+        // Le cache local représente l'action la plus récente de ce téléphone.
+        // Une ancienne réponse Cloud mise en cache ne doit jamais réimposer
+        // la matière d'une séance précédente après une panne.
         let restoredOpen: OpenSession | null =
-          serverOpen || localOpen || null;
+          localOpen || serverOpen || null;
         if (restoredOpen) {
           const restoredInstitutionId =
             mapped.find((item) => item.id === restoredOpen?.class_id)
@@ -1393,6 +1584,7 @@ export default function ClassDevicePage() {
 
         if (restoredOpen) {
           setOpen(restoredOpen);
+          setSessionRuntimeState(runtimeStateForOpen(restoredOpen));
         }
 
         const initialClassId = restoredOpen?.class_id || mapped[0]?.id || "";
@@ -1457,11 +1649,9 @@ export default function ClassDevicePage() {
         if (completion?.version === 1) {
           setLastCompletion(completion);
         }
-        let localOpen =
-          localOpenCandidate?.local_relay === true &&
-          !isClientSessionId(localOpenCandidate.id)
-            ? localOpenCandidate
-            : null;
+        let localOpen = isRestorableClassDeviceOpen(localOpenCandidate)
+          ? localOpenCandidate
+          : null;
         if (
           localOpen &&
           completion?.version === 1 &&
@@ -1476,6 +1666,7 @@ export default function ClassDevicePage() {
         }
         if (localOpen) {
           setOpen(localOpen);
+          setSessionRuntimeState(runtimeStateForOpen(localOpen));
           const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(localOpen.class_id);
           if (snap?.state) {
             applySnapshotState(snap.state, { restoreOpen: false });
@@ -2166,6 +2357,21 @@ export default function ClassDevicePage() {
   }, [open?.class_id, relayClassSchedule?.schedule_revision]);
 
   /* helpers saisie */
+  function persistAttendanceRowsImmediately(nextRows: Record<string, Row>) {
+    const currentOpen = openRef.current;
+    if (!currentOpen?.class_id) return;
+    saveClassDeviceSnapshot<ClassPageSnapshotState>(currentOpen.class_id, {
+      classId: currentOpen.class_id,
+      subjectId: currentOpen.subject_id || subjectId,
+      open: currentOpen,
+      rows: nextRows,
+      penaltyOpen,
+      penRubric,
+      penRows,
+      msg,
+    });
+  }
+
   function toggleAbsent(id: string, v: boolean) {
     setRows((prev) => {
       const cur = prev[id] || {};
@@ -2174,7 +2380,9 @@ export default function ClassDevicePage() {
         next.late = false;
         next.late_observed_at = null;
       }
-      return { ...prev, [id]: next };
+      const nextRows = { ...prev, [id]: next };
+      persistAttendanceRowsImmediately(nextRows);
+      return nextRows;
     });
   }
   function toggleLate(id: string, v: boolean) {
@@ -2186,7 +2394,9 @@ export default function ClassDevicePage() {
         absent: v ? false : cur.absent,
         late_observed_at: v ? observedNowIso() : null,
       };
-      return { ...prev, [id]: next };
+      const nextRows = { ...prev, [id]: next };
+      persistAttendanceRowsImmediately(nextRows);
+      return nextRows;
     });
   }
 
@@ -2312,7 +2522,7 @@ export default function ClassDevicePage() {
       return;
     }
 
-    if (!activeConfiguredSlot) {
+    if (!activeConfiguredSlot?.id) {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
@@ -2324,149 +2534,319 @@ export default function ClassDevicePage() {
     }
 
     setBusy(true);
-    setMsg("Vérification de la cohérence du téléphone, du relais et du planning…");
+    setSessionRuntimeState("opening");
+    setMsg("Ouverture de l’appel : relais local prioritaire, puis Cloud, puis stockage sécurisé sur ce téléphone…");
 
     try {
-      const storedReadiness = await getOfflineReadiness("class-device").catch(
-        () => null,
-      );
       const relayPolicy = selectedClass?.attendance_presence;
-      const assessment = await assessClassDeviceOfflineReadiness(
-        storedReadiness,
-        {
-          institutionId: selectedClass?.institution_id,
-          classId,
-          actorProfileId: selectedClass?.actor_profile_id,
-          relayBaseUrl: relayPolicy?.relay_local_url,
-          relayAccessToken: relayPolicy?.relay_access_token,
-        },
-      );
-      setClassReadinessAssessment(assessment);
-      if (assessment.status !== "ready" || !assessment.schedule) {
-        setMsg(assessment.message);
-        return;
+      let preparedSchedule = relayClassScheduleRef.current;
+      if (
+        selectedClass?.institution_id &&
+        selectedClass.id &&
+        selectedClass.actor_profile_id
+      ) {
+        preparedSchedule = await getClassDeviceCoherentSchedule({
+          institutionId: selectedClass.institution_id,
+          classId: selectedClass.id,
+          actorProfileId: selectedClass.actor_profile_id,
+        }).catch(() => preparedSchedule);
       }
 
-      const verifiedPeriods = periodsFromRelayClassSchedule(
-        assessment.schedule,
-        classId,
-      );
+      const verifiedPeriods: Record<number, Period[]> = preparedSchedule
+        ? periodsFromRelayClassSchedule(preparedSchedule, classId)
+        : periodsByDay;
       const verifiedPeriod = Object.values(verifiedPeriods)
         .flat()
-        .find((period) => period.id === activeConfiguredSlot.id);
-      const verifiedSubjects = relaySubjectsForSlot(
-        assessment.schedule,
-        classId,
-        verifiedPeriod || null,
-      );
+        .find((period) => period.id === activeConfiguredSlot.id) || activeConfiguredSlot;
+      const verifiedSubjects = preparedSchedule
+        ? relaySubjectsForSlot(preparedSchedule, classId, verifiedPeriod)
+        : subjects;
+
       if (
-        !verifiedPeriod ||
-        !verifiedSubjects ||
-        !verifiedSubjects.some((subject) => subject.id === subjectId)
+        preparedSchedule &&
+        (!verifiedPeriod ||
+          !verifiedSubjects ||
+          !verifiedSubjects.some((subject) => subject.id === subjectId))
       ) {
+        setSessionRuntimeState("recoverable_error");
         setMsg(
-          "Le créneau ou la discipline ne figure pas dans le planning vérifié de la classe. Actualisez l’appareil.",
+          "Le créneau ou la discipline ne figure pas dans le planning préparé de la classe. Actualisez la préparation de ce téléphone.",
         );
         return;
       }
 
-      relayClassScheduleRef.current = assessment.schedule;
-      setRelayClassSchedule(assessment.schedule);
-      setPeriodsByDay(verifiedPeriods);
-      setRelayScheduleIssue(null);
+      if (preparedSchedule) {
+        relayClassScheduleRef.current = preparedSchedule;
+        setRelayClassSchedule(preparedSchedule);
+        setPeriodsByDay(verifiedPeriods);
+      }
 
-      const today = new Date();
-      const effectiveStart = verifiedPeriod.start_time;
+      const observedAt = relayAdjustedDate();
+      const [hh, mm] = verifiedPeriod.start_time.split(":").map((value) => Number(value));
+      const started = new Date(
+        observedAt.getFullYear(),
+        observedAt.getMonth(),
+        observedAt.getDate(),
+        Number.isFinite(hh) ? hh : observedAt.getHours(),
+        Number.isFinite(mm) ? mm : 0,
+        0,
+        0,
+      );
       const effectiveDuration = Math.max(
         1,
         minutesDiff(verifiedPeriod.start_time, verifiedPeriod.end_time),
       );
-      const [hh, mm] = effectiveStart.split(":").map((x) => +x);
-      const started = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hh, mm, 0, 0);
+      const attemptKey = [
+        classId,
+        verifiedPeriod.id,
+        subjectId,
+        dateKeyInTZ(observedAt, inst.tz || "Africa/Abidjan"),
+      ].join(":");
+      const actualCallAtISO = observedAt.toISOString();
 
-      const clientSessionId = `${classId}_${subjectId || "none"}_${started.toISOString()}`;
-      const actualCallAtISO = observedNowIso();
-      if (
-        !selectedClass?.institution_id ||
-        !relayPolicy?.enabled ||
-        relayPolicy.allow_local_relay === false ||
-        !relayPolicy.relay_local_url ||
-        !relayPolicy.relay_access_token
-      ) {
-        setMsg("Les données d’accès au relais de cette classe sont absentes.");
-        return;
-      }
-
-      const local = await openTeacherAttendanceSessionOnRelay({
-        institutionId: selectedClass.institution_id,
+      const relayAttemptStartedAt = performance.now();
+      const relayDelivery = await openTeacherAttendanceSessionOnRelay({
+        institutionId: selectedClass?.institution_id || "",
         classId,
         periodId: verifiedPeriod.id!,
-        attemptKey: clientSessionId,
-        relayBaseUrl: relayPolicy.relay_local_url,
-        relayAccessToken: relayPolicy.relay_access_token,
+        attemptKey,
+        relayBaseUrl: relayPolicy?.relay_local_url,
+        relayAccessToken: relayPolicy?.relay_access_token,
       });
-      if (local.state !== "relay_opened" || !local.session_id) {
-        const deliveryMessage = teacherSessionDeliveryMessage(local);
-        const blockedStatus =
-          local.last_error === "authentication_required" ||
-          local.last_error === "relay_unauthorized"
-            ? "relay_access_denied"
-            : "relay_unreachable";
-        setClassReadinessAssessment({
-          ...assessment,
-          status: blockedStatus,
-          message: deliveryMessage,
-          schedule: null,
-        });
-        setRelayScheduleIssue(deliveryMessage);
-        setMsg(deliveryMessage);
+      const relayAttemptDuration = performance.now() - relayAttemptStartedAt;
+
+      if (relayDelivery.state === "relay_opened" && relayDelivery.session_id) {
+        setRelayStatus("connected");
+        if (relayDelivery.relay_time) {
+          const relayTime = Date.parse(relayDelivery.relay_time);
+          if (Number.isFinite(relayTime)) {
+            relayClockOffsetMsRef.current = relayTime - Date.now();
+          }
+        }
+        const cls = classes.find((candidate) => candidate.id === classId);
+        const subj = (verifiedSubjects ?? []).find(
+          (subject) => subject.id === (relayDelivery.subject_id || subjectId),
+        );
+        const relayOpen: OpenSession = {
+          id: relayDelivery.session_id,
+          class_id: classId,
+          class_label: cls?.label || "Classe",
+          subject_id: relayDelivery.subject_id || subjectId || null,
+          subject_name: subj?.label || null,
+          started_at: relayDelivery.started_at || started.toISOString(),
+          actual_call_at: relayDelivery.actual_call_at || actualCallAtISO,
+          expected_minutes: effectiveDuration,
+          local_relay: true,
+          delivery_origin: "relay",
+          open_operation_id: relayDelivery.operation_id,
+          period_id: verifiedPeriod.id,
+          scheduled_end_at: relayDelivery.scheduled_end_at,
+          grace_expires_at: relayDelivery.grace_expires_at,
+          session_state: relayDelivery.session_state || "open",
+          education_type: cls?.education_type || "general_secondary",
+          education_label: cls?.education_label || "Secondaire général",
+          education_short_label: cls?.education_short_label || "Général",
+          formation_code: cls?.formation_code || null,
+          formation_label: cls?.formation_label || null,
+          formation_level_code: cls?.formation_level_code || null,
+          formation_level_label: cls?.formation_level_label || null,
+          education_context_key:
+            cls?.education_context_key ||
+            cls?.education_type ||
+            "general_secondary",
+          education_context_label:
+            cls?.education_context_label ||
+            cls?.education_label ||
+            "Secondaire général",
+        };
+        setOpen(relayOpen);
+        setSessionRuntimeState("open_relay");
+        await cacheSet("classDevice:local-open", relayOpen);
+        setMsg(teacherSessionDeliveryMessage(relayDelivery));
+        await refreshPending();
         return;
       }
-      if (local.relay_time) {
-        const relayTime = Date.parse(local.relay_time);
-        if (Number.isFinite(relayTime)) {
-          relayClockOffsetMsRef.current = relayTime - Date.now();
-        }
-      }
-      const cls = classes.find((candidate) => candidate.id === classId);
-      const subj = verifiedSubjects.find(
-        (subject) => subject.id === (local.subject_id || subjectId),
+
+      setRelayStatus(
+        relayDelivery.last_status && relayDelivery.last_status > 0
+          ? relayAttemptDuration >= 2_500
+            ? "slow"
+            : "connected"
+          : relayAttemptDuration >= 2_500
+            ? "slow"
+            : "unavailable",
       );
-      const localOpen: OpenSession = {
-        id: local.session_id,
-        class_id: classId,
-        class_label: cls?.label || "Classe",
-        subject_id: local.subject_id || subjectId || null,
-        subject_name: subj?.label || null,
-        started_at: local.started_at || started.toISOString(),
-        actual_call_at: local.actual_call_at || actualCallAtISO,
-        expected_minutes: effectiveDuration,
-        local_relay: true,
-        period_id: verifiedPeriod.id,
-        scheduled_end_at: local.scheduled_end_at,
-        grace_expires_at: local.grace_expires_at,
-        session_state: local.session_state || "open",
-        education_type: cls?.education_type || "general_secondary",
-        education_label: cls?.education_label || "Secondaire général",
-        education_short_label: cls?.education_short_label || "Général",
-        formation_code: cls?.formation_code || null,
-        formation_label: cls?.formation_label || null,
-        formation_level_code: cls?.formation_level_code || null,
-        formation_level_label: cls?.formation_level_label || null,
-        education_context_key:
-          cls?.education_context_key ||
-          cls?.education_type ||
-          "general_secondary",
-        education_context_label:
-          cls?.education_context_label ||
-          cls?.education_label ||
-          "Secondaire général",
-      };
-      setOpen(localOpen);
-      await cacheSet("classDevice:local-open", localOpen);
-      setMsg(teacherSessionDeliveryMessage(local));
-      await refreshPending();
+
+      const operationId = relayDelivery.operation_id;
+      const clientSessionId = `client:${operationId}`;
+      const cloudResult = await offlineMutateJson<{
+        item?: OpenSession & {
+          period_id?: string | null;
+          operation_id?: string | null;
+          server_time?: string | null;
+        };
+      }>(
+        "/api/class/sessions/start",
+        {
+          method: "POST",
+          body: {
+            class_id: classId,
+            subject_id: subjectId,
+            period_id: verifiedPeriod.id,
+            expected_minutes: effectiveDuration,
+            actual_call_at: actualCallAtISO,
+            client_session_id: clientSessionId,
+            operation_id: operationId,
+          },
+        },
+        {
+          operationId,
+          mergeKey: `session-start:${attemptKey}`,
+          meta: {
+            operationType: "session-start",
+            clientSessionId,
+            institutionId: selectedClass?.institution_id || "",
+            classId,
+            periodId: verifiedPeriod.id,
+            subjectId,
+          },
+          timeoutMs: 6_000,
+        },
+      );
+
+      if (cloudResult.ok === true) {
+        const cloudItem = cloudResult.data?.item;
+        if (!cloudItem?.id) {
+          setCloudStatus("connected");
+          setSessionRuntimeState("recoverable_error");
+          setMsg("Le Cloud a répondu sans fournir l’identifiant de la séance. L’appel n’a pas été perdu ; réessayez.");
+          return;
+        }
+        if (
+          String(cloudItem.class_id || "") !== classId ||
+          String(cloudItem.subject_id || "") !== subjectId
+        ) {
+          setCloudStatus("connected");
+          setSessionRuntimeState("recoverable_error");
+          setMsg("Réponse Cloud incohérente avec la classe ou la matière. Aucune seconde séance n’a été créée.");
+          return;
+        }
+
+        const cloudCorrectedPeriod = Boolean(
+          cloudItem.period_id &&
+            String(cloudItem.period_id) !== String(verifiedPeriod.id),
+        );
+        const cls = classes.find((candidate) => candidate.id === classId);
+        const subj = (verifiedSubjects ?? []).find(
+          (subject) => subject.id === subjectId,
+        );
+        const cloudOpen: OpenSession = {
+          ...cloudItem,
+          class_id: classId,
+          class_label: cloudItem.class_label || cls?.label || "Classe",
+          subject_id: subjectId,
+          subject_name: cloudItem.subject_name || subj?.label || null,
+          started_at: cloudItem.started_at || started.toISOString(),
+          actual_call_at: cloudItem.actual_call_at || actualCallAtISO,
+          expected_minutes:
+            cloudItem.expected_minutes ?? effectiveDuration,
+          local_relay: false,
+          delivery_origin: "cloud_fallback",
+          open_operation_id: operationId,
+          period_id: cloudItem.period_id || verifiedPeriod.id,
+          session_state: cloudItem.session_state || "open",
+        };
+        setCloudStatus("connected");
+        setOpen(cloudOpen);
+        setSessionRuntimeState("open_cloud_fallback");
+        await cacheSet("classDevice:local-open", cloudOpen);
+        setMsg(
+          cloudCorrectedPeriod
+            ? "Relais local indisponible. Le Cloud a recalé le créneau avec son heure serveur et l’appel continue sans GPS."
+            : "Relais local indisponible. L’appel continue via le Cloud.",
+        );
+        if (cloudCorrectedPeriod) setNowTick(Date.now());
+        await refreshPending();
+        return;
+      }
+
+      if (cloudResult.ok === false && cloudResult.queued) {
+        const cloudNetworkUnavailable =
+          cloudResult.offline ||
+          cloudResult.status === 0 ||
+          cloudResult.status >= 500;
+        setCloudStatus(
+          cloudNetworkUnavailable ? "unavailable" : "connected",
+        );
+        if (relayDelivery.state === "blocked") {
+          setSessionRuntimeState("recoverable_error");
+          setMsg(
+            "Le relais a refusé ce créneau pour une règle métier précise et le Cloud est indisponible. L’appel n’a pas été ouvert en double ; vérifiez le planning préparé.",
+          );
+          return;
+        }
+        if (!preparedSchedule) {
+          setSessionRuntimeState("recoverable_error");
+          setMsg(
+            "Relais et Cloud indisponibles. Le planning local vérifié manque sur ce téléphone : relancez sa préparation dès qu’une connexion revient.",
+          );
+          return;
+        }
+
+        const cls = classes.find((candidate) => candidate.id === classId);
+        const subj = (verifiedSubjects ?? []).find(
+          (subject) => subject.id === subjectId,
+        );
+        const pendingOpen: OpenSession = {
+          id: clientSessionId,
+          class_id: classId,
+          class_label: cls?.label || "Classe",
+          subject_id: subjectId,
+          subject_name: subj?.label || null,
+          started_at: started.toISOString(),
+          actual_call_at: actualCallAtISO,
+          expected_minutes: effectiveDuration,
+          local_relay: false,
+          delivery_origin: "local_pending",
+          open_operation_id: operationId,
+          period_id: verifiedPeriod.id,
+          session_state: "open",
+          education_type: cls?.education_type || "general_secondary",
+          education_label: cls?.education_label || "Secondaire général",
+          education_short_label: cls?.education_short_label || "Général",
+          formation_code: cls?.formation_code || null,
+          formation_label: cls?.formation_label || null,
+          formation_level_code: cls?.formation_level_code || null,
+          formation_level_label: cls?.formation_level_label || null,
+          education_context_key:
+            cls?.education_context_key ||
+            cls?.education_type ||
+            "general_secondary",
+          education_context_label:
+            cls?.education_context_label ||
+            cls?.education_label ||
+            "Secondaire général",
+        };
+        setOpen(pendingOpen);
+        setSessionRuntimeState("open_local_pending");
+        await cacheSet("classDevice:local-open", pendingOpen);
+        setMsg(
+          cloudResult.status === 401
+            ? "Cloud joignable, mais la session doit être renouvelée. L’appel reste enregistré sur ce téléphone et sera synchronisé automatiquement."
+            : "Relais et Internet indisponibles. L’appel est enregistré sur ce téléphone et sera synchronisé automatiquement.",
+        );
+        await refreshPending();
+        return;
+      }
+
+      setCloudStatus("connected");
+      setSessionRuntimeState("recoverable_error");
+      setMsg(
+        (cloudResult.ok === false ? cloudResult.error : null) ||
+          "Le Cloud a refusé l’ouverture pour une règle métier précise. Aucune donnée locale n’a été supprimée.",
+      );
     } catch (e: any) {
+      setSessionRuntimeState("recoverable_error");
       setMsg(e?.message || "Échec démarrage séance");
     } finally {
       setBusy(false);
@@ -2487,6 +2867,7 @@ export default function ClassDevicePage() {
     if (!confirmed) return;
 
     setBusy(true);
+    setSessionRuntimeState("closing");
     setMsg(null);
 
     const finishLocal = async (input: {
@@ -2563,6 +2944,11 @@ export default function ClassDevicePage() {
       setSubjectId("");
       pendingSnapshotSubjectRef.current = "";
       setLastCompletion(completion);
+      setSessionRuntimeState(
+        input.relayState === "relay_confirmed"
+          ? "closed_synced"
+          : "closed_pending_sync",
+      );
       setMsg(input.message);
       const currentMs = Date.now();
       computeDefaultsForNow(sourcePeriods, currentMs);
@@ -2649,29 +3035,48 @@ export default function ClassDevicePage() {
         } else {
           const pendingMarks = attendanceMarksFromRows(rows);
           if (pendingMarks.length > 0) {
-            const pendingAttendance = await offlineMutateJson(
+            await offlineMutateJson(
               "/api/teacher/attendance/bulk",
               { method: "POST", body: { session_id: openId, marks: pendingMarks } },
-              { mergeKey: `attendance:${openId}` },
+              {
+                mergeKey: `attendance:${openId}`,
+                queueOnly: true,
+                meta: {
+                  operationType: "attendance",
+                  clientSessionId: openId,
+                  classId: cur.class_id,
+                  subjectId: cur.subject_id || null,
+                  periodId: cur.period_id || null,
+                },
+              },
             );
-            if (!(pendingAttendance as any).ok && !shouldTreatAsOffline(pendingAttendance)) {
-              const err = extractRespError(pendingAttendance);
-              setMsg(
-                err
-                  ? `La séance reste ouverte : ${err}`
-                  : "La séance reste ouverte : l’appel final n’a pas été enregistré.",
-              );
-              return;
-            }
           }
-          // On termine localement, et on garde un marqueur avec l'heure réelle de fin
-          // pour fermer la séance serveur dès qu'elle existera.
-          await cacheSet(PENDING_END_KEY, { actual_end_at: actualEndAt } satisfies PendingEndPayload);
+          // L'ordre monotone de l'outbox garantit ouverture → présences → fermeture.
+          // Chaque cours garde sa propre fermeture : aucun marqueur unique ne peut être écrasé
+          // par le cours suivant.
+          await offlineMutateJson(
+            "/api/class/sessions/end",
+            {
+              method: "PATCH",
+              body: { session_id: openId, actual_end_at: actualEndAt },
+            },
+            {
+              mergeKey: `end:${openId}`,
+              queueOnly: true,
+              meta: {
+                operationType: "session-end",
+                clientSessionId: openId,
+                classId: cur.class_id,
+                subjectId: cur.subject_id || null,
+                periodId: cur.period_id || null,
+              },
+            },
+          );
           await finishLocal({
             actualEndAt,
             relayState: "device_pending",
             message:
-              "Séance terminée localement. La fin sera synchronisée dès que le réseau reviendra.",
+              "Séance terminée sur ce téléphone. L’appel et la fermeture sont en attente de synchronisation ; le cours suivant peut commencer.",
           });
           await refreshPending();
           return;
@@ -2729,6 +3134,7 @@ export default function ClassDevicePage() {
         setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
       }
     } catch (e: any) {
+      setSessionRuntimeState("recoverable_error");
       setMsg(e?.message || "Échec fin de séance");
     } finally {
       setBusy(false);
@@ -2838,6 +3244,38 @@ export default function ClassDevicePage() {
       )
     : "—";
   const openActualStart = open?.actual_call_at ? formatTimeLabel(open.actual_call_at) : null;
+  const connectivityLabel = (status: ConnectivityState) =>
+    status === "connected"
+      ? "connecté"
+      : status === "slow"
+        ? "lent"
+        : status === "unavailable"
+          ? "indisponible"
+          : "vérification";
+  const connectivityTone = (status: ConnectivityState) =>
+    status === "connected"
+      ? "bg-emerald-500/20 text-emerald-100"
+      : status === "slow"
+        ? "bg-amber-500/20 text-amber-100"
+        : status === "unavailable"
+          ? "bg-rose-500/20 text-rose-100"
+          : "bg-slate-500/30 text-slate-100";
+  const callSyncLabel =
+    syncing
+      ? "synchronisation"
+      : sessionRuntimeState === "open_local_pending" ||
+          sessionRuntimeState === "closed_pending_sync" ||
+          pendingSync > 0
+        ? "en attente"
+        : sessionRuntimeState === "recoverable_error"
+          ? "à vérifier"
+          : "synchronisé";
+  const callSyncTone =
+    callSyncLabel === "synchronisé"
+      ? "bg-emerald-500/20 text-emerald-100"
+      : callSyncLabel === "à vérifier"
+        ? "bg-rose-500/20 text-rose-100"
+        : "bg-amber-500/20 text-amber-100";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
@@ -2861,15 +3299,33 @@ export default function ClassDevicePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Online / Offline + Sync */}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <span
               className={[
                 "rounded-full px-3 py-1 text-xs font-semibold",
-                isOnline ? "bg-emerald-500/20 text-emerald-100" : "bg-amber-500/20 text-amber-100",
+                connectivityTone(cloudStatus),
               ].join(" ")}
+              title="Disponibilité réelle du service Cloud"
             >
-              {isOnline ? "En ligne" : "Hors ligne"}
+              Cloud : {connectivityLabel(cloudStatus)}
+            </span>
+            <span
+              className={[
+                "rounded-full px-3 py-1 text-xs font-semibold",
+                connectivityTone(relayStatus),
+              ].join(" ")}
+              title="Disponibilité réelle du relais local"
+            >
+              Relais local : {connectivityLabel(relayStatus)}
+            </span>
+            <span
+              className={[
+                "rounded-full px-3 py-1 text-xs font-semibold",
+                callSyncTone,
+              ].join(" ")}
+              title="État de conservation et de synchronisation de l’appel"
+            >
+              Appel : {callSyncLabel}
             </span>
 
             <button
@@ -2913,15 +3369,9 @@ export default function ClassDevicePage() {
         }}
         onPrepared={refreshClassContextAfterPreparation}
       />
-      {(subjectScheduleIssue ||
-        relayScheduleIssue ||
-        (classReadinessAssessment &&
-          classReadinessAssessment.status !== "ready")) && (
+      {(subjectScheduleIssue || relayScheduleIssue) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-          {classReadinessAssessment &&
-          classReadinessAssessment.status !== "ready"
-            ? classReadinessAssessment.message
-            : subjectScheduleIssue || relayScheduleIssue}
+          {subjectScheduleIssue || relayScheduleIssue}
         </div>
       )}
       {!open &&

@@ -71,13 +71,13 @@ test("la déconnexion compte aussi les appels et fermetures du nouveau protocole
   assert.match(page, /supprimer définitivement ces données/);
 });
 
-test("le Web et le service worker portent la même release lifecycle v5.2", async () => {
+test("le Web et le service worker portent la même release fallback v5.3", async () => {
   const [worker, release] = await Promise.all([
     read("public/moncahier-sw.js"),
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-07-30-class-device-lifecycle-v5-2";
+  const expected = "2026-07-31-class-device-fallback-v5-3";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
 });

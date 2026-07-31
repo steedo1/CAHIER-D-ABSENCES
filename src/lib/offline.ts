@@ -48,6 +48,8 @@ type MutateOpts = {
   mergeKey?: string;
   meta?: Record<string, any>;
   operationId?: string;
+  timeoutMs?: number;
+  queueOnly?: boolean;
 };
 
 export type MutateResult<T = any> =
@@ -419,6 +421,31 @@ function responseErrorMessage(payload: any, status: number) {
   return String(payload?.error || payload?.message || `HTTP ${status}`);
 }
 
+const DEFAULT_MUTATION_TIMEOUT_MS = 6_000;
+const OUTBOX_REPLAY_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("request_timeout", "TimeoutError")),
+    Math.max(500, timeoutMs),
+  );
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function outboxRetryDelayMs(attempts: number) {
+  const exponent = Math.max(0, Math.min(6, Math.floor(attempts || 0)));
+  return Math.min(60_000, 1_000 * 2 ** exponent);
+}
+
 /**
  * GET JSON avec fallback cache (kv).
  * - Online OK -> met à jour le cache.
@@ -627,14 +654,26 @@ export async function offlineMutateJson<T = any>(
     };
   };
 
-  try {
-    const res = await fetch(url, {
-      method,
-      credentials: "include",
-      cache: "no-store",
-      headers: buildHeaders(operationHeaders),
-      body: bodyObj === undefined ? undefined : JSON.stringify(bodyObj),
+  if (opts?.queueOnly) {
+    return await queueMutation({
+      offline: true,
+      status: 0,
+      error: "queued_by_client",
     });
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method,
+        credentials: "include",
+        cache: "no-store",
+        headers: buildHeaders(operationHeaders),
+        body: bodyObj === undefined ? undefined : JSON.stringify(bodyObj),
+      },
+      opts?.timeoutMs ?? DEFAULT_MUTATION_TIMEOUT_MS,
+    );
 
     const status = res.status;
     const j = await safeJson(res);
@@ -743,17 +782,33 @@ async function flushOutboxInternal(): Promise<FlushResult> {
     // autres actions indépendantes de la file.
     if (row.state === "blocked") continue;
 
+    const attemptsBeforeRun = Number(row.attempts || 0);
+    if (
+      row.lastAttemptAt &&
+      Date.now() - row.lastAttemptAt < outboxRetryDelayMs(attemptsBeforeRun)
+    ) {
+      retryableFailure = true;
+      lastError = row.lastError || "retry_backoff";
+      lastStatus =
+        typeof row.lastStatus === "number" ? row.lastStatus : null;
+      break;
+    }
+
     // Prépare body potentiellement réécrit (session_id)
     const body = rewriteBodyWithSessionMap(row.body, map);
 
     try {
-      const res = await fetch(row.url, {
-        method: row.method,
-        credentials: "include",
-        cache: "no-store",
-        headers: buildHeaders(row.headers),
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
+      const res = await fetchWithTimeout(
+        row.url,
+        {
+          method: row.method,
+          credentials: "include",
+          cache: "no-store",
+          headers: buildHeaders(row.headers),
+          body: body === undefined ? undefined : JSON.stringify(body),
+        },
+        OUTBOX_REPLAY_TIMEOUT_MS,
+      );
 
       if (!res.ok) {
         const j = await safeJson(res);
