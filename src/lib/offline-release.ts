@@ -4,4 +4,4 @@ export const MON_CAHIER_WEB_RELEASE =
   "development";
 
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-07-31-class-device-fallback-v5-3";
+  "2026-08-01-class-device-recovery-v5-4";

@@ -32,7 +32,7 @@ test("la séance locale pending survit au rechargement", async () => {
   assert.match(page, /isRestorableClassDeviceOpen\(localOpenCandidate\)/);
   assert.match(page, /isRestorableClassDeviceOpen\(snapState\.open\)/);
   assert.match(page, /cacheSet\("classDevice:local-open", pendingOpen\)/);
-  assert.match(page, /localOpen \|\| serverOpen \|\| null/);
+  assert.match(page, /chooseRestorableClassDeviceOpen\(\{/);
   assert.match(page, /persistAttendanceRowsImmediately/);
   assert.match(page, /saveClassDeviceSnapshot<ClassPageSnapshotState>/);
 });

@@ -525,7 +525,7 @@ test("échec d’actualisation ne conserve aucun message vert", () => {
   );
 });
 
-test("le démarrage /class exige la barrière et ne recrée plus de séance legacy", async () => {
+test("la préparation reste stricte et l'ancien endpoint délègue au démarrage contrôlé", async () => {
   const source = await readFile(
     new URL("../src/app/class/page.tsx", import.meta.url),
     "utf8",
@@ -534,10 +534,17 @@ test("le démarrage /class exige la barrière et ne recrée plus de séance lega
     source.indexOf("async function startSession()"),
     source.indexOf("async function endSession()"),
   );
-  assert.match(start, /assessClassDeviceOfflineReadiness/);
-  assert.match(start, /assessment\.status !== "ready"/);
-  assert.match(start, /local\.state !== "relay_opened"/);
-  assert.doesNotMatch(start, /\/api\/class\/sessions\/start/);
+  assert.match(start, /if \(relayDelivery\.state === "blocked"\)/);
+  assert.match(start, /\/api\/class\/sessions\/start/);
+  assert.match(start, /delivery_origin: "local_pending"/);
+  const legacyRoute = await readFile(
+    new URL("../src/app/api/class/sessions/open/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    legacyRoute,
+    /export \{ POST \} from "\.\.\/start\/route"/,
+  );
   assert.doesNotMatch(start, /id:\s*`client:/);
   assert.match(source, /ancien cache reste consultable/i);
 });

@@ -371,9 +371,27 @@ function clearDirtyRecordsAfterAcknowledgement(
             SELECT id FROM attendance_marks
             WHERE institution_id = ? AND session_id = ? AND student_id = ?
           )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM sync_outbox pending
+            WHERE pending.institution_id = ?
+              AND pending.operation_id <> ?
+              AND pending.entity_type = 'attendance_call'
+              AND pending.entity_id = ?
+              AND pending.state IN ('pending', 'sending', 'blocked')
+              AND EXISTS (
+                SELECT 1
+                FROM json_each(json_extract(pending.payload_json, '$.marks')) queued_mark
+                WHERE json_extract(queued_mark.value, '$.student_id') = ?
+              )
+          )
       `).run(
         operation.institution_id,
         operation.institution_id,
+        operation.entity_id,
+        studentId,
+        operation.institution_id,
+        operation.operation_id,
         operation.entity_id,
         studentId,
       );

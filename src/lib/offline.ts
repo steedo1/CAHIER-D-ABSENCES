@@ -38,6 +38,9 @@ export type LegacyTeacherAttendanceMutation = {
   createdAt: number;
 };
 
+export type LegacyTeacherSessionEndMutation =
+  LegacyTeacherAttendanceMutation;
+
 type MutateInit = {
   method: "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonValue;
@@ -215,6 +218,24 @@ async function getSessionIdMap(): Promise<Record<string, string>> {
 
 async function setSessionIdMap(next: Record<string, string>): Promise<void> {
   await metaSet("sessionIdMap", next);
+}
+
+export async function registerOfflineSessionReference(
+  clientSessionId: string,
+  serverSessionId: string,
+) {
+  const clientKey = String(clientSessionId || "").trim();
+  const serverId = String(serverSessionId || "").trim();
+  if (!clientKey.startsWith("client:") || !serverId) {
+    throw new Error("offline_session_mapping_invalid");
+  }
+  const map = await getSessionIdMap();
+  const existing = String(map[clientKey] || "").trim();
+  if (existing && existing !== serverId) {
+    throw new Error("offline_session_mapping_conflict");
+  }
+  map[clientKey] = serverId;
+  await setSessionIdMap(map);
 }
 
 export async function resolveOfflineSessionReference(sessionId: string): Promise<{
@@ -569,6 +590,42 @@ export async function findLegacyTeacherAttendanceMutation(
 }
 
 export async function removeLegacyTeacherAttendanceMutation(id: string): Promise<void> {
+  await outboxDelete(String(id || "").trim());
+}
+
+export async function findLegacyTeacherSessionEndMutation(
+  sessionIds: string[],
+): Promise<LegacyTeacherSessionEndMutation | null> {
+  const acceptedIds = new Set(
+    sessionIds.map((value) => String(value || "").trim()).filter(Boolean),
+  );
+  if (!acceptedIds.size) return null;
+  const rows = await outboxAll();
+  const row = [...rows].reverse().find((candidate) => {
+    if (!/^\/api\/(?:class|teacher)\/sessions\/end(?:[/?]|$)/.test(candidate.url)) {
+      return false;
+    }
+    const sessionId = String(candidate.body?.session_id || "").trim();
+    const clientId = String(candidate.body?.client_session_id || "").trim();
+    return (
+      acceptedIds.has(sessionId) ||
+      acceptedIds.has(clientId) ||
+      acceptedIds.has(`client:${clientId}`)
+    );
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    operationId: row.operationId,
+    body: row.body,
+    state: row.state === "blocked" ? "blocked" : "pending",
+    lastStatus: typeof row.lastStatus === "number" ? row.lastStatus : null,
+    lastError: row.lastError || null,
+    createdAt: row.createdAt,
+  };
+}
+
+export async function removeQueuedOfflineMutation(id: string) {
   await outboxDelete(String(id || "").trim());
 }
 

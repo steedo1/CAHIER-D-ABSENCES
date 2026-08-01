@@ -81,6 +81,7 @@ export type CloseTeacherSessionInput = BaseInput & {
   sessionId: string;
   classId?: string | null;
   attendanceOperationId?: string | null;
+  operationId?: string | null;
 };
 export type TransitionTeacherSessionInput = BaseInput & {
   classId: string;
@@ -138,9 +139,17 @@ async function getOrCreate(
     periodId: string | null;
     attendanceOperationId: string | null;
     attemptKey: string;
+    operationId?: string | null;
   },
 ) {
   const records = await deps.store.list(input.institutionId);
+  const requestedOperationId = normalizedText(input.operationId);
+  const collision = requestedOperationId
+    ? records.find((record) => record.operation_id === requestedOperationId)
+    : null;
+  if (collision && collision.content_key !== input.contentKey) {
+    throw new Error("operation_id_reused_with_different_payload");
+  }
   const existing = records
     .filter((record) => record.kind === input.kind && record.content_key === input.contentKey)
     .sort((left, right) => left.created_at.localeCompare(right.created_at))
@@ -150,7 +159,7 @@ async function getOrCreate(
   const created: TeacherSessionLifecycleDeliveryRecord = {
     schema_version: 1,
     institution_id: input.institutionId,
-    operation_id: deps.createOperationId(),
+    operation_id: requestedOperationId || deps.createOperationId(),
     kind: input.kind,
     content_key: input.contentKey,
     session_id: input.sessionId,
@@ -305,6 +314,7 @@ async function postCloseInternal(
     periodId: null,
     attendanceOperationId,
     attemptKey: sessionId,
+    operationId: input.operationId,
   });
   if (
     (!current.class_id && classId) ||
@@ -380,6 +390,7 @@ export async function stageTeacherAttendanceSessionCloseWithDependencies(
     periodId: null,
     attendanceOperationId,
     attemptKey: sessionId,
+    operationId: input.operationId,
   });
   if (
     (!current.class_id && classId) ||

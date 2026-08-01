@@ -99,6 +99,22 @@ async function selectProfilesByIds(srv: any, ids: string[]) {
   return result;
 }
 
+async function selectAttendanceMarksBySessionIds(srv: any, sessionIds: string[]) {
+  const result: any[] = [];
+  for (let index = 0; index < sessionIds.length; index += 500) {
+    const batch = sessionIds.slice(index, index + 500);
+    if (!batch.length) continue;
+    result.push(...await selectRows(
+      srv
+        .from("attendance_marks")
+        .select("session_id,student_id,status,minutes_late,reason")
+        .in("session_id", batch),
+      "attendance_marks",
+    ));
+  }
+  return result;
+}
+
 async function attendanceScheduleRevision(srv: any, institutionId: string) {
   const { data, error } = await srv
     .from("attendance_schedule_revisions")
@@ -294,6 +310,24 @@ export async function buildRelayBootstrapSnapshot(
       }
       return [{ ...row, subject_id: localSubjectId }];
     });
+    const normalizedSessionIds = new Set(
+      normalizedSessions.map((row) => text(row.id)).filter(Boolean),
+    );
+    const attendanceMarks = await selectAttendanceMarksBySessionIds(
+      srv,
+      Array.from(normalizedSessionIds),
+    );
+    const normalizedAttendanceMarks = attendanceMarks.flatMap((row) => {
+      if (!normalizedSessionIds.has(text(row.session_id))) {
+        missing("attendance_marks", row, "session_id", row.session_id);
+        return [];
+      }
+      if (!studentIds.has(text(row.student_id))) {
+        missing("attendance_marks", row, "student_id", row.student_id);
+        return [];
+      }
+      return [row];
+    });
 
     const optionalMigrationMissing =
       (attendancePolicy.error as any)?.code === "42P01" ||
@@ -401,13 +435,22 @@ export async function buildRelayBootstrapSnapshot(
         teacher_sessions: normalizedSessions.map((row) => withMeta({
           ...row,
           client_session_id: row.id,
-          period_id: null,
           origin:
             row.origin === "class_device" || row.origin === "admin"
               ? row.origin
               : "teacher",
         }, generatedAt)),
-        attendance_marks: [],
+        attendance_marks: normalizedAttendanceMarks.map((row) => withMeta({
+          id: entityId(row.session_id, row.student_id),
+          institution_id: institutionId,
+          session_id: row.session_id,
+          student_id: row.student_id,
+          status: row.status,
+          late_minutes: Number(row.minutes_late || 0),
+          comment: row.reason || null,
+          source: "cloud",
+          local_dirty: false,
+        }, generatedAt)),
         grade_periods: [],
         grade_evaluations: [],
         student_grades: [],

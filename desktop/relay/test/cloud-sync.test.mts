@@ -818,3 +818,74 @@ test("un relais configuré mais vide reçoit son premier snapshot sans bootstrap
   assert.equal(store.status().institutions[0]?.schedule_revision, 1);
   db.close();
 });
+
+test("un appel plus recent conserve la marque dirty apres l'acquittement de l'ancien", async () => {
+  const { db, store } = setup();
+  seedLocalSessionOpenReceipt(db);
+  const at = "2026-07-28T08:06:00.000Z";
+  db.prepare(`
+    INSERT INTO students(id,institution_id,display_name,updated_at)
+    VALUES ('student-1','inst-1','Eleve test',?)
+  `).run(at);
+  db.prepare(`
+    INSERT INTO attendance_marks(
+      id,institution_id,session_id,student_id,status,late_minutes,updated_at
+    ) VALUES ('mark-1','inst-1','session-local','student-1','present',0,?)
+  `).run(at);
+  db.prepare(`
+    INSERT INTO sync_records(
+      institution_id,entity_type,entity_id,payload_json,local_dirty,updated_at
+    ) VALUES ('inst-1','attendance_mark','mark-1','{}',1,?)
+  `).run(at);
+  enqueueAttendanceCall(db, "op-attendance-old", "session-local");
+  enqueueAttendanceCall(db, "op-attendance-new", "session-local");
+
+  await syncRelayOnce(config(), store, {
+    now: () => new Date("2026-07-28T08:07:00.000Z"),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as {
+        operations: Array<{ operation_id: string }>;
+      };
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-28T08:07:01.000Z",
+        acknowledgements: body.operations.map((operation) => ({
+          operation_id: operation.operation_id,
+          status: operation.operation_id === "op-attendance-old" ? "acknowledged" : "retryable",
+          http_status: operation.operation_id === "op-attendance-old" ? 200 : 503,
+        })),
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  assert.equal(
+    (db.prepare("SELECT local_dirty FROM sync_records WHERE entity_id='mark-1'").get() as { local_dirty: number }).local_dirty,
+    1,
+  );
+
+  await syncRelayOnce(config(), store, {
+    now: () => new Date("2026-07-28T08:30:00.000Z"),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as {
+        operations: Array<{ operation_id: string }>;
+      };
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-28T08:30:01.000Z",
+        acknowledgements: body.operations.map((operation) => ({
+          operation_id: operation.operation_id,
+          status: "acknowledged",
+          http_status: 200,
+        })),
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  assert.equal(
+    (db.prepare("SELECT local_dirty FROM sync_records WHERE entity_id='mark-1'").get() as { local_dirty: number }).local_dirty,
+    0,
+  );
+  db.close();
+});

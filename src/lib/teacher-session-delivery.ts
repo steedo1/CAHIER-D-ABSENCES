@@ -13,6 +13,7 @@ import {
 export type TeacherSessionDeliveryState =
   | "device_pending"
   | "relay_opened"
+  | "cloud_opened"
   | "blocked";
 
 export type TeacherSessionDeliveryRecord = {
@@ -192,7 +193,9 @@ async function openInternal(
   if (!periodId) throw new Error("period_id_required");
 
   const current = await getOrCreateRecord({ institutionId, classId, periodId, attemptKey }, deps);
-  if (current.state === "relay_opened") return current;
+  if (current.state === "relay_opened" || current.state === "cloud_opened") {
+    return current;
+  }
   if (!relayBaseUrl || !relayAccessToken) {
     return await storePatch(deps, current, {
       state: "device_pending",
@@ -387,8 +390,71 @@ export async function openTeacherAttendanceSessionOnRelay(
     : await run();
 }
 
+export async function listTeacherSessionOpenOperations(
+  institutionId: string,
+) {
+  const normalizedInstitutionId = normalizedText(institutionId);
+  if (!normalizedInstitutionId) return [];
+  return await createIndexedDbTeacherSessionStore().list(
+    normalizedInstitutionId,
+  );
+}
+
+export async function retryTeacherSessionOpenOperationOnRelay(
+  record: TeacherSessionDeliveryRecord,
+  input: Pick<
+    OpenTeacherSessionOnRelayInput,
+    "relayBaseUrl" | "relayAccessToken"
+  >,
+) {
+  if (record.state !== "device_pending") return record;
+  return await openTeacherAttendanceSessionOnRelay({
+    institutionId: record.institution_id,
+    classId: record.class_id,
+    periodId: record.period_id,
+    attemptKey: record.attempt_key,
+    relayBaseUrl: input.relayBaseUrl,
+    relayAccessToken: input.relayAccessToken,
+  });
+}
+
+export async function markTeacherSessionOpenedInCloud(input: {
+  institutionId: string;
+  operationId: string;
+  sessionId: string;
+  subjectId?: string | null;
+  startedAt?: string | null;
+  actualCallAt?: string | null;
+}) {
+  const institutionId = normalizedText(input.institutionId);
+  const operationId = normalizedText(input.operationId);
+  const sessionId = normalizedText(input.sessionId);
+  if (!institutionId || !operationId || !sessionId) return null;
+  const store = createIndexedDbTeacherSessionStore();
+  const records = await store.list(institutionId);
+  const record = records.find(
+    (candidate) => candidate.operation_id === operationId,
+  );
+  if (!record) return null;
+  const next: TeacherSessionDeliveryRecord = {
+    ...record,
+    state: "cloud_opened",
+    session_id: sessionId,
+    subject_id: normalizedText(input.subjectId) || record.subject_id,
+    started_at: normalizedText(input.startedAt) || record.started_at,
+    actual_call_at:
+      normalizedText(input.actualCallAt) || record.actual_call_at,
+    updated_at: new Date().toISOString(),
+    last_error: null,
+    last_status: 200,
+  };
+  await store.put(next);
+  return next;
+}
+
 export function teacherSessionDeliveryMessage(record: TeacherSessionDeliveryRecord) {
   if (record.state === "relay_opened") return "Séance ouverte et sécurisée sur le relais local.";
+  if (record.state === "cloud_opened") return "Séance ouverte et sécurisée dans le Cloud.";
   if (record.last_error === "relay_session_open_route_unavailable") {
     return "Séance conservée sur cet appareil : le relais doit être mis à jour avant l’ouverture locale.";
   }

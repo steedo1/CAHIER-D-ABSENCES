@@ -491,7 +491,7 @@ export async function POST(req: NextRequest) {
       });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: "attendance_upsert_unavailable" }, { status: 503 });
     }
 
     upserted = count || toUpsert.length;
@@ -505,7 +505,7 @@ export async function POST(req: NextRequest) {
       .in("student_id", toDelete);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: "attendance_delete_unavailable" }, { status: 503 });
     }
 
     deleted = count || toDelete.length;
@@ -517,17 +517,17 @@ export async function POST(req: NextRequest) {
    * - si non-NULL mais plus tard que l'heure effective cohérente -> on corrige vers la plus petite
    */
   if (upserted > 0 || deleted > 0) {
-    const patch: any = {};
-
-    if (!existingCall) {
-      patch.actual_call_at = callAtISO;
-    } else if (effectiveCallAt.getTime() < existingCall.getTime() - 60_000) {
-      // on ne corrige que si c'est vraiment plus tôt (>1 min)
-      patch.actual_call_at = callAtISO;
-    }
-
-    if (Object.keys(patch).length) {
-      await srv.from("teacher_sessions").update(patch).eq("id", session_id);
+    const actualCallAt = !existingCall
+      ? callAtISO
+      : effectiveCallAt.getTime() < existingCall.getTime() - 60_000
+        ? callAtISO
+        : existingCall.toISOString();
+    const { error } = await srv
+      .from("teacher_sessions")
+      .update({ actual_call_at: actualCallAt })
+      .eq("id", session_id);
+    if (error) {
+      return NextResponse.json({ error: "session_revision_update_unavailable" }, { status: 503 });
     }
   }
 

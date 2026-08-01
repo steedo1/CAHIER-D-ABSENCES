@@ -12,6 +12,7 @@ import {
   type TeacherSessionLifecycleStore,
 } from "../src/lib/teacher-session-lifecycle-delivery";
 import type { TeacherAttendanceDeliveryRecord } from "../src/lib/teacher-attendance-delivery";
+import type { TeacherSessionDeliveryRecord } from "../src/lib/teacher-session-delivery";
 
 function attendance(
   overrides: Partial<TeacherAttendanceDeliveryRecord> = {},
@@ -288,4 +289,122 @@ test("la fermeture peut être mise en file sans aucun POST réseau", async () =>
   assert.equal(record.attendance_operation_id, "attendance-a");
   assert.equal(record.operation_id, "stable-close-operation");
   assert.equal(store.records.length, 1);
+});
+
+test("le retour du relais seul rejoue ouverture puis marques puis fermeture avec les mêmes identifiants", async () => {
+  let opens: TeacherSessionDeliveryRecord[] = [{
+    schema_version: 1,
+    institution_id: "school-a",
+    operation_id: "stable-open-operation",
+    class_id: "class-a",
+    period_id: "period-a",
+    attempt_key: "class-a:period-a:2026-08-01",
+    content_key: "open-content",
+    state: "device_pending",
+    session_id: null,
+    subject_id: null,
+    started_at: null,
+    actual_call_at: null,
+    scheduled_end_at: null,
+    grace_expires_at: null,
+    relay_time: null,
+    session_state: null,
+    created_at: "2026-08-01T08:00:00.000Z",
+    updated_at: "2026-08-01T08:00:00.000Z",
+    relay_attempted_at: "2026-08-01T08:00:00.000Z",
+    last_status: 0,
+    last_error: "relay_unreachable",
+    requires_authentication: false,
+    last_details: null,
+  }];
+  const scenario = recoveryScenario();
+  const order = scenario.order;
+  const deps: ClassDeviceAttendanceRecoveryDependencies = {
+    ...scenario.deps,
+    async listOpen() {
+      return structuredClone(opens);
+    },
+    async retryOpen(record) {
+      order.push(`open:${record.operation_id}`);
+      const next = {
+        ...record,
+        state: "relay_opened" as const,
+        session_id: "relay-session-a",
+        subject_id: "subject-a",
+      };
+      opens = [next];
+      return structuredClone(next);
+    },
+    async afterOpenRecovered(record) {
+      order.push(`mapped:${record.operation_id}:${record.session_id}`);
+    },
+  };
+
+  const result = await recoverClassDeviceAttendanceWithDependencies(
+    context(),
+    deps,
+  );
+  assert.deepEqual(order, [
+    "open:stable-open-operation",
+    "mapped:stable-open-operation:relay-session-a",
+    "attendance:attendance-a",
+    "close:close-a",
+  ]);
+  assert.equal(result.opens_retried, 1);
+  assert.equal(result.opens_confirmed, 1);
+  assert.equal(result.recovered_sessions[0]?.operation_id, "stable-open-operation");
+  assert.equal(result.recovered_sessions[0]?.session_id, "relay-session-a");
+});
+
+test("une migration interrompue apres l'ouverture relais reprend au cycle suivant", async () => {
+  const opened: TeacherSessionDeliveryRecord = {
+    schema_version: 1,
+    institution_id: "school-a",
+    operation_id: "stable-open-operation",
+    class_id: "class-a",
+    period_id: "period-a",
+    attempt_key: "class-a:period-a:2026-08-01",
+    content_key: "open-content",
+    state: "relay_opened",
+    session_id: "relay-session-a",
+    subject_id: "subject-a",
+    started_at: "2026-08-01T08:00:00.000Z",
+    actual_call_at: "2026-08-01T08:01:00.000Z",
+    scheduled_end_at: "2026-08-01T09:00:00.000Z",
+    grace_expires_at: "2026-08-01T09:10:00.000Z",
+    relay_time: "2026-08-01T08:01:00.000Z",
+    session_state: "open",
+    created_at: "2026-08-01T08:00:00.000Z",
+    updated_at: "2026-08-01T08:01:00.000Z",
+    relay_attempted_at: "2026-08-01T08:01:00.000Z",
+    last_status: 201,
+    last_error: null,
+    requires_authentication: false,
+    last_details: null,
+  };
+  let migrations = 0;
+  const deps: ClassDeviceAttendanceRecoveryDependencies = {
+    async listOpen() { return [structuredClone(opened)]; },
+    async retryOpen() { throw new Error("already_opened_must_not_retry"); },
+    async afterOpenRecovered() {
+      migrations += 1;
+      if (migrations === 1) throw new Error("indexeddb_interrupted");
+    },
+    async listAttendance() { return []; },
+    async retryAttendance(record) { return record; },
+    async listLifecycle() { return []; },
+    async retryClose(record) { return record; },
+  };
+
+  await assert.rejects(
+    recoverClassDeviceAttendanceWithDependencies(context(), deps),
+    /indexeddb_interrupted/,
+  );
+  const result = await recoverClassDeviceAttendanceWithDependencies(
+    context(),
+    deps,
+  );
+  assert.equal(migrations, 2);
+  assert.equal(result.opens_retried, 0);
+  assert.equal(result.recovered_sessions[0]?.session_id, "relay-session-a");
 });

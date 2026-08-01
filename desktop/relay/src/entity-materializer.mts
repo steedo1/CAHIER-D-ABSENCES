@@ -1,7 +1,12 @@
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson } from "./json.mjs";
 import type { SyncAction, SyncEntityType } from "./types.mjs";
-import { localDateTime, scheduledSlotTimes } from "./teacher-session-rules.mjs";
+import {
+  localDateTime,
+  scheduledSlotTimes,
+  timeMinutes,
+  weekdayMatches,
+} from "./teacher-session-rules.mjs";
 
 type EntitySpec = {
   table: string;
@@ -347,12 +352,15 @@ function enrichTeacherSessionLifecycle(
   values: Record<string, unknown>,
 ) {
   const current = db.prepare(`
-    SELECT started_at, actual_call_at, ended_at, period_id,
+    SELECT class_id, subject_id, teacher_id, started_at, actual_call_at, ended_at, period_id,
            session_state, closure_source, closure_confirmation,
-           requires_payroll_review
+           requires_payroll_review, local_lifecycle_managed
     FROM teacher_sessions
     WHERE institution_id = ? AND id = ?
   `).get(institutionId, entityId) as {
+    class_id: string;
+    subject_id: string;
+    teacher_id: string;
     started_at: string;
     actual_call_at: string | null;
     ended_at: string | null;
@@ -361,6 +369,7 @@ function enrichTeacherSessionLifecycle(
     closure_source: string | null;
     closure_confirmation: string | null;
     requires_payroll_review: number;
+    local_lifecycle_managed: number;
   } | undefined;
   const startedAt = String(values.started_at ?? current?.started_at ?? "").trim();
   if (!startedAt) return;
@@ -369,14 +378,46 @@ function enrichTeacherSessionLifecycle(
     FROM institutions WHERE id = ?
   `).get(institutionId) as { timezone: string } | undefined;
   if (!institution) return;
-  const sessionDate = localDateTime(startedAt, institution.timezone).ymd;
+  const localStartedAt = localDateTime(startedAt, institution.timezone);
+  const sessionDate = localStartedAt.ymd;
   values.session_date = sessionDate;
   values.scheduled_start_at = startedAt;
   values.requested_start_at = values.actual_call_at ?? current?.actual_call_at ?? startedAt;
   values.actual_started_at = values.actual_call_at ?? current?.actual_call_at ?? startedAt;
 
-  const periodId = String(values.period_id ?? current?.period_id ?? "").trim();
+  let periodId = String(values.period_id ?? current?.period_id ?? "").trim();
+  if (!periodId) {
+    const classId = String(values.class_id ?? current?.class_id ?? "").trim();
+    const subjectId = String(values.subject_id ?? current?.subject_id ?? "").trim();
+    const teacherId = String(values.teacher_id ?? current?.teacher_id ?? "").trim();
+    if (classId && subjectId && teacherId) {
+      const candidates = db.prepare(`
+        SELECT tt.period_id, p.weekday, p.start_time, p.end_time
+        FROM teacher_timetables tt
+        JOIN institution_periods p
+          ON p.institution_id = tt.institution_id AND p.id = tt.period_id
+        WHERE tt.institution_id = ?
+          AND tt.class_id = ?
+          AND tt.subject_id = ?
+          AND tt.teacher_id = ?
+          AND tt.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+        ORDER BY tt.server_version DESC, tt.updated_at DESC, tt.id DESC
+      `).all(institutionId, classId, subjectId, teacherId) as Array<{
+        period_id: string;
+        weekday: number;
+        start_time: string;
+        end_time: string;
+      }>;
+      periodId = candidates.find((candidate) =>
+        weekdayMatches(candidate.weekday, localStartedAt.weekday)
+        && localStartedAt.minutes >= timeMinutes(candidate.start_time)
+        && localStartedAt.minutes < timeMinutes(candidate.end_time)
+      )?.period_id ?? "";
+    }
+  }
   if (periodId) {
+    values.period_id = periodId;
     const period = db.prepare(`
       SELECT start_time, end_time FROM institution_periods
       WHERE institution_id = ? AND id = ?
@@ -391,6 +432,9 @@ function enrichTeacherSessionLifecycle(
       values.scheduled_start_at = schedule.scheduledStartAt;
       values.scheduled_end_at = schedule.scheduledEndAt;
       values.grace_expires_at = schedule.graceExpiresAt;
+      if (String(values.origin ?? "").trim() === "class_device" || current?.local_lifecycle_managed === 1) {
+        values.local_lifecycle_managed = 1;
+      }
     }
   }
   const endedAt = values.ended_at === undefined ? current?.ended_at : values.ended_at;

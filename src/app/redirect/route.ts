@@ -91,7 +91,7 @@ export async function GET(req: Request) {
           .maybeSingle();
 
         if (cls?.id) {
-          const dest = book === "grades" ? "/grades/class-device" : `/class/${cls.id}`;
+          const dest = book === "grades" ? "/grades/class-device" : "/class";
           const res = NextResponse.redirect(new URL(dest, url));
           return attachLastDest(res, dest, book);
         }

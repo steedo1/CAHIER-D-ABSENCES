@@ -6,6 +6,7 @@ import {
   attendanceClassContextIsComplete,
   resolveAttendanceEducationContext,
 } from "@/lib/education-attendance";
+import { classDeviceCloudSessionId } from "@/lib/class-device-cloud-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -187,11 +188,16 @@ export async function POST(req: NextRequest) {
         b?.operation_id ||
         "",
     ).trim();
+    if (!operationId) {
+      return NextResponse.json(
+        { error: "operation_id_required" },
+        { status: 400 },
+      );
+    }
     if (
-      operationId &&
-      (!/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+      !/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
         operationId.startsWith("client:"))
-    ) {
+    {
       return NextResponse.json(
         { error: "invalid_operation_id" },
         { status: 400 },
@@ -230,7 +236,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (clsErr) {
-      return NextResponse.json({ error: clsErr.message }, { status: 400 });
+      return NextResponse.json({ error: "class_lookup_unavailable" }, { status: 503 });
     }
     if (!cls) {
       return NextResponse.json({ error: "class_not_found" }, { status: 404 });
@@ -336,8 +342,8 @@ export async function POST(req: NextRequest) {
 
       if (allowedSubjectError) {
         return NextResponse.json(
-          { error: allowedSubjectError.message },
-          { status: 400 },
+          { error: "formation_subject_lookup_unavailable" },
+          { status: 503 },
         );
       }
       if (!allowedSubject) {
@@ -359,7 +365,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (iErr) {
-      return NextResponse.json({ error: iErr.message }, { status: 400 });
+      return NextResponse.json({ error: "institution_lookup_unavailable" }, { status: 503 });
     }
 
     const tz = String(inst?.tz || "Africa/Abidjan");
@@ -387,7 +393,7 @@ export async function POST(req: NextRequest) {
       .order("period_no", { ascending: true });
 
     if (pErr) {
-      return NextResponse.json({ error: pErr.message }, { status: 400 });
+      return NextResponse.json({ error: "period_lookup_unavailable" }, { status: 503 });
     }
 
     let periodDuration: number | null = null;
@@ -457,7 +463,7 @@ export async function POST(req: NextRequest) {
       .eq("period_id", currentPeriod.periodId);
 
     if (scheduledErr) {
-      return NextResponse.json({ error: scheduledErr.message }, { status: 400 });
+      return NextResponse.json({ error: "timetable_lookup_unavailable" }, { status: 503 });
     }
 
     const scheduledTeacherIds = uniq<string>(
@@ -528,6 +534,12 @@ export async function POST(req: NextRequest) {
       | null = null;
 
     const upPayload = {
+      id: classDeviceCloudSessionId({
+        institutionId: String(cls.institution_id),
+        classId: class_id,
+        actorProfileId: user.id,
+        operationId,
+      }),
       institution_id: cls.institution_id,
       teacher_id,
       class_id,
@@ -554,21 +566,40 @@ export async function POST(req: NextRequest) {
     ) {
       // doublon attendu: on relira juste après
     } else if (insertErr) {
-      return NextResponse.json({ error: insertErr.message }, { status: 400 });
+      return NextResponse.json({ error: "session_insert_unavailable" }, { status: 503 });
     }
 
     if (!session) {
       const { data: rows, error: selErr } = await srv
         .from("teacher_sessions")
         .select("id,started_at,expected_minutes,actual_call_at,class_id,subject_id,created_at")
-        .eq("institution_id", cls.institution_id)
-        .eq("teacher_id", teacher_id)
-        .eq("started_at", slotStartedISO)
+        .eq("id", upPayload.id)
         .order("actual_call_at", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: true })
         .limit(1);
 
-      if (selErr) return NextResponse.json({ error: selErr.message }, { status: 400 });
+      if (selErr) {
+        return NextResponse.json({ error: "session_lookup_unavailable" }, { status: 503 });
+      }
+      session = (rows as any[])?.[0] ?? null;
+      idempotent = Boolean(session);
+    }
+
+    if (!session && insertErr) {
+      const { data: rows, error: slotErr } = await srv
+        .from("teacher_sessions")
+        .select("id,started_at,expected_minutes,actual_call_at,class_id,subject_id,created_at")
+        .eq("institution_id", cls.institution_id)
+        .eq("teacher_id", teacher_id)
+        .eq("started_at", slotStartedISO)
+        .eq("status", "open")
+        .is("ended_at", null)
+        .order("actual_call_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
+        .limit(1);
+      if (slotErr) {
+        return NextResponse.json({ error: "session_slot_lookup_unavailable" }, { status: 503 });
+      }
       session = (rows as any[])?.[0] ?? null;
       idempotent = Boolean(session);
     }
@@ -674,7 +705,7 @@ export async function POST(req: NextRequest) {
         education_context_label: educationContext.context_label,
       },
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "start_failed" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "start_unavailable" }, { status: 503 });
   }
 }

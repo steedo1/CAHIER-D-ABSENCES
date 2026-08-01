@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  deliverTeacherAttendance,
   listTeacherAttendanceOperations,
   retryTeacherAttendanceOperationOnRelay,
   type TeacherAttendanceDeliveryRecord,
@@ -8,8 +9,20 @@ import {
 import {
   listTeacherSessionLifecycleOperations,
   retryTeacherSessionCloseOnRelay,
+  stageTeacherAttendanceSessionClose,
   type TeacherSessionLifecycleDeliveryRecord,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import {
+  listTeacherSessionOpenOperations,
+  retryTeacherSessionOpenOperationOnRelay,
+  type TeacherSessionDeliveryRecord,
+} from "@/lib/teacher-session-delivery";
+import {
+  findLegacyTeacherAttendanceMutation,
+  findLegacyTeacherSessionEndMutation,
+  registerOfflineSessionReference,
+  removeQueuedOfflineMutation,
+} from "@/lib/offline";
 
 export type ClassDeviceAttendanceRecoveryContext = {
   institutionId: string;
@@ -29,9 +42,32 @@ export type ClassDeviceAttendanceRecoverySummary = {
   closes_waiting_for_attendance: number;
   requires_attention: number;
   relay_unreachable: boolean;
+  opens_retried: number;
+  opens_confirmed: number;
+  recovered_sessions: Array<{
+    operation_id: string;
+    session_id: string;
+    subject_id: string | null;
+    started_at: string | null;
+    actual_call_at: string | null;
+    scheduled_end_at: string | null;
+    grace_expires_at: string | null;
+    relay_time: string | null;
+  }>;
 };
 
 export type ClassDeviceAttendanceRecoveryDependencies = {
+  listOpen?(
+    institutionId: string,
+  ): Promise<TeacherSessionDeliveryRecord[]>;
+  retryOpen?(
+    record: TeacherSessionDeliveryRecord,
+    context: ClassDeviceAttendanceRecoveryContext,
+  ): Promise<TeacherSessionDeliveryRecord>;
+  afterOpenRecovered?(
+    record: TeacherSessionDeliveryRecord,
+    context: ClassDeviceAttendanceRecoveryContext,
+  ): Promise<void>;
   listAttendance(
     institutionId: string,
   ): Promise<TeacherAttendanceDeliveryRecord[]>;
@@ -115,10 +151,15 @@ function closeBelongsToClass(
 }
 
 function pendingCount(
+  opens: TeacherSessionDeliveryRecord[],
   attendance: TeacherAttendanceDeliveryRecord[],
   lifecycle: TeacherSessionLifecycleDeliveryRecord[],
   classId: string,
 ) {
+  const openPending = opens.filter(
+    (record) =>
+      record.class_id === classId && record.state === "device_pending",
+  ).length;
   const scopedAttendance = classAttendance(attendance, classId);
   const attendancePending = scopedAttendance.filter(
     (record) => !attendanceResolved(record),
@@ -128,7 +169,7 @@ function pendingCount(
       closeBelongsToClass(record, classId, scopedAttendance) &&
       record.state !== "relay_confirmed",
   ).length;
-  return attendancePending + closePending;
+  return openPending + attendancePending + closePending;
 }
 
 export async function countClassDeviceAttendanceRecoveryWithDependencies(
@@ -138,17 +179,18 @@ export async function countClassDeviceAttendanceRecoveryWithDependencies(
   >,
   deps: Pick<
     ClassDeviceAttendanceRecoveryDependencies,
-    "listAttendance" | "listLifecycle"
+    "listOpen" | "listAttendance" | "listLifecycle"
   >,
 ) {
   const institutionId = normalizedText(context.institutionId);
   const classId = normalizedText(context.classId);
   if (!institutionId || !classId) return 0;
-  const [attendance, lifecycle] = await Promise.all([
+  const [opens, attendance, lifecycle] = await Promise.all([
+    deps.listOpen ? deps.listOpen(institutionId) : Promise.resolve([]),
     deps.listAttendance(institutionId),
     deps.listLifecycle(institutionId),
   ]);
-  return pendingCount(attendance, lifecycle, classId);
+  return pendingCount(opens, attendance, lifecycle, classId);
 }
 
 export async function recoverClassDeviceAttendanceWithDependencies(
@@ -164,9 +206,13 @@ export async function recoverClassDeviceAttendanceWithDependencies(
   if (!classId) throw new Error("class_id_required");
   if (!actorProfileId) throw new Error("actor_profile_id_required");
 
-  const originalAttendance = await deps.listAttendance(institutionId);
-  const originalLifecycle = await deps.listLifecycle(institutionId);
+  const originalOpens = deps.listOpen
+    ? await deps.listOpen(institutionId)
+    : [];
+  let originalAttendance = await deps.listAttendance(institutionId);
+  let originalLifecycle = await deps.listLifecycle(institutionId);
   const pendingBefore = pendingCount(
+    originalOpens,
     originalAttendance,
     originalLifecycle,
     classId,
@@ -181,12 +227,71 @@ export async function recoverClassDeviceAttendanceWithDependencies(
     closes_waiting_for_attendance: 0,
     requires_attention: 0,
     relay_unreachable: false,
+    opens_retried: 0,
+    opens_confirmed: 0,
+    recovered_sessions: [],
   };
 
   if (!relayBaseUrl || !relayAccessToken) {
     summary.relay_unreachable = pendingBefore > 0;
     return summary;
   }
+
+  const scopedOpens = originalOpens
+    .filter(
+      (record) =>
+        record.class_id === classId && record.state === "device_pending",
+    )
+    .sort((left, right) =>
+      left.created_at.localeCompare(right.created_at) ||
+      left.operation_id.localeCompare(right.operation_id),
+    );
+  if (deps.retryOpen) {
+    for (const record of scopedOpens) {
+      summary.opens_retried += 1;
+      const next = await deps.retryOpen(record, {
+        ...context,
+        institutionId,
+        classId,
+        actorProfileId,
+        relayBaseUrl,
+        relayAccessToken,
+      });
+      if (next.state === "relay_opened" && next.session_id) {
+        summary.opens_confirmed += 1;
+      } else if (
+        next.last_status === 0 || next.last_error === "relay_unreachable"
+      ) {
+        summary.relay_unreachable = true;
+      } else if (next.state === "blocked") {
+        summary.requires_attention += 1;
+      }
+    }
+  }
+
+  const opensAfterRetry = deps.listOpen
+    ? await deps.listOpen(institutionId)
+    : originalOpens;
+  for (const record of opensAfterRetry.filter(
+    (candidate) =>
+      candidate.class_id === classId &&
+      candidate.state === "relay_opened" &&
+      Boolean(candidate.session_id),
+  )) {
+    summary.recovered_sessions.push({
+      operation_id: record.operation_id,
+      session_id: record.session_id!,
+      subject_id: record.subject_id,
+      started_at: record.started_at,
+      actual_call_at: record.actual_call_at,
+      scheduled_end_at: record.scheduled_end_at,
+      grace_expires_at: record.grace_expires_at,
+      relay_time: record.relay_time,
+    });
+    await deps.afterOpenRecovered?.(record, context);
+  }
+  originalAttendance = await deps.listAttendance(institutionId);
+  originalLifecycle = await deps.listLifecycle(institutionId);
 
   const scopedAttendance = classAttendance(originalAttendance, classId);
   const attendanceByOperation = new Map(
@@ -276,11 +381,13 @@ export async function recoverClassDeviceAttendanceWithDependencies(
     }
   }
 
-  const [finalAttendance, finalLifecycle] = await Promise.all([
+  const [finalOpens, finalAttendance, finalLifecycle] = await Promise.all([
+    deps.listOpen ? deps.listOpen(institutionId) : Promise.resolve([]),
     deps.listAttendance(institutionId),
     deps.listLifecycle(institutionId),
   ]);
   summary.pending_after = pendingCount(
+    finalOpens,
     finalAttendance,
     finalLifecycle,
     classId,
@@ -290,6 +397,64 @@ export async function recoverClassDeviceAttendanceWithDependencies(
 
 function productionDependencies(): ClassDeviceAttendanceRecoveryDependencies {
   return {
+    listOpen: listTeacherSessionOpenOperations,
+    retryOpen: async (record, context) =>
+      await retryTeacherSessionOpenOperationOnRelay(record, {
+        relayBaseUrl: context.relayBaseUrl,
+        relayAccessToken: context.relayAccessToken,
+      }),
+    afterOpenRecovered: async (record, context) => {
+      if (!record.session_id) return;
+      const clientSessionId = `client:${record.operation_id}`;
+      await registerOfflineSessionReference(
+        clientSessionId,
+        record.session_id,
+      );
+      const legacyAttendance = await findLegacyTeacherAttendanceMutation([
+        clientSessionId,
+        record.session_id,
+      ]);
+      let attendanceOperationId: string | null = null;
+      if (legacyAttendance && Array.isArray(legacyAttendance.body?.marks)) {
+        const attendance = await deliverTeacherAttendance({
+          institutionId: record.institution_id,
+          actorProfileId: context.actorProfileId,
+          sessionId: clientSessionId,
+          classId: record.class_id,
+          periodId: record.period_id,
+          marks: legacyAttendance.body.marks,
+          relayBaseUrl: context.relayBaseUrl,
+          relayAccessToken: context.relayAccessToken,
+          forceRelay: true,
+        });
+        attendanceOperationId = attendance.operation_id;
+        if (
+          attendance.state === "relay_secured" ||
+          attendance.state === "cloud_synced"
+        ) {
+          await removeQueuedOfflineMutation(legacyAttendance.id);
+        }
+      }
+
+      const legacyEnd = await findLegacyTeacherSessionEndMutation([
+        clientSessionId,
+        record.session_id,
+      ]);
+      if (legacyEnd) {
+        await stageTeacherAttendanceSessionClose({
+          institutionId: record.institution_id,
+          sessionId: record.session_id,
+          classId: record.class_id,
+          attendanceOperationId,
+          operationId: legacyEnd.operationId,
+        });
+        await removeQueuedOfflineMutation(legacyEnd.id);
+      }
+      // Tous les descendants locaux ont maintenant une représentation durable
+      // dans le pipeline relais ; l'ancienne ouverture Cloud ne doit plus les
+      // concurrencer.
+      await removeQueuedOfflineMutation(record.operation_id);
+    },
     listAttendance: listTeacherAttendanceOperations,
     retryAttendance: async (record, context) =>
       await retryTeacherAttendanceOperationOnRelay(record, {
