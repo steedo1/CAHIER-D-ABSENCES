@@ -162,7 +162,7 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
     assert.equal(validBody.ok, true);
     assert.equal(validBody.institution_id, "inst-1");
     assert.ok(Number.isFinite(Date.parse(String(validBody.relay_time))));
-    assert.equal(validBody.relay_version, "0.1.0");
+    assert.equal(validBody.relay_version, "0.2.0");
     assert.equal(validBody.schema_version, 8);
     assert.equal(validBody.protocol_version, 1);
     assert.equal(validBody.teacher_attendance_writes_enabled, false);
@@ -175,6 +175,8 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
       attendance_session_close: true,
       attendance_transition: true,
       class_device_scope_v1: true,
+      bootstrap_revision_ack_v1: true,
+      admin_schedule_status_v1: true,
     });
     assert.equal(validBody.snapshot_revision, null);
     assert.equal(validBody.schedule_status, "not_prepared");

@@ -291,7 +291,7 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     const health = await fetch(`${relay.url}/health`);
     assert.equal(health.status, 200);
     const healthBody = await health.json() as any;
-    assert.equal(healthBody.relay_version, "0.1.0");
+    assert.equal(healthBody.relay_version, "0.2.0");
     assert.equal(healthBody.schema_version, 8);
     assert.equal(healthBody.protocol_version, 1);
     assert.equal(healthBody.teacher_attendance_writes_enabled, true);
@@ -322,7 +322,28 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(body.teacher_attendance_writes_enabled, true);
     assert.equal(body.capabilities.attendance_transition, true);
     assert.equal(body.capabilities.class_device_scope_v1, true);
+    assert.equal(body.capabilities.bootstrap_revision_ack_v1, true);
+    assert.equal(body.capabilities.admin_schedule_status_v1, true);
     assert.equal(JSON.stringify(body).includes(SCHOOL_ONE_SECRET), false);
+
+    const status = await fetch(
+      `${relay.url}/v1/admin/schedule-status?institution_id=inst-1`,
+      { headers: { Authorization: "Bearer school-one-admin" } },
+    );
+    assert.equal(status.status, 200);
+    const statusBody = await status.json() as any;
+    assert.equal(statusBody.ok, true);
+    assert.equal(statusBody.institution_id, "inst-1");
+    assert.equal(statusBody.snapshot_revision, 12);
+    assert.equal(statusBody.schedule_status, "ready");
+    assert.equal(statusBody.relay_version, "0.2.0");
+    assert.equal(statusBody.capabilities.bootstrap_revision_ack_v1, true);
+
+    const unauthorizedStatus = await fetch(
+      `${relay.url}/v1/admin/schedule-status?institution_id=inst-1`,
+      { headers: { Authorization: "Bearer school-two-admin" } },
+    );
+    assert.equal(unauthorizedStatus.status, 401);
     assert.equal(totalChanges(db), before);
   } finally {
     await relay.close();

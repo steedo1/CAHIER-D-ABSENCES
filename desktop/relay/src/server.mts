@@ -270,6 +270,21 @@ export function createRelayServer(
         }
         return json(response, 200, store.bootstrap(body));
       }
+      if (request.method === "GET" && url.pathname === "/v1/admin/schedule-status") {
+        const institutionId = requiredParam(url, "institution_id");
+        if (!authorizedForInstitutionId(request, config, store, institutionId)) {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        return json(response, 200, {
+          ok: true,
+          institution_id: institutionId,
+          ...relayRuntimeContract(
+            store.db,
+            config.teacherAttendanceWritesEnabled === true,
+          ),
+          ...institutionScheduleContract(store.db, institutionId),
+        });
+      }
       if (request.method === "GET" && url.pathname === "/v1/admin/dashboard") {
         const institutionId = requiredParam(url, "institution_id");
         if (!authorizedForInstitutionId(request, config, store, institutionId)) {

@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import {
   getRelayConfig,
+  relayBootstrapErrorMessage,
   saveRelayConfig,
-  syncRelayBootstrap,
+  syncRelayScheduleAfterMutation,
 } from "@/lib/local-relay";
 import RelayCloudSyncDevices from "@/components/admin/RelayCloudSyncDevices";
 
@@ -109,15 +110,16 @@ export default function AttendancePresenceSettings() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || "Enregistrement impossible.");
       saveRelayConfig({ baseUrl: relayAdminUrl, token: relayAdminToken });
-      const relay = await syncRelayBootstrap({ force: true }).catch((error: any) => ({
+      const relay = await syncRelayScheduleAfterMutation().catch((error: any) => ({
         ok: false,
         error: String(error?.message || error),
+        details: null,
       }));
       await load();
       setMessage(
         relay.ok
           ? "Verrouillage enregistré et relais synchronisé ✅"
-          : "Verrouillage enregistré. Le relais local devra encore être connecté et synchronisé.",
+          : `Verrouillage enregistré dans le Cloud. ${relayBootstrapErrorMessage(relay)}`,
       );
     } catch (error: any) {
       setMessage(error?.message || "Enregistrement impossible.");
@@ -131,11 +133,14 @@ export default function AttendancePresenceSettings() {
     setMessage("Connexion au relais local…");
     try {
       saveRelayConfig({ baseUrl: relayAdminUrl, token: relayAdminToken });
-      const result = await syncRelayBootstrap({ force: true });
-      if (!result.ok) throw new Error(String((result as any).error || "Relais inaccessible."));
+      const result = await syncRelayScheduleAfterMutation();
+      if (!result.ok) {
+        setMessage(relayBootstrapErrorMessage(result));
+        return;
+      }
       setMessage("Relais local connecté et données pédagogiques synchronisées ✅");
     } catch (error: any) {
-      setMessage(error?.message || "Relais local inaccessible.");
+      setMessage(relayBootstrapErrorMessage(error, "Relais local inaccessible."));
     } finally {
       setSaving(false);
     }

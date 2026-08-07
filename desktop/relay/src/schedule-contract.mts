@@ -5,13 +5,15 @@ import {
 } from "./db.mjs";
 import { SYNC_PROTOCOL_VERSION } from "./types.mjs";
 
-export const RELAY_VERSION = "0.1.0";
+export const RELAY_VERSION = "0.2.0";
 export const RELAY_CAPABILITIES = {
   attendance_session_open: true,
   attendance_write: true,
   attendance_session_close: true,
   attendance_transition: true,
   class_device_scope_v1: true,
+  bootstrap_revision_ack_v1: true,
+  admin_schedule_status_v1: true,
 } as const;
 
 function storedRevision(db: RelayDatabase, institutionId: string) {

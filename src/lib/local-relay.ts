@@ -48,6 +48,8 @@ export type RelayCapabilities = {
   attendance_session_close?: boolean;
   attendance_transition?: boolean;
   class_device_scope_v1?: boolean;
+  bootstrap_revision_ack_v1?: boolean;
+  admin_schedule_status_v1?: boolean;
 };
 
 export type RelayTeacherExpectedPeriod = {
@@ -95,6 +97,16 @@ export class LocalRelayHttpError extends Error {
   }
 }
 
+class RelayBootstrapSyncError extends Error {
+  constructor(
+    code: string,
+    readonly details: Record<string, any> | null = null,
+  ) {
+    super(code);
+    this.name = "RelayBootstrapSyncError";
+  }
+}
+
 const DEFAULT_RELAY_URL =
   process.env.NEXT_PUBLIC_MONCAHIER_RELAY_URL || "http://127.0.0.1:4317";
 const RELAY_URL_KEY = "moncahier:relay:url";
@@ -104,6 +116,8 @@ const LAST_BOOTSTRAP_KEY = "moncahier:relay:last-bootstrap-at";
 const ADMIN_SCHEDULE_SYNC_KEY = "moncahier:relay:schedule-sync-state";
 const ADMIN_SCHEDULE_SYNC_EVENT = "moncahier:relay:schedule-sync-state";
 const BOOTSTRAP_THROTTLE_MS = 5 * 60 * 1000;
+const MIN_RELAY_SCHEMA_VERSION = 8;
+const RELAY_PROTOCOL_VERSION = 1;
 const RELAY_TIMEOUT_MS = 5_000;
 const RELAY_PERMISSION_TIMEOUT_MS = 15_000;
 const RELAY_BOOTSTRAP_TIMEOUT_MS = 60_000;
@@ -117,6 +131,7 @@ export type AdminScheduleSyncState = {
   snapshot_revision?: number | null;
   relay_revision?: number | null;
   error?: string | null;
+  error_details?: Record<string, any> | null;
 };
 
 function browser() {
@@ -539,6 +554,131 @@ export async function fetchFounderAttendanceSlots<T>(
   }
 }
 
+function safeRelayRevision(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function relayFailureDetails(
+  health: Record<string, any>,
+  snapshot: Record<string, any>,
+  result: Record<string, any>,
+) {
+  return {
+    relay_status: String(result?.status || "unknown"),
+    relay_version: String(health?.relay_version || "") || null,
+    relay_schema_version: safeRelayRevision(health?.schema_version),
+    relay_protocol_version: safeRelayRevision(health?.protocol_version),
+    snapshot_id: String(snapshot?.snapshot_id || "") || null,
+    expected_revision: safeRelayRevision(snapshot?.snapshot_revision),
+    applied_revision: safeRelayRevision(result?.applied_snapshot_revision),
+    rejected_entities: safeRelayRevision(result?.rejected_entities) || 0,
+    source_skipped_entities: safeRelayRevision(result?.source_skipped_entities) || 0,
+    diagnostics: Array.isArray(result?.diagnostics)
+      ? result.diagnostics.slice(0, 10)
+      : [],
+  };
+}
+
+async function loadCompleteRelaySnapshot() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const snapshot = await cloudJson<any>("/api/admin/offline/bootstrap");
+    const snapshotRevision = safeRelayRevision(snapshot?.snapshot_revision);
+    if (
+      snapshot?.snapshot_completeness === "complete" &&
+      snapshotRevision !== null
+    ) {
+      return { snapshot, snapshotRevision };
+    }
+    const changedDuringGeneration =
+      snapshot?.diagnostics?.revision_changed_during_generation === true;
+    if (attempt === 0 && changedDuringGeneration) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      continue;
+    }
+    throw new RelayBootstrapSyncError("bootstrap_snapshot_not_complete", {
+      snapshot_completeness: snapshot?.snapshot_completeness || null,
+      snapshot_revision: snapshotRevision,
+      diagnostics: snapshot?.diagnostics || null,
+    });
+  }
+  throw new RelayBootstrapSyncError("bootstrap_snapshot_not_complete");
+}
+
+async function verifiedRelayScheduleRevision(institutionId: string) {
+  const query = new URLSearchParams({ institution_id: institutionId });
+  try {
+    const status = await relayJson<any>(
+      `/v1/admin/schedule-status?${query.toString()}`,
+      {},
+      { timeoutMs: RELAY_PERMISSION_TIMEOUT_MS },
+    );
+    return safeRelayRevision(status?.snapshot_revision);
+  } catch {
+    try {
+      const health = await relayJson<any>("/health", {}, {
+        timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
+      });
+      return safeRelayRevision(health?.snapshot_revision);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function relayBootstrapErrorMessage(
+  input: { error?: unknown; details?: Record<string, any> | null } | unknown,
+  fallback = "Le relais local n'a pas pu être synchronisé.",
+) {
+  const value = input && typeof input === "object"
+    ? input as { error?: unknown; details?: Record<string, any> | null }
+    : { error: input };
+  const code = String(value.error || "").trim();
+  const details = value.details || {};
+  if (code === "relay_update_required") {
+    const installed = safeRelayRevision(details.relay_schema_version);
+    const suffix = installed === null
+      ? ""
+      : ` (schéma installé ${installed}, attendu ${MIN_RELAY_SCHEMA_VERSION})`;
+    return `Le programme du PC relais est ancien${suffix}. Double-cliquez sur « Mettre-A-Jour-Mon-Cahier.cmd » dans le dossier du relais, puis réessayez.`;
+  }
+  if (code === "relay_bootstrap_partial") {
+    const rejected = safeRelayRevision(details.rejected_entities) || 0;
+    const first = Array.isArray(details.diagnostics) ? details.diagnostics[0] : null;
+    const diagnostic = first && typeof first === "object"
+      ? first as Record<string, unknown>
+      : null;
+    const reason = diagnostic
+      ? String(diagnostic.reason || diagnostic.error || "").trim()
+      : "";
+    const quantity = rejected > 1 ? `${rejected} données` : "une donnée";
+    return `Le relais a refusé ${quantity} du snapshot. L'ancien planning reste protégé${reason ? ` (${reason})` : ""}.`;
+  }
+  if (code === "relay_revision_ack_missing") {
+    return "Le relais a reçu les données mais n'a pas fourni l'accusé de révision attendu. Lancez « Mettre-A-Jour-Mon-Cahier.cmd » sur le PC relais, puis réessayez.";
+  }
+  if (code === "relay_revision_mismatch" || code === "relay_schedule_revision_not_acknowledged") {
+    return "Le relais n'a pas confirmé la dernière révision du planning. L'ancien planning reste actif hors ligne par sécurité.";
+  }
+  if (code === "relay_sync_required_after_cloud_mutation") {
+    return "La modification Cloud attend encore d'être transmise au PC relais.";
+  }
+  if (code === "bootstrap_snapshot_not_complete") {
+    return "Les données Cloud ont changé pendant la préparation du relais. Réessayez dans quelques secondes.";
+  }
+  if (code === "unauthorized") {
+    return "Le jeton administrateur du relais est invalide ou ne correspond pas à cet établissement.";
+  }
+  if (code === "relay_bootstrap_rejected") {
+    return "Le relais a refusé le snapshot reçu. Consultez le diagnostic du relais puis réessayez.";
+  }
+  if (code === "Failed to fetch" || code.includes("délai") || code.includes("aborted")) {
+    return "Le PC relais ne répond pas. Vérifiez qu'il est allumé et que le service Mon Cahier Relay est lancé.";
+  }
+  return code || fallback;
+}
+
 export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
   if (!browser()) return { ok: false, skipped: "server" as const };
   const last = Number(window.localStorage.getItem(LAST_BOOTSTRAP_KEY) || 0);
@@ -549,37 +689,93 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
 
   bootstrapInFlight = (async () => {
     try {
-      await relayJson<{ ok: boolean }>("/health", {}, {
+      const health = await relayJson<any>("/health", {}, {
         timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
       });
-      const snapshot = await cloudJson<any>("/api/admin/offline/bootstrap");
-      const snapshotRevision = Number(snapshot?.snapshot_revision);
+      const schemaVersion = safeRelayRevision(health?.schema_version);
+      const protocolVersion = safeRelayRevision(health?.protocol_version);
       if (
-        snapshot?.snapshot_completeness !== "complete" ||
-        !Number.isSafeInteger(snapshotRevision) ||
-        snapshotRevision < 0
+        schemaVersion === null ||
+        schemaVersion < MIN_RELAY_SCHEMA_VERSION ||
+        protocolVersion !== RELAY_PROTOCOL_VERSION
       ) {
-        throw new Error("bootstrap_snapshot_not_complete");
+        throw new RelayBootstrapSyncError("relay_update_required", {
+          relay_version: health?.relay_version || null,
+          relay_schema_version: schemaVersion,
+          relay_protocol_version: protocolVersion,
+          expected_schema_version: MIN_RELAY_SCHEMA_VERSION,
+          expected_protocol_version: RELAY_PROTOCOL_VERSION,
+        });
       }
-      rememberRelayInstitution(snapshot?.institution_id);
+
+      const { snapshot, snapshotRevision } = await loadCompleteRelaySnapshot();
+      const institutionId = String(snapshot?.institution_id || "").trim();
+      if (!institutionId) {
+        throw new RelayBootstrapSyncError("bootstrap_institution_missing");
+      }
+      rememberRelayInstitution(institutionId);
+
       const result = await relayJson<any>("/v1/sync/bootstrap", {
         method: "POST",
         body: JSON.stringify(snapshot),
       }, {
         timeoutMs: RELAY_BOOTSTRAP_TIMEOUT_MS,
       });
-      const appliedRevision = Number(result?.applied_snapshot_revision);
-      if (
-        (result?.status !== "applied" && result?.status !== "duplicate") ||
-        !Number.isSafeInteger(appliedRevision) ||
-        appliedRevision !== snapshotRevision
-      ) {
-        throw new Error("relay_schedule_revision_not_acknowledged");
+      const status = String(result?.status || "");
+      const details = relayFailureDetails(health, snapshot, result);
+
+      if (status === "partial") {
+        throw new RelayBootstrapSyncError("relay_bootstrap_partial", details);
       }
+      if (status !== "applied" && status !== "duplicate") {
+        throw new RelayBootstrapSyncError("relay_bootstrap_rejected", details);
+      }
+
+      let appliedRevision = safeRelayRevision(result?.applied_snapshot_revision);
+      let acknowledgementSource = "bootstrap_response";
+      if (appliedRevision !== snapshotRevision) {
+        const verifiedRevision = await verifiedRelayScheduleRevision(institutionId);
+        if (verifiedRevision === snapshotRevision) {
+          appliedRevision = verifiedRevision;
+          acknowledgementSource = "schedule_status";
+        }
+      }
+      if (appliedRevision === null) {
+        throw new RelayBootstrapSyncError("relay_revision_ack_missing", details);
+      }
+      if (appliedRevision !== snapshotRevision) {
+        throw new RelayBootstrapSyncError("relay_revision_mismatch", {
+          ...details,
+          applied_revision: appliedRevision,
+        });
+      }
+
+      const acknowledgedResult = {
+        ...result,
+        applied_snapshot_revision: appliedRevision,
+        acknowledgement_source: acknowledgementSource,
+      };
       window.localStorage.setItem(LAST_BOOTSTRAP_KEY, String(Date.now()));
-      return { ok: true, result, snapshot_revision: snapshotRevision };
+      return {
+        ok: true,
+        result: acknowledgedResult,
+        snapshot_revision: snapshotRevision,
+      };
     } catch (error: any) {
-      return { ok: false, error: String(error?.message || error) };
+      if (error instanceof RelayBootstrapSyncError) {
+        return { ok: false, error: error.message, details: error.details };
+      }
+      if (error instanceof LocalRelayHttpError) {
+        return {
+          ok: false,
+          error: error.code,
+          details: {
+            http_status: error.status,
+            ...(error.payload || {}),
+          },
+        };
+      }
+      return { ok: false, error: String(error?.message || error), details: null };
     } finally {
       bootstrapInFlight = null;
     }
@@ -603,14 +799,16 @@ export function syncRelayScheduleAfterMutation() {
           status: "synced",
           updated_at: new Date().toISOString(),
           snapshot_revision: revision,
-          relay_revision: Number(result.result?.applied_snapshot_revision),
+          relay_revision: safeRelayRevision(result.result?.applied_snapshot_revision),
           error: null,
+          error_details: null,
         });
       } else {
         setAdminScheduleSyncState({
           status: "pending",
           updated_at: new Date().toISOString(),
           error: String(result.error || "relay_schedule_sync_failed"),
+          error_details: result.details || null,
         });
       }
       return result;
@@ -624,6 +822,7 @@ export function markRelayScheduleSyncPending() {
     status: "pending",
     updated_at: new Date().toISOString(),
     error: "relay_sync_required_after_cloud_mutation",
+    error_details: null,
   });
 }
 

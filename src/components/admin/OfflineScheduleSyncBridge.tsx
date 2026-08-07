@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, RefreshCcw } from "lucide-react";
 import {
   getAdminScheduleSyncState,
+  getRelayConfig,
   markRelayScheduleSyncPending,
+  relayBootstrapErrorMessage,
   subscribeAdminScheduleSync,
   syncRelayScheduleAfterMutation,
   type AdminScheduleSyncState,
@@ -30,8 +32,13 @@ export default function OfflineScheduleSyncBridge() {
   const [state, setState] = useState<AdminScheduleSyncState | null>(null);
 
   useEffect(() => {
-    setState(getAdminScheduleSyncState());
-    return subscribeAdminScheduleSync(setState);
+    const persisted = getAdminScheduleSyncState();
+    setState(persisted);
+    const unsubscribe = subscribeAdminScheduleSync(setState);
+    if (persisted && persisted.status !== "synced" && getRelayConfig().token) {
+      void syncRelayScheduleAfterMutation();
+    }
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -58,6 +65,12 @@ export default function OfflineScheduleSyncBridge() {
 
   if (!state || state.status === "synced") return null;
 
+  const updateRequired = state.error === "relay_update_required";
+  const pendingMessage = relayBootstrapErrorMessage(
+    { error: state.error, details: state.error_details },
+    "La modification est enregistrée dans le Cloud, mais le PC relais ne l'a pas encore confirmée.",
+  );
+
   return (
     <aside className="fixed bottom-4 right-4 z-[120] max-w-sm rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 shadow-2xl">
       <div className="flex items-start gap-3">
@@ -66,12 +79,21 @@ export default function OfflineScheduleSyncBridge() {
           <div className="font-bold">
             {state.status === "syncing"
               ? "Actualisation du relais en cours…"
-              : "Le relais doit être actualisé"}
+              : updateRequired
+                ? "Mise à jour du programme relais requise"
+                : "Le relais doit être actualisé"}
           </div>
           <p className="mt-1 text-xs leading-5 text-amber-900">
-            La modification est bien enregistrée dans le Cloud, mais elle ne
-            sera pas déclarée disponible hors ligne avant l’accusé du relais.
+            {state.status === "syncing"
+              ? "Le snapshot Cloud est en cours de transmission et de vérification sur le PC relais."
+              : pendingMessage}
           </p>
+          {state.status === "pending" && state.error && (
+            <details className="mt-2 text-[11px] text-amber-800">
+              <summary className="cursor-pointer font-semibold">Diagnostic technique</summary>
+              <code className="mt-1 block break-all">{state.error}</code>
+            </details>
+          )}
           {state.status === "pending" && (
             <button
               type="button"

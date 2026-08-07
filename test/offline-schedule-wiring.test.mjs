@@ -54,7 +54,33 @@ test("le bootstrap exige un snapshot complet et un accusé de la même révision
   assert.match(relayBootstrap, /completeSnapshotApplied/);
   assert.match(relayBootstrap, /attendance_schedule_revision/);
   assert.match(relayBootstrap, /attendance_schedule_manifest/);
-  assert.match(localRelay, /relay_schedule_revision_not_acknowledged/);
+  assert.match(localRelay, /relay_update_required/);
+  assert.match(localRelay, /relay_revision_ack_missing/);
+  assert.match(localRelay, /relay_revision_mismatch/);
+  assert.match(localRelay, /\/v1\/admin\/schedule-status/);
+});
+
+test("le relais annonce et vérifie explicitement l'accusé de révision", async () => {
+  const [contract, server, installer, updater, settings, bridge] = await Promise.all([
+    read("desktop/relay/src/schedule-contract.mts"),
+    read("desktop/relay/src/server.mts"),
+    read("desktop/relay/windows/install-relay.ps1"),
+    read("desktop/relay/windows/update-relay.ps1"),
+    read("src/components/admin/AttendancePresenceSettings.tsx"),
+    read("src/components/admin/OfflineScheduleSyncBridge.tsx"),
+  ]);
+  assert.match(contract, /RELAY_VERSION = "0\.2\.0"/);
+  assert.match(contract, /bootstrap_revision_ack_v1: true/);
+  assert.match(contract, /admin_schedule_status_v1: true/);
+  assert.match(server, /\/v1\/admin\/schedule-status/);
+  assert.match(installer, /schema_version -lt 8/);
+  assert.match(installer, /bootstrap_revision_ack_v1/);
+  assert.match(updater, /backups\\update-/);
+  assert.match(updater, /Mon Cahier Relay\.lnk/);
+  assert.match(settings, /syncRelayScheduleAfterMutation/);
+  assert.match(settings, /relayBootstrapErrorMessage/);
+  assert.match(bridge, /getRelayConfig/);
+  assert.match(bridge, /Mise à jour du programme relais requise/);
 });
 
 test("le service worker couvre les trois navigations professeur", async () => {
