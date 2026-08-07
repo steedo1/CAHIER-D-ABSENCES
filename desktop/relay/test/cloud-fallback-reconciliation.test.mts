@@ -130,3 +130,83 @@ test("une marque Cloud est matérialisée sur la bonne séance et la bonne écol
   });
   db.close();
 });
+
+test("une ancienne identité locale de marque est alignée sur l'identité Cloud sans doublon", () => {
+  const db = setup();
+  db.prepare(`
+    INSERT INTO students(id, institution_id, display_name, updated_at)
+    VALUES ('student-legacy', 'inst-1', 'Eleve legacy', '2026-08-01T07:00:00.000Z')
+  `).run();
+  db.prepare(`
+    INSERT INTO teacher_sessions(
+      id, institution_id, class_id, subject_id, teacher_id, period_id, started_at,
+      origin, updated_at
+    ) VALUES (
+      'cloud-session-legacy', 'inst-1', 'class-1', 'subject-1', 'teacher-1', 'period-1',
+      '2026-08-01T08:00:00.000Z', 'class_device', '2026-08-01T08:00:00.000Z'
+    )
+  `).run();
+  db.prepare(`
+    INSERT INTO attendance_marks(
+      id, institution_id, session_id, student_id, status,
+      late_minutes, comment, server_version, updated_at
+    ) VALUES (
+      'relay-attendance-legacy', 'inst-1', 'cloud-session-legacy', 'student-legacy',
+      'absent', NULL, 'ancienne valeur', 0, '2026-08-01T08:05:00.000Z'
+    )
+  `).run();
+  db.prepare(`
+    INSERT INTO sync_records(
+      institution_id, entity_type, entity_id, payload_json,
+      server_version, local_dirty, updated_at
+    ) VALUES (
+      'inst-1', 'attendance_mark', 'relay-attendance-legacy', '{}',
+      0, 0, '2026-08-01T08:05:00.000Z'
+    )
+  `).run();
+
+  const cloudId = "cloud-session-legacy:student-legacy";
+  materializeEntity(db, {
+    institutionId: "inst-1",
+    entityType: "attendance_mark",
+    entityId: cloudId,
+    action: "upsert",
+    serverVersion: 6,
+    occurredAt: "2026-08-01T08:15:00.000Z",
+    payload: {
+      institution_id: "inst-1",
+      session_id: "cloud-session-legacy",
+      student_id: "student-legacy",
+      status: "late",
+      late_minutes: 4,
+      comment: "valeur Cloud",
+    },
+  });
+
+  const marks = db.prepare(`
+    SELECT id, status, late_minutes, comment
+    FROM attendance_marks
+    WHERE institution_id = 'inst-1'
+      AND session_id = 'cloud-session-legacy'
+      AND student_id = 'student-legacy'
+  `).all() as Array<{
+    id: string;
+    status: string;
+    late_minutes: number | null;
+    comment: string | null;
+  }>;
+  assert.deepEqual(marks, [{
+    id: cloudId,
+    status: "late",
+    late_minutes: 4,
+    comment: "valeur Cloud",
+  }]);
+
+  const syncIds = db.prepare(`
+    SELECT entity_id
+    FROM sync_records
+    WHERE institution_id = 'inst-1' AND entity_type = 'attendance_mark'
+  `).all().map((row) => String((row as { entity_id: string }).entity_id));
+  assert.deepEqual(syncIds, [cloudId]);
+  db.close();
+});

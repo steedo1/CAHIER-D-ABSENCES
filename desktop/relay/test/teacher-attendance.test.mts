@@ -394,6 +394,11 @@ test("un professeur valide sécurise et matérialise atomiquement son appel", as
     assert.equal(count(db, "teacher_attendance_operations"), 1);
     assert.equal(count(db, "sync_outbox"), 1);
     assert.equal(count(db, "attendance_marks"), 1);
+    const materializedMark = db.prepare(`
+      SELECT id FROM attendance_marks
+      WHERE institution_id = ? AND session_id = ? AND student_id = ?
+    `).get(school.institutionId, value.sessionId, value.studentId) as { id: string };
+    assert.equal(materializedMark.id, `${value.sessionId}:${value.studentId}`);
     const outbox = db.prepare(`
       SELECT institution_id, actor_profile_id, entity_type, state,
              protocol_version, payload_fingerprint
@@ -838,6 +843,22 @@ test("un bootstrap ultérieur préserve la séance et les marques locales dirty"
     { institution_id: school.institutionId, actor_profile_id: value.teacherId },
     NOW,
   );
+  const legacyMarkId = "relay-attendance-legacy-dirty";
+  db.prepare(`
+    UPDATE attendance_marks
+    SET id = ?
+    WHERE institution_id = ? AND session_id = ? AND student_id = ?
+  `).run(legacyMarkId, school.institutionId, value.sessionId, value.studentId);
+  db.prepare(`
+    UPDATE sync_records
+    SET entity_id = ?
+    WHERE institution_id = ? AND entity_type = 'attendance_mark'
+      AND entity_id = ?
+  `).run(
+    legacyMarkId,
+    school.institutionId,
+    `${value.sessionId}:${value.studentId}`,
+  );
   const mark = db.prepare(`
     SELECT id, updated_at FROM attendance_marks
     WHERE institution_id = ? AND session_id = ? AND student_id = ?
@@ -877,7 +898,7 @@ test("un bootstrap ultérieur préserve la séance et les marques locales dirty"
         updated_at: "2026-07-22T09:20:00.000Z",
       }],
       attendance_marks: [{
-        id: mark.id,
+        id: `${value.sessionId}:${value.studentId}`,
         institution_id: school.institutionId,
         session_id: value.sessionId,
         student_id: value.studentId,

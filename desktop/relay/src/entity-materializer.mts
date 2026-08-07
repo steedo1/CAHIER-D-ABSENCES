@@ -271,6 +271,126 @@ export function collectionSpec(collection: string) {
   return SPEC_BY_COLLECTION.get(collection) ?? null;
 }
 
+type AttendanceMarkSemanticRow = {
+  id: string;
+  session_id: string;
+  student_id: string;
+};
+
+function attendanceMarkSemanticRow(
+  db: RelayDatabase,
+  institutionId: string,
+  payload: Record<string, unknown>,
+) {
+  const sessionId = String(payload.session_id ?? "").trim();
+  const studentId = String(payload.student_id ?? "").trim();
+  if (!sessionId || !studentId) return null;
+  return db.prepare(`
+    SELECT id, session_id, student_id
+    FROM attendance_marks
+    WHERE institution_id = ? AND session_id = ? AND student_id = ?
+  `).get(institutionId, sessionId, studentId) as AttendanceMarkSemanticRow | undefined ?? null;
+}
+
+function attendanceMarkIdentityHasPendingWrite(
+  db: RelayDatabase,
+  institutionId: string,
+  existingId: string,
+  sessionId: string,
+  studentId: string,
+) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM sync_outbox pending
+    WHERE pending.institution_id = ?
+      AND pending.state IN ('pending', 'sending', 'blocked')
+      AND (
+        (pending.entity_type = 'attendance_mark' AND pending.entity_id = ?)
+        OR (
+          pending.entity_type = 'attendance_call'
+          AND pending.entity_id = ?
+          AND EXISTS (
+            SELECT 1
+            FROM json_each(json_extract(pending.payload_json, '$.marks')) queued_mark
+            WHERE json_extract(queued_mark.value, '$.student_id') = ?
+          )
+        )
+      )
+    LIMIT 1
+  `).get(institutionId, existingId, sessionId, studentId));
+}
+
+export function attendanceMarkSemanticIdentityProtected(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+) {
+  const existing = attendanceMarkSemanticRow(db, institutionId, payload);
+  if (!existing || existing.id === entityId) return false;
+  const dirty = db.prepare(`
+    SELECT local_dirty
+    FROM sync_records
+    WHERE institution_id = ? AND entity_type = 'attendance_mark' AND entity_id = ?
+  `).get(institutionId, existing.id) as { local_dirty: number } | undefined;
+  return dirty?.local_dirty === 1 || attendanceMarkIdentityHasPendingWrite(
+    db,
+    institutionId,
+    existing.id,
+    existing.session_id,
+    existing.student_id,
+  );
+}
+
+function materializeAttendanceMark(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+  values: Record<string, unknown>,
+) {
+  const existing = attendanceMarkSemanticRow(db, institutionId, payload);
+  if (
+    existing &&
+    existing.id !== entityId &&
+    attendanceMarkSemanticIdentityProtected(db, institutionId, entityId, payload)
+  ) {
+    throw new Error("attendance_mark_semantic_identity_locally_protected");
+  }
+
+  const columns = Object.keys(values);
+  const updates = columns
+    .filter((column) => column !== "institution_id")
+    .map((column) => `${column} = excluded.${column}`);
+  const persist = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO attendance_marks(${columns.join(", ")})
+      VALUES (${columns.map(() => "?").join(", ")})
+      ON CONFLICT(institution_id, session_id, student_id)
+      DO UPDATE SET ${updates.join(", ")}
+    `).run(...columns.map((column) => values[column]));
+
+    if (!existing || existing.id === entityId) return;
+    const canonicalRecord = db.prepare(`
+      SELECT 1 FROM sync_records
+      WHERE institution_id = ? AND entity_type = 'attendance_mark' AND entity_id = ?
+    `).get(institutionId, entityId);
+    if (canonicalRecord) {
+      db.prepare(`
+        DELETE FROM sync_records
+        WHERE institution_id = ? AND entity_type = 'attendance_mark' AND entity_id = ?
+      `).run(institutionId, existing.id);
+    } else {
+      db.prepare(`
+        UPDATE sync_records
+        SET entity_id = ?
+        WHERE institution_id = ? AND entity_type = 'attendance_mark' AND entity_id = ?
+      `).run(entityId, institutionId, existing.id);
+    }
+  });
+  persist();
+}
+
 export function materializeEntity(
   db: RelayDatabase,
   input: {
@@ -328,6 +448,10 @@ export function materializeEntity(
   }
   if (spec.entityType === "teacher_session") {
     enrichTeacherSessionLifecycle(db, institutionId, entityId, values);
+  }
+  if (spec.entityType === "attendance_mark") {
+    materializeAttendanceMark(db, institutionId, entityId, payload, values);
+    return;
   }
 
   const columns = Object.keys(values);

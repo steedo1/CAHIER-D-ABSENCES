@@ -1,6 +1,7 @@
 import type { RelayDatabase } from "./db.mjs";
 import { getInstitutionMeta, setInstitutionMeta } from "./db.mjs";
 import {
+  attendanceMarkSemanticIdentityProtected,
   collectionSpec,
   ENTITY_SPECS,
   materializeEntity,
@@ -726,7 +727,18 @@ function importWorkItem(
   | { status: "imported" }
   | { status: "preserved" }
   | { status: "rejected"; diagnostic: BootstrapDiagnostic } {
-  if (isLocalDirty(db, snapshot.institution_id, item.entityType, item.entityId)) {
+  if (
+    isLocalDirty(db, snapshot.institution_id, item.entityType, item.entityId) ||
+    (
+      item.entityType === "attendance_mark" &&
+      attendanceMarkSemanticIdentityProtected(
+        db,
+        snapshot.institution_id,
+        item.entityId,
+        item.row,
+      )
+    )
+  ) {
     return { status: "preserved" };
   }
 

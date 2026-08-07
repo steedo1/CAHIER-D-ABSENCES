@@ -436,11 +436,8 @@ function validateBusinessRules(
   return { session, period, periodStart, periodEnd, timezone };
 }
 
-function materializedMarkId(institutionId: string, sessionId: string, studentId: string) {
-  const digest = createHash("sha256")
-    .update(`${institutionId}\u0000${sessionId}\u0000${studentId}`)
-    .digest("hex");
-  return `relay-attendance-${digest}`;
+function materializedMarkId(_institutionId: string, sessionId: string, studentId: string) {
+  return `${sessionId}:${studentId}`;
 }
 
 function mergedPayload(
