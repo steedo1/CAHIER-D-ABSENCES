@@ -46,8 +46,11 @@ import {
 } from "@/lib/offline-parent";
 import {
   checkRelayTeacherConnectivity,
+  fetchAdminAttendanceMonitor,
+  fetchInstitutionSettings,
   fetchRelayTeacherOfflineSchedule,
   LocalRelayHttpError,
+  syncRelayBootstrap,
   type RelayCapabilities,
   type RelayTeacherConnectivityResult,
   type RelayTeacherOfflineSchedule,
@@ -1816,6 +1819,13 @@ type AdminBulletinPeriod = {
   end_date?: string | null;
 };
 
+type AdminAttendancePreparationRow = {
+  class_id?: string | null;
+  class_label?: string | null;
+  planned_start?: string | null;
+  planned_end?: string | null;
+};
+
 function itemsOf<T = any>(payload: any): T[] {
   if (Array.isArray(payload)) return payload as T[];
   return Array.isArray(payload?.items) ? payload.items : [];
@@ -1830,84 +1840,134 @@ async function optional(task: () => Promise<unknown>) {
 }
 
 async function prepareAdmin(onProgress: ProgressCallback): Promise<OfflineReadiness> {
-  onProgress("Téléchargement des classes et de l’identité de l’établissement…");
-  const [classPayload] = await Promise.all([
-    getAdminBulletinClasses<any>(),
-    getAdminBulletinSettings<any>(),
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Abidjan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  onProgress("Préparation de la vue administrative par créneau…");
+  const [monitor] = await Promise.all([
+    fetchAdminAttendanceMonitor<AdminAttendancePreparationRow>(today, today),
+    fetchInstitutionSettings<Record<string, unknown>>(),
+    warmOfflineShell([
+      "/admin/dashboard",
+      "/admin/absences/appels",
+      "/admin/absences/appels-matrice",
+    ]),
   ]);
-  const classes = itemsOf<AdminBulletinClass>(classPayload).filter((item) => item?.id);
-  const academicYears = uniqueIds(classes.map((item) => item.academic_year));
-  const years: Array<string | null> = academicYears.length ? academicYears : [null];
-
-  onProgress("Téléchargement des périodes de bulletins…");
-  const periods: AdminBulletinPeriod[] = [];
-  for (const year of years) {
-    const payload = await getAdminBulletinPeriods<any>(year);
-    periods.push(...itemsOf<AdminBulletinPeriod>(payload));
-  }
-
-  const periodMap = new Map<string, AdminBulletinPeriod>();
-  for (const period of periods) {
-    const from = String(period?.start_date || "").trim();
-    const to = String(period?.end_date || "").trim();
-    if (!from || !to) continue;
-    periodMap.set(
-      `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
-      period,
-    );
-  }
-  const uniquePeriodList = Array.from(periodMap.values());
-  const tasks = classes.flatMap((classRow) =>
-    uniquePeriodList
-      .filter(
-        (period) =>
-          !classRow.academic_year ||
-          !period.academic_year ||
-          classRow.academic_year === period.academic_year,
-      )
-      .map((period) => ({ classRow, period })),
-  );
-  const studentIds = new Set<string>();
-  let bulletinCount = 0;
-
-  onProgress(`Préparation de ${tasks.length} bulletin(s) de classe…`);
-  await mapLimit(tasks, 2, async ({ classRow, period }, index) => {
-    if (index === 0 || (index + 1) % 4 === 0 || index + 1 === tasks.length) {
-      onProgress(`Bulletins ${index + 1}/${tasks.length}…`);
-    }
-    const params = new URLSearchParams({
-      class_id: String(classRow.id),
-      from: String(period.start_date),
-      to: String(period.end_date),
-    });
-    const academicYear = period.academic_year || classRow.academic_year;
-    if (academicYear) params.set("academic_year", academicYear);
-    if (period.code) params.set("period_code", period.code);
-    const bulletin: any = await getAdminBulletin(params);
-    if (bulletin?.ok !== false) bulletinCount += 1;
-    for (const item of itemsOf<any>(bulletin)) {
-      const id = String(item?.student_id || "").trim();
-      if (id) studentIds.add(id);
-    }
-    await optional(() => getAdminBulletinConduct(params));
+  await optional(async () => {
+    await syncRelayBootstrap();
   });
 
-  onProgress("Préparation de l’historique des communications…");
-  await Promise.all([
-    getCommunicationMeta<any>(),
-    getCommunicationHistory<any>(),
-  ]);
+  const monitorRows = Array.isArray(monitor.data?.rows)
+    ? monitor.data.rows
+    : [];
+  const attendanceClassIds = uniqueIds(
+    monitorRows.map((row) => row.class_id || row.class_label || null),
+  );
+  const attendanceSlots = new Set(
+    monitorRows
+      .map((row) =>
+        `${String(row.planned_start || "").slice(0, 5)}-${String(
+          row.planned_end || "",
+        ).slice(0, 5)}`,
+      )
+      .filter((value) => value !== "-"),
+  );
 
-  onProgress("Préparation des écrans bulletins et communication…");
-  await warmOfflineShell(["/admin/bulletins", "/admin/communication"]);
+  const studentIds = new Set<string>();
+  let bulletinCount = 0;
+  let classes: AdminBulletinClass[] = [];
+  let communicationReady = false;
+
+  onProgress("Préparation complémentaire des bulletins…");
+  try {
+    const [classPayload] = await Promise.all([
+      getAdminBulletinClasses<any>(),
+      getAdminBulletinSettings<any>(),
+    ]);
+    classes = itemsOf<AdminBulletinClass>(classPayload).filter(
+      (item) => item?.id,
+    );
+    const academicYears = uniqueIds(classes.map((item) => item.academic_year));
+    const years: Array<string | null> = academicYears.length
+      ? academicYears
+      : [null];
+    const periods: AdminBulletinPeriod[] = [];
+    for (const year of years) {
+      const payload = await getAdminBulletinPeriods<any>(year);
+      periods.push(...itemsOf<AdminBulletinPeriod>(payload));
+    }
+
+    const periodMap = new Map<string, AdminBulletinPeriod>();
+    for (const period of periods) {
+      const from = String(period?.start_date || "").trim();
+      const to = String(period?.end_date || "").trim();
+      if (!from || !to) continue;
+      periodMap.set(
+        `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
+        period,
+      );
+    }
+    const tasks = classes.flatMap((classRow) =>
+      Array.from(periodMap.values())
+        .filter(
+          (period) =>
+            !classRow.academic_year ||
+            !period.academic_year ||
+            classRow.academic_year === period.academic_year,
+        )
+        .map((period) => ({ classRow, period })),
+    );
+
+    await mapLimit(tasks, 2, async ({ classRow, period }, index) => {
+      if (index === 0 || (index + 1) % 4 === 0 || index + 1 === tasks.length) {
+        onProgress(`Bulletins ${index + 1}/${tasks.length}…`);
+      }
+      const params = new URLSearchParams({
+        class_id: String(classRow.id),
+        from: String(period.start_date),
+        to: String(period.end_date),
+      });
+      const academicYear = period.academic_year || classRow.academic_year;
+      if (academicYear) params.set("academic_year", academicYear);
+      if (period.code) params.set("period_code", period.code);
+      const bulletin: any = await getAdminBulletin(params);
+      if (bulletin?.ok !== false) bulletinCount += 1;
+      for (const item of itemsOf<any>(bulletin)) {
+        const id = String(item?.student_id || "").trim();
+        if (id) studentIds.add(id);
+      }
+      await optional(() => getAdminBulletinConduct(params));
+    });
+  } catch {
+    // Les bulletins sont complémentaires : la surveillance des appels reste prête.
+  }
+
+  onProgress("Préparation de l’historique des communications…");
+  try {
+    await Promise.all([
+      getCommunicationMeta<any>(),
+      getCommunicationHistory<any>(),
+    ]);
+    communicationReady = true;
+  } catch {
+    // La communication ne doit pas rendre la vue par créneau indisponible.
+  }
+
+  await optional(() =>
+    warmOfflineShell(["/admin/bulletins", "/admin/communication"]),
+  );
 
   return {
     version: 4,
     role: "admin",
     prepared_at: new Date().toISOString(),
-    class_count: classes.length,
+    class_count: Math.max(classes.length, attendanceClassIds.length),
     student_count: studentIds.size,
-    slot_count: 0,
+    slot_count: attendanceSlots.size,
     evaluation_count: 0,
     textbook_assignment_count: 0,
     bulletin_count: bulletinCount,
@@ -1915,7 +1975,7 @@ async function prepareAdmin(onProgress: ProgressCallback): Promise<OfflineReadin
     grades_ready: false,
     textbook_ready: false,
     consultation_ready: true,
-    communication_ready: true,
+    communication_ready: communicationReady,
     shell_ready: true,
   };
 }

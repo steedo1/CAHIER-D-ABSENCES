@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint src test desktop/relay/src desktop/relay/test desktop/relay/scripts public/moncahier-sw.js public/sw.js eslint.config.mjs"
   },
   "dependencies": {
     "@radix-ui/react-separator": "^1.1.7",

@@ -19,8 +19,8 @@ const layout = source("../src/app/layout.tsx");
 test("la page de connexion fait partie du shell enseignant et compte-classe", () => {
   assert.match(serviceWorker, /OFFLINE_PAGE_PATHS[\s\S]*"\/login"/);
   assert.ok((readiness.match(/"\/login"/g) || []).length >= 2);
-  assert.match(release, /2026-08-08-offline-login-v1/);
-  assert.match(serviceWorker, /2026-08-08-offline-login-v1/);
+  assert.match(release, /2026-08-08-offline-final-v1/);
+  assert.match(serviceWorker, /2026-08-08-offline-final-v1/);
 });
 
 test("le login bascule vers la vérification locale uniquement après une panne réseau", () => {

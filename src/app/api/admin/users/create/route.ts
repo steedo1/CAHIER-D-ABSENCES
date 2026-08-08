@@ -362,7 +362,9 @@ async function saveEducatorAssignments(opts: {
 
   const { error: insErr } = await supaSrv
     .from("educator_class_assignments")
-    .insert(rows);
+    // La colonne est nullable depuis l'affectation par niveau, mais le type
+    // Supabase livré avec ce dossier décrit encore class_id comme obligatoire.
+    .insert(rows as any);
 
   if (insErr) {
     return { ok: false as const, error: insErr.message };

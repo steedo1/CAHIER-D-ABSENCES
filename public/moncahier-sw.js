@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-08-08-offline-login-v1";
+const VERSION = "2026-08-08-offline-final-v1";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
@@ -117,7 +117,7 @@ self.addEventListener("fetch", (event) => {
   if (
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/_next/image") ||
-    /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)$/i.test(url.pathname)
+    /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico|webmanifest)$/i.test(url.pathname)
   ) {
     event.respondWith(assetResponse(request));
   }
@@ -159,7 +159,7 @@ async function warmDocument(rawUrl) {
       if (
         asset.origin === self.location.origin &&
         (asset.pathname.startsWith("/_next/") ||
-          /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)$/i.test(asset.pathname))
+          /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico|webmanifest)$/i.test(asset.pathname))
       ) {
         assets.add(asset.href);
       }

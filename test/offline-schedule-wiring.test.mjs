@@ -101,8 +101,8 @@ test("le service worker couvre les trois navigations professeur", async () => {
   assert.match(worker, /Ressource essentielle indisponible/);
   assert.match(worker, /Ressource essentielle absente du cache/);
   assert.match(worker, /verified/);
-  assert.match(worker, /2026-08-08-offline-login-v1/);
-  assert.match(release, /2026-08-08-offline-login-v1/);
+  assert.match(worker, /2026-08-08-offline-final-v1/);
+  assert.match(release, /2026-08-08-offline-final-v1/);
   assert.match(offline, /getActiveOfflineWorkerRelease/);
   assert.match(readiness, /serviceWorkerRelease/);
 });

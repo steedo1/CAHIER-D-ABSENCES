@@ -79,7 +79,7 @@ export default function AttendancePresenceSettings() {
     setZones((current) => current.map((zone) => (zone.id === id ? { ...zone, ...patch } : zone)));
   }
 
-  function useCurrentPosition(id: string) {
+  function setCurrentPositionForZone(id: string) {
     setMessage("Localisation du site en cours…");
     if (!navigator.geolocation) {
       setMessage("La localisation n'est pas disponible sur cet appareil.");
@@ -296,7 +296,7 @@ export default function AttendancePresenceSettings() {
                 <input type="number" min={30} max={5000} value={zone.radius_m} onChange={(event) => patchZone(zone.id, { radius_m: Number(event.target.value || 150) })} className="w-20 bg-transparent" /> m
               </label>
               <div className="flex gap-2">
-                <button type="button" onClick={() => useCurrentPosition(zone.id)} className="flex-1 rounded-lg bg-sky-700 px-2 py-2 text-xs font-semibold text-white hover:bg-sky-800">
+                <button type="button" onClick={() => setCurrentPositionForZone(zone.id)} className="flex-1 rounded-lg bg-sky-700 px-2 py-2 text-xs font-semibold text-white hover:bg-sky-800">
                   Prendre ma position
                 </button>
                 <button type="button" onClick={() => setZones((current) => current.filter((item) => item.id !== zone.id))} className="rounded-lg border border-rose-200 px-2 py-2 text-xs text-rose-700 hover:bg-rose-50">

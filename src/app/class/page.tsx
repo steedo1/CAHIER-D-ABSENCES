@@ -8,7 +8,7 @@ import {
   registerServiceWorker,
   offlineGetJson,
   offlineMutateJson,
-  outboxCount,
+  listQueuedOfflineMutationOperationIdsForScope,
   flushOutbox,
   cacheGet,
   cacheSet,
@@ -26,6 +26,7 @@ import {
   validateClassDeviceScheduleScope,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflinePreparationCoordinator from "@/components/OfflinePreparationCoordinator";
 import {
   deliverTeacherAttendance,
   stageTeacherAttendanceDraft,
@@ -42,7 +43,7 @@ import {
   teacherSessionLifecycleDeliveryMessage,
 } from "@/lib/teacher-session-lifecycle-delivery";
 import {
-  countClassDeviceAttendanceRecovery,
+  listClassDeviceAttendanceRecoveryOperationIds,
   recoverClassDeviceAttendance,
   type ClassDeviceAttendanceRecoverySummary,
 } from "@/lib/class-device-attendance-recovery";
@@ -1005,14 +1006,25 @@ export default function ClassDevicePage() {
   }
 
   async function countPendingForCurrentClass() {
-    const legacyPending = await outboxCount().catch(() => 0);
-    const relayPending = selectedClass?.institution_id && selectedClass.id
-      ? await countClassDeviceAttendanceRecovery({
+    if (!selectedClass?.id) return 0;
+    const sessionIds = [
+      openRef.current?.id,
+      lastCompletion?.session_id,
+    ];
+    const [legacyOperationIds, relayOperationIds] = await Promise.all([
+      listQueuedOfflineMutationOperationIdsForScope({
+        institutionId: selectedClass.institution_id,
+        classId: selectedClass.id,
+        sessionIds,
+      }).catch(() => []),
+      selectedClass.institution_id
+        ? listClassDeviceAttendanceRecoveryOperationIds({
           institutionId: selectedClass.institution_id,
           classId: selectedClass.id,
-        }).catch(() => 0)
-      : 0;
-    return legacyPending + relayPending;
+        }).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    return new Set([...legacyOperationIds, ...relayOperationIds]).size;
   }
 
   async function refreshPending() {
@@ -1095,13 +1107,12 @@ export default function ClassDevicePage() {
   }
 
   // 🔁 Si l'utilisateur a "terminé" une séance locale, on tente de fermer la séance serveur après sync
-  async function processPendingEnd(): Promise<void> {
+  async function processPendingEnd(cloudReachable: boolean): Promise<void> {
     try {
       const pending = await cacheGet<PendingEndPayload | null>(PENDING_END_KEY);
       if (!pending) return;
 
-      // si pas en ligne, on attend
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      if (!cloudReachable) return;
 
       // Ancien marqueur sans identité : ne jamais risquer de fermer le cours suivant.
       const clientSessionId = String(pending.client_session_id || "").trim();
@@ -1126,7 +1137,15 @@ export default function ClassDevicePage() {
             actual_end_at: pending.actual_end_at,
           },
         },
-        { mergeKey: `end:${srvId}` }
+        {
+          mergeKey: `end:${srvId}`,
+          meta: {
+            operationType: "session-end",
+            institutionId: selectedClass?.institution_id || null,
+            clientSessionId,
+            classId: selectedClass?.id || null,
+          },
+        }
       );
 
       // si réussi OU si mis en attente offline, on purge le pending
@@ -1178,94 +1197,118 @@ export default function ClassDevicePage() {
       let result: Awaited<ReturnType<typeof flushOutbox>> | null = null;
       let recovery: ClassDeviceAttendanceRecoverySummary | null = null;
       try {
-      const cloudReachable =
-        typeof window === "undefined" ? true : await probeCloudAvailability();
-      if (cloudReachable) {
-        result = await flushOutbox();
-        const active = openRef.current;
-        if (active?.open_operation_id && selectedClass?.institution_id) {
-          const resolved = await resolveOfflineSessionReference(active.id);
-          if (resolved.serverSessionId) {
-            await markTeacherSessionOpenedInCloud({
-              institutionId: selectedClass.institution_id,
-              operationId: active.open_operation_id,
-              sessionId: resolved.serverSessionId,
-              subjectId: active.subject_id,
-              startedAt: active.started_at,
-              actualCallAt: active.actual_call_at,
-            });
-          }
-        }
-        if (
-          lastCompletion?.open_operation_id &&
-          lastCompletion.institution_id
-        ) {
-          const resolved = await resolveOfflineSessionReference(
-            lastCompletion.session_id,
-          );
-          if (resolved.serverSessionId) {
-            await markTeacherSessionOpenedInCloud({
-              institutionId: lastCompletion.institution_id,
-              operationId: lastCompletion.open_operation_id,
-              sessionId: resolved.serverSessionId,
-              subjectId: lastCompletion.subject_id,
-              startedAt: lastCompletion.started_at,
-            });
-          }
-        }
-      }
-      const relay = selectedClass?.attendance_presence;
-      if (
-        selectedClass?.institution_id &&
-        selectedClass.id &&
-        selectedClass.actor_profile_id &&
-        relay?.relay_local_url &&
-        relay.relay_access_token
-      ) {
-        recovery = await recoverClassDeviceAttendance({
-          institutionId: selectedClass.institution_id,
-          classId: selectedClass.id,
-          actorProfileId: selectedClass.actor_profile_id,
-          relayBaseUrl: relay.relay_local_url,
-          relayAccessToken: relay.relay_access_token,
-        });
-        setRelayStatus(
-          recovery.relay_unreachable ? "unavailable" : "connected",
+        const relay = selectedClass?.attendance_presence;
+        const relayConfigured = Boolean(
+          selectedClass?.institution_id &&
+            selectedClass.id &&
+            selectedClass.actor_profile_id &&
+            relay?.relay_local_url &&
+            relay.relay_access_token,
         );
-        const current = openRef.current;
-        const recoveredOpen = current?.open_operation_id
-          ? recovery.recovered_sessions.find(
-              (candidate) =>
-                candidate.operation_id === current.open_operation_id,
-            )
-          : null;
-        if (current && recoveredOpen) {
-          if (recoveredOpen.relay_time) {
-            relayClockRef.current = captureLiveRelayClock(
-              recoveredOpen.relay_time,
+
+        // Le relais est l'autorité de proximité. Le Cloud n'est consulté
+        // qu'après cette tentative, afin qu'une même opération ne parte pas
+        // simultanément sur les deux canaux.
+        if (
+          relayConfigured &&
+          selectedClass?.institution_id &&
+          selectedClass.actor_profile_id &&
+          relay?.relay_local_url &&
+          relay.relay_access_token
+        ) {
+          try {
+            recovery = await recoverClassDeviceAttendance({
+              institutionId: selectedClass.institution_id,
+              classId: selectedClass.id,
+              actorProfileId: selectedClass.actor_profile_id,
+              relayBaseUrl: relay.relay_local_url,
+              relayAccessToken: relay.relay_access_token,
+            });
+            setRelayStatus(
+              recovery.relay_unreachable ? "unavailable" : "connected",
             );
+            const current = openRef.current;
+            const recoveredOpen = current?.open_operation_id
+              ? recovery.recovered_sessions.find(
+                  (candidate) =>
+                    candidate.operation_id === current.open_operation_id,
+                )
+              : null;
+            if (current && recoveredOpen) {
+              if (recoveredOpen.relay_time) {
+                relayClockRef.current = captureLiveRelayClock(
+                  recoveredOpen.relay_time,
+                );
+              }
+              const mappedOpen: OpenSession = {
+                ...current,
+                id: recoveredOpen.session_id,
+                subject_id: recoveredOpen.subject_id || current.subject_id,
+                started_at: recoveredOpen.started_at || current.started_at,
+                actual_call_at:
+                  recoveredOpen.actual_call_at || current.actual_call_at,
+                scheduled_end_at:
+                  recoveredOpen.scheduled_end_at || current.scheduled_end_at,
+                grace_expires_at:
+                  recoveredOpen.grace_expires_at || current.grace_expires_at,
+                local_relay: true,
+                delivery_origin: "relay",
+              };
+              openRef.current = mappedOpen;
+              setOpen(mappedOpen);
+              setSessionRuntimeState("open_relay");
+              await cacheSet("classDevice:local-open", mappedOpen);
+            }
+          } catch {
+            setRelayStatus("unavailable");
           }
-          const mappedOpen: OpenSession = {
-            ...current,
-            id: recoveredOpen.session_id,
-            subject_id: recoveredOpen.subject_id || current.subject_id,
-            started_at: recoveredOpen.started_at || current.started_at,
-            actual_call_at:
-              recoveredOpen.actual_call_at || current.actual_call_at,
-            scheduled_end_at:
-              recoveredOpen.scheduled_end_at || current.scheduled_end_at,
-            grace_expires_at:
-              recoveredOpen.grace_expires_at || current.grace_expires_at,
-            local_relay: true,
-            delivery_origin: "relay",
-          };
-          openRef.current = mappedOpen;
-          setOpen(mappedOpen);
-          setSessionRuntimeState("open_relay");
-          await cacheSet("classDevice:local-open", mappedOpen);
         }
-      }
-      await processPendingEnd();
+
+        const relayHasAuthoritativePending = Boolean(
+          recovery &&
+            recovery.pending_before > 0 &&
+            !recovery.relay_unreachable &&
+            recovery.pending_after > 0,
+        );
+        const cloudReachable =
+          typeof window === "undefined" ? true : await probeCloudAvailability();
+        if (cloudReachable && !relayHasAuthoritativePending) {
+          result = await flushOutbox();
+          const active = openRef.current;
+          if (active?.open_operation_id && selectedClass?.institution_id) {
+            const resolved = await resolveOfflineSessionReference(active.id);
+            if (resolved.serverSessionId) {
+              await markTeacherSessionOpenedInCloud({
+                institutionId: selectedClass.institution_id,
+                operationId: active.open_operation_id,
+                sessionId: resolved.serverSessionId,
+                subjectId: active.subject_id,
+                startedAt: active.started_at,
+                actualCallAt: active.actual_call_at,
+              });
+            }
+          }
+          if (
+            lastCompletion?.open_operation_id &&
+            lastCompletion.institution_id
+          ) {
+            const resolved = await resolveOfflineSessionReference(
+              lastCompletion.session_id,
+            );
+            if (resolved.serverSessionId) {
+              await markTeacherSessionOpenedInCloud({
+                institutionId: lastCompletion.institution_id,
+                operationId: lastCompletion.open_operation_id,
+                sessionId: resolved.serverSessionId,
+                subjectId: lastCompletion.subject_id,
+                startedAt: lastCompletion.started_at,
+              });
+            }
+          }
+        }
+        await processPendingEnd(
+          cloudReachable && !relayHasAuthoritativePending,
+        );
     } catch (e: any) {
       setMsg(e?.message || "Synchronisation interrompue. Les données restent conservées.");
     } finally {
@@ -1649,7 +1692,11 @@ export default function ClassDevicePage() {
         { method: "POST", body: payload },
         {
           // Une sanction est un événement : chaque lot doit rester distinct.
-          meta: { operationType: "penalty-batch" },
+          meta: {
+            operationType: "penalty-batch",
+            institutionId: selectedClass?.institution_id || null,
+            classId: cid,
+          },
         }
       );
 
@@ -1886,7 +1933,7 @@ export default function ClassDevicePage() {
           }
         }
       } finally {
-        void processPendingEnd();
+        void probeCloudAvailability().then(processPendingEnd);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3301,6 +3348,7 @@ export default function ClassDevicePage() {
                 queueOnly: true,
                 meta: {
                   operationType: "attendance",
+                  institutionId: selectedClass?.institution_id || null,
                   clientSessionId: openId,
                   classId: cur.class_id,
                   subjectId: cur.subject_id || null,
@@ -3323,6 +3371,7 @@ export default function ClassDevicePage() {
               queueOnly: true,
               meta: {
                 operationType: "session-end",
+                institutionId: selectedClass?.institution_id || null,
                 clientSessionId: openId,
                 classId: cur.class_id,
                 subjectId: cur.subject_id || null,
@@ -3352,7 +3401,17 @@ export default function ClassDevicePage() {
         const attendance = await offlineMutateJson(
           "/api/teacher/attendance/bulk",
           { method: "POST", body: { session_id: openId, marks: finalMarks } },
-          { mergeKey: `attendance:${openId}` },
+          {
+            mergeKey: `attendance:${openId}`,
+            meta: {
+              operationType: "attendance",
+              institutionId: selectedClass?.institution_id || null,
+              clientSessionId: cur.id,
+              classId: cur.class_id,
+              subjectId: cur.subject_id || null,
+              periodId: cur.period_id || null,
+            },
+          },
         );
         if (!(attendance as any).ok && !shouldTreatAsOffline(attendance)) {
           const err = extractRespError(attendance);
@@ -3379,6 +3438,7 @@ export default function ClassDevicePage() {
           mergeKey: `end:${openId}`,
           meta: {
             operationType: "session-end",
+            institutionId: selectedClass?.institution_id || null,
             clientSessionId: isClientSessionId(cur.id)
               ? cur.id
               : `client:${cur.open_operation_id || cur.id}`,
@@ -3430,28 +3490,7 @@ export default function ClassDevicePage() {
     if (remaining > 0) {
       setMsg("Tentative de sécurisation des données avant déconnexion…");
       try {
-        if (
-          typeof navigator === "undefined" ||
-          navigator.onLine !== false
-        ) {
-          await flushOutbox();
-        }
-        const relay = selectedClass?.attendance_presence;
-        if (
-          selectedClass?.institution_id &&
-          selectedClass.id &&
-          selectedClass.actor_profile_id &&
-          relay?.relay_local_url &&
-          relay.relay_access_token
-        ) {
-          await recoverClassDeviceAttendance({
-            institutionId: selectedClass.institution_id,
-            classId: selectedClass.id,
-            actorProfileId: selectedClass.actor_profile_id,
-            relayBaseUrl: relay.relay_local_url,
-            relayAccessToken: relay.relay_access_token,
-          });
-        }
+        await syncNow();
       } catch {}
       remaining = await countPendingForCurrentClass();
       setPendingSync(remaining);
@@ -3629,6 +3668,7 @@ export default function ClassDevicePage() {
         </div>
       </header>
 
+      <OfflinePreparationCoordinator role="class-device" />
       <OfflineReadinessCard
         role="class-device"
         classDeviceContext={{

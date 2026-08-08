@@ -150,26 +150,61 @@ function closeBelongsToClass(
   );
 }
 
+function pendingOperationIds(
+  opens: TeacherSessionDeliveryRecord[],
+  attendance: TeacherAttendanceDeliveryRecord[],
+  lifecycle: TeacherSessionLifecycleDeliveryRecord[],
+  classId: string,
+) {
+  const operationIds = new Set<string>();
+  for (const record of opens) {
+    if (record.class_id === classId && record.state === "device_pending") {
+      operationIds.add(record.operation_id);
+    }
+  }
+  const scopedAttendance = classAttendance(attendance, classId);
+  for (const record of scopedAttendance) {
+    if (!attendanceResolved(record)) operationIds.add(record.operation_id);
+  }
+  for (const record of lifecycle) {
+    if (
+      closeBelongsToClass(record, classId, scopedAttendance) &&
+      record.state !== "relay_confirmed"
+    ) {
+      operationIds.add(record.operation_id);
+    }
+  }
+  return Array.from(operationIds);
+}
+
 function pendingCount(
   opens: TeacherSessionDeliveryRecord[],
   attendance: TeacherAttendanceDeliveryRecord[],
   lifecycle: TeacherSessionLifecycleDeliveryRecord[],
   classId: string,
 ) {
-  const openPending = opens.filter(
-    (record) =>
-      record.class_id === classId && record.state === "device_pending",
-  ).length;
-  const scopedAttendance = classAttendance(attendance, classId);
-  const attendancePending = scopedAttendance.filter(
-    (record) => !attendanceResolved(record),
-  ).length;
-  const closePending = lifecycle.filter(
-    (record) =>
-      closeBelongsToClass(record, classId, scopedAttendance) &&
-      record.state !== "relay_confirmed",
-  ).length;
-  return openPending + attendancePending + closePending;
+  return pendingOperationIds(opens, attendance, lifecycle, classId).length;
+}
+
+export async function listClassDeviceAttendanceRecoveryOperationIdsWithDependencies(
+  context: Pick<
+    ClassDeviceAttendanceRecoveryContext,
+    "institutionId" | "classId"
+  >,
+  deps: Pick<
+    ClassDeviceAttendanceRecoveryDependencies,
+    "listOpen" | "listAttendance" | "listLifecycle"
+  >,
+) {
+  const institutionId = normalizedText(context.institutionId);
+  const classId = normalizedText(context.classId);
+  if (!institutionId || !classId) return [];
+  const [opens, attendance, lifecycle] = await Promise.all([
+    deps.listOpen ? deps.listOpen(institutionId) : Promise.resolve([]),
+    deps.listAttendance(institutionId),
+    deps.listLifecycle(institutionId),
+  ]);
+  return pendingOperationIds(opens, attendance, lifecycle, classId);
 }
 
 export async function countClassDeviceAttendanceRecoveryWithDependencies(
@@ -182,15 +217,12 @@ export async function countClassDeviceAttendanceRecoveryWithDependencies(
     "listOpen" | "listAttendance" | "listLifecycle"
   >,
 ) {
-  const institutionId = normalizedText(context.institutionId);
-  const classId = normalizedText(context.classId);
-  if (!institutionId || !classId) return 0;
-  const [opens, attendance, lifecycle] = await Promise.all([
-    deps.listOpen ? deps.listOpen(institutionId) : Promise.resolve([]),
-    deps.listAttendance(institutionId),
-    deps.listLifecycle(institutionId),
-  ]);
-  return pendingCount(opens, attendance, lifecycle, classId);
+  return (
+    await listClassDeviceAttendanceRecoveryOperationIdsWithDependencies(
+      context,
+      deps,
+    )
+  ).length;
 }
 
 export async function recoverClassDeviceAttendanceWithDependencies(
@@ -478,6 +510,18 @@ export async function countClassDeviceAttendanceRecovery(
   >,
 ) {
   return await countClassDeviceAttendanceRecoveryWithDependencies(
+    context,
+    productionDependencies(),
+  );
+}
+
+export async function listClassDeviceAttendanceRecoveryOperationIds(
+  context: Pick<
+    ClassDeviceAttendanceRecoveryContext,
+    "institutionId" | "classId"
+  >,
+) {
+  return await listClassDeviceAttendanceRecoveryOperationIdsWithDependencies(
     context,
     productionDependencies(),
   );

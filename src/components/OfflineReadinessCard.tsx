@@ -5,7 +5,6 @@ import { AlertTriangle, CloudDownload, Database, RefreshCcw, ShieldCheck, WifiOf
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
-  prepareOffline,
   resolveAuthoritativeClassDeviceSchedule,
   type ClassDeviceScheduleAssessment,
   type ClassDeviceAssessmentContext,
@@ -18,6 +17,10 @@ import {
   shouldAutomaticallyPrepareOffline,
   shouldShowOfflinePreparationRetry,
 } from "@/lib/offline-auto-preparation";
+import {
+  OFFLINE_PREPARATION_EVENT,
+  runCoordinatedOfflinePreparation,
+} from "@/lib/offline-preparation-coordinator";
 import {
   getOfflineStorageProtection,
   offlineStorageProtectionMessage,
@@ -101,18 +104,25 @@ export default function OfflineReadinessCard({
     void refresh();
     const handleNetworkChange = () => void refresh();
     const handleFocus = () => void refresh();
+    const handlePrepared = (event: Event) => {
+      const preparedRole = (event as CustomEvent<{ role?: OfflineRole }>).detail
+        ?.role;
+      if (preparedRole === role) void refresh();
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     window.addEventListener("online", handleNetworkChange);
     window.addEventListener("offline", handleNetworkChange);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener(OFFLINE_PREPARATION_EVENT, handlePrepared);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       cancelled = true;
       window.removeEventListener("online", handleNetworkChange);
       window.removeEventListener("offline", handleNetworkChange);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(OFFLINE_PREPARATION_EVENT, handlePrepared);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
@@ -146,7 +156,14 @@ export default function OfflineReadinessCard({
     setError(null);
     setProgress("Démarrage de la préparation…");
     try {
-      const next = await prepareOffline(role, setProgress);
+      const coordinated = await runCoordinatedOfflinePreparation(role, {
+        force: true,
+        onProgress: setProgress,
+      });
+      const next = coordinated.readiness;
+      if (!next) {
+        throw new Error("La préparation hors ligne n’a pas pu être confirmée.");
+      }
       setStorageProtection(next.storage_protection || null);
       if (role === "teacher" || role === "class-device") {
         const preparedClassDeviceContext =
@@ -220,7 +237,7 @@ export default function OfflineReadinessCard({
 
   const preparedSummary = readiness
     ? role === "admin"
-      ? `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.bulletin_count} bulletin(s) et historique des communications`
+      ? `${readiness.class_count} classe(s), ${readiness.slot_count} créneau(x), ${readiness.bulletin_count} bulletin(s) et communications préparés`
       : role === "parent"
         ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
         : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.slot_count} créneau(x), ${readiness.evaluation_count} évaluation(s), ${readiness.textbook_assignment_count} progression(s)`
@@ -228,7 +245,7 @@ export default function OfflineReadinessCard({
 
   const preparationDescription =
     role === "admin"
-      ? "Télécharge les bulletins officiels, leurs images et l’historique des communications sur cet appareil."
+      ? "Prépare automatiquement la surveillance des appels par créneau, les réglages, les bulletins et les communications sur cet appareil."
       : role === "parent"
         ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
         : role === "class-device"

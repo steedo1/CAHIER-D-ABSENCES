@@ -6,6 +6,7 @@ import { Users, Clock, Play, Square, LogOut, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import OfflinePreparationCoordinator from "@/components/OfflinePreparationCoordinator";
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
@@ -2748,6 +2749,7 @@ export default function TeacherDashboard() {
         <InstallAndPushCTA />
       </section>
 
+      <OfflinePreparationCoordinator role="teacher" />
       <OfflineReadinessCard role="teacher" />
 
       {/* Sélection + paramètres horaire */}

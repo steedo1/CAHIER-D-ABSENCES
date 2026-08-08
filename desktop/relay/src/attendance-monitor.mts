@@ -24,6 +24,7 @@ type TimetableRow = {
   period_id: string;
   weekday: number | null;
   class_id: string;
+  class_level: string | null;
   subject_id: string;
   teacher_id: string;
   class_label: string;
@@ -72,7 +73,7 @@ export function attendanceMonitor(
   `).all(options.institutionId) as PeriodRow[];
   const timetables = db.prepare(`
     SELECT tt.period_id, tt.weekday, tt.class_id, tt.subject_id, tt.teacher_id,
-           c.label AS class_label, s.name AS subject_name,
+           c.label AS class_label, c.level AS class_level, s.name AS subject_name,
            COALESCE(NULLIF(TRIM(p.display_name), ''), NULLIF(TRIM(p.email), ''),
                     NULLIF(TRIM(p.phone), ''), 'Enseignant') AS teacher_name,
            p.phone AS teacher_phone
@@ -169,8 +170,8 @@ export function attendanceMonitor(
       } else {
         const isPast = date < today;
         const isDueToday = date === today && nowMinutes >= startMinutes + missingWindow;
-        if (!isPast && !isDueToday) continue;
-        status = "missing";
+        if (date > today) continue;
+        status = isPast || isDueToday ? "missing" : "waiting";
         const absence = absenceIndex.get(`${date}|${timetable.teacher_id}`);
         if (absence) {
           absenceStatus = absence.status;
@@ -186,7 +187,9 @@ export function attendanceMonitor(
         period_label: period.label || `${hm(period.start_time)} – ${hm(period.end_time)}`,
         planned_start: hm(period.start_time),
         planned_end: hm(period.end_time),
+        class_id: timetable.class_id,
         class_label: timetable.class_label || null,
+        class_level: timetable.class_level || null,
         subject_name: timetable.subject_name || null,
         teacher_name: timetable.teacher_name,
         teacher_phone: timetable.teacher_phone,

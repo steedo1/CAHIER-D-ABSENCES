@@ -98,6 +98,7 @@ export type RelayStatus = {
 };
 
 export type AttendanceMonitorStatus =
+  | "waiting"
   | "missing"
   | "late"
   | "ok"
@@ -110,7 +111,9 @@ export type AttendanceMonitorRow = {
   period_label: string | null;
   planned_start: string | null;
   planned_end: string | null;
+  class_id: string | null;
   class_label: string | null;
+  class_level: string | null;
   subject_name: string | null;
   teacher_name: string;
   teacher_phone: string | null;

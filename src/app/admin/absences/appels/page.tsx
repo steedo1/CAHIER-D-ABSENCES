@@ -32,6 +32,7 @@ type MonitorStatus =
   | "missing"
   | "late"
   | "ok"
+  | "waiting"
   | "pending_absence"
   | "justified_absence";
 
@@ -84,6 +85,7 @@ type TeacherSummaryRow = {
   total: number;
   missing: number;
   late: number;
+  waiting: number;
   pending_absence: number;
   justified_absence: number;
   ok: number;
@@ -97,6 +99,7 @@ type SubjectGroup = {
     total: number;
     missing: number;
     late: number;
+    waiting: number;
     pending_absence: number;
     justified_absence: number;
     ok: number;
@@ -235,6 +238,7 @@ function countStatuses(rows: MonitorRow[]) {
     total: rows.length,
     missing: rows.filter((r) => r.status === "missing").length,
     late: rows.filter((r) => r.status === "late").length,
+    waiting: rows.filter((r) => r.status === "waiting").length,
     pending_absence: rows.filter((r) => r.status === "pending_absence").length,
     justified_absence: rows.filter((r) => r.status === "justified_absence").length,
     ok: rows.filter((r) => r.status === "ok").length,
@@ -252,6 +256,7 @@ function teacherSummary(rows: MonitorRow[]): TeacherSummaryRow[] {
         total: 0,
         missing: 0,
         late: 0,
+        waiting: 0,
         pending_absence: 0,
         justified_absence: 0,
         ok: 0,
@@ -265,6 +270,9 @@ function teacherSummary(rows: MonitorRow[]): TeacherSummaryRow[] {
         break;
       case "late":
         existing.late += 1;
+        break;
+      case "waiting":
+        existing.waiting += 1;
         break;
       case "pending_absence":
         existing.pending_absence += 1;
@@ -333,6 +341,7 @@ function groupRowsBySubject(rows: MonitorRow[]): SubjectGroup[] {
 
 function statusText(r: MonitorRow) {
   if (r.status === "missing") return "Appel manquant";
+  if (r.status === "waiting") return "Créneau en attente";
   if (r.status === "late") {
     return `Appel en retard${
       typeof r.late_minutes === "number" ? ` (+${r.late_minutes} min)` : ""
@@ -346,6 +355,9 @@ function statusText(r: MonitorRow) {
 function detailsText(r: MonitorRow) {
   if (r.status === "missing") {
     return "Aucun appel détecté pour ce créneau.";
+  }
+  if (r.status === "waiting") {
+    return "Le créneau n’a pas encore atteint l’heure limite de l’appel.";
   }
   if (r.status === "late") {
     return `Appel réalisé avec retard${
@@ -423,6 +435,7 @@ function buildPrintHtml(args: {
               <td>${t.total}</td>
               <td>${t.missing}</td>
               <td>${t.late}</td>
+              <td>${t.waiting}</td>
               <td>${t.pending_absence}</td>
               <td>${t.justified_absence}</td>
               <td>${t.ok}</td>
@@ -462,7 +475,8 @@ function buildPrintHtml(args: {
             <div class="mini-card"><span>Créneaux</span><strong>${group.totals.total}</strong></div>
             <div class="mini-card"><span>Manquants</span><strong>${group.totals.missing}</strong></div>
             <div class="mini-card"><span>Retards</span><strong>${group.totals.late}</strong></div>
-            <div class="mini-card"><span>En attente</span><strong>${group.totals.pending_absence}</strong></div>
+            <div class="mini-card"><span>Créneaux en attente</span><strong>${group.totals.waiting}</strong></div>
+            <div class="mini-card"><span>Absences à valider</span><strong>${group.totals.pending_absence}</strong></div>
             <div class="mini-card"><span>Justifiées</span><strong>${group.totals.justified_absence}</strong></div>
             <div class="mini-card"><span>Conformes</span><strong>${group.totals.ok}</strong></div>
           </div>
@@ -475,13 +489,14 @@ function buildPrintHtml(args: {
                 <th>Total</th>
                 <th>Manquants</th>
                 <th>Retards</th>
-                <th>En attente</th>
+                <th>Créneaux en attente</th>
+                <th>Absences à valider</th>
                 <th>Justifiées</th>
                 <th>Conformes</th>
               </tr>
             </thead>
             <tbody>
-              ${teacherTable || `<tr><td colspan="7">Aucune donnée</td></tr>`}
+              ${teacherTable || `<tr><td colspan="8">Aucune donnée</td></tr>`}
             </tbody>
           </table>
 
@@ -786,7 +801,8 @@ function buildPrintHtml(args: {
     <div class="summary">
       <div class="card"><div class="label">Manquants</div><div class="value">${totals.missing}</div></div>
       <div class="card"><div class="label">Retards</div><div class="value">${totals.late}</div></div>
-      <div class="card"><div class="label">En attente</div><div class="value">${totals.pending_absence}</div></div>
+      <div class="card"><div class="label">Créneaux en attente</div><div class="value">${totals.waiting}</div></div>
+      <div class="card"><div class="label">Absences à valider</div><div class="value">${totals.pending_absence}</div></div>
       <div class="card"><div class="label">Justifiées</div><div class="value">${totals.justified_absence}</div></div>
       <div class="card"><div class="label">Conformes</div><div class="value">${totals.ok}</div></div>
     </div>
@@ -881,13 +897,15 @@ function StatPill({
 }: {
   label: string;
   value: number;
-  tone: "red" | "amber" | "sky" | "blue" | "emerald";
+  tone: "red" | "amber" | "violet" | "sky" | "blue" | "emerald";
 }) {
   const toneClasses =
     tone === "red"
       ? "border-red-100 bg-red-50 text-red-800"
       : tone === "amber"
       ? "border-amber-100 bg-amber-50 text-amber-800"
+      : tone === "violet"
+      ? "border-violet-100 bg-violet-50 text-violet-800"
       : tone === "sky"
       ? "border-sky-100 bg-sky-50 text-sky-800"
       : tone === "blue"
@@ -1047,7 +1065,7 @@ export default function SurveillanceAppelsPage() {
     };
   }, []);
 
-  const rawRows = rowsState.data || [];
+  const rawRows = useMemo(() => rowsState.data || [], [rowsState.data]);
   const classesFromRows = useMemo(
     () => uniqueClassesFromRows(rawRows),
     [rawRows],
@@ -1124,6 +1142,7 @@ export default function SurveillanceAppelsPage() {
 
   const totalMissing = rows.filter((r) => r.status === "missing").length;
   const totalLate = rows.filter((r) => r.status === "late").length;
+  const totalWaiting = rows.filter((r) => r.status === "waiting").length;
   const totalOk = rows.filter((r) => r.status === "ok").length;
   const totalPendingAbsence = rows.filter((r) => r.status === "pending_absence").length;
   const totalJustified = rows.filter((r) => r.status === "justified_absence").length;
@@ -1159,6 +1178,14 @@ export default function SurveillanceAppelsPage() {
         <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
           <Clock className="h-3 w-3" />
           Appel en retard {mins !== null && mins >= 0 ? `( +${mins} min )` : ""}
+        </span>
+      );
+    }
+    if (r.status === "waiting") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-800">
+          <Hourglass className="h-3 w-3" />
+          Créneau en attente
         </span>
       );
     }
@@ -1202,6 +1229,8 @@ export default function SurveillanceAppelsPage() {
         ? "Appels manquants"
         : statusFilter === "late"
         ? "Appels en retard"
+        : statusFilter === "waiting"
+        ? "Créneaux en attente"
         : statusFilter === "pending_absence"
         ? "Demandes en attente"
         : statusFilter === "justified_absence"
@@ -1291,7 +1320,7 @@ export default function SurveillanceAppelsPage() {
           title="Filtrer la surveillance par enseignement"
         />
 
-        <section className="grid gap-3 md:grid-cols-5">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <div className="rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-red-800">
@@ -1312,10 +1341,22 @@ export default function SurveillanceAppelsPage() {
             <div className="mt-2 text-2xl font-semibold text-amber-900">{totalLate}</div>
           </div>
 
+          <div className="rounded-2xl border border-violet-100 bg-violet-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-violet-900">
+                Créneaux en attente
+              </span>
+              <Hourglass className="h-5 w-5 text-violet-600" />
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-violet-900">
+              {totalWaiting}
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-sky-100 bg-sky-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-sky-900">
-                En attente
+                Absences à valider
               </span>
               <Hourglass className="h-5 w-5 text-sky-600" />
             </div>
@@ -1390,7 +1431,8 @@ export default function SurveillanceAppelsPage() {
                 <option value="all">Tous les statuts</option>
                 <option value="missing">Appels manquants</option>
                 <option value="late">Appels en retard</option>
-                <option value="pending_absence">Demandes en attente</option>
+                <option value="waiting">Créneaux en attente</option>
+                <option value="pending_absence">Absences à valider</option>
                 <option value="justified_absence">Absences justifiées</option>
                 <option value="ok">Appels conformes</option>
               </Select>
@@ -1421,8 +1463,11 @@ export default function SurveillanceAppelsPage() {
             <span className="inline-flex items-center gap-1 rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-amber-800">
               <Clock className="h-3 w-3" /> Appel en retard
             </span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-violet-100 bg-violet-50 px-2 py-0.5 text-violet-800">
+              <Hourglass className="h-3 w-3" /> Créneau en attente
+            </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-sky-800">
-              <Hourglass className="h-3 w-3" /> Demande en attente
+              <Hourglass className="h-3 w-3" /> Absence à valider
             </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-blue-800">
               <ShieldCheck className="h-3 w-3" /> Absence justifiée
@@ -1480,7 +1525,12 @@ export default function SurveillanceAppelsPage() {
                       <StatPill label="Manquants" value={group.totals.missing} tone="red" />
                       <StatPill label="Retards" value={group.totals.late} tone="amber" />
                       <StatPill
-                        label="En attente"
+                        label="Créneaux en attente"
+                        value={group.totals.waiting}
+                        tone="violet"
+                      />
+                      <StatPill
+                        label="Absences à valider"
                         value={group.totals.pending_absence}
                         tone="sky"
                       />
@@ -1506,7 +1556,8 @@ export default function SurveillanceAppelsPage() {
                               <th className="px-3 py-2 text-left">Total</th>
                               <th className="px-3 py-2 text-left">Manquants</th>
                               <th className="px-3 py-2 text-left">Retards</th>
-                              <th className="px-3 py-2 text-left">En attente</th>
+                              <th className="px-3 py-2 text-left">Créneaux en attente</th>
+                              <th className="px-3 py-2 text-left">Absences à valider</th>
                               <th className="px-3 py-2 text-left">Justifiées</th>
                               <th className="px-3 py-2 text-left">Conformes</th>
                             </tr>
@@ -1520,6 +1571,7 @@ export default function SurveillanceAppelsPage() {
                                 <td className="px-3 py-2 text-slate-700">{teacher.total}</td>
                                 <td className="px-3 py-2 text-slate-700">{teacher.missing}</td>
                                 <td className="px-3 py-2 text-slate-700">{teacher.late}</td>
+                                <td className="px-3 py-2 text-slate-700">{teacher.waiting}</td>
                                 <td className="px-3 py-2 text-slate-700">
                                   {teacher.pending_absence}
                                 </td>
@@ -1558,6 +1610,8 @@ export default function SurveillanceAppelsPage() {
                                   ? "border-l-4 border-red-400 bg-red-50/40 hover:bg-red-50"
                                   : r.status === "late"
                                   ? "border-l-4 border-amber-400 bg-amber-50/30 hover:bg-amber-50"
+                                  : r.status === "waiting"
+                                  ? "border-l-4 border-violet-400 bg-violet-50/30 hover:bg-violet-50"
                                   : r.status === "pending_absence"
                                   ? "border-l-4 border-sky-400 bg-sky-50/30 hover:bg-sky-50"
                                   : r.status === "justified_absence"
@@ -1599,6 +1653,11 @@ export default function SurveillanceAppelsPage() {
                                         {typeof r.late_minutes === "number"
                                           ? `Retard estimé : ${r.late_minutes} min.`
                                           : ""}
+                                      </span>
+                                    )}
+                                    {r.status === "waiting" && (
+                                      <span>
+                                        Créneau à venir ou délai d’appel encore ouvert.
                                       </span>
                                     )}
                                     {r.status === "pending_absence" && (

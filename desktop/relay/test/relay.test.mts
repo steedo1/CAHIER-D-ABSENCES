@@ -208,6 +208,41 @@ test("le contrôle des appels fonctionne depuis SQLite sans Internet", () => {
   db.close();
 });
 
+test("un créneau courant reste en attente avant l'heure limite de l'appel", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const now = "2026-07-13T08:05:00.000Z";
+  store.ensureInstitution("inst-1", "Collège test", now);
+
+  db.prepare(`INSERT INTO classes(id,institution_id,academic_year,label,level,updated_at)
+              VALUES ('class-1','inst-1','2026-2027','4e A','4e',?)`).run(now);
+  db.prepare(`INSERT INTO subjects(id,institution_id,name,updated_at)
+              VALUES ('math','inst-1','Mathématiques',?)`).run(now);
+  db.prepare(`INSERT INTO profiles(id,institution_id,display_name,updated_at)
+              VALUES ('t1','inst-1','Mme Un',?)`).run(now);
+  db.prepare(`
+    INSERT INTO institution_periods(id,institution_id,weekday,label,start_time,end_time,updated_at)
+    VALUES ('p1','inst-1',1,'Cours 1','08:00:00','09:00:00',?)
+  `).run(now);
+  db.prepare(`
+    INSERT INTO teacher_timetables(
+      id,institution_id,class_id,subject_id,teacher_id,period_id,weekday,updated_at
+    ) VALUES ('tt-1','inst-1','class-1','math','t1','p1',1,?)
+  `).run(now);
+
+  const rows = attendanceMonitor(db, {
+    institutionId: "inst-1",
+    from: "2026-07-13",
+    to: "2026-07-13",
+    now: new Date(now),
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.status, "waiting");
+  assert.equal(rows[0]?.class_id, "class-1");
+  assert.equal(rows[0]?.class_level, "4e");
+  db.close();
+});
+
 test("une écoute LAN est refusée sans jeton", () => {
   assert.throws(
     () => loadRelayConfig({ MONCAHIER_RELAY_HOST: "0.0.0.0" }),

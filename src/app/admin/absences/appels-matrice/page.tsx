@@ -14,6 +14,7 @@ import {
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
 
 type MonitorStatus =
+  | "waiting"
   | "missing"
   | "late"
   | "ok"
@@ -81,11 +82,21 @@ function nowHHMM(d = new Date()): string {
   return `${h}:${m}`;
 }
 
+function savedAtLabel(value: string | null) {
+  const date = new Date(String(value || ""));
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function statusScore(s: MonitorStatus): number {
   if (s === "missing") return 4;
   if (s === "pending_absence") return 3;
   if (s === "late") return 2;
   if (s === "justified_absence") return 1;
+  if (s === "ok") return 1;
   return 0;
 }
 
@@ -94,6 +105,9 @@ function statusHint(
   reason?: string | null,
   comment?: string | null
 ): string {
+  if (s === "waiting") {
+    return "Le créneau est en cours, le délai normal pour commencer l’appel n’est pas encore dépassé.";
+  }
   if (s === "missing") {
     return "Aucun appel détecté pour cette classe sur ce créneau.";
   }
@@ -114,6 +128,9 @@ function statusHint(
 }
 
 function cellColorClasses(s: MonitorStatus): string {
+  if (s === "waiting") {
+    return "bg-slate-500 text-white border-slate-300 shadow-lg shadow-slate-300/40";
+  }
   if (s === "missing") {
     return "bg-red-600 text-white border-red-400 shadow-lg shadow-red-300/40";
   }
@@ -172,10 +189,12 @@ export default function AppelsMatricePage() {
     data: null,
   });
   const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
+  const [dataSavedAt, setDataSavedAt] = useState<string | null>(null);
 
   const [now, setNow] = useState<Date>(() => new Date());
   const today = useMemo(() => toLocalDateInputValue(now), [now]);
   const [levelFilter, setLevelFilter] = useState<string>("all");
+  const [selectedSlotKey, setSelectedSlotKey] = useState<string>("auto");
 
   const inFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -201,6 +220,7 @@ export default function AppelsMatricePage() {
         controller.signal,
       );
       setDataSource(result.source);
+      setDataSavedAt(result.saved_at);
       setRowsState({
         loading: false,
         error: null,
@@ -269,8 +289,9 @@ export default function AppelsMatricePage() {
     };
   }, []);
 
-  const rows = rowsState.data ?? [];
+  const rows = useMemo(() => rowsState.data ?? [], [rowsState.data]);
   const currentTime = nowHHMM(now);
+  const lastUpdatedLabel = savedAtLabel(dataSavedAt);
   const initialLoading = rowsState.loading && rows.length === 0;
   const refreshing = rowsState.loading && rows.length > 0;
 
@@ -307,7 +328,7 @@ export default function AppelsMatricePage() {
     return list;
   }, [rows]);
 
-  const activeSlot: Slot | null = useMemo(() => {
+  const automaticSlot: Slot | null = useMemo(() => {
     if (!slots.length) return null;
 
     const live = slots.find((s) => s.start <= currentTime && currentTime < s.end);
@@ -320,6 +341,11 @@ export default function AppelsMatricePage() {
 
     return slots[0];
   }, [slots, currentTime]);
+
+  const activeSlot: Slot | null = useMemo(() => {
+    if (selectedSlotKey === "auto") return automaticSlot;
+    return slots.find((slot) => slot.key === selectedSlotKey) || automaticSlot;
+  }, [automaticSlot, selectedSlotKey, slots]);
 
   const classCells: ClassCell[] = useMemo(() => {
     if (!activeSlot) return [];
@@ -389,6 +415,7 @@ export default function AppelsMatricePage() {
   }, [rows, activeSlot, levelFilter]);
 
   const totalPresent = classCells.filter((c) => c.status === "ok").length;
+  const totalWaiting = classCells.filter((c) => c.status === "waiting").length;
   const totalLate = classCells.filter((c) => c.status === "late").length;
   const totalMissing = classCells.filter((c) => c.status === "missing").length;
   const totalPending = classCells.filter((c) => c.status === "pending_absence").length;
@@ -436,6 +463,7 @@ export default function AppelsMatricePage() {
                 : "border-amber-200 bg-amber-50 text-amber-800"
             }`}>
               {dataSource === "cloud" ? "Cloud" : dataSource === "relay" ? "Relais local" : "Dernière vue locale"}
+              {lastUpdatedLabel ? ` · ${lastUpdatedLabel}` : ""}
             </div>
             <h1 className="mt-1 text-2xl font-semibold text-slate-900">
               Appels par créneau — Tableau de classes
@@ -457,14 +485,26 @@ export default function AppelsMatricePage() {
               </span>
             </div>
 
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-3">
               <span className="text-[11px] uppercase tracking-wide text-slate-500">
                 Créneau suivi
               </span>
-              {activeSlot ? (
-                <span className="font-mono text-xs font-semibold text-emerald-700">
-                  {activeSlot.label}
-                </span>
+              {slots.length ? (
+                <select
+                  value={selectedSlotKey}
+                  onChange={(event) => setSelectedSlotKey(event.target.value)}
+                  className="max-w-[220px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-emerald-800"
+                  aria-label="Choisir le créneau administratif"
+                >
+                  <option value="auto">
+                    Automatique — {automaticSlot?.label || "créneau actuel"}
+                  </option>
+                  {slots.map((slot) => (
+                    <option key={slot.key} value={slot.key}>
+                      {slot.label}
+                    </option>
+                  ))}
+                </select>
               ) : (
                 <span className="text-[11px] text-amber-700">
                   Aucun créneau défini pour aujourd&apos;hui
@@ -488,7 +528,20 @@ export default function AppelsMatricePage() {
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-5">
+        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-100/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-700">
+                En attente
+              </span>
+              <Clock className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">{totalWaiting}</div>
+            <p className="text-[11px] text-slate-700/80">
+              Délai normal de démarrage encore ouvert.
+            </p>
+          </div>
+
           <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-red-800">
@@ -569,6 +622,10 @@ export default function AppelsMatricePage() {
 
             <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
               <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1">
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-slate-500" />
+                  En attente
+                </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-emerald-500" />
                   Conforme
@@ -663,6 +720,8 @@ export default function AppelsMatricePage() {
                     <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
                       {cell.status === "missing"
                         ? "OFF"
+                        : cell.status === "waiting"
+                        ? "ATTENTE"
                         : cell.status === "late"
                         ? "RETARD"
                         : cell.status === "pending_absence"

@@ -8,6 +8,7 @@ import Guard from "@/components/Guard";
 export const metadata: Metadata = {
   title: "Mon Cahier d’Absences",
   description: "Portail web - Admin & Enseignants",
+  manifest: "/manifest.webmanifest",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },   // si tu as mis le .ico

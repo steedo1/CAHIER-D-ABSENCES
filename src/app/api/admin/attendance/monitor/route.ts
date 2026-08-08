@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type MonitorStatus =
+  | "waiting"
   | "missing"
   | "late"
   | "ok"
@@ -19,7 +20,12 @@ type MonitorRow = {
   period_label?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  class_id?: string | null;
   class_label?: string | null;
+  class_level?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_name?: string | null;
   teacher_name: string;
   teacher_phone?: string | null;
@@ -236,7 +242,10 @@ export async function GET(req: NextRequest) {
       .from("teacher_timetables")
       .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id")
       .eq("institution_id", institution_id),
-    srv.from("classes").select("id,label").eq("institution_id", institution_id),
+    srv
+      .from("classes")
+      .select("id,label,level,education_type,formation_code,formation_level_code")
+      .eq("institution_id", institution_id),
     srv
       .from("institution_subjects")
       .select("id,custom_name,subjects:subject_id(id,name)")
@@ -343,8 +352,10 @@ export async function GET(req: NextRequest) {
   }
 
   const classLabelById = new Map<string, string>();
+  const classById = new Map<string, any>();
   (classes || []).forEach((c: any) => {
     classLabelById.set(String(c.id), String(c.label || ""));
+    classById.set(String(c.id), c);
   });
 
   const subjectNameById = new Map<string, string>();
@@ -517,6 +528,7 @@ export async function GET(req: NextRequest) {
     const teacherId = String(tt.teacher_id);
 
     const classLabel = classLabelById.get(classId) || "";
+    const classRow = classById.get(classId) || {};
 
     let subjName = subjectNameById.get(subjectId) || "";
     if (!subjName) {
@@ -576,13 +588,13 @@ export async function GET(req: NextRequest) {
           if (nowMinutes >= controlLimitMin) {
             status = "missing";
           } else {
-            continue;
+            status = "waiting";
           }
         } else {
           continue;
         }
 
-        // 🔥 si c'était missing, on vérifie s'il existe une demande d'absence
+        // Une autorisation connue reste visible même pendant le délai normal.
         const absence = absenceIndex.get(`${ymd}|${teacherId}`);
         if (absence) {
           absence_request_status = absence.status;
@@ -613,7 +625,13 @@ export async function GET(req: NextRequest) {
         period_label: periodLabel || null,
         planned_start: normalizeTimeFromDb(period.start_time),
         planned_end: normalizeTimeFromDb(period.end_time),
+        class_id: classId,
         class_label: classLabel || null,
+        class_level: String(classRow.level || "").trim() || null,
+        education_type: String(classRow.education_type || "").trim() || null,
+        formation_code: String(classRow.formation_code || "").trim() || null,
+        formation_level_code:
+          String(classRow.formation_level_code || "").trim() || null,
         subject_name: subjName || null,
         teacher_name: teacherName,
         teacher_phone: teacherPhone,

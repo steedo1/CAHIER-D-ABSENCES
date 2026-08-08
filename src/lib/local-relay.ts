@@ -119,6 +119,9 @@ const BOOTSTRAP_THROTTLE_MS = 5 * 60 * 1000;
 const MIN_RELAY_SCHEMA_VERSION = 8;
 const RELAY_PROTOCOL_VERSION = 1;
 const RELAY_TIMEOUT_MS = 5_000;
+const RELAY_ADMIN_READ_TIMEOUT_MS = 2_000;
+const CLOUD_READ_TIMEOUT_MS = 5_000;
+const CLOUD_ROLE_TIMEOUT_MS = 1_500;
 const RELAY_PERMISSION_TIMEOUT_MS = 15_000;
 const RELAY_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const RELAY_PRESENCE_TIMEOUT_MS = 5_000;
@@ -338,25 +341,46 @@ async function writeEnvelope<T>(key: string, data: T, source: LocalDataSource) {
   return envelope;
 }
 
-async function cloudJson<T>(url: string, signal?: AbortSignal) {
-  const response = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  const payload = await safeJson(response);
-  if (!response.ok) throw new Error(String(payload?.error || payload?.message || `HTTP_${response.status}`));
-  return payload as T;
+async function cloudJson<T>(
+  url: string,
+  signal?: AbortSignal,
+  timeoutMs = CLOUD_READ_TIMEOUT_MS,
+) {
+  const merged = mergeSignals(signal, timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: merged.signal,
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(
+        String(payload?.error || payload?.message || `HTTP_${response.status}`),
+      );
+    }
+    return payload as T;
+  } finally {
+    merged.cleanup();
+  }
 }
 
 export async function resolveRelayInstitutionId(signal?: AbortSignal) {
   if (!browser()) return null;
 
   try {
-    const role = await cloudJson<{ institution_id?: string | null }>("/api/auth/role", signal);
+    const role = await cloudJson<{ institution_id?: string | null }>(
+      "/api/auth/role",
+      signal,
+      CLOUD_ROLE_TIMEOUT_MS,
+    );
     const institutionId = String(role?.institution_id || "").trim();
+    const remembered = getRememberedRelayInstitution();
+    if (institutionId && remembered && remembered !== institutionId) {
+      await clearRelayUserState();
+    }
     if (institutionId) rememberRelayInstitution(institutionId);
     if (institutionId) return institutionId;
   } catch {
@@ -380,7 +404,27 @@ export async function fetchAdminAttendanceMonitor<T>(
   }
 
   const queryString = query.toString();
-  const key = `relay:admin:attendance:${queryString}`;
+  const institutionId =
+    getRememberedRelayInstitution() ||
+    (await resolveRelayInstitutionId(signal));
+  const scope = institutionId || "institution-inconnue";
+  const key = `relay:admin:attendance:${scope}:${queryString}`;
+
+  if (institutionId) {
+    try {
+      const relayQuery = new URLSearchParams(query);
+      relayQuery.set("institution_id", institutionId);
+
+      const relay = await relayJson<{ rows: T[] }>(
+        `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
+        { signal },
+        { timeoutMs: RELAY_ADMIN_READ_TIMEOUT_MS },
+      );
+      return await writeEnvelope(key, relay, "relay");
+    } catch {
+      // Le Cloud reste disponible pour un administrateur hors du réseau local.
+    }
+  }
 
   try {
     const cloud = await cloudJson<{ rows: T[] }>(
@@ -390,24 +434,6 @@ export async function fetchAdminAttendanceMonitor<T>(
     return await writeEnvelope(key, cloud, "cloud");
   } catch (cloudError) {
     if (signal?.aborted) throw cloudError;
-
-    const institutionId = await resolveRelayInstitutionId(signal);
-
-    if (institutionId) {
-      try {
-        const relayQuery = new URLSearchParams(query);
-        relayQuery.set("institution_id", institutionId);
-
-        const relay = await relayJson<{ rows: T[] }>(
-          `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
-          { signal },
-        );
-        return await writeEnvelope(key, relay, "relay");
-      } catch {
-        // Dernier niveau : vue locale connue.
-      }
-    }
-
     const cached = await readEnvelope<{ rows: T[] }>(key);
     if (cached) return { ...cached, source: "cache" };
     throw cloudError;

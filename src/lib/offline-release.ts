@@ -4,4 +4,4 @@ export const MON_CAHIER_WEB_RELEASE =
   "development";
 
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-08-08-offline-login-v1";
+  "2026-08-08-offline-final-v1";

@@ -645,6 +645,70 @@ export async function outboxCount(): Promise<number> {
   return count;
 }
 
+export async function listQueuedOfflineMutationOperationIdsForScope(scope: {
+  institutionId?: string | null;
+  classId: string;
+  sessionIds?: Array<string | null | undefined>;
+}): Promise<string[]> {
+  const institutionId = String(scope.institutionId || "").trim();
+  const classId = String(scope.classId || "").trim();
+  if (!classId) return [];
+
+  const acceptedSessionIds = new Set(
+    (scope.sessionIds || [])
+      .flatMap((value) => {
+        const normalized = String(value || "").trim();
+        if (!normalized) return [];
+        return normalized.startsWith("client:")
+          ? [normalized, normalized.slice("client:".length)]
+          : [normalized, `client:${normalized}`];
+      })
+      .filter(Boolean),
+  );
+  const rows = await outboxAll();
+  const operationIds = new Set<string>();
+
+  for (const row of rows) {
+    const rowInstitutionId = String(
+      row.meta?.institutionId ||
+        row.meta?.institution_id ||
+        row.body?.institution_id ||
+        "",
+    ).trim();
+    if (
+      institutionId &&
+      rowInstitutionId &&
+      rowInstitutionId !== institutionId
+    ) {
+      continue;
+    }
+
+    const rowClassId = String(
+      row.meta?.classId || row.meta?.class_id || row.body?.class_id || "",
+    ).trim();
+    const rowSessionIds = [
+      row.meta?.clientSessionId,
+      row.meta?.sessionId,
+      row.body?.client_session_id,
+      row.body?.session_id,
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const belongsToClass = rowClassId === classId;
+    const belongsToSession = rowSessionIds.some(
+      (value) =>
+        acceptedSessionIds.has(value) ||
+        acceptedSessionIds.has(
+          value.startsWith("client:") ? value.slice("client:".length) : `client:${value}`,
+        ),
+    );
+    if (!belongsToClass && !belongsToSession) continue;
+    operationIds.add(String(row.operationId || row.id).trim());
+  }
+
+  return Array.from(operationIds).filter(Boolean);
+}
+
 export async function outboxStats(): Promise<OutboxStats> {
   const rows = await outboxAll();
   const blocked = rows.filter((row) => row.state === "blocked").length;
