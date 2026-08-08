@@ -7,6 +7,7 @@ import {
   enrichClassDeviceAccess,
   type ClassDeviceMetadataReader,
 } from "@/lib/class-device-access-server";
+import { buildClassDeviceCloudSchedule } from "@/lib/class-device-offline-cloud-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -170,15 +171,44 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const wantsOfflineContractV5 =
+    String(new URL(req.url).searchParams.get("offline_contract") || "") === "v5";
+  let offlineSchedule: unknown = null;
+  let offlineScheduleError: string | null = null;
+  if (wantsOfflineContractV5 && enriched.length === 1) {
+    const authorized = enriched[0] as any;
+    try {
+      offlineSchedule = await buildClassDeviceCloudSchedule(srv, {
+        institutionId: String(authorized?.institution_id || "").trim(),
+        classId: String(authorized?.id || "").trim(),
+        actorProfileId: user.id,
+        classLabel: String(authorized?.label || "Classe"),
+        classLevel: String(authorized?.level || ""),
+      });
+    } catch (error) {
+      offlineScheduleError =
+        error instanceof Error ? error.message : "class_offline_schedule_failed";
+    }
+  }
+
   // Debug optionnel
   const wantDebug = (new URL(req.url).searchParams.get("debug") || "") === "1";
+  const responsePayload = {
+    items: enriched,
+    diagnostics: enrichmentDiagnostics,
+    ...(wantsOfflineContractV5
+      ? {
+          offline_schedule: offlineSchedule,
+          offline_schedule_error: offlineScheduleError,
+        }
+      : {}),
+  };
   return noStoreJson(
     wantDebug
       ? {
-          items: enriched,
-          diagnostics: enrichmentDiagnostics,
+          ...responsePayload,
           debug: { phone, ...debug, variants, likePatterns },
         }
-      : { items: enriched, diagnostics: enrichmentDiagnostics }
+      : responsePayload
   );
 }

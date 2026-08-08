@@ -1598,57 +1598,84 @@ async function prepareClassDevice(
   const preparedAccess = resolveClassDevicePreparationAccess(classPayload);
   const { classId, institutionId, actorProfileId } = preparedAccess;
   const relayPolicy = preparedAccess.relayPolicy;
+  const cloudSchedule = classPayload?.offline_schedule as
+    | RelayTeacherOfflineSchedule
+    | null
+    | undefined;
+  if (!cloudSchedule) {
+    const diagnostic = String(classPayload?.offline_schedule_error || "").trim();
+    throw new Error(
+      diagnostic
+        ? `Le planning Cloud de cette classe n’a pas pu être préparé (${diagnostic}).`
+        : "Le planning Cloud de cette classe n’a pas pu être préparé.",
+    );
+  }
+  const cloudScope = validateClassDeviceScheduleScope(cloudSchedule, {
+    institutionId,
+    classId,
+    actorProfileId,
+  });
+  if (!cloudScope.ok && "status" in cloudScope) {
+    throw new Error(classDeviceReadinessMessage(cloudScope.status));
+  }
+  if (cloudRevision !== null && cloudRevision !== cloudScope.revision) {
+    throw new Error(
+      "Le planning Cloud a changé pendant la préparation. Une nouvelle tentative est nécessaire.",
+    );
+  }
 
-  onProgress("Vérification du relais et du planning de la classe…");
+  // L'écran d'appel et son jeu de données minimal doivent être disponibles
+  // avant toute tentative d'accès au réseau local. Le relais est prioritaire
+  // lorsqu'il répond, mais il n'est pas un prérequis à la préparation Cloud.
+  onProgress("Préparation immédiate de l’écran d’appel hors ligne…");
+  await warmOfflineShell(["/class"]);
+  rememberOfflineBookDestinations({
+    attendance: "/class",
+    grades: "/grades/class-device",
+  });
+  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
+  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+    throw new Error(classDeviceReadinessMessage("service_worker_stale"));
+  }
+  await projectClassDeviceScheduleCaches(cloudSchedule, classId);
+
+  onProgress("Vérification facultative du relais local…");
   const relayConnectivity = await checkRelayTeacherConnectivity({
     institutionId,
     baseUrl: relayPolicy.relayLocalUrl,
     accessToken: relayPolicy.relayAccessToken,
   });
-  if (relayConnectivity.status !== "reachable") {
-    const status =
-      relayConnectivity.status === "access_denied"
-        ? "relay_access_denied"
-        : relayConnectivity.status === "permission_denied"
-          ? "relay_permission_denied"
-          : relayConnectivity.status === "incompatible_browser"
-            ? "browser_incompatible"
-            : "relay_unreachable";
-    throw new Error(classDeviceReadinessMessage(status));
-  }
-  if (relayConnectivity.capabilities?.class_device_scope_v1 !== true) {
-    throw new Error(classDeviceReadinessMessage("relay_contract_stale"));
-  }
-  if (relayConnectivity.actor_kind !== "class_device") {
-    throw new Error(classDeviceReadinessMessage("relay_contract_stale"));
-  }
-  if (String(relayConnectivity.class_id || "").trim() !== classId) {
-    throw new Error(classDeviceReadinessMessage("class_mismatch"));
-  }
+  let relaySchedule: RelayTeacherOfflineSchedule | null = null;
+  let relayUsable = false;
   if (
-    String(relayConnectivity.actor_profile_id || "").trim() !==
-    actorProfileId
+    relayConnectivity.status === "reachable" &&
+    relayConnectivity.capabilities?.class_device_scope_v1 === true &&
+    relayConnectivity.actor_kind === "class_device" &&
+    String(relayConnectivity.class_id || "").trim() === classId &&
+    String(relayConnectivity.actor_profile_id || "").trim() ===
+      actorProfileId &&
+    relayConnectivity.teacher_attendance_writes_enabled === true &&
+    completeRelayCapabilities(relayConnectivity.capabilities)
   ) {
-    throw new Error(classDeviceReadinessMessage("device_mismatch"));
-  }
-
-  let relaySchedule: RelayTeacherOfflineSchedule;
-  try {
-    relaySchedule = await fetchRelayTeacherOfflineSchedule({
-      institutionId,
-      baseUrl: relayPolicy.relayLocalUrl,
-      accessToken: relayPolicy.relayAccessToken,
-    });
-  } catch (error) {
-    throw new Error(classDeviceReadinessMessage(scheduleFetchFailureStatus(error)));
-  }
-  const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
-    institutionId,
-    classId,
-    actorProfileId,
-  });
-  if (!relayScope.ok && "status" in relayScope) {
-    throw new Error(classDeviceReadinessMessage(relayScope.status));
+    try {
+      const candidate = await fetchRelayTeacherOfflineSchedule({
+        institutionId,
+        baseUrl: relayPolicy.relayLocalUrl,
+        accessToken: relayPolicy.relayAccessToken,
+      });
+      const candidateScope = validateClassDeviceScheduleScope(candidate, {
+        institutionId,
+        classId,
+        actorProfileId,
+      });
+      if (candidateScope.ok && candidateScope.revision === cloudScope.revision) {
+        relaySchedule = candidate;
+        relayUsable = true;
+      }
+    } catch {
+      // La préparation Cloud reste valide si le relais disparaît entre les
+      // deux contrôles. L'autorité sera réévaluée au démarrage de l'appel.
+    }
   }
 
   try {
@@ -1672,12 +1699,12 @@ async function prepareClassDevice(
     ],
     (payload: any) =>
       Array.isArray(payload?.periods) && payload.periods.length > 0,
-  );
+  ).catch(() => undefined);
 
   const studentIds = new Set<string>();
-  const relayRoster = relaySchedule.rosters?.[classId];
-  for (const student of Array.isArray(relayRoster?.items)
-    ? relayRoster.items
+  const cloudRoster = cloudSchedule.rosters?.[classId];
+  for (const student of Array.isArray(cloudRoster?.items)
+    ? cloudRoster.items
     : []) {
     const id = String(student?.id || "").trim();
     if (id) studentIds.add(id);
@@ -1687,7 +1714,7 @@ async function prepareClassDevice(
   const roster: any = await fetchAndCache(
     `/api/class/roster?class_id=${encodeURIComponent(classId)}`,
     `classDevice:roster:${classId}`,
-  );
+  ).catch(() => null);
   for (const student of Array.isArray(roster?.items) ? roster.items : []) {
     const id = String(student?.id || "").trim();
     if (id) studentIds.add(id);
@@ -1695,45 +1722,24 @@ async function prepareClassDevice(
   await fetchAndCache(
     `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
     `classDevice:subjects:${classId}`,
-  );
+  ).catch(() => undefined);
 
-  onProgress(
-    `Préparation de ${relaySchedule.slots.length} créneau(x) vérifié(s)…`,
+  const preparedGrades = await prepareGrades("class-device", onProgress).catch(
+    () => ({ classIds: [], studentIds: new Set<string>(), evaluationCount: 0 }),
   );
-  await mapLimit(relaySchedule.slots, 4, async (slot, index) => {
-    if (
-      index === 0 ||
-      (index + 1) % 5 === 0 ||
-      index + 1 === relaySchedule.slots.length
-    ) {
-      onProgress(`Créneaux ${index + 1}/${relaySchedule.slots.length}…`);
-    }
-    await fetchAndCache(
-      `/api/class/subjects?class_id=${encodeURIComponent(classId)}&slot=${encodeURIComponent(slot.key)}`,
-      `classDevice:subjects:${classId}:${slot.key}`,
-    );
-  });
-
-  const preparedGrades = await prepareGrades("class-device", onProgress);
   for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
-  const preparedTextbook = await prepareTextbook(onProgress);
+  const preparedTextbook = await prepareTextbook(onProgress).catch(() => ({
+    classIds: [],
+    assignmentCount: 0,
+  }));
 
-  onProgress("Préparation et vérification du shell hors ligne…");
+  onProgress("Préparation des écrans complémentaires hors ligne…");
   await warmOfflineShell([
     "/login",
     "/choose-book",
-    "/class",
     "/grades/class-device",
     "/enseignant/cahier-de-texte",
-  ]);
-  rememberOfflineBookDestinations({
-    attendance: "/class",
-    grades: "/grades/class-device",
-  });
-  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
-  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
-    throw new Error(classDeviceReadinessMessage("service_worker_stale"));
-  }
+  ]).catch(() => undefined);
 
   const readiness: OfflineReadiness = {
     version: 5,
@@ -1742,68 +1748,45 @@ async function prepareClassDevice(
     checked_at: new Date().toISOString(),
     class_count: 1,
     student_count: studentIds.size,
-    slot_count: relaySchedule.slot_count,
+    slot_count: cloudSchedule.slot_count,
     evaluation_count: preparedGrades.evaluationCount,
     textbook_assignment_count: preparedTextbook.assignmentCount,
     bulletin_count: 0,
     parent_child_count: 0,
-    grades_ready: true,
-    textbook_ready: true,
+    grades_ready: preparedGrades.evaluationCount > 0,
+    textbook_ready: preparedTextbook.assignmentCount > 0,
     consultation_ready: false,
     communication_ready: false,
     shell_ready: true,
     relay_connectivity: relayConnectivity,
     web_release: MON_CAHIER_WEB_RELEASE,
     service_worker_release: activeServiceWorkerRelease,
-    schedule_revision: relayScope.revision,
-    schedule_generated_at: relaySchedule.generated_at,
+    schedule_revision: cloudScope.revision,
+    schedule_generated_at: cloudSchedule.generated_at,
     institution_id: institutionId,
     authorized_class_id: classId,
     authorized_actor_profile_id: actorProfileId,
     relay_revision: safeRevision(relayConnectivity.snapshot_revision),
-    cloud_revision: cloudRevision,
+    cloud_revision: cloudScope.revision,
     relay_capabilities: relayConnectivity.capabilities,
-    class_device_compatibility: "ready",
+    class_device_compatibility: relayUsable ? "ready" : "ready_local",
     data_presence: {
       classes: 1,
-      students: Array.isArray(relayRoster?.items)
-        ? relayRoster.items.length
+      students: Array.isArray(cloudRoster?.items)
+        ? cloudRoster.items.length
         : 0,
-      slots: relaySchedule.slot_count,
+      slots: cloudSchedule.slot_count,
       grades: preparedGrades.evaluationCount,
       textbook_assignments: preparedTextbook.assignmentCount,
-      assignments: relaySchedule.assignments.length,
+      assignments: cloudSchedule.assignments.length,
     },
   };
-  const status = evaluateClassDeviceCoherence({
-    readiness,
-    expected_web_release: MON_CAHIER_WEB_RELEASE,
-    expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
-    active_service_worker_release: activeServiceWorkerRelease,
-    expected_institution_id: institutionId,
-    expected_class_id: classId,
-    expected_actor_profile_id: actorProfileId,
-    bundle_present: true,
-    bundle_schedule_revision: relayScope.revision,
-    bundle_scope_valid: true,
-    relay_status: relayConnectivity.status,
-    relay_institution_id: relaySchedule.institution_id,
-    relay_actor_kind: relaySchedule.actor_kind || null,
-    relay_class_id: relaySchedule.class_id || null,
-    relay_actor_profile_id: relaySchedule.actor_profile_id || null,
-    relay_schedule_available: true,
-    relay_revision: relayScope.revision,
-    cloud_revision: cloudRevision,
-    relay_writes_enabled:
-      relayConnectivity.teacher_attendance_writes_enabled === true,
-    relay_capabilities: relayConnectivity.capabilities,
-  });
-  if (status !== "ready") {
-    throw new Error(classDeviceReadinessMessage(status));
-  }
 
-  await persistClassDeviceBundle(readiness, relaySchedule);
-  await projectClassDeviceScheduleCaches(relaySchedule, classId);
+  const authoritativeSchedule = relayUsable && relaySchedule
+    ? relaySchedule
+    : cloudSchedule;
+  await persistClassDeviceBundle(readiness, authoritativeSchedule);
+  await projectClassDeviceScheduleCaches(authoritativeSchedule, classId);
   return readiness;
 }
 

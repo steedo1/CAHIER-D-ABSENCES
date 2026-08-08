@@ -80,7 +80,7 @@ test("le Web et le service worker portent la même release hors ligne finale", a
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-08-08-offline-final-v1";
+  const expected = "2026-08-08-offline-field-fix-v2";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
 });

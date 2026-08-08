@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-08-08-offline-final-v1";
+const VERSION = "2026-08-08-offline-field-fix-v2";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;

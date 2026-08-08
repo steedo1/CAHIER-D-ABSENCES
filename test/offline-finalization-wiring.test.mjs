@@ -85,6 +85,33 @@ test("le téléphone classe réconcilie le relais avant tout rejeu Cloud", async
   assert.doesNotMatch(logout, /await flushOutbox\(\)/);
 });
 
+test("la préparation classe est Cloud-first et ne dépend pas du relais local", async () => {
+  const [route, readiness, cloudProjector] = await Promise.all([
+    read("src/app/api/class/my-classes/route.ts"),
+    read("src/lib/offline-readiness.ts"),
+    read("src/lib/class-device-offline-cloud-server.ts"),
+  ]);
+  const preparation = readiness.slice(
+    readiness.indexOf("async function prepareClassDevice"),
+    readiness.indexOf("type AdminBulletinClass"),
+  );
+
+  assert.match(route, /offline_schedule: offlineSchedule/);
+  assert.match(route, /buildClassDeviceCloudSchedule/);
+  assert.match(cloudProjector, /source: "cloud" as const/);
+  assert.match(preparation, /classPayload\?\.offline_schedule/);
+  assert.ok(
+    preparation.indexOf('warmOfflineShell(["/class"])') <
+      preparation.indexOf("checkRelayTeacherConnectivity"),
+  );
+  assert.match(preparation, /relayUsable \? "ready" : "ready_local"/);
+  assert.match(preparation, /persistClassDeviceBundle\(readiness, authoritativeSchedule\)/);
+  assert.doesNotMatch(
+    preparation,
+    /if \(relayConnectivity\.status !== "reachable"\)[\s\S]{0,300}throw new Error/,
+  );
+});
+
 test("les statuts en attente et la PWA installable sont câblés de bout en bout", async () => {
   const [cloud, relay, matrix, details, manifest, layout, worker] = await Promise.all([
     read("src/app/api/admin/attendance/monitor/route.ts"),
