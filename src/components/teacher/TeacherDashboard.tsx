@@ -14,7 +14,6 @@ import {
   registerServiceWorker,
   offlineGetJson,
   offlineMutateJson,
-  outboxCount,
   flushOutbox,
   cacheGet,
   cacheSet,
@@ -33,7 +32,6 @@ import {
   type RelayTeacherConnectivityResult,
 } from "@/lib/local-relay";
 import {
-  countUnresolvedTeacherAttendanceOperations,
   deliverTeacherAttendance,
   getLatestTeacherAttendanceOperation,
   stageTeacherAttendanceDraft,
@@ -52,6 +50,11 @@ import {
   teacherSessionLifecycleDeliveryMessage,
   transitionTeacherAttendanceSessionOnRelay,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import {
+  emptyTeacherOfflinePendingSummary,
+  getTeacherOfflinePendingSummary,
+  type TeacherOfflinePendingSummary,
+} from "@/lib/teacher-offline-pending";
 
 /* ─────────────────────────────────────────
    Types
@@ -405,7 +408,10 @@ function clientSessionIdFromOpen(open: OpenSession | null) {
 export default function TeacherDashboard() {
   // offline / sync
   const [isOnline, setIsOnline] = useState<boolean>(true);
-  const [pending, setPending] = useState<number>(0);
+  const [pendingSummary, setPendingSummary] = useState<TeacherOfflinePendingSummary>(
+    emptyTeacherOfflinePendingSummary(),
+  );
+  const pending = pendingSummary.total;
   const [syncing, setSyncing] = useState<boolean>(false);
   const [nowTick, setNowTick] = useState<number>(Date.now());
 
@@ -538,10 +544,17 @@ export default function TeacherDashboard() {
 
   async function refreshPending() {
     try {
-      const n = await outboxCount();
-      setPending(Number.isFinite(n) ? n : 0);
+      const summary = await getTeacherOfflinePendingSummary(
+        inst.institution_id,
+      );
+      setPendingSummary(summary);
+      return summary;
     } catch {
-      setPending(0);
+      const empty = emptyTeacherOfflinePendingSummary(
+        inst.institution_id || null,
+      );
+      setPendingSummary(empty);
+      return empty;
     }
   }
 
@@ -555,7 +568,7 @@ export default function TeacherDashboard() {
     setMsg(null);
     try {
       const result = await flushOutbox();
-      await refreshPending();
+      const summary = await refreshPending();
 
       // refresh open session depuis le serveur (si dispo)
       try {
@@ -588,17 +601,25 @@ export default function TeacherDashboard() {
         /* ignore */
       }
 
-      if (result.authRequired) {
+      if (result.authRequired || summary.requires_authentication > 0) {
         setMsg(
           "Synchronisation suspendue : votre session doit être renouvelée. Les données restent conservées sur cet appareil."
         );
-      } else if (result.blocked > 0) {
+      } else if (summary.blocked > 0) {
         setMsg(
-          `${result.blocked} action(s) protégée(s) nécessitent une vérification. Aucune donnée n’a été supprimée.`
+          `${summary.blocked} action(s) protégée(s) nécessitent une vérification. Aucune donnée n’a été supprimée.`
         );
-      } else if (result.remaining > 0) {
+      } else if (summary.delivery_unknown > 0) {
         setMsg(
-          `Réseau encore instable : ${result.remaining} action(s) restent en attente sur cet appareil.`
+          `${summary.delivery_unknown} action(s) ont une livraison incertaine et doivent être vérifiées avant un nouvel envoi.`
+        );
+      } else if (summary.device_pending > 0) {
+        setMsg(
+          `Réseau encore instable : ${summary.device_pending} action(s) restent uniquement sur cet appareil.`
+        );
+      } else if (summary.relay_secured > 0) {
+        setMsg(
+          `${summary.relay_secured} action(s) sont sécurisées sur le relais local et attendent leur confirmation Cloud.`
         );
       } else {
         setMsg(
@@ -2167,22 +2188,24 @@ export default function TeacherDashboard() {
 
   /* Déconnexion (avec nettoyage offline) */
   async function logout() {
-    const unresolvedAttendance = await countUnresolvedTeacherAttendanceOperations(
+    let summary = await getTeacherOfflinePendingSummary(
       inst.institution_id,
-    ).catch(() => 0);
-    let remaining = (await outboxCount().catch(() => 0)) + unresolvedAttendance;
+    ).catch(() =>
+      emptyTeacherOfflinePendingSummary(inst.institution_id || null),
+    );
+    let remaining = summary.at_risk;
 
     if (remaining > 0 && await teacherSessionCloudAvailable()) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
-        const result = await flushOutbox();
-        remaining = result.remaining + unresolvedAttendance;
-        await refreshPending();
+        await flushOutbox();
+        summary = await refreshPending();
+        remaining = summary.at_risk;
       } catch {
-        const historicalRemaining = await outboxCount().catch(() =>
-          Math.max(0, remaining - unresolvedAttendance)
-        );
-        remaining = historicalRemaining + unresolvedAttendance;
+        summary = await getTeacherOfflinePendingSummary(
+          inst.institution_id,
+        ).catch(() => summary);
+        remaining = summary.at_risk;
       }
     }
 
