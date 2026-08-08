@@ -5,6 +5,12 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
 import { triggerPushDispatch } from "@/lib/push-dispatch";
 import { triggerSmsDispatch } from "@/lib/sms-dispatch";
+import {
+  reserveTeacherCloudOperationReceipt,
+  storeTeacherCloudOperationOutcome,
+  teacherCloudPayloadFingerprint,
+  validTeacherCloudOperationId,
+} from "@/lib/teacher-cloud-operation-receipts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,6 +117,13 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({} as any));
   const session_id = String(body?.session_id || "");
+  const rawOperationId = req.headers.get("X-Mon-Cahier-Operation-Id");
+  const operationId = rawOperationId
+    ? validTeacherCloudOperationId(rawOperationId)
+    : null;
+  if (rawOperationId && !operationId) {
+    return NextResponse.json({ error: "invalid_operation_id" }, { status: 400 });
+  }
 
   // 🔹 payload marks brut
   const rawMarks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
@@ -482,6 +495,52 @@ export async function POST(req: NextRequest) {
   let upserted = 0;
   let deleted = 0;
 
+  if (operationId) {
+    const receiptMarks = marks
+      .map((mark) => ({
+        student_id: String(mark.student_id || "").trim(),
+        status: mark.status,
+        minutes_late: Number(mark.minutes_late || 0),
+        reason: mark.reason == null ? null : String(mark.reason).trim(),
+        observed_at: mark.observed_at == null ? null : String(mark.observed_at),
+        late_observed_at:
+          mark.late_observed_at == null ? null : String(mark.late_observed_at),
+      }))
+      .sort((left, right) => left.student_id.localeCompare(right.student_id));
+    const receipt = await reserveTeacherCloudOperationReceipt(srv, {
+      operationId,
+      institutionId: String(clsRow.institution_id),
+      actorUserId: user.id,
+      operationType: "teacher_attendance.bulk",
+      sessionId: session_id,
+      payloadFingerprint: teacherCloudPayloadFingerprint({
+        operation_type: "teacher_attendance.bulk",
+        session_id,
+        marks: receiptMarks,
+      }),
+    });
+    if (receipt.status === "conflict") {
+      return NextResponse.json(
+        { error: "operation_id_reused_with_different_payload", operation_id: operationId },
+        { status: 409 },
+      );
+    }
+    if (receipt.status === "processing") {
+      return NextResponse.json(
+        { error: "operation_already_processing", operation_id: operationId },
+        { status: 503 },
+      );
+    }
+    if (receipt.status === "acknowledged") {
+      return NextResponse.json({
+        ...(receipt.receipt.response_json || {}),
+        ok: true,
+        operation_id: operationId,
+        idempotent: true,
+      });
+    }
+  }
+
   if (toUpsert.length) {
     const { error, count } = await srv
       .from("attendance_marks")
@@ -491,6 +550,13 @@ export async function POST(req: NextRequest) {
       });
 
     if (error) {
+      if (operationId) {
+        await storeTeacherCloudOperationOutcome(srv, {
+          operationId,
+          state: "retryable",
+          errorCode: "attendance_upsert_unavailable",
+        }).catch(() => undefined);
+      }
       return NextResponse.json({ error: "attendance_upsert_unavailable" }, { status: 503 });
     }
 
@@ -505,6 +571,13 @@ export async function POST(req: NextRequest) {
       .in("student_id", toDelete);
 
     if (error) {
+      if (operationId) {
+        await storeTeacherCloudOperationOutcome(srv, {
+          operationId,
+          state: "retryable",
+          errorCode: "attendance_delete_unavailable",
+        }).catch(() => undefined);
+      }
       return NextResponse.json({ error: "attendance_delete_unavailable" }, { status: 503 });
     }
 
@@ -527,6 +600,13 @@ export async function POST(req: NextRequest) {
       .update({ actual_call_at: actualCallAt })
       .eq("id", session_id);
     if (error) {
+      if (operationId) {
+        await storeTeacherCloudOperationOutcome(srv, {
+          operationId,
+          state: "retryable",
+          errorCode: "session_revision_update_unavailable",
+        }).catch(() => undefined);
+      }
       return NextResponse.json({ error: "session_revision_update_unavailable" }, { status: 503 });
     }
   }
@@ -539,5 +619,18 @@ export async function POST(req: NextRequest) {
     ]);
   }
 
-  return NextResponse.json({ ok: true, upserted, deleted });
+  const responseBody = {
+    ok: true,
+    upserted,
+    deleted,
+    ...(operationId ? { operation_id: operationId, idempotent: false } : {}),
+  };
+  if (operationId) {
+    await storeTeacherCloudOperationOutcome(srv, {
+      operationId,
+      state: "acknowledged",
+      response: responseBody,
+    });
+  }
+  return NextResponse.json(responseBody);
 }

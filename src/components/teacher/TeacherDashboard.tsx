@@ -34,6 +34,7 @@ import {
 import {
   deliverTeacherAttendance,
   getLatestTeacherAttendanceOperation,
+  reconcileTeacherAttendanceUnknownOperations,
   stageTeacherAttendanceDraft,
   teacherAttendanceDeliveryMessage,
   type TeacherAttendanceDeliveryRecord,
@@ -573,6 +574,9 @@ export default function TeacherDashboard() {
     let cloudAvailable = false;
     let cloudResult: Awaited<ReturnType<typeof flushOutbox>> | null = null;
     let relayRecovery: TeacherOfflineRelayRecoverySummary | null = null;
+    let cloudReconciliation: Awaited<
+      ReturnType<typeof reconcileTeacherAttendanceUnknownOperations>
+    > | null = null;
 
     try {
       const cachedOpen = (await cacheGet("teacher:local-open").catch(
@@ -585,17 +589,19 @@ export default function TeacherDashboard() {
         relayPolicy?.relay_local_url &&
         relayPolicy.relay_access_token
       ) {
-        relayRecovery = await recoverTeacherOfflineOperationsToRelay({
-          institutionId: inst.institution_id,
-          actorProfileId: inst.actor_profile_id,
-          relayBaseUrl: relayPolicy.relay_local_url,
-          relayAccessToken: relayPolicy.relay_access_token,
-          activeLocalSessionIds: [open?.id, cachedOpen?.id].filter(
-            (value): value is string => Boolean(value),
-          ),
-        });
+        const relayRecoveryResult =
+          await recoverTeacherOfflineOperationsToRelay({
+            institutionId: inst.institution_id,
+            actorProfileId: inst.actor_profile_id,
+            relayBaseUrl: relayPolicy.relay_local_url,
+            relayAccessToken: relayPolicy.relay_access_token,
+            activeLocalSessionIds: [open?.id, cachedOpen?.id].filter(
+              (value): value is string => Boolean(value),
+            ),
+          });
+        relayRecovery = relayRecoveryResult;
 
-        const recoveredOpen = relayRecovery.recovered_sessions.find(
+        const recoveredOpen = relayRecoveryResult.recovered_sessions.find(
           (candidate) =>
             candidate.source === "open" &&
             [open?.id, cachedOpen?.id].includes(
@@ -650,7 +656,7 @@ export default function TeacherDashboard() {
         }
 
         const recoveredTransition = transitionPrompt
-          ? relayRecovery.recovered_sessions.find(
+          ? relayRecoveryResult.recovered_sessions.find(
               (candidate) =>
                 candidate.source === "transition" &&
                 candidate.attempt_key === transitionPrompt.attemptKey,
@@ -694,6 +700,12 @@ export default function TeacherDashboard() {
       cloudAvailable = await teacherSessionCloudAvailable();
       setIsOnline(cloudAvailable);
       if (cloudAvailable) {
+        if (inst.institution_id) {
+          cloudReconciliation =
+            await reconcileTeacherAttendanceUnknownOperations(
+              inst.institution_id,
+            );
+        }
         cloudResult = await flushOutbox();
       }
       const summary = await refreshPending();
@@ -740,6 +752,7 @@ export default function TeacherDashboard() {
 
       if (
         cloudResult?.authRequired ||
+        (cloudReconciliation?.requires_authentication || 0) > 0 ||
         summary.requires_authentication > 0
       ) {
         setMsg(
@@ -751,7 +764,7 @@ export default function TeacherDashboard() {
         );
       } else if (summary.delivery_unknown > 0) {
         setMsg(
-          `${summary.delivery_unknown} action(s) ont une livraison incertaine et doivent être vérifiées avant un nouvel envoi.`
+          `${summary.delivery_unknown} action(s) restent incertaines après vérification du reçu Cloud. Aucun renvoi aveugle n’a été effectué.`
         );
       } else if (summary.device_pending > 0) {
         if (
@@ -775,6 +788,13 @@ export default function TeacherDashboard() {
           relaySecuredNow > 0
             ? `${relaySecuredNow} action(s) viennent d’être sécurisées sur le relais local. ${summary.relay_secured} action(s) attendent maintenant leur confirmation Cloud.`
             : `${summary.relay_secured} action(s) sont sécurisées sur le relais local et attendent leur confirmation Cloud.`
+        );
+      } else if (
+        cloudReconciliation &&
+        (cloudReconciliation.confirmed > 0 || cloudReconciliation.retried > 0)
+      ) {
+        setMsg(
+          `Vérification Cloud terminée ✅ ${cloudReconciliation.confirmed} action(s) déjà reçue(s), ${cloudReconciliation.retried} reprise(s) avec le même identifiant.`
         );
       } else if (cloudResult?.flushed) {
         setMsg(

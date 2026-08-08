@@ -428,7 +428,7 @@ let recoveryPromise: Promise<TeacherOfflineRelayRecoverySummary> | null = null;
 
 export async function recoverTeacherOfflineOperationsToRelay(
   context: TeacherOfflineRelayRecoveryContext,
-) {
+): Promise<TeacherOfflineRelayRecoverySummary> {
   if (recoveryPromise) return await recoveryPromise;
   const run = () =>
     recoverTeacherOfflineOperationsToRelayWithDependencies(
@@ -442,12 +442,18 @@ export async function recoverTeacherOfflineOperationsToRelay(
           request<T>(name: string, callback: () => Promise<T>): Promise<T>;
         };
       }).locks;
-  recoveryPromise = locks
-    ? locks.request("moncahier-teacher-relay-recovery", run)
+  const currentRecovery: Promise<TeacherOfflineRelayRecoverySummary> = locks
+    ? locks.request<TeacherOfflineRelayRecoverySummary>(
+        "moncahier-teacher-relay-recovery",
+        run,
+      )
     : run();
+  recoveryPromise = currentRecovery;
   try {
-    return await recoveryPromise;
+    return await currentRecovery;
   } finally {
-    recoveryPromise = null;
+    if (recoveryPromise === currentRecovery) {
+      recoveryPromise = null;
+    }
   }
 }

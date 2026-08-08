@@ -49,6 +49,7 @@ export type TeacherAttendanceDeliveryRecord = {
   last_status: number | null;
   last_error: string | null;
   requires_authentication: boolean;
+  reconciliation_attempted_at?: string | null;
 };
 
 export type TeacherAttendanceOperationStore = {
@@ -71,6 +72,9 @@ export type TeacherAttendanceDeliveryDependencies = {
     operationId: string;
     sessionId: string;
     marks: TeacherAttendanceMark[];
+  }): Promise<DeliveryHttpResponse>;
+  lookupCloudOperation?(input: {
+    operationId: string;
   }): Promise<DeliveryHttpResponse>;
   requestPresenceProof(input: {
     institutionId: string;
@@ -654,6 +658,22 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
         body: await safeResponseJson(response),
       };
     },
+    async lookupCloudOperation({ operationId }) {
+      const response = await fetch(
+        `/api/teacher/operations/${encodeURIComponent(operationId)}`,
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        },
+      );
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await safeResponseJson(response),
+      };
+    },
     async requestPresenceProof(input) {
       return await requestRelayAttendancePresenceProof(input);
     },
@@ -675,6 +695,175 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
     findLegacy: findLegacyTeacherAttendanceMutation,
     removeLegacy: removeLegacyTeacherAttendanceMutation,
   };
+}
+
+export type TeacherAttendanceReconciliationSummary = {
+  checked: number;
+  confirmed: number;
+  retried: number;
+  still_unknown: number;
+  blocked: number;
+  requires_authentication: number;
+};
+
+async function reconcileUnknownRecord(
+  record: TeacherAttendanceDeliveryRecord,
+  deps: TeacherAttendanceDeliveryDependencies,
+) {
+  if (record.state !== "delivery_unknown" || !deps.lookupCloudOperation) {
+    return { record, retried: false };
+  }
+  const checking = await storePatch(deps, record, {
+    reconciliation_attempted_at: deps.now().toISOString(),
+    last_error: "cloud_reconciliation_in_progress",
+    requires_authentication: false,
+  });
+  let response: DeliveryHttpResponse;
+  try {
+    response = await deps.lookupCloudOperation({ operationId: record.operation_id });
+  } catch {
+    return {
+      record: await storePatch(deps, checking, {
+        state: "delivery_unknown",
+        last_status: 0,
+        last_error: "cloud_reconciliation_unreachable",
+      }),
+      retried: false,
+    };
+  }
+
+  if (response.status === 401) {
+    return {
+      record: await storePatch(deps, checking, {
+        state: "delivery_unknown",
+        last_status: response.status,
+        last_error: "authentication_required",
+        requires_authentication: true,
+      }),
+      retried: false,
+    };
+  }
+
+  const responseOperationId = normalizedText(response.body?.operation_id);
+  if (responseOperationId && responseOperationId !== record.operation_id) {
+    return {
+      record: await storePatch(deps, checking, {
+        state: "conflict",
+        last_status: response.status,
+        last_error: "cloud_reconciliation_operation_id_mismatch",
+      }),
+      retried: false,
+    };
+  }
+
+  const state = normalizedText(response.body?.state);
+  if (response.ok && state === "acknowledged") {
+    return {
+      record: await storePatch(deps, checking, {
+        state: "cloud_synced",
+        channel: "cloud",
+        last_status: response.status,
+        last_error: null,
+      }),
+      retried: false,
+    };
+  }
+  if (state === "blocked" || state === "conflict") {
+    return {
+      record: await storePatch(deps, checking, {
+        state,
+        last_status: response.status,
+        last_error: safeErrorCode(
+          response.body,
+          state === "conflict" ? "cloud_operation_conflict" : "cloud_operation_blocked",
+        ),
+      }),
+      retried: false,
+    };
+  }
+  if (state === "processing") {
+    return {
+      record: await storePatch(deps, checking, {
+        state: "delivery_unknown",
+        last_status: response.status,
+        last_error: "cloud_operation_still_processing",
+      }),
+      retried: false,
+    };
+  }
+
+  const mayRetry =
+    (response.status === 404 && state === "not_received") ||
+    state === "retryable";
+  if (mayRetry) {
+    const retryable = await storePatch(deps, checking, {
+      state: "device_pending",
+      channel: "cloud",
+      cloud_attempted_at: null,
+      last_status: response.status,
+      last_error: state === "retryable"
+        ? "cloud_operation_retryable"
+        : "cloud_operation_not_received",
+    });
+    return { record: await deliverToCloud(retryable, deps), retried: true };
+  }
+
+  return {
+    record: await storePatch(deps, checking, {
+      state: "delivery_unknown",
+      last_status: response.status,
+      last_error: safeErrorCode(response.body, "cloud_reconciliation_inconclusive"),
+    }),
+    retried: false,
+  };
+}
+
+export async function reconcileTeacherAttendanceUnknownOperationsWithDependencies(
+  institutionId: string,
+  deps: TeacherAttendanceDeliveryDependencies,
+): Promise<TeacherAttendanceReconciliationSummary> {
+  const summary: TeacherAttendanceReconciliationSummary = {
+    checked: 0,
+    confirmed: 0,
+    retried: 0,
+    still_unknown: 0,
+    blocked: 0,
+    requires_authentication: 0,
+  };
+  const records = await deps.store.list(normalizedText(institutionId));
+  for (const record of records) {
+    if (record.state !== "delivery_unknown") continue;
+    summary.checked += 1;
+    const result = await reconcileUnknownRecord(record, deps);
+    if (result.retried) summary.retried += 1;
+    if (result.record.state === "cloud_synced") summary.confirmed += 1;
+    if (result.record.state === "delivery_unknown") summary.still_unknown += 1;
+    if (result.record.state === "blocked" || result.record.state === "conflict") {
+      summary.blocked += 1;
+    }
+    if (result.record.requires_authentication) summary.requires_authentication += 1;
+  }
+  return summary;
+}
+
+export async function reconcileTeacherAttendanceUnknownOperations(
+  institutionId: string,
+) {
+  const normalizedInstitutionId = normalizedText(institutionId);
+  if (!normalizedInstitutionId) {
+    return {
+      checked: 0,
+      confirmed: 0,
+      retried: 0,
+      still_unknown: 0,
+      blocked: 0,
+      requires_authentication: 0,
+    } satisfies TeacherAttendanceReconciliationSummary;
+  }
+  return await reconcileTeacherAttendanceUnknownOperationsWithDependencies(
+    normalizedInstitutionId,
+    productionDependencies(),
+  );
 }
 
 export async function deliverTeacherAttendance(input: {
