@@ -50,6 +50,12 @@ function validIterations(value: unknown): number {
   return iterations;
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 function secretMaterial(identifier: string, password: string): Uint8Array {
   const normalizedIdentifier = String(identifier || "").trim();
   const normalizedPassword = String(password || "");
@@ -70,7 +76,7 @@ async function deriveVerifier(input: {
   const api = cryptoApi();
   const key = await api.subtle.importKey(
     "raw",
-    secretMaterial(input.identifier, input.password),
+    toArrayBuffer(secretMaterial(input.identifier, input.password)),
     "PBKDF2",
     false,
     ["deriveBits"],
@@ -79,7 +85,7 @@ async function deriveVerifier(input: {
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt: input.salt,
+      salt: toArrayBuffer(input.salt),
       iterations: validIterations(input.iterations),
     },
     key,
