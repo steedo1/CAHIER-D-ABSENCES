@@ -559,7 +559,17 @@ export async function isTeacherSessionLocallyFinalized(
   return records.some(
     (record) =>
       record.kind === "close" &&
-      record.session_id === normalizedSessionId,
+      record.session_id === normalizedSessionId &&
+      teacherSessionLifecycleCountsAsFinalized(record),
+  );
+}
+
+export function teacherSessionLifecycleCountsAsFinalized(
+  record: TeacherSessionLifecycleDeliveryRecord,
+) {
+  return record.kind === "close" && (
+    record.state === "device_pending" ||
+    record.state === "relay_confirmed"
   );
 }
 

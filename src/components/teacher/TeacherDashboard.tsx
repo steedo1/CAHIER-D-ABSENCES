@@ -47,6 +47,8 @@ import {
 } from "@/lib/teacher-session-delivery";
 import {
   closeTeacherAttendanceSessionOnRelay,
+  isTeacherSessionLocallyFinalized,
+  stageTeacherAttendanceSessionClose,
   teacherSessionLifecycleDeliveryMessage,
   transitionTeacherAttendanceSessionOnRelay,
 } from "@/lib/teacher-session-lifecycle-delivery";
@@ -563,11 +565,21 @@ export default function TeacherDashboard() {
         )) as any;
         const openServer = (os?.item as OpenSession) || null;
         const openLocal = (await cacheGet("teacher:local-open").catch(() => null)) as OpenSession | null;
-        if (openServer) {
+        const serverAlreadyFinished = openServer && inst.institution_id
+          ? await isTeacherSessionLocallyFinalized(inst.institution_id, openServer.id)
+          : false;
+        const localAlreadyFinished = openLocal && inst.institution_id
+          ? await isTeacherSessionLocallyFinalized(inst.institution_id, openLocal.id)
+          : false;
+        if (serverAlreadyFinished || localAlreadyFinished) {
+          await cacheSet("teacher:local-open", null);
+        }
+        if (openServer && !serverAlreadyFinished) {
           setOpen(openServer);
           await cacheSet("teacher:local-open", null);
         } else if (openLocal?.local_relay) {
-          setOpen(openLocal);
+          if (localAlreadyFinished) setOpen(null);
+          else setOpen(openLocal);
         } else {
           setOpen(null);
           await cacheSet("teacher:local-open", null);
@@ -807,19 +819,41 @@ export default function TeacherDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [os, localOpen] = await Promise.all([
+        const [os, localOpen, cachedBasics] = await Promise.all([
           offlineGetJson("/api/teacher/sessions/open", "teacher:open").catch(() => ({ item: null })),
           cacheGet("teacher:local-open").catch(() => null),
+          cacheGet("teacher:inst:basics").catch(() => null),
         ]);
 
         const openServer = ((os as any)?.item as OpenSession) || null;
         const openLocal = (localOpen as OpenSession) || null;
+        const institutionId = safeStr((cachedBasics as any)?.institution_id);
+        const serverAlreadyFinished = openServer && institutionId
+          ? await isTeacherSessionLocallyFinalized(institutionId, openServer.id)
+          : false;
+        const localAlreadyFinished = openLocal && institutionId
+          ? await isTeacherSessionLocallyFinalized(institutionId, openLocal.id)
+          : false;
 
-        setOpen(openServer || openLocal || null);
+        if (serverAlreadyFinished || localAlreadyFinished) {
+          await cacheSet("teacher:local-open", null);
+        }
+        setOpen(
+          (!serverAlreadyFinished ? openServer : null) ||
+          (!localAlreadyFinished ? openLocal : null) ||
+          null,
+        );
       } catch {
         try {
           const localOpen = await cacheGet("teacher:local-open");
-          setOpen((localOpen as OpenSession) || null);
+          const cachedBasics = await cacheGet("teacher:inst:basics").catch(() => null);
+          const institutionId = safeStr((cachedBasics as any)?.institution_id);
+          const candidate = (localOpen as OpenSession) || null;
+          const alreadyFinished = candidate && institutionId
+            ? await isTeacherSessionLocallyFinalized(institutionId, candidate.id)
+            : false;
+          if (alreadyFinished) await cacheSet("teacher:local-open", null);
+          setOpen(alreadyFinished ? null : candidate);
         } catch {
           setOpen(null);
         }
@@ -1761,6 +1795,7 @@ export default function TeacherDashboard() {
           return;
         }
         const marks = attendanceMarksFromRows(rows);
+        let attendanceOperationId: string | null = null;
         if (marks.length > 0) {
           await persistAttendanceDraft(rows);
           const attendance = await deliverTeacherAttendance({
@@ -1775,6 +1810,22 @@ export default function TeacherDashboard() {
             forceRelay: true,
           });
           setAttendanceDelivery(attendance);
+          attendanceOperationId = attendance.operation_id;
+          if (attendance.state === "device_pending") {
+            await stageTeacherAttendanceSessionClose({
+              institutionId: inst.institution_id,
+              sessionId: open.id,
+              classId: open.class_id,
+              attendanceOperationId,
+            });
+            await finishLocal();
+            setFinalizationDismissedFor(null);
+            setMsg(
+              "Séance terminée sur ce téléphone. L’appel et la fermeture restent en attente sur cet appareil ; le cours suivant peut commencer.",
+            );
+            await refreshPending();
+            return;
+          }
           if (attendance.state !== "relay_secured" && attendance.state !== "cloud_synced") {
             setMsg(
               `${teacherAttendanceDeliveryMessage(attendance)} ` +
@@ -1786,9 +1837,20 @@ export default function TeacherDashboard() {
         const closed = await closeTeacherAttendanceSessionOnRelay({
           institutionId: inst.institution_id,
           sessionId: open.id,
+          classId: open.class_id,
+          attendanceOperationId,
           relayBaseUrl: inst.attendance_presence?.relay_local_url,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
+        if (closed.state === "device_pending") {
+          await finishLocal();
+          setFinalizationDismissedFor(null);
+          setMsg(
+            "Séance terminée sur ce téléphone. La fermeture reste en attente sur cet appareil ; le cours suivant peut commencer.",
+          );
+          await refreshPending();
+          return;
+        }
         if (closed.state !== "relay_confirmed") {
           setMsg(
             `${teacherSessionLifecycleDeliveryMessage(closed)} ` +
