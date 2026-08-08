@@ -55,6 +55,11 @@ import {
 import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
 import {
+  getOfflineStorageProtection,
+  offlineStorageProtectionMessage,
+  type OfflineStorageProtection,
+} from "@/lib/offline-storage-security";
+import {
   decideOfflineSchedulePolicy,
   decideTeacherCloudFallbackPolicy,
   type SchedulePolicyStatus,
@@ -112,6 +117,7 @@ export type OfflineReadiness = {
   cloud_revision?: number | null;
   checked_at?: string | null;
   class_device_compatibility?: ClassDeviceReadinessStatus;
+  storage_protection?: OfflineStorageProtection;
 };
 
 export type TeacherScheduleCompatibilityStatus =
@@ -1995,12 +2001,23 @@ export async function prepareOffline(
   role: OfflineRole,
   onProgress: ProgressCallback = () => undefined
 ): Promise<OfflineReadiness> {
+  onProgress("Protection du stockage local…");
+  const storageProtection = await getOfflineStorageProtection({
+    requestPersistence: true,
+  });
+  if (storageProtection.status === "low_space") {
+    throw new Error(
+      offlineStorageProtectionMessage(storageProtection) ||
+        "L’espace local disponible est insuffisant.",
+    );
+  }
+
   const cloud = await probeCloudSchedule();
   if (!cloud) {
     throw new Error("Reconnectez Internet pour actualiser les données hors ligne.");
   }
 
-  const readiness =
+  const prepared =
     role === "teacher"
       ? await prepareTeacher(onProgress)
       : role === "class-device"
@@ -2011,6 +2028,20 @@ export async function prepareOffline(
         : role === "admin"
           ? await prepareAdmin(onProgress)
           : await prepareParent(onProgress);
+  const readiness: OfflineReadiness = {
+    ...prepared,
+    storage_protection: storageProtection,
+  };
+
+  if (role === "class-device") {
+    const bundle = await cacheGet<
+      ClassDeviceCoherentBundle<OfflineReadiness, RelayTeacherOfflineSchedule>
+    >(CLASS_DEVICE_COHERENT_BUNDLE_KEY).catch(() => null);
+    if (bundle?.schema_version === 1 && bundle.schedule) {
+      await persistClassDeviceBundle(readiness, bundle.schedule);
+    }
+  }
+
   await cacheSet(readinessKey(role), readiness);
   return readiness;
 }

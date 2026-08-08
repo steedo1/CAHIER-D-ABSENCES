@@ -983,8 +983,44 @@ export async function flushOutbox(): Promise<FlushResult> {
 
 /* ───────────────────────── Clear all offline data ───────────────────────── */
 
+const OFFLINE_LOCAL_STORAGE_EXACT_KEYS = new Set([
+  "moncahier:relay:token",
+  "moncahier:relay:institution-id",
+  "moncahier:relay:last-bootstrap-at",
+  "moncahier:relay:schedule-sync-state",
+  "mc_last_dest",
+  "mc_last_dest_attendance",
+  "mc_last_dest_grades",
+]);
+const OFFLINE_LOCAL_STORAGE_PREFIXES = [
+  "moncahier.classDevice.snapshot.",
+];
+
+export function clearOfflineLocalStorage(): void {
+  if (!isBrowser()) return;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key) continue;
+      if (
+        OFFLINE_LOCAL_STORAGE_EXACT_KEYS.has(key) ||
+        OFFLINE_LOCAL_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))
+      ) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) window.localStorage.removeItem(key);
+  } catch {
+    // Nettoyage tolérant : IndexedDB et Cache API restent purgés ensuite.
+  }
+}
+
 export async function clearOfflineAll(): Promise<void> {
   if (!isBrowser()) return;
+
+  // 0) snapshots et secrets hors IndexedDB
+  clearOfflineLocalStorage();
 
   // 1) caches (Cache API)
   if ("caches" in window) {
@@ -996,12 +1032,21 @@ export async function clearOfflineAll(): Promise<void> {
     }
   }
 
-  // 2) IndexedDB stores
+  // 2) IndexedDB : vider d'abord les stores. Même si un autre onglet
+  // bloque ensuite deleteDatabase(), les données sensibles ont déjà disparu.
   try {
     const db = await openDB();
+    const storeNames = Array.from(db.objectStoreNames);
+    if (storeNames.length > 0) {
+      const tx = db.transaction(storeNames, "readwrite");
+      for (const storeName of storeNames) {
+        tx.objectStore(storeName).clear();
+      }
+      await txDone(tx);
+    }
     db.close();
   } catch {
-    // ignore
+    // La suppression complète ci-dessous reste tentée.
   }
 
   // delete database entirely

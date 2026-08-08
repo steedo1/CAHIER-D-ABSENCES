@@ -235,8 +235,10 @@ export function subscribeAdminScheduleSync(
 
 export async function clearRelayUserState() {
   if (!browser()) return;
+  window.localStorage.removeItem(RELAY_TOKEN_KEY);
   window.localStorage.removeItem(INSTITUTION_ID_KEY);
   window.localStorage.removeItem(LAST_BOOTSTRAP_KEY);
+  window.localStorage.removeItem(ADMIN_SCHEDULE_SYNC_KEY);
   await cacheDeleteByPrefixes(["relay:"]).catch(() => {});
   const worker = navigator.serviceWorker?.controller;
   worker?.postMessage({ type: "MON_CAHIER_PURGE_ADMIN_LOCAL" });

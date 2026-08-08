@@ -3,6 +3,8 @@
 
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { clearOfflineAll } from "@/lib/offline";
+import { clearRelayUserState } from "@/lib/local-relay";
 
 type ForcedMode = "emailOnly" | "phoneOnly";
 type LoginMode = "email" | "phone";
@@ -234,6 +236,9 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
       if (!res.ok || !json.ok) {
         throw new Error(json.error || `HTTP_${res.status}`);
       }
+
+      setStatusText("Sécurisation de cet appareil…");
+      await Promise.allSettled([clearOfflineAll(), clearRelayUserState()]);
 
       setStatusText("Ouverture de votre espace…");
       await syncBrowserSession(

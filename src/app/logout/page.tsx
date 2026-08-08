@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { clearRelayUserState } from "@/lib/local-relay";
+import { clearOfflineAll } from "@/lib/offline";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +74,8 @@ export default function LogoutPage() {
         }),
       ]);
 
-      // 3) Retrait des données pédagogiques locales liées à l'utilisateur.
-      await clearRelayUserState();
+      // 3) Retrait des données pédagogiques, snapshots et jetons locaux.
+      await Promise.allSettled([clearOfflineAll(), clearRelayUserState()]);
 
       // 4) Nettoyage local supplémentaire pour éviter les restes après reconnexion.
       clearLocalAuthStorage();

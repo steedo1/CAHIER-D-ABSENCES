@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CloudDownload, RefreshCcw, ShieldCheck, WifiOff } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CloudDownload, Database, RefreshCcw, ShieldCheck, WifiOff } from "lucide-react";
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
@@ -14,6 +14,15 @@ import {
   type TeacherScheduleAssessment,
 } from "@/lib/offline-readiness";
 import { isClassDeviceReadyStatus } from "@/lib/offlineClassDevice";
+import {
+  shouldAutomaticallyPrepareOffline,
+  shouldShowOfflinePreparationRetry,
+} from "@/lib/offline-auto-preparation";
+import {
+  getOfflineStorageProtection,
+  offlineStorageProtectionMessage,
+  type OfflineStorageProtection,
+} from "@/lib/offline-storage-security";
 
 type Props = {
   role: OfflineRole;
@@ -54,12 +63,24 @@ export default function OfflineReadinessCard({
     useState<TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null>(
       null,
     );
+  const [storageProtection, setStorageProtection] =
+    useState<OfflineStorageProtection | null>(null);
+  const [refreshCycle, setRefreshCycle] = useState(0);
+  const [initialRefreshDone, setInitialRefreshDone] = useState(false);
+  const autoAttemptedCycleRef = useRef<number | null>(null);
+  const preparingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
-      const stored = await getOfflineReadiness(role).catch(() => null);
+      const [stored, currentStorageProtection] = await Promise.all([
+        getOfflineReadiness(role).catch(() => null),
+        getOfflineStorageProtection().catch(() => null),
+      ]);
       if (cancelled) return;
+      setStorageProtection(
+        currentStorageProtection || stored?.storage_protection || null,
+      );
       setReadiness(stored);
       if (role === "teacher" || role === "class-device") {
         const next =
@@ -73,15 +94,26 @@ export default function OfflineReadinessCard({
         setAssessment(next);
         setReadiness(next.readiness);
       }
+      if (cancelled) return;
+      setInitialRefreshDone(true);
+      setRefreshCycle((current) => current + 1);
     };
     void refresh();
     const handleNetworkChange = () => void refresh();
+    const handleFocus = () => void refresh();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
     window.addEventListener("online", handleNetworkChange);
     window.addEventListener("offline", handleNetworkChange);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       cancelled = true;
       window.removeEventListener("online", handleNetworkChange);
       window.removeEventListener("offline", handleNetworkChange);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
     role,
@@ -108,12 +140,14 @@ export default function OfflineReadinessCard({
   }, [assessment?.status, readiness, role]);
 
   async function handlePrepare() {
-    if (preparing) return;
+    if (preparingRef.current) return;
+    preparingRef.current = true;
     setPreparing(true);
     setError(null);
     setProgress("Démarrage de la préparation…");
     try {
       const next = await prepareOffline(role, setProgress);
+      setStorageProtection(next.storage_protection || null);
       if (role === "teacher" || role === "class-device") {
         const preparedClassDeviceContext =
           role === "class-device"
@@ -155,9 +189,34 @@ export default function OfflineReadinessCard({
       setError(String(cause?.message || "La préparation hors ligne a échoué."));
       setProgress("");
     } finally {
+      preparingRef.current = false;
       setPreparing(false);
     }
   }
+
+  useEffect(() => {
+    if (!initialRefreshDone || refreshCycle <= 0) return;
+    if (autoAttemptedCycleRef.current === refreshCycle) return;
+
+    const shouldPrepare = shouldAutomaticallyPrepareOffline({
+      has_readiness: Boolean(readiness),
+      stale,
+      preparing,
+      storage_status:
+        storageProtection?.status || readiness?.storage_protection?.status,
+    });
+    if (!shouldPrepare) return;
+
+    autoAttemptedCycleRef.current = refreshCycle;
+    void handlePrepare();
+  }, [
+    initialRefreshDone,
+    preparing,
+    readiness,
+    refreshCycle,
+    stale,
+    storageProtection?.status,
+  ]);
 
   const preparedSummary = readiness
     ? role === "admin"
@@ -198,6 +257,22 @@ export default function OfflineReadinessCard({
     role === "class-device"
       ? isClassDeviceReadyStatus(assessment?.status)
       : assessment?.status === "ready";
+  const effectiveStorageProtection =
+    storageProtection || readiness?.storage_protection || null;
+  const storageProtectionText = offlineStorageProtectionMessage(
+    effectiveStorageProtection,
+  );
+  const storageProtectionClasses =
+    effectiveStorageProtection?.status === "persistent"
+      ? "text-emerald-800"
+      : effectiveStorageProtection?.status === "low_space"
+        ? "text-rose-800"
+        : "text-amber-800";
+  const showManualRetry = shouldShowOfflinePreparationRetry({
+    preparing,
+    error,
+    storage_status: effectiveStorageProtection?.status,
+  });
 
   return (
     <section
@@ -224,13 +299,17 @@ export default function OfflineReadinessCard({
             ) : (
               <CloudDownload className="h-5 w-5 text-slate-600" />
             )}
-            {readiness
-              ? stale
-                ? role === "teacher" || role === "class-device"
-                  ? "Mode hors ligne non compatible"
-                  : "Mode hors ligne prêt — actualisation conseillée"
-                : "Mode hors ligne prêt"
-              : "Préparer le mode hors ligne"}
+            {preparing
+              ? "Mise à jour hors ligne en cours"
+              : readiness
+                ? stale
+                  ? role === "teacher" || role === "class-device"
+                    ? "Mode hors ligne à actualiser"
+                    : "Actualisation hors ligne nécessaire"
+                  : "Mode hors ligne prêt"
+                : error
+                  ? "Configuration hors ligne à reprendre"
+                  : "Configuration hors ligne automatique"}
           </div>
 
           {readiness ? (
@@ -240,7 +319,7 @@ export default function OfflineReadinessCard({
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-600">
-              {preparationDescription}
+              {preparationDescription} La configuration se lance automatiquement dès que la connexion nécessaire est disponible.
             </p>
           )}
 
@@ -264,23 +343,29 @@ export default function OfflineReadinessCard({
                 : "Cloud indisponible : la cohérence est décidée avec le relais local."}
             </p>
           )}
+          {storageProtectionText && (
+            <p
+              className={[
+                "mt-2 inline-flex items-start gap-1.5 text-xs font-medium",
+                storageProtectionClasses,
+              ].join(" ")}
+            >
+              <Database className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{storageProtectionText}</span>
+            </p>
+          )}
         </div>
 
-        <button
-          type="button"
-          onClick={handlePrepare}
-          disabled={preparing}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-55"
-        >
-          {preparing ? (
-            <RefreshCcw className="h-4 w-4 animate-spin" />
-          ) : readiness ? (
+        {showManualRetry && (
+          <button
+            type="button"
+            onClick={handlePrepare}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25"
+          >
             <RefreshCcw className="h-4 w-4" />
-          ) : (
-            <CloudDownload className="h-4 w-4" />
-          )}
-          {preparing ? "Préparation…" : readiness ? "Actualiser" : "Préparer"}
-        </button>
+            Réessayer
+          </button>
+        )}
       </div>
     </section>
   );
