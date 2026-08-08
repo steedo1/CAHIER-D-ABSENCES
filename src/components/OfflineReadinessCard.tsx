@@ -3,16 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CloudDownload, RefreshCcw, ShieldCheck, WifiOff } from "lucide-react";
 import {
-  assessClassDeviceOfflineReadiness,
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
   prepareOffline,
+  resolveAuthoritativeClassDeviceSchedule,
   type ClassDeviceScheduleAssessment,
   type ClassDeviceAssessmentContext,
   type OfflineReadiness,
   type OfflineRole,
   type TeacherScheduleAssessment,
 } from "@/lib/offline-readiness";
+import { isClassDeviceReadyStatus } from "@/lib/offlineClassDevice";
 
 type Props = {
   role: OfflineRole;
@@ -64,7 +65,7 @@ export default function OfflineReadinessCard({
         const next =
           role === "teacher"
             ? await assessTeacherOfflineReadiness(stored)
-            : await assessClassDeviceOfflineReadiness(
+            : await resolveAuthoritativeClassDeviceSchedule(
                 stored,
                 classDeviceContext,
               );
@@ -98,8 +99,11 @@ export default function OfflineReadinessCard({
       !Number.isFinite(preparedAt) ||
       Date.now() - preparedAt > 24 * 60 * 60 * 1000;
     const scheduleStale =
-      (role === "teacher" || role === "class-device") &&
-      assessment?.status !== "ready";
+      role === "teacher"
+        ? assessment?.status !== "ready"
+        : role === "class-device"
+          ? !isClassDeviceReadyStatus(assessment?.status)
+          : false;
     return ageStale || scheduleStale;
   }, [assessment?.status, readiness, role]);
 
@@ -123,18 +127,22 @@ export default function OfflineReadinessCard({
         const checked =
           role === "teacher"
             ? await assessTeacherOfflineReadiness(next)
-            : await assessClassDeviceOfflineReadiness(
+            : await resolveAuthoritativeClassDeviceSchedule(
                 next,
                 preparedClassDeviceContext,
               );
         setAssessment(checked);
         setReadiness(checked.readiness);
+        const checkedReady =
+          role === "class-device"
+            ? isClassDeviceReadyStatus(checked.status)
+            : checked.status === "ready";
         setProgress(
-          checked.status === "ready"
+          checkedReady
             ? "Préparation et cohérence vérifiées."
             : "Données téléchargées, mais cohérence hors ligne non confirmée.",
         );
-        if (checked.status !== "ready") {
+        if (!checkedReady) {
           throw new Error(checked.message);
         }
         await onPrepared?.(checked.readiness || next);
@@ -186,6 +194,10 @@ export default function OfflineReadinessCard({
         : relayConnectivity?.status === "unreachable"
           ? "Relais inaccessible depuis l’application."
           : null;
+  const assessmentReady =
+    role === "class-device"
+      ? isClassDeviceReadyStatus(assessment?.status)
+      : assessment?.status === "ready";
 
   return (
     <section
@@ -238,7 +250,7 @@ export default function OfflineReadinessCard({
             <p
               className={[
                 "mt-2 text-xs font-semibold",
-                assessment?.status === "ready" ? "text-emerald-800" : "text-amber-800",
+                assessmentReady ? "text-emerald-800" : "text-amber-800",
               ].join(" ")}
             >
               {relayConnectivityMessage}
@@ -247,7 +259,9 @@ export default function OfflineReadinessCard({
           {assessment && !assessment.cloud_reachable && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
-              Cloud indisponible : la cohérence est décidée avec le relais local.
+              {role === "class-device" && assessment.status === "ready_local"
+                ? "Cloud et relais indisponibles : le planning sécurisé de ce téléphone reste utilisable."
+                : "Cloud indisponible : la cohérence est décidée avec le relais local."}
             </p>
           )}
         </div>

@@ -15,7 +15,11 @@ import {
   clearOfflineAll,
   resolveOfflineSessionReference,
 } from "@/lib/offline";
-import { getClassDeviceCoherentSchedule } from "@/lib/offline-readiness";
+import {
+  getClassDeviceCoherentSchedule,
+  getOfflineReadiness,
+  resolveAuthoritativeClassDeviceSchedule,
+} from "@/lib/offline-readiness";
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
@@ -44,7 +48,6 @@ import {
   type ClassDeviceAttendanceRecoverySummary,
 } from "@/lib/class-device-attendance-recovery";
 import {
-  fetchRelayTeacherOfflineSchedule,
   type RelayTeacherOfflineSchedule,
 } from "@/lib/local-relay";
 import {
@@ -719,7 +722,7 @@ export default function ClassDevicePage() {
         classId: target.id,
         actorProfileId: target.actor_profile_id,
       });
-      if (!scope.ok) {
+      if (!scope.ok && "status" in scope) {
         const codeByStatus = {
           relay_contract_stale: "relay_class_schedule_contract_stale",
           institution_mismatch: "relay_class_schedule_institution_mismatch",
@@ -733,17 +736,17 @@ export default function ClassDevicePage() {
       if (source === "live") {
         relayClockRef.current = captureLiveRelayClock(schedule.relay_time);
       }
-      const relayPeriods = periodsFromRelayClassSchedule(schedule, target!.id);
+      const relayPeriods = periodsFromRelayClassSchedule(schedule, target.id);
       relayClassScheduleRef.current = schedule;
       setRelayClassSchedule(schedule);
       setPeriodsByDay(relayPeriods);
 
-      const relayRoster = relayRosterForClass(schedule, target!.id);
+      const relayRoster = relayRosterForClass(schedule, target.id);
       if (relayRoster) {
-        await cacheSet(`classDevice:roster:${target!.id}`, {
+        await cacheSet(`classDevice:roster:${target.id}`, {
           items: relayRoster,
         });
-        if (openRef.current?.class_id === target!.id) setRoster(relayRoster);
+        if (openRef.current?.class_id === target.id) setRoster(relayRoster);
       }
       return schedule;
     };
@@ -766,6 +769,8 @@ export default function ClassDevicePage() {
     const relay = target?.attendance_presence;
     if (
       !target?.institution_id ||
+      !target.id ||
+      !target.actor_profile_id ||
       !relay?.enabled ||
       relay.allow_local_relay === false ||
       !relay.relay_local_url ||
@@ -777,20 +782,46 @@ export default function ClassDevicePage() {
       );
       return await loadPreparedSchedule();
     }
-    if (relayScheduleRefreshRef.current) return await relayScheduleRefreshRef.current;
+    if (relayScheduleRefreshRef.current) {
+      return await relayScheduleRefreshRef.current;
+    }
 
     const run = (async () => {
       const startedAt = performance.now();
       setRelayStatus("checking");
       try {
-        const schedule = await fetchRelayTeacherOfflineSchedule({
-          institutionId: target.institution_id,
-          baseUrl: relay.relay_local_url!,
-          accessToken: relay.relay_access_token!,
-        });
-        const applied = await applySchedule(schedule, "live");
-        setRelayStatus("connected");
-        setRelayScheduleIssue(null);
+        const stored = await getOfflineReadiness("class-device").catch(
+          () => null,
+        );
+        const resolution = await resolveAuthoritativeClassDeviceSchedule(
+          stored,
+          {
+            institutionId: target.institution_id,
+            classId: target.id,
+            actorProfileId: target.actor_profile_id,
+            relayBaseUrl: relay.relay_local_url,
+            relayAccessToken: relay.relay_access_token,
+          },
+        );
+
+        if (!resolution.allowed || !resolution.schedule) {
+          setRelayStatus(
+            performance.now() - startedAt >= 2_500 ? "slow" : "unavailable",
+          );
+          setRelayScheduleIssue(resolution.message);
+          return await loadPreparedSchedule();
+        }
+
+        const source =
+          resolution.source === "relay" ? "live" : "prepared";
+        const applied = await applySchedule(resolution.schedule, source);
+        if (resolution.source === "relay") {
+          setRelayStatus("connected");
+          setRelayScheduleIssue(null);
+        } else {
+          setRelayStatus("unavailable");
+          setRelayScheduleIssue(resolution.message);
+        }
         return applied;
       } catch (error) {
         setRelayStatus(
@@ -2653,17 +2684,48 @@ export default function ClassDevicePage() {
 
     try {
       const relayPolicy = selectedClass?.attendance_presence;
-      let preparedSchedule = relayClassScheduleRef.current;
       if (
-        selectedClass?.institution_id &&
-        selectedClass.id &&
-        selectedClass.actor_profile_id
+        !selectedClass?.institution_id ||
+        !selectedClass.id ||
+        !selectedClass.actor_profile_id
       ) {
-        preparedSchedule = await getClassDeviceCoherentSchedule({
+        setSessionRuntimeState("recoverable_error");
+        setMsg(
+          "L’identité de cet appareil de classe est incomplète. Relancez sa préparation.",
+        );
+        return;
+      }
+
+      const storedReadiness = await getOfflineReadiness("class-device").catch(
+        () => null,
+      );
+      const scheduleDecision =
+        await resolveAuthoritativeClassDeviceSchedule(storedReadiness, {
           institutionId: selectedClass.institution_id,
           classId: selectedClass.id,
           actorProfileId: selectedClass.actor_profile_id,
-        }).catch(() => preparedSchedule);
+          relayBaseUrl: relayPolicy?.relay_local_url,
+          relayAccessToken: relayPolicy?.relay_access_token,
+        });
+      if (!scheduleDecision.allowed || !scheduleDecision.schedule) {
+        setSessionRuntimeState("recoverable_error");
+        setRelayScheduleIssue(scheduleDecision.message);
+        setMsg(scheduleDecision.message);
+        return;
+      }
+
+      // Une seule décision autoritaire alimente l’affichage, la matière,
+      // l’ouverture relais, le fallback Cloud et le stockage local.
+      const preparedSchedule = scheduleDecision.schedule;
+      if (scheduleDecision.source === "relay") {
+        setRelayStatus("connected");
+        setRelayScheduleIssue(null);
+        relayClockRef.current = captureLiveRelayClock(
+          preparedSchedule.relay_time,
+        );
+      } else {
+        setRelayStatus("unavailable");
+        setRelayScheduleIssue(scheduleDecision.message);
       }
 
       const verifiedPeriods: Record<number, Period[]> = preparedSchedule

@@ -62,10 +62,13 @@ import {
   CLASS_DEVICE_COHERENT_BUNDLE_KEY,
   classDeviceReadinessMessage,
   evaluateClassDeviceCoherence,
+  isClassDeviceReadyStatus,
+  resolveClassDeviceScheduleAuthority,
   validateClassDeviceRelayAccessTokenScope,
   validateClassDeviceScheduleScope,
   type ClassDeviceCoherentBundle,
   type ClassDeviceReadinessStatus,
+  type ClassDeviceScheduleAuthoritySource,
 } from "@/lib/offlineClassDevice";
 
 export type OfflineRole = "teacher" | "class-device" | "admin" | "parent";
@@ -133,6 +136,13 @@ export type ClassDeviceScheduleAssessment = {
   cloud_revision: number | null;
   schedule: RelayTeacherOfflineSchedule | null;
 };
+
+export type ClassDeviceAuthoritativeScheduleResolution =
+  ClassDeviceScheduleAssessment & {
+    allowed: boolean;
+    source: ClassDeviceScheduleAuthoritySource | null;
+    revision: number | null;
+  };
 
 export type ClassDeviceAssessmentContext = {
   institutionId?: string | null;
@@ -828,7 +838,7 @@ export function resolveClassDevicePreparationAccess(classPayload: unknown) {
     relayPolicy.relay_access_token,
     { institutionId, classId, actorProfileId },
   );
-  if (!tokenScope.ok) {
+  if (!tokenScope.ok && "status" in tokenScope) {
     throw new Error(classDeviceReadinessMessage(tokenScope.status));
   }
   return {
@@ -1070,6 +1080,7 @@ export async function assessClassDeviceOfflineReadiness(
       readiness?.authorized_actor_profile_id ||
       "",
   ).trim();
+  const expectedScope = { institutionId, classId, actorProfileId };
   const [cloud, activeServiceWorkerRelease] = await Promise.all([
     probeCloudSchedule(),
     getActiveOfflineWorkerRelease(),
@@ -1077,15 +1088,16 @@ export async function assessClassDeviceOfflineReadiness(
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const bundleValidation = validateClassDeviceScheduleScope(
     bundle?.schedule,
-    { institutionId, classId, actorProfileId },
+    expectedScope,
   );
+  const preparedSchedule = bundleValidation.ok ? bundle!.schedule : null;
   const baseState = {
     readiness,
     cloud_reachable: Boolean(cloud),
     phone_revision: safeRevision(readiness?.schedule_revision),
     relay_revision: null,
     cloud_revision: cloudRevision,
-    schedule: bundleValidation.ok ? bundle!.schedule : null,
+    schedule: preparedSchedule,
   };
 
   const preflight = evaluateClassDeviceCoherence({
@@ -1134,7 +1146,7 @@ export async function assessClassDeviceOfflineReadiness(
     relay_revision: relayRevision,
   };
   if (relay.status !== "reachable") {
-    const status =
+    const relayFailureStatus =
       relay.status === "access_denied"
         ? "relay_access_denied"
         : relay.status === "permission_denied"
@@ -1142,7 +1154,51 @@ export async function assessClassDeviceOfflineReadiness(
           : relay.status === "incompatible_browser"
             ? "browser_incompatible"
             : "relay_unreachable";
-    return classDeviceAssessment(status, withRelay);
+
+    if (relayFailureStatus !== "relay_unreachable") {
+      return classDeviceAssessment(relayFailureStatus, withRelay);
+    }
+
+    const authority = resolveClassDeviceScheduleAuthority({
+      expected: expectedScope,
+      preparedSchedule,
+      relaySchedule: null,
+      relayAvailable: false,
+      cloudRevision,
+    });
+    if (!authority.allowed) {
+      return classDeviceAssessment(authority.status, {
+        ...withRelay,
+        schedule: preparedSchedule,
+      });
+    }
+
+    const observed = {
+      ...readiness!,
+      checked_at: new Date().toISOString(),
+      relay_revision: relayRevision,
+      cloud_revision: cloudRevision,
+      relay_connectivity: relay,
+      relay_capabilities: relay.capabilities,
+      class_device_compatibility: authority.status,
+    } satisfies OfflineReadiness;
+    try {
+      await persistClassDeviceBundle(observed, authority.schedule);
+    } catch {
+      return classDeviceAssessment(
+        "phone_stale",
+        { ...withRelay, schedule: null },
+        "Le planning local est cohérent, mais sa validation atomique a échoué. Relancez la préparation.",
+      );
+    }
+    return classDeviceAssessment(authority.status, {
+      readiness: observed,
+      cloud_reachable: Boolean(cloud),
+      phone_revision: authority.revision,
+      relay_revision: relayRevision,
+      cloud_revision: cloudRevision,
+      schedule: authority.schedule,
+    });
   }
 
   let relaySchedule: RelayTeacherOfflineSchedule;
@@ -1155,15 +1211,14 @@ export async function assessClassDeviceOfflineReadiness(
   } catch (error) {
     return classDeviceAssessment(scheduleFetchFailureStatus(error), withRelay);
   }
-  const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
-    institutionId: context.institutionId,
-    classId: context.classId,
-    actorProfileId: context.actorProfileId,
-  });
-  if (!relayScope.ok) {
+  const relayScope = validateClassDeviceScheduleScope(
+    relaySchedule,
+    expectedScope,
+  );
+  if (!relayScope.ok && "status" in relayScope) {
     return classDeviceAssessment(relayScope.status, {
       ...withRelay,
-      schedule: null,
+      schedule: preparedSchedule,
     });
   }
 
@@ -1192,63 +1247,134 @@ export async function assessClassDeviceOfflineReadiness(
     relay_capabilities: relay.capabilities,
   });
 
-  if (evaluated === "refresh_from_relay") {
-    try {
-      const refreshed = refreshedClassDeviceReadiness(
+  if (evaluated !== "ready" && evaluated !== "refresh_from_relay") {
+    const observed =
+      readiness?.version === 5
+        ? {
+            ...readiness,
+            checked_at: new Date().toISOString(),
+            relay_revision: relayScope.revision,
+            cloud_revision: cloudRevision,
+            relay_connectivity: relay,
+            relay_capabilities: relay.capabilities,
+            class_device_compatibility: evaluated,
+          }
+        : readiness;
+    if (observed && preparedSchedule) {
+      try {
+        await persistClassDeviceBundle(observed, preparedSchedule);
+      } catch {
+        return classDeviceAssessment(
+          "phone_stale",
+          { ...withRelay, schedule: null },
+          "La vérification est correcte, mais sa conservation atomique a échoué. Relancez la préparation.",
+        );
+      }
+    }
+    return classDeviceAssessment(evaluated, {
+      readiness: observed,
+      cloud_reachable: Boolean(cloud),
+      phone_revision: safeRevision(observed?.schedule_revision),
+      relay_revision: relayScope.revision,
+      cloud_revision: cloudRevision,
+      schedule: preparedSchedule,
+    });
+  }
+
+  const authority = resolveClassDeviceScheduleAuthority({
+    expected: expectedScope,
+    preparedSchedule,
+    relaySchedule,
+    relayAvailable: true,
+    cloudRevision,
+  });
+  if (!authority.allowed) {
+    return classDeviceAssessment(authority.status, {
+      ...withRelay,
+      schedule: preparedSchedule,
+    });
+  }
+
+  const observed = authority.should_persist
+    ? refreshedClassDeviceReadiness(
         readiness!,
-        relaySchedule,
+        authority.schedule,
         relay,
         cloudRevision,
         activeServiceWorkerRelease!,
-      );
-      await persistClassDeviceBundle(refreshed, relaySchedule);
-      await projectClassDeviceScheduleCaches(relaySchedule, context.classId);
-      return classDeviceAssessment("ready", {
-        readiness: refreshed,
-        cloud_reachable: Boolean(cloud),
-        phone_revision: relayScope.revision,
-        relay_revision: relayScope.revision,
+      )
+    : ({
+        ...readiness!,
+        checked_at: new Date().toISOString(),
+        relay_revision: authority.revision,
         cloud_revision: cloudRevision,
-        schedule: relaySchedule,
-      });
-    } catch {
-      return classDeviceAssessment("phone_stale", {
-        ...withRelay,
-        schedule: null,
-      });
-    }
+        relay_connectivity: relay,
+        relay_capabilities: relay.capabilities,
+        class_device_compatibility: "ready",
+      } satisfies OfflineReadiness);
+
+  try {
+    // Même à révision égale, le planning vivant validé devient le bundle utilisé
+    // par l’écran et par l’ouverture : aucune ancienne projection ne peut revenir.
+    await persistClassDeviceBundle(observed, authority.schedule);
+    await projectClassDeviceScheduleCaches(authority.schedule, context.classId);
+  } catch {
+    return classDeviceAssessment("phone_stale", {
+      ...withRelay,
+      schedule: null,
+    });
   }
 
-  const observed =
-    readiness?.version === 5
-      ? {
-          ...readiness,
-          checked_at: new Date().toISOString(),
-          relay_revision: relayScope.revision,
-          cloud_revision: cloudRevision,
-          relay_connectivity: relay,
-          relay_capabilities: relay.capabilities,
-          class_device_compatibility: evaluated,
-        }
-      : readiness;
-  if (observed && bundleValidation.ok) {
-    try {
-      await persistClassDeviceBundle(observed, bundle!.schedule);
-    } catch {
-      return classDeviceAssessment("phone_stale", {
-        ...withRelay,
-        schedule: null,
-      }, "La vérification est correcte, mais sa conservation atomique a échoué. Relancez la préparation.");
-    }
-  }
-  return classDeviceAssessment(evaluated, {
+  return classDeviceAssessment("ready", {
     readiness: observed,
     cloud_reachable: Boolean(cloud),
-    phone_revision: safeRevision(observed?.schedule_revision),
-    relay_revision: relayScope.revision,
+    phone_revision: authority.revision,
+    relay_revision: authority.revision,
     cloud_revision: cloudRevision,
-    schedule: evaluated === "ready" ? relaySchedule : null,
+    schedule: authority.schedule,
   });
+}
+
+export async function resolveAuthoritativeClassDeviceSchedule(
+  initial: OfflineReadiness | null,
+  requested: ClassDeviceAssessmentContext = {},
+): Promise<ClassDeviceAuthoritativeScheduleResolution> {
+  const assessment = await assessClassDeviceOfflineReadiness(
+    initial,
+    requested,
+  );
+  const scope = assessment.schedule
+    ? validateClassDeviceScheduleScope(assessment.schedule, {
+        institutionId: String(
+          requested.institutionId || assessment.readiness?.institution_id || "",
+        ).trim(),
+        classId: String(
+          requested.classId ||
+            assessment.readiness?.authorized_class_id ||
+            "",
+        ).trim(),
+        actorProfileId: String(
+          requested.actorProfileId ||
+            assessment.readiness?.authorized_actor_profile_id ||
+            "",
+        ).trim(),
+      })
+    : null;
+  const allowed =
+    isClassDeviceReadyStatus(assessment.status) &&
+    Boolean(assessment.schedule) &&
+    scope?.ok === true;
+
+  return {
+    ...assessment,
+    allowed,
+    source: allowed
+      ? assessment.status === "ready_local"
+        ? "prepared-phone"
+        : "relay"
+      : null,
+    revision: allowed && scope?.ok ? scope.revision : null,
+  };
 }
 
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
@@ -1443,7 +1569,7 @@ async function prepareClassDevice(
     classId,
     actorProfileId,
   });
-  if (!relayScope.ok) {
+  if (!relayScope.ok && "status" in relayScope) {
     throw new Error(classDeviceReadinessMessage(relayScope.status));
   }
 

@@ -69,7 +69,7 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
     read("src/components/admin/AttendancePresenceSettings.tsx"),
     read("src/components/admin/OfflineScheduleSyncBridge.tsx"),
   ]);
-  assert.match(contract, /RELAY_VERSION = "0\.2\.0"/);
+  assert.match(contract, /RELAY_VERSION = "0\.2\.1"/);
   assert.match(contract, /bootstrap_revision_ack_v1: true/);
   assert.match(contract, /admin_schedule_status_v1: true/);
   assert.match(server, /\/v1\/admin\/schedule-status/);
@@ -105,4 +105,24 @@ test("le service worker couvre les trois navigations professeur", async () => {
   assert.match(release, /2026-08-01-class-device-recovery-v5-4/);
   assert.match(offline, /getActiveOfflineWorkerRelease/);
   assert.match(readiness, /serviceWorkerRelease/);
+});
+
+
+test("le planning autoritaire est centralisé et conservé atomiquement sans régression", async () => {
+  const [device, readiness, page, card] = await Promise.all([
+    read("src/lib/offlineClassDevice.ts"),
+    read("src/lib/offline-readiness.ts"),
+    read("src/app/class/page.tsx"),
+    read("src/components/OfflineReadinessCard.tsx"),
+  ]);
+
+  assert.match(device, /resolveClassDeviceScheduleAuthority/);
+  assert.match(device, /preparedValidation\.revision > relayValidation\.revision/);
+  assert.match(device, /status: "relay_stale"/);
+  assert.match(device, /status: "ready_local"/);
+  assert.match(readiness, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(readiness, /persistClassDeviceBundle\(observed, authority\.schedule\)/);
+  assert.match(readiness, /projectClassDeviceScheduleCaches\(authority\.schedule/);
+  assert.match(page, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(card, /resolveAuthoritativeClassDeviceSchedule/);
 });

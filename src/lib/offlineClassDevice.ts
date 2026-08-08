@@ -13,6 +13,7 @@ export type ClassDeviceRelayStatus =
 
 export type ClassDeviceReadinessStatus =
   | "ready"
+  | "ready_local"
   | "refresh_from_relay"
   | "not_prepared"
   | "web_release_stale"
@@ -105,6 +106,31 @@ export type ClassDeviceCoherentBundle<
   readiness: TReadiness;
   schedule: TSchedule;
 };
+
+export type ClassDeviceScheduleAuthoritySource = "relay" | "prepared-phone";
+
+export type ClassDeviceScheduleAuthorityDecision<
+  TSchedule extends ClassDeviceScheduleScope = ClassDeviceScheduleScope,
+> =
+  | {
+      allowed: true;
+      status: "ready" | "ready_local" | "refresh_from_relay";
+      source: ClassDeviceScheduleAuthoritySource;
+      schedule: TSchedule;
+      revision: number;
+      should_persist: boolean;
+    }
+  | {
+      allowed: false;
+      status: Exclude<
+        ClassDeviceReadinessStatus,
+        "ready" | "ready_local" | "refresh_from_relay"
+      >;
+      source: null;
+      schedule: null;
+      revision: null;
+      should_persist: false;
+    };
 
 function normalizedId(value: unknown) {
   return String(value || "").trim();
@@ -305,6 +331,144 @@ export function validateClassDeviceScheduleScope(
   return { ok: true, revision };
 }
 
+export function isClassDeviceReadyStatus(
+  status: string | null | undefined,
+) {
+  return status === "ready" || status === "ready_local";
+}
+
+export function resolveClassDeviceScheduleAuthority<
+  TSchedule extends ClassDeviceScheduleScope,
+>(input: {
+  expected: {
+    institutionId: string;
+    classId: string;
+    actorProfileId: string;
+  };
+  preparedSchedule?: TSchedule | null;
+  relaySchedule?: TSchedule | null;
+  relayAvailable: boolean;
+  cloudRevision?: number | null;
+}): ClassDeviceScheduleAuthorityDecision<TSchedule> {
+  const preparedValidation = validateClassDeviceScheduleScope(
+    input.preparedSchedule,
+    input.expected,
+  );
+
+  if (!input.relayAvailable) {
+    if (!input.preparedSchedule) {
+      return {
+        allowed: false,
+        status: "not_prepared",
+        source: null,
+        schedule: null,
+        revision: null,
+        should_persist: false,
+      };
+    }
+    if ("status" in preparedValidation) {
+      return {
+        allowed: false,
+        status: preparedValidation.status,
+        source: null,
+        schedule: null,
+        revision: null,
+        should_persist: false,
+      };
+    }
+
+    const cloudRevision = safeClassDeviceRevision(input.cloudRevision);
+    if (cloudRevision !== null && cloudRevision !== preparedValidation.revision) {
+      return {
+        allowed: false,
+        status:
+          preparedValidation.revision < cloudRevision
+            ? "phone_stale"
+            : "sources_diverged",
+        source: null,
+        schedule: null,
+        revision: null,
+        should_persist: false,
+      };
+    }
+
+    return {
+      allowed: true,
+      status: "ready_local",
+      source: "prepared-phone",
+      schedule: input.preparedSchedule,
+      revision: preparedValidation.revision,
+      should_persist: false,
+    };
+  }
+
+  const relayValidation = validateClassDeviceScheduleScope(
+    input.relaySchedule,
+    input.expected,
+  );
+  if (!input.relaySchedule) {
+    return {
+      allowed: false,
+      status: "schedule_not_prepared",
+      source: null,
+      schedule: null,
+      revision: null,
+      should_persist: false,
+    };
+  }
+  if ("status" in relayValidation) {
+    return {
+      allowed: false,
+      status: relayValidation.status,
+      source: null,
+      schedule: null,
+      revision: null,
+      should_persist: false,
+    };
+  }
+
+  const cloudRevision = safeClassDeviceRevision(input.cloudRevision);
+  if (cloudRevision !== null && relayValidation.revision !== cloudRevision) {
+    return {
+      allowed: false,
+      status:
+        relayValidation.revision < cloudRevision
+          ? "relay_stale"
+          : "sources_diverged",
+      source: null,
+      schedule: null,
+      revision: null,
+      should_persist: false,
+    };
+  }
+
+  if (
+    preparedValidation.ok &&
+    preparedValidation.revision > relayValidation.revision
+  ) {
+    return {
+      allowed: false,
+      status: "relay_stale",
+      source: null,
+      schedule: null,
+      revision: null,
+      should_persist: false,
+    };
+  }
+
+  const shouldPersist =
+    !preparedValidation.ok ||
+    preparedValidation.revision < relayValidation.revision;
+  return {
+    allowed: true,
+    status: shouldPersist ? "refresh_from_relay" : "ready",
+    source: "relay",
+    schedule: input.relaySchedule,
+    revision: relayValidation.revision,
+    should_persist: shouldPersist,
+  };
+}
+
 export function evaluateClassDeviceCoherence(
   input: ClassDeviceCoherenceInput,
 ): ClassDeviceReadinessStatus {
@@ -414,6 +578,8 @@ export function classDeviceReadinessMessage(
 ) {
   const messages: Record<ClassDeviceReadinessStatus, string> = {
     ready: "Le shell, le relais et les données de cette classe sont cohérents.",
+    ready_local:
+      "Le planning sécurisé de ce téléphone est cohérent. Le relais est momentanément inaccessible ; l’appel peut continuer localement.",
     refresh_from_relay:
       "Le relais possède un planning plus récent. Actualisation sécurisée requise.",
     not_prepared:

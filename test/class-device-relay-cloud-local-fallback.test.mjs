@@ -6,6 +6,28 @@ async function read(path) {
   return await readFile(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
+test("le même planning autoritaire alimente relais, Cloud et stockage local", async () => {
+  const page = await read("src/app/class/page.tsx");
+  const start = page.slice(
+    page.indexOf("async function startSession()"),
+    page.indexOf("async function endSession()"),
+  );
+
+  const authorityIndex = start.indexOf("resolveAuthoritativeClassDeviceSchedule");
+  const verifiedPeriodIndex = start.indexOf("const verifiedPeriod");
+  const relayIndex = start.indexOf("openTeacherAttendanceSessionOnRelay({");
+  const cloudIndex = start.indexOf('"/api/class/sessions/start"', relayIndex);
+  const localIndex = start.indexOf('delivery_origin: "local_pending"', cloudIndex);
+
+  assert.ok(authorityIndex >= 0, "résolution autoritaire absente");
+  assert.ok(verifiedPeriodIndex > authorityIndex, "le créneau doit venir de la décision autoritaire");
+  assert.ok(relayIndex > verifiedPeriodIndex, "le relais doit utiliser le créneau vérifié");
+  assert.ok(cloudIndex > relayIndex, "le Cloud doit conserver le même créneau");
+  assert.ok(localIndex > cloudIndex, "le stockage local doit conserver le même créneau");
+  assert.match(start, /periodId: verifiedPeriod\.id!/);
+  assert.match(start, /period_id: verifiedPeriod\.id/);
+});
+
 test("le démarrage suit relais puis Cloud puis appareil avec un même operation_id", async () => {
   const page = await read("src/app/class/page.tsx");
 

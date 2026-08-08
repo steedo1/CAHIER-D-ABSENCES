@@ -6,6 +6,8 @@ import {
   CLASS_DEVICE_COHERENT_BUNDLE_KEY,
   classDeviceReadinessMessage,
   evaluateClassDeviceCoherence,
+  isClassDeviceReadyStatus,
+  resolveClassDeviceScheduleAuthority,
   validateClassDeviceRelayAccessTokenScope,
   validateClassDeviceScheduleScope,
   type ClassDeviceCoherenceInput,
@@ -196,6 +198,129 @@ test("relais en retard sur le téléphone ou le Cloud bloque", () => {
     }),
     "sources_diverged",
   );
+});
+
+test("la source autoritaire adopte atomiquement un relais plus récent", () => {
+  const relaySchedule = structuredClone(schedule) as ClassDeviceScheduleScope;
+  relaySchedule.schedule_revision = 11;
+  const decision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule: schedule,
+    relaySchedule,
+    relayAvailable: true,
+    cloudRevision: 11,
+  });
+
+  assert.equal(decision.allowed, true);
+  if (!decision.allowed) return;
+  assert.equal(decision.status, "refresh_from_relay");
+  assert.equal(decision.source, "relay");
+  assert.equal(decision.revision, 11);
+  assert.equal(decision.should_persist, true);
+  assert.equal(decision.schedule, relaySchedule);
+});
+
+test("un relais plus ancien ne peut jamais rétrograder le téléphone", () => {
+  const preparedSchedule = structuredClone(schedule) as ClassDeviceScheduleScope;
+  preparedSchedule.schedule_revision = 11;
+  const decision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule,
+    relaySchedule: schedule,
+    relayAvailable: true,
+    cloudRevision: 11,
+  });
+
+  assert.deepEqual(decision, {
+    allowed: false,
+    status: "relay_stale",
+    source: null,
+    schedule: null,
+    revision: null,
+    should_persist: false,
+  });
+});
+
+test("la double panne autorise uniquement le planning local cohérent", () => {
+  const decision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule: schedule,
+    relaySchedule: null,
+    relayAvailable: false,
+    cloudRevision: null,
+  });
+
+  assert.equal(decision.allowed, true);
+  if (!decision.allowed) return;
+  assert.equal(decision.status, "ready_local");
+  assert.equal(decision.source, "prepared-phone");
+  assert.equal(decision.revision, 10);
+  assert.equal(decision.should_persist, false);
+  assert.equal(isClassDeviceReadyStatus(decision.status), true);
+});
+
+test("un Cloud plus récent bloque le planning local lorsque le relais est absent", () => {
+  const decision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule: schedule,
+    relaySchedule: null,
+    relayAvailable: false,
+    cloudRevision: 11,
+  });
+
+  assert.equal(decision.allowed, false);
+  if (decision.allowed) return;
+  assert.equal(decision.status, "phone_stale");
+});
+
+test("la source autoritaire refuse une autre classe ou un autre appareil", () => {
+  const otherClass = structuredClone(schedule) as ClassDeviceScheduleScope;
+  otherClass.class_id = "class-b";
+  const classDecision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule: schedule,
+    relaySchedule: otherClass,
+    relayAvailable: true,
+    cloudRevision: 10,
+  });
+  assert.equal(classDecision.allowed, false);
+  if (!classDecision.allowed) assert.equal(classDecision.status, "class_mismatch");
+
+  const otherDevice = structuredClone(schedule) as ClassDeviceScheduleScope;
+  otherDevice.actor_profile_id = "device-b";
+  const deviceDecision = resolveClassDeviceScheduleAuthority({
+    expected: {
+      institutionId: "school-a",
+      classId: "class-a",
+      actorProfileId: "device-a",
+    },
+    preparedSchedule: schedule,
+    relaySchedule: otherDevice,
+    relayAvailable: true,
+    cloudRevision: 10,
+  });
+  assert.equal(deviceDecision.allowed, false);
+  if (!deviceDecision.allowed) assert.equal(deviceDecision.status, "device_mismatch");
 });
 
 test("Cloud indisponible reste prêt si téléphone et relais concordent", () => {

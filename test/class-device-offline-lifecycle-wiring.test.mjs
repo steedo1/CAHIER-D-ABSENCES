@@ -81,3 +81,21 @@ test("le Web et le service worker portent la même release recovery v5.4", async
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
 });
+
+
+test("rechargement et ouverture partagent le bundle autoritaire sans retour à une ancienne révision", async () => {
+  const [page, readiness] = await Promise.all([
+    read("src/app/class/page.tsx"),
+    read("src/lib/offline-readiness.ts"),
+  ]);
+  const start = page.slice(
+    page.indexOf("async function startSession()"),
+    page.indexOf("async function endSession()"),
+  );
+
+  assert.match(page, /refreshClassScheduleFromRelay/);
+  assert.match(page, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(start, /const preparedSchedule = scheduleDecision\.schedule/);
+  assert.doesNotMatch(start, /preparedSchedule = await getClassDeviceCoherentSchedule/);
+  assert.match(readiness, /Même à révision égale, le planning vivant validé devient le bundle utilisé/);
+});

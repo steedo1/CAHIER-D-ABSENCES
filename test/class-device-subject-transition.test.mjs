@@ -42,3 +42,19 @@ test("l'API départage les anciens UUID de même horaire et le relais conserve u
   assert.match(rules, /actorKind === "teacher" && \(timetables\.length > 1/);
   assert.match(rules, /const selectedTimetable = timetables\[0\]/);
 });
+
+
+test("le clic Commencer utilise une seule décision autoritaire pour le créneau et la matière", async () => {
+  const page = await read("src/app/class/page.tsx");
+  const start = page.slice(
+    page.indexOf("async function startSession()"),
+    page.indexOf("async function endSession()"),
+  );
+
+  assert.match(start, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(start, /const preparedSchedule = scheduleDecision\.schedule/);
+  assert.match(start, /periodsFromRelayClassSchedule\(preparedSchedule, classId\)/);
+  assert.match(start, /relaySubjectsForSlot\(preparedSchedule, classId, verifiedPeriod\)/);
+  assert.doesNotMatch(start, /getClassDeviceCoherentSchedule/);
+  assert.match(start, /Une seule décision autoritaire alimente l’affichage, la matière/);
+});
