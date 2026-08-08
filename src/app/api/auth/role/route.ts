@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import type { AppRole } from "@/lib/auth/role";
 import { ROLE_PRIORITY } from "@/lib/auth/role";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,21 +24,38 @@ export async function GET() {
     .select("role,institution_id")
     .eq("profile_id", user.id);
 
-  if (rolesErr) {
-    // On ne casse pas l'UI, on renvoie role=null
-    return NextResponse.json({ role: null }, { status: 200 });
-  }
-
-  const roles = (rows ?? []).map((r: any) => r.role as AppRole);
+  const safeRows = rolesErr ? [] : (rows ?? []);
+  const roles = safeRows.map((r: any) => r.role as AppRole);
   const primary = ROLE_PRIORITY.find((r) => roles.includes(r)) ?? roles[0] ?? null;
   const primaryRow =
-    (rows ?? []).find((row: any) => row.role === primary && row.institution_id) ||
-    (rows ?? []).find((row: any) => row.institution_id) ||
+    safeRows.find((row: any) => row.role === primary && row.institution_id) ||
+    safeRows.find((row: any) => row.institution_id) ||
     null;
+
+  // Les comptes-classe sont également reconnus par leur numéro associé à la
+  // classe, comme dans /redirect. Cela évite de les enregistrer par erreur
+  // comme enseignants pour la connexion hors ligne.
+  let classDeviceInstitutionId: string | null = null;
+  const phone = String(user.phone || "").trim();
+  if (phone && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = getSupabaseServiceClient();
+      const { data: classRow } = await admin
+        .from("classes")
+        .select("institution_id")
+        .eq("class_phone_e164", phone)
+        .maybeSingle();
+      classDeviceInstitutionId = String(classRow?.institution_id || "").trim() || null;
+    } catch {
+      classDeviceInstitutionId = null;
+    }
+  }
 
   return NextResponse.json({
     user_id: user.id,
-    role: primary,
-    institution_id: primaryRow?.institution_id ? String(primaryRow.institution_id) : null,
+    role: classDeviceInstitutionId ? "class_device" : primary,
+    institution_id:
+      classDeviceInstitutionId ||
+      (primaryRow?.institution_id ? String(primaryRow.institution_id) : null),
   });
 }

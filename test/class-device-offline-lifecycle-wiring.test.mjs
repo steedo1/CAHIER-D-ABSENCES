@@ -62,22 +62,24 @@ test("un redémarrage ne restaure pas une séance déjà terminée localement", 
   );
 });
 
-test("la déconnexion compte aussi les appels et fermetures du nouveau protocole", async () => {
+test("la déconnexion compte les opérations en attente sans les supprimer", async () => {
   const page = await read("src/app/class/page.tsx");
 
   assert.match(page, /countPendingForCurrentClass/);
   assert.match(page, /countClassDeviceAttendanceRecovery/);
   assert.match(page, /Tentative de sécurisation des données avant déconnexion/);
-  assert.match(page, /supprimer définitivement ces données/);
+  assert.match(page, /resteront conservées sur cet appareil/);
+  assert.match(page, /clearOfflineLoginSession/);
+  assert.doesNotMatch(page, /supprimer définitivement ces données/);
 });
 
-test("le Web et le service worker portent la même release recovery v5.4", async () => {
+test("le Web et le service worker portent la même release offline-login v1", async () => {
   const [worker, release] = await Promise.all([
     read("public/moncahier-sw.js"),
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-08-01-class-device-recovery-v5-4";
+  const expected = "2026-08-08-offline-login-v1";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
 });

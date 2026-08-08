@@ -1518,6 +1518,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
 
   onProgress("Préparation de l’application…");
   await warmOfflineShell([
+    "/login",
     "/choose-book",
     "/attendance",
     "/grades",
@@ -1716,6 +1717,7 @@ async function prepareClassDevice(
 
   onProgress("Préparation et vérification du shell hors ligne…");
   await warmOfflineShell([
+    "/login",
     "/choose-book",
     "/class",
     "/grades/class-device",

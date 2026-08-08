@@ -12,9 +12,9 @@ import {
   flushOutbox,
   cacheGet,
   cacheSet,
-  clearOfflineAll,
   resolveOfflineSessionReference,
 } from "@/lib/offline";
+import { clearOfflineLoginSession } from "@/lib/offline-auth";
 import {
   getClassDeviceCoherentSchedule,
   getOfflineReadiness,
@@ -23,7 +23,6 @@ import {
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
-  clearClassDeviceSnapshot,
   validateClassDeviceScheduleScope,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
@@ -3366,14 +3365,15 @@ export default function ClassDevicePage() {
     }
 
     if (remaining > 0) {
-      const discard = window.confirm(
-        `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
-          "OK = se déconnecter et supprimer définitivement ces données.\n" +
-          "Annuler = rester connecté et conserver les données (recommandé)."
+      const proceed = window.confirm(
+        `${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
+          "Elles resteront conservées sur cet appareil et reprendront avec ce même compte-classe.\n" +
+          "OK = se déconnecter maintenant.\n" +
+          "Annuler = rester connecté pour tenter une synchronisation."
       );
-      if (!discard) {
+      if (!proceed) {
         setMsg(
-          `${remaining} action(s) conservées sur cet appareil. Rejoignez le réseau local du relais puis appuyez sur Sync.`
+          `${remaining} action(s) restent conservées. Rejoignez le réseau local du relais puis appuyez sur Sync.`
         );
         return;
       }
@@ -3407,20 +3407,11 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
-      // 4) Purge snapshots locaux (important si téléphone partagé)
-      try {
-        const snapshotIds = new Set<string>(classes.map((c) => c.id));
-        const currentSnapshotId = openRef.current?.class_id || classId;
-        if (currentSnapshotId) snapshotIds.add(currentSnapshotId);
-        snapshotIds.forEach((id) => clearClassDeviceSnapshot(id));
-      } catch {}
+      // 4) Verrouiller l'accès courant sans supprimer le snapshot, le bundle,
+      // le jeton relais ni les actions hors ligne du même compte-classe.
+      clearOfflineLoginSession();
 
-      // 5) Purge offline (important si téléphone partagé)
-      try {
-        await clearOfflineAll();
-      } catch {}
-
-      // 6) Retour écran de connexion global
+      // 5) Retour écran de connexion global
       window.location.href = "/login";
     }
   }

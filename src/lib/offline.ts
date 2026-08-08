@@ -991,6 +991,7 @@ const OFFLINE_LOCAL_STORAGE_EXACT_KEYS = new Set([
   "mc_last_dest",
   "mc_last_dest_attendance",
   "mc_last_dest_grades",
+  "moncahier:offline-session:v1",
 ]);
 const OFFLINE_LOCAL_STORAGE_PREFIXES = [
   "moncahier.classDevice.snapshot.",

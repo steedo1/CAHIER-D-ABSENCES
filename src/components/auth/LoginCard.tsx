@@ -5,6 +5,13 @@ import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { clearOfflineAll } from "@/lib/offline";
 import { clearRelayUserState } from "@/lib/local-relay";
+import {
+  authenticateOfflineLogin,
+  clearOfflineLoginSession,
+  enrollOfflineLogin,
+  getOfflineLoginAvailability,
+  getOfflineLoginOwnerUserId,
+} from "@/lib/offline-auth";
 
 type ForcedMode = "emailOnly" | "phoneOnly";
 type LoginMode = "email" | "phone";
@@ -24,6 +31,12 @@ type LoginResponse = {
   } | null;
 };
 
+type RoleResponse = {
+  user_id?: string;
+  role?: string | null;
+  institution_id?: string | null;
+};
+
 function humanError(error?: string | null) {
   const value = String(error || "").trim();
   if (!value) return "Connexion impossible. Vérifie les informations saisies.";
@@ -34,6 +47,32 @@ function humanError(error?: string | null) {
   if (value === "PHONE_INVALID") return "Numéro de téléphone invalide.";
   if (value === "SERVER_SESSION_NOT_PERSISTED") {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
+  }
+  if (value === "OFFLINE_LOGIN_NOT_CONFIGURED") {
+    return "La connexion hors ligne n’a pas encore été activée sur cet appareil. Reconnecte Internet une fois.";
+  }
+  if (value === "OFFLINE_LOGIN_NOT_PREPARED") {
+    return "Les données hors ligne de ce compte ne sont pas encore préparées sur cet appareil.";
+  }
+  if (value === "OFFLINE_LOGIN_EXPIRED") {
+    return "L’autorisation hors ligne a expiré. Reconnecte Internet pour la renouveler.";
+  }
+  if (value === "OFFLINE_LOGIN_SHELL_STALE") {
+    return "L’application hors ligne doit être actualisée. Reconnecte Internet puis relance la préparation.";
+  }
+  if (value === "OFFLINE_LOGIN_INVALID") {
+    return "Identifiants incorrects pour la connexion hors ligne de cet appareil.";
+  }
+  if (value.startsWith("OFFLINE_LOGIN_LOCKED:")) {
+    const seconds = Math.max(1, Number(value.split(":")[1] || 0));
+    const minutes = Math.max(1, Math.ceil(seconds / 60));
+    return `Trop de tentatives. Réessaie dans environ ${minutes} minute(s).`;
+  }
+  if (
+    value === "OFFLINE_LOGIN_BROWSER_UNSUPPORTED" ||
+    value === "OFFLINE_LOGIN_CREDENTIAL_INVALID"
+  ) {
+    return "Ce navigateur ne peut pas utiliser la connexion hors ligne sécurisée.";
   }
   if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
     return "Identifiants incorrects. Vérifie le compte et le mot de passe.";
@@ -46,6 +85,20 @@ function humanError(error?: string | null) {
   }
 
   return value;
+}
+
+function isNetworkFailure(error: unknown) {
+  const name = String((error as any)?.name || "");
+  const message = String((error as any)?.message || "").toLowerCase();
+  return (
+    name === "AbortError" ||
+    error instanceof TypeError ||
+    message.includes("fetch") ||
+    message.includes("network") ||
+    message.includes("réseau") ||
+    message.includes("failed to fetch") ||
+    message.includes("signal is aborted")
+  );
 }
 
 function Spinner() {
@@ -67,6 +120,8 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [offlineReady, setOfflineReady] = useState(false);
+  const [browserOnline, setBrowserOnline] = useState(true);
 
   // ✅ Verrou immédiat anti double-clic, plus fiable que le state React seul.
   const busyRef = useRef(false);
@@ -83,15 +138,37 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     setMode(forcedMode === "emailOnly" ? "email" : "phone");
   }, [forcedMode]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      setBrowserOnline(navigator.onLine);
+      const availability = await getOfflineLoginAvailability().catch(() => null);
+      if (!cancelled) setOfflineReady(Boolean(availability?.available));
+    };
+    void refresh();
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+
   async function clearPreviousServerCookies() {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2_500);
     try {
       await fetch("/api/auth/sync", {
         method: "DELETE",
         cache: "no-store",
         credentials: "include",
+        signal: controller.signal,
       });
     } catch {
       // Tolérant : le login qui suit réécrira les bons cookies.
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
@@ -201,6 +278,8 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     ) {
       throw new Error("SERVER_SESSION_NOT_PERSISTED");
     }
+
+    return checked.payload as RoleResponse;
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -214,23 +293,34 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     setStatusText("Préparation de la connexion…");
 
     try {
+      const identifierKind = mode === "email" ? "email" : "phone";
+      const identifier = mode === "email" ? email.trim() : phone.trim();
+
       // Important après une déconnexion/reconnexion : on enlève les anciens restes.
       clearPreviousBrowserSession();
       await clearPreviousServerCookies();
 
       setStatusText("Vérification des identifiants…");
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: mode === "email" ? email.trim() : undefined,
-          phone: mode === "phone" ? phone.trim() : undefined,
-          password,
-          country: "CI",
-        }),
-      });
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8_000);
+      let res: Response;
+      try {
+        res = await fetch("/api/auth/login", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          signal: controller.signal,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: mode === "email" ? email.trim() : undefined,
+            phone: mode === "phone" ? phone.trim() : undefined,
+            password,
+            country: "CI",
+          }),
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
@@ -238,20 +328,61 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
       }
 
       setStatusText("Sécurisation de cet appareil…");
-      await Promise.allSettled([clearOfflineAll(), clearRelayUserState()]);
+      const authenticatedUserId = String(json.user?.id || "").trim();
+      const preparedUserId = await getOfflineLoginOwnerUserId().catch(() => null);
+
+      if (authenticatedUserId && preparedUserId === authenticatedUserId) {
+        // Même utilisateur : conserver son bundle, ses opérations en attente et
+        // son accès relais. Seule l'ancienne session locale est fermée.
+        clearOfflineLoginSession();
+      } else {
+        // Changement réel de compte : aucune donnée de l'ancien utilisateur ne
+        // doit être exposée au nouveau compte.
+        await Promise.allSettled([clearOfflineAll(), clearRelayUserState()]);
+      }
 
       setStatusText("Ouverture de votre espace…");
-      await syncBrowserSession(
+      const role = await syncBrowserSession(
         json.session?.access_token,
         json.session?.refresh_token,
-        json.user?.id,
+        authenticatedUserId,
       );
+
+      await enrollOfflineLogin({
+        identifierKind,
+        identifier,
+        password,
+        userId: String(json.user?.id || role?.user_id || ""),
+        role: role?.role,
+        institutionId: role?.institution_id,
+      }).catch((offlineError) => {
+        console.warn(
+          "[login] activation hors ligne ignorée:",
+          String((offlineError as any)?.message || offlineError),
+        );
+      });
 
       // ✅ Navigation complète volontaire : évite les caches client/RSC et la course avec /redirect.
       window.location.assign(redirectTo || "/redirect");
       return;
     } catch (err: any) {
-      setError(humanError(err?.message));
+      if (isNetworkFailure(err)) {
+        try {
+          setStatusText("Cloud indisponible. Vérification sécurisée sur cet appareil…");
+          const offline = await authenticateOfflineLogin({
+            identifierKind: mode === "email" ? "email" : "phone",
+            identifier: mode === "email" ? email.trim() : phone.trim(),
+            password,
+          });
+          setStatusText("Connexion hors ligne confirmée. Ouverture de l’application…");
+          window.location.assign(offline.destination);
+          return;
+        } catch (offlineError: any) {
+          setError(humanError(offlineError?.message));
+        }
+      } else {
+        setError(humanError(err?.message));
+      }
       setStatusText(null);
       busyRef.current = false;
       setBusy(false);
@@ -296,6 +427,21 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
           >
             Email
           </button>
+        </div>
+      ) : null}
+
+      {offlineReady ? (
+        <div
+          className={[
+            "mb-4 rounded-2xl border px-4 py-3 text-sm font-medium",
+            browserOnline
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-amber-200 bg-amber-50 text-amber-800",
+          ].join(" ")}
+        >
+          {browserOnline
+            ? "Connexion hors ligne prête sur cet appareil."
+            : "Internet indisponible : utilise les mêmes identifiants pour ouvrir les données préparées."}
         </div>
       ) : null}
 

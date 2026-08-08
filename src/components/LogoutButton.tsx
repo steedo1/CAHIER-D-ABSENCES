@@ -5,8 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { clearOfflineAll } from "@/lib/offline";
-import { clearRelayUserState } from "@/lib/local-relay";
+import { clearOfflineLoginSession } from "@/lib/offline-auth";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -30,8 +29,9 @@ export function LogoutButton() {
       // 2) Purge cookies SSR
       await fetch("/api/auth/sync", { method: "DELETE", cache: "no-store" }).catch(() => {});
 
-      // 3) Purge des données pédagogiques et jetons locaux de cet utilisateur.
-      await Promise.allSettled([clearOfflineAll(), clearRelayUserState()]);
+      // 3) Ferme uniquement la session locale active. La préparation hors
+      // ligne du même compte reste disponible pour une reconnexion sans réseau.
+      clearOfflineLoginSession();
 
       // 4) Redirection
       router.replace("/login");

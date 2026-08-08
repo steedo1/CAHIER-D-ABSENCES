@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Providers from "./providers";
 import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
+import Guard from "@/components/Guard";
 
 export const metadata: Metadata = {
   title: "Mon Cahier d’Absences",
@@ -25,7 +26,7 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
-        <Providers>{children}</Providers>
+        <Providers><Guard>{children}</Guard></Providers>
         <ServiceWorkerRegistrar />
       </body>
     </html>

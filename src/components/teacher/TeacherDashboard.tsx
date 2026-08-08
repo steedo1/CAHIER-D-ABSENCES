@@ -17,8 +17,8 @@ import {
   flushOutbox,
   cacheGet,
   cacheSet,
-  clearOfflineAll,
 } from "@/lib/offline";
+import { clearOfflineLoginSession } from "@/lib/offline-auth";
 import {
   checkGpsInsideZones,
   getFreshGpsEvidence,
@@ -2460,7 +2460,7 @@ export default function TeacherDashboard() {
     }
   }
 
-  /* Déconnexion (avec nettoyage offline) */
+  /* Déconnexion : session fermée, préparation hors ligne conservée. */
   async function logout() {
     let summary = await getTeacherOfflinePendingSummary(
       inst.institution_id,
@@ -2484,14 +2484,15 @@ export default function TeacherDashboard() {
     }
 
     if (remaining > 0) {
-      const discard = window.confirm(
-        `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
-          "OK = se déconnecter et supprimer définitivement ces données.\n" +
-          "Annuler = rester connecté et conserver les données (recommandé)."
+      const proceed = window.confirm(
+        `${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
+          "Elles resteront conservées sur cet appareil et reprendront avec ce même compte.\n" +
+          "OK = se déconnecter maintenant.\n" +
+          "Annuler = rester connecté pour tenter une synchronisation."
       );
-      if (!discard) {
+      if (!proceed) {
         setMsg(
-          `${remaining} action(s) conservées sur cet appareil. Reconnectez Internet puis appuyez sur Sync.`
+          `${remaining} action(s) restent conservées. Reconnectez Internet puis appuyez sur Sync.`
         );
         return;
       }
@@ -2520,12 +2521,9 @@ export default function TeacherDashboard() {
         }
       }
     } finally {
-      // important : éviter de garder des queues offline d’un autre utilisateur
-      try {
-        await clearOfflineAll();
-      } catch {
-        /* ignore */
-      }
+      // La déconnexion verrouille l'accès, mais ne détruit ni la préparation
+      // hors ligne ni les actions encore en attente pour ce même compte.
+      clearOfflineLoginSession();
       window.location.href = "/login";
     }
   }

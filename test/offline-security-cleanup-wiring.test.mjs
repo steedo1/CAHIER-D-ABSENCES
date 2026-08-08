@@ -23,20 +23,26 @@ test("la purge générale retire aussi snapshots, jeton relais et routage local"
   assert.match(relay, /removeItem\(ADMIN_SCHEDULE_SYNC_KEY\)/);
 });
 
-test("tous les boutons et la page de déconnexion purgent les données sensibles", () => {
+test("la déconnexion normale verrouille la session sans détruire la préparation hors ligne", () => {
   for (const content of [logoutButton, trueLogout, logoutPage]) {
-    assert.match(content, /clearOfflineAll/);
-    assert.match(content, /clearRelayUserState/);
-    assert.match(content, /Promise\.allSettled/);
+    assert.match(content, /clearOfflineLoginSession/);
+    assert.doesNotMatch(content, /clearOfflineAll/);
+    assert.doesNotMatch(content, /clearRelayUserState/);
   }
 });
 
-test("une nouvelle connexion valide purge l'ancien utilisateur avant d'ouvrir le nouvel espace", () => {
+test("une reconnexion du même utilisateur conserve son bundle mais un autre compte déclenche la purge", () => {
   const accepted = loginCard.indexOf("if (!res.ok || !json.ok)");
+  const ownerRead = loginCard.indexOf("getOfflineLoginOwnerUserId()");
+  const sameUser = loginCard.indexOf("preparedUserId === authenticatedUserId");
+  const preserve = loginCard.indexOf("clearOfflineLoginSession()", sameUser);
   const purge = loginCard.indexOf("Promise.allSettled([clearOfflineAll(), clearRelayUserState()])");
   const sync = loginCard.indexOf("await syncBrowserSession(");
 
   assert.ok(accepted >= 0);
-  assert.ok(purge > accepted);
+  assert.ok(ownerRead > accepted);
+  assert.ok(sameUser > ownerRead);
+  assert.ok(preserve > sameUser);
+  assert.ok(purge > preserve);
   assert.ok(sync > purge);
 });
