@@ -420,6 +420,13 @@ export async function POST(req: NextRequest) {
         throw error;
       }
       if (replay) {
+        const replayScheduledStart = replay.scheduledStartAt;
+        if (!replayScheduledStart) {
+          return NextResponse.json(
+            { error: "offline_replay_scheduled_start_required" },
+            { status: 409 },
+          );
+        }
         const { data: existingAccepted, error: existingAcceptedError } = await srv
           .from("teacher_sessions")
           .select(
@@ -446,7 +453,7 @@ export async function POST(req: NextRequest) {
           const scheduledStartMatches = Boolean(
             acceptedStart &&
               Math.abs(
-                acceptedStart.getTime() - replay.scheduledStartAt.getTime(),
+                acceptedStart.getTime() - replayScheduledStart.getTime(),
               ) <= 60_000,
           );
 

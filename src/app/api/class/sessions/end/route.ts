@@ -225,6 +225,11 @@ export async function PATCH(req: NextRequest) {
           requireScheduledStart: true,
           requireOperationBoundClientSession: false,
         });
+        if (!replay) {
+          throw new TeacherSessionReplayError(
+            "offline_replay_context_required",
+          );
+        }
         if (!replay.clientSessionId.startsWith("client:")) {
           throw new TeacherSessionReplayError(
             "offline_replay_client_session_id_invalid",
@@ -250,6 +255,11 @@ export async function PATCH(req: NextRequest) {
         }
       } catch (error) {
         return replayError(error);
+      }
+      if (!replay) {
+        return replayError(
+          new TeacherSessionReplayError("offline_replay_context_required"),
+        );
       }
       effectiveEndAt = replay.eventAt;
     } else {

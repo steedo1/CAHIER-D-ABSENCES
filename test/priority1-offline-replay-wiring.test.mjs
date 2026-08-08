@@ -83,3 +83,16 @@ test("une réponse perdue est acquittée avant toute revalidation d'un planning 
   assert.match(relayOpen, /liveReceiptReplayedOffline/);
   assert.match(relayOpen, /local_session_mapping_conflict/);
 });
+
+
+test("les routes Cloud gardent explicitement les valeurs de rejeu non nulles", async () => {
+  const [start, end] = await Promise.all([
+    read("src/app/api/class/sessions/start/route.ts"),
+    read("src/app/api/class/sessions/end/route.ts"),
+  ]);
+  assert.match(start, /const replayScheduledStart = replay\.scheduledStartAt/);
+  assert.match(start, /offline_replay_scheduled_start_required/);
+  assert.match(start, /replayScheduledStart\.getTime\(\)/);
+  assert.match(end, /if \(!replay\) \{[\s\S]*offline_replay_context_required/);
+  assert.match(end, /effectiveEndAt = replay\.eventAt/);
+});
