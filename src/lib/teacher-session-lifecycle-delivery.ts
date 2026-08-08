@@ -586,6 +586,29 @@ export async function retryTeacherSessionCloseOnRelay(
     sessionId: record.session_id,
     classId: record.class_id,
     attendanceOperationId: record.attendance_operation_id,
+    operationId: record.operation_id,
+    relayBaseUrl: input.relayBaseUrl,
+    relayAccessToken: input.relayAccessToken,
+  });
+}
+
+export async function retryTeacherSessionLifecycleOperationOnRelay(
+  record: TeacherSessionLifecycleDeliveryRecord,
+  input: {
+    relayBaseUrl?: string | null;
+    relayAccessToken?: string | null;
+  },
+) {
+  if (record.state !== "device_pending") return record;
+  if (record.kind === "close") {
+    return await retryTeacherSessionCloseOnRelay(record, input);
+  }
+  if (!record.class_id || !record.period_id) return record;
+  return await transitionTeacherAttendanceSessionOnRelay({
+    institutionId: record.institution_id,
+    classId: record.class_id,
+    periodId: record.period_id,
+    attemptKey: record.attempt_key,
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
   });

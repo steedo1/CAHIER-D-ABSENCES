@@ -55,6 +55,10 @@ import {
   getTeacherOfflinePendingSummary,
   type TeacherOfflinePendingSummary,
 } from "@/lib/teacher-offline-pending";
+import {
+  recoverTeacherOfflineOperationsToRelay,
+  type TeacherOfflineRelayRecoverySummary,
+} from "@/lib/teacher-offline-relay-recovery";
 
 /* ─────────────────────────────────────────
    Types
@@ -413,6 +417,8 @@ export default function TeacherDashboard() {
   );
   const pending = pendingSummary.total;
   const [syncing, setSyncing] = useState<boolean>(false);
+  const syncingRef = useRef(false);
+  const syncNowRef = useRef<() => Promise<void>>(async () => undefined);
   const [nowTick, setNowTick] = useState<number>(Date.now());
 
 
@@ -559,49 +565,183 @@ export default function TeacherDashboard() {
   }
 
   async function syncNow() {
-    if (syncing) return;
-    if (!(await teacherSessionCloudAvailable())) {
-      setMsg("Hors connexion : synchronisation impossible.");
-      return;
-    }
+    if (syncingRef.current) return;
+    syncingRef.current = true;
     setSyncing(true);
     setMsg(null);
-    try {
-      const result = await flushOutbox();
-      const summary = await refreshPending();
 
-      // refresh open session depuis le serveur (si dispo)
-      try {
-        const os = (await offlineGetJson(
-          "/api/teacher/sessions/open",
-          "teacher:open:afterSync"
-        )) as any;
-        const openServer = (os?.item as OpenSession) || null;
-        const openLocal = (await cacheGet("teacher:local-open").catch(() => null)) as OpenSession | null;
-        const serverAlreadyFinished = openServer && inst.institution_id
-          ? await isTeacherSessionLocallyFinalized(inst.institution_id, openServer.id)
-          : false;
-        const localAlreadyFinished = openLocal && inst.institution_id
-          ? await isTeacherSessionLocallyFinalized(inst.institution_id, openLocal.id)
-          : false;
-        if (serverAlreadyFinished || localAlreadyFinished) {
-          await cacheSet("teacher:local-open", null);
+    let cloudAvailable = false;
+    let cloudResult: Awaited<ReturnType<typeof flushOutbox>> | null = null;
+    let relayRecovery: TeacherOfflineRelayRecoverySummary | null = null;
+
+    try {
+      const cachedOpen = (await cacheGet("teacher:local-open").catch(
+        () => null,
+      )) as OpenSession | null;
+      const relayPolicy = inst.attendance_presence;
+      if (
+        inst.institution_id &&
+        inst.actor_profile_id &&
+        relayPolicy?.relay_local_url &&
+        relayPolicy.relay_access_token
+      ) {
+        relayRecovery = await recoverTeacherOfflineOperationsToRelay({
+          institutionId: inst.institution_id,
+          actorProfileId: inst.actor_profile_id,
+          relayBaseUrl: relayPolicy.relay_local_url,
+          relayAccessToken: relayPolicy.relay_access_token,
+          activeLocalSessionIds: [open?.id, cachedOpen?.id].filter(
+            (value): value is string => Boolean(value),
+          ),
+        });
+
+        const recoveredOpen = relayRecovery.recovered_sessions.find(
+          (candidate) =>
+            candidate.source === "open" &&
+            [open?.id, cachedOpen?.id].includes(
+              `client:${candidate.attempt_key}`,
+            ),
+        );
+        if (recoveredOpen) {
+          const session = recoveredOpen.session;
+          const assignment = teachClasses.find(
+            (candidate) =>
+              candidate.class_id === recoveredOpen.class_id &&
+              (!session.subject_id ||
+                candidate.subject_id === String(session.subject_id)),
+          );
+          const mapped: OpenSession = {
+            id: String(session.id || ""),
+            class_id: recoveredOpen.class_id,
+            class_label:
+              assignment?.class_label ||
+              open?.class_label ||
+              cachedOpen?.class_label ||
+              "Classe",
+            subject_id:
+              String(session.subject_id || assignment?.subject_id || "") ||
+              null,
+            subject_name:
+              assignment?.subject_name ||
+              open?.subject_name ||
+              cachedOpen?.subject_name ||
+              null,
+            period_id: recoveredOpen.period_id,
+            started_at: String(session.started_at || ""),
+            actual_call_at: String(session.actual_call_at || "") || null,
+            scheduled_end_at:
+              String(session.scheduled_end_at || "") || null,
+            grace_expires_at:
+              String(session.grace_expires_at || "") || null,
+            session_state:
+              session.session_state === "finalizing" ||
+              session.session_state === "closed"
+                ? session.session_state
+                : "open",
+            expected_minutes:
+              open?.expected_minutes || cachedOpen?.expected_minutes || null,
+            presence_method: "local_relay",
+            local_relay: true,
+          };
+          if (mapped.id && mapped.started_at) {
+            setOpen(mapped);
+            await cacheSet("teacher:local-open", mapped);
+          }
         }
-        if (openServer && !serverAlreadyFinished) {
-          setOpen(openServer);
-          await cacheSet("teacher:local-open", null);
-        } else if (openLocal?.local_relay) {
-          if (localAlreadyFinished) setOpen(null);
-          else setOpen(openLocal);
-        } else {
-          setOpen(null);
-          await cacheSet("teacher:local-open", null);
+
+        const recoveredTransition = transitionPrompt
+          ? relayRecovery.recovered_sessions.find(
+              (candidate) =>
+                candidate.source === "transition" &&
+                candidate.attempt_key === transitionPrompt.attemptKey,
+            )
+          : null;
+        if (recoveredTransition && transitionPrompt) {
+          const session = recoveredTransition.session;
+          const mapped: OpenSession = {
+            id: String(session.id || ""),
+            class_id: transitionPrompt.classId,
+            class_label: transitionPrompt.classLabel,
+            subject_id:
+              String(
+                session.subject_id || transitionPrompt.subjectId || "",
+              ) || null,
+            subject_name: transitionPrompt.subjectName,
+            period_id: transitionPrompt.periodId,
+            started_at: String(session.started_at || ""),
+            actual_call_at:
+              String(
+                session.actual_call_at || session.requested_start_at || "",
+              ) || null,
+            expected_minutes: transitionPrompt.expectedMinutes,
+            scheduled_end_at:
+              String(session.scheduled_end_at || "") || null,
+            grace_expires_at:
+              String(session.grace_expires_at || "") || null,
+            session_state: "open",
+            presence_method: "local_relay",
+            local_relay: true,
+          };
+          if (mapped.id && mapped.started_at) {
+            setOpen(mapped);
+            await cacheSet("teacher:local-open", mapped);
+            setTransitionPrompt(null);
+            setFinalizationDismissedFor(null);
+          }
         }
-      } catch {
-        /* ignore */
       }
 
-      if (result.authRequired || summary.requires_authentication > 0) {
+      cloudAvailable = await teacherSessionCloudAvailable();
+      setIsOnline(cloudAvailable);
+      if (cloudAvailable) {
+        cloudResult = await flushOutbox();
+      }
+      const summary = await refreshPending();
+
+      // Le serveur Cloud n'est interrogé que lorsqu'il répond réellement. Le
+      // relais LAN reste utilisable même si navigator.onLine vaut false.
+      if (cloudAvailable) {
+        try {
+          const os = (await offlineGetJson(
+            "/api/teacher/sessions/open",
+            "teacher:open:afterSync"
+          )) as any;
+          const openServer = (os?.item as OpenSession) || null;
+          const openLocal = (await cacheGet("teacher:local-open").catch(() => null)) as OpenSession | null;
+          const serverAlreadyFinished = openServer && inst.institution_id
+            ? await isTeacherSessionLocallyFinalized(inst.institution_id, openServer.id)
+            : false;
+          const localAlreadyFinished = openLocal && inst.institution_id
+            ? await isTeacherSessionLocallyFinalized(inst.institution_id, openLocal.id)
+            : false;
+          if (serverAlreadyFinished || localAlreadyFinished) {
+            await cacheSet("teacher:local-open", null);
+          }
+          if (openServer && !serverAlreadyFinished) {
+            setOpen(openServer);
+            await cacheSet("teacher:local-open", null);
+          } else if (openLocal?.local_relay) {
+            if (localAlreadyFinished) setOpen(null);
+            else setOpen(openLocal);
+          } else {
+            setOpen(null);
+            await cacheSet("teacher:local-open", null);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const relaySecuredNow = relayRecovery
+        ? relayRecovery.opens_confirmed +
+          relayRecovery.attendance_secured +
+          relayRecovery.lifecycle_confirmed
+        : 0;
+
+      if (
+        cloudResult?.authRequired ||
+        summary.requires_authentication > 0
+      ) {
         setMsg(
           "Synchronisation suspendue : votre session doit être renouvelée. Les données restent conservées sur cet appareil."
         );
@@ -614,26 +754,51 @@ export default function TeacherDashboard() {
           `${summary.delivery_unknown} action(s) ont une livraison incertaine et doivent être vérifiées avant un nouvel envoi.`
         );
       } else if (summary.device_pending > 0) {
-        setMsg(
-          `Réseau encore instable : ${summary.device_pending} action(s) restent uniquement sur cet appareil.`
-        );
+        if (
+          relayRecovery?.relay_unreachable &&
+          !cloudAvailable
+        ) {
+          setMsg(
+            `Internet et relais indisponibles : ${summary.device_pending} action(s) restent protégées uniquement sur cet appareil. Le relais sera réessayé automatiquement.`
+          );
+        } else if (relayRecovery?.opens_waiting_for_user) {
+          setMsg(
+            `${summary.device_pending} action(s) restent sur cet appareil. Une ouverture de séance non confirmée doit être relancée volontairement par le professeur.`
+          );
+        } else {
+          setMsg(
+            `${summary.device_pending} action(s) restent uniquement sur cet appareil. Le relais local a été essayé avant le Cloud.`
+          );
+        }
       } else if (summary.relay_secured > 0) {
         setMsg(
-          `${summary.relay_secured} action(s) sont sécurisées sur le relais local et attendent leur confirmation Cloud.`
+          relaySecuredNow > 0
+            ? `${relaySecuredNow} action(s) viennent d’être sécurisées sur le relais local. ${summary.relay_secured} action(s) attendent maintenant leur confirmation Cloud.`
+            : `${summary.relay_secured} action(s) sont sécurisées sur le relais local et attendent leur confirmation Cloud.`
+        );
+      } else if (cloudResult?.flushed) {
+        setMsg(
+          `Synchronisation terminée ✅ (${cloudResult.flushed} action(s))`
+        );
+      } else if (!cloudAvailable) {
+        setMsg(
+          "Le Cloud est indisponible, mais le relais local a bien été vérifié. Aucune action compatible ne reste à lui transmettre."
         );
       } else {
-        setMsg(
-          result.flushed > 0
-            ? `Synchronisation terminée ✅ (${result.flushed} action(s))`
-            : "Toutes les données sont déjà synchronisées ✅"
-        );
+        setMsg("Toutes les données sont déjà synchronisées ✅");
       }
     } catch (e: any) {
-      setMsg(e?.message || "Synchronisation échouée");
+      setMsg(
+        e?.message ||
+          "Synchronisation interrompue. Les données restent conservées.",
+      );
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
   }
+
+  syncNowRef.current = syncNow;
 
   useEffect(() => {
     registerServiceWorker();
@@ -645,15 +810,14 @@ export default function TeacherDashboard() {
     const onOnline = () => {
       void teacherSessionCloudAvailable().then((available) => {
         setIsOnline(available);
-        if (available) {
-          void refreshPending();
-          void syncNow();
-        }
+        void refreshPending();
+        void syncNowRef.current();
       });
     };
     const onOffline = () => {
       setIsOnline(false);
       void refreshPending();
+      void syncNowRef.current();
     };
 
     window.addEventListener("online", onOnline);
@@ -771,6 +935,40 @@ export default function TeacherDashboard() {
       zones: [],
     },
   });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const relayPolicy = inst.attendance_presence;
+    if (
+      pendingSummary.device_pending <= 0 ||
+      !inst.institution_id ||
+      !inst.actor_profile_id ||
+      !relayPolicy?.relay_local_url ||
+      !relayPolicy.relay_access_token
+    ) {
+      return;
+    }
+
+    const retryRelay = () => {
+      if (document.visibilityState === "visible") {
+        void syncNowRef.current();
+      }
+    };
+    retryRelay();
+    const interval = window.setInterval(retryRelay, 20_000);
+    document.addEventListener("visibilitychange", retryRelay);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", retryRelay);
+    };
+    // Le relais LAN peut revenir sans événement navigateur « online ».
+  }, [
+    inst.institution_id,
+    inst.actor_profile_id,
+    inst.attendance_presence?.relay_local_url,
+    inst.attendance_presence?.relay_access_token,
+    pendingSummary.device_pending,
+  ]);
+
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
   const [slotLabel, setSlotLabel] = useState<string>(
     "Aucun créneau configuré (fallback automatique)"
