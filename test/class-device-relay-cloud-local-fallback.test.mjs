@@ -104,6 +104,24 @@ test("le téléphone de classe ne demande jamais le GPS et le téléphone person
   assert.match(teacherStart, /verifyAttendancePresence/);
 });
 
+test("le téléphone professeur passe par Cloud + GPS quand le relais est indisponible", async () => {
+  const [readiness, dashboard, policy] = await Promise.all([
+    read("src/lib/offline-readiness.ts"),
+    read("src/components/teacher/TeacherDashboard.tsx"),
+    read("src/lib/offline-schedule-policy.ts"),
+  ]);
+
+  assert.match(policy, /decideTeacherCloudFallbackPolicy/);
+  assert.match(policy, /return "ready_cloud_gps"/);
+  assert.match(readiness, /cloudFallback === "ready_cloud_gps"/);
+  assert.match(readiness, /status: "ready"/);
+  assert.match(readiness, /Le GPS sera vérifié au démarrage de l’appel/);
+  assert.match(dashboard, /const cloudAvailable = await teacherSessionCloudAvailable\(\)/);
+  assert.match(dashboard, /relayPolicy\?\.allow_gps_fallback !== true/);
+  assert.match(dashboard, /const presence = await preparePresenceEvidence\(clientSessionId\)/);
+  assert.match(dashboard, /getFreshGpsEvidence\(policy\.max_gps_accuracy_m\)/);
+});
+
 test("les requêtes critiques ont des timeouts courts, un verrou et un backoff", async () => {
   const offline = await read("src/lib/offline.ts");
 

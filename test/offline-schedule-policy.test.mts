@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideOfflineSchedulePolicy } from "../src/lib/offline-schedule-policy.ts";
+import {
+  decideOfflineSchedulePolicy,
+  decideTeacherCloudFallbackPolicy,
+} from "../src/lib/offline-schedule-policy.ts";
 import { isOfflineScheduleMutation } from "../src/lib/admin-offline-schedule.ts";
 
 const readyBase = {
@@ -54,6 +57,78 @@ test("un relais inaccessible ne peut jamais produire une carte verte", () => {
       relay_status: "unreachable",
     }),
     "relay_unreachable",
+  );
+});
+
+test("le professeur peut utiliser Cloud + GPS quand le relais est inaccessible", () => {
+  assert.equal(
+    decideTeacherCloudFallbackPolicy({
+      phone_prepared: true,
+      phone_revision: 10,
+      cloud_reachable: true,
+      cloud_revision: 10,
+      presence_required: true,
+      gps_fallback_allowed: true,
+      active_gps_zone_count: 1,
+    }),
+    "ready_cloud_gps",
+  );
+});
+
+test("le secours Cloud + GPS refuse un téléphone plus ancien que le Cloud", () => {
+  assert.equal(
+    decideTeacherCloudFallbackPolicy({
+      phone_prepared: true,
+      phone_revision: 9,
+      cloud_reachable: true,
+      cloud_revision: 10,
+      presence_required: true,
+      gps_fallback_allowed: true,
+      active_gps_zone_count: 1,
+    }),
+    "phone_stale",
+  );
+});
+
+test("le secours Cloud reste bloqué si le GPS est interdit ou non configuré", () => {
+  const base = {
+    phone_prepared: true,
+    phone_revision: 10,
+    cloud_reachable: true,
+    cloud_revision: 10,
+    presence_required: true,
+    gps_fallback_allowed: true,
+    active_gps_zone_count: 1,
+  } as const;
+
+  assert.equal(
+    decideTeacherCloudFallbackPolicy({
+      ...base,
+      gps_fallback_allowed: false,
+    }),
+    "gps_fallback_disabled",
+  );
+  assert.equal(
+    decideTeacherCloudFallbackPolicy({
+      ...base,
+      active_gps_zone_count: 0,
+    }),
+    "gps_zones_missing",
+  );
+});
+
+test("si la preuve de présence est désactivée, le Cloud suffit", () => {
+  assert.equal(
+    decideTeacherCloudFallbackPolicy({
+      phone_prepared: true,
+      phone_revision: 10,
+      cloud_reachable: true,
+      cloud_revision: 10,
+      presence_required: false,
+      gps_fallback_allowed: false,
+      active_gps_zone_count: 0,
+    }),
+    "ready_cloud",
   );
 });
 

@@ -56,6 +56,7 @@ import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
 import {
   decideOfflineSchedulePolicy,
+  decideTeacherCloudFallbackPolicy,
   type SchedulePolicyStatus,
 } from "@/lib/offline-schedule-policy";
 import {
@@ -586,27 +587,38 @@ export async function assessTeacherOfflineReadiness(
   const basics: any = await cacheGet("teacher:inst:basics").catch(() => null);
   const institutionId = String(basics?.institution_id || "").trim();
   const relayPolicy = basics?.attendance_presence || {};
-  if (
-    !institutionId ||
-    !relayPolicy?.relay_local_url ||
-    !relayPolicy?.relay_access_token
-  ) {
+  if (!institutionId) {
     return {
       ...base,
       status: "not_prepared",
-      message: "Les données d’accès professeur au relais sont absentes.",
+      message: "L’établissement associé à cette préparation est absent.",
     };
   }
 
-  const [cloud, relay, serviceWorkerRelease] = await Promise.all([
+  const relayConfigured = Boolean(
+    relayPolicy?.allow_local_relay !== false &&
+      String(relayPolicy?.relay_local_url || "").trim() &&
+      String(relayPolicy?.relay_access_token || "").trim(),
+  );
+  const [cloudProbe, relay, serviceWorkerRelease] = await Promise.all([
     probeCloudSchedule(),
-    checkRelayTeacherConnectivity({
-      institutionId,
-      baseUrl: String(relayPolicy.relay_local_url),
-      accessToken: String(relayPolicy.relay_access_token),
-    }),
+    relayConfigured
+      ? checkRelayTeacherConnectivity({
+          institutionId,
+          baseUrl: String(relayPolicy.relay_local_url),
+          accessToken: String(relayPolicy.relay_access_token),
+        })
+      : Promise.resolve<RelayTeacherConnectivityResult>({
+          status: "unreachable",
+          checked_at: new Date().toISOString(),
+        }),
     getActiveOfflineWorkerRelease(),
   ]);
+  const cloud =
+    cloudProbe &&
+    String(cloudProbe.institution_id || "").trim() === institutionId
+      ? cloudProbe
+      : null;
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const relayRevision = safeRevision(relay.snapshot_revision);
   const state = {
@@ -646,17 +658,73 @@ export async function assessTeacherOfflineReadiness(
     initialPolicy === "relay_permission_denied" ||
     initialPolicy === "browser_incompatible"
   ) {
+    const activeGpsZoneCount = Array.isArray(relayPolicy?.zones)
+      ? relayPolicy.zones.filter((zone: any) => zone?.is_active !== false).length
+      : 0;
+    const cloudFallback = decideTeacherCloudFallbackPolicy({
+      phone_prepared: true,
+      phone_revision: base.phone_revision,
+      cloud_reachable: Boolean(cloud),
+      cloud_revision: cloudRevision,
+      presence_required: relayPolicy?.enabled === true,
+      gps_fallback_allowed: relayPolicy?.allow_gps_fallback === true,
+      active_gps_zone_count: activeGpsZoneCount,
+    });
+
+    if (cloudFallback === "ready_cloud" || cloudFallback === "ready_cloud_gps") {
+      return {
+        ...state,
+        status: "ready",
+        message:
+          cloudFallback === "ready_cloud_gps"
+            ? "Relais local indisponible : le Cloud et le téléphone utilisent la même révision. Le GPS sera vérifié au démarrage de l’appel."
+            : "Relais local indisponible : le Cloud et le téléphone utilisent la même révision.",
+      };
+    }
+    if (cloudFallback === "phone_stale") {
+      return {
+        ...state,
+        status: "phone_stale",
+        message:
+          "Le Cloud est plus récent que ce téléphone. Actualisez la préparation avant de commencer l’appel.",
+      };
+    }
+    if (cloudFallback === "sources_diverged") {
+      return {
+        ...state,
+        status: "sources_diverged",
+        message:
+          "La révision de ce téléphone est plus récente que celle du Cloud. Une vérification administrative est nécessaire.",
+      };
+    }
+    if (cloudFallback === "gps_fallback_disabled") {
+      return {
+        ...state,
+        status: initialPolicy,
+        message:
+          "Le relais local est indisponible et le secours GPS n’est pas autorisé pour cet établissement.",
+      };
+    }
+    if (cloudFallback === "gps_zones_missing") {
+      return {
+        ...state,
+        status: "relay_unreachable",
+        message:
+          "Le relais local est indisponible et aucune zone GPS active n’est configurée pour autoriser le secours Cloud.",
+      };
+    }
+
     return {
       ...state,
       status: initialPolicy,
       message:
         initialPolicy === "relay_permission_denied"
-          ? "La permission d’accès au réseau local est refusée."
+          ? "La permission d’accès au réseau local est refusée et le Cloud n’est pas disponible pour le secours GPS."
           : initialPolicy === "browser_incompatible"
-            ? "Ce navigateur ne peut pas contrôler le relais local."
+            ? "Ce navigateur ne peut pas contrôler le relais local et le Cloud n’est pas disponible pour le secours GPS."
             : initialPolicy === "relay_access_denied"
-              ? "Le relais refuse le jeton professeur signé."
-              : "Le relais local est inaccessible.",
+              ? "Le relais refuse le jeton professeur signé et le Cloud n’est pas disponible pour le secours GPS."
+              : "Le relais local et le Cloud sont indisponibles.",
     };
   }
   if (initialPolicy === "relay_incompatible") {

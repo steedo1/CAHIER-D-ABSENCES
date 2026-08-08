@@ -25,6 +25,26 @@ export type SchedulePolicyInput = {
   cloud_revision: number | null;
 };
 
+export type TeacherCloudFallbackPolicyStatus =
+  | "ready_cloud"
+  | "ready_cloud_gps"
+  | "not_prepared"
+  | "cloud_unreachable"
+  | "phone_stale"
+  | "sources_diverged"
+  | "gps_fallback_disabled"
+  | "gps_zones_missing";
+
+export type TeacherCloudFallbackPolicyInput = {
+  phone_prepared: boolean;
+  phone_revision: number | null;
+  cloud_reachable: boolean;
+  cloud_revision: number | null;
+  presence_required: boolean;
+  gps_fallback_allowed: boolean;
+  active_gps_zone_count: number;
+};
+
 export function decideOfflineSchedulePolicy(
   input: SchedulePolicyInput,
 ): SchedulePolicyStatus {
@@ -55,4 +75,36 @@ export function decideOfflineSchedulePolicy(
   }
   if (input.phone_revision > input.relay_revision) return "relay_stale";
   return "ready";
+}
+
+/**
+ * Décide si le téléphone personnel du professeur peut ignorer un relais local
+ * indisponible et ouvrir la séance directement dans le Cloud.
+ *
+ * Ce secours reste strict : le planning préparé doit correspondre exactement à
+ * la révision Cloud et, lorsque la preuve de présence est activée, le GPS doit
+ * être autorisé avec au moins une zone active configurée.
+ */
+export function decideTeacherCloudFallbackPolicy(
+  input: TeacherCloudFallbackPolicyInput,
+): TeacherCloudFallbackPolicyStatus {
+  if (!input.phone_prepared || input.phone_revision === null) {
+    return "not_prepared";
+  }
+  if (!input.cloud_reachable || input.cloud_revision === null) {
+    return "cloud_unreachable";
+  }
+  if (input.phone_revision < input.cloud_revision) return "phone_stale";
+  if (input.phone_revision > input.cloud_revision) {
+    return "sources_diverged";
+  }
+  if (!input.presence_required) return "ready_cloud";
+  if (!input.gps_fallback_allowed) return "gps_fallback_disabled";
+  if (
+    !Number.isFinite(input.active_gps_zone_count) ||
+    input.active_gps_zone_count <= 0
+  ) {
+    return "gps_zones_missing";
+  }
+  return "ready_cloud_gps";
 }
