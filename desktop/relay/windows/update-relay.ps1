@@ -1,4 +1,5 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "release-package-validation.ps1")
 Add-Type -AssemblyName System.Windows.Forms
 
 function Show-Info([string]$Message, [string]$Title = "Mon Cahier Relay") {
@@ -44,6 +45,8 @@ try {
     if ($NodeMajor -lt 20 -or $NodeMajor -gt 26) {
         throw "Version Node.js incompatible : $NodeVersion. Utilisez une version comprise entre 20 et 26."
     }
+
+    Assert-MonCahierRelayReleasePackage $RelayRoot $NodeCommand.Source
 
     $ExistingConfig = Get-Content $ConfigPath -Raw | ConvertFrom-Json
     $Port = if ($ExistingConfig.port) { [int]$ExistingConfig.port } else { 4317 }

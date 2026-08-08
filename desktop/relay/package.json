@@ -1,6 +1,6 @@
 {
   "name": "@moncahier/desktop-relay",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "Relais local SQLite pour Mon Cahier Desktop",
@@ -13,7 +13,8 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "verify": "npm run typecheck && npm test",
     "dev": "tsx src/cli.mts",
-    "start": "node dist/src/cli.mjs"
+    "start": "node dist/src/cli.mjs",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File windows/New-Relay-Package.ps1"
   },
   "dependencies": {
     "better-sqlite3": "12.11.1"
