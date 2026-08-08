@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
+import { Users, Clock, Play, Square, LogOut, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
@@ -60,6 +60,10 @@ import {
   recoverTeacherOfflineOperationsToRelay,
   type TeacherOfflineRelayRecoverySummary,
 } from "@/lib/teacher-offline-relay-recovery";
+import {
+  buildTeacherOfflineStatus,
+  type TeacherConnectivityUiState,
+} from "@/lib/teacher-offline-status";
 
 /* ─────────────────────────────────────────
    Types
@@ -207,17 +211,21 @@ function GhostButton(
 function Chip({
   children,
   tone = "emerald",
+  title,
 }: {
-  children: React.ReactNode;
-  tone?: "emerald" | "slate" | "amber";
+  children?: React.ReactNode;
+  tone?: "emerald" | "slate" | "amber" | "rose";
+  title?: string;
 }) {
   const map = {
     emerald: "bg-emerald-50 text-emerald-800 ring-emerald-200",
     slate: "bg-slate-50 text-slate-800 ring-slate-200",
     amber: "bg-amber-50 text-amber-800 ring-amber-200",
+    rose: "bg-rose-50 text-rose-800 ring-rose-200",
   } as const;
   return (
     <span
+      title={title}
       className={[
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs ring-1",
         map[tone],
@@ -413,6 +421,11 @@ function clientSessionIdFromOpen(open: OpenSession | null) {
 export default function TeacherDashboard() {
   // offline / sync
   const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [cloudUiStatus, setCloudUiStatus] = useState<
+    Exclude<TeacherConnectivityUiState, "unconfigured">
+  >("checking");
+  const [relayUiStatus, setRelayUiStatus] =
+    useState<TeacherConnectivityUiState>("checking");
   const [pendingSummary, setPendingSummary] = useState<TeacherOfflinePendingSummary>(
     emptyTeacherOfflinePendingSummary(),
   );
@@ -583,6 +596,10 @@ export default function TeacherDashboard() {
         () => null,
       )) as OpenSession | null;
       const relayPolicy = inst.attendance_presence;
+      const relayConfigured = Boolean(
+        relayPolicy?.relay_local_url && relayPolicy.relay_access_token,
+      );
+      setRelayUiStatus(relayConfigured ? "checking" : "unconfigured");
       if (
         inst.institution_id &&
         inst.actor_profile_id &&
@@ -600,6 +617,15 @@ export default function TeacherDashboard() {
             ),
           });
         relayRecovery = relayRecoveryResult;
+        const relayAttempts =
+          relayRecoveryResult.opens_retried +
+          relayRecoveryResult.attendance_retried +
+          relayRecoveryResult.lifecycle_retried;
+        if (relayRecoveryResult.relay_unreachable) {
+          setRelayUiStatus("unavailable");
+        } else if (relayAttempts > 0) {
+          setRelayUiStatus("connected");
+        }
 
         const recoveredOpen = relayRecoveryResult.recovered_sessions.find(
           (candidate) =>
@@ -699,6 +725,7 @@ export default function TeacherDashboard() {
 
       cloudAvailable = await teacherSessionCloudAvailable();
       setIsOnline(cloudAvailable);
+      setCloudUiStatus(cloudAvailable ? "connected" : "unavailable");
       if (cloudAvailable) {
         if (inst.institution_id) {
           cloudReconciliation =
@@ -802,7 +829,11 @@ export default function TeacherDashboard() {
         );
       } else if (!cloudAvailable) {
         setMsg(
-          "Le Cloud est indisponible, mais le relais local a bien été vérifié. Aucune action compatible ne reste à lui transmettre."
+          !relayConfigured
+            ? "Le Cloud est indisponible et aucun relais local n’est configuré. Aucune opération n’est actuellement en attente."
+            : relayRecovery?.relay_unreachable
+              ? "Le Cloud et le relais local sont indisponibles. Aucune opération n’est actuellement en attente."
+              : "Le Cloud est indisponible. Le relais local a été vérifié et aucune opération compatible ne reste à lui transmettre."
         );
       } else {
         setMsg("Toutes les données sont déjà synchronisées ✅");
@@ -823,19 +854,26 @@ export default function TeacherDashboard() {
   useEffect(() => {
     registerServiceWorker();
 
-    void teacherSessionCloudAvailable().then(setIsOnline);
+    setCloudUiStatus("checking");
+    void teacherSessionCloudAvailable().then((available) => {
+      setIsOnline(available);
+      setCloudUiStatus(available ? "connected" : "unavailable");
+    });
 
     void refreshPending();
 
     const onOnline = () => {
+      setCloudUiStatus("checking");
       void teacherSessionCloudAvailable().then((available) => {
         setIsOnline(available);
+        setCloudUiStatus(available ? "connected" : "unavailable");
         void refreshPending();
         void syncNowRef.current();
       });
     };
     const onOffline = () => {
       setIsOnline(false);
+      setCloudUiStatus("unavailable");
       void refreshPending();
       void syncNowRef.current();
     };
@@ -955,6 +993,18 @@ export default function TeacherDashboard() {
       zones: [],
     },
   });
+  useEffect(() => {
+    const relayPolicy = inst.attendance_presence;
+    setRelayUiStatus(
+      relayPolicy?.relay_local_url && relayPolicy.relay_access_token
+        ? "checking"
+        : "unconfigured",
+    );
+  }, [
+    inst.attendance_presence?.relay_local_url,
+    inst.attendance_presence?.relay_access_token,
+  ]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const relayPolicy = inst.attendance_presence;
@@ -1802,6 +1852,7 @@ export default function TeacherDashboard() {
         inst.institution_id &&
         activeConfiguredSlot.id
       ) {
+        setRelayUiStatus("checking");
         setMsg("Vérification en temps réel du relais et du créneau…");
         liveRelayCheck = await checkRelayTeacherConnectivity({
           institutionId: inst.institution_id,
@@ -1814,6 +1865,9 @@ export default function TeacherDashboard() {
             end_time: activeConfiguredSlot.end_time,
           },
         });
+        setRelayUiStatus(
+          liveRelayCheck.status === "reachable" ? "connected" : "unavailable",
+        );
         if (liveRelayCheck.status === "reachable" && liveRelayCheck.relay_time) {
           const relayTime = Date.parse(liveRelayCheck.relay_time);
           if (Number.isFinite(relayTime)) relayClockOffsetMsRef.current = relayTime - Date.now();
@@ -1829,6 +1883,8 @@ export default function TeacherDashboard() {
       }
 
       const cloudAvailable = await teacherSessionCloudAvailable();
+      setIsOnline(cloudAvailable);
+      setCloudUiStatus(cloudAvailable ? "connected" : "unavailable");
       if (
         liveRelayCheck &&
         liveRelayCheck.status !== "reachable" &&
@@ -2474,6 +2530,25 @@ export default function TeacherDashboard() {
     }
   }
 
+  const offlineStatus = useMemo(
+    () =>
+      buildTeacherOfflineStatus({
+        cloud: cloudUiStatus,
+        relay: relayUiStatus,
+        pending: pendingSummary,
+        syncing,
+      }),
+    [cloudUiStatus, pendingSummary, relayUiStatus, syncing],
+  );
+  const statusMessageClasses =
+    pendingSummary.blocked > 0
+      ? "border-rose-200 bg-rose-50 text-rose-900"
+      : pendingSummary.at_risk > 0
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : pendingSummary.relay_secured > 0
+          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+          : "border-slate-200 bg-slate-50 text-slate-800";
+
   /* Barre d’actions collante (mobile) */
   const showSticky = true;
   const mobileBar = showSticky ? (
@@ -2611,29 +2686,49 @@ export default function TeacherDashboard() {
             </p>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Chip tone={isOnline ? "emerald" : "amber"}>{isOnline ? "En ligne" : "Hors ligne"}</Chip>
+              <Chip
+                tone={offlineStatus.cloud.tone}
+                title={offlineStatus.cloud.description}
+              >
+                {offlineStatus.cloud.label}
+              </Chip>
+              <Chip
+                tone={offlineStatus.relay.tone}
+                title={offlineStatus.relay.description}
+              >
+                {offlineStatus.relay.label}
+              </Chip>
+              <Chip
+                tone={offlineStatus.data.tone}
+                title={offlineStatus.data.description}
+              >
+                {offlineStatus.data.label}
+              </Chip>
               {inst.attendance_presence?.enabled && (
-                <Chip tone="emerald">Appel protégé par périmètre</Chip>
+                <Chip tone="emerald">Présence protégée</Chip>
               )}
-              {pending > 0 && <Chip tone="amber">{pending} en attente</Chip>}
               <GhostButton
                 tone="emerald"
                 onClick={syncNow}
-                disabled={!isOnline || syncing || pending === 0}
+                disabled={!offlineStatus.sync.enabled}
                 className="bg-white/90"
-                aria-label="Synchroniser"
-                title={!isOnline ? "Revenez en ligne pour synchroniser" : undefined}
+                aria-label={
+                  pending > 0
+                    ? `Synchroniser ${pending} action(s)`
+                    : "Synchroniser les données"
+                }
+                title={offlineStatus.sync.title}
               >
-                <RefreshCcw className="h-4 w-4" />
-                {syncing ? "Sync…" : "Sync"}
+                <RefreshCcw className={[
+                  "h-4 w-4",
+                  syncing ? "animate-spin" : "",
+                ].join(" ")} />
+                {offlineStatus.sync.label}
               </GhostButton>
-              {!isOnline && (
-                <span className="inline-flex items-center gap-1 text-xs text-amber-200/90">
-                  <WifiOff className="h-3.5 w-3.5" />
-                  Mode offline actif
-                </span>
-              )}
             </div>
+            <p className="mt-2 max-w-2xl text-xs text-indigo-100/85">
+              {offlineStatus.data.description}
+            </p>
           </div>
 
           {/* Bouton déconnexion */}
@@ -2824,7 +2919,13 @@ export default function TeacherDashboard() {
           </div>
         )}
         {msg && (
-          <div className="text-sm text-slate-700" aria-live="polite">
+          <div
+            className={[
+              "rounded-xl border px-3 py-2 text-sm font-medium",
+              statusMessageClasses,
+            ].join(" ")}
+            aria-live="polite"
+          >
             {msg}
           </div>
         )}
