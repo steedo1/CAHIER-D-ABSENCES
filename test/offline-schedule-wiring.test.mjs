@@ -101,19 +101,20 @@ test("le service worker couvre les trois navigations professeur", async () => {
   assert.match(worker, /Ressource essentielle indisponible/);
   assert.match(worker, /Ressource essentielle absente du cache/);
   assert.match(worker, /verified/);
-  assert.match(worker, /2026-08-08-offline-field-fix-v2/);
-  assert.match(release, /2026-08-08-offline-field-fix-v2/);
+  assert.match(worker, /2026-08-08-attendance-core-v1/);
+  assert.match(release, /2026-08-08-attendance-core-v1/);
   assert.match(offline, /getActiveOfflineWorkerRelease/);
   assert.match(readiness, /serviceWorkerRelease/);
 });
 
 
 test("le planning autoritaire est centralisé et conservé atomiquement sans régression", async () => {
-  const [device, readiness, page, card] = await Promise.all([
+  const [device, readiness, page, card, coordinator] = await Promise.all([
     read("src/lib/offlineClassDevice.ts"),
     read("src/lib/offline-readiness.ts"),
     read("src/app/class/page.tsx"),
     read("src/components/OfflineReadinessCard.tsx"),
+    read("src/lib/offline-preparation-coordinator.ts"),
   ]);
 
   assert.match(device, /resolveClassDeviceScheduleAuthority/);
@@ -124,5 +125,8 @@ test("le planning autoritaire est centralisé et conservé atomiquement sans ré
   assert.match(readiness, /persistClassDeviceBundle\(observed, authority\.schedule\)/);
   assert.match(readiness, /projectClassDeviceScheduleCaches\(authority\.schedule/);
   assert.match(page, /resolveAuthoritativeClassDeviceSchedule/);
-  assert.match(card, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(card, /subscribeOfflinePreparation/);
+  assert.doesNotMatch(card, /resolveAuthoritativeClassDeviceSchedule/);
+  assert.match(coordinator, /classDeviceContexts/);
+  assert.match(coordinator, /runCoordinatedOfflinePreparation/);
 });

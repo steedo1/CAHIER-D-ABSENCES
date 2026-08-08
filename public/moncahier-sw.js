@@ -1,9 +1,11 @@
 /* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-08-08-offline-field-fix-v2";
+const VERSION = "2026-08-08-attendance-core-v1";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
+const WARM_FETCH_TIMEOUT_MS = 12_000;
+const warmOperations = new Map();
 const OFFLINE_PAGE_PATHS = new Set([
   "/login",
   "/choose-book",
@@ -91,7 +93,7 @@ async function assetResponse(request) {
   const cached = await cache.match(request);
   if (cached) return cached;
 
-  const response = await fetch(request);
+  const response = await fetchWithTimeout(request);
   if (isCacheable(response)) await cache.put(request, response.clone());
   return response;
 }
@@ -123,7 +125,25 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-async function warmDocument(rawUrl) {
+async function warmFetch(request, signal) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new Error("Téléchargement hors ligne trop long.")),
+    WARM_FETCH_TIMEOUT_MS,
+  );
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
+async function warmDocument(rawUrl, signal) {
+  if (signal?.aborted) throw signal.reason || new Error("Préparation annulée.");
   const url = new URL(rawUrl, self.location.origin);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   if (!isOfflinePagePath(url.pathname)) {
@@ -135,7 +155,7 @@ async function warmDocument(rawUrl) {
     credentials: "include",
     cache: "reload",
   });
-  const response = await fetch(request);
+  const response = await warmFetch(request, signal);
   if (!isCacheable(response)) {
     throw new Error(`HTTP ${response.status} pour ${url.pathname}`);
   }
@@ -171,15 +191,16 @@ async function warmDocument(rawUrl) {
   const assetCache = await caches.open(ASSET_CACHE);
   await Promise.all(
     Array.from(assets).map(async (assetUrl) => {
+      if (signal?.aborted) throw signal.reason || new Error("Préparation annulée.");
       const assetRequest = new Request(assetUrl, { credentials: "include" });
-      const assetResponseValue = await fetch(assetRequest);
+      const assetResponseValue = await warmFetch(assetRequest, signal);
       if (!isCacheable(assetResponseValue)) {
         throw new Error(
           `Ressource essentielle indisponible (${assetResponseValue.status}) : ${new URL(assetUrl).pathname}`,
         );
       }
       await assetCache.put(assetRequest, assetResponseValue.clone());
-    })
+    }),
   );
 
   if (!(await shell.match(request))) {
@@ -247,20 +268,34 @@ self.addEventListener("message", (event) => {
     return;
   }
 
+  if (event.data?.type === "MON_CAHIER_CANCEL_WARM_SHELL") {
+    const operationId = String(event.data.operationId || "");
+    warmOperations.get(operationId)?.abort(new Error("Préparation annulée."));
+    warmOperations.delete(operationId);
+    return;
+  }
+
   if (event.data?.type !== "MON_CAHIER_WARM_SHELL") return;
   const port = event.ports?.[0];
   const urls = Array.isArray(event.data.urls) ? event.data.urls : [];
+  const operationId = String(event.data.operationId || crypto.randomUUID());
+  const controller = new AbortController();
+  warmOperations.set(operationId, controller);
 
   event.waitUntil(
     (async () => {
       try {
         const verified = [];
-        for (const url of urls) verified.push(await warmDocument(url));
+        for (const url of urls) {
+          verified.push(await warmDocument(url, controller.signal));
+        }
         port?.postMessage({ ok: true, verified });
       } catch (error) {
         port?.postMessage({ ok: false, error: String(error?.message || error) });
+      } finally {
+        warmOperations.delete(operationId);
       }
-    })()
+    })(),
   );
 });
 

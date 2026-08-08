@@ -4,4 +4,4 @@ export const MON_CAHIER_WEB_RELEASE =
   "development";
 
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-08-08-offline-field-fix-v2";
+  "2026-08-08-attendance-core-v1";

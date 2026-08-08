@@ -3,36 +3,12 @@
 import {
   cacheGet,
   cacheSet,
-  getActiveOfflineWorkerRelease,
   MON_CAHIER_SERVICE_WORKER_RELEASE,
-  warmOfflineShell,
 } from "@/lib/offline";
 import {
-  gradesClassesKey,
-  gradesComponentsKey,
-  gradesEvaluationsKey,
-  gradesLockKey,
-  gradesPeriodsKey,
-  gradesRosterKey,
-  gradesScoresKey,
-  gradesSettingsKey,
-  type GradesOfflineRole,
-} from "@/lib/offline-grades";
-import {
-  TEXTBOOK_BOOTSTRAP_KEY,
-  textbookSlotsKey,
-} from "@/lib/offline-textbook";
-import {
-  getAdminBulletin,
-  getAdminBulletinClasses,
-  getAdminBulletinConduct,
-  getAdminBulletinPeriods,
-  getAdminBulletinSettings,
-} from "@/lib/offline-bulletins";
-import {
-  getCommunicationHistory,
-  getCommunicationMeta,
-} from "@/lib/offline-communication";
+  getPreparationWorkerRelease,
+  warmAttendanceOfflineShell,
+} from "@/lib/offline-preparation-service-worker";
 import {
   getParentBulletins,
   getParentChildren,
@@ -46,11 +22,9 @@ import {
 } from "@/lib/offline-parent";
 import {
   checkRelayTeacherConnectivity,
-  fetchAdminAttendanceMonitor,
-  fetchInstitutionSettings,
   fetchRelayTeacherOfflineSchedule,
+  fetchAdminAttendanceMonitor,
   LocalRelayHttpError,
-  syncRelayBootstrap,
   type RelayCapabilities,
   type RelayTeacherConnectivityResult,
   type RelayTeacherOfflineSchedule,
@@ -121,10 +95,17 @@ export type OfflineReadiness = {
   checked_at?: string | null;
   class_device_compatibility?: ClassDeviceReadinessStatus;
   storage_protection?: OfflineStorageProtection;
+  attendance_core_ready?: boolean;
+  queues_ready?: boolean;
+  open_session_ready?: boolean;
+  identity_ready?: boolean;
+  preparation_scope?: "attendance-core" | "legacy";
+  actor_profile_id?: string | null;
 };
 
 export type TeacherScheduleCompatibilityStatus =
-  Exclude<SchedulePolicyStatus, "refresh_from_relay">;
+  | Exclude<SchedulePolicyStatus, "refresh_from_relay">
+  | "ready_local";
 
 export type TeacherScheduleAssessment = {
   status: TeacherScheduleCompatibilityStatus;
@@ -186,21 +167,6 @@ type GradeClass = {
   subject_name?: string | null;
 };
 
-type GradePeriod = {
-  id?: string | null;
-};
-
-type GradeEvaluation = {
-  id?: string | null;
-};
-
-type TextbookBootstrap = {
-  items?: Array<{
-    id?: string | null;
-    class_id?: string | null;
-  }>;
-};
-
 const READINESS_PREFIX = "offline:readiness:";
 
 function readinessKey(role: OfflineRole) {
@@ -223,12 +189,13 @@ function responseMessage(payload: any, status: number) {
   return String(payload?.message || payload?.error || `HTTP ${status}`);
 }
 
-async function fetchFreshJson<T = any>(url: string): Promise<T> {
+async function fetchFreshJson<T = any>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
     method: "GET",
     credentials: "include",
     cache: "no-store",
     headers: { Accept: "application/json" },
+    signal,
   });
 
   let payload: any = null;
@@ -242,30 +209,14 @@ async function fetchFreshJson<T = any>(url: string): Promise<T> {
   return payload as T;
 }
 
-async function fetchAndCache<T = any>(url: string, key: string): Promise<T> {
-  const payload = await fetchFreshJson<T>(url);
+async function fetchAndCache<T = any>(
+  url: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  const payload = await fetchFreshJson<T>(url, signal);
   await cacheSet(key, payload);
   return payload;
-}
-
-async function fetchFirstAndCache<T = any>(
-  candidates: Array<{ url: string; key: string }>,
-  validator?: (payload: T) => boolean
-): Promise<T> {
-  let lastError: unknown = null;
-  for (const candidate of candidates) {
-    try {
-      const payload = await fetchFreshJson<T>(candidate.url);
-      if (validator && !validator(payload)) {
-        throw new Error("Aucun créneau administratif n’est disponible.");
-      }
-      await cacheSet(candidate.key, payload);
-      return payload;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Données de l’établissement indisponibles.");
 }
 
 async function mapLimit<T>(
@@ -287,201 +238,6 @@ function uniqueIds(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
-function uniqueGradeClasses(values: GradeClass[]): GradeClass[] {
-  const map = new Map<string, GradeClass>();
-  for (const item of values) {
-    const classId = String(item?.class_id || "").trim();
-    if (!classId) continue;
-    const subjectId = String(item?.subject_id || "").trim() || null;
-    map.set(`${classId}|${subjectId || ""}`, {
-      ...item,
-      class_id: classId,
-      subject_id: subjectId,
-    });
-  }
-  return Array.from(map.values());
-}
-
-async function prepareGrades(
-  role: GradesOfflineRole,
-  onProgress: ProgressCallback
-): Promise<{ classIds: string[]; studentIds: Set<string>; evaluationCount: number }> {
-  onProgress("Téléchargement des classes du cahier de notes…");
-  const classPayload: any = await fetchAndCache(
-    "/api/grades/classes",
-    gradesClassesKey(role)
-  );
-  const gradeClasses = uniqueGradeClasses(
-    Array.isArray(classPayload?.items) ? classPayload.items : []
-  );
-  const classIds = uniqueIds(gradeClasses.map((item) => item.class_id));
-
-  const settingsCandidates = [
-    "/api/teacher/institution/settings",
-    "/api/institution/settings",
-    "/api/admin/institution/settings",
-  ].map((url) => ({ url, key: gradesSettingsKey(role, url) }));
-  try {
-    await fetchFirstAndCache(settingsCandidates);
-  } catch {
-    // Le nom de l'établissement est décoratif ; les notes restent préparables.
-  }
-
-  onProgress("Téléchargement des périodes de notes par classe…");
-  const periodIdSet = new Set<string>();
-
-  if (classIds.length > 0) {
-    await mapLimit(classIds, 4, async (classId, index) => {
-      onProgress(`Notes : périodes ${index + 1}/${classIds.length}…`);
-      const params = new URLSearchParams({ class_id: classId });
-      const suffix = `?${params.toString()}`;
-      const periodPayload: any = await fetchFirstAndCache(
-        [
-          `/api/admin/institution/grading-periods${suffix}`,
-          `/api/institution/grading-periods${suffix}`,
-          `/api/teacher/institution/grading-periods${suffix}`,
-        ].map((url) => ({ url, key: gradesPeriodsKey(role, classId) })),
-        (payload: any) => Array.isArray(payload?.items),
-      );
-
-      for (const period of Array.isArray(periodPayload?.items)
-        ? periodPayload.items
-        : []) {
-        const id = String((period as GradePeriod)?.id || "").trim();
-        if (id) periodIdSet.add(id);
-      }
-    });
-  } else {
-    const periodPayload: any = await fetchFirstAndCache(
-      [
-        "/api/admin/institution/grading-periods",
-        "/api/institution/grading-periods",
-        "/api/teacher/institution/grading-periods",
-      ].map((url) => ({ url, key: gradesPeriodsKey(role) })),
-      (payload: any) => Array.isArray(payload?.items),
-    );
-    for (const period of Array.isArray(periodPayload?.items)
-      ? periodPayload.items
-      : []) {
-      const id = String((period as GradePeriod)?.id || "").trim();
-      if (id) periodIdSet.add(id);
-    }
-  }
-
-  const periodIds = Array.from(periodIdSet);
-  const periodVariants: Array<string | null> = periodIds.length ? periodIds : [null];
-  const studentIds = new Set<string>();
-
-  onProgress(`Notes : téléchargement de ${classIds.length} liste(s) d’élèves…`);
-  await mapLimit(classIds, 4, async (classId, index) => {
-    onProgress(`Notes : liste d’élèves ${index + 1}/${classIds.length}…`);
-    const rosterUrl =
-      role === "teacher"
-        ? `/api/teacher/roster?class_id=${encodeURIComponent(classId)}`
-        : `/api/grades/roster?class_id=${encodeURIComponent(classId)}`;
-    const roster: any = await fetchAndCache(rosterUrl, gradesRosterKey(role, classId));
-    for (const student of Array.isArray(roster?.items) ? roster.items : []) {
-      const id = String(student?.id || "").trim();
-      if (id) studentIds.add(id);
-    }
-  });
-
-  const componentPairs = gradeClasses.filter(
-    (item) => item.class_id && item.subject_id
-  );
-  await mapLimit(componentPairs, 4, async (item) => {
-    const classId = String(item.class_id);
-    const subjectId = String(item.subject_id);
-    const params = new URLSearchParams({ class_id: classId, subject_id: subjectId });
-    await fetchAndCache(
-      `/api/teacher/grades/components?${params.toString()}`,
-      gradesComponentsKey(role, classId, subjectId)
-    );
-  });
-
-  const evaluationTasks = gradeClasses.flatMap((item) =>
-    periodVariants.map((periodId) => ({ item, periodId }))
-  );
-  const evaluations = new Map<string, GradeEvaluation>();
-
-  onProgress(
-    `Téléchargement de ${evaluationTasks.length} ensemble(s) d’évaluations…`
-  );
-  await mapLimit(evaluationTasks, 4, async ({ item, periodId }, index) => {
-    if (index === 0 || (index + 1) % 5 === 0 || index + 1 === evaluationTasks.length) {
-      onProgress(`Évaluations ${index + 1}/${evaluationTasks.length}…`);
-    }
-
-    const classId = String(item.class_id || "");
-    const subjectId = String(item.subject_id || "").trim() || null;
-    const params = new URLSearchParams({ class_id: classId });
-    if (subjectId) params.set("subject_id", subjectId);
-    if (periodId) params.set("grading_period_id", periodId);
-    const endpoint =
-      role === "teacher"
-        ? `/api/teacher/grades/evaluations?${params.toString()}`
-        : `/api/grades/evaluations?${params.toString()}`;
-    const payload: any = await fetchAndCache(
-      endpoint,
-      gradesEvaluationsKey(role, classId, subjectId, periodId)
-    );
-
-    for (const evaluation of Array.isArray(payload?.items) ? payload.items : []) {
-      const id = String(evaluation?.id || "").trim();
-      if (id) evaluations.set(id, evaluation);
-    }
-  });
-
-  const evaluationList = Array.from(evaluations.values());
-  onProgress(`Téléchargement des notes de ${evaluationList.length} évaluation(s)…`);
-  await mapLimit(evaluationList, 4, async (evaluation, index) => {
-    const evaluationId = String(evaluation.id || "");
-    if (index === 0 || (index + 1) % 10 === 0 || index + 1 === evaluationList.length) {
-      onProgress(`Notes ${index + 1}/${evaluationList.length}…`);
-    }
-    const scoresUrl =
-      role === "teacher"
-        ? `/api/teacher/grades/scores?evaluation_id=${encodeURIComponent(evaluationId)}`
-        : `/api/grades/scores?evaluation_id=${encodeURIComponent(evaluationId)}`;
-    await fetchAndCache(scoresUrl, gradesScoresKey(role, evaluationId));
-
-    const lockUrl =
-      role === "teacher"
-        ? `/api/teacher/grades/locks?evaluation_id=${encodeURIComponent(evaluationId)}`
-        : `/api/grades/locks?evaluation_id=${encodeURIComponent(evaluationId)}`;
-    try {
-      await fetchAndCache(lockUrl, gradesLockKey(role, evaluationId));
-    } catch {
-      // Certaines installations n'activent pas encore le verrouillage par PIN.
-    }
-  });
-
-  return { classIds, studentIds, evaluationCount: evaluationList.length };
-}
-
-async function prepareTextbook(
-  onProgress: ProgressCallback,
-): Promise<{ classIds: string[]; assignmentCount: number }> {
-  onProgress("Téléchargement du cahier de texte…");
-  const bootstrap = await fetchAndCache<TextbookBootstrap>(
-    "/api/teacher/textbook/bootstrap",
-    TEXTBOOK_BOOTSTRAP_KEY,
-  );
-  const assignments = Array.isArray(bootstrap?.items) ? bootstrap.items : [];
-  const classIds = uniqueIds(assignments.map((item) => item?.class_id));
-
-  onProgress(`Cahier de texte : téléchargement de ${classIds.length} grille(s) horaire(s)…`);
-  await mapLimit(classIds, 4, async (classId, index) => {
-    onProgress(`Cahier de texte : créneaux ${index + 1}/${classIds.length}…`);
-    await fetchAndCache(
-      `/api/institution/slots?class_id=${encodeURIComponent(classId)}`,
-      textbookSlotsKey(classId),
-    );
-  });
-
-  return { classIds, assignmentCount: assignments.length };
-}
-
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
   if (role === "class-device") {
     const bundle = await cacheGet<
@@ -499,6 +255,32 @@ export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineRea
   return (value?.version === 4 || value?.version === 5) && value.role === role
     ? value
     : null;
+}
+
+async function checkRelayWithin(
+  input: Parameters<typeof checkRelayTeacherConnectivity>[0],
+  signal?: AbortSignal,
+  timeoutMs = 4_000,
+): Promise<RelayTeacherConnectivityResult> {
+  if (signal?.aborted) {
+    throw signal.reason || new Error("Préparation annulée.");
+  }
+  const checkedAt = new Date().toISOString();
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  const timeout = new Promise<RelayTeacherConnectivityResult>((resolve) => {
+    timer = globalThis.setTimeout(
+      () => resolve({ status: "unreachable", checked_at: checkedAt }),
+      Math.max(1, timeoutMs),
+    );
+  });
+  try {
+    return await Promise.race([
+      checkRelayTeacherConnectivity(input),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== null) globalThis.clearTimeout(timer);
+  }
 }
 
 function completeRelayCapabilities(capabilities?: RelayCapabilities) {
@@ -621,7 +403,7 @@ export async function assessTeacherOfflineReadiness(
           status: "unreachable",
           checked_at: new Date().toISOString(),
         }),
-    getActiveOfflineWorkerRelease(),
+    getPreparationWorkerRelease(),
   ]);
   const cloud =
     cloudProbe &&
@@ -1160,7 +942,7 @@ export async function assessClassDeviceOfflineReadiness(
   const expectedScope = { institutionId, classId, actorProfileId };
   const [cloud, activeServiceWorkerRelease] = await Promise.all([
     probeCloudSchedule(),
-    getActiveOfflineWorkerRelease(),
+    getPreparationWorkerRelease(),
   ]);
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const bundleValidation = validateClassDeviceScheduleScope(
@@ -1454,14 +1236,26 @@ export async function resolveAuthoritativeClassDeviceSchedule(
   };
 }
 
-async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
-  onProgress("Téléchargement de l’emploi du temps…");
+async function prepareTeacher(
+  onProgress: ProgressCallback,
+  signal?: AbortSignal,
+): Promise<OfflineReadiness> {
+  onProgress("Téléchargement du noyau d’appel professeur…");
   const bootstrap = await fetchAndCache<TeacherBootstrap>(
     "/api/teacher/offline/bootstrap",
-    "teacher:offline:bootstrap"
+    "teacher:offline:bootstrap",
+    signal,
   );
-
+  const scheduleRevision = safeRevision(bootstrap?.schedule_revision);
   const slots = Array.isArray(bootstrap?.slots) ? bootstrap.slots : [];
+  if (
+    bootstrap?.snapshot_completeness !== "complete" ||
+    scheduleRevision === null ||
+    !String(bootstrap?.institution_id || "").trim()
+  ) {
+    throw new Error("Le planning professeur reçu du Cloud est incomplet.");
+  }
+
   for (const slot of slots) {
     if (!slot?.key) continue;
     const items = Array.isArray(slot.items) ? slot.items : [];
@@ -1472,42 +1266,57 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     });
   }
 
-  onProgress("Téléchargement des paramètres de l’établissement…");
-  const basics: any = await fetchFirstAndCache(
-    [{ url: "/api/teacher/institution/basics", key: "teacher:inst:basics" }],
-    (payload: any) => Array.isArray(payload?.periods) && payload.periods.length > 0
-  );
-
-  onProgress("Vérification du relais local depuis l’application…");
-  const relayPolicy = basics?.attendance_presence || {};
-  const relayConnectivity = await checkRelayTeacherConnectivity({
-    institutionId: String(basics?.institution_id || ""),
-    baseUrl: String(relayPolicy?.relay_local_url || ""),
-    accessToken: String(relayPolicy?.relay_access_token || ""),
-  });
-
-  // Réglages de conduite : utiles pour les sanctions, mais optionnels si l’établissement
-  // utilise encore les valeurs par défaut.
-  try {
-    await fetchFirstAndCache([
-      { url: "/api/teacher/conduct/settings", key: "teacher:conduct:teacher" },
-      { url: "/api/institution/conduct/settings", key: "teacher:conduct:institution" },
-    ]);
-  } catch {
-    // Les maxima par défaut du tableau de bord restent utilisables.
+  onProgress("Vérification de l’identité et de l’établissement…");
+  const [identity, basics] = await Promise.all([
+    fetchAndCache<any>("/api/auth/role", "teacher:offline:identity", signal),
+    fetchAndCache<any>(
+      "/api/teacher/institution/basics",
+      "teacher:inst:basics",
+      signal,
+    ),
+  ]);
+  const institutionId = String(bootstrap.institution_id || "").trim();
+  const actorProfileId = String(identity?.user_id || "").trim();
+  if (
+    !actorProfileId ||
+    String(identity?.institution_id || "").trim() !== institutionId ||
+    String(basics?.institution_id || "").trim() !== institutionId
+  ) {
+    throw new Error("L’identité locale ne correspond pas au planning professeur.");
   }
 
+  const relayPolicy = basics?.attendance_presence || {};
+  const relayConfigured = Boolean(
+    relayPolicy?.allow_local_relay !== false &&
+      String(relayPolicy?.relay_local_url || "").trim() &&
+      String(relayPolicy?.relay_access_token || "").trim(),
+  );
+  const relayConnectivityPromise: Promise<RelayTeacherConnectivityResult> = relayConfigured
+    ? checkRelayWithin(
+        {
+          institutionId,
+          baseUrl: String(relayPolicy.relay_local_url),
+          accessToken: String(relayPolicy.relay_access_token),
+        },
+        signal,
+      )
+    : Promise.resolve({
+        status: "unreachable",
+        checked_at: new Date().toISOString(),
+      } satisfies RelayTeacherConnectivityResult);
+
   const classIds = uniqueIds(
-    slots.flatMap((slot) => (slot.items || []).map((item) => item.class_id || null))
+    slots.flatMap((slot) => (slot.items || []).map((item) => item.class_id || null)),
   );
   const studentIds = new Set<string>();
-
   onProgress(`Téléchargement de ${classIds.length} liste(s) d’élèves…`);
   await mapLimit(classIds, 4, async (classId, index) => {
-    onProgress(`Liste d’élèves ${index + 1}/${classIds.length}…`);
+    if (signal?.aborted) throw signal.reason || new Error("Préparation annulée.");
+    onProgress(`Listes d’élèves ${index + 1}/${classIds.length}…`);
     const roster: any = await fetchAndCache(
       `/api/teacher/roster?class_id=${encodeURIComponent(classId)}`,
-      `teacher:roster:${classId}`
+      `teacher:roster:${classId}`,
+      signal,
     );
     for (const student of Array.isArray(roster?.items) ? roster.items : []) {
       const id = String(student?.id || "").trim();
@@ -1515,85 +1324,86 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     }
   });
 
-  const preparedGrades = await prepareGrades("teacher", onProgress);
-  for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
-  const preparedTextbook = await prepareTextbook(onProgress);
+  onProgress("Vérification de la séance professeur ouverte…");
+  await fetchAndCache(
+    "/api/teacher/sessions/open",
+    "teacher:open-session",
+    signal,
+  );
 
-  onProgress("Préparation de l’application…");
-  await warmOfflineShell([
-    "/login",
-    "/choose-book",
-    "/attendance",
-    "/grades",
-    "/enseignant/cahier-de-texte",
-  ]);
-  rememberOfflineBookDestinations({
-    attendance: "/attendance",
-    grades: "/grades",
-  });
-  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
+  onProgress("Préparation du seul écran d’appel…");
+  await warmAttendanceOfflineShell(["/login", "/attendance"], { signal });
+  rememberOfflineBookDestinations({ attendance: "/attendance", grades: "/grades" });
+  const activeServiceWorkerRelease = await getPreparationWorkerRelease(signal);
   if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
     throw new Error(
-      "Le nouveau service hors ligne n’est pas encore actif. Rechargez la page puis relancez la préparation.",
+      "Le service hors ligne actif ne correspond pas à cette version de l’application.",
     );
   }
+  const relayConnectivity = await relayConnectivityPromise;
+
+  const relayRevision = safeRevision(relayConnectivity.snapshot_revision);
+  const relayReady =
+    relayConnectivity.status === "reachable" &&
+    relayConnectivity.teacher_attendance_writes_enabled === true &&
+    completeRelayCapabilities(relayConnectivity.capabilities) &&
+    relayRevision === scheduleRevision;
 
   return {
     version: 5,
     role: "teacher",
     prepared_at: new Date().toISOString(),
-    class_count: uniqueIds([
-      ...classIds,
-      ...preparedGrades.classIds,
-      ...preparedTextbook.classIds,
-    ]).length,
+    checked_at: new Date().toISOString(),
+    class_count: classIds.length,
     student_count: studentIds.size,
     slot_count: slots.length,
-    evaluation_count: preparedGrades.evaluationCount,
-    textbook_assignment_count: preparedTextbook.assignmentCount,
+    evaluation_count: 0,
+    textbook_assignment_count: 0,
     bulletin_count: 0,
     parent_child_count: 0,
-    grades_ready: true,
-    textbook_ready: true,
+    grades_ready: false,
+    textbook_ready: false,
     consultation_ready: false,
     communication_ready: false,
     shell_ready: true,
+    attendance_core_ready: true,
+    queues_ready: true,
+    open_session_ready: true,
+    identity_ready: true,
+    preparation_scope: "attendance-core",
+    actor_profile_id: actorProfileId,
+    institution_id: institutionId,
     relay_connectivity: relayConnectivity,
+    relay_capabilities: relayConnectivity.capabilities,
     web_release: String(bootstrap.web_release || MON_CAHIER_WEB_RELEASE),
     service_worker_release: activeServiceWorkerRelease,
-    schedule_revision: safeRevision(bootstrap.schedule_revision),
+    schedule_revision: scheduleRevision,
     schedule_generated_at: String(bootstrap.generated_at || "") || null,
+    relay_revision: relayRevision,
+    cloud_revision: scheduleRevision,
+    schedule_compatibility: relayReady ? "ready" : "ready_local",
     data_presence: {
       classes: classIds.length,
       students: studentIds.size,
       slots: slots.length,
-      grades: preparedGrades.evaluationCount,
-      textbook_assignments: preparedTextbook.assignmentCount,
+      grades: 0,
+      textbook_assignments: 0,
       assignments: Array.isArray(bootstrap.assignments)
         ? bootstrap.assignments.length
         : 0,
     },
-    relay_capabilities: relayConnectivity.capabilities,
-    schedule_compatibility:
-      bootstrap.snapshot_completeness === "complete" &&
-      safeRevision(bootstrap.schedule_revision) !== null &&
-      safeRevision(bootstrap.schedule_revision) ===
-        safeRevision(relayConnectivity.snapshot_revision) &&
-      relayConnectivity.teacher_attendance_writes_enabled === true &&
-      completeRelayCapabilities(relayConnectivity.capabilities)
-        ? "ready"
-        : "not_prepared",
   };
 }
 
 async function prepareClassDevice(
   onProgress: ProgressCallback,
-  cloudRevision: number | null,
+  signal?: AbortSignal,
 ): Promise<OfflineReadiness> {
-  onProgress("Téléchargement de la classe autorisée…");
+  onProgress("Téléchargement du planning strict de la classe…");
   const classPayload: any = await fetchAndCache(
     "/api/class/my-classes?offline_contract=v5",
     "classDevice:my-classes",
+    signal,
   );
   const preparedAccess = resolveClassDevicePreparationAccess(classPayload);
   const { classId, institutionId, actorProfileId } = preparedAccess;
@@ -1602,212 +1412,127 @@ async function prepareClassDevice(
     | RelayTeacherOfflineSchedule
     | null
     | undefined;
-  if (!cloudSchedule) {
-    const diagnostic = String(classPayload?.offline_schedule_error || "").trim();
-    throw new Error(
-      diagnostic
-        ? `Le planning Cloud de cette classe n’a pas pu être préparé (${diagnostic}).`
-        : "Le planning Cloud de cette classe n’a pas pu être préparé.",
-    );
-  }
-  const cloudScope = validateClassDeviceScheduleScope(cloudSchedule, {
-    institutionId,
-    classId,
-    actorProfileId,
-  });
-  if (!cloudScope.ok && "status" in cloudScope) {
-    throw new Error(classDeviceReadinessMessage(cloudScope.status));
-  }
-  if (cloudRevision !== null && cloudRevision !== cloudScope.revision) {
-    throw new Error(
-      "Le planning Cloud a changé pendant la préparation. Une nouvelle tentative est nécessaire.",
-    );
+  const cloudScope = cloudSchedule
+    ? validateClassDeviceScheduleScope(cloudSchedule, {
+        institutionId,
+        classId,
+        actorProfileId,
+      })
+    : null;
+  if (!cloudSchedule || !cloudScope?.ok) {
+    throw new Error(classDeviceReadinessMessage("schedule_not_prepared"));
   }
 
-  // L'écran d'appel et son jeu de données minimal doivent être disponibles
-  // avant toute tentative d'accès au réseau local. Le relais est prioritaire
-  // lorsqu'il répond, mais il n'est pas un prérequis à la préparation Cloud.
-  onProgress("Préparation immédiate de l’écran d’appel hors ligne…");
-  await warmOfflineShell(["/class"]);
-  rememberOfflineBookDestinations({
-    attendance: "/class",
-    grades: "/grades/class-device",
-  });
-  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
+  const relayConnectivityPromise = checkRelayWithin(
+    {
+      institutionId,
+      baseUrl: relayPolicy.relayLocalUrl,
+      accessToken: relayPolicy.relayAccessToken,
+    },
+    signal,
+  );
+
+  onProgress("Préparation du seul écran d’appel de la classe…");
+  await warmAttendanceOfflineShell(["/login", "/class"], { signal });
+  const activeServiceWorkerRelease = await getPreparationWorkerRelease(signal);
   if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
     throw new Error(classDeviceReadinessMessage("service_worker_stale"));
   }
-  await projectClassDeviceScheduleCaches(cloudSchedule, classId);
 
   onProgress("Vérification facultative du relais local…");
-  const relayConnectivity = await checkRelayTeacherConnectivity({
-    institutionId,
-    baseUrl: relayPolicy.relayLocalUrl,
-    accessToken: relayPolicy.relayAccessToken,
-  });
-  let relaySchedule: RelayTeacherOfflineSchedule | null = null;
+  const relayConnectivity = await relayConnectivityPromise;
+  let authoritativeSchedule = cloudSchedule;
   let relayUsable = false;
   if (
     relayConnectivity.status === "reachable" &&
     relayConnectivity.capabilities?.class_device_scope_v1 === true &&
     relayConnectivity.actor_kind === "class_device" &&
     String(relayConnectivity.class_id || "").trim() === classId &&
-    String(relayConnectivity.actor_profile_id || "").trim() ===
-      actorProfileId &&
-    relayConnectivity.teacher_attendance_writes_enabled === true &&
-    completeRelayCapabilities(relayConnectivity.capabilities)
+    String(relayConnectivity.actor_profile_id || "").trim() === actorProfileId
   ) {
     try {
-      const candidate = await fetchRelayTeacherOfflineSchedule({
+      const relaySchedule = await fetchRelayTeacherOfflineSchedule({
         institutionId,
         baseUrl: relayPolicy.relayLocalUrl,
         accessToken: relayPolicy.relayAccessToken,
       });
-      const candidateScope = validateClassDeviceScheduleScope(candidate, {
+      const relayScope = validateClassDeviceScheduleScope(relaySchedule, {
         institutionId,
         classId,
         actorProfileId,
       });
-      if (candidateScope.ok && candidateScope.revision === cloudScope.revision) {
-        relaySchedule = candidate;
-        relayUsable = true;
+      if (relayScope.ok && relayScope.revision >= cloudScope.revision) {
+        authoritativeSchedule = relaySchedule;
       }
+      relayUsable = relayScope.ok;
     } catch {
-      // La préparation Cloud reste valide si le relais disparaît entre les
-      // deux contrôles. L'autorité sera réévaluée au démarrage de l'appel.
+      relayUsable = false;
     }
   }
 
-  try {
-    await fetchAndCache("/api/teacher/sessions/open", "classDevice:open-session");
-  } catch {
-    // L'absence d'une séance déjà ouverte ne bloque pas la préparation.
-    await cacheSet("classDevice:open-session", { item: null });
-  }
-
-  onProgress("Téléchargement des paramètres de l’établissement…");
-  await fetchFirstAndCache(
-    [
-      {
-        url: "/api/teacher/institution/basics",
-        key: "classDevice:inst:basics:teacher",
-      },
-      {
-        url: "/api/institution/basics",
-        key: "classDevice:inst:basics:institution",
-      },
-    ],
-    (payload: any) =>
-      Array.isArray(payload?.periods) && payload.periods.length > 0,
-  ).catch(() => undefined);
-
-  const studentIds = new Set<string>();
-  const cloudRoster = cloudSchedule.rosters?.[classId];
-  for (const student of Array.isArray(cloudRoster?.items)
-    ? cloudRoster.items
-    : []) {
-    const id = String(student?.id || "").trim();
-    if (id) studentIds.add(id);
-  }
-
-  onProgress("Téléchargement des élèves et matières de la classe…");
-  const roster: any = await fetchAndCache(
-    `/api/class/roster?class_id=${encodeURIComponent(classId)}`,
-    `classDevice:roster:${classId}`,
-  ).catch(() => null);
-  for (const student of Array.isArray(roster?.items) ? roster.items : []) {
-    const id = String(student?.id || "").trim();
-    if (id) studentIds.add(id);
-  }
+  await projectClassDeviceScheduleCaches(authoritativeSchedule, classId);
   await fetchAndCache(
-    `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
-    `classDevice:subjects:${classId}`,
-  ).catch(() => undefined);
+    "/api/teacher/sessions/open",
+    "classDevice:open-session",
+    signal,
+  ).catch(async (error) => {
+    if (signal?.aborted) throw error;
+    await cacheSet("classDevice:open-session", { item: null });
+  });
 
-  const preparedGrades = await prepareGrades("class-device", onProgress).catch(
-    () => ({ classIds: [], studentIds: new Set<string>(), evaluationCount: 0 }),
-  );
-  for (const studentId of preparedGrades.studentIds) studentIds.add(studentId);
-  const preparedTextbook = await prepareTextbook(onProgress).catch(() => ({
-    classIds: [],
-    assignmentCount: 0,
-  }));
-
-  onProgress("Préparation des écrans complémentaires hors ligne…");
-  await warmOfflineShell([
-    "/login",
-    "/choose-book",
-    "/grades/class-device",
-    "/enseignant/cahier-de-texte",
-  ]).catch(() => undefined);
-
+  const roster = authoritativeSchedule.rosters?.[classId];
+  const studentCount = Array.isArray(roster?.items) ? roster.items.length : 0;
+  const status = relayUsable ? "ready" : "ready_local";
   const readiness: OfflineReadiness = {
     version: 5,
     role: "class-device",
     prepared_at: new Date().toISOString(),
     checked_at: new Date().toISOString(),
     class_count: 1,
-    student_count: studentIds.size,
-    slot_count: cloudSchedule.slot_count,
-    evaluation_count: preparedGrades.evaluationCount,
-    textbook_assignment_count: preparedTextbook.assignmentCount,
+    student_count: studentCount,
+    slot_count: authoritativeSchedule.slot_count,
+    evaluation_count: 0,
+    textbook_assignment_count: 0,
     bulletin_count: 0,
     parent_child_count: 0,
-    grades_ready: preparedGrades.evaluationCount > 0,
-    textbook_ready: preparedTextbook.assignmentCount > 0,
+    grades_ready: false,
+    textbook_ready: false,
     consultation_ready: false,
     communication_ready: false,
     shell_ready: true,
+    attendance_core_ready: true,
+    queues_ready: true,
+    open_session_ready: true,
+    identity_ready: true,
+    preparation_scope: "attendance-core",
+    actor_profile_id: actorProfileId,
     relay_connectivity: relayConnectivity,
     web_release: MON_CAHIER_WEB_RELEASE,
     service_worker_release: activeServiceWorkerRelease,
-    schedule_revision: cloudScope.revision,
-    schedule_generated_at: cloudSchedule.generated_at,
+    schedule_revision: safeRevision(authoritativeSchedule.schedule_revision),
+    schedule_generated_at: authoritativeSchedule.generated_at,
     institution_id: institutionId,
     authorized_class_id: classId,
     authorized_actor_profile_id: actorProfileId,
     relay_revision: safeRevision(relayConnectivity.snapshot_revision),
     cloud_revision: cloudScope.revision,
     relay_capabilities: relayConnectivity.capabilities,
-    class_device_compatibility: relayUsable ? "ready" : "ready_local",
+    class_device_compatibility: status,
     data_presence: {
       classes: 1,
-      students: Array.isArray(cloudRoster?.items)
-        ? cloudRoster.items.length
-        : 0,
-      slots: cloudSchedule.slot_count,
-      grades: preparedGrades.evaluationCount,
-      textbook_assignments: preparedTextbook.assignmentCount,
-      assignments: cloudSchedule.assignments.length,
+      students: studentCount,
+      slots: authoritativeSchedule.slot_count,
+      grades: 0,
+      textbook_assignments: 0,
+      assignments: authoritativeSchedule.assignments.length,
     },
   };
 
-  const authoritativeSchedule = relayUsable && relaySchedule
-    ? relaySchedule
-    : cloudSchedule;
   await persistClassDeviceBundle(readiness, authoritativeSchedule);
-  await projectClassDeviceScheduleCaches(authoritativeSchedule, classId);
   return readiness;
 }
 
-type AdminBulletinClass = {
-  id?: string | null;
-  academic_year?: string | null;
-};
-
-type AdminBulletinPeriod = {
-  academic_year?: string | null;
-  code?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-};
-
-type AdminAttendancePreparationRow = {
-  class_id?: string | null;
-  class_label?: string | null;
-  planned_start?: string | null;
-  planned_end?: string | null;
-};
+type AdminAttendancePreparationRow = Record<string, unknown>;
 
 function itemsOf<T = any>(payload: any): T[] {
   if (Array.isArray(payload)) return payload as T[];
@@ -1822,144 +1547,63 @@ async function optional(task: () => Promise<unknown>) {
   }
 }
 
-async function prepareAdmin(onProgress: ProgressCallback): Promise<OfflineReadiness> {
+async function prepareAdmin(
+  onProgress: ProgressCallback,
+  signal?: AbortSignal,
+): Promise<OfflineReadiness> {
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Abidjan",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-
-  onProgress("Préparation de la vue administrative par créneau…");
-  const [monitor] = await Promise.all([
-    fetchAdminAttendanceMonitor<AdminAttendancePreparationRow>(today, today),
-    fetchInstitutionSettings<Record<string, unknown>>(),
-    warmOfflineShell([
-      "/admin/dashboard",
-      "/admin/absences/appels",
-      "/admin/absences/appels-matrice",
-    ]),
-  ]);
-  await optional(async () => {
-    await syncRelayBootstrap();
-  });
-
-  const monitorRows = Array.isArray(monitor.data?.rows)
-    ? monitor.data.rows
-    : [];
-  const attendanceClassIds = uniqueIds(
-    monitorRows.map((row) => row.class_id || row.class_label || null),
+  onProgress("Préparation de la supervision des appels…");
+  const monitor = await fetchAdminAttendanceMonitor<AdminAttendancePreparationRow>(
+    today,
+    today,
+    signal,
   );
-  const attendanceSlots = new Set(
-    monitorRows
-      .map((row) =>
-        `${String(row.planned_start || "").slice(0, 5)}-${String(
-          row.planned_end || "",
-        ).slice(0, 5)}`,
-      )
-      .filter((value) => value !== "-"),
+  await cacheSet("admin:attendance:core", monitor);
+  await warmAttendanceOfflineShell(
+    ["/admin/absences/appels", "/admin/absences/appels-matrice"],
+    { signal },
   );
-
-  const studentIds = new Set<string>();
-  let bulletinCount = 0;
-  let classes: AdminBulletinClass[] = [];
-  let communicationReady = false;
-
-  onProgress("Préparation complémentaire des bulletins…");
-  try {
-    const [classPayload] = await Promise.all([
-      getAdminBulletinClasses<any>(),
-      getAdminBulletinSettings<any>(),
-    ]);
-    classes = itemsOf<AdminBulletinClass>(classPayload).filter(
-      (item) => item?.id,
-    );
-    const academicYears = uniqueIds(classes.map((item) => item.academic_year));
-    const years: Array<string | null> = academicYears.length
-      ? academicYears
-      : [null];
-    const periods: AdminBulletinPeriod[] = [];
-    for (const year of years) {
-      const payload = await getAdminBulletinPeriods<any>(year);
-      periods.push(...itemsOf<AdminBulletinPeriod>(payload));
-    }
-
-    const periodMap = new Map<string, AdminBulletinPeriod>();
-    for (const period of periods) {
-      const from = String(period?.start_date || "").trim();
-      const to = String(period?.end_date || "").trim();
-      if (!from || !to) continue;
-      periodMap.set(
-        `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
-        period,
-      );
-    }
-    const tasks = classes.flatMap((classRow) =>
-      Array.from(periodMap.values())
-        .filter(
-          (period) =>
-            !classRow.academic_year ||
-            !period.academic_year ||
-            classRow.academic_year === period.academic_year,
-        )
-        .map((period) => ({ classRow, period })),
-    );
-
-    await mapLimit(tasks, 2, async ({ classRow, period }, index) => {
-      if (index === 0 || (index + 1) % 4 === 0 || index + 1 === tasks.length) {
-        onProgress(`Bulletins ${index + 1}/${tasks.length}…`);
-      }
-      const params = new URLSearchParams({
-        class_id: String(classRow.id),
-        from: String(period.start_date),
-        to: String(period.end_date),
-      });
-      const academicYear = period.academic_year || classRow.academic_year;
-      if (academicYear) params.set("academic_year", academicYear);
-      if (period.code) params.set("period_code", period.code);
-      const bulletin: any = await getAdminBulletin(params);
-      if (bulletin?.ok !== false) bulletinCount += 1;
-      for (const item of itemsOf<any>(bulletin)) {
-        const id = String(item?.student_id || "").trim();
-        if (id) studentIds.add(id);
-      }
-      await optional(() => getAdminBulletinConduct(params));
-    });
-  } catch {
-    // Les bulletins sont complémentaires : la surveillance des appels reste prête.
+  const activeServiceWorkerRelease = await getPreparationWorkerRelease(signal);
+  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+    throw new Error("Le service hors ligne Admin doit être actualisé.");
   }
-
-  onProgress("Préparation de l’historique des communications…");
-  try {
-    await Promise.all([
-      getCommunicationMeta<any>(),
-      getCommunicationHistory<any>(),
-    ]);
-    communicationReady = true;
-  } catch {
-    // La communication ne doit pas rendre la vue par créneau indisponible.
-  }
-
-  await optional(() =>
-    warmOfflineShell(["/admin/bulletins", "/admin/communication"]),
-  );
 
   return {
-    version: 4,
+    version: 5,
     role: "admin",
     prepared_at: new Date().toISOString(),
-    class_count: Math.max(classes.length, attendanceClassIds.length),
-    student_count: studentIds.size,
-    slot_count: attendanceSlots.size,
+    class_count: 0,
+    student_count: 0,
+    slot_count: 0,
     evaluation_count: 0,
     textbook_assignment_count: 0,
-    bulletin_count: bulletinCount,
+    bulletin_count: 0,
     parent_child_count: 0,
     grades_ready: false,
     textbook_ready: false,
     consultation_ready: true,
-    communication_ready: communicationReady,
+    communication_ready: false,
     shell_ready: true,
+    attendance_core_ready: true,
+    queues_ready: true,
+    open_session_ready: false,
+    identity_ready: true,
+    preparation_scope: "attendance-core",
+    web_release: MON_CAHIER_WEB_RELEASE,
+    service_worker_release: activeServiceWorkerRelease,
+    data_presence: {
+      classes: 0,
+      students: 0,
+      slots: 0,
+      grades: 0,
+      textbook_assignments: 0,
+      assignments: 0,
+    },
   };
 }
 
@@ -2021,7 +1665,7 @@ async function prepareParent(onProgress: ProgressCallback): Promise<OfflineReadi
     .filter((value): value is string => Boolean(value));
 
   onProgress("Préparation de la consultation et des bulletins…");
-  await warmOfflineShell(["/parents", ...Array.from(new Set(verificationPages))]);
+  await warmAttendanceOfflineShell(["/parents", ...Array.from(new Set(verificationPages))]);
 
   return {
     version: 4,
@@ -2044,8 +1688,11 @@ async function prepareParent(onProgress: ProgressCallback): Promise<OfflineReadi
 
 export async function prepareOffline(
   role: OfflineRole,
-  onProgress: ProgressCallback = () => undefined
+  onProgress: ProgressCallback = () => undefined,
+  options: { signal?: AbortSignal } = {},
 ): Promise<OfflineReadiness> {
+  const signal = options.signal;
+  if (signal?.aborted) throw signal.reason || new Error("Préparation annulée.");
   onProgress("Protection du stockage local…");
   const storageProtection = await getOfflineStorageProtection({
     requestPersistence: true,
@@ -2057,21 +1704,13 @@ export async function prepareOffline(
     );
   }
 
-  const cloud = await probeCloudSchedule();
-  if (!cloud) {
-    throw new Error("Reconnectez Internet pour actualiser les données hors ligne.");
-  }
-
   const prepared =
     role === "teacher"
-      ? await prepareTeacher(onProgress)
+      ? await prepareTeacher(onProgress, signal)
       : role === "class-device"
-        ? await prepareClassDevice(
-            onProgress,
-            safeRevision(cloud.schedule_revision),
-          )
+        ? await prepareClassDevice(onProgress, signal)
         : role === "admin"
-          ? await prepareAdmin(onProgress)
+          ? await prepareAdmin(onProgress, signal)
           : await prepareParent(onProgress);
   const readiness: OfflineReadiness = {
     ...prepared,

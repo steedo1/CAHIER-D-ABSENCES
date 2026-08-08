@@ -6,25 +6,32 @@ const card = fs.readFileSync(
   new URL("../src/components/OfflineReadinessCard.tsx", import.meta.url),
   "utf8",
 );
+const coordinator = fs.readFileSync(
+  new URL("../src/components/OfflinePreparationCoordinator.tsx", import.meta.url),
+  "utf8",
+);
 
-test("la préparation hors ligne se lance automatiquement après le diagnostic", () => {
-  assert.match(card, /shouldAutomaticallyPrepareOffline/);
-  assert.match(card, /autoAttemptedCycleRef/);
-  assert.match(card, /preparingRef\.current/);
-  assert.match(card, /void handlePrepare\(\)/);
-  assert.match(card, /setRefreshCycle\(\(current\) => current \+ 1\)/);
+test("la carte est une vue abonnée et ne possède plus son propre moteur", () => {
+  assert.match(card, /subscribeOfflinePreparation/);
+  assert.match(card, /getOfflinePreparationSnapshot/);
+  assert.doesNotMatch(card, /addEventListener\("online"/);
+  assert.doesNotMatch(card, /addEventListener\("focus"/);
+  assert.doesNotMatch(card, /visibilitychange/);
+  assert.doesNotMatch(card, /prepareOffline/);
 });
 
-test("la préparation est réévaluée au retour du réseau et au premier plan", () => {
-  assert.match(card, /addEventListener\("online", handleNetworkChange\)/);
-  assert.match(card, /addEventListener\("focus", handleFocus\)/);
-  assert.match(card, /addEventListener\("visibilitychange", handleVisibilityChange\)/);
-  assert.match(card, /document\.visibilityState === "visible"/);
+test("le coordinateur unique possède les déclencheurs automatiques", () => {
+  assert.match(coordinator, /createOfflinePreparationTriggerController/);
+  assert.match(coordinator, /subscribeWindow\("online"\)/);
+  assert.match(coordinator, /subscribeWindow\("focus"\)/);
+  assert.match(coordinator, /visibilitychange/);
+  assert.match(coordinator, /controllerchange/);
+  assert.match(coordinator, /setOfflinePreparationContext/);
 });
 
-test("le bouton permanent Préparer ou Actualiser est masqué", () => {
+test("le bouton permanent est masqué et seul Réessayer reste après échec", () => {
   assert.doesNotMatch(card, /readiness \? "Actualiser" : "Préparer"/);
-  assert.match(card, /showManualRetry &&/);
+  assert.match(card, /hasError && !isBusy/);
   assert.match(card, />\s*Réessayer\s*</);
   assert.match(card, /Configuration hors ligne automatique/);
 });
