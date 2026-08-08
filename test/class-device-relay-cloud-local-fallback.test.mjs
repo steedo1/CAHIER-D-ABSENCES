@@ -79,14 +79,16 @@ test("le mapping client vers serveur et la restauration Cloud du téléphone de 
 test("le Cloud fallback utilise son heure serveur et vérifie le period_id exact", async () => {
   const route = await read("src/app/api/class/sessions/start/route.ts");
 
-  assert.match(route, /const serverNow = new Date\(\);\s+const actualCallAt = serverNow;/s);
+  assert.match(route, /const serverNow = new Date\(\);\s+let actualCallAt = serverNow;/s);
+  assert.match(route, /if \(replay\) actualCallAt = replay\.eventAt/);
   assert.match(route, /const requestedPeriodMismatch\s*=\s*Boolean/);
   assert.match(route, /requestedPeriodId !== currentPeriod\.periodId/);
   assert.doesNotMatch(route, /error: "period_id_mismatch"/);
   assert.match(route, /period_id: currentPeriod\.periodId/);
   assert.match(route, /delivery_origin: "cloud_fallback"/);
   assert.match(route, /server_time: serverNow\.toISOString\(\)/);
-  assert.match(route, /action: "cloud_time_applied_without_gps_or_blocking"/);
+  assert.match(route, /"cloud_time_applied_without_gps_or_blocking"/);
+  assert.match(route, /delivery_mode: replay \? "offline_replay" : "live"/);
 });
 
 test("le téléphone de classe ne demande jamais le GPS et le téléphone personnel garde ses contrôles", async () => {

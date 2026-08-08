@@ -23,9 +23,10 @@ export type TeacherOfflineRelayRecoveryContext = {
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
   /**
-   * Une ouverture refusée faute de relais ne doit jamais démarrer plus tard à
-   * l'insu du professeur. Seules les séances locales encore réellement
-   * affichées sur l'appareil peuvent être rejouées automatiquement.
+   * Une ouverture abandonnée ne doit jamais démarrer plus tard à l'insu du
+   * professeur. Une séance encore affichée, ou une séance déjà terminée qui
+   * possède des présences/une fermeture dépendantes, peut en revanche être
+   * reconstruite automatiquement avec son contexte historique vérifié.
    */
   activeLocalSessionIds?: string[];
 };
@@ -200,6 +201,32 @@ function isActiveOpen(
   );
 }
 
+function openRequiredByPendingWork(
+  record: TeacherSessionDeliveryRecord,
+  attendance: TeacherAttendanceDeliveryRecord[],
+  lifecycle: TeacherSessionLifecycleDeliveryRecord[],
+) {
+  const sessionReferences = new Set([
+    record.operation_id,
+    `client:${record.operation_id}`,
+    record.attempt_key,
+    `client:${record.attempt_key}`,
+  ]);
+  const hasPendingAttendance = attendance.some(
+    (candidate) =>
+      !attendanceResolved(candidate) &&
+      (sessionReferences.has(candidate.session_id) ||
+        sessionReferences.has(candidate.session_reference)),
+  );
+  const hasPendingClose = lifecycle.some(
+    (candidate) =>
+      candidate.kind === "close" &&
+      !lifecycleResolved(candidate) &&
+      Boolean(candidate.session_id && sessionReferences.has(candidate.session_id)),
+  );
+  return hasPendingAttendance || hasPendingClose;
+}
+
 export async function recoverTeacherOfflineOperationsToRelayWithDependencies(
   context: TeacherOfflineRelayRecoveryContext,
   deps: TeacherOfflineRelayRecoveryDependencies,
@@ -241,7 +268,10 @@ export async function recoverTeacherOfflineOperationsToRelayWithDependencies(
   for (const record of sorted(
     opens.filter((candidate) => candidate.state === "device_pending"),
   )) {
-    if (!isActiveOpen(record, activeKeys)) {
+    if (
+      !isActiveOpen(record, activeKeys) &&
+      !openRequiredByPendingWork(record, attendance, lifecycle)
+    ) {
       summary.opens_waiting_for_user += 1;
       continue;
     }
@@ -404,7 +434,7 @@ function productionDependencies(): TeacherOfflineRelayRecoveryDependencies {
     afterOpenRecovered: async (record) => {
       if (!record.session_id) return;
       await registerOfflineSessionReference(
-        `client:${record.attempt_key}`,
+        `client:${record.operation_id}`,
         record.session_id,
       );
     },

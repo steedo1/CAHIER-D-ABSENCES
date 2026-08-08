@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import Database from "better-sqlite3";
-import { openRelayDatabase, schemaVersion, type RelayDatabase } from "../src/db.mjs";
+import {
+  openRelayDatabase,
+  schemaVersion,
+  setInstitutionMeta,
+  type RelayDatabase,
+} from "../src/db.mjs";
 import { canonicalJson } from "../src/json.mjs";
 import { createRelayServer } from "../src/server.mjs";
 import { RelayStore } from "../src/store.mjs";
@@ -571,6 +576,57 @@ test("le même operation_id est idempotent et un contenu différent retourne 409
     error instanceof TeacherSessionOpenError &&
     error.code === "operation_id_reused_with_different_payload"
   );
+  db.close();
+});
+
+test("une ouverture live déjà acceptée reste idempotente lors du rejeu hors ligne", () => {
+  const db = openRelayDatabase(":memory:");
+  const school: SchoolSeed = {
+    institutionId: "inst-live-replay",
+    code: "SCH-LIVE-REPLAY",
+    secret: SCHOOL_ONE_SECRET,
+  };
+  const value = seedSchool(db, school);
+  setInstitutionMeta(db, school.institutionId, "attendance_schedule_revision", "1");
+
+  const operationId = "live-response-lost-operation";
+  const first = openTeacherAttendanceSession(
+    db,
+    operation(school, operationId),
+    teacher(school),
+    NOW,
+  );
+
+  // Le planning a changé après l'acceptation. Le rejeu ne doit pas recréer ni
+  // refuser une opération déjà durablement enregistrée sur le relais.
+  setInstitutionMeta(db, school.institutionId, "attendance_schedule_revision", "2");
+  const retry = openTeacherAttendanceSession(
+    db,
+    {
+      protocol_version: 2,
+      operation_id: operationId,
+      operation_type: "attendance.session.open",
+      class_id: value.classId,
+      period_id: value.periodId,
+      event_at: NOW.toISOString(),
+      replay_context: {
+        mode: "offline_replay",
+        queued_at: new Date(NOW.getTime() + 60_000).toISOString(),
+        client_session_id: `client:${operationId}`,
+        schedule_revision: 1,
+        timezone: "UTC",
+        scheduled_start_at: "2026-07-22T09:00:00.000Z",
+      },
+    },
+    teacher(school),
+    new Date("2026-07-22T11:00:00.000Z"),
+  );
+
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.session.id, first.session.id);
+  assert.equal(count(db, "teacher_sessions"), 1);
+  assert.equal(count(db, "teacher_session_open_operations"), 1);
+  assert.equal(count(db, "sync_outbox"), 1);
   db.close();
 });
 

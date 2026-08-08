@@ -183,6 +183,9 @@ type OpenSession = {
   delivery_origin?: SessionDeliveryOrigin;
   open_operation_id?: string | null;
   period_id?: string | null;
+  schedule_revision?: number | null;
+  timezone?: string | null;
+  scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
   grace_expires_at?: string | null;
   session_state?: "open" | "finalizing" | "closed";
@@ -576,6 +579,47 @@ function dateKeyInTZ(d: Date, tz: string) {
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value || "";
   return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+function timezoneOffsetMinutes(atUTC: Date, tz: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(atUTC);
+  const number = (type: Intl.DateTimeFormatPartTypes, fallback: number) =>
+    Number(parts.find((part) => part.type === type)?.value || fallback);
+  const wallAsUTC = Date.UTC(
+    number("year", 1970),
+    number("month", 1) - 1,
+    number("day", 1),
+    number("hour", 0),
+    number("minute", 0),
+  );
+  return Math.round((wallAsUTC - atUTC.getTime()) / 60_000);
+}
+
+function scheduledDateAtTimeInTZ(observedAt: Date, hm: string, tz: string) {
+  const [year, month, day] = dateKeyInTZ(observedAt, tz)
+    .split("-")
+    .map((value) => Number(value));
+  const [hour, minute] = String(hm || "00:00")
+    .slice(0, 5)
+    .split(":")
+    .map((value) => Number(value));
+  const guess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
+  let resolved = new Date(
+    guess.getTime() - timezoneOffsetMinutes(guess, tz) * 60_000,
+  );
+  const secondOffset = timezoneOffsetMinutes(resolved, tz);
+  if (secondOffset !== timezoneOffsetMinutes(guess, tz)) {
+    resolved = new Date(guess.getTime() - secondOffset * 60_000);
+  }
+  return resolved;
 }
 
 function formatReminderCountdown(ms: number): string | null {
@@ -2757,15 +2801,10 @@ export default function ClassDevicePage() {
       }
 
       const observedAt = relayAdjustedDate();
-      const [hh, mm] = verifiedPeriod.start_time.split(":").map((value) => Number(value));
-      const started = new Date(
-        observedAt.getFullYear(),
-        observedAt.getMonth(),
-        observedAt.getDate(),
-        Number.isFinite(hh) ? hh : observedAt.getHours(),
-        Number.isFinite(mm) ? mm : 0,
-        0,
-        0,
+      const started = scheduledDateAtTimeInTZ(
+        observedAt,
+        verifiedPeriod.start_time,
+        inst.tz || "Africa/Abidjan",
       );
       const effectiveDuration = Math.max(
         1,
@@ -2785,6 +2824,10 @@ export default function ClassDevicePage() {
         classId,
         periodId: verifiedPeriod.id!,
         attemptKey,
+        eventAt: actualCallAtISO,
+        scheduleRevision: preparedSchedule?.schedule_revision ?? null,
+        timezone: inst.tz || "Africa/Abidjan",
+        scheduledStartAt: started.toISOString(),
         relayBaseUrl: relayPolicy?.relay_local_url,
         relayAccessToken: relayPolicy?.relay_access_token,
       });
@@ -2814,6 +2857,9 @@ export default function ClassDevicePage() {
           delivery_origin: "relay",
           open_operation_id: relayDelivery.operation_id,
           period_id: verifiedPeriod.id,
+          schedule_revision: preparedSchedule?.schedule_revision ?? null,
+          timezone: inst.tz || "Africa/Abidjan",
+          scheduled_start_at: started.toISOString(),
           scheduled_end_at: relayDelivery.scheduled_end_at,
           grace_expires_at: relayDelivery.grace_expires_at,
           session_state: relayDelivery.session_state || "open",
@@ -2889,6 +2935,9 @@ export default function ClassDevicePage() {
             classId,
             periodId: verifiedPeriod.id,
             subjectId,
+            scheduleRevision: preparedSchedule?.schedule_revision ?? null,
+            timezone: inst.tz || "Africa/Abidjan",
+            scheduledStartAt: started.toISOString(),
           },
           timeoutMs: 6_000,
         },
@@ -2937,6 +2986,10 @@ export default function ClassDevicePage() {
           delivery_origin: "cloud_fallback",
           open_operation_id: operationId,
           period_id: cloudItem.period_id || verifiedPeriod.id,
+          schedule_revision:
+            cloudItem.schedule_revision ?? preparedSchedule?.schedule_revision ?? null,
+          timezone: inst.tz || "Africa/Abidjan",
+          scheduled_start_at: started.toISOString(),
           session_state: cloudItem.session_state || "open",
         };
         setCloudStatus("connected");
@@ -2994,6 +3047,9 @@ export default function ClassDevicePage() {
           delivery_origin: "local_pending",
           open_operation_id: operationId,
           period_id: verifiedPeriod.id,
+          schedule_revision: preparedSchedule.schedule_revision,
+          timezone: inst.tz || "Africa/Abidjan",
+          scheduled_start_at: started.toISOString(),
           session_state: "open",
           education_type: cls?.education_type || "general_secondary",
           education_label: cls?.education_label || "Secondaire général",
@@ -3189,6 +3245,13 @@ export default function ClassDevicePage() {
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
+              actualEndAt,
+              scheduleRevision:
+                cur.schedule_revision ??
+                relayClassScheduleRef.current?.schedule_revision ??
+                null,
+              timezone: cur.timezone || inst.tz || "Africa/Abidjan",
+              scheduledStartAt: cur.scheduled_start_at || cur.started_at,
               relayBaseUrl: relayPolicy?.relay_local_url,
               relayAccessToken: relayPolicy?.relay_access_token,
             })
@@ -3197,6 +3260,13 @@ export default function ClassDevicePage() {
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
+              actualEndAt,
+              scheduleRevision:
+                cur.schedule_revision ??
+                relayClassScheduleRef.current?.schedule_revision ??
+                null,
+              timezone: cur.timezone || inst.tz || "Africa/Abidjan",
+              scheduledStartAt: cur.scheduled_start_at || cur.started_at,
             });
         const relayConfirmed = closed.state === "relay_confirmed";
         const message = relayConfirmed
@@ -3257,6 +3327,12 @@ export default function ClassDevicePage() {
                 classId: cur.class_id,
                 subjectId: cur.subject_id || null,
                 periodId: cur.period_id || null,
+                scheduleRevision:
+                  cur.schedule_revision ??
+                  relayClassScheduleRef.current?.schedule_revision ??
+                  null,
+                timezone: cur.timezone || inst.tz || "Africa/Abidjan",
+                scheduledStartAt: cur.scheduled_start_at || cur.started_at,
               },
             },
           );
@@ -3299,7 +3375,24 @@ export default function ClassDevicePage() {
             actual_end_at: actualEndAt,
           },
         },
-        { mergeKey: `end:${openId}` }
+        {
+          mergeKey: `end:${openId}`,
+          meta: {
+            operationType: "session-end",
+            clientSessionId: isClientSessionId(cur.id)
+              ? cur.id
+              : `client:${cur.open_operation_id || cur.id}`,
+            classId: cur.class_id,
+            subjectId: cur.subject_id || null,
+            periodId: cur.period_id || null,
+            scheduleRevision:
+              cur.schedule_revision ??
+              relayClassScheduleRef.current?.schedule_revision ??
+              null,
+            timezone: cur.timezone || inst.tz || "Africa/Abidjan",
+            scheduledStartAt: cur.scheduled_start_at || cur.started_at,
+          },
+        }
       );
 
       if ((r as any).ok) {

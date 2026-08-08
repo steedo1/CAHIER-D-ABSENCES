@@ -8,6 +8,14 @@ import {
   TeacherSessionRuleError,
   type TeacherScheduledSlot,
 } from "./teacher-session-rules.mjs";
+import {
+  assertRelayReplayScheduledStart,
+  RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION,
+  RelayOfflineReplayError,
+  validateRelayOfflineReplay,
+  type RelayOfflineReplayContext,
+  type ValidatedRelayOfflineReplay,
+} from "./teacher-session-replay.mjs";
 
 const PROTOCOL_VERSION = 1 as const;
 const CLOSE_OPERATION_TYPE = "attendance.session.close" as const;
@@ -53,12 +61,21 @@ export type TeacherSessionLifecycleRow = {
   attendance_snapshot_status: "none" | "partial" | "complete";
 };
 
-type CloseOperation = {
-  protocol_version: 1;
-  operation_id: string;
-  operation_type: typeof CLOSE_OPERATION_TYPE;
-  session_id: string;
-};
+type CloseOperation =
+  | {
+      protocol_version: 1;
+      operation_id: string;
+      operation_type: typeof CLOSE_OPERATION_TYPE;
+      session_id: string;
+    }
+  | {
+      protocol_version: typeof RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION;
+      operation_id: string;
+      operation_type: typeof CLOSE_OPERATION_TYPE;
+      session_id: string;
+      event_at: string;
+      replay_context: RelayOfflineReplayContext;
+    };
 
 type TransitionOperation = {
   protocol_version: 1;
@@ -109,19 +126,43 @@ function text(value: unknown, code: string, maxLength = 256) {
 
 function parseClose(raw: unknown): CloseOperation {
   const value = record(raw, "operation_must_be_object");
-  exactKeys(value, ["protocol_version", "operation_id", "operation_type", "session_id"]);
-  if (value.protocol_version !== PROTOCOL_VERSION) {
-    throw new TeacherSessionLifecycleError(400, "protocol_version_not_supported");
-  }
+  const protocolVersion = Number(value.protocol_version);
+  exactKeys(
+    value,
+    protocolVersion === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION
+      ? [
+          "protocol_version",
+          "operation_id",
+          "operation_type",
+          "session_id",
+          "event_at",
+          "replay_context",
+        ]
+      : ["protocol_version", "operation_id", "operation_type", "session_id"],
+  );
   if (value.operation_type !== CLOSE_OPERATION_TYPE) {
     throw new TeacherSessionLifecycleError(400, "operation_type_not_supported");
   }
-  return {
-    protocol_version: PROTOCOL_VERSION,
+  const base = {
     operation_id: text(value.operation_id, "operation_id_required", 128),
     operation_type: CLOSE_OPERATION_TYPE,
     session_id: text(value.session_id, "session_id_required"),
   };
+  if (protocolVersion === PROTOCOL_VERSION) {
+    return { protocol_version: PROTOCOL_VERSION, ...base };
+  }
+  if (protocolVersion === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION) {
+    return {
+      protocol_version: RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION,
+      ...base,
+      event_at: text(value.event_at, "event_at_required", 64),
+      replay_context: record(
+        value.replay_context,
+        "offline_replay_context_invalid",
+      ) as RelayOfflineReplayContext,
+    };
+  }
+  throw new TeacherSessionLifecycleError(400, "protocol_version_not_supported");
 }
 
 function parseTransition(raw: unknown): TransitionOperation {
@@ -285,26 +326,39 @@ function closeSessionInternal(
     confirmation: ClosureConfirmation;
     requestedAt: string;
     now: Date;
+    eventAt?: Date;
+    receivedAt?: string;
+    protocolVersion?: number;
+    replay?: ValidatedRelayOfflineReplay | null;
   },
 ) {
   const existingByOperation = db.prepare(`
     SELECT session_id, requested_by_profile_id, closure_source,
-           payload_fingerprint, closed_at
+           protocol_version, payload_fingerprint, closed_at
     FROM teacher_session_closure_events
     WHERE institution_id = ? AND operation_id = ?
   `).get(input.session.institution_id, input.operationId) as {
     session_id: string;
     requested_by_profile_id: string | null;
     closure_source: string;
+    protocol_version: number;
     payload_fingerprint: string;
     closed_at: string;
   } | undefined;
   if (existingByOperation) {
+    const logicalPayloadMatches =
+      existingByOperation.session_id === input.session.id &&
+      existingByOperation.requested_by_profile_id === input.requestedByProfileId &&
+      existingByOperation.closure_source === input.source;
+    const exactPayloadMatches =
+      existingByOperation.protocol_version === (input.protocolVersion || PROTOCOL_VERSION) &&
+      existingByOperation.payload_fingerprint === input.fingerprint;
+    const liveReceiptReplayedOffline =
+      existingByOperation.protocol_version === PROTOCOL_VERSION &&
+      input.protocolVersion === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION;
     if (
-      existingByOperation.session_id !== input.session.id ||
-      existingByOperation.requested_by_profile_id !== input.requestedByProfileId ||
-      existingByOperation.closure_source !== input.source ||
-      existingByOperation.payload_fingerprint !== input.fingerprint
+      !logicalPayloadMatches ||
+      (!exactPayloadMatches && !liveReceiptReplayedOffline)
     ) {
       throw new TeacherSessionLifecycleError(409, "operation_id_reused_with_different_payload");
     }
@@ -324,11 +378,14 @@ function closeSessionInternal(
   if (!Number.isFinite(scheduledEndMs)) {
     throw new TeacherSessionLifecycleError(409, "session_schedule_missing");
   }
-  const closedAt = input.now.toISOString();
-  const payableEndAt = new Date(Math.min(input.now.getTime(), scheduledEndMs)).toISOString();
+  const eventAt = input.eventAt || input.now;
+  const receivedAt = input.receivedAt || input.requestedAt;
+  const protocolVersion = input.protocolVersion || PROTOCOL_VERSION;
+  const closedAt = eventAt.toISOString();
+  const payableEndAt = new Date(Math.min(eventAt.getTime(), scheduledEndMs)).toISOString();
   const requiresReview = input.confirmation === "unconfirmed" ? 1 : 0;
   const closurePayload = {
-    protocol_version: PROTOCOL_VERSION,
+    protocol_version: protocolVersion,
     operation_type: CLOSE_OPERATION_TYPE,
     institution_id: input.session.institution_id,
     session_id: input.session.id,
@@ -341,6 +398,17 @@ function closeSessionInternal(
     closure_confirmation: input.confirmation,
     requires_payroll_review: requiresReview === 1,
     attendance_snapshot_status: input.session.attendance_snapshot_status,
+    event_at: closedAt,
+    received_at: receivedAt,
+    replay_context: input.replay
+      ? {
+          client_session_id: input.replay.clientSessionId,
+          schedule_revision: input.replay.scheduleRevision,
+          schedule_revision_stale: input.replay.scheduleRevisionStale,
+          timezone: input.replay.timezone,
+          scheduled_start_at: input.replay.scheduledStartAt.toISOString(),
+        }
+      : null,
   };
 
   const occupiedOutbox = db.prepare(`
@@ -368,7 +436,7 @@ function closeSessionInternal(
     input.source,
     input.confirmation,
     requiresReview,
-    closedAt,
+    receivedAt,
     input.session.institution_id,
     input.session.id,
   );
@@ -385,11 +453,12 @@ function closeSessionInternal(
       closure_confirmation, payload_fingerprint, payload_json,
       requested_at, closed_at, payable_end_at,
       requires_payroll_review, created_at
-    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.session.institution_id,
     input.session.id,
     input.operationId,
+    protocolVersion,
     CLOSE_OPERATION_TYPE,
     input.requestedByProfileId,
     input.source,
@@ -400,14 +469,14 @@ function closeSessionInternal(
     closedAt,
     payableEndAt,
     requiresReview,
-    closedAt,
+    receivedAt,
   );
   db.prepare(`
     INSERT INTO sync_outbox(
       operation_id, institution_id, device_id, actor_profile_id,
       entity_type, entity_id, action, base_server_version,
       payload_json, occurred_at, protocol_version, payload_fingerprint
-    ) VALUES (?, ?, ?, ?, 'teacher_session', ?, 'upsert', ?, ?, ?, 1, ?)
+    ) VALUES (?, ?, ?, ?, 'teacher_session', ?, 'upsert', ?, ?, ?, ?, ?)
   `).run(
     input.operationId,
     input.session.institution_id,
@@ -418,10 +487,11 @@ function closeSessionInternal(
     input.session.id,
     input.session.server_version,
     canonicalJson({ ...closurePayload, sync_operation_type: "teacher_session.close" }),
-    input.requestedAt,
+    closedAt,
+    protocolVersion,
     input.fingerprint,
   );
-  insertOutboxDependenciesForClose(db, input.session, input.operationId, closedAt);
+  insertOutboxDependenciesForClose(db, input.session, input.operationId, receivedAt);
 
   const current = teacherSessionLifecycleRow(db, input.session.institution_id, input.session.id);
   if (!current) throw new TeacherSessionLifecycleError(500, "session_close_failed");
@@ -441,6 +511,9 @@ function closeSessionInternal(
       closure_confirmation: input.confirmation,
       requires_payroll_review: requiresReview === 1,
       attendance_snapshot_status: current.attendance_snapshot_status,
+      delivery_mode: input.replay ? "offline_replay" : "live",
+      event_at: closedAt,
+      received_at: receivedAt,
     }),
     closedAt,
   );
@@ -475,6 +548,9 @@ function markFinalizing(db: RelayDatabase, session: TeacherSessionLifecycleRow) 
 
 function maintenanceInside(db: RelayDatabase, now: Date) {
   const nowIso = now.toISOString();
+  const replayProtectionCutoff = new Date(
+    now.getTime() - 24 * 60 * 60 * 1000,
+  ).toISOString();
   const candidates = db.prepare(`
     SELECT id, institution_id, client_session_id, class_id, subject_id,
            teacher_id, period_id, started_at, actual_call_at, ended_at,
@@ -489,8 +565,12 @@ function maintenanceInside(db: RelayDatabase, now: Date) {
     WHERE local_lifecycle_managed = 1 AND ended_at IS NULL
       AND session_state IN ('open', 'finalizing')
       AND scheduled_end_at IS NOT NULL AND scheduled_end_at <= ?
+      AND NOT (
+        client_session_id LIKE 'client:%'
+        AND updated_at > ?
+      )
     ORDER BY scheduled_end_at, institution_id, id
-  `).all(nowIso) as TeacherSessionLifecycleRow[];
+  `).all(nowIso, replayProtectionCutoff) as TeacherSessionLifecycleRow[];
   let finalized = 0;
   let closed = 0;
   const closureOperationIds: string[] = [];
@@ -565,7 +645,7 @@ export function closeTeacherAttendanceSession(
   now = new Date(),
 ) {
   const operation = parseClose(raw);
-  const requestedAt = now.toISOString();
+  const receivedAt = now.toISOString();
   const operationFingerprint = fingerprint({
     ...operation,
     institution_id: teacher.institution_id,
@@ -574,9 +654,71 @@ export function closeTeacherAttendanceSession(
     auth_class_id: relayActorClassId(teacher),
   });
   return db.transaction(() => {
-    maintenanceInside(db, now);
-    const session = teacherSessionLifecycleRow(db, teacher.institution_id, operation.session_id);
+    let session = teacherSessionLifecycleRow(
+      db,
+      teacher.institution_id,
+      operation.session_id,
+    );
     if (!session) throw new TeacherSessionLifecycleError(404, "session_not_found");
+
+    let replay: ValidatedRelayOfflineReplay | null = null;
+    let eventAt = now;
+    if (operation.protocol_version === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION) {
+      try {
+        replay = validateRelayOfflineReplay({
+          db,
+          institutionId: teacher.institution_id,
+          operationId: operation.operation_id,
+          eventAtRaw: operation.event_at,
+          rawContext: operation.replay_context,
+          now,
+          requireOperationBoundClientSession: false,
+        });
+        assertRelayReplayScheduledStart(
+          replay,
+          session.scheduled_start_at || session.started_at,
+        );
+      } catch (error) {
+        const code = error instanceof RelayOfflineReplayError
+          ? error.code
+          : "offline_replay_invalid";
+        throw new TeacherSessionLifecycleError(409, code);
+      }
+      if (session.client_session_id) {
+        const acceptedClientSessionIds = new Set([
+          session.client_session_id,
+          session.client_session_id.startsWith("client:")
+            ? session.client_session_id
+            : `client:${session.client_session_id}`,
+          `client:${session.id}`,
+        ]);
+        if (!acceptedClientSessionIds.has(replay.clientSessionId)) {
+          throw new TeacherSessionLifecycleError(
+            409,
+            "offline_replay_client_session_mismatch",
+          );
+        }
+      }
+      eventAt = replay.eventAt;
+      const startedAt = new Date(
+        session.actual_started_at || session.actual_call_at || session.started_at,
+      );
+      if (!Number.isFinite(startedAt.getTime())) {
+        throw new TeacherSessionLifecycleError(409, "session_started_at_invalid");
+      }
+      if (eventAt.getTime() < startedAt.getTime()) {
+        throw new TeacherSessionLifecycleError(409, "actual_end_at_before_start");
+      }
+    } else {
+      maintenanceInside(db, now);
+      session = teacherSessionLifecycleRow(
+        db,
+        teacher.institution_id,
+        operation.session_id,
+      );
+      if (!session) throw new TeacherSessionLifecycleError(404, "session_not_found");
+    }
+
     if (relayActorKind(teacher) === "teacher") {
       if (session.teacher_id !== teacher.actor_profile_id) {
         throw new TeacherSessionLifecycleError(403, "forbidden_not_owner");
@@ -592,10 +734,21 @@ export function closeTeacherAttendanceSession(
       deviceId: relayActorDeviceId(teacher),
       source: "teacher_confirmed",
       confirmation: "confirmed",
-      requestedAt,
+      requestedAt: receivedAt,
       now,
+      eventAt,
+      receivedAt,
+      protocolVersion: operation.protocol_version,
+      replay,
     });
-    return closeResult(operation.operation_id, result, requestedAt);
+    if (replay) maintenanceInside(db, now);
+    return {
+      ...closeResult(operation.operation_id, result, receivedAt),
+      delivery_mode: replay ? "offline_replay" : "live",
+      event_at: eventAt.toISOString(),
+      received_at: receivedAt,
+      schedule_revision_stale: replay?.scheduleRevisionStale ?? false,
+    };
   })();
 }
 

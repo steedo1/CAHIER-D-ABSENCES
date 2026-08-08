@@ -326,6 +326,56 @@ test("la fin du créneau devient finalizing et le propriétaire peut enregistrer
   db.close();
 });
 
+test("une fermeture live déjà acceptée reste idempotente lors du rejeu hors ligne", () => {
+  const db = openRelayDatabase(":memory:");
+  const value = seedSchool(db);
+  const opened = openOld(db, value);
+  maintainTeacherAttendanceSessions(db, AT_0800);
+  secureCompleteAttendance(db, value, opened.session.id);
+
+  const operationId = "close-response-lost";
+  const first = closeTeacherAttendanceSession(
+    db,
+    closeOperation(opened.session.id, operationId),
+    teacher(value.institutionId, value.oldTeacherId),
+    AT_0805,
+  );
+  const retry = closeTeacherAttendanceSession(
+    db,
+    {
+      protocol_version: 2,
+      operation_id: operationId,
+      operation_type: "attendance.session.close",
+      session_id: opened.session.id,
+      event_at: AT_0805.toISOString(),
+      replay_context: {
+        mode: "offline_replay",
+        queued_at: new Date(AT_0805.getTime() + 60_000).toISOString(),
+        client_session_id: `client:${opened.session.client_session_id}`,
+        schedule_revision: 0,
+        timezone: "UTC",
+        scheduled_start_at: "2026-07-22T07:00:00.000Z",
+      },
+    },
+    teacher(value.institutionId, value.oldTeacherId),
+    new Date("2026-07-22T10:00:00.000Z"),
+  );
+
+  assert.equal(first.idempotent, false);
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.session.id, first.session.id);
+  assert.equal(retry.session.closed_at, first.session.closed_at);
+  assert.equal(count(db, "teacher_session_closure_events"), 1);
+  assert.equal(
+    Number((db.prepare(`
+      SELECT COUNT(*) AS count FROM sync_outbox
+      WHERE institution_id = ? AND operation_id = ?
+    `).get(value.institutionId, operationId) as { count: number }).count),
+    1,
+  );
+  db.close();
+});
+
 test("seul le propriétaire ferme normalement et le professeur suivant effectue un takeover", () => {
   const db = openRelayDatabase(":memory:");
   const value = seedSchool(db);

@@ -7,6 +7,12 @@ import {
   resolveAttendanceEducationContext,
 } from "@/lib/education-attendance";
 import { classDeviceCloudSessionId } from "@/lib/class-device-cloud-session";
+import {
+  assertTeacherSessionReplayScheduledStart,
+  TeacherSessionReplayError,
+  validateTeacherSessionReplay,
+  type ValidatedTeacherSessionReplay,
+} from "@/lib/teacher-session-replay";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +26,7 @@ type Body = {
   period_id?: string | null;
   client_session_id?: string | null;
   operation_id?: string | null;
+  replay_context?: unknown;
 };
 
 function uniq<T>(arr: T[]): T[] {
@@ -181,7 +188,9 @@ export async function POST(req: NextRequest) {
     }
 
     const serverNow = new Date();
-    const actualCallAt = serverNow;
+    let actualCallAt = serverNow;
+    let replay: ValidatedTeacherSessionReplay | null = null;
+    let currentScheduleRevision: number | null = null;
     const requestedPeriodId = String(b?.period_id || "").trim();
     const operationId = String(
       req.headers.get("x-mon-cahier-operation-id") ||
@@ -301,6 +310,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const deterministicSessionId = classDeviceCloudSessionId({
+      institutionId: String(cls.institution_id),
+      classId: class_id,
+      actorProfileId: user.id,
+      operationId,
+    });
+
     const classEducationType = String(
       (cls as any).education_type || "general_secondary",
     );
@@ -369,6 +385,157 @@ export async function POST(req: NextRequest) {
     }
 
     const tz = String(inst?.tz || "Africa/Abidjan");
+
+    if (b?.replay_context != null) {
+      const { data: revisionRow, error: revisionError } = await srv
+        .from("attendance_schedule_revisions")
+        .select("revision")
+        .eq("institution_id", cls.institution_id)
+        .maybeSingle();
+      if (revisionError) {
+        return NextResponse.json(
+          { error: "schedule_revision_lookup_unavailable" },
+          { status: 503 },
+        );
+      }
+      currentScheduleRevision = Number.isSafeInteger(Number(revisionRow?.revision))
+        ? Number(revisionRow?.revision)
+        : 0;
+      try {
+        replay = validateTeacherSessionReplay({
+          rawContext: b.replay_context,
+          eventAtRaw: b.actual_call_at,
+          operationId,
+          clientSessionId: b.client_session_id,
+          serverNow,
+          expectedTimezone: tz,
+          currentScheduleRevision,
+          requireScheduledStart: true,
+          requireOperationBoundClientSession: true,
+        });
+      } catch (error) {
+        if (error instanceof TeacherSessionReplayError) {
+          return NextResponse.json({ error: error.code }, { status: 409 });
+        }
+        throw error;
+      }
+      if (replay) {
+        const { data: existingAccepted, error: existingAcceptedError } = await srv
+          .from("teacher_sessions")
+          .select(
+            "id,institution_id,created_by,teacher_id,class_id,subject_id,started_at,actual_call_at,expected_minutes,status,ended_at",
+          )
+          .eq("id", deterministicSessionId)
+          .maybeSingle();
+
+        if (existingAcceptedError) {
+          return NextResponse.json(
+            { error: "session_lookup_unavailable" },
+            { status: 503 },
+          );
+        }
+
+        if (existingAccepted) {
+          const logicalMappingMatches =
+            String((existingAccepted as any).institution_id || "") ===
+              String(cls.institution_id) &&
+            String((existingAccepted as any).created_by || "") === user.id &&
+            String((existingAccepted as any).class_id || "") === class_id &&
+            String((existingAccepted as any).subject_id || "") === instSubjectId;
+          const acceptedStart = parseIsoDate((existingAccepted as any).started_at);
+          const scheduledStartMatches = Boolean(
+            acceptedStart &&
+              Math.abs(
+                acceptedStart.getTime() - replay.scheduledStartAt.getTime(),
+              ) <= 60_000,
+          );
+
+          if (!logicalMappingMatches || !scheduledStartMatches) {
+            return NextResponse.json(
+              { error: "operation_id_reused_with_different_payload" },
+              { status: 409 },
+            );
+          }
+
+          const { data: subj } = await srv
+            .from("institution_subjects")
+            .select("custom_name,subjects:subject_id(name)")
+            .eq("id", instSubjectId)
+            .maybeSingle();
+          const replaySubjectName =
+            (subj as any)?.custom_name ??
+            (subj as any)?.subjects?.name ??
+            null;
+          const replayEducationContext = resolveAttendanceEducationContext({
+            educationType: (cls as any).education_type,
+            formationCode: (cls as any).formation_code,
+            formationLevelCode: (cls as any).formation_level_code,
+            classLevel: (cls as any).level,
+            settingsJson: (inst as any)?.settings_json,
+          });
+          const acceptedEventAt =
+            parseIsoDate((existingAccepted as any).actual_call_at)?.toISOString() ||
+            replay.eventAt.toISOString();
+
+          return NextResponse.json({
+            item: {
+              id: (existingAccepted as any).id,
+              class_id,
+              class_label: cls.label as string,
+              subject_id,
+              subject_name: replaySubjectName,
+              period_id: requestedPeriodId || null,
+              started_at: (existingAccepted as any).started_at,
+              actual_call_at: acceptedEventAt,
+              expected_minutes:
+                (existingAccepted as any).expected_minutes ?? null,
+              delivery_origin: "cloud_fallback",
+              operation_id: operationId,
+              delivery_mode: "offline_replay",
+              event_at: acceptedEventAt,
+              received_at: serverNow.toISOString(),
+              schedule_revision: replay.scheduleRevision,
+              schedule_revision_stale: replay.scheduleRevisionStale,
+              server_time: serverNow.toISOString(),
+              idempotent: true,
+              clock_anomaly: {
+                client_server_skew_ms: clientClockSkewMs,
+                requested_period_id: requestedPeriodId || null,
+                cloud_period_id: requestedPeriodId || null,
+                action: "previously_accepted_operation_acknowledged",
+              },
+              education_type: replayEducationContext.education_type,
+              education_label: replayEducationContext.education_label,
+              education_short_label:
+                replayEducationContext.education_short_label,
+              formation_code: replayEducationContext.formation_code,
+              formation_label: replayEducationContext.formation_label,
+              formation_level_code:
+                replayEducationContext.formation_level_code,
+              formation_level_label:
+                replayEducationContext.formation_level_label,
+              education_context_key: replayEducationContext.context_key,
+              education_context_label: replayEducationContext.context_label,
+            },
+          });
+        }
+      }
+
+      if (replay?.scheduleRevisionStale) {
+        return NextResponse.json(
+          {
+            error: "offline_replay_schedule_revision_stale_requires_review",
+            details: {
+              replay_revision: replay.scheduleRevision,
+              current_revision: currentScheduleRevision,
+            },
+          },
+          { status: 409 },
+        );
+      }
+      if (replay) actualCallAt = replay.eventAt;
+    }
+
     const educationContext = resolveAttendanceEducationContext({
       educationType: (cls as any).education_type,
       formationCode: (cls as any).formation_code,
@@ -453,6 +620,18 @@ export async function POST(req: NextRequest) {
     const requestedPeriodMismatch = Boolean(
       requestedPeriodId && requestedPeriodId !== currentPeriod.periodId,
     );
+    if (replay && requestedPeriodMismatch) {
+      return NextResponse.json(
+        {
+          error: "offline_replay_period_mismatch",
+          details: {
+            requested_period_id: requestedPeriodId,
+            historical_period_id: currentPeriod.periodId,
+          },
+        },
+        { status: 409 },
+      );
+    }
 
     const { data: scheduledRows, error: scheduledErr } = await srv
       .from("teacher_timetables")
@@ -507,6 +686,14 @@ export async function POST(req: NextRequest) {
     const hh = Math.floor(currentPeriod.startMin / 60);
     const mm = currentPeriod.startMin % 60;
     const slotStartedAt = dateInTZFromYMDHM(ymd, `${pad2(hh)}:${pad2(mm)}`, tz);
+    try {
+      assertTeacherSessionReplayScheduledStart(replay, slotStartedAt);
+    } catch (error) {
+      if (error instanceof TeacherSessionReplayError) {
+        return NextResponse.json({ error: error.code }, { status: 409 });
+      }
+      throw error;
+    }
     const slotStartedISO = slotStartedAt.toISOString();
     const callISO = actualCallAt.toISOString();
 
@@ -534,12 +721,7 @@ export async function POST(req: NextRequest) {
       | null = null;
 
     const upPayload = {
-      id: classDeviceCloudSessionId({
-        institutionId: String(cls.institution_id),
-        classId: class_id,
-        actorProfileId: user.id,
-        operationId,
-      }),
+      id: deterministicSessionId,
       institution_id: cls.institution_id,
       teacher_id,
       class_id,
@@ -681,6 +863,11 @@ export async function POST(req: NextRequest) {
         expected_minutes: session.expected_minutes ?? expected_minutes ?? null,
         delivery_origin: "cloud_fallback",
         operation_id: operationId || null,
+        delivery_mode: replay ? "offline_replay" : "live",
+        event_at: callISO,
+        received_at: serverNow.toISOString(),
+        schedule_revision: replay?.scheduleRevision ?? currentScheduleRevision,
+        schedule_revision_stale: replay?.scheduleRevisionStale ?? false,
         server_time: serverNow.toISOString(),
         idempotent,
         clock_anomaly:
@@ -691,7 +878,9 @@ export async function POST(req: NextRequest) {
                 client_server_skew_ms: clientClockSkewMs,
                 requested_period_id: requestedPeriodId || null,
                 cloud_period_id: currentPeriod.periodId,
-                action: "cloud_time_applied_without_gps_or_blocking",
+                action: replay
+                  ? "historical_offline_event_verified"
+                  : "cloud_time_applied_without_gps_or_blocking",
               }
             : null,
         education_type: educationContext.education_type,

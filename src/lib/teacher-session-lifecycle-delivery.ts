@@ -1,6 +1,10 @@
 "use client";
 
-import { cacheGet, cacheSet } from "@/lib/offline";
+import {
+  cacheGet,
+  cacheSet,
+  resolveOfflineSessionReference,
+} from "@/lib/offline";
 import {
   LocalRelayHttpError,
   postRelayTeacherAttendanceSessionClose,
@@ -29,6 +33,11 @@ export type TeacherSessionLifecycleDeliveryRecord = {
   period_id: string | null;
   /** Absent sur les enregistrements v1 créés avant la reprise ordonnée appel → fermeture. */
   attendance_operation_id?: string | null;
+  /** Heure réelle de fin observée sur le téléphone. */
+  actual_end_at?: string | null;
+  schedule_revision?: number | null;
+  timezone?: string | null;
+  scheduled_start_at?: string | null;
   attempt_key: string;
   state: TeacherSessionLifecycleDeliveryState;
   device_requested_at: string;
@@ -82,6 +91,12 @@ export type CloseTeacherSessionInput = BaseInput & {
   classId?: string | null;
   attendanceOperationId?: string | null;
   operationId?: string | null;
+  actualEndAt?: string | null;
+  scheduleRevision?: number | null;
+  timezone?: string | null;
+  scheduledStartAt?: string | null;
+  /** Réservé aux reprises différées ; une fermeture directe reste au protocole v1. */
+  replayMode?: boolean;
 };
 export type TransitionTeacherSessionInput = BaseInput & {
   classId: string;
@@ -140,6 +155,10 @@ async function getOrCreate(
     attendanceOperationId: string | null;
     attemptKey: string;
     operationId?: string | null;
+    actualEndAt?: string | null;
+    scheduleRevision?: number | null;
+    timezone?: string | null;
+    scheduledStartAt?: string | null;
   },
 ) {
   const records = await deps.store.list(input.institutionId);
@@ -166,6 +185,13 @@ async function getOrCreate(
     class_id: input.classId,
     period_id: input.periodId,
     attendance_operation_id: input.attendanceOperationId,
+    actual_end_at: normalizedText(input.actualEndAt) || null,
+    schedule_revision:
+      Number.isSafeInteger(Number(input.scheduleRevision)) && Number(input.scheduleRevision) >= 0
+        ? Number(input.scheduleRevision)
+        : null,
+    timezone: normalizedText(input.timezone) || null,
+    scheduled_start_at: normalizedText(input.scheduledStartAt) || null,
     attempt_key: input.attemptKey,
     state: "device_pending",
     device_requested_at: now,
@@ -214,8 +240,10 @@ async function applyResponse(
       });
     }
     if (record.kind === "close") {
+      const expectedSessionId =
+        normalizedText(record.last_details?.relay_session_id) || record.session_id;
       if (
-        normalizedText(response.body?.session?.id) !== record.session_id ||
+        normalizedText(response.body?.session?.id) !== expectedSessionId ||
         response.body?.session?.session_state !== "closed"
       ) {
         return await patchRecord(deps, record, {
@@ -315,15 +343,33 @@ async function postCloseInternal(
     attendanceOperationId,
     attemptKey: sessionId,
     operationId: input.operationId,
+    actualEndAt: input.actualEndAt,
+    scheduleRevision: input.scheduleRevision,
+    timezone: input.timezone,
+    scheduledStartAt: input.scheduledStartAt,
   });
+  const suppliedRevision = Number(input.scheduleRevision);
   if (
     (!current.class_id && classId) ||
-    (!current.attendance_operation_id && attendanceOperationId)
+    (!current.attendance_operation_id && attendanceOperationId) ||
+    (!current.actual_end_at && normalizedText(input.actualEndAt)) ||
+    (current.schedule_revision == null && Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0) ||
+    (!current.timezone && normalizedText(input.timezone)) ||
+    (!current.scheduled_start_at && normalizedText(input.scheduledStartAt))
   ) {
     current = await patchRecord(deps, current, {
       class_id: current.class_id || classId,
       attendance_operation_id:
         current.attendance_operation_id || attendanceOperationId,
+      actual_end_at: current.actual_end_at || normalizedText(input.actualEndAt) || null,
+      schedule_revision:
+        current.schedule_revision ??
+        (Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0
+          ? suppliedRevision
+          : null),
+      timezone: current.timezone || normalizedText(input.timezone) || null,
+      scheduled_start_at:
+        current.scheduled_start_at || normalizedText(input.scheduledStartAt) || null,
     });
   }
   if (current.state === "relay_confirmed") return current;
@@ -343,12 +389,39 @@ async function postCloseInternal(
     requires_authentication: false,
   });
   try {
-    return await applyResponse(deps, attempted, await deps.postClose({
+    const resolvedSession = await resolveOfflineSessionReference(sessionId);
+    const relaySessionId = resolvedSession.serverSessionId || sessionId;
+    const replayRevision = Number(attempted.schedule_revision);
+    const replay =
+      input.replayMode === true &&
+      normalizedText(attempted.actual_end_at) &&
+      Number.isSafeInteger(replayRevision) &&
+      replayRevision >= 0 &&
+      normalizedText(attempted.timezone) &&
+      normalizedText(attempted.scheduled_start_at)
+        ? {
+            eventAt: normalizedText(attempted.actual_end_at),
+            queuedAt: attempted.created_at,
+            clientSessionId: (
+              resolvedSession.sessionReference || sessionId
+            ).startsWith("client:")
+              ? resolvedSession.sessionReference || sessionId
+              : `client:${resolvedSession.sessionReference || sessionId}`,
+            scheduleRevision: replayRevision,
+            timezone: normalizedText(attempted.timezone),
+            scheduledStartAt: normalizedText(attempted.scheduled_start_at),
+          }
+        : null;
+    const attemptedWithResolvedSession = await patchRecord(deps, attempted, {
+      last_details: { relay_session_id: relaySessionId },
+    });
+    return await applyResponse(deps, attemptedWithResolvedSession, await deps.postClose({
       baseUrl,
       accessToken,
       payload: buildTeacherSessionCloseRelayPayload({
         operationId: attempted.operation_id,
-        sessionId,
+        sessionId: relaySessionId,
+        replay,
       }),
     }));
   } catch {
@@ -391,15 +464,33 @@ export async function stageTeacherAttendanceSessionCloseWithDependencies(
     attendanceOperationId,
     attemptKey: sessionId,
     operationId: input.operationId,
+    actualEndAt: input.actualEndAt,
+    scheduleRevision: input.scheduleRevision,
+    timezone: input.timezone,
+    scheduledStartAt: input.scheduledStartAt,
   });
+  const suppliedRevision = Number(input.scheduleRevision);
   if (
     (!current.class_id && classId) ||
-    (!current.attendance_operation_id && attendanceOperationId)
+    (!current.attendance_operation_id && attendanceOperationId) ||
+    (!current.actual_end_at && normalizedText(input.actualEndAt)) ||
+    (current.schedule_revision == null && Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0) ||
+    (!current.timezone && normalizedText(input.timezone)) ||
+    (!current.scheduled_start_at && normalizedText(input.scheduledStartAt))
   ) {
     current = await patchRecord(deps, current, {
       class_id: current.class_id || classId,
       attendance_operation_id:
         current.attendance_operation_id || attendanceOperationId,
+      actual_end_at: current.actual_end_at || normalizedText(input.actualEndAt) || null,
+      schedule_revision:
+        current.schedule_revision ??
+        (Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0
+          ? suppliedRevision
+          : null),
+      timezone: current.timezone || normalizedText(input.timezone) || null,
+      scheduled_start_at:
+        current.scheduled_start_at || normalizedText(input.scheduledStartAt) || null,
     });
   }
   return current;
@@ -587,6 +678,11 @@ export async function retryTeacherSessionCloseOnRelay(
     classId: record.class_id,
     attendanceOperationId: record.attendance_operation_id,
     operationId: record.operation_id,
+    actualEndAt: record.actual_end_at,
+    scheduleRevision: record.schedule_revision,
+    timezone: record.timezone,
+    scheduledStartAt: record.scheduled_start_at,
+    replayMode: true,
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
   });

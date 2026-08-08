@@ -283,7 +283,33 @@ test("4 - une ouverture n'est rejouée que si sa séance locale est encore activ
   assert.equal(active.recovered_sessions[0]?.session.id, "relay-session-a");
 });
 
-test("5 - une livraison Cloud incertaine n'est jamais renvoyée vers le relais", async () => {
+test("5 - une séance déjà terminée rejoue son ouverture avant ses données dépendantes", async () => {
+  const open = openRecord({ operation_id: "open-completed" });
+  const attendance = attendanceRecord({
+    session_reference: "client:open-completed",
+    session_id: "client:open-completed",
+  });
+  const close = lifecycleRecord({
+    content_key: JSON.stringify({ session_id: "client:open-completed" }),
+    session_id: "client:open-completed",
+  });
+  const s = scenario({ opens: [open], attendance: [attendance], lifecycle: [close] });
+  const result = await recoverTeacherOfflineOperationsToRelayWithDependencies(
+    context(),
+    s.deps,
+  );
+  assert.deepEqual(s.order, [
+    "open:open-completed",
+    "map:open-completed",
+    "attendance:attendance-a",
+    "close:close-a",
+  ]);
+  assert.equal(result.opens_confirmed, 1);
+  assert.equal(result.attendance_secured, 1);
+  assert.equal(result.lifecycle_confirmed, 1);
+});
+
+test("6 - une livraison Cloud incertaine n'est jamais renvoyée vers le relais", async () => {
   const uncertain = attendanceRecord({
     state: "delivery_unknown",
     channel: "cloud",
@@ -300,7 +326,7 @@ test("5 - une livraison Cloud incertaine n'est jamais renvoyée vers le relais",
   assert.equal(result.pending_after, 1);
 });
 
-test("6 - sans configuration relais, aucune donnée n'est supprimée", async () => {
+test("7 - sans configuration relais, aucune donnée n'est supprimée", async () => {
   const s = scenario({ attendance: [attendanceRecord()] });
   const result = await recoverTeacherOfflineOperationsToRelayWithDependencies(
     context({ relayBaseUrl: null, relayAccessToken: null }),

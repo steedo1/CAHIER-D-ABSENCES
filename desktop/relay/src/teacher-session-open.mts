@@ -11,17 +11,35 @@ import {
   resolveTeacherScheduledSlot,
   TeacherSessionRuleError,
 } from "./teacher-session-rules.mjs";
+import {
+  assertRelayReplayScheduledStart,
+  RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION,
+  RelayOfflineReplayError,
+  validateRelayOfflineReplay,
+  type RelayOfflineReplayContext,
+  type ValidatedRelayOfflineReplay,
+} from "./teacher-session-replay.mjs";
 
 const PROTOCOL_VERSION = 1 as const;
 const OPERATION_TYPE = "attendance.session.open" as const;
 
-type TeacherSessionOpenOperation = {
-  protocol_version: typeof PROTOCOL_VERSION;
-  operation_id: string;
-  operation_type: typeof OPERATION_TYPE;
-  class_id: string;
-  period_id: string;
-};
+type TeacherSessionOpenOperation =
+  | {
+      protocol_version: typeof PROTOCOL_VERSION;
+      operation_id: string;
+      operation_type: typeof OPERATION_TYPE;
+      class_id: string;
+      period_id: string;
+    }
+  | {
+      protocol_version: typeof RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION;
+      operation_id: string;
+      operation_type: typeof OPERATION_TYPE;
+      class_id: string;
+      period_id: string;
+      event_at: string;
+      replay_context: RelayOfflineReplayContext;
+    };
 
 type PeriodRow = {
   id: string;
@@ -104,6 +122,10 @@ export type TeacherSessionOpenResult = {
   presence_proof: string;
   proof_expires_at: string;
   relay_time: string;
+  delivery_mode?: "live" | "offline_replay";
+  event_at?: string;
+  received_at?: string;
+  schedule_revision_stale?: boolean;
 };
 
 export class TeacherSessionOpenError extends Error {
@@ -134,29 +156,53 @@ function text(value: unknown, code: string, maxLength = 256) {
 
 function parseOperation(raw: unknown): TeacherSessionOpenOperation {
   const row = object(raw, "operation_must_be_object");
-  const accepted = new Set([
-    "protocol_version",
-    "operation_id",
-    "operation_type",
-    "class_id",
-    "period_id",
-  ]);
+  const protocolVersion = Number(row.protocol_version);
+  const accepted = new Set(
+    protocolVersion === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION
+      ? [
+          "protocol_version",
+          "operation_id",
+          "operation_type",
+          "class_id",
+          "period_id",
+          "event_at",
+          "replay_context",
+        ]
+      : [
+          "protocol_version",
+          "operation_id",
+          "operation_type",
+          "class_id",
+          "period_id",
+        ],
+  );
   if (Object.keys(row).some((key) => !accepted.has(key))) {
     throw new TeacherSessionOpenError(400, "operation_field_not_supported");
-  }
-  if (row.protocol_version !== PROTOCOL_VERSION) {
-    throw new TeacherSessionOpenError(400, "protocol_version_not_supported");
   }
   if (row.operation_type !== OPERATION_TYPE) {
     throw new TeacherSessionOpenError(400, "operation_type_not_supported");
   }
-  return {
-    protocol_version: PROTOCOL_VERSION,
+  const base = {
     operation_id: text(row.operation_id, "operation_id_required", 128),
     operation_type: OPERATION_TYPE,
     class_id: text(row.class_id, "class_id_required"),
     period_id: text(row.period_id, "period_id_required"),
   };
+  if (protocolVersion === PROTOCOL_VERSION) {
+    return { protocol_version: PROTOCOL_VERSION, ...base };
+  }
+  if (protocolVersion === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION) {
+    return {
+      protocol_version: RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION,
+      ...base,
+      event_at: text(row.event_at, "event_at_required", 64),
+      replay_context: object(
+        row.replay_context,
+        "offline_replay_context_invalid",
+      ) as RelayOfflineReplayContext,
+    };
+  }
+  throw new TeacherSessionOpenError(400, "protocol_version_not_supported");
 }
 
 function fingerprint(
@@ -173,6 +219,12 @@ function fingerprint(
     auth_class_id: teacher.class_id || null,
     class_id: operation.class_id,
     period_id: operation.period_id,
+    event_at: operation.protocol_version === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION
+      ? operation.event_at
+      : null,
+    replay_context: operation.protocol_version === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION
+      ? operation.replay_context
+      : null,
   })).digest("hex");
 }
 
@@ -405,17 +457,33 @@ function resultFromReceipt(
   receipt: StoredReceipt,
   now: Date,
 ): TeacherSessionOpenResult {
+  const logicalPayloadMatches =
+    receipt.operation_type === operation.operation_type &&
+    receipt.class_id === operation.class_id &&
+    receipt.period_id === operation.period_id;
+  const exactPayloadMatches =
+    receipt.protocol_version === operation.protocol_version &&
+    receipt.payload_fingerprint === expectedFingerprint;
+  const liveReceiptReplayedOffline =
+    receipt.protocol_version === PROTOCOL_VERSION &&
+    operation.protocol_version === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION;
+
   if (
-    receipt.protocol_version !== operation.protocol_version ||
-    receipt.operation_type !== operation.operation_type ||
-    receipt.class_id !== operation.class_id ||
-    receipt.period_id !== operation.period_id ||
-    receipt.payload_fingerprint !== expectedFingerprint
+    !logicalPayloadMatches ||
+    (!exactPayloadMatches && !liveReceiptReplayedOffline)
   ) {
     throw new TeacherSessionOpenError(409, "operation_id_reused_with_different_payload");
   }
   const session = sessionRow(db, teacher.institution_id, receipt.local_session_id);
   if (!session) throw new TeacherSessionOpenError(409, "local_session_mapping_missing");
+  if (
+    session.class_id !== receipt.class_id ||
+    session.period_id !== receipt.period_id ||
+    session.subject_id !== receipt.subject_id ||
+    session.teacher_id !== receipt.teacher_profile_id
+  ) {
+    throw new TeacherSessionOpenError(409, "local_session_mapping_conflict");
+  }
   if (session.session_state === "closed" || session.ended_at) {
     throw new TeacherSessionOpenError(409, "session_slot_already_closed");
   }
@@ -494,20 +562,58 @@ export function openTeacherAttendanceSession(
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ): TeacherSessionOpenResult {
   const operation = parseOperation(raw);
-  maintainTeacherAttendanceSessions(db, now);
   const operationFingerprint = fingerprint(operation, teacher);
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) {
     return resultFromReceipt(db, operation, teacher, operationFingerprint, existing, now);
   }
 
+  let replay: ValidatedRelayOfflineReplay | null = null;
+  let eventAt = now;
+  if (operation.protocol_version === RELAY_OFFLINE_REPLAY_PROTOCOL_VERSION) {
+    try {
+      replay = validateRelayOfflineReplay({
+        db,
+        institutionId: teacher.institution_id,
+        operationId: operation.operation_id,
+        eventAtRaw: operation.event_at,
+        rawContext: operation.replay_context,
+        now,
+        requireOperationBoundClientSession: true,
+      });
+      if (replay.scheduleRevisionStale) {
+        throw new RelayOfflineReplayError(
+          "offline_replay_schedule_revision_stale_requires_review",
+        );
+      }
+      eventAt = replay.eventAt;
+    } catch (error) {
+      const code = error instanceof RelayOfflineReplayError
+        ? error.code
+        : "offline_replay_invalid";
+      throw new TeacherSessionOpenError(409, code);
+    }
+  }
+  maintainTeacherAttendanceSessions(db, now);
+
   const persist = db.transaction(() => {
     const raced = storedReceipt(db, teacher.institution_id, operation.operation_id);
     if (raced) {
       return resultFromReceipt(db, operation, teacher, operationFingerprint, raced, now);
     }
-    const business = validateBusinessRules(db, operation, teacher, now);
+    const business = validateBusinessRules(db, operation, teacher, eventAt);
+    if (replay) {
+      try {
+        assertRelayReplayScheduledStart(replay, business.startedAt);
+      } catch (error) {
+        const code = error instanceof RelayOfflineReplayError
+          ? error.code
+          : "offline_replay_scheduled_start_invalid";
+        throw new TeacherSessionOpenError(409, code);
+      }
+    }
     const acceptedAt = now.toISOString();
+    const eventAtIso = eventAt.toISOString();
     const createdLocally = business.reusable === null;
     const sessionId = business.reusable?.id || randomUUID();
     if (createdLocally) {
@@ -527,19 +633,19 @@ export function openTeacherAttendanceSession(
       `).run(
         sessionId,
         teacher.institution_id,
-        sessionId,
+        replay?.clientSessionId || sessionId,
         operation.class_id,
         business.timetable.subject_id,
         business.timetable.teacher_id,
         operation.period_id,
         business.startedAt,
-        acceptedAt,
+        eventAtIso,
         relayActorKind(teacher) === "class_device" ? "class_device" : "teacher",
         acceptedAt,
         business.sessionDate,
         business.startedAt,
-        acceptedAt,
-        acceptedAt,
+        eventAtIso,
+        eventAtIso,
         business.scheduledEndAt,
         business.graceExpiresAt,
       );
@@ -558,8 +664,8 @@ export function openTeacherAttendanceSession(
       `).run(
         business.sessionDate,
         business.startedAt,
-        acceptedAt,
-        acceptedAt,
+        eventAtIso,
+        eventAtIso,
         business.scheduledEndAt,
         business.graceExpiresAt,
         acceptedAt,
@@ -586,6 +692,17 @@ export function openTeacherAttendanceSession(
       local_session_id: session.id,
       remote_session_id: null,
       accepted_at: acceptedAt,
+      event_at: eventAtIso,
+      received_at: acceptedAt,
+      replay_context: replay
+        ? {
+            client_session_id: replay.clientSessionId,
+            schedule_revision: replay.scheduleRevision,
+            schedule_revision_stale: replay.scheduleRevisionStale,
+            timezone: replay.timezone,
+            scheduled_start_at: replay.scheduledStartAt.toISOString(),
+          }
+        : null,
     };
     const payloadJson = canonicalJson(storedPayload);
     db.prepare(`
@@ -638,7 +755,7 @@ export function openTeacherAttendanceSession(
           operation_type: "teacher_session.open",
           ...materializedPayload,
         }),
-        acceptedAt,
+        eventAtIso,
         operation.protocol_version,
         operationFingerprint,
       );
@@ -711,8 +828,11 @@ export function openTeacherAttendanceSession(
         timetable_id: business.timetable.id,
         created_locally: createdLocally,
         payload_fingerprint: operationFingerprint,
+        delivery_mode: replay ? "offline_replay" : "live",
+        event_at: eventAtIso,
+        received_at: acceptedAt,
       }),
-      acceptedAt,
+      eventAtIso,
     );
 
     const proof = proofForSession(db, teacher, session, now);
@@ -736,6 +856,10 @@ export function openTeacherAttendanceSession(
       presence_proof: proof.proof,
       proof_expires_at: proof.expires_at,
       relay_time: acceptedAt,
+      delivery_mode: replay ? "offline_replay" : "live",
+      event_at: eventAtIso,
+      received_at: acceptedAt,
+      schedule_revision_stale: replay?.scheduleRevisionStale ?? false,
     } as const;
   });
   return persist();

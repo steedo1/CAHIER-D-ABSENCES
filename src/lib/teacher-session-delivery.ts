@@ -29,6 +29,14 @@ export type TeacherSessionDeliveryRecord = {
   subject_id: string | null;
   started_at: string | null;
   actual_call_at: string | null;
+  /** Heure réelle observée sur le téléphone pour un rejeu différé. */
+  event_at?: string | null;
+  /** Révision du planning préparé au moment de l'appel. */
+  schedule_revision?: number | null;
+  /** Fuseau du planning préparé au moment de l'appel. */
+  timezone?: string | null;
+  /** Début prévu du créneau attesté par le planning local. */
+  scheduled_start_at?: string | null;
   scheduled_end_at: string | null;
   grace_expires_at: string | null;
   relay_time: string | null;
@@ -69,6 +77,12 @@ export type OpenTeacherSessionOnRelayInput = {
   classId: string;
   periodId: string;
   attemptKey?: string | null;
+  eventAt?: string | null;
+  scheduleRevision?: number | null;
+  timezone?: string | null;
+  scheduledStartAt?: string | null;
+  /** Réservé aux reprises différées ; un appel direct reste au protocole v1. */
+  replayMode?: boolean;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
 };
@@ -132,6 +146,10 @@ async function getOrCreateRecord(
     classId: string;
     periodId: string;
     attemptKey: string;
+    eventAt?: string | null;
+    scheduleRevision?: number | null;
+    timezone?: string | null;
+    scheduledStartAt?: string | null;
   },
   deps: TeacherSessionDeliveryDependencies,
 ) {
@@ -157,6 +175,13 @@ async function getOrCreateRecord(
     subject_id: null,
     started_at: null,
     actual_call_at: null,
+    event_at: normalizedText(input.eventAt) || null,
+    schedule_revision:
+      Number.isSafeInteger(Number(input.scheduleRevision)) && Number(input.scheduleRevision) >= 0
+        ? Number(input.scheduleRevision)
+        : null,
+    timezone: normalizedText(input.timezone) || null,
+    scheduled_start_at: normalizedText(input.scheduledStartAt) || null,
     scheduled_end_at: null,
     grace_expires_at: null,
     relay_time: null,
@@ -192,7 +217,35 @@ async function openInternal(
   if (!classId) throw new Error("class_id_required");
   if (!periodId) throw new Error("period_id_required");
 
-  const current = await getOrCreateRecord({ institutionId, classId, periodId, attemptKey }, deps);
+  let current = await getOrCreateRecord({
+    institutionId,
+    classId,
+    periodId,
+    attemptKey,
+    eventAt: input.eventAt,
+    scheduleRevision: input.scheduleRevision,
+    timezone: input.timezone,
+    scheduledStartAt: input.scheduledStartAt,
+  }, deps);
+  const suppliedRevision = Number(input.scheduleRevision);
+  if (
+    (!current.event_at && normalizedText(input.eventAt)) ||
+    (current.schedule_revision == null && Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0) ||
+    (!current.timezone && normalizedText(input.timezone)) ||
+    (!current.scheduled_start_at && normalizedText(input.scheduledStartAt))
+  ) {
+    current = await storePatch(deps, current, {
+      event_at: current.event_at || normalizedText(input.eventAt) || null,
+      schedule_revision:
+        current.schedule_revision ??
+        (Number.isSafeInteger(suppliedRevision) && suppliedRevision >= 0
+          ? suppliedRevision
+          : null),
+      timezone: current.timezone || normalizedText(input.timezone) || null,
+      scheduled_start_at:
+        current.scheduled_start_at || normalizedText(input.scheduledStartAt) || null,
+    });
+  }
   if (current.state === "relay_opened" || current.state === "cloud_opened") {
     return current;
   }
@@ -210,10 +263,28 @@ async function openInternal(
     requires_authentication: false,
     last_details: null,
   });
+  const replayRevision = Number(attempted.schedule_revision);
+  const replay =
+    input.replayMode === true &&
+    normalizedText(attempted.event_at) &&
+    Number.isSafeInteger(replayRevision) &&
+    replayRevision >= 0 &&
+    normalizedText(attempted.timezone) &&
+    normalizedText(attempted.scheduled_start_at)
+      ? {
+          eventAt: normalizedText(attempted.event_at),
+          queuedAt: attempted.created_at,
+          clientSessionId: `client:${attempted.operation_id}`,
+          scheduleRevision: replayRevision,
+          timezone: normalizedText(attempted.timezone),
+          scheduledStartAt: normalizedText(attempted.scheduled_start_at),
+        }
+      : null;
   const payload = buildTeacherSessionOpenRelayPayload({
     operationId: attempted.operation_id,
     classId,
     periodId,
+    replay,
   });
 
   let response: DeliveryHttpResponse;
@@ -413,6 +484,11 @@ export async function retryTeacherSessionOpenOperationOnRelay(
     classId: record.class_id,
     periodId: record.period_id,
     attemptKey: record.attempt_key,
+    eventAt: record.event_at || record.actual_call_at,
+    scheduleRevision: record.schedule_revision,
+    timezone: record.timezone,
+    scheduledStartAt: record.scheduled_start_at || record.started_at,
+    replayMode: true,
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
   });

@@ -784,6 +784,55 @@ function rewriteBodyWithSessionMap(body: any, map: Record<string, string>) {
   return body;
 }
 
+function bodyWithOfflineReplayContext(row: OutboxRow, body: any) {
+  if (!body || typeof body !== "object") return body;
+  const operationType = String(row?.meta?.operationType || "").trim();
+  if (operationType !== "session-start" && operationType !== "session-end") {
+    return body;
+  }
+
+  const clientSessionId = String(
+    row?.meta?.clientSessionId ||
+      row?.body?.client_session_id ||
+      (String(row?.body?.session_id || "").startsWith("client:")
+        ? row.body.session_id
+        : ""),
+  ).trim();
+  const scheduleRevision = Number(row?.meta?.scheduleRevision);
+  const timezone = String(row?.meta?.timezone || "").trim();
+  const scheduledStartAt = String(row?.meta?.scheduledStartAt || "").trim();
+
+  // Les anciennes opérations dépourvues de contexte ne sont jamais rejouées
+  // comme des appels en direct. Le serveur les bloque explicitement afin de
+  // préserver les données pour une récupération contrôlée.
+  if (
+    !clientSessionId ||
+    !Number.isSafeInteger(scheduleRevision) ||
+    scheduleRevision < 0 ||
+    !timezone ||
+    !scheduledStartAt
+  ) {
+    return {
+      ...body,
+      replay_context: { mode: "offline_replay_context_missing" },
+    };
+  }
+
+  return {
+    ...body,
+    replay_context: {
+      mode: "offline_replay",
+      queued_at: new Date(row.createdAt).toISOString(),
+      client_session_id: clientSessionId.startsWith("client:")
+        ? clientSessionId
+        : `client:${clientSessionId}`,
+      schedule_revision: scheduleRevision,
+      timezone,
+      scheduled_start_at: scheduledStartAt,
+    },
+  };
+}
+
 async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any) {
   // start session returns { item: { id, ... } } (supposé)
   const clientSessionId = row?.meta?.clientSessionId || row?.body?.client_session_id;
@@ -852,7 +901,10 @@ async function flushOutboxInternal(): Promise<FlushResult> {
     }
 
     // Prépare body potentiellement réécrit (session_id)
-    const body = rewriteBodyWithSessionMap(row.body, map);
+    const body = bodyWithOfflineReplayContext(
+      row,
+      rewriteBodyWithSessionMap(row.body, map),
+    );
 
     try {
       const res = await fetchWithTimeout(
