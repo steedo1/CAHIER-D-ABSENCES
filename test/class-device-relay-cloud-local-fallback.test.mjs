@@ -60,20 +60,23 @@ test("le mapping client vers serveur et la restauration Cloud du téléphone de 
   assert.match(openRoute, /\.eq\("created_by", user\.id\)/);
   assert.match(openRoute, /\.eq\("origin", "class_device"\)/);
   assert.match(openRoute, /delivery_origin: classDeviceOrigin \? "cloud_fallback"/);
-  assert.match(offline, /map\[clientKey\] = serverId/);
+  assert.match(offline, /registerOfflineSessionReference\(clientKey, String\(serverId\)\)/);
 });
 
-test("le Cloud fallback utilise son heure serveur et vérifie le period_id exact", async () => {
+test("le Cloud conserve l'heure capturée hors ligne et vérifie le period_id exact", async () => {
   const route = await read("src/app/api/class/sessions/start/route.ts");
 
-  assert.match(route, /const serverNow = new Date\(\);\s+const actualCallAt = serverNow;/s);
+  assert.match(route, /const maxOfflineAgeMs = 30 \* 24 \* 60 \* 60_000/);
+  assert.match(route, /const clientObservedAtAccepted = Boolean/);
+  assert.match(route, /const actualCallAt = clientObservedAtAccepted\s+\? clientObservedAt!\s+: serverNow/s);
   assert.match(route, /const requestedPeriodMismatch\s*=\s*Boolean/);
   assert.match(route, /requestedPeriodId !== currentPeriod\.periodId/);
   assert.doesNotMatch(route, /error: "period_id_mismatch"/);
   assert.match(route, /period_id: currentPeriod\.periodId/);
   assert.match(route, /delivery_origin: "cloud_fallback"/);
   assert.match(route, /server_time: serverNow\.toISOString\(\)/);
-  assert.match(route, /action: "cloud_time_applied_without_gps_or_blocking"/);
+  assert.match(route, /"device_time_preserved_for_offline_sync"/);
+  assert.match(route, /"cloud_time_applied_invalid_device_time"/);
 });
 
 test("le téléphone de classe ne demande jamais le GPS et le téléphone personnel garde ses contrôles", async () => {
@@ -144,4 +147,39 @@ test("chaque fermeture locale est une opération ordonnée et ne peut pas être 
   assert.match(page, /mergeKey: `end:\$\{openId\}`/);
   assert.doesNotMatch(page, /cacheSet\(PENDING_END_KEY,\s*\{\s*actual_end_at:/);
   assert.match(page, /aucun marqueur unique ne peut être écrasé/);
+});
+
+test("le retour Cloud respecte ouverture, appel puis fermeture sans dépasser une opération bloquée", async () => {
+  const [page, offline, attendanceRoute, endRoute] = await Promise.all([
+    read("src/app/class/page.tsx"),
+    read("src/lib/offline.ts"),
+    read("src/app/api/teacher/attendance/bulk/route.ts"),
+    read("src/app/api/class/sessions/end/route.ts"),
+  ]);
+
+  assert.match(page, /queueCloudFallbackForRelaySession/);
+  assert.match(page, /operationId: openOperationId[\s\S]*operationId: input\.attendanceOperationId[\s\S]*operationId: input\.closeOperationId/);
+  assert.match(page, /markTeacherAttendanceSyncedInCloud/);
+  assert.match(page, /markTeacherSessionClosedInCloud/);
+  assert.match(offline, /const blockedSessions = new Set<string>\(\)/);
+  assert.match(offline, /blockedSessions\.has\(dependencyKey\)/);
+  assert.match(offline, /operationType === "session-end"/);
+  assert.match(attendanceRoute, /if \(session\.ended_at\)/);
+  assert.match(attendanceRoute, /operation_id: operationId/);
+  assert.match(endRoute, /error: "session_id_required"/);
+  assert.doesNotMatch(endRoute, /order\("started_at", \{ ascending: false \}\)/);
+});
+
+test("une réponse Cloud perdue est rejouée avec le même identifiant au lieu de réécrire l'histoire", async () => {
+  const [attendanceDelivery, lifecycle, page] = await Promise.all([
+    read("src/lib/teacher-attendance-delivery.ts"),
+    read("src/lib/teacher-session-lifecycle-delivery.ts"),
+    read("src/app/class/page.tsx"),
+  ]);
+
+  assert.doesNotMatch(attendanceDelivery, /state === "delivery_unknown" \|\|/);
+  assert.match(attendanceDelivery, /cloud_operation_id_mismatch/);
+  assert.match(lifecycle, /state === "cloud_confirmed"/);
+  assert.match(page, /relay_state: "cloud_confirmed"/);
+  assert.match(page, /sans modifier leurs heures originales/);
 });

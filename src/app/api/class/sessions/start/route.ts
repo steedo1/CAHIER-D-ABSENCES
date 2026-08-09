@@ -181,7 +181,6 @@ export async function POST(req: NextRequest) {
     }
 
     const serverNow = new Date();
-    const actualCallAt = serverNow;
     const requestedPeriodId = String(b?.period_id || "").trim();
     const operationId = String(
       req.headers.get("x-mon-cahier-operation-id") ||
@@ -210,6 +209,18 @@ export async function POST(req: NextRequest) {
     const clientClockSkewMs = clientObservedAt
       ? clientObservedAt.getTime() - serverNow.getTime()
       : null;
+    const maxFutureMs = 5 * 60_000;
+    const maxOfflineAgeMs = 30 * 24 * 60 * 60_000;
+    const clientObservedAtAccepted = Boolean(
+      clientObservedAt &&
+      clientObservedAt.getTime() <= serverNow.getTime() + maxFutureMs &&
+      clientObservedAt.getTime() >= serverNow.getTime() - maxOfflineAgeMs
+    );
+    // Pour le téléphone de classe déjà autorisé, l'heure métier est celle
+    // capturée au moment de l'appel. Le retour d'Internet ne la remplace pas.
+    const actualCallAt = clientObservedAtAccepted
+      ? clientObservedAt!
+      : serverNow;
 
     let phone = String((user as any).phone || "").trim();
     if (!phone) {
@@ -691,7 +702,9 @@ export async function POST(req: NextRequest) {
                 client_server_skew_ms: clientClockSkewMs,
                 requested_period_id: requestedPeriodId || null,
                 cloud_period_id: currentPeriod.periodId,
-                action: "cloud_time_applied_without_gps_or_blocking",
+                action: clientObservedAtAccepted
+                  ? "device_time_preserved_for_offline_sync"
+                  : "cloud_time_applied_invalid_device_time",
               }
             : null,
         education_type: educationContext.education_type,

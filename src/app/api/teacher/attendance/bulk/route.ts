@@ -110,7 +110,21 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({} as any));
-  const session_id = String(body?.session_id || "");
+  const session_id = String(body?.session_id || "").trim();
+  const operationId = String(
+    req.headers.get("x-mon-cahier-operation-id") ||
+      body?.operation_id ||
+      "",
+  ).trim();
+  if (!operationId) {
+    return NextResponse.json({ error: "operation_id_required" }, { status: 400 });
+  }
+  if (
+    !/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+    operationId.startsWith("client:")
+  ) {
+    return NextResponse.json({ error: "invalid_operation_id" }, { status: 400 });
+  }
 
   // 🔹 payload marks brut
   const rawMarks: Mark[] = Array.isArray(body?.marks) ? body.marks : [];
@@ -129,7 +143,7 @@ export async function POST(req: NextRequest) {
   // 1) Charger la séance (+ started_at pour cohérence)
   const { data: sess, error: sErr } = await srv
     .from("teacher_sessions")
-    .select("id, class_id, teacher_id, expected_minutes, actual_call_at, started_at, presence_verified, presence_method")
+    .select("id, class_id, teacher_id, expected_minutes, actual_call_at, started_at, ended_at, presence_verified, presence_method")
     .eq("id", session_id)
     .maybeSingle();
 
@@ -147,9 +161,20 @@ export async function POST(req: NextRequest) {
     expected_minutes: number | null;
     actual_call_at: string | null;
     started_at: string | null;
+    ended_at: string | null;
     presence_verified: boolean | null;
     presence_method: string | null;
   };
+
+  if (session.ended_at) {
+    return NextResponse.json(
+      {
+        error: "session_closed",
+        message: "Cette séance est déjà terminée et ne peut plus être modifiée.",
+      },
+      { status: 409 },
+    );
+  }
 
   // 2) Autorisation (prof de la séance ou téléphone de classe)
   let allowed = session.teacher_id === user.id;
@@ -539,5 +564,11 @@ export async function POST(req: NextRequest) {
     ]);
   }
 
-  return NextResponse.json({ ok: true, upserted, deleted });
+  return NextResponse.json({
+    ok: true,
+    operation_id: operationId,
+    session_id,
+    upserted,
+    deleted,
+  });
 }

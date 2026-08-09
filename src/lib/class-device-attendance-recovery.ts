@@ -92,6 +92,10 @@ function attendanceResolved(record: TeacherAttendanceDeliveryRecord) {
   return record.state === "relay_secured" || record.state === "cloud_synced";
 }
 
+function attendanceActive(record: TeacherAttendanceDeliveryRecord) {
+  return record.state !== "superseded";
+}
+
 function attendanceRetryable(record: TeacherAttendanceDeliveryRecord) {
   if (record.channel === "cloud" || record.cloud_attempted_at) return false;
   return (
@@ -101,7 +105,11 @@ function attendanceRetryable(record: TeacherAttendanceDeliveryRecord) {
 }
 
 function attendanceNeedsAttention(record: TeacherAttendanceDeliveryRecord) {
-  return !attendanceResolved(record) && !attendanceRetryable(record);
+  return (
+    attendanceActive(record) &&
+    !attendanceResolved(record) &&
+    !attendanceRetryable(record)
+  );
 }
 
 function classAttendance(
@@ -109,7 +117,7 @@ function classAttendance(
   classId: string,
 ) {
   return records
-    .filter((record) => record.class_id === classId)
+    .filter((record) => record.class_id === classId && attendanceActive(record))
     .sort((left, right) =>
       left.created_at.localeCompare(right.created_at) ||
       left.operation_id.localeCompare(right.operation_id),
@@ -167,7 +175,8 @@ function pendingCount(
   const closePending = lifecycle.filter(
     (record) =>
       closeBelongsToClass(record, classId, scopedAttendance) &&
-      record.state !== "relay_confirmed",
+      record.state !== "relay_confirmed" &&
+      record.state !== "cloud_confirmed",
   ).length;
   return openPending + attendancePending + closePending;
 }
@@ -338,7 +347,12 @@ export async function recoverClassDeviceAttendanceWithDependencies(
     );
 
   for (const close of closeRecords) {
-    if (close.state === "relay_confirmed") continue;
+    if (
+      close.state === "relay_confirmed" ||
+      close.state === "cloud_confirmed"
+    ) {
+      continue;
+    }
     if (close.state === "blocked") {
       summary.requires_attention += 1;
       continue;

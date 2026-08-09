@@ -237,6 +237,42 @@ test("le compteur inclut l'appel et la fermeture encore locaux", async () => {
   );
 });
 
+test("une confirmation Cloud retire l'appel et la fermeture de la reprise relais", async () => {
+  const scenario = recoveryScenario({
+    attendance: [
+      attendance({
+        state: "cloud_synced",
+        channel: "cloud",
+        cloud_attempted_at: "2026-08-09T11:00:00.000Z",
+        last_status: 200,
+        last_error: null,
+      }),
+    ],
+    lifecycle: [
+      close({
+        state: "cloud_confirmed",
+        last_status: 200,
+        last_error: null,
+      }),
+    ],
+  });
+
+  assert.equal(
+    await countClassDeviceAttendanceRecoveryWithDependencies(
+      context(),
+      scenario.deps,
+    ),
+    0,
+  );
+  const result = await recoverClassDeviceAttendanceWithDependencies(
+    context(),
+    scenario.deps,
+  );
+  assert.deepEqual(scenario.order, []);
+  assert.equal(result.pending_before, 0);
+  assert.equal(result.pending_after, 0);
+});
+
 test("la fermeture peut être mise en file sans aucun POST réseau", async () => {
   class LifecycleStore implements TeacherSessionLifecycleStore {
     records: TeacherSessionLifecycleDeliveryRecord[] = [];

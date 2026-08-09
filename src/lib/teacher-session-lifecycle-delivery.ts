@@ -16,6 +16,7 @@ import {
 export type TeacherSessionLifecycleDeliveryState =
   | "device_pending"
   | "relay_confirmed"
+  | "cloud_confirmed"
   | "blocked";
 
 export type TeacherSessionLifecycleDeliveryRecord = {
@@ -326,7 +327,12 @@ async function postCloseInternal(
         current.attendance_operation_id || attendanceOperationId,
     });
   }
-  if (current.state === "relay_confirmed") return current;
+  if (
+    current.state === "relay_confirmed" ||
+    current.state === "cloud_confirmed"
+  ) {
+    return current;
+  }
   const baseUrl = normalizedText(input.relayBaseUrl);
   const accessToken = normalizedText(input.relayAccessToken);
   if (!baseUrl || !accessToken) {
@@ -581,6 +587,34 @@ export async function retryTeacherSessionCloseOnRelay(
   });
 }
 
+export async function markTeacherSessionClosedInCloud(input: {
+  institutionId: string;
+  operationId: string;
+  status?: number | null;
+}) {
+  const institutionId = normalizedText(input.institutionId);
+  const operationId = normalizedText(input.operationId);
+  if (!institutionId || !operationId) return null;
+  const store = createIndexedDbTeacherSessionLifecycleStore();
+  const records = await store.list(institutionId);
+  const record = records.find(
+    (candidate) =>
+      candidate.kind === "close" && candidate.operation_id === operationId,
+  );
+  if (!record) return null;
+  const next: TeacherSessionLifecycleDeliveryRecord = {
+    ...record,
+    state: "cloud_confirmed",
+    updated_at: new Date().toISOString(),
+    last_status: input.status ?? 200,
+    last_error: null,
+    last_details: null,
+    requires_authentication: false,
+  };
+  await store.put(next);
+  return next;
+}
+
 export async function transitionTeacherAttendanceSessionOnRelay(
   input: TransitionTeacherSessionInput,
 ) {
@@ -594,6 +628,9 @@ export function teacherSessionLifecycleDeliveryMessage(
     return record.kind === "close"
       ? "Séance terminée sur le relais local."
       : "Cours suivant ouvert sur le relais local.";
+  }
+  if (record.state === "cloud_confirmed") {
+    return "Séance terminée et sécurisée dans le Cloud.";
   }
   if (record.last_error === "teacher_attendance_writes_disabled") {
     return "Opération conservée sur cet appareil : les écritures du relais sont désactivées.";

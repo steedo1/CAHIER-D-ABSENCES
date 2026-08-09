@@ -25,6 +25,7 @@ export type TeacherAttendanceDeliveryState =
   | "relay_secured"
   | "cloud_synced"
   | "delivery_unknown"
+  | "superseded"
   | "blocked"
   | "conflict";
 
@@ -293,6 +294,19 @@ async function getOrCreateRecord(
     });
   }
 
+  if (
+    latest &&
+    latest.state !== "relay_secured" &&
+    latest.state !== "cloud_synced" &&
+    latest.state !== "superseded"
+  ) {
+    await storePatch(deps, latest, {
+      state: "superseded",
+      last_error: "attendance_superseded_by_newer_draft",
+      requires_authentication: false,
+    });
+  }
+
   const created: TeacherAttendanceDeliveryRecord = {
     schema_version: 1,
     institution_id: input.institutionId,
@@ -320,7 +334,7 @@ async function getOrCreateRecord(
 function terminalState(state: TeacherAttendanceDeliveryState) {
   return state === "relay_secured" ||
     state === "cloud_synced" ||
-    state === "delivery_unknown" ||
+    state === "superseded" ||
     state === "blocked" ||
     state === "conflict";
 }
@@ -353,10 +367,19 @@ async function deliverToCloud(
   }
 
   if (response.ok) {
+    const responseOperationId = normalizedText(response.body?.operation_id);
+    if (responseOperationId !== current.operation_id) {
+      return await storePatch(deps, current, {
+        state: "conflict",
+        last_status: response.status,
+        last_error: "cloud_operation_id_mismatch",
+      });
+    }
     return await storePatch(deps, current, {
       state: "cloud_synced",
       last_status: response.status,
       last_error: null,
+      requires_authentication: false,
     });
   }
   const error = safeErrorCode(response.body, `cloud_http_${response.status}`);
@@ -798,6 +821,37 @@ export async function retryTeacherAttendanceOperationOnRelay(
   });
 }
 
+export async function markTeacherAttendanceSyncedInCloud(input: {
+  institutionId: string;
+  operationId: string;
+  sessionId?: string | null;
+  status?: number | null;
+}) {
+  const institutionId = normalizedText(input.institutionId);
+  const operationId = normalizedText(input.operationId);
+  if (!institutionId || !operationId) return null;
+  const store = createIndexedDbTeacherAttendanceStore();
+  const records = await store.list(institutionId);
+  const record = records.find(
+    (candidate) => candidate.operation_id === operationId,
+  );
+  if (!record) return null;
+  const sessionId = normalizedText(input.sessionId);
+  const next: TeacherAttendanceDeliveryRecord = {
+    ...record,
+    state: "cloud_synced",
+    channel: "cloud",
+    session_id: sessionId || record.session_id,
+    cloud_attempted_at: record.cloud_attempted_at || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_status: input.status ?? 200,
+    last_error: null,
+    requires_authentication: false,
+  };
+  await store.put(next);
+  return next;
+}
+
 export async function countUnresolvedTeacherAttendanceOperations(knownInstitutionId?: string | null) {
   if (typeof window === "undefined") return 0;
   const cachedInstitutionId = normalizedText(
@@ -815,13 +869,18 @@ export async function countUnresolvedTeacherAttendanceOperations(knownInstitutio
   const records = (await Promise.all(
     Array.from(institutionIds, (institutionId) => store.list(institutionId)),
   )).flat();
-  return records.filter((record) => record.state !== "cloud_synced").length;
+  return records.filter(
+    (record) =>
+      record.state !== "cloud_synced" &&
+      record.state !== "superseded",
+  ).length;
 }
 
 export function teacherAttendanceDeliveryMessage(record: TeacherAttendanceDeliveryRecord) {
   if (record.state === "cloud_synced") return "Synchronisé.";
   if (record.state === "relay_secured") return "Sécurisé sur le relais local.";
   if (record.state === "delivery_unknown") return "Synchronisation à vérifier.";
+  if (record.state === "superseded") return "Remplacé par une version plus récente.";
   if (record.state === "conflict") return "Action requise : conflit de synchronisation.";
   if (record.state === "blocked") {
     if (record.last_error === "session_not_found") {

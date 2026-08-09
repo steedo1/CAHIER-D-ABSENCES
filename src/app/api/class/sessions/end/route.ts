@@ -21,7 +21,7 @@ function parseEffectiveEndAt(raw: unknown) {
   if (Number.isNaN(d.getTime())) return now.toISOString();
 
   const maxFutureMs = 10 * 60 * 1000;
-  const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+  const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
 
   if (d.getTime() > now.getTime() + maxFutureMs) return now.toISOString();
   if (d.getTime() < now.getTime() - maxAgeMs) return now.toISOString();
@@ -49,10 +49,21 @@ export async function PATCH(req: NextRequest) {
         body?.operation_id ||
         "",
     ).trim();
+    if (!session_id) {
+      return NextResponse.json(
+        { error: "session_id_required" },
+        { status: 400 },
+      );
+    }
+    if (!operationId) {
+      return NextResponse.json(
+        { error: "operation_id_required" },
+        { status: 400 },
+      );
+    }
     if (
-      operationId &&
-      (!/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
-        operationId.startsWith("client:"))
+      !/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+      operationId.startsWith("client:")
     ) {
       return NextResponse.json(
         { error: "invalid_operation_id" },
@@ -61,62 +72,32 @@ export async function PATCH(req: NextRequest) {
     }
     const endedAtIso = parseEffectiveEndAt(body?.actual_end_at);
 
-    if (session_id) {
-      const { data: sess, error: sErr } = await srv
-        .from("teacher_sessions")
-        .select("id, created_by, ended_at, status, started_at")
-        .eq("id", session_id)
-        .maybeSingle();
+    const { data: sess, error: sErr } = await srv
+      .from("teacher_sessions")
+      .select("id, created_by, ended_at, status, started_at")
+      .eq("id", session_id)
+      .maybeSingle();
 
-      if (sErr) {
-        return NextResponse.json({ error: sErr.message }, { status: 400 });
-      }
-      if (!sess) {
-        return NextResponse.json({ error: "session_not_found" }, { status: 404 });
-      }
+    if (sErr) {
+      return NextResponse.json({ error: sErr.message }, { status: 400 });
+    }
+    if (!sess) {
+      return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+    }
 
-      if (String(sess.created_by || "") !== String(user.id)) {
-        return NextResponse.json({ error: "forbidden_not_owner" }, { status: 403 });
-      }
+    if (String(sess.created_by || "") !== String(user.id)) {
+      return NextResponse.json({ error: "forbidden_not_owner" }, { status: 403 });
+    }
 
-      if (sess.ended_at) {
-        return NextResponse.json(
-          {
-            ok: true,
-            item: {
-              id: sess.id,
-              ended_at: sess.ended_at,
-              operation_id: operationId || null,
-              idempotent: true,
-              server_time: new Date().toISOString(),
-            },
-          },
-          { status: 200 }
-        );
-      }
-
-      const { data: updated, error: uErr } = await srv
-        .from("teacher_sessions")
-        .update({
-          ended_at: endedAtIso,
-          status: "submitted",
-        })
-        .eq("id", session_id)
-        .is("ended_at", null)
-        .select("id, status, started_at, ended_at")
-        .maybeSingle();
-
-      if (uErr) {
-        return NextResponse.json({ error: uErr.message }, { status: 400 });
-      }
-
+    if (sess.ended_at) {
       return NextResponse.json(
         {
           ok: true,
           item: {
-            ...(updated ?? { id: session_id, ended_at: endedAtIso }),
+            id: sess.id,
+            ended_at: sess.ended_at,
             operation_id: operationId || null,
-            idempotent: false,
+            idempotent: true,
             server_time: new Date().toISOString(),
           },
         },
@@ -124,42 +105,26 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const { data: open, error: qErr } = await srv
-      .from("teacher_sessions")
-      .select("id, ended_at, status, started_at")
-      .eq("created_by", user.id)
-      .is("ended_at", null)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (qErr) {
-      return NextResponse.json({ error: qErr.message }, { status: 400 });
-    }
-    if (!open) {
-      return NextResponse.json({ error: "no_open_session" }, { status: 404 });
-    }
-
-    const { data: closed, error } = await srv
+    const { data: updated, error: uErr } = await srv
       .from("teacher_sessions")
       .update({
         ended_at: endedAtIso,
         status: "submitted",
       })
-      .eq("id", open.id)
+      .eq("id", session_id)
       .is("ended_at", null)
       .select("id, status, started_at, ended_at")
       .maybeSingle();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (uErr) {
+      return NextResponse.json({ error: uErr.message }, { status: 400 });
     }
 
     return NextResponse.json(
       {
         ok: true,
         item: {
-          ...(closed ?? { id: open.id, ended_at: endedAtIso }),
+          ...(updated ?? { id: session_id, ended_at: endedAtIso }),
           operation_id: operationId || null,
           idempotent: false,
           server_time: new Date().toISOString(),
@@ -167,6 +132,7 @@ export async function PATCH(req: NextRequest) {
       },
       { status: 200 }
     );
+
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "end_failed" },

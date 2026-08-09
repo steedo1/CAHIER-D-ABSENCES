@@ -65,7 +65,11 @@ function scenario(
     now: () => new Date("2026-07-22T10:00:00.000Z"),
     createOperationId: () => options.operationId || `operation-${++sequence}`,
     cloudManifestAvailable: async () => options.cloudAvailable ?? false,
-    postCloud: options.cloud || (async () => ({ ok: true, status: 200, body: { ok: true } })),
+    postCloud: options.cloud || (async ({ operationId }) => ({
+      ok: true,
+      status: 200,
+      body: { ok: true, operation_id: operationId },
+    })),
     requestPresenceProof: options.proof || (async () => ({
       proof: "valid-presence-proof",
       expires_at: "2026-07-22T10:03:00.000Z",
@@ -195,6 +199,53 @@ test("8 - erreur Cloud ambiguë : delivery_unknown sans relais", async () => {
   ));
   assert.equal(result.state, "delivery_unknown");
   assert.equal(relayPosts, 0);
+});
+
+test("8b - une réponse Cloud perdue est rejouée avec le même operation_id", async () => {
+  const store = new TestIndexedDbStore();
+  const operationIds: string[] = [];
+  let attempt = 0;
+  const deps = scenario(store, {
+    cloudAvailable: true,
+    operationId: "cloud-retry-stable-operation",
+    cloud: async ({ operationId }) => {
+      operationIds.push(operationId);
+      attempt += 1;
+      if (attempt === 1) throw new Error("response lost");
+      return {
+        ok: true,
+        status: 200,
+        body: { operation_id: operationId },
+      };
+    },
+  });
+
+  const first = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  const second = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  assert.equal(first.state, "delivery_unknown");
+  assert.equal(second.state, "cloud_synced");
+  assert.deepEqual(operationIds, [
+    "cloud-retry-stable-operation",
+    "cloud-retry-stable-operation",
+  ]);
+});
+
+test("8c - un accusé Cloud portant un autre operation_id est un conflit", async () => {
+  const result = await deliverTeacherAttendanceWithDependencies(
+    input(),
+    scenario(new TestIndexedDbStore(), {
+      cloudAvailable: true,
+      operationId: "expected-cloud-operation",
+      cloud: async () => ({
+        ok: true,
+        status: 200,
+        body: { operation_id: "another-cloud-operation" },
+      }),
+    }),
+  );
+
+  assert.equal(result.state, "conflict");
+  assert.equal(result.last_error, "cloud_operation_id_mismatch");
 });
 
 test("9 - retry relais réutilise operation_id et payload canonique", async () => {
@@ -358,7 +409,7 @@ test("19 - navigation hors ligne Appel, Notes et Cahier de texte inchangée", as
   }
 });
 
-test("20 - ancienne outbox migrée sans double envoi", async () => {
+test("20 - ancienne outbox migrée reprend avec le même operation_id", async () => {
   const store = new TestIndexedDbStore();
   let removed = "";
   let cloudPosts = 0;
@@ -384,9 +435,10 @@ test("20 - ancienne outbox migrée sans double envoi", async () => {
     },
   }));
   assert.equal(result.operation_id, "legacy-operation");
-  assert.equal(result.state, "delivery_unknown");
+  assert.equal(result.state, "relay_secured");
   assert.equal(removed, "legacy-row");
-  assert.equal(cloudPosts + relayPosts, 0);
+  assert.equal(cloudPosts, 0);
+  assert.equal(relayPosts, 1);
 });
 
 test("21 - séance locale absente de SQLite : aucune création aveugle", async () => {
@@ -763,4 +815,37 @@ test("30 - une synchronisation sans séance Cloud conserve l'ouverture locale du
   );
   assert.equal(source.includes("else if (openLocal?.local_relay)"), true);
   assert.equal(source.includes("setOpen(openLocal);"), true);
+});
+
+test("31 - une correction remplace l'ancienne tentative sans risque de rejeu", async () => {
+  const store = new TestIndexedDbStore();
+  const deps = scenario(store, {
+    relay: async () => { throw new Error("offline"); },
+  });
+
+  const first = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  const corrected = await deliverTeacherAttendanceWithDependencies(input({
+    marks: [
+      { student_id: "student-b", status: "present", comment: null },
+      { student_id: "student-a", status: "late", comment: "5 min" },
+    ],
+  }), deps);
+
+  const records = await store.list("school-a");
+  assert.equal(records.length, 2);
+  assert.notEqual(corrected.operation_id, first.operation_id);
+  assert.equal(
+    records.find((record) => record.operation_id === first.operation_id)?.state,
+    "superseded",
+  );
+  assert.equal(
+    records.find((record) => record.operation_id === corrected.operation_id)?.state,
+    "device_pending",
+  );
+  assert.equal(
+    teacherAttendanceDeliveryMessage(
+      records.find((record) => record.operation_id === first.operation_id)!,
+    ),
+    "Remplacé par une version plus récente.",
+  );
 });

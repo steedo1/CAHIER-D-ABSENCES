@@ -74,6 +74,16 @@ export type OutboxStats = {
   lastStatus: number | null;
 };
 
+export type FlushedMutationAcknowledgement = {
+  operationId: string;
+  operationType: string | null;
+  clientSessionId: string | null;
+  sessionId: string | null;
+  institutionId: string | null;
+  classId: string | null;
+  status: number;
+};
+
 export type FlushResult = {
   flushed: number;
   remaining: number;
@@ -82,6 +92,7 @@ export type FlushResult = {
   retryableFailure: boolean;
   lastError: string | null;
   lastStatus: number | null;
+  acknowledged: FlushedMutationAcknowledgement[];
 };
 
 const DB_NAME = "moncahier_offline_v1";
@@ -668,6 +679,24 @@ export async function outboxStats(): Promise<OutboxStats> {
  * - réseau, authentification expirée ou panne temporaire -> mise en attente ;
  * - validation métier immédiate -> erreur visible, sans mise en attente.
  */
+function mutationOperationType(
+  url: string,
+  explicit?: string | null,
+) {
+  const normalizedExplicit = String(explicit || "").trim();
+  if (normalizedExplicit) return normalizedExplicit;
+  if (/\/api\/(?:class|teacher)\/sessions\/start(?:[/?]|$)/.test(url)) {
+    return "session-start";
+  }
+  if (/\/api\/teacher\/attendance\/bulk(?:[/?]|$)/.test(url)) {
+    return "attendance";
+  }
+  if (/\/api\/(?:class|teacher)\/sessions\/end(?:[/?]|$)/.test(url)) {
+    return "session-end";
+  }
+  return null;
+}
+
 export async function offlineMutateJson<T = any>(
   url: string,
   init: MutateInit,
@@ -748,6 +777,23 @@ export async function offlineMutateJson<T = any>(
       return { ok: false, queued: false, offline: false, status, error: msg, data: j };
     }
 
+    const operationType = mutationOperationType(
+      url,
+      opts?.meta?.operationType,
+    );
+    if (operationType) {
+      const acknowledgedOperationId = responseOperationId(j);
+      if (acknowledgedOperationId !== operationId) {
+        return await queueMutation({
+          offline: false,
+          status: 409,
+          error: acknowledgedOperationId
+            ? "offline_operation_id_mismatch"
+            : "offline_operation_id_missing",
+        });
+      }
+    }
+
     // ✅ OK
     return { ok: true, data: j as T, status };
   } catch (error: any) {
@@ -784,8 +830,25 @@ function rewriteBodyWithSessionMap(body: any, map: Record<string, string>) {
   return body;
 }
 
+function responseOperationId(responseJson: any) {
+  return String(
+    responseJson?.operation_id ||
+      responseJson?.item?.operation_id ||
+      responseJson?.data?.operation_id ||
+      responseJson?.data?.item?.operation_id ||
+      "",
+  ).trim();
+}
+
 async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any) {
-  // start session returns { item: { id, ... } } (supposé)
+  const acknowledgedOperationId = responseOperationId(responseJson);
+  if (
+    acknowledgedOperationId &&
+    acknowledgedOperationId !== row.operationId
+  ) {
+    throw new Error("offline_start_operation_id_mismatch");
+  }
+
   const clientSessionId = row?.meta?.clientSessionId || row?.body?.client_session_id;
   const serverId = responseJson?.item?.id || responseJson?.data?.item?.id;
 
@@ -795,11 +858,23 @@ async function maybeUpdateSessionMapFromStart(row: OutboxRow, responseJson: any)
   const clientKey = rawClientKey.startsWith("client:")
     ? rawClientKey
     : `client:${rawClientKey}`;
-  const map = await getSessionIdMap();
-  if (map[clientKey] === serverId) return;
+  await registerOfflineSessionReference(clientKey, String(serverId));
+}
 
-  map[clientKey] = serverId;
-  await setSessionIdMap(map);
+function outboxOperationType(row: OutboxRow) {
+  return mutationOperationType(row.url, row?.meta?.operationType);
+}
+
+function outboxSessionDependencyKey(row: OutboxRow, body: any) {
+  const candidate =
+    row?.meta?.clientSessionId ||
+    body?.client_session_id ||
+    body?.session_id ||
+    row?.body?.client_session_id ||
+    row?.body?.session_id ||
+    "";
+  const normalized = String(candidate || "").trim();
+  return normalized || null;
 }
 
 function isSessionStartRow(row: OutboxRow) {
@@ -820,6 +895,7 @@ async function flushOutboxInternal(): Promise<FlushResult> {
     retryableFailure: false,
     lastError: null,
     lastStatus: null,
+    acknowledged: [],
   };
 
   if (!isBrowser()) return empty;
@@ -832,12 +908,33 @@ async function flushOutboxInternal(): Promise<FlushResult> {
   let retryableFailure = false;
   let lastError: string | null = null;
   let lastStatus: number | null = null;
+  const acknowledged: FlushedMutationAcknowledgement[] = [];
+  const blockedSessions = new Set<string>();
   const map = await getSessionIdMap();
 
   for (const row of rows) {
-    // Une action invalide reste visible et récupérable. Elle ne bloque pas les
-    // autres actions indépendantes de la file.
-    if (row.state === "blocked") continue;
+    const body = rewriteBodyWithSessionMap(row.body, map);
+    const operationType = outboxOperationType(row);
+    const dependencyKey = outboxSessionDependencyKey(row, body);
+
+    // Une ouverture ou un appel bloqué ne doit jamais être dépassé par la
+    // fermeture de la même séance. Les cours indépendants restent rejouables.
+    if (row.state === "blocked") {
+      if (
+        dependencyKey &&
+        (operationType === "session-start" || operationType === "attendance")
+      ) {
+        blockedSessions.add(dependencyKey);
+      }
+      continue;
+    }
+    if (
+      dependencyKey &&
+      blockedSessions.has(dependencyKey) &&
+      (operationType === "attendance" || operationType === "session-end")
+    ) {
+      continue;
+    }
 
     const attemptsBeforeRun = Number(row.attempts || 0);
     if (
@@ -850,9 +947,6 @@ async function flushOutboxInternal(): Promise<FlushResult> {
         typeof row.lastStatus === "number" ? row.lastStatus : null;
       break;
     }
-
-    // Prépare body potentiellement réécrit (session_id)
-    const body = rewriteBodyWithSessionMap(row.body, map);
 
     try {
       const res = await fetchWithTimeout(
@@ -906,19 +1000,78 @@ async function flushOutboxInternal(): Promise<FlushResult> {
           lastStatus: res.status,
           lastError: msg,
         });
+        if (
+          dependencyKey &&
+          (operationType === "session-start" || operationType === "attendance")
+        ) {
+          blockedSessions.add(dependencyKey);
+        }
         continue;
       }
 
       const j = await safeJson(res);
-
-      // Si c'était un startSession, on mémorise le mapping client -> server
-      if (isSessionStartRow(row)) {
-        await maybeUpdateSessionMapFromStart(row, j);
-        // refresh local map (au cas où)
-        const next = await getSessionIdMap();
-        Object.assign(map, next);
+      const acknowledgedOperationId = responseOperationId(j);
+      if (
+        operationType &&
+        acknowledgedOperationId !== row.operationId
+      ) {
+        const msg = acknowledgedOperationId
+          ? "offline_operation_id_mismatch"
+          : "offline_operation_id_missing";
+        await outboxUpdate(row.id, {
+          state: "blocked",
+          attempts: Number(row.attempts || 0) + 1,
+          lastAttemptAt: Date.now(),
+          lastStatus: 409,
+          lastError: msg,
+        });
+        if (dependencyKey) blockedSessions.add(dependencyKey);
+        lastError = msg;
+        lastStatus = 409;
+        continue;
       }
 
+      // Si c'était un startSession, on mémorise le mapping client -> server.
+      // Un mapping déjà lié à une autre séance est un conflit métier, jamais
+      // une raison d'écraser silencieusement l'ancien cours.
+      if (isSessionStartRow(row)) {
+        try {
+          await maybeUpdateSessionMapFromStart(row, j);
+          const next = await getSessionIdMap();
+          Object.assign(map, next);
+        } catch (error: any) {
+          const msg = String(error?.message || "offline_session_mapping_conflict");
+          await outboxUpdate(row.id, {
+            state: "blocked",
+            attempts: Number(row.attempts || 0) + 1,
+            lastAttemptAt: Date.now(),
+            lastStatus: 409,
+            lastError: msg,
+          });
+          if (dependencyKey) blockedSessions.add(dependencyKey);
+          lastError = msg;
+          lastStatus = 409;
+          continue;
+        }
+      }
+
+      const resolvedSessionId = String(
+        j?.session_id ||
+          j?.item?.id ||
+          j?.data?.session_id ||
+          j?.data?.item?.id ||
+          body?.session_id ||
+          "",
+      ).trim() || null;
+      acknowledged.push({
+        operationId: row.operationId,
+        operationType,
+        clientSessionId: dependencyKey,
+        sessionId: resolvedSessionId,
+        institutionId: String(row?.meta?.institutionId || "").trim() || null,
+        classId: String(row?.meta?.classId || "").trim() || null,
+        status: res.status,
+      });
       await outboxDelete(row.id);
       flushed += 1;
     } catch (error: any) {
@@ -946,6 +1099,7 @@ async function flushOutboxInternal(): Promise<FlushResult> {
     retryableFailure,
     lastError: lastError || stats.lastError,
     lastStatus: lastStatus ?? stats.lastStatus,
+    acknowledged,
   };
 }
 
