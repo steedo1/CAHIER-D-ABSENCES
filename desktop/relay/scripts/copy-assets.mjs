@@ -12,3 +12,10 @@ cpSync(
   new URL("../dist/protocol/", import.meta.url),
   { recursive: true },
 );
+
+mkdirSync(new URL("../dist/windows/", import.meta.url), { recursive: true });
+cpSync(
+  new URL("../windows/", import.meta.url),
+  new URL("../dist/windows/", import.meta.url),
+  { recursive: true },
+);

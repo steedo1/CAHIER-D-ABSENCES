@@ -4,6 +4,7 @@
 import { useCallback, useState } from "react";
 import { LogOut } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 
 type TrueLogoutButtonProps = {
   className?: string;
@@ -92,6 +93,7 @@ export default function TrueLogoutButton({
         }),
       ]);
     } finally {
+      await clearActiveOfflineAccess().catch(() => {});
       clearBrowserStorage();
       clearReadableCookies();
       window.location.replace("/login");

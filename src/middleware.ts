@@ -1,9 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  OFFLINE_ACCESS_COOKIE,
+  OFFLINE_DEVICE_COOKIE,
+  verifyOfflineAccessGrant,
+} from "@/lib/offline-auth-contract";
 
 const PUBLIC = new Set(["/login", "/recover", "/redirect"]);
 
 const PROTECTED_PREFIXES = [
   "/attendance",
+  "/class",
   "/admin",
   "/super",
   "/founder",
@@ -12,7 +18,7 @@ const PROTECTED_PREFIXES = [
   "/(protected)",
 ];
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
   const { pathname } = url;
 
@@ -40,7 +46,27 @@ export function middleware(req: NextRequest) {
   const hasSessionCookie = hasSbAccess || hasSbRefresh || hasAuthToken;
 
   if (!hasSessionCookie) {
+    const offlineToken = c.get(OFFLINE_ACCESS_COOKIE)?.value || "";
+    const offlineDeviceId = c.get(OFFLINE_DEVICE_COOKIE)?.value || "";
+    const offlineSecret =
+      process.env.MON_CAHIER_OFFLINE_AUTH_SECRET ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      "";
+    if (offlineToken && offlineDeviceId && offlineSecret.length >= 32) {
+      const grant = await verifyOfflineAccessGrant({
+        token: offlineToken,
+        secret: offlineSecret,
+        pathname,
+        deviceId: offlineDeviceId,
+      });
+      if (grant) {
+        const response = NextResponse.next();
+        response.headers.set("X-Mon-Cahier-Offline-Access", "1");
+        return response;
+      }
+    }
     url.pathname = "/login";
+    url.searchParams.set("offline", "required");
     return NextResponse.redirect(url);
   }
 

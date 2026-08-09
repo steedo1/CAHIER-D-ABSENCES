@@ -23,7 +23,9 @@ export function openRelayDatabase(path: string): RelayDatabase {
   try {
     db.pragma("foreign_keys = ON");
     db.pragma("journal_mode = WAL");
-    db.pragma("synchronous = NORMAL");
+    // Les appels confirmés doivent survivre à une coupure électrique, pas seulement
+    // à un arrêt du processus. WAL + FULL privilégie donc la durabilité métier.
+    db.pragma("synchronous = FULL");
     db.pragma("busy_timeout = 5000");
     db.pragma("wal_autocheckpoint = 1000");
     migrate(db);

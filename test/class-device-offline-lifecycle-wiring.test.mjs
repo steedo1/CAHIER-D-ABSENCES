@@ -118,7 +118,9 @@ test("la déconnexion compte aussi les appels et fermetures du nouveau protocole
   assert.match(page, /countPendingForCurrentClass/);
   assert.match(page, /countClassDeviceAttendanceRecovery/);
   assert.match(page, /Tentative de sécurisation des données avant déconnexion/);
-  assert.match(page, /supprimer définitivement ces données/);
+  assert.match(page, /se déconnecter en conservant ces données/);
+  assert.match(page, /clearActiveOfflineAccess/);
+  assert.doesNotMatch(page, /clearOfflineAll/);
 });
 
 test("le Web et le service worker portent la même release PWA stable v5.5", async () => {

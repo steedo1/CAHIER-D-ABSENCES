@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { canonicalJson } from "./json.mjs";
+import {
+  CapturedAtDeviceError,
+  effectiveCapturedAtDevice,
+  normalizeCapturedAtDevice,
+} from "./device-time.mjs";
 import { issueAttendancePresenceProofForTeacher } from "./presence-proof.mjs";
 import { relayActorDeviceId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
 import {
@@ -19,6 +24,7 @@ type TeacherSessionOpenOperation = {
   protocol_version: typeof PROTOCOL_VERSION;
   operation_id: string;
   operation_type: typeof OPERATION_TYPE;
+  captured_at_device?: string;
   class_id: string;
   period_id: string;
 };
@@ -138,6 +144,7 @@ function parseOperation(raw: unknown): TeacherSessionOpenOperation {
     "protocol_version",
     "operation_id",
     "operation_type",
+    "captured_at_device",
     "class_id",
     "period_id",
   ]);
@@ -150,10 +157,18 @@ function parseOperation(raw: unknown): TeacherSessionOpenOperation {
   if (row.operation_type !== OPERATION_TYPE) {
     throw new TeacherSessionOpenError(400, "operation_type_not_supported");
   }
+  let capturedAtDevice: string | null;
+  try {
+    capturedAtDevice = normalizeCapturedAtDevice(row.captured_at_device);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionOpenError(400, code);
+  }
   return {
     protocol_version: PROTOCOL_VERSION,
     operation_id: text(row.operation_id, "operation_id_required", 128),
     operation_type: OPERATION_TYPE,
+    ...(capturedAtDevice ? { captured_at_device: capturedAtDevice } : {}),
     class_id: text(row.class_id, "class_id_required"),
     period_id: text(row.period_id, "period_id_required"),
   };
@@ -171,6 +186,9 @@ function fingerprint(
     auth_actor_profile_id: teacher.actor_profile_id,
     auth_actor_kind: relayActorKind(teacher),
     auth_class_id: teacher.class_id || null,
+    ...(operation.captured_at_device
+      ? { captured_at_device: operation.captured_at_device }
+      : {}),
     class_id: operation.class_id,
     period_id: operation.period_id,
   })).digest("hex");
@@ -494,20 +512,28 @@ export function openTeacherAttendanceSession(
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ): TeacherSessionOpenResult {
   const operation = parseOperation(raw);
-  maintainTeacherAttendanceSessions(db, now);
   const operationFingerprint = fingerprint(operation, teacher);
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) {
     return resultFromReceipt(db, operation, teacher, operationFingerprint, existing, now);
   }
+  let capturedAt: Date;
+  try {
+    capturedAt = effectiveCapturedAtDevice(operation.captured_at_device || null, now);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionOpenError(409, code);
+  }
+  maintainTeacherAttendanceSessions(db, capturedAt);
 
   const persist = db.transaction(() => {
     const raced = storedReceipt(db, teacher.institution_id, operation.operation_id);
     if (raced) {
       return resultFromReceipt(db, operation, teacher, operationFingerprint, raced, now);
     }
-    const business = validateBusinessRules(db, operation, teacher, now);
+    const business = validateBusinessRules(db, operation, teacher, capturedAt);
     const acceptedAt = now.toISOString();
+    const capturedAtIso = capturedAt.toISOString();
     const createdLocally = business.reusable === null;
     const sessionId = business.reusable?.id || randomUUID();
     if (createdLocally) {
@@ -533,13 +559,13 @@ export function openTeacherAttendanceSession(
         business.timetable.teacher_id,
         operation.period_id,
         business.startedAt,
-        acceptedAt,
+        capturedAtIso,
         relayActorKind(teacher) === "class_device" ? "class_device" : "teacher",
         acceptedAt,
         business.sessionDate,
         business.startedAt,
-        acceptedAt,
-        acceptedAt,
+        capturedAtIso,
+        capturedAtIso,
         business.scheduledEndAt,
         business.graceExpiresAt,
       );
@@ -558,8 +584,8 @@ export function openTeacherAttendanceSession(
       `).run(
         business.sessionDate,
         business.startedAt,
-        acceptedAt,
-        acceptedAt,
+        capturedAtIso,
+        capturedAtIso,
         business.scheduledEndAt,
         business.graceExpiresAt,
         acceptedAt,
@@ -586,6 +612,7 @@ export function openTeacherAttendanceSession(
       local_session_id: session.id,
       remote_session_id: null,
       accepted_at: acceptedAt,
+      captured_at_device: capturedAtIso,
     };
     const payloadJson = canonicalJson(storedPayload);
     db.prepare(`
@@ -638,7 +665,7 @@ export function openTeacherAttendanceSession(
           operation_type: "teacher_session.open",
           ...materializedPayload,
         }),
-        acceptedAt,
+        capturedAtIso,
         operation.protocol_version,
         operationFingerprint,
       );

@@ -166,16 +166,6 @@ export async function POST(req: NextRequest) {
     presence_method: string | null;
   };
 
-  if (session.ended_at) {
-    return NextResponse.json(
-      {
-        error: "session_closed",
-        message: "Cette séance est déjà terminée et ne peut plus être modifiée.",
-      },
-      { status: 409 },
-    );
-  }
-
   // 2) Autorisation (prof de la séance ou téléphone de classe)
   let allowed = session.teacher_id === user.id;
   let classDeviceAuthorized = false;
@@ -331,19 +321,28 @@ export async function POST(req: NextRequest) {
   const serverNow = new Date();
   const existingCall = parseIsoDate(session.actual_call_at);
 
-  const candidateClientCall =
-    parseIsoDate(body?.actual_call_at) ||
-    parseIsoDate(body?.client_call_at) ||
-    parseIsoDate(body?.click_at) ||
-    parseIsoDate(body?.clicked_at) ||
-    parseIsoDate(body?.call_at) ||
-    null;
+  const rawCapturedAtDevice = String(
+    body?.captured_at_device ??
+      body?.actual_call_at ??
+      body?.client_call_at ??
+      body?.click_at ??
+      body?.clicked_at ??
+      body?.call_at ??
+      "",
+  ).trim();
+  const candidateClientCall = rawCapturedAtDevice
+    ? parseIsoDate(rawCapturedAtDevice)
+    : null;
+  if (rawCapturedAtDevice && !candidateClientCall) {
+    return NextResponse.json(
+      { error: "captured_at_device_invalid" },
+      { status: 422 },
+    );
+  }
 
   const refSlot = parseIsoDate(session.started_at) || existingCall || serverNow;
   const windowMin = refSlot.getTime() - 8 * 60_000 * 60; // -8h
   const windowMax = refSlot.getTime() + 12 * 60_000 * 60; // +12h
-
-  let effectiveCallAt: Date = existingCall || serverNow;
 
   if (candidateClientCall) {
     const maxFutureMs = 5 * 60_000; // +5 min
@@ -352,17 +351,23 @@ export async function POST(req: NextRequest) {
     const inWindow =
       candidateClientCall.getTime() >= windowMin &&
       candidateClientCall.getTime() <= windowMax;
+    if (!notTooFuture || !inWindow) {
+      return NextResponse.json(
+        { error: "captured_at_device_out_of_window" },
+        { status: 422 },
+      );
+    }
+  }
 
-    if (notTooFuture && inWindow) {
-      if (!existingCall) {
-        effectiveCallAt = candidateClientCall;
-      } else {
-        const diffMs = existingCall.getTime() - candidateClientCall.getTime();
-        if (diffMs > 60_000) {
-          // existingCall semble être une heure de sync plus tard → on calcule avec l'heure réelle
-          effectiveCallAt = candidateClientCall;
-        }
-      }
+  // Horloge causale : le clic de validation, jamais l'heure de réception réseau.
+  const capturedAtDevice = (candidateClientCall || serverNow).toISOString();
+  let effectiveCallAt: Date = existingCall || candidateClientCall || serverNow;
+
+  if (candidateClientCall && existingCall) {
+    const diffMs = existingCall.getTime() - candidateClientCall.getTime();
+    if (diffMs > 60_000) {
+      // existingCall semble être une heure de sync plus tard → calculer avec l'heure réelle.
+      effectiveCallAt = candidateClientCall;
     }
   }
 
@@ -462,102 +467,128 @@ export async function POST(req: NextRequest) {
     return Math.max(0, Math.floor(observedMin - currentPeriod.startMin));
   }
 
-  const toUpsert: any[] = [];
-  const toDelete: string[] = [];
-  const absentHours = Math.round((expectedMin / 60) * 100) / 100;
+  const atomicMarks: Array<{
+    student_id: string;
+    status: "present" | "absent" | "late";
+    late_minutes: number;
+    comment: string | null;
+  }> = [];
 
   for (const m of marks) {
-    if (!m?.student_id) continue;
+    const studentId = String(m?.student_id || "").trim();
+    if (!studentId) continue;
+    if (m.status !== "present" && m.status !== "absent" && m.status !== "late") {
+      return NextResponse.json(
+        { error: "attendance_status_invalid" },
+        { status: 422 },
+      );
+    }
     const reason = (m?.reason ?? null) ? String(m.reason).trim() : null;
+    atomicMarks.push({
+      student_id: studentId,
+      status: m.status,
+      late_minutes:
+        m.status === "late"
+          ? autoLateness
+            ? computeLateMinutes(m)
+            : Math.max(0, Math.round(Number(m?.minutes_late || 0)))
+          : 0,
+      comment: reason,
+    });
+  }
+  atomicMarks.sort((left, right) => left.student_id.localeCompare(right.student_id));
 
-    if (m.status === "present") {
-      toDelete.push(m.student_id);
-      continue;
+  const { data: atomicData, error: atomicError } = await srv.rpc(
+    "apply_relay_attendance_call_v2",
+    {
+      p_institution_id: clsRow.institution_id,
+      p_session_id: session_id,
+      p_operation_id: operationId,
+      p_captured_at_device: capturedAtDevice,
+      p_marks: atomicMarks,
+    },
+  );
+
+  if (atomicError) {
+    const details = [
+      (atomicError as any)?.code,
+      (atomicError as any)?.message,
+      (atomicError as any)?.details,
+      (atomicError as any)?.hint,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (details.includes("attendance_operation_payload_conflict")) {
+      return NextResponse.json(
+        { error: "attendance_operation_payload_conflict" },
+        { status: 409 },
+      );
     }
-
-    if (m.status === "absent") {
-      toUpsert.push({
-        session_id,
-        student_id: m.student_id,
-        status: "absent",
-        minutes_late: 0,
-        hours_absent: absentHours,
-        reason,
-      });
-      continue;
+    if (details.includes("attendance_operation_stale")) {
+      return NextResponse.json(
+        { error: "attendance_operation_stale" },
+        { status: 409 },
+      );
     }
-
-    if (m.status === "late") {
-      const minLate = autoLateness
-        ? computeLateMinutes(m)
-        : Math.max(0, Math.round(Number(m?.minutes_late || 0)));
-
-      toUpsert.push({
-        session_id,
-        student_id: m.student_id,
-        status: "late",
-        minutes_late: minLate,
-        hours_absent: 0,
-        reason,
-      });
-      continue;
+    if (details.includes("attendance_operation_ambiguous")) {
+      return NextResponse.json(
+        { error: "attendance_operation_ambiguous" },
+        { status: 409 },
+      );
     }
+    if (details.includes("attendance_operation_capture_invalid")) {
+      return NextResponse.json(
+        { error: "captured_at_device_invalid" },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json(
+      {
+        error: "attendance_integrity_migration_required",
+        message:
+          "La mutation atomique des appels est indisponible. Appliquez la migration d'intégrité avant de réessayer.",
+      },
+      { status: 503 },
+    );
   }
 
-  let upserted = 0;
-  let deleted = 0;
-
-  if (toUpsert.length) {
-    const { error, count } = await srv
-      .from("attendance_marks")
-      .upsert(toUpsert, {
-        onConflict: "session_id,student_id",
-        count: "exact",
-      });
-
-    if (error) {
-      return NextResponse.json({ error: "attendance_upsert_unavailable" }, { status: 503 });
-    }
-
-    upserted = count || toUpsert.length;
+  const atomicResult = Array.isArray(atomicData) ? atomicData[0] : atomicData;
+  const atomicStatus = String((atomicResult as any)?.status || "");
+  if (atomicStatus === "session_not_found") {
+    return NextResponse.json({ error: "session_not_found" }, { status: 404 });
+  }
+  if (atomicStatus === "session_closed") {
+    return NextResponse.json(
+      {
+        error: "session_closed",
+        message: "Cette séance est déjà terminée et ne peut plus être modifiée.",
+      },
+      { status: 409 },
+    );
+  }
+  if (
+    atomicStatus === "attendance_operation_stale" ||
+    atomicStatus === "attendance_operation_ambiguous" ||
+    atomicStatus === "attendance_operation_payload_conflict"
+  ) {
+    return NextResponse.json({ error: atomicStatus }, { status: 409 });
+  }
+  if (atomicStatus === "attendance_payload_invalid") {
+    return NextResponse.json({ error: atomicStatus }, { status: 422 });
+  }
+  if (atomicStatus !== "applied" && atomicStatus !== "already_applied") {
+    return NextResponse.json(
+      { error: "attendance_atomic_response_invalid" },
+      { status: 503 },
+    );
   }
 
-  if (toDelete.length) {
-    const { error, count } = await srv
-      .from("attendance_marks")
-      .delete({ count: "exact" })
-      .eq("session_id", session_id)
-      .in("student_id", toDelete);
+  const changed = (atomicResult as any)?.changed === true;
+  const upserted = Number((atomicResult as any)?.upserted || 0);
+  const deleted = Number((atomicResult as any)?.deleted || 0);
 
-    if (error) {
-      return NextResponse.json({ error: "attendance_delete_unavailable" }, { status: 503 });
-    }
-
-    deleted = count || toDelete.length;
-  }
-
-  /**
-   * ✅ Fixer/corriger actual_call_at au moment du 1er marquage :
-   * - si NULL -> on met l'heure effective (client si fournie, sinon serveur)
-   * - si non-NULL mais plus tard que l'heure effective cohérente -> on corrige vers la plus petite
-   */
-  if (upserted > 0 || deleted > 0) {
-    const actualCallAt = !existingCall
-      ? callAtISO
-      : effectiveCallAt.getTime() < existingCall.getTime() - 60_000
-        ? callAtISO
-        : existingCall.toISOString();
-    const { error } = await srv
-      .from("teacher_sessions")
-      .update({ actual_call_at: actualCallAt })
-      .eq("id", session_id);
-    if (error) {
-      return NextResponse.json({ error: "session_revision_update_unavailable" }, { status: 503 });
-    }
-  }
-
-  // ✨ temps réel — déclenche push + sms si des changements ont eu lieu (non bloquant)
-  if (upserted > 0 || deleted > 0) {
+  // Temps réel uniquement lorsque l'opération a réellement changé l'appel.
+  if (changed) {
     await Promise.allSettled([
       triggerPushDispatch({ req, reason: "teacher_attendance_bulk" }),
       triggerSmsDispatch({ req, reason: "teacher_attendance_bulk" }),
@@ -568,6 +599,8 @@ export async function POST(req: NextRequest) {
     ok: true,
     operation_id: operationId,
     session_id,
+    captured_at_device: capturedAtDevice,
+    idempotent: atomicStatus === "already_applied",
     upserted,
     deleted,
   });

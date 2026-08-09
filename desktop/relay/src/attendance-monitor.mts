@@ -1,6 +1,15 @@
 import type { RelayDatabase } from "./db.mjs";
 import type { AttendanceMonitorRow } from "./types.mjs";
 
+type AttendanceMonitorViewStatus =
+  | "not_started"
+  | "started"
+  | AttendanceMonitorRow["status"];
+
+type AttendanceMonitorViewRow = Omit<AttendanceMonitorRow, "status"> & {
+  status: AttendanceMonitorViewStatus;
+};
+
 type WeekdayMode = "iso" | "js" | "mon0";
 
 type MonitorOptions = {
@@ -10,6 +19,7 @@ type MonitorOptions = {
   now?: Date;
   lateThresholdMinutes?: number;
   missingWindowMinutes?: number;
+  includeExpectedStatuses?: boolean;
 };
 
 type PeriodRow = {
@@ -55,7 +65,7 @@ const MAX_CARRY_AFTER_END_MINUTES = 120;
 export function attendanceMonitor(
   db: RelayDatabase,
   options: MonitorOptions,
-): AttendanceMonitorRow[] {
+): AttendanceMonitorViewRow[] {
   const fromDate = parseYmd(options.from, "from");
   const toDate = parseYmd(options.to, "to");
   if (fromDate.getTime() > toDate.getTime()) throw new Error("invalid_date_range");
@@ -64,6 +74,7 @@ export function attendanceMonitor(
   const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
   const lateThreshold = positiveMinutes(options.lateThresholdMinutes, 15);
   const missingWindow = positiveMinutes(options.missingWindowMinutes, lateThreshold);
+  const includeExpectedStatuses = options.includeExpectedStatuses === true;
 
   const periods = db.prepare(`
     SELECT id, weekday, label, start_time, end_time
@@ -122,7 +133,7 @@ export function attendanceMonitor(
   const sessionsIndex = indexSessions(sessions);
   const absenceIndex = indexAbsences(absences);
   const nextStart = nextStartBySlot(timetables, periodById);
-  const rows: AttendanceMonitorRow[] = [];
+  const rows: AttendanceMonitorViewRow[] = [];
 
   for (const timetable of timetables) {
     const period = periodById.get(timetable.period_id);
@@ -145,33 +156,50 @@ export function attendanceMonitor(
         timetable.subject_id,
         timetable.teacher_id,
       ].join("|");
-      const best = (sessionsIndex.get(sessionKey) ?? [])
+      const candidates = (sessionsIndex.get(sessionKey) ?? [])
         .filter(
           (session) =>
-            session.callMinutes >= startMinutes &&
-            session.callMinutes <= endMinutes + MAX_CARRY_AFTER_END_MINUTES &&
-            (followingStart === null || session.callMinutes < followingStart),
-        )
-        .sort((a, b) => a.callMinutes - b.callMinutes)[0];
+            session.eventMinutes >= startMinutes &&
+            session.eventMinutes <= endMinutes + MAX_CARRY_AFTER_END_MINUTES &&
+            (followingStart === null || session.eventMinutes < followingStart),
+        );
+      const bestCalled = candidates
+        .filter((session) => session.callMinutes !== null)
+        .sort((a, b) => (a.callMinutes as number) - (b.callMinutes as number))[0];
+      const bestStarted = candidates
+        .filter((session) => session.callMinutes === null)
+        .sort((a, b) => a.startedMinutes - b.startedMinutes)[0];
 
-      let status: AttendanceMonitorRow["status"];
+      let status: AttendanceMonitorViewStatus;
       let lateMinutes: number | null = null;
       let openedFrom: AttendanceMonitorRow["opened_from"] = null;
       let absenceStatus: AttendanceMonitorRow["absence_request_status"] = null;
       let absenceReason: string | null = null;
       let absenceComment: string | null = null;
 
-      if (best) {
-        const delta = best.callMinutes - startMinutes;
+      if (bestCalled?.callMinutes !== null && bestCalled?.callMinutes !== undefined) {
+        const delta = bestCalled.callMinutes - startMinutes;
         status = delta <= lateThreshold ? "ok" : "late";
         lateMinutes = status === "late" ? delta : null;
-        openedFrom = best.origin === "admin" ? null : best.origin;
+        openedFrom = bestCalled.origin === "admin" ? null : bestCalled.origin;
+      } else if (bestStarted) {
+        const delta = bestStarted.startedMinutes - startMinutes;
+        if (includeExpectedStatuses) {
+          status = "started";
+          lateMinutes = delta > lateThreshold ? delta : null;
+        } else {
+          status = delta <= lateThreshold ? "ok" : "late";
+          lateMinutes = status === "late" ? delta : null;
+        }
+        openedFrom = bestStarted.origin === "admin" ? null : bestStarted.origin;
       } else {
         const isPast = date < today;
         const isDueToday = date === today && nowMinutes >= startMinutes + missingWindow;
-        if (!isPast && !isDueToday) continue;
-        status = "missing";
-        const absence = absenceIndex.get(`${date}|${timetable.teacher_id}`);
+        if (!includeExpectedStatuses && !isPast && !isDueToday) continue;
+        status = isPast || isDueToday ? "missing" : "not_started";
+        const absence = status === "missing"
+          ? absenceIndex.get(`${date}|${timetable.teacher_id}`)
+          : null;
         if (absence) {
           absenceStatus = absence.status;
           absenceReason = absence.reason_label;
@@ -210,15 +238,27 @@ export function attendanceMonitor(
 function indexSessions(rows: SessionRow[]) {
   const index = new Map<
     string,
-    { callMinutes: number; origin: SessionRow["origin"] }[]
+    {
+      eventMinutes: number;
+      startedMinutes: number;
+      callMinutes: number | null;
+      origin: SessionRow["origin"];
+    }[]
   >();
   for (const row of rows) {
-    const callAt = row.actual_call_at || row.started_at;
-    const callDate = new Date(callAt);
-    if (!Number.isFinite(callDate.getTime())) continue;
-    const key = [toYmd(callDate), row.class_id, row.subject_id, row.teacher_id].join("|");
+    const startedAt = new Date(row.started_at);
+    const callAt = row.actual_call_at ? new Date(row.actual_call_at) : null;
+    if (!Number.isFinite(startedAt.getTime())) continue;
+    if (callAt && !Number.isFinite(callAt.getTime())) continue;
+    const startedMinutes = startedAt.getUTCHours() * 60 + startedAt.getUTCMinutes();
+    const callMinutes = callAt
+      ? callAt.getUTCHours() * 60 + callAt.getUTCMinutes()
+      : null;
+    const key = [toYmd(startedAt), row.class_id, row.subject_id, row.teacher_id].join("|");
     const value = {
-      callMinutes: callDate.getUTCHours() * 60 + callDate.getUTCMinutes(),
+      eventMinutes: callMinutes ?? startedMinutes,
+      startedMinutes,
+      callMinutes,
       origin: row.origin,
     };
     index.set(key, [...(index.get(key) ?? []), value]);

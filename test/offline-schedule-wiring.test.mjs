@@ -76,7 +76,7 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
   assert.match(installer, /schema_version -lt 8/);
   assert.match(installer, /bootstrap_revision_ack_v1/);
   assert.match(updater, /backups\\update-/);
-  assert.match(updater, /Mon Cahier Relay\.lnk/);
+  assert.match(updater, /Start-ScheduledTask -TaskName "Mon Cahier Relay"/);
   assert.match(settings, /syncRelayScheduleAfterMutation/);
   assert.match(settings, /relayBootstrapErrorMessage/);
   assert.match(bridge, /getRelayConfig/);

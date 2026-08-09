@@ -3,6 +3,14 @@
 
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import {
+  activateOfflineAccess,
+  authenticateOfflineAccess,
+  clearActiveOfflineAccess,
+  disableOfflineAccessForIdentifier,
+  getOrCreateOfflineDeviceId,
+  provisionOfflineAccess,
+} from "@/lib/offline-auth-client";
 
 type ForcedMode = "emailOnly" | "phoneOnly";
 type LoginMode = "email" | "phone";
@@ -22,6 +30,34 @@ type LoginResponse = {
   } | null;
 };
 
+type RoleResponse = {
+  user_id?: string | null;
+  role?: string | null;
+  institution_id?: string | null;
+  offline_access?: {
+    token?: string;
+    expires_at?: number;
+    destination?: string;
+    role?: string;
+  } | null;
+};
+
+const AUTH_REQUEST_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = AUTH_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 function humanError(error?: string | null) {
   const value = String(error || "").trim();
   if (!value) return "Connexion impossible. Vérifie les informations saisies.";
@@ -32,6 +68,21 @@ function humanError(error?: string | null) {
   if (value === "PHONE_INVALID") return "Numéro de téléphone invalide.";
   if (value === "SERVER_SESSION_NOT_PERSISTED") {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
+  }
+  if (value === "offline_access_not_prepared") {
+    return "Cet appareil n’a pas encore été autorisé en ligne pour cette connexion.";
+  }
+  if (value === "offline_access_expired") {
+    return "L’autorisation hors ligne de cet appareil a expiré. Reconnectez-le à Internet.";
+  }
+  if (value === "offline_access_disabled") {
+    return "L’accès hors ligne de ce compte a été désactivé sur cet appareil.";
+  }
+  if (value === "offline_credentials_invalid") {
+    return "Identifiants incorrects pour l’accès hors ligne de cet appareil.";
+  }
+  if (value === "offline_function_not_prepared") {
+    return "Les données indispensables à ce rôle ne sont pas encore prêtes sur cet appareil.";
   }
   if (lower.includes("invalid login") || lower.includes("invalid credentials")) {
     return "Identifiants incorrects. Vérifie le compte et le mot de passe.";
@@ -81,18 +132,6 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     setMode(forcedMode === "emailOnly" ? "email" : "phone");
   }, [forcedMode]);
 
-  async function clearPreviousServerCookies() {
-    try {
-      await fetch("/api/auth/sync", {
-        method: "DELETE",
-        cache: "no-store",
-        credentials: "include",
-      });
-    } catch {
-      // Tolérant : le login qui suit réécrira les bons cookies.
-    }
-  }
-
   function clearPreviousBrowserSession() {
     // On nettoie localement sans appeler supabase.auth.signOut() pour éviter
     // qu’un événement SIGNED_OUT asynchrone vienne effacer les nouveaux cookies
@@ -137,7 +176,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
   }
 
   async function writeServerSession(accessToken: string, refreshToken: string) {
-    const response = await fetch("/api/auth/sync", {
+    const response = await fetchWithTimeout("/api/auth/sync", {
       method: "POST",
       cache: "no-store",
       credentials: "include",
@@ -157,6 +196,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     accessToken?: string,
     refreshToken?: string,
     expectedUserId?: string,
+    deviceId?: string,
   ) {
     if (!accessToken || !refreshToken) {
       throw new Error("SERVER_SESSION_NOT_PERSISTED");
@@ -174,11 +214,14 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     // Vérification réelle : la requête suivante doit relire les cookies HttpOnly
     // et retrouver exactement le compte qui vient de se connecter.
     async function readServerSession() {
-      const response = await fetch("/api/auth/role", {
+      const response = await fetchWithTimeout("/api/auth/role", {
         cache: "no-store",
         credentials: "include",
+        headers: deviceId
+          ? { "X-Mon-Cahier-Device-Id": deviceId }
+          : undefined,
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = (await response.json().catch(() => ({}))) as RoleResponse;
       return { response, payload };
     }
 
@@ -194,11 +237,26 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     }
 
     if (
-      checked.response.status === 401 ||
+      !checked.response.ok ||
       (!!expectedUserId && String(checked.payload?.user_id || "") !== expectedUserId)
     ) {
       throw new Error("SERVER_SESSION_NOT_PERSISTED");
     }
+    return checked.payload;
+  }
+
+  async function openOfflineSession() {
+    setStatusText("Vérification de l’autorisation locale…");
+    const authorized = await authenticateOfflineAccess({
+      mode,
+      identifier: mode === "email" ? email : phone,
+      password,
+    });
+    // Le nettoyage intervient seulement après une validation locale complète.
+    clearPreviousBrowserSession();
+    activateOfflineAccess(authorized);
+    setStatusText("Connexion hors ligne autorisée sur cet appareil…");
+    window.location.assign(authorized.payload.destination);
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -212,35 +270,72 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     setStatusText("Préparation de la connexion…");
 
     try {
-      // Important après une déconnexion/reconnexion : on enlève les anciens restes.
-      clearPreviousBrowserSession();
-      await clearPreviousServerCookies();
-
       setStatusText("Vérification des identifiants…");
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: mode === "email" ? email.trim() : undefined,
-          phone: mode === "phone" ? phone.trim() : undefined,
-          password,
-          country: "CI",
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout("/api/auth/login", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: mode === "email" ? email.trim() : undefined,
+            phone: mode === "phone" ? phone.trim() : undefined,
+            password,
+            country: "CI",
+          }),
+        });
+      } catch {
+        await openOfflineSession();
+        return;
+      }
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
+        if (res.status >= 500) {
+          await openOfflineSession();
+          return;
+        }
+        // Un 401/403 explicite n'est jamais converti en connexion hors ligne.
+        if (
+          (res.status === 401 || res.status === 403) &&
+          /disabled|banned|inactive|désactiv/i.test(String(json.error || ""))
+        ) {
+          await disableOfflineAccessForIdentifier({
+            mode,
+            identifier: mode === "email" ? email : phone,
+          }).catch(() => undefined);
+        }
         throw new Error(json.error || `HTTP_${res.status}`);
       }
 
+      await clearActiveOfflineAccess().catch(() => undefined);
       setStatusText("Ouverture de votre espace…");
-      await syncBrowserSession(
+      let deviceId = "";
+      try {
+        deviceId = getOrCreateOfflineDeviceId();
+      } catch {
+        // Le login en ligne reste disponible si le stockage local est bloqué.
+      }
+      const role = await syncBrowserSession(
         json.session?.access_token,
         json.session?.refresh_token,
         json.user?.id,
+        deviceId,
       );
+
+      const grantToken = String(role?.offline_access?.token || "");
+      if (grantToken && deviceId) {
+        setStatusText("Autorisation de cet appareil…");
+        await provisionOfflineAccess({
+          mode,
+          identifier: mode === "email" ? email : phone,
+          password,
+          grantToken,
+        }).catch((cause) => {
+          console.warn("[offline-auth] provisioning_failed", cause);
+        });
+      }
 
       // ✅ Navigation complète volontaire : évite les caches client/RSC et la course avec /redirect.
       window.location.assign(redirectTo || "/redirect");

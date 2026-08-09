@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import {
@@ -18,7 +19,6 @@ import {
   flushOutbox,
   cacheGet,
   cacheSet,
-  clearOfflineAll,
 } from "@/lib/offline";
 import {
   checkGpsInsideZones,
@@ -50,6 +50,7 @@ import {
   teacherSessionLifecycleDeliveryMessage,
   transitionTeacherAttendanceSessionOnRelay,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import { decideTeacherSessionStart } from "@/lib/teacher-session-start-policy";
 
 /* ─────────────────────────────────────────
    Types
@@ -406,6 +407,8 @@ export default function TeacherDashboard() {
   const [pending, setPending] = useState<number>(0);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [nowTick, setNowTick] = useState<number>(Date.now());
+  const syncingRef = useRef(false);
+  const syncNowRef = useRef<() => Promise<void>>(async () => undefined);
 
 
   /* ───────── Rappel sonore / vibration fin de séance ───────── */
@@ -544,11 +547,12 @@ export default function TeacherDashboard() {
   }
 
   async function syncNow() {
-    if (syncing) return;
+    if (syncingRef.current) return;
     if (!(await teacherSessionCloudAvailable())) {
       setMsg("Hors connexion : synchronisation impossible.");
       return;
     }
+    syncingRef.current = true;
     setSyncing(true);
     setMsg(null);
     try {
@@ -598,9 +602,12 @@ export default function TeacherDashboard() {
     } catch (e: any) {
       setMsg(e?.message || "Synchronisation échouée");
     } finally {
+      syncingRef.current = false;
       setSyncing(false);
     }
   }
+
+  syncNowRef.current = syncNow;
 
   useEffect(() => {
     registerServiceWorker();
@@ -614,7 +621,7 @@ export default function TeacherDashboard() {
         setIsOnline(available);
         if (available) {
           void refreshPending();
-          void syncNow();
+          void syncNowRef.current();
         }
       });
     };
@@ -632,6 +639,20 @@ export default function TeacherDashboard() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (pending <= 0) return;
+    const retry = () => {
+      if (document.visibilityState === "visible") void syncNowRef.current();
+    };
+    retry();
+    const interval = window.setInterval(retry, 20_000);
+    document.addEventListener("visibilitychange", retry);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", retry);
+    };
+  }, [pending]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1406,7 +1427,10 @@ export default function TeacherDashboard() {
   }
 
   /* Actions (séance) — OFFLINE OK */
-  async function preparePresenceEvidence(clientSessionId: string): Promise<{
+  async function preparePresenceEvidence(
+    clientSessionId: string,
+    forceGps = false,
+  ): Promise<{
     evidence: AttendancePresenceEvidence | null;
     actualCallAt: string;
     label: string;
@@ -1417,6 +1441,7 @@ export default function TeacherDashboard() {
     }
 
     if (
+      !forceGps &&
       policy.allow_local_relay &&
       policy.relay_local_url &&
       policy.relay_access_token &&
@@ -1521,6 +1546,7 @@ export default function TeacherDashboard() {
       const clientSessionId = `${sel.class_id}_${sel.subject_id || "none"}_${started.toISOString()}`;
       const relayPolicy = inst.attendance_presence;
       let liveRelayCheck: RelayTeacherConnectivityResult | null = null;
+      let scheduleMismatch: string | null = null;
       if (
         relayPolicy?.enabled &&
         relayPolicy.allow_local_relay &&
@@ -1545,23 +1571,37 @@ export default function TeacherDashboard() {
           const relayTime = Date.parse(liveRelayCheck.relay_time);
           if (Number.isFinite(relayTime)) relayClockOffsetMsRef.current = relayTime - Date.now();
         }
-        const scheduleMismatch = relayScheduleMismatchMessage(
+        scheduleMismatch = relayScheduleMismatchMessage(
           liveRelayCheck,
           activeConfiguredSlot,
         );
-        if (scheduleMismatch) {
-          setMsg(scheduleMismatch);
-          return;
-        }
       }
 
       const cloudAvailable = await teacherSessionCloudAvailable();
-      if (
-        liveRelayCheck &&
-        liveRelayCheck.status !== "reachable" &&
-        (!cloudAvailable || relayPolicy?.allow_gps_fallback !== true)
-      ) {
-        setMsg(relayConnectivityFailureMessage(liveRelayCheck.status));
+      const relayConfigured = Boolean(
+        relayPolicy?.allow_local_relay &&
+        relayPolicy?.relay_local_url &&
+        relayPolicy?.relay_access_token &&
+        inst.institution_id &&
+        activeConfiguredSlot.id
+      );
+      const startDecision = decideTeacherSessionStart({
+        cloud_available: cloudAvailable,
+        presence_enabled: relayPolicy?.enabled === true,
+        allow_gps_fallback: relayPolicy?.allow_gps_fallback === true,
+        relay_configured: relayConfigured,
+        relay_reachable: liveRelayCheck?.status === "reachable",
+        relay_schedule_matches: !scheduleMismatch,
+      });
+      if (startDecision.mode === "blocked") {
+        setMsg(
+          scheduleMismatch ||
+          (liveRelayCheck && liveRelayCheck.status !== "reachable"
+            ? relayConnectivityFailureMessage(liveRelayCheck.status)
+            : startDecision.reason === "presence_unavailable"
+              ? "La preuve de présence locale est indisponible et le GPS de secours n’est pas autorisé."
+              : "Le Cloud et le relais local sont indisponibles pour ouvrir cette séance."),
+        );
         return;
       }
 
@@ -1649,7 +1689,10 @@ export default function TeacherDashboard() {
         return;
       }
 
-      const presence = await preparePresenceEvidence(clientSessionId);
+      const presence = await preparePresenceEvidence(
+        clientSessionId,
+        startDecision.force_gps,
+      );
       const actualCallAt = presence.actualCallAt;
 
       const body = {
@@ -1741,6 +1784,9 @@ export default function TeacherDashboard() {
     );
     if (!confirmed) return;
 
+    // Figé au clic de validation, avant toute tentative relais/Cloud.
+    const attendanceCapturedAt = observedNowIso();
+
     setBusy(true);
     setMsg(null);
 
@@ -1773,6 +1819,7 @@ export default function TeacherDashboard() {
             relayBaseUrl: inst.attendance_presence?.relay_local_url,
             relayAccessToken: inst.attendance_presence?.relay_access_token,
             forceRelay: true,
+            capturedAtDevice: attendanceCapturedAt,
           });
           setAttendanceDelivery(attendance);
           if (attendance.state !== "relay_secured" && attendance.state !== "cloud_synced") {
@@ -1818,6 +1865,7 @@ export default function TeacherDashboard() {
           relayBaseUrl: inst.attendance_presence?.relay_local_url,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
           forceRelay: false,
+          capturedAtDevice: attendanceCapturedAt,
         });
         setAttendanceDelivery(attendance);
         if (!["cloud_synced", "device_pending", "relay_secured"].includes(attendance.state)) {
@@ -1832,7 +1880,7 @@ export default function TeacherDashboard() {
       const openId = String(open.id || "");
       const clientId = clientSessionIdFromOpen(open);
       const isLocal = openId.startsWith("client:");
-      const actualEndAt = new Date().toISOString();
+      const actualEndAt = attendanceCapturedAt;
 
       const body: any = {
         actual_end_at: actualEndAt,
@@ -2127,8 +2175,8 @@ export default function TeacherDashboard() {
     if (remaining > 0) {
       const discard = window.confirm(
         `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
-          "OK = se déconnecter et supprimer définitivement ces données.\n" +
-          "Annuler = rester connecté et conserver les données (recommandé)."
+          "OK = se déconnecter en conservant ces données sur cet appareil.\n" +
+          "Annuler = rester connecté pour tenter une synchronisation maintenant."
       );
       if (!discard) {
         setMsg(
@@ -2161,12 +2209,9 @@ export default function TeacherDashboard() {
         }
       }
     } finally {
-      // important : éviter de garder des queues offline d’un autre utilisateur
-      try {
-        await clearOfflineAll();
-      } catch {
-        /* ignore */
-      }
+      // La déconnexion ferme l'accès actif, mais conserve les données préparées,
+      // les opérations en attente et l'autorisation locale de cet appareil.
+      await clearActiveOfflineAccess().catch(() => {});
       window.location.href = "/login";
     }
   }

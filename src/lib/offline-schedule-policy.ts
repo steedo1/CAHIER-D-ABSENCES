@@ -56,3 +56,32 @@ export function decideOfflineSchedulePolicy(
   if (input.phone_revision > input.relay_revision) return "relay_stale";
   return "ready";
 }
+
+export type TeacherCloudFallbackInput = {
+  phone_prepared: boolean;
+  phone_revision: number | null;
+  cloud_reachable: boolean;
+  cloud_revision: number | null;
+  presence_enabled: boolean;
+  allow_gps_fallback: boolean;
+};
+
+/**
+ * Le relais ne participe pas à cette décision : cette voie n'est sûre que si
+ * le Cloud confirme exactement la révision déjà préparée sur le téléphone.
+ * La preuve de présence reste, elle, soumise au réglage GPS de l'établissement.
+ */
+export function canUseTeacherCloudFallback(
+  input: TeacherCloudFallbackInput,
+): boolean {
+  if (
+    !input.phone_prepared ||
+    !input.cloud_reachable ||
+    input.phone_revision === null ||
+    input.cloud_revision === null ||
+    input.phone_revision !== input.cloud_revision
+  ) {
+    return false;
+  }
+  return !input.presence_enabled || input.allow_gps_fallback;
+}

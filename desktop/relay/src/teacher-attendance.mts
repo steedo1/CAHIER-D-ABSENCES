@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
+import {
+  CapturedAtDeviceError,
+  effectiveCapturedAtDevice,
+  normalizeCapturedAtDevice,
+} from "./device-time.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import {
   RelayPresenceProofError,
@@ -26,6 +31,7 @@ type TeacherAttendanceOperation = {
   protocol_version: typeof PROTOCOL_VERSION;
   operation_id: string;
   operation_type: typeof OPERATION_TYPE;
+  captured_at_device?: string;
   session_id: string;
   class_id: string;
   period_id: string;
@@ -126,6 +132,7 @@ function parseOperation(raw: unknown): TeacherAttendanceOperation {
     "protocol_version",
     "operation_id",
     "operation_type",
+    "captured_at_device",
     "session_id",
     "class_id",
     "period_id",
@@ -174,10 +181,18 @@ function parseOperation(raw: unknown): TeacherAttendanceOperation {
   const presenceProof = rawProof === undefined || rawProof === null
     ? null
     : text(rawProof, "presence_proof_invalid", 4096);
+  let capturedAtDevice: string | null;
+  try {
+    capturedAtDevice = normalizeCapturedAtDevice(row.captured_at_device);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherAttendanceError(400, code);
+  }
   return {
     protocol_version: PROTOCOL_VERSION,
     operation_id: text(row.operation_id, "operation_id_required", 128),
     operation_type: OPERATION_TYPE,
+    ...(capturedAtDevice ? { captured_at_device: capturedAtDevice } : {}),
     session_id: text(row.session_id, "session_id_required"),
     class_id: text(row.class_id, "class_id_required"),
     period_id: text(row.period_id, "period_id_required"),
@@ -198,6 +213,9 @@ function fingerprint(
     auth_actor_profile_id: teacher.actor_profile_id,
     auth_actor_kind: relayActorKind(teacher),
     auth_class_id: relayActorClassId(teacher),
+    ...(operation.captured_at_device
+      ? { captured_at_device: operation.captured_at_device }
+      : {}),
     session_id: operation.session_id,
     class_id: operation.class_id,
     period_id: operation.period_id,
@@ -291,7 +309,8 @@ function validateBusinessRules(
   db: RelayDatabase,
   operation: TeacherAttendanceOperation,
   teacher: AuthenticatedRelayTeacher,
-  now: Date,
+  businessAt: Date,
+  verificationAt: Date,
 ) {
   const institution = db.prepare(`
     SELECT timezone, settings_json FROM institutions
@@ -347,14 +366,14 @@ function validateBusinessRules(
   if (!period) throw new TeacherAttendanceError(404, "period_not_found");
 
   const timezone = String(institution.timezone || "Africa/Abidjan");
-  const localNow = localDateTime(now, timezone);
+  const localNow = localDateTime(businessAt, timezone);
   const localSession = localDateTime(session.started_at, timezone);
   const periodStart = timeMinutes(period.start_time);
   const periodEnd = timeMinutes(period.end_time);
   if (periodEnd <= periodStart) throw new TeacherAttendanceError(409, "period_time_invalid");
   const graceExpiresMs = new Date(session.grace_expires_at || "").getTime();
   const canFinalize = session.session_state === "finalizing" &&
-    Number.isFinite(graceExpiresMs) && now.getTime() < graceExpiresMs;
+    Number.isFinite(graceExpiresMs) && businessAt.getTime() < graceExpiresMs;
   if (!canFinalize && (
     !weekdayMatches(period.weekday, localNow.weekday) ||
     localNow.minutes < periodStart ||
@@ -426,7 +445,7 @@ function validateBusinessRules(
         institutionId: teacher.institution_id,
         actorProfileId: session.teacher_id,
         clientSessionId: session.client_session_id || session.id,
-      }, now);
+      }, verificationAt);
     } catch (error) {
       const code = error instanceof RelayPresenceProofError ? error.code : "relay_proof_invalid";
       throw new TeacherAttendanceError(403, code);
@@ -497,19 +516,29 @@ export function secureTeacherAttendanceOperation(
   options: { faultInjector?: (stage: FaultStage) => void } = {},
 ): TeacherAttendanceResult {
   const operation = parseOperation(raw);
-  maintainTeacherAttendanceSessions(db, now);
   const operationFingerprint = fingerprint(operation, teacher);
   const existing = storedReceipt(db, teacher.institution_id, operation.operation_id);
   if (existing) return idempotentResult(operation, teacher, operationFingerprint, existing);
+
+  let capturedAt: Date;
+  try {
+    capturedAt = effectiveCapturedAtDevice(operation.captured_at_device || null, now);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherAttendanceError(409, code);
+  }
+  maintainTeacherAttendanceSessions(db, capturedAt);
 
   const { session, period, periodStart, periodEnd, timezone } = validateBusinessRules(
     db,
     operation,
     teacher,
+    capturedAt,
     now,
   );
   const acceptedAt = now.toISOString();
-  const localNow = localDateTime(now, timezone);
+  const capturedAtIso = capturedAt.toISOString();
+  const localNow = localDateTime(capturedAt, timezone);
   const normalizedMarks = operation.marks.map((mark) => {
     if (mark.status !== "late") {
       return {
@@ -522,7 +551,7 @@ export function secureTeacherAttendanceOperation(
     }
 
     // Backward compatibility: old clients without observed_at use SAVE time.
-    const observedAt = mark.observed_at || acceptedAt;
+    const observedAt = mark.observed_at || capturedAtIso;
     const observedMs = new Date(observedAt).getTime();
     if (!Number.isFinite(observedMs)) {
       throw new TeacherAttendanceError(400, "observed_at_invalid");
@@ -560,6 +589,7 @@ export function secureTeacherAttendanceOperation(
     class_id: operation.class_id,
     period_id: operation.period_id,
     accepted_at: acceptedAt,
+    captured_at_device: capturedAtIso,
     marks: normalizedMarks,
   };
   const payloadJson = canonicalJson(storedPayload);
@@ -605,7 +635,7 @@ export function secureTeacherAttendanceOperation(
       session.id,
       session.server_version,
       payloadJson,
-      acceptedAt,
+      capturedAtIso,
       operation.protocol_version,
       operationFingerprint,
     );
@@ -664,7 +694,7 @@ export function secureTeacherAttendanceOperation(
           updated_at = ?
       WHERE institution_id = ? AND id = ?
     `).run(
-      acceptedAt,
+      capturedAtIso,
       operation.period_id,
       operation.operation_id,
       acceptedAt,

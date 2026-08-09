@@ -1,3 +1,5 @@
+param([switch]$Elevated)
+
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 
@@ -21,6 +23,24 @@ function Stop-RelayListener([int]$Port) {
 }
 
 try {
+    $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+    $IsAdministrator = $Principal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if (-not $IsAdministrator) {
+        $QuotedScript = '"' + $PSCommandPath + '"'
+        Start-Process powershell.exe `
+            -Verb RunAs `
+            -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $QuotedScript,
+                "-Elevated"
+            )
+        exit 0
+    }
+
     $RelayRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
     $PackagePath = Join-Path $RelayRoot "package.json"
     $ConfigPath = Join-Path $env:LOCALAPPDATA "MonCahier\Relay\config.json"
@@ -86,20 +106,13 @@ try {
     [Environment]::SetEnvironmentVariable("MONCAHIER_RELAY_CONFIG", $ConfigPath, "User")
     $env:MONCAHIER_RELAY_CONFIG = $ConfigPath
 
-    # Le raccourci est volontairement recréé : il doit pointer vers cette version,
-    # et non vers un ancien dossier d'installation encore présent sur le PC.
-    $StartupFolder = [Environment]::GetFolderPath("Startup")
-    $ShortcutPath = Join-Path $StartupFolder "Mon Cahier Relay.lnk"
-    $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = Join-Path $env:WINDIR "System32\wscript.exe"
-    $Shortcut.Arguments = '"' + (Join-Path $PSScriptRoot "run-relay-hidden.vbs") + '"'
-    $Shortcut.WorkingDirectory = $RelayRoot
-    $Shortcut.Description = "Démarrage automatique de Mon Cahier Relay"
-    $Shortcut.Save()
-
-    Start-Process (Join-Path $env:WINDIR "System32\wscript.exe") `
-        -ArgumentList ('"' + (Join-Path $PSScriptRoot "run-relay-hidden.vbs") + '"')
+    # La tâche SYSTEM démarre avant toute connexion utilisateur et est recréée
+    # pour pointer vers cette version du relais.
+    & (Join-Path $PSScriptRoot "install-startup-task.ps1") `
+        -RelayRoot $RelayRoot `
+        -ConfigPath $ConfigPath `
+        -NodePath $NodeCommand.Source | Out-Null
+    Start-ScheduledTask -TaskName "Mon Cahier Relay"
 
     $Health = $null
     for ($Attempt = 0; $Attempt -lt 15; $Attempt++) {

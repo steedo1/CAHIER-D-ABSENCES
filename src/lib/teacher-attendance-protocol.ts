@@ -14,6 +14,8 @@ export type TeacherAttendanceRelayPayload = {
   protocol_version: typeof TEACHER_ATTENDANCE_PROTOCOL_VERSION;
   operation_id: string;
   operation_type: typeof TEACHER_ATTENDANCE_OPERATION_TYPE;
+  /** Heure métier capturée et persistée sur l'appareil avant toute tentative réseau. */
+  captured_at_device?: string;
   session_id: string;
   class_id: string;
   period_id: string;
@@ -26,6 +28,13 @@ function requiredText(value: unknown, field: string, maxLength = 256) {
   if (!normalized) throw new Error(`${field}_required`);
   if (normalized.length > maxLength) throw new Error(`${field}_too_long`);
   return normalized;
+}
+
+function optionalIso(value: unknown, field: string) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const parsed = new Date(String(value));
+  if (!Number.isFinite(parsed.getTime())) throw new Error(`${field}_invalid`);
+  return parsed.toISOString();
 }
 
 export function normalizeTeacherAttendanceMarks(
@@ -92,6 +101,7 @@ export function buildTeacherAttendanceRelayPayload(input: {
   periodId: string;
   marks: TeacherAttendanceMark[];
   presenceProof?: string | null;
+  capturedAtDevice?: string | Date | null;
 }): TeacherAttendanceRelayPayload {
   const marks = normalizeTeacherAttendanceMarks(input.marks);
   if (!marks.length) throw new Error("marks_required");
@@ -105,8 +115,9 @@ export function buildTeacherAttendanceRelayPayload(input: {
     period_id: requiredText(input.periodId, "period_id"),
     marks,
   };
+  const capturedAtDevice = optionalIso(input.capturedAtDevice, "captured_at_device");
+  if (capturedAtDevice) payload.captured_at_device = capturedAtDevice;
   const proof = String(input.presenceProof || "").trim();
   if (proof) payload.presence_proof = requiredText(proof, "presence_proof", 4096);
   return payload;
 }
-

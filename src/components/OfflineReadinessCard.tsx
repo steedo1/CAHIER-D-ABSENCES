@@ -179,7 +179,7 @@ export default function OfflineReadinessCard({
         ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
         : role === "class-device"
           ? `${readiness.class_count} classe, ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
-          : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.slot_count} créneau(x), ${readiness.evaluation_count} évaluation(s), ${readiness.textbook_assignment_count} progression(s)`
+          : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
     : "";
 
   const preparationDescription =
@@ -189,7 +189,7 @@ export default function OfflineReadinessCard({
         ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
         : role === "class-device"
           ? "Télécharge uniquement la classe autorisée, les élèves, les créneaux et les matières nécessaires à l’appel."
-          : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
+          : "Télécharge uniquement l’emploi du temps, les classes et les listes d’élèves nécessaires à l’appel.";
 
   const relayConnectivity =
     role === "teacher" || role === "class-device"

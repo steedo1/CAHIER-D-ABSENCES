@@ -214,6 +214,7 @@ async function openInternal(
     operationId: attempted.operation_id,
     classId,
     periodId,
+    capturedAtDevice: attempted.created_at,
   });
 
   let response: DeliveryHttpResponse;

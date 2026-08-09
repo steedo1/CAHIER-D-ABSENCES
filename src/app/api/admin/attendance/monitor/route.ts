@@ -6,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type MonitorStatus =
+  | "not_started"
+  | "started"
   | "missing"
   | "late"
   | "ok"
@@ -142,6 +144,7 @@ export async function GET(req: NextRequest) {
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
   const debug = url.searchParams.get("debug") === "1";
+  const includeExpectedStatuses = url.searchParams.get("include_expected") === "1";
 
   const {
     data: { user },
@@ -392,17 +395,19 @@ export async function GET(req: NextRequest) {
   });
 
   type SessIndexItem = {
-    callMin: number;
+    startedMin: number;
+    callMin: number | null;
     opened_from: "teacher" | "class_device" | null;
   };
 
   const sessionsIndex = new Map<string, SessIndexItem[]>();
   (sessions || []).forEach((s: any) => {
-    const callIso = (s.actual_call_at as string | null) || (s.started_at as string | null);
-    if (!callIso) return;
-    const ymd = isoToYMD(callIso);
-    const hm = isoToHM(callIso);
-    const callMin = hmToMin(hm);
+    const startedIso = s.started_at as string | null;
+    if (!startedIso) return;
+    const callIso = s.actual_call_at as string | null;
+    const ymd = isoToYMD(startedIso);
+    const startedMin = hmToMin(isoToHM(startedIso));
+    const callMin = callIso ? hmToMin(isoToHM(callIso)) : null;
     const key = [
       ymd,
       String(s.class_id || ""),
@@ -412,6 +417,7 @@ export async function GET(req: NextRequest) {
 
     const arr = sessionsIndex.get(key) || [];
     arr.push({
+      startedMin,
       callMin,
       opened_from:
         s.origin === "class_device"
@@ -438,7 +444,7 @@ export async function GET(req: NextRequest) {
     const status = String(r.status || "") as "pending" | "approved";
     if (!teacherId || !start || !end || !status) return;
 
-    let c = parseYMD(start);
+    const c = parseYMD(start);
     const e = parseYMD(end);
     if (!c || !e) return;
 
@@ -534,17 +540,23 @@ export async function GET(req: NextRequest) {
       const key = [ymd, classId, subjectId, teacherId].join("|");
       const sessList = sessionsIndex.get(key) || [];
 
-      let best: SessIndexItem | null = null;
+      let bestCalled: SessIndexItem | null = null;
+      let bestStarted: SessIndexItem | null = null;
 
       const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
       const nextStartMin =
         nextStartMinBySlot.get(`${group}|${String(tt.period_id)}`) ?? null;
 
       for (const s of sessList) {
-        if (s.callMin < startMin) continue;
-        if (s.callMin > endMin + MAX_CARRY_AFTER_END_MIN) continue;
-        if (nextStartMin !== null && s.callMin >= nextStartMin) continue;
-        if (!best || s.callMin < best.callMin) best = s;
+        const eventMin = s.callMin ?? s.startedMin;
+        if (eventMin < startMin) continue;
+        if (eventMin > endMin + MAX_CARRY_AFTER_END_MIN) continue;
+        if (nextStartMin !== null && eventMin >= nextStartMin) continue;
+        if (s.callMin !== null) {
+          if (!bestCalled || s.callMin < (bestCalled.callMin as number)) bestCalled = s;
+        } else if (!bestStarted || s.startedMin < bestStarted.startedMin) {
+          bestStarted = s;
+        }
       }
 
       let status: MonitorStatus;
@@ -556,15 +568,24 @@ export async function GET(req: NextRequest) {
       let absence_reason_label: string | null = null;
       let absence_admin_comment: string | null = null;
 
-      if (best) {
-        const delta = best.callMin - startMin;
+      if (bestCalled && bestCalled.callMin !== null) {
+        const delta = bestCalled.callMin - startMin;
         if (delta <= LATE_THRESHOLD_MIN) {
           status = "ok";
         } else {
           status = "late";
           lateMinutes = delta;
         }
-        opened_from = best.opened_from;
+        opened_from = bestCalled.opened_from;
+      } else if (bestStarted) {
+        if (includeExpectedStatuses) {
+          status = "started";
+        } else {
+          const delta = bestStarted.startedMin - startMin;
+          status = delta <= LATE_THRESHOLD_MIN ? "ok" : "late";
+          lateMinutes = status === "late" ? delta : null;
+        }
+        opened_from = bestStarted.opened_from;
       } else {
         const isBeforeToday = ymd < todayYmd;
         const isToday = ymd === todayYmd;
@@ -576,14 +597,18 @@ export async function GET(req: NextRequest) {
           if (nowMinutes >= controlLimitMin) {
             status = "missing";
           } else {
-            continue;
+            if (!includeExpectedStatuses) continue;
+            status = "not_started";
           }
         } else {
-          continue;
+          if (!includeExpectedStatuses) continue;
+          status = "not_started";
         }
 
         // 🔥 si c'était missing, on vérifie s'il existe une demande d'absence
-        const absence = absenceIndex.get(`${ymd}|${teacherId}`);
+        const absence = status === "missing"
+          ? absenceIndex.get(`${ymd}|${teacherId}`)
+          : null;
         if (absence) {
           absence_request_status = absence.status;
           absence_reason_label = absence.reason_label;
@@ -650,6 +675,7 @@ export async function GET(req: NextRequest) {
       ).sort((a, b) => a - b);
 
     return NextResponse.json({
+      institution_id,
       rows,
       debug: {
         todayYmd,
@@ -675,5 +701,5 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ rows });
+  return NextResponse.json({ institution_id, rows });
 }

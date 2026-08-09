@@ -196,6 +196,36 @@ export async function cacheSet(key: string, value: any): Promise<void> {
   await txDone(tx);
 }
 
+/**
+ * Publie un paquet cohérent dans le cache local.
+ *
+ * IndexedDB garantit qu'une transaction est soit entièrement validée, soit
+ * entièrement annulée. Les écrans d'appel ne peuvent donc jamais observer un
+ * nouvel emploi du temps avec d'anciennes listes d'élèves (ou l'inverse).
+ */
+export async function cacheSetMany(
+  entries: ReadonlyArray<readonly [key: string, value: any]>,
+): Promise<void> {
+  if (!entries.length) return;
+
+  const normalized = new Map<string, any>();
+  for (const [rawKey, value] of entries) {
+    const key = String(rawKey || "").trim();
+    if (!key) throw new Error("offline_cache_key_required");
+    normalized.set(key, value);
+  }
+
+  const db = await openDB();
+  const tx = db.transaction(["kv"], "readwrite");
+  const store = tx.objectStore("kv");
+  const updatedAt = Date.now();
+  for (const [key, value] of normalized) {
+    const row: KVRow = { key, value, updatedAt };
+    store.put(row);
+  }
+  await txDone(tx);
+}
+
 export async function cacheDeleteByPrefixes(prefixes: string[]): Promise<void> {
   const normalized = Array.from(
     new Set(prefixes.map((value) => String(value || "").trim()).filter(Boolean)),
@@ -521,6 +551,7 @@ function responseErrorMessage(payload: any, status: number) {
 }
 
 const DEFAULT_MUTATION_TIMEOUT_MS = 6_000;
+const DEFAULT_READ_TIMEOUT_MS = 6_000;
 const OUTBOX_REPLAY_TIMEOUT_MS = 8_000;
 
 async function fetchWithTimeout(
@@ -553,12 +584,16 @@ function outboxRetryDelayMs(attempts: number) {
  */
 export async function offlineGetJson<T = any>(url: string, cacheKey: string): Promise<T> {
   try {
-    const res = await fetch(url, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      headers: buildHeaders({ "Content-Type": "application/json" }),
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: buildHeaders({ "Content-Type": "application/json" }),
+      },
+      DEFAULT_READ_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const j = await safeJson(res);

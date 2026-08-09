@@ -301,7 +301,12 @@ export function createRelayServer(
         const from = requiredParam(url, "from");
         const to = requiredParam(url, "to");
         return json(response, 200, {
-          rows: attendanceMonitor(store.db, { institutionId, from, to }),
+          rows: attendanceMonitor(store.db, {
+            institutionId,
+            from,
+            to,
+            includeExpectedStatuses: url.searchParams.get("include_expected") === "1",
+          }),
         });
       }
       if (request.method === "GET" && url.pathname === "/v1/founder/attendance-slots") {

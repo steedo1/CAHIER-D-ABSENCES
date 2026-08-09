@@ -95,6 +95,7 @@ test("ouverture locale confirmée : identité dérivée conservée sans jeton ni
     operation_type: "attendance.session.open",
     class_id: "class-a",
     period_id: "period-a",
+    captured_at_device: "2026-07-22T09:15:00.000Z",
   });
   const persisted = JSON.stringify(store.records);
   assert.equal(persisted.includes("signed-teacher-token-never-persisted"), false);

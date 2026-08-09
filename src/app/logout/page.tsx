@@ -4,7 +4,7 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { clearRelayUserState } from "@/lib/local-relay";
+import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 
 export const dynamic = "force-dynamic";
 
@@ -73,13 +73,16 @@ export default function LogoutPage() {
         }),
       ]);
 
-      // 3) Retrait des données pédagogiques locales liées à l'utilisateur.
-      await clearRelayUserState();
+      // 3) Ferme la session hors ligne active sans révoquer l'appareil autorisé.
+      await clearActiveOfflineAccess().catch(() => {});
 
-      // 4) Nettoyage local supplémentaire pour éviter les restes après reconnexion.
+      // 4) Les cartes admin préparées restent sur l'appareil autorisé afin de
+      // permettre une reconnexion hors ligne. Seule la session active est fermée.
+
+      // 5) Nettoyage local supplémentaire pour éviter les restes après reconnexion.
       clearLocalAuthStorage();
 
-      // 5) Navigation complète vers login pour éviter les caches client.
+      // 6) Navigation complète vers login pour éviter les caches client.
       window.location.replace("/login");
     })();
   }, []);

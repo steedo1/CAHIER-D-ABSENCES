@@ -296,7 +296,7 @@ test("la fin du créneau devient finalizing et le propriétaire peut enregistrer
   let session = db.prepare(`
     SELECT session_state, payable_end_at FROM teacher_sessions
     WHERE institution_id = ? AND id = ?
-  `).get(value.institutionId, opened.session.id) as any;
+  `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
   assert.deepEqual(session, { session_state: "finalizing", payable_end_at: null });
 
   secureCompleteAttendance(db, value, opened.session.id);
@@ -314,7 +314,7 @@ test("la fin du créneau devient finalizing et le propriétaire peut enregistrer
   session = db.prepare(`
     SELECT attendance_snapshot_status FROM teacher_sessions
     WHERE institution_id = ? AND id = ?
-  `).get(value.institutionId, opened.session.id) as any;
+  `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
   assert.equal(session.attendance_snapshot_status, "complete");
   assert.equal(count(db, "teacher_session_closure_events"), 1);
   assert.equal(adminDashboard(db, {
@@ -323,6 +323,46 @@ test("la fin du créneau devient finalizing et le propriétaire peut enregistrer
     now: AT_0805,
   }).session_reviews.count, 0);
   assert.deepEqual(db.pragma("foreign_key_check"), []);
+  db.close();
+});
+
+test("la fermeture conserve l'heure appareil sans la confondre avec l'acceptation relais", () => {
+  const db = openRelayDatabase(":memory:");
+  const value = seedSchool(db);
+  const opened = openOld(db, value, "open-for-captured-close");
+  secureCompleteAttendance(db, value, opened.session.id, AT_0801, "call-before-captured-close");
+  const capturedAt = "2026-07-22T08:04:00.000Z";
+  const result = closeTeacherAttendanceSession(
+    db,
+    {
+      ...closeOperation(opened.session.id, "captured-close"),
+      captured_at_device: capturedAt,
+    },
+    teacher(value.institutionId, value.oldTeacherId),
+    AT_0805,
+  );
+  assert.equal(result.relay_time, AT_0805.toISOString());
+  assert.equal(result.session.closed_at, capturedAt);
+
+  const event = db.prepare(`
+    SELECT requested_at, closed_at, created_at, payload_json
+    FROM teacher_session_closure_events
+    WHERE institution_id = ? AND operation_id = ?
+  `).get(value.institutionId, "captured-close") as {
+    requested_at: string;
+    closed_at: string;
+    created_at: string;
+    payload_json: string;
+  };
+  assert.equal(event.requested_at, capturedAt);
+  assert.equal(event.closed_at, capturedAt);
+  assert.equal(event.created_at, AT_0805.toISOString());
+  assert.equal(JSON.parse(event.payload_json).captured_at_device, capturedAt);
+  const outbox = db.prepare(`
+    SELECT occurred_at FROM sync_outbox
+    WHERE institution_id = ? AND operation_id = ?
+  `).get(value.institutionId, "captured-close") as { occurred_at: string };
+  assert.equal(outbox.occurred_at, capturedAt);
   db.close();
 });
 
@@ -391,8 +431,8 @@ test("seul le propriétaire ferme normalement et le professeur suivant effectue 
     now: AT_0805,
   }).session_reviews;
   assert.equal(review.count, 1);
-  assert.equal((review.items[0] as any).proposed_minutes, 60);
-  assert.equal((review.items[0] as any).proposed_amount, null);
+  assert.equal((review.items[0] as Record<string, unknown>).proposed_minutes, 60);
+  assert.equal((review.items[0] as Record<string, unknown>).proposed_amount, null);
   const dependencies = db.prepare(`
     SELECT child.entity_type AS child_type, parent.entity_type AS parent_type
     FROM sync_outbox_dependencies dependency
@@ -467,7 +507,7 @@ test("la grâce expirée ferme automatiquement sans prolonger la paie", () => {
     SELECT session_state, closed_at, payable_end_at, closure_source,
            closure_confirmation, requires_payroll_review, attendance_snapshot_status
     FROM teacher_sessions WHERE institution_id = ? AND id = ?
-  `).get(value.institutionId, opened.session.id) as any;
+  `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
   assert.deepEqual(session, {
     session_state: "closed",
     closed_at: AT_0810.toISOString(),
@@ -504,7 +544,7 @@ test("les courses fermeture manuelle, automatique et transition ne produisent qu
   );
   maintainTeacherAttendanceSessions(manualFirst, AT_0810);
   assert.equal(count(manualFirst, "teacher_session_closure_events"), 1);
-  assert.equal((manualFirst.prepare(`SELECT closure_source FROM teacher_sessions`).get() as any).closure_source,
+  assert.equal((manualFirst.prepare(`SELECT closure_source FROM teacher_sessions`).get() as Record<string, unknown>).closure_source,
     "teacher_confirmed");
   manualFirst.close();
 
@@ -519,7 +559,7 @@ test("les courses fermeture manuelle, automatique et transition ne produisent qu
     AT_0810,
   );
   assert.equal(count(automaticFirst, "teacher_session_closure_events"), 1);
-  assert.equal((automaticFirst.prepare(`SELECT closure_source FROM teacher_sessions`).get() as any).closure_source,
+  assert.equal((automaticFirst.prepare(`SELECT closure_source FROM teacher_sessions`).get() as Record<string, unknown>).closure_source,
     "automatic_grace_expired");
   automaticFirst.close();
 
@@ -608,7 +648,7 @@ test("le même professeur ferme son premier cours avant d'ouvrir la classe suiva
   assert.notEqual(next.session.id, first.session.id);
   const sessions = db.prepare(`
     SELECT class_id, session_state FROM teacher_sessions ORDER BY started_at
-  `).all() as any[];
+  `).all() as Array<Record<string, unknown>>;
   assert.deepEqual(sessions, [
     { class_id: value.classId, session_state: "closed" },
     { class_id: value.nextClassId, session_state: "open" },
@@ -666,7 +706,7 @@ test("chaque interruption de transition annule fermeture, nouvelle séance et ou
     const session = db.prepare(`
       SELECT session_state, ended_at FROM teacher_sessions
       WHERE institution_id = ? AND id = ?
-    `).get(value.institutionId, opened.session.id) as any;
+    `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
     assert.deepEqual(session, { session_state: "finalizing", ended_at: null });
     assert.equal(count(db, "teacher_sessions"), 1);
     assert.equal(count(db, "teacher_session_closure_events"), 0);
@@ -704,7 +744,7 @@ test("la migration 6 vers 7 est atomique, rejouable et refuse les doublons", () 
       SELECT session_date, session_state, scheduled_start_at, scheduled_end_at,
              grace_expires_at
       FROM teacher_sessions WHERE id = 'legacy-session'
-    `).get() as any;
+    `).get() as Record<string, unknown>;
     assert.deepEqual(backfilled, {
       session_date: "2026-07-22",
       session_state: "open",
@@ -718,7 +758,7 @@ test("la migration 6 vers 7 est atomique, rejouable et refuse les doublons", () 
     migrated = openRelayDatabase(path);
     assert.equal(Number((migrated.prepare(`
       SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7
-    `).get() as any).count), 1);
+    `).get() as { count: number }).count), 1);
     migrated.close();
 
     const rollbackPath = join(directory, "rollback.db");
@@ -783,7 +823,7 @@ test("le redémarrage du serveur ferme une séance expirée", async () => {
     const session = db.prepare(`
       SELECT session_state, closure_source FROM teacher_sessions
       WHERE institution_id = ? AND id = ?
-    `).get(value.institutionId, opened.session.id) as any;
+    `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
     assert.deepEqual(session, {
       session_state: "closed",
       closure_source: "automatic_grace_expired",
@@ -801,7 +841,7 @@ test("flag désactivé, ancien jeton Admin, CORS et taille de corps restent sûr
   const value = seedSchool(db);
   const opened = openOld(db, value);
   maintainTeacherAttendanceSessions(db, AT_0800);
-  const changesBefore = Number((db.prepare(`SELECT total_changes() AS count`).get() as any).count);
+  const changesBefore = Number((db.prepare(`SELECT total_changes() AS count`).get() as { count: number }).count);
   const server = createRelayServer(
     relayConfig(value.code, false),
     new RelayStore(db),
@@ -842,7 +882,7 @@ test("flag désactivé, ancien jeton Admin, CORS et taille de corps restent sûr
       body: JSON.stringify({ ...closeOperation(opened.session.id), padding: "x".repeat(20_000) }),
     });
     assert.equal(oversized.status, 413);
-    assert.equal(Number((db.prepare(`SELECT total_changes() AS count`).get() as any).count), changesBefore);
+    assert.equal(Number((db.prepare(`SELECT total_changes() AS count`).get() as { count: number }).count), changesBefore);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();
@@ -904,7 +944,7 @@ test("un bootstrap ultérieur préserve la fermeture locale dirty", () => {
   const session = db.prepare(`
     SELECT session_state, closure_source, payable_end_at
     FROM teacher_sessions WHERE institution_id = ? AND id = ?
-  `).get(value.institutionId, opened.session.id) as any;
+  `).get(value.institutionId, opened.session.id) as Record<string, unknown>;
   assert.deepEqual(session, {
     session_state: "closed",
     closure_source: "teacher_confirmed",
@@ -927,14 +967,14 @@ test("intégrité, secrets, absence de collection Finance et contrôle Admin loc
   assert.equal(/CREATE\s+TABLE\s+(?:finance\.)/i.test(migration), false);
   const collections = db.prepare(`
     SELECT DISTINCT entity_type FROM sync_outbox ORDER BY entity_type
-  `).all().map((row) => String((row as any).entity_type));
+  `).all().map((row) => String((row as { entity_type: unknown }).entity_type));
   assert.equal(collections.some((name) => /finance|payment|receipt|cash|expense|budget/i.test(name)), false);
   const persisted = db.prepare(`
     SELECT payload_json AS value FROM sync_outbox
     UNION ALL SELECT payload_json FROM teacher_session_open_operations
     UNION ALL SELECT payload_json FROM teacher_session_closure_events
     UNION ALL SELECT details_json FROM audit_log
-  `).all().map((row) => String((row as any).value || "")).join("\n");
+  `).all().map((row) => String((row as { value: unknown }).value || "")).join("\n");
   const token = teacherToken(value, value.oldTeacherId);
   assert.equal(persisted.includes(token), false);
   assert.equal(persisted.includes(opened.presence_proof), false);
@@ -944,7 +984,7 @@ test("intégrité, secrets, absence de collection Finance et contrôle Admin loc
     now: AT_0810,
   });
   assert.equal(dashboard.session_reviews.count, 1);
-  assert.equal((dashboard.session_reviews.items[0] as any).closure_source,
+  assert.equal((dashboard.session_reviews.items[0] as Record<string, unknown>).closure_source,
     "automatic_grace_expired");
   db.close();
 });

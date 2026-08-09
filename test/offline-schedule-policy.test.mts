@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideOfflineSchedulePolicy } from "../src/lib/offline-schedule-policy.ts";
+import {
+  canUseTeacherCloudFallback,
+  decideOfflineSchedulePolicy,
+} from "../src/lib/offline-schedule-policy.ts";
 import { isOfflineScheduleMutation } from "../src/lib/admin-offline-schedule.ts";
 
 const readyBase = {
@@ -89,6 +92,20 @@ test("une divergence multi-source est bloquée", () => {
     }),
     "sources_diverged",
   );
+});
+
+test("un professeur peut utiliser Cloud + GPS seulement sur la même révision préparée", () => {
+  const input = {
+    phone_prepared: true,
+    phone_revision: 10,
+    cloud_reachable: true,
+    cloud_revision: 10,
+    presence_enabled: true,
+    allow_gps_fallback: true,
+  };
+  assert.equal(canUseTeacherCloudFallback(input), true);
+  assert.equal(canUseTeacherCloudFallback({ ...input, cloud_revision: 11 }), false);
+  assert.equal(canUseTeacherCloudFallback({ ...input, allow_gps_fallback: false }), false);
 });
 
 test("les mutations Paramètres, édition, import et publication déclenchent la propagation", () => {

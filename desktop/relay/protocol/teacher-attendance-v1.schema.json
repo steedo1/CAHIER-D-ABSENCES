@@ -25,6 +25,10 @@
     "operation_type": {
       "const": "attendance.call.submit"
     },
+    "captured_at_device": {
+      "type": "string",
+      "format": "date-time"
+    },
     "session_id": {
       "type": "string",
       "minLength": 1,

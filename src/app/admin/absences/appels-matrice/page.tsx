@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -10,10 +10,19 @@ import {
   ShieldCheck,
   Hourglass,
   Loader2,
+  CircleDashed,
+  PlayCircle,
 } from "lucide-react";
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
+import {
+  adminAttendancePollDelay,
+  adminAttendanceViewReducer,
+  initialAdminAttendanceViewState,
+} from "@/lib/admin-attendance-monitor";
 
 type MonitorStatus =
+  | "not_started"
+  | "started"
   | "missing"
   | "late"
   | "ok"
@@ -40,8 +49,6 @@ type MonitorRow = {
   absence_admin_comment?: string | null;
 };
 
-type FetchState<T> = { loading: boolean; error: string | null; data: T | null };
-
 type Slot = {
   key: string;
   start: string; // HH:MM
@@ -58,8 +65,6 @@ type ClassCell = {
   absence_reason_label?: string | null;
   absence_admin_comment?: string | null;
 };
-
-const POLL_INTERVAL_MS = 5_000;
 
 function toLocalDateInputValue(d: Date) {
   const yyyy = d.getFullYear();
@@ -82,10 +87,12 @@ function nowHHMM(d = new Date()): string {
 }
 
 function statusScore(s: MonitorStatus): number {
-  if (s === "missing") return 4;
-  if (s === "pending_absence") return 3;
-  if (s === "late") return 2;
-  if (s === "justified_absence") return 1;
+  if (s === "missing") return 6;
+  if (s === "pending_absence") return 5;
+  if (s === "late") return 4;
+  if (s === "started") return 3;
+  if (s === "justified_absence") return 2;
+  if (s === "not_started") return 1;
   return 0;
 }
 
@@ -94,6 +101,12 @@ function statusHint(
   reason?: string | null,
   comment?: string | null
 ): string {
+  if (s === "not_started") {
+    return "Cours attendu sur ce créneau ; l’appel n’a pas encore démarré.";
+  }
+  if (s === "started") {
+    return "Séance démarrée, mais aucun appel validé n’a encore été reçu.";
+  }
   if (s === "missing") {
     return "Aucun appel détecté pour cette classe sur ce créneau.";
   }
@@ -114,6 +127,12 @@ function statusHint(
 }
 
 function cellColorClasses(s: MonitorStatus): string {
+  if (s === "not_started") {
+    return "bg-slate-500 text-white border-slate-300 shadow-lg shadow-slate-300/40";
+  }
+  if (s === "started") {
+    return "bg-violet-600 text-white border-violet-400 shadow-lg shadow-violet-300/40";
+  }
   if (s === "missing") {
     return "bg-red-600 text-white border-red-400 shadow-lg shadow-red-300/40";
   }
@@ -166,44 +185,43 @@ function compareLevels(a: string, b: string): number {
 }
 
 export default function AppelsMatricePage() {
-  const [rowsState, setRowsState] = useState<FetchState<MonitorRow[]>>({
-    loading: false,
-    error: null,
-    data: null,
-  });
-  const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
+  const [rowsState, dispatchRows] = useReducer(
+    adminAttendanceViewReducer<MonitorRow>,
+    initialAdminAttendanceViewState<MonitorRow>(),
+  );
+  const dataSource: LocalDataSource | null = rowsState.source;
+  const savedAt = rowsState.savedAt;
 
   const [now, setNow] = useState<Date>(() => new Date());
-  const today = useMemo(() => toLocalDateInputValue(now), [now]);
   const [levelFilter, setLevelFilter] = useState<string>("all");
+  const [pollCycle, setPollCycle] = useState(0);
 
   const inFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const loadRows = useCallback(async () => {
+  const loadRows = useCallback(async (requestedAt = new Date()) => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
 
-    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setNow(requestedAt);
+    const requestedDate = toLocalDateInputValue(requestedAt);
 
-    setRowsState((prev) => ({
-      ...prev,
-      loading: true,
-      error: null,
-    }));
+    dispatchRows({ type: "begin" });
 
     try {
       const result = await fetchAdminAttendanceMonitor<MonitorRow>(
-        today,
-        today,
+        requestedDate,
+        requestedDate,
         controller.signal,
+        undefined,
+        { includeExpectedStatuses: true },
       );
-      setDataSource(result.source);
-      setRowsState({
-        loading: false,
-        error: null,
+      dispatchRows({
+        type: "success",
+        source: result.source,
+        savedAt: result.saved_at,
         data: result.data.rows || [],
       });
     } catch (e: any) {
@@ -211,37 +229,41 @@ export default function AppelsMatricePage() {
         return;
       }
 
-      setRowsState((prev) => ({
-        loading: false,
+      dispatchRows({
+        type: "failure",
         error: e?.message || "Erreur lors du chargement des données.",
-        data: prev.data,
-      }));
+      });
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       inFlightRef.current = false;
+      if (!controller.signal.aborted) setPollCycle((value) => value + 1);
     }
-  }, [today]);
+  }, []);
 
   useEffect(() => {
-    void loadRows();
+    void loadRows(new Date());
   }, [loadRows]);
+
+  const pollDelayMs = adminAttendancePollDelay(
+    dataSource,
+    Boolean(rowsState.error),
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const id = window.setInterval(() => {
-      setNow(new Date());
-      void loadRows();
-    }, POLL_INTERVAL_MS);
+    const id = window.setTimeout(() => {
+      void loadRows(new Date());
+    }, pollDelayMs);
 
-    return () => window.clearInterval(id);
-  }, [loadRows]);
+    return () => window.clearTimeout(id);
+  }, [loadRows, pollCycle, pollDelayMs]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const refreshNow = () => {
-      setNow(new Date());
-      void loadRows();
+      void loadRows(new Date());
     };
 
     const onVisibilityChange = () => {
@@ -255,10 +277,12 @@ export default function AppelsMatricePage() {
     };
 
     window.addEventListener("focus", onFocus);
+    window.addEventListener("online", refreshNow);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", refreshNow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadRows]);
@@ -269,7 +293,7 @@ export default function AppelsMatricePage() {
     };
   }, []);
 
-  const rows = rowsState.data ?? [];
+  const rows = useMemo(() => rowsState.data ?? [], [rowsState.data]);
   const currentTime = nowHHMM(now);
   const initialLoading = rowsState.loading && rows.length === 0;
   const refreshing = rowsState.loading && rows.length > 0;
@@ -389,6 +413,8 @@ export default function AppelsMatricePage() {
   }, [rows, activeSlot, levelFilter]);
 
   const totalPresent = classCells.filter((c) => c.status === "ok").length;
+  const totalNotStarted = classCells.filter((c) => c.status === "not_started").length;
+  const totalStarted = classCells.filter((c) => c.status === "started").length;
   const totalLate = classCells.filter((c) => c.status === "late").length;
   const totalMissing = classCells.filter((c) => c.status === "missing").length;
   const totalPending = classCells.filter((c) => c.status === "pending_absence").length;
@@ -397,6 +423,20 @@ export default function AppelsMatricePage() {
   ).length;
 
   const hasAnySlot = slots.length > 0;
+  const savedAtLabel = useMemo(() => {
+    if (!savedAt) return null;
+    const value = new Date(savedAt);
+    if (!Number.isFinite(value.getTime())) return null;
+    return new Intl.DateTimeFormat("fr-FR", {
+      timeZone: "Africa/Abidjan",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(value);
+  }, [savedAt]);
 
   return (
     <main className="min-h-screen bg-slate-50/80 p-4 md:p-6">
@@ -429,14 +469,27 @@ export default function AppelsMatricePage() {
               Vue panoramique
             </p>
             <div className={`mb-2 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold ${
-              dataSource === "cloud"
+              dataSource === null
+                ? "border-slate-200 bg-slate-50 text-slate-600"
+                : dataSource === "cloud"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                 : dataSource === "relay"
                 ? "border-sky-200 bg-sky-50 text-sky-700"
                 : "border-amber-200 bg-amber-50 text-amber-800"
             }`}>
-              {dataSource === "cloud" ? "Cloud" : dataSource === "relay" ? "Relais local" : "Dernière vue locale"}
+              {dataSource === null
+                ? "Source en attente"
+                : dataSource === "cloud"
+                ? "Cloud"
+                : dataSource === "relay"
+                ? "Relais local"
+                : "Dernière vue locale"}
             </div>
+            <p className="mb-2 text-[11px] text-slate-500">
+              {savedAtLabel
+                ? `Données enregistrées le ${savedAtLabel}`
+                : "Aucune donnée n’a encore été reçue."}
+            </p>
             <h1 className="mt-1 text-2xl font-semibold text-slate-900">
               Appels par créneau — Tableau de classes
             </h1>
@@ -488,7 +541,33 @@ export default function AppelsMatricePage() {
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-5">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
+          <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-100/90 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-700">
+                À venir
+              </span>
+              <CircleDashed className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="text-2xl font-semibold text-slate-900">{totalNotStarted}</div>
+            <p className="text-[11px] text-slate-700/80">
+              Cours attendus, appel non démarré.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border border-violet-100 bg-violet-50/90 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-violet-900">
+                Démarrés
+              </span>
+              <PlayCircle className="h-5 w-5 text-violet-600" />
+            </div>
+            <div className="text-2xl font-semibold text-violet-900">{totalStarted}</div>
+            <p className="text-[11px] text-violet-900/80">
+              Séances ouvertes, appel non validé.
+            </p>
+          </div>
+
           <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-red-800">
@@ -570,6 +649,14 @@ export default function AppelsMatricePage() {
             <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-slate-500" />
+                  À venir
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-violet-600" />
+                  Démarré
+                </span>
+                <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-emerald-500" />
                   Conforme
                 </span>
@@ -616,6 +703,19 @@ export default function AppelsMatricePage() {
             </div>
           </div>
 
+          {dataSource === "cache" && rows.length > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Cloud et relais indisponibles : la dernière vue locale valide reste affichée
+              {savedAtLabel ? ` (enregistrée le ${savedAtLabel})` : ""}.
+            </div>
+          )}
+
+          {rowsState.error && rows.length > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Actualisation impossible : les cartes précédentes sont conservées. {rowsState.error}
+            </div>
+          )}
+
           {initialLoading ? (
             <div className="flex min-h-[240px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600">
               <Loader2 className="mb-3 h-8 w-8 animate-spin text-emerald-600" />
@@ -626,7 +726,7 @@ export default function AppelsMatricePage() {
                 Veuillez patienter quelques instants.
               </p>
             </div>
-          ) : rowsState.error ? (
+          ) : rowsState.error && rows.length === 0 ? (
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {rowsState.error}
             </div>
@@ -652,7 +752,7 @@ export default function AppelsMatricePage() {
                   key={cell.class_label}
                   className={[
                     "relative flex flex-col rounded-2xl border px-3 py-3 text-xs",
-                    "mc-blink",
+                    cell.status === "not_started" ? "" : "mc-blink",
                     cellColorClasses(cell.status),
                   ].join(" ")}
                 >
@@ -661,7 +761,11 @@ export default function AppelsMatricePage() {
                       {cell.class_label}
                     </span>
                     <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
-                      {cell.status === "missing"
+                      {cell.status === "not_started"
+                        ? "À VENIR"
+                        : cell.status === "started"
+                        ? "DÉMARRÉ"
+                        : cell.status === "missing"
                         ? "OFF"
                         : cell.status === "late"
                         ? "RETARD"

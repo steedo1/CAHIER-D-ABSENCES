@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -28,7 +29,10 @@ export function LogoutButton() {
       // 2) Purge cookies SSR
       await fetch("/api/auth/sync", { method: "DELETE", cache: "no-store" }).catch(() => {});
 
-      // 3) Redirection
+      // 3) Ferme uniquement la session hors ligne active; le grant appareil persiste.
+      await clearActiveOfflineAccess().catch(() => {});
+
+      // 4) Redirection
       router.replace("/login");
     } finally {
       setBusy(false);

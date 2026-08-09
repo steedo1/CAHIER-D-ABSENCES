@@ -1,75 +1,122 @@
-//src/app/api/sessions/[id]/marks/route.ts
-import { NextResponse, type NextRequest } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { createHash } from "node:crypto";
+import { NextRequest, NextResponse } from "next/server";
+import { POST as postTeacherAttendanceBulk } from "@/app/api/teacher/attendance/bulk/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type MarkStatus = "present" | "absent" | "late";
-type MarkInput = { student_id: string; status: MarkStatus; note?: string | null };
+type MarkInput = {
+  student_id: string;
+  status: MarkStatus;
+  note?: string | null;
+  minutes_late?: number;
+  observed_at?: string | null;
+};
 
-function isMark(x: unknown): x is MarkInput {
-  if (!x || typeof x !== "object") return false;
-  const m = x as Record<string, unknown>;
-  if (typeof m.student_id !== "string" || !m.student_id.trim()) return false;
-  if (typeof m.status !== "string") return false;
-  if (!["present", "absent", "late"].includes(m.status)) return false;
-  if (m.note != null && typeof m.note !== "string") return false;
+function isMark(value: unknown): value is MarkInput {
+  if (!value || typeof value !== "object") return false;
+  const mark = value as Record<string, unknown>;
+  if (typeof mark.student_id !== "string" || !mark.student_id.trim()) return false;
+  if (mark.status !== "present" && mark.status !== "absent" && mark.status !== "late") {
+    return false;
+  }
+  if (mark.note != null && typeof mark.note !== "string") return false;
+  if (mark.minutes_late != null && !Number.isFinite(Number(mark.minutes_late))) return false;
+  if (mark.observed_at != null && typeof mark.observed_at !== "string") return false;
   return true;
 }
 
+function canonicalLegacyOperationId(
+  sessionId: string,
+  capturedAtDevice: string,
+  marks: MarkInput[],
+) {
+  const canonicalMarks = marks
+    .map((mark) => ({
+      student_id: mark.student_id.trim(),
+      status: mark.status,
+      note: mark.note?.trim() || null,
+      minutes_late: Math.max(0, Math.floor(Number(mark.minutes_late || 0))),
+      observed_at: mark.observed_at || null,
+    }))
+    .sort((left, right) => left.student_id.localeCompare(right.student_id));
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ sessionId, capturedAtDevice, marks: canonicalMarks }))
+    .digest("hex")
+    .slice(0, 48);
+  return `legacy:${fingerprint}`;
+}
+
 /**
- * Enregistre les marques d'appel pour une session.
- * POST /api/sessions/:id/marks
- * Body: { marks: Array<{ student_id: string; status: "present"|"absent"|"late"; note?: string }> }
+ * Compatibilité de l'ancien endpoint d'appel.
+ *
+ * Toutes les écritures sont désormais déléguées à la route atomique et
+ * authentifiée `/api/teacher/attendance/bulk`. Aucun accès service-role direct
+ * ne doit contourner les contrôles de séance, d'appareil ou de causalité.
  */
 export async function POST(
   req: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  const sessionId = String(id || "").trim();
+  if (!sessionId) {
+    return NextResponse.json({ error: "missing_session" }, { status: 400 });
   }
 
-  const marks = (body as Record<string, unknown>)?.marks as unknown;
-  if (!Array.isArray(marks)) {
-    return NextResponse.json({ error: "bad_payload", hint: "marks must be an array" }, { status: 400 });
+  const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+  const rawMarks = body?.marks;
+  if (!Array.isArray(rawMarks)) {
+    return NextResponse.json(
+      { error: "bad_payload", hint: "marks must be an array" },
+      { status: 400 },
+    );
   }
-  if (marks.length === 0) {
-    return NextResponse.json({ ok: true, count: 0 });
-  }
-
-  // Validation élément par élément (avec message précis)
-  for (let i = 0; i < marks.length; i++) {
-    if (!isMark(marks[i])) {
+  for (let index = 0; index < rawMarks.length; index += 1) {
+    if (!isMark(rawMarks[index])) {
       return NextResponse.json(
-        { error: "bad_mark", index: i, value: marks[i] },
-        { status: 400 }
+        { error: "bad_mark", index, value: rawMarks[index] },
+        { status: 400 },
       );
     }
   }
 
-  const supabase = getSupabaseServiceClient();
+  const marks = rawMarks as MarkInput[];
+  const suppliedCapturedAt = String(
+    body?.captured_at_device || body?.actual_call_at || "",
+  ).trim();
+  const capturedAtDevice = suppliedCapturedAt || new Date().toISOString();
+  const suppliedOperationId = String(
+    req.headers.get("x-mon-cahier-operation-id") || body?.operation_id || "",
+  ).trim();
+  const operationId = suppliedOperationId || canonicalLegacyOperationId(
+    sessionId,
+    capturedAtDevice,
+    marks,
+  );
 
-  const rows = (marks as MarkInput[]).map((m) => ({
-    session_id: id,
-    student_id: m.student_id.trim(),
-    status: m.status,
-    note: m.note?.trim?.() ?? null,
-  }));
+  const headers = new Headers(req.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "application/json");
+  headers.set("X-Mon-Cahier-Operation-Id", operationId);
 
-  const { error } = await supabase.from("attendance_marks").upsert(rows, {
-    onConflict: "session_id,student_id",
+  const forwarded = new NextRequest(req.url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      session_id: sessionId,
+      operation_id: operationId,
+      captured_at_device: capturedAtDevice,
+      marks: marks.map((mark) => ({
+        student_id: mark.student_id.trim(),
+        status: mark.status,
+        minutes_late: mark.minutes_late,
+        reason: mark.note?.trim() || null,
+        observed_at: mark.observed_at || null,
+      })),
+    }),
   });
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
-  }
-
-  return NextResponse.json({ ok: true, count: rows.length });
+  return await postTeacherAttendanceBulk(forwarded);
 }

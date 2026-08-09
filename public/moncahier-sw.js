@@ -8,12 +8,14 @@ const ASSET_CACHE = `${CACHE_PREFIX}assets-${CACHE_VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
 const PRECACHE_URLS = [
   OFFLINE_URL,
+  "/login",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/badge-72.png",
 ];
 const OFFLINE_PAGE_PATHS = new Set([
+  "/login",
   "/choose-book",
   "/attendance",
   "/class",
@@ -63,6 +65,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       await precacheApplicationFiles();
+      // La page de connexion et ses chunks doivent être réellement utilisables
+      // sans réseau, pas seulement son document HTML.
+      await warmDocument("/login").catch(() => undefined);
       await self.skipWaiting();
     })(),
   );

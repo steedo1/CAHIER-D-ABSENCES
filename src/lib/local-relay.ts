@@ -12,8 +12,16 @@ import type {
   TeacherSessionTransitionRelayPayload,
 } from "@/lib/teacher-session-lifecycle-protocol";
 import { probeCloudSchedule } from "@/lib/cloud-availability";
+import {
+  ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS,
+  adminAttendanceCacheKeys,
+  createTimedAbortSignal,
+  isInstitutionScopedAdminAttendanceEnvelope,
+  readCloudRelayCache,
+  type AdminAttendanceDataSource,
+} from "@/lib/admin-attendance-monitor";
 
-export type LocalDataSource = "cloud" | "relay" | "cache";
+export type LocalDataSource = AdminAttendanceDataSource;
 
 export type LocalReadResult<T> = {
   data: T;
@@ -21,7 +29,9 @@ export type LocalReadResult<T> = {
   saved_at: string;
 };
 
-type CacheEnvelope<T> = LocalReadResult<T>;
+type CacheEnvelope<T> = LocalReadResult<T> & {
+  institution_id?: string;
+};
 
 type RelayConfig = {
   baseUrl: string;
@@ -243,20 +253,11 @@ export async function clearRelayUserState() {
 }
 
 function mergeSignals(external?: AbortSignal, timeoutMs = RELAY_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(new Error("Le relais local n'a pas répondu dans le délai prévu.")),
+  return createTimedAbortSignal(
+    external,
     timeoutMs,
+    "Le relais local n'a pas répondu dans le délai prévu.",
   );
-  const onAbort = () => controller.abort(external?.reason || "aborted");
-  external?.addEventListener("abort", onAbort, { once: true });
-  return {
-    signal: controller.signal,
-    cleanup() {
-      window.clearTimeout(timeout);
-      external?.removeEventListener("abort", onAbort);
-    },
-  };
 }
 
 async function safeJson(response: Response) {
@@ -326,8 +327,18 @@ async function readEnvelope<T>(key: string): Promise<CacheEnvelope<T> | null> {
   }
 }
 
-async function writeEnvelope<T>(key: string, data: T, source: LocalDataSource) {
-  const envelope: CacheEnvelope<T> = { data, source, saved_at: new Date().toISOString() };
+async function writeEnvelope<T>(
+  key: string,
+  data: T,
+  source: LocalDataSource,
+  institutionId?: string | null,
+) {
+  const envelope: CacheEnvelope<T> = {
+    data,
+    source,
+    saved_at: new Date().toISOString(),
+    ...(institutionId ? { institution_id: institutionId } : {}),
+  };
   try {
     await cacheSet(key, envelope);
   } catch {
@@ -336,17 +347,28 @@ async function writeEnvelope<T>(key: string, data: T, source: LocalDataSource) {
   return envelope;
 }
 
-async function cloudJson<T>(url: string, signal?: AbortSignal) {
-  const response = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  const payload = await safeJson(response);
-  if (!response.ok) throw new Error(String(payload?.error || payload?.message || `HTTP_${response.status}`));
-  return payload as T;
+async function cloudJson<T>(url: string, signal?: AbortSignal, timeoutMs?: number) {
+  const timed = timeoutMs
+    ? createTimedAbortSignal(
+        signal,
+        timeoutMs,
+        "Le Cloud n'a pas répondu dans le délai prévu.",
+      )
+    : null;
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: timed?.signal || signal,
+    });
+    const payload = await safeJson(response);
+    if (!response.ok) throw new Error(String(payload?.error || payload?.message || `HTTP_${response.status}`));
+    return payload as T;
+  } finally {
+    timed?.cleanup();
+  }
 }
 
 export async function resolveRelayInstitutionId(signal?: AbortSignal) {
@@ -364,52 +386,151 @@ export async function resolveRelayInstitutionId(signal?: AbortSignal) {
   return getRememberedRelayInstitution();
 }
 
+function adminAttendanceMonitorQuery(
+  from: string,
+  to: string,
+  educationScope?: EducationScopeValue,
+  includeExpectedStatuses = false,
+) {
+  const query = new URLSearchParams({ from, to });
+  if (educationScope) {
+    const scopeParams = buildEducationScopeSearchParams(educationScope);
+    scopeParams.forEach((value, key) => query.set(key, value));
+  }
+  if (includeExpectedStatuses) query.set("include_expected", "1");
+  return query;
+}
+
+function legacyCompatibleAttendanceMonitorRows<T>(rows: T[], includeExpectedStatuses: boolean) {
+  if (includeExpectedStatuses) return rows;
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== "object") return [row];
+    const value = row as Record<string, unknown>;
+    if (value.status === "not_started") return [];
+    if (value.status !== "started") return [row];
+    return [{
+      ...value,
+      status: typeof value.late_minutes === "number" ? "late" : "ok",
+    } as T];
+  });
+}
+
+export async function hasInstitutionScopedAdminAttendanceMonitorCache(
+  institutionId: string,
+  from: string,
+  to: string,
+  educationScope?: EducationScopeValue,
+): Promise<boolean> {
+  if (!browser()) return false;
+  const expectedInstitutionId = String(institutionId || "").trim();
+  if (!expectedInstitutionId) return false;
+
+  const queryString = adminAttendanceMonitorQuery(
+    from,
+    to,
+    educationScope,
+    true,
+  ).toString();
+  const key = adminAttendanceCacheKeys(queryString, expectedInstitutionId).scoped;
+  const envelope = await readEnvelope<{ rows: unknown[] }>(key);
+  return isInstitutionScopedAdminAttendanceEnvelope(envelope, expectedInstitutionId);
+}
+
 export async function fetchAdminAttendanceMonitor<T>(
   from: string,
   to: string,
   signal?: AbortSignal,
   educationScope?: EducationScopeValue,
+  options: { includeExpectedStatuses?: boolean } = {},
 ): Promise<LocalReadResult<{ rows: T[] }>> {
-  const query = new URLSearchParams({ from, to });
-
-  if (educationScope) {
-    const scopeParams = buildEducationScopeSearchParams(educationScope);
-    scopeParams.forEach((value, key) => query.set(key, value));
-  }
+  const includeExpectedStatuses = options.includeExpectedStatuses === true;
+  const query = adminAttendanceMonitorQuery(
+    from,
+    to,
+    educationScope,
+    includeExpectedStatuses,
+  );
 
   const queryString = query.toString();
-  const key = `relay:admin:attendance:${queryString}`;
+  let institutionId = getRememberedRelayInstitution();
+  const scopedKey = (value: string) =>
+    adminAttendanceCacheKeys(queryString, value).scoped;
+  const legacyKey = adminAttendanceCacheKeys(queryString, institutionId || "").legacy;
 
-  try {
-    const cloud = await cloudJson<{ rows: T[] }>(
-      `/api/admin/attendance/monitor?${queryString}`,
-      signal,
-    );
-    return await writeEnvelope(key, cloud, "cloud");
-  } catch (cloudError) {
-    if (signal?.aborted) throw cloudError;
-
-    const institutionId = await resolveRelayInstitutionId(signal);
-
-    if (institutionId) {
-      try {
-        const relayQuery = new URLSearchParams(query);
-        relayQuery.set("institution_id", institutionId);
-
-        const relay = await relayJson<{ rows: T[] }>(
-          `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
-          { signal },
+  return await readCloudRelayCache<LocalReadResult<{ rows: T[] }>>({
+    signal,
+    cloud: async () => {
+      const cloud = await cloudJson<{ rows: T[]; institution_id?: string | null }>(
+        `/api/admin/attendance/monitor?${queryString}`,
+        signal,
+        ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS,
+      );
+      const cloudInstitutionId = String(cloud.institution_id || institutionId || "").trim();
+      if (cloudInstitutionId) {
+        institutionId = cloudInstitutionId;
+        rememberRelayInstitution(cloudInstitutionId);
+        return await writeEnvelope(
+          scopedKey(cloudInstitutionId),
+          cloud,
+          "cloud",
+          cloudInstitutionId,
         );
-        return await writeEnvelope(key, relay, "relay");
-      } catch {
-        // Dernier niveau : vue locale connue.
       }
-    }
+      return {
+        data: cloud,
+        source: "cloud",
+        saved_at: new Date().toISOString(),
+      };
+    },
+    relay: institutionId
+      ? async () => {
+          const relayInstitutionId = institutionId as string;
+          const relayQuery = new URLSearchParams(query);
+          relayQuery.set("institution_id", relayInstitutionId);
+          const relay = await relayJson<{ rows: T[] }>(
+            `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
+            { signal },
+          );
+          const compatibleRelay = {
+            ...relay,
+            rows: legacyCompatibleAttendanceMonitorRows(
+              relay.rows || [],
+              includeExpectedStatuses,
+            ),
+          };
+          return await writeEnvelope(
+            scopedKey(relayInstitutionId),
+            compatibleRelay,
+            "relay",
+            relayInstitutionId,
+          );
+        }
+      : undefined,
+    cache: async () => {
+      if (!institutionId) return null;
 
-    const cached = await readEnvelope<{ rows: T[] }>(key);
-    if (cached) return { ...cached, source: "cache" };
-    throw cloudError;
-  }
+      const currentKey = scopedKey(institutionId);
+      const scoped = await readEnvelope<{ rows: T[] }>(currentKey);
+      if (scoped && isInstitutionScopedAdminAttendanceEnvelope(scoped, institutionId)) {
+        return { ...scoped, source: "cache" };
+      }
+
+      // Compatibilité uniquement avec une enveloppe legacy qui portait déjà
+      // une identité vérifiable. Une ancienne vue non scoped n'est jamais attribuée
+      // implicitement au compte actuellement mémorisé.
+      const legacy = await readEnvelope<{ rows: T[] }>(legacyKey);
+      if (!legacy || !isInstitutionScopedAdminAttendanceEnvelope(legacy, institutionId)) return null;
+      const migrated: CacheEnvelope<{ rows: T[] }> = {
+        ...legacy,
+      };
+      try {
+        await cacheSet(currentKey, migrated);
+      } catch {
+        // La vue legacy reste lisible même si IndexedDB refuse la migration.
+      }
+      return { ...migrated, source: "cache" };
+    },
+  });
 }
 
 export async function fetchDashboardMetrics<T extends Record<string, any>>(

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createIndexedDbTeacherAttendanceStore,
   deliverTeacherAttendanceWithDependencies,
+  stageTeacherAttendanceDraftWithDependencies,
   teacherAttendanceDeliveryMessage,
   type DeliverTeacherAttendanceInput,
   type TeacherAttendanceDeliveryDependencies,
@@ -72,7 +73,7 @@ function scenario(
     })),
     requestPresenceProof: options.proof || (async () => ({
       proof: "valid-presence-proof",
-      expires_at: "2026-07-22T10:03:00.000Z",
+      expires_at: "2026-07-23T10:03:00.000Z",
     })),
     postRelay: options.relay || (async ({ payload }) => ({
       ok: true,
@@ -402,11 +403,16 @@ test("18 - aucun jeton dans l'opération ou le payload métier", async () => {
   assert.equal(JSON.stringify(relayPayload).includes("signed-teacher-token"), false);
 });
 
-test("19 - navigation hors ligne Appel, Notes et Cahier de texte inchangée", async () => {
+test("19 - la préparation hors ligne professeur réchauffe seulement Appel et Connexion", async () => {
   const source = await readFile(new URL("../src/lib/offline-readiness.ts", import.meta.url), "utf8");
-  for (const path of ["/choose-book", "/attendance", "/grades", "/enseignant/cahier-de-texte"]) {
-    assert.equal(source.includes(`"${path}"`), true, path);
+  const start = source.indexOf("async function prepareTeacher(");
+  const end = source.indexOf("async function prepareClassDevice(", start);
+  const preparation = source.slice(start, end);
+  for (const path of ["/attendance", "/login"]) {
+    assert.equal(preparation.includes(`"${path}"`), true, path);
   }
+  assert.equal(preparation.includes('"/grades"'), false);
+  assert.equal(preparation.includes('"/enseignant/cahier-de-texte"'), false);
 });
 
 test("20 - ancienne outbox migrée reprend avec le même operation_id", async () => {
@@ -848,4 +854,90 @@ test("31 - une correction remplace l'ancienne tentative sans risque de rejeu", a
     ),
     "Remplacé par une version plus récente.",
   );
+});
+
+test("32 - un vieux brouillon fige la capture à la première validation et la garde aux retries", async () => {
+  const store = new TestIndexedDbStore();
+  let current = new Date("2026-07-22T08:00:00.000Z");
+  const capturedPayloads: Array<string | undefined> = [];
+  const deps = scenario(store, {
+    operationId: "draft-then-submit",
+    relay: async ({ payload }) => {
+      capturedPayloads.push(payload.captured_at_device);
+      return {
+        ok: false,
+        status: 503,
+        body: { error: "teacher_attendance_writes_disabled" },
+      };
+    },
+  });
+  deps.now = () => current;
+
+  const draft = await stageTeacherAttendanceDraftWithDependencies(input(), deps);
+  assert.ok(draft);
+  assert.equal(draft.created_at, "2026-07-22T08:00:00.000Z");
+  assert.equal(draft.captured_at_device, undefined);
+
+  current = new Date("2026-07-22T10:00:00.000Z");
+  const firstAttempt = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  assert.equal(firstAttempt.captured_at_device, "2026-07-22T10:00:00.000Z");
+
+  current = new Date("2026-07-22T10:05:00.000Z");
+  const retry = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  assert.equal(retry.operation_id, firstAttempt.operation_id);
+  assert.equal(retry.captured_at_device, "2026-07-22T10:00:00.000Z");
+  assert.deepEqual(capturedPayloads, [
+    "2026-07-22T10:00:00.000Z",
+    "2026-07-22T10:00:00.000Z",
+  ]);
+});
+
+test("33 - le trajet Cloud reçoit le même captured_at_device que l'opération locale", async () => {
+  const store = new TestIndexedDbStore();
+  let received: string | null = null;
+  const deps = scenario(store, {
+    cloudAvailable: true,
+    operationId: "cloud-captured-operation",
+    cloud: async ({ operationId, capturedAtDevice }) => {
+      received = capturedAtDevice;
+      return {
+        ok: true,
+        status: 200,
+        body: { ok: true, operation_id: operationId },
+      };
+    },
+  });
+  deps.now = () => new Date("2026-07-22T11:30:00.000Z");
+
+  const result = await deliverTeacherAttendanceWithDependencies(input(), deps);
+  assert.equal(result.state, "cloud_synced");
+  assert.equal(result.captured_at_device, "2026-07-22T11:30:00.000Z");
+  assert.equal(received, result.captured_at_device);
+});
+
+test("34 - l'instant fourni par le clic prévaut et reste stable lors des retries", async () => {
+  const store = new TestIndexedDbStore();
+  const captures: string[] = [];
+  const deps = scenario(store, {
+    operationId: "explicit-captured-operation",
+    relay: async ({ payload }) => {
+      captures.push(String(payload.captured_at_device));
+      throw new Error("offline");
+    },
+  });
+  deps.now = () => new Date("2026-07-22T15:00:00.000Z");
+
+  const first = await deliverTeacherAttendanceWithDependencies(input({
+    capturedAtDevice: "2026-07-22T08:15:00.000Z",
+  }), deps);
+  const retry = await deliverTeacherAttendanceWithDependencies(input({
+    capturedAtDevice: "2026-07-22T09:45:00.000Z",
+  }), deps);
+
+  assert.equal(first.captured_at_device, "2026-07-22T08:15:00.000Z");
+  assert.equal(retry.captured_at_device, first.captured_at_device);
+  assert.deepEqual(captures, [
+    "2026-07-22T08:15:00.000Z",
+    "2026-07-22T08:15:00.000Z",
+  ]);
 });

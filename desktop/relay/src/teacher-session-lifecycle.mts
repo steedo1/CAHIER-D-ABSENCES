@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
+import {
+  CapturedAtDeviceError,
+  effectiveCapturedAtDevice,
+  normalizeCapturedAtDevice,
+} from "./device-time.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
 import { issueAttendancePresenceProofForTeacher } from "./presence-proof.mjs";
 import { relayActorClassId, relayActorDeviceId, relayActorKind, type AuthenticatedRelayTeacher } from "./teacher-auth.mjs";
@@ -57,6 +62,7 @@ type CloseOperation = {
   protocol_version: 1;
   operation_id: string;
   operation_type: typeof CLOSE_OPERATION_TYPE;
+  captured_at_device?: string;
   session_id: string;
 };
 
@@ -64,6 +70,7 @@ type TransitionOperation = {
   protocol_version: 1;
   operation_id: string;
   operation_type: typeof TRANSITION_OPERATION_TYPE;
+  captured_at_device?: string;
   class_id: string;
   period_id: string;
 };
@@ -109,17 +116,27 @@ function text(value: unknown, code: string, maxLength = 256) {
 
 function parseClose(raw: unknown): CloseOperation {
   const value = record(raw, "operation_must_be_object");
-  exactKeys(value, ["protocol_version", "operation_id", "operation_type", "session_id"]);
+  exactKeys(value, [
+    "protocol_version", "operation_id", "operation_type", "captured_at_device", "session_id",
+  ]);
   if (value.protocol_version !== PROTOCOL_VERSION) {
     throw new TeacherSessionLifecycleError(400, "protocol_version_not_supported");
   }
   if (value.operation_type !== CLOSE_OPERATION_TYPE) {
     throw new TeacherSessionLifecycleError(400, "operation_type_not_supported");
   }
+  let capturedAtDevice: string | null;
+  try {
+    capturedAtDevice = normalizeCapturedAtDevice(value.captured_at_device);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionLifecycleError(400, code);
+  }
   return {
     protocol_version: PROTOCOL_VERSION,
     operation_id: text(value.operation_id, "operation_id_required", 128),
     operation_type: CLOSE_OPERATION_TYPE,
+    ...(capturedAtDevice ? { captured_at_device: capturedAtDevice } : {}),
     session_id: text(value.session_id, "session_id_required"),
   };
 }
@@ -127,7 +144,7 @@ function parseClose(raw: unknown): CloseOperation {
 function parseTransition(raw: unknown): TransitionOperation {
   const value = record(raw, "operation_must_be_object");
   exactKeys(value, [
-    "protocol_version", "operation_id", "operation_type", "class_id", "period_id",
+    "protocol_version", "operation_id", "operation_type", "captured_at_device", "class_id", "period_id",
   ]);
   if (value.protocol_version !== PROTOCOL_VERSION) {
     throw new TeacherSessionLifecycleError(400, "protocol_version_not_supported");
@@ -135,10 +152,18 @@ function parseTransition(raw: unknown): TransitionOperation {
   if (value.operation_type !== TRANSITION_OPERATION_TYPE) {
     throw new TeacherSessionLifecycleError(400, "operation_type_not_supported");
   }
+  let capturedAtDevice: string | null;
+  try {
+    capturedAtDevice = normalizeCapturedAtDevice(value.captured_at_device);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionLifecycleError(400, code);
+  }
   return {
     protocol_version: PROTOCOL_VERSION,
     operation_id: text(value.operation_id, "operation_id_required", 128),
     operation_type: TRANSITION_OPERATION_TYPE,
+    ...(capturedAtDevice ? { captured_at_device: capturedAtDevice } : {}),
     class_id: text(value.class_id, "class_id_required"),
     period_id: text(value.period_id, "period_id_required"),
   };
@@ -284,6 +309,7 @@ function closeSessionInternal(
     source: ClosureSource;
     confirmation: ClosureConfirmation;
     requestedAt: string;
+    acceptedAt: string;
     now: Date;
   },
 ) {
@@ -335,6 +361,7 @@ function closeSessionInternal(
     teacher_profile_id: input.session.teacher_id,
     requested_by_profile_id: input.requestedByProfileId,
     scheduled_end_at: input.session.scheduled_end_at,
+    captured_at_device: closedAt,
     closed_at: closedAt,
     payable_end_at: payableEndAt,
     closure_source: input.source,
@@ -368,7 +395,7 @@ function closeSessionInternal(
     input.source,
     input.confirmation,
     requiresReview,
-    closedAt,
+    input.acceptedAt,
     input.session.institution_id,
     input.session.id,
   );
@@ -400,7 +427,7 @@ function closeSessionInternal(
     closedAt,
     payableEndAt,
     requiresReview,
-    closedAt,
+    input.acceptedAt,
   );
   db.prepare(`
     INSERT INTO sync_outbox(
@@ -421,7 +448,7 @@ function closeSessionInternal(
     input.requestedAt,
     input.fingerprint,
   );
-  insertOutboxDependenciesForClose(db, input.session, input.operationId, closedAt);
+  insertOutboxDependenciesForClose(db, input.session, input.operationId, input.acceptedAt);
 
   const current = teacherSessionLifecycleRow(db, input.session.institution_id, input.session.id);
   if (!current) throw new TeacherSessionLifecycleError(500, "session_close_failed");
@@ -442,7 +469,7 @@ function closeSessionInternal(
       requires_payroll_review: requiresReview === 1,
       attendance_snapshot_status: current.attendance_snapshot_status,
     }),
-    closedAt,
+    input.acceptedAt,
   );
   return { session: current, idempotent: false, alreadyClosed: false };
 }
@@ -520,6 +547,7 @@ function maintenanceInside(db: RelayDatabase, now: Date) {
       source: "automatic_grace_expired",
       confirmation: "unconfirmed",
       requestedAt: session.grace_expires_at || nowIso,
+      acceptedAt: nowIso,
       now,
     });
     if (!result.alreadyClosed) {
@@ -565,7 +593,7 @@ export function closeTeacherAttendanceSession(
   now = new Date(),
 ) {
   const operation = parseClose(raw);
-  const requestedAt = now.toISOString();
+  const acceptedAt = now.toISOString();
   const operationFingerprint = fingerprint({
     ...operation,
     institution_id: teacher.institution_id,
@@ -573,8 +601,16 @@ export function closeTeacherAttendanceSession(
     auth_actor_kind: relayActorKind(teacher),
     auth_class_id: relayActorClassId(teacher),
   });
+  let capturedAt: Date;
+  try {
+    capturedAt = effectiveCapturedAtDevice(operation.captured_at_device || null, now);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionLifecycleError(409, code);
+  }
+  const requestedAt = capturedAt.toISOString();
   return db.transaction(() => {
-    maintenanceInside(db, now);
+    maintenanceInside(db, capturedAt);
     const session = teacherSessionLifecycleRow(db, teacher.institution_id, operation.session_id);
     if (!session) throw new TeacherSessionLifecycleError(404, "session_not_found");
     if (relayActorKind(teacher) === "teacher") {
@@ -593,9 +629,10 @@ export function closeTeacherAttendanceSession(
       source: "teacher_confirmed",
       confirmation: "confirmed",
       requestedAt,
-      now,
+      acceptedAt,
+      now: capturedAt,
     });
-    return closeResult(operation.operation_id, result, requestedAt);
+    return closeResult(operation.operation_id, result, acceptedAt);
   })();
 }
 
@@ -688,6 +725,7 @@ function createTransitionSession(
   teacher: AuthenticatedRelayTeacher,
   schedule: TeacherScheduledSlot,
   requestedStartAt: string,
+  acceptedAt: string,
   openOperationId: string,
 ) {
   const existing = db.prepare(`
@@ -740,7 +778,7 @@ function createTransitionSession(
     operation.period_id,
     schedule.scheduledStartAt,
     requestedStartAt,
-    requestedStartAt,
+    acceptedAt,
     schedule.sessionDate,
     schedule.scheduledStartAt,
     requestedStartAt,
@@ -758,6 +796,7 @@ function createTransitionSession(
     teacher_profile_id: teacher.actor_profile_id,
     class_id: operation.class_id,
     period_id: operation.period_id,
+    captured_at_device: requestedStartAt,
   });
   const openPayload = {
     protocol_version: PROTOCOL_VERSION,
@@ -770,7 +809,8 @@ function createTransitionSession(
     subject_id: schedule.timetable.subject_id,
     local_session_id: session.id,
     remote_session_id: null,
-    accepted_at: requestedStartAt,
+    accepted_at: acceptedAt,
+    captured_at_device: requestedStartAt,
     requested_start_at: requestedStartAt,
   };
   db.prepare(`
@@ -792,8 +832,8 @@ function createTransitionSession(
     session.id,
     openFingerprint,
     canonicalJson(openPayload),
-    requestedStartAt,
-    requestedStartAt,
+    acceptedAt,
+    acceptedAt,
   );
   db.prepare(`
     INSERT INTO sync_outbox(
@@ -809,6 +849,7 @@ function createTransitionSession(
     session.id,
     canonicalJson({
       operation_type: "teacher_session.open",
+      captured_at_device: requestedStartAt,
       ...sessionPayload(session),
       open_operation_id: openOperationId,
       timetable_id: schedule.timetable.id,
@@ -830,7 +871,7 @@ export function transitionTeacherAttendanceSession(
   if (relayActorKind(teacher) === "class_device") {
     throw new TeacherSessionLifecycleError(403, "class_device_transition_not_supported");
   }
-  const requestedStartAt = now.toISOString();
+  const acceptedAt = now.toISOString();
   const operation = parseTransition(raw);
   const operationFingerprint = fingerprint({
     ...operation,
@@ -850,6 +891,15 @@ export function transitionTeacherAttendanceSession(
     return transitionResult(db, existing, teacher, operation.operation_id, true, now);
   }
 
+  let capturedAt: Date;
+  try {
+    capturedAt = effectiveCapturedAtDevice(operation.captured_at_device || null, now);
+  } catch (error) {
+    const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
+    throw new TeacherSessionLifecycleError(409, code);
+  }
+  const requestedStartAt = capturedAt.toISOString();
+
   return db.transaction(() => {
     const raced = transitionReceipt(db, teacher.institution_id, operation.operation_id);
     if (raced) {
@@ -858,14 +908,14 @@ export function transitionTeacherAttendanceSession(
       }
       return transitionResult(db, raced, teacher, operation.operation_id, true, now);
     }
-    maintenanceInside(db, now);
+    maintenanceInside(db, capturedAt);
     let schedule: TeacherScheduledSlot;
     try {
       schedule = resolveTeacherScheduledSlot(db, {
         teacher,
         classId: operation.class_id,
         periodId: operation.period_id,
-        now,
+        now: capturedAt,
       });
     } catch (error) {
       if (error instanceof TeacherSessionRuleError) {
@@ -929,7 +979,8 @@ export function transitionTeacherAttendanceSession(
       source: "next_slot_takeover",
       confirmation: "unconfirmed",
       requestedAt: requestedStartAt,
-      now,
+      acceptedAt,
+      now: capturedAt,
     });
     options.faultInjector?.("after_previous_close");
 
@@ -939,6 +990,7 @@ export function transitionTeacherAttendanceSession(
       teacher,
       schedule,
       requestedStartAt,
+      acceptedAt,
       openOperationId,
     );
     options.faultInjector?.("after_new_session");
@@ -965,6 +1017,7 @@ export function transitionTeacherAttendanceSession(
       new_session_id: next.session.id,
       class_id: operation.class_id,
       period_id: operation.period_id,
+      captured_at_device: requestedStartAt,
       requested_start_at: requestedStartAt,
       close_operation_id: closeOperationId,
       open_operation_id: openOperationId,
@@ -992,8 +1045,8 @@ export function transitionTeacherAttendanceSession(
       openOperationId,
       operationFingerprint,
       canonicalJson(transitionPayload),
-      requestedStartAt,
-      requestedStartAt,
+      acceptedAt,
+      acceptedAt,
     );
     options.faultInjector?.("after_transition_receipt");
     db.prepare(`
@@ -1012,7 +1065,7 @@ export function transitionTeacherAttendanceSession(
         requested_start_at: requestedStartAt,
         closure_confirmation: "unconfirmed",
       }),
-      requestedStartAt,
+      acceptedAt,
     );
     const receipt = transitionReceipt(db, teacher.institution_id, operation.operation_id);
     if (!receipt) throw new TeacherSessionLifecycleError(500, "transition_receipt_missing");

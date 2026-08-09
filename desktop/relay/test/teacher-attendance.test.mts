@@ -450,6 +450,53 @@ test("un professeur valide sécurise et matérialise atomiquement son appel", as
   }
 });
 
+test("captured_at_device reste distinct de l'acceptation relais et pilote l'heure métier", async () => {
+  const db = openRelayDatabase(":memory:");
+  const school: SchoolSeed = {
+    institutionId: "inst-1", code: "SCH-000001", secret: SCHOOL_ONE_SECRET,
+  };
+  const value = seedSchool(db, school);
+  const capturedAt = "2026-07-22T09:10:00.000Z";
+  const relay = await startRelay(db, [school.code]);
+  try {
+    const response = await postOperation(relay.url, {
+      ...operation(school, "captured-attendance"),
+      captured_at_device: capturedAt,
+    }, teacherToken(school));
+    assert.equal(response.status, 202);
+
+    const receipt = db.prepare(`
+      SELECT accepted_at, payload_json
+      FROM teacher_attendance_operations
+      WHERE institution_id = ? AND operation_id = ?
+    `).get(school.institutionId, "captured-attendance") as {
+      accepted_at: string;
+      payload_json: string;
+    };
+    assert.equal(receipt.accepted_at, NOW.toISOString());
+    assert.equal(JSON.parse(receipt.payload_json).captured_at_device, capturedAt);
+    const outbox = db.prepare(`
+      SELECT occurred_at FROM sync_outbox
+      WHERE institution_id = ? AND operation_id = ?
+    `).get(school.institutionId, "captured-attendance") as { occurred_at: string };
+    assert.equal(outbox.occurred_at, capturedAt);
+    const session = db.prepare(`
+      SELECT actual_call_at, attendance_durable_at, updated_at
+      FROM teacher_sessions WHERE institution_id = ? AND id = ?
+    `).get(school.institutionId, value.sessionId) as {
+      actual_call_at: string;
+      attendance_durable_at: string;
+      updated_at: string;
+    };
+    assert.equal(session.actual_call_at, capturedAt);
+    assert.equal(session.attendance_durable_at, NOW.toISOString());
+    assert.equal(session.updated_at, NOW.toISOString());
+  } finally {
+    await relay.close();
+    db.close();
+  }
+});
+
 test("l'authentification refuse absence, invalidité, jeton Admin et professeur inactif", async () => {
   const db = openRelayDatabase(":memory:");
   const school: SchoolSeed = {
@@ -744,8 +791,10 @@ test("la fenêtre serveur, la taille, le JSON, les champs et statuts inconnus so
 
     const unknownType = { ...operation(school, "unknown-type"), operation_type: "unknown" };
     assert.equal((await postOperation(relay.url, unknownType, teacherToken(school))).status, 400);
-    const unknownStatus = operation(school, "unknown-status") as any;
-    unknownStatus.marks[0].status = "missing";
+    const unknownStatus = operation(school, "unknown-status");
+    const firstUnknownMark = unknownStatus.marks[0];
+    assert.ok(firstUnknownMark);
+    firstUnknownMark.status = "missing";
     assert.equal((await postOperation(relay.url, unknownStatus, teacherToken(school))).status, 400);
     const injectedIdentity = { ...operation(school, "identity"), institution_id: school.institutionId };
     const unknownFieldResponse = await postOperation(relay.url, injectedIdentity, teacherToken(school));

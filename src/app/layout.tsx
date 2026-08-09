@@ -3,6 +3,8 @@ import type { Metadata, Viewport } from "next";
 import Providers from "./providers";
 import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
+import OfflineAccessGuard from "@/components/OfflineAccessGuard";
+import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePreparation";
 
 export const metadata: Metadata = {
   applicationName: "Mon Cahier",
@@ -33,7 +35,10 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <OfflineAccessGuard>{children}</OfflineAccessGuard>
+          <BackgroundAttendancePreparation />
+        </Providers>
         <ServiceWorkerRegistrar />
       </body>
     </html>

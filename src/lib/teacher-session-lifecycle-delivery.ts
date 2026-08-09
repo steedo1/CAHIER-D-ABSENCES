@@ -355,6 +355,7 @@ async function postCloseInternal(
       payload: buildTeacherSessionCloseRelayPayload({
         operationId: attempted.operation_id,
         sessionId,
+        capturedAtDevice: attempted.device_requested_at,
       }),
     }));
   } catch {
@@ -456,6 +457,7 @@ async function postTransitionInternal(
         operationId: attempted.operation_id,
         classId,
         periodId,
+        capturedAtDevice: attempted.device_requested_at,
       }),
     }));
   } catch {

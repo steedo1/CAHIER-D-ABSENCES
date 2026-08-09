@@ -14,13 +14,26 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+async function fetchAuthSync(init: RequestInit) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5_000);
+  try {
+    return await fetch("/api/auth/sync", {
+      ...init,
+      cache: "no-store",
+      credentials: "include",
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function syncSsrCookies(s: Session | null) {
   if (!s?.access_token || !s?.refresh_token) return;
 
-  await fetch("/api/auth/sync", {
+  await fetchAuthSync({
     method: "POST",
-    cache: "no-store",
-    credentials: "include",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       access_token: s.access_token,
@@ -30,10 +43,8 @@ async function syncSsrCookies(s: Session | null) {
 }
 
 async function clearSsrCookies() {
-  await fetch("/api/auth/sync", {
+  await fetchAuthSync({
     method: "DELETE",
-    cache: "no-store",
-    credentials: "include",
   });
 }
 

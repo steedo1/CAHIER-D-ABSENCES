@@ -75,7 +75,9 @@ L'assistant effectue automatiquement les opérations suivantes :
   base d'un autre établissement ;
 - autorisation du port 4317 uniquement sur les réseaux Windows privés ;
 - proposition explicite avant de classer le réseau courant comme privé ;
-- installation du démarrage silencieux à l'ouverture de session ;
+- installation d'une tâche planifiée `Mon Cahier Relay`, exécutée par `SYSTEM`
+  au démarrage du PC avant toute ouverture de session, avec dix reprises à une
+  minute d'intervalle en cas d'échec ;
 - démarrage immédiat, contrôle `/health`, copie du jeton dans le presse-papiers
   et ouverture de la page de paramétrage Mon Cahier.
 
@@ -110,6 +112,26 @@ Deux raccourcis de dépannage ne nécessitent aucune commande manuelle :
 
 Le jeton Admin reste réservé au navigateur d'administration. Il n'est jamais
 communiqué aux enseignants et n'intervient pas dans leur preuve de présence.
+
+### Reprise après coupure électrique
+
+Après le retour du courant, Windows relance automatiquement le relais dès son
+démarrage. Il n'est pas nécessaire qu'un utilisateur ouvre une session. Pour
+réinstaller ou réparer uniquement cette tâche depuis une console PowerShell
+**Administrateur**, sans réinstaller les données, exécuter :
+
+```powershell
+& .\windows\install-startup-task.ps1 `
+  -RelayRoot (Resolve-Path .) `
+  -ConfigPath "$env:LOCALAPPDATA\MonCahier\Relay\config.json" `
+  -NodePath (Get-Command node.exe).Source
+```
+
+Le script valide tous les chemins, accorde uniquement à `SYSTEM` l'accès au
+dossier `%LOCALAPPDATA%\MonCahier\Relay`, remplace l'ancien raccourci de session
+et n'efface ni la configuration ni la base SQLite. La vérification recommandée
+est `Get-ScheduledTask -TaskName "Mon Cahier Relay"`, puis un redémarrage du PC
+et `windows/Diagnostic-Mon-Cahier.cmd`.
 
 ## API locale du lot 6.2
 

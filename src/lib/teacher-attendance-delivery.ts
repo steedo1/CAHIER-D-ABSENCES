@@ -43,6 +43,8 @@ export type TeacherAttendanceDeliveryRecord = {
   content_key: string;
   state: TeacherAttendanceDeliveryState;
   channel: DeliveryChannel;
+  /** Figé à la première tentative de validation; absent sur les anciens enregistrements. */
+  captured_at_device?: string | null;
   created_at: string;
   updated_at: string;
   cloud_attempted_at: string | null;
@@ -72,6 +74,7 @@ export type TeacherAttendanceDeliveryDependencies = {
     operationId: string;
     sessionId: string;
     marks: TeacherAttendanceMark[];
+    capturedAtDevice: string;
   }): Promise<DeliveryHttpResponse>;
   requestPresenceProof(input: {
     institutionId: string;
@@ -107,6 +110,8 @@ export type DeliverTeacherAttendanceInput = {
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
   preferredChannel?: "relay" | null;
+  /** Instant du clic de validation, figé avant toute tentative réseau. */
+  capturedAtDevice?: string | null;
 };
 
 const STORE_PREFIX = "teacher:attendance-delivery:v1:";
@@ -188,6 +193,27 @@ async function storePatch(
   const next = patchRecord(record, deps.now(), patch);
   await deps.store.put(next);
   return next;
+}
+
+function normalizedCapturedAtDevice(value: unknown) {
+  const text = normalizedText(value);
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (!Number.isFinite(parsed.getTime())) throw new Error("captured_at_device_invalid");
+  return parsed.toISOString();
+}
+
+async function ensureCapturedAtDevice(
+  deps: TeacherAttendanceDeliveryDependencies,
+  record: TeacherAttendanceDeliveryRecord,
+  preferredCapturedAtDevice?: string | null,
+) {
+  const existing = normalizedCapturedAtDevice(record.captured_at_device);
+  if (existing) return record;
+  return await storePatch(deps, record, {
+    captured_at_device:
+      normalizedCapturedAtDevice(preferredCapturedAtDevice) || deps.now().toISOString(),
+  });
 }
 
 function migratedLegacyState(legacy: LegacyTeacherAttendanceMutation) {
@@ -343,7 +369,8 @@ async function deliverToCloud(
   record: TeacherAttendanceDeliveryRecord,
   deps: TeacherAttendanceDeliveryDependencies,
 ) {
-  const current = await storePatch(deps, record, {
+  const captured = await ensureCapturedAtDevice(deps, record);
+  const current = await storePatch(deps, captured, {
     channel: "cloud",
     cloud_attempted_at: deps.now().toISOString(),
     last_status: null,
@@ -357,6 +384,7 @@ async function deliverToCloud(
       operationId: current.operation_id,
       sessionId: current.session_id,
       marks: current.marks,
+      capturedAtDevice: current.captured_at_device as string,
     });
   } catch {
     return await storePatch(deps, current, {
@@ -427,6 +455,8 @@ async function deliverToRelay(
     });
   }
 
+  const captured = await ensureCapturedAtDevice(deps, record);
+
   let proof: { proof: string; expires_at: string };
   try {
     proof = await deps.requestPresenceProof({
@@ -438,7 +468,7 @@ async function deliverToRelay(
     });
   } catch (error) {
     const auth = error instanceof LocalRelayHttpError && error.status === 401;
-    return await storePatch(deps, record, {
+    return await storePatch(deps, captured, {
       state: "device_pending",
       last_status: error instanceof LocalRelayHttpError ? error.status : 0,
       last_error: auth ? "authentication_required" : "relay_presence_proof_unavailable",
@@ -447,7 +477,7 @@ async function deliverToRelay(
   }
   const expiresAt = new Date(proof.expires_at).getTime();
   if (!normalizedText(proof.proof) || !Number.isFinite(expiresAt) || expiresAt <= deps.now().getTime()) {
-    return await storePatch(deps, record, {
+    return await storePatch(deps, captured, {
       state: "device_pending",
       last_status: null,
       last_error: "relay_presence_proof_expired",
@@ -455,14 +485,15 @@ async function deliverToRelay(
   }
 
   const payload = buildTeacherAttendanceRelayPayload({
-    operationId: record.operation_id,
-    sessionId: record.session_id,
-    classId: record.class_id,
-    periodId: record.period_id,
-    marks: record.marks,
+    operationId: captured.operation_id,
+    sessionId: captured.session_id,
+    classId: captured.class_id,
+    periodId: captured.period_id,
+    marks: captured.marks,
     presenceProof: proof.proof,
+    capturedAtDevice: captured.captured_at_device || null,
   });
-  const current = await storePatch(deps, record, {
+  const current = await storePatch(deps, captured, {
     channel: "relay",
     relay_attempted_at: deps.now().toISOString(),
     last_status: null,
@@ -573,8 +604,14 @@ async function deliverInternal(
     });
   }
 
-  if (record.channel === "cloud") return await deliverToCloud(record, deps);
-  if (record.channel === "relay") return await deliverToRelay(input, record, deps);
+  const captured = await ensureCapturedAtDevice(
+    deps,
+    record,
+    input.capturedAtDevice,
+  );
+
+  if (captured.channel === "cloud") return await deliverToCloud(captured, deps);
+  if (captured.channel === "relay") return await deliverToRelay(input, captured, deps);
 
   let cloudAvailable = false;
   try {
@@ -583,8 +620,8 @@ async function deliverInternal(
     cloudAvailable = false;
   }
   return cloudAvailable
-    ? await deliverToCloud(record, deps)
-    : await deliverToRelay(input, record, deps);
+    ? await deliverToCloud(captured, deps)
+    : await deliverToRelay(input, captured, deps);
 }
 
 export async function deliverTeacherAttendanceWithDependencies(
@@ -651,7 +688,7 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
         return false;
       }
     },
-    async postCloud({ operationId, sessionId, marks }) {
+    async postCloud({ operationId, sessionId, marks, capturedAtDevice }) {
       const response = await fetch("/api/teacher/attendance/bulk", {
         method: "POST",
         credentials: "include",
@@ -663,6 +700,7 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
         },
         body: JSON.stringify({
           session_id: sessionId,
+          captured_at_device: capturedAtDevice,
           marks: marks.map((mark) => ({
             student_id: mark.student_id,
             status: mark.status,
@@ -710,6 +748,7 @@ export async function deliverTeacherAttendance(input: {
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
   forceRelay?: boolean;
+  capturedAtDevice?: string | null;
 }) {
   const resolved = await resolveOfflineSessionReference(input.sessionId);
   const deliveryInput = {
@@ -818,6 +857,7 @@ export async function retryTeacherAttendanceOperationOnRelay(
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
     forceRelay: true,
+    capturedAtDevice: record.captured_at_device || null,
   });
 }
 

@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 import {
   registerServiceWorker,
   offlineGetJson,
@@ -12,14 +13,12 @@ import {
   flushOutbox,
   cacheGet,
   cacheSet,
-  clearOfflineAll,
   resolveOfflineSessionReference,
 } from "@/lib/offline";
 import { getClassDeviceCoherentSchedule } from "@/lib/offline-readiness";
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
-  clearClassDeviceSnapshot,
   validateClassDeviceScheduleScope,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
@@ -3203,6 +3202,7 @@ export default function ClassDevicePage() {
       periodId: string;
       marks: ReturnType<typeof attendanceMarksFromRows>;
       attendanceOperationId: string | null;
+      attendanceCapturedAt: string;
       closeOperationId: string;
       actualEndAt: string;
     }) => {
@@ -3251,6 +3251,7 @@ export default function ClassDevicePage() {
             method: "POST",
             body: {
               session_id: clientSessionId,
+              captured_at_device: input.attendanceCapturedAt,
               marks: input.marks,
             },
           },
@@ -3300,6 +3301,8 @@ export default function ClassDevicePage() {
       let openId = String(cur.id || "");
       const isClientLocal = isClientSessionId(openId);
       const actualEndAt = observedNowIso();
+      // Même instant métier pour tous les chemins (téléphone, relais, Cloud/outbox).
+      const attendanceCapturedAt = actualEndAt;
 
       if (cur.local_relay) {
         const relayPolicy = selectedClass?.attendance_presence;
@@ -3327,6 +3330,7 @@ export default function ClassDevicePage() {
             relayBaseUrl: relayPolicy?.relay_local_url,
             relayAccessToken: relayPolicy?.relay_access_token,
             forceRelay: true,
+            capturedAtDevice: attendanceCapturedAt,
           });
           attendanceOperationId = attendance.operation_id;
           attendanceSecured =
@@ -3360,6 +3364,7 @@ export default function ClassDevicePage() {
               periodId,
               marks,
               attendanceOperationId,
+              attendanceCapturedAt,
               closeOperationId: closed.operation_id,
               actualEndAt,
             });
@@ -3393,7 +3398,11 @@ export default function ClassDevicePage() {
               "/api/teacher/attendance/bulk",
               {
                 method: "POST",
-                body: { session_id: openId, marks: pendingMarks },
+                body: {
+                  session_id: openId,
+                  captured_at_device: attendanceCapturedAt,
+                  marks: pendingMarks,
+                },
               },
               {
                 mergeKey: `attendance:${openId}`,
@@ -3450,7 +3459,11 @@ export default function ClassDevicePage() {
           "/api/teacher/attendance/bulk",
           {
             method: "POST",
-            body: { session_id: openId, marks: finalMarks },
+            body: {
+              session_id: openId,
+              captured_at_device: attendanceCapturedAt,
+              marks: finalMarks,
+            },
           },
           {
             mergeKey: `attendance:${openId}`,
@@ -3598,8 +3611,8 @@ export default function ClassDevicePage() {
     if (remaining > 0) {
       const discard = window.confirm(
         `ATTENTION : ${remaining} action(s) ne sont pas encore synchronisées.\n\n` +
-          "OK = se déconnecter et supprimer définitivement ces données.\n" +
-          "Annuler = rester connecté et conserver les données (recommandé)."
+          "OK = se déconnecter en conservant ces données sur cet appareil.\n" +
+          "Annuler = rester connecté pour tenter une synchronisation maintenant."
       );
       if (!discard) {
         setMsg(
@@ -3637,20 +3650,11 @@ export default function ClassDevicePage() {
         }
       }
     } finally {
-      // 4) Purge snapshots locaux (important si téléphone partagé)
-      try {
-        const snapshotIds = new Set<string>(classes.map((c) => c.id));
-        const currentSnapshotId = openRef.current?.class_id || classId;
-        if (currentSnapshotId) snapshotIds.add(currentSnapshotId);
-        snapshotIds.forEach((id) => clearClassDeviceSnapshot(id));
-      } catch {}
+      // La session active est fermée, mais la préparation de la classe, les
+      // opérations en attente et le grant appareil restent disponibles.
+      await clearActiveOfflineAccess().catch(() => {});
 
-      // 5) Purge offline (important si téléphone partagé)
-      try {
-        await clearOfflineAll();
-      } catch {}
-
-      // 6) Retour écran de connexion global
+      // 4) Retour écran de connexion global
       window.location.href = "/login";
     }
   }

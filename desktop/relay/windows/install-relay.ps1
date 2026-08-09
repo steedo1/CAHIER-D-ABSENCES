@@ -210,18 +210,14 @@ try {
         if ($_.Exception.Message -like "Installation annulée*") { throw }
     }
 
-    $StartupFolder = [Environment]::GetFolderPath("Startup")
-    $ShortcutPath = Join-Path $StartupFolder "Mon Cahier Relay.lnk"
-    $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = Join-Path $env:WINDIR "System32\wscript.exe"
-    $Shortcut.Arguments = '"' + (Join-Path $PSScriptRoot "run-relay-hidden.vbs") + '"'
-    $Shortcut.WorkingDirectory = $RelayRoot
-    $Shortcut.Description = "Démarrage automatique de Mon Cahier Relay"
-    $Shortcut.Save()
-
-    Start-Process (Join-Path $env:WINDIR "System32\wscript.exe") `
-        -ArgumentList ('"' + (Join-Path $PSScriptRoot "run-relay-hidden.vbs") + '"')
+    & (Join-Path $PSScriptRoot "install-startup-task.ps1") `
+        -RelayRoot $RelayRoot `
+        -ConfigPath $ConfigPath `
+        -NodePath $NodeCommand.Source | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "La tâche de démarrage automatique du relais n'a pas pu être installée."
+    }
+    Start-ScheduledTask -TaskName "Mon Cahier Relay"
     Start-Sleep -Seconds 3
 
     $HealthCheck = Invoke-RestMethod "http://127.0.0.1:4317/health" -TimeoutSec 5

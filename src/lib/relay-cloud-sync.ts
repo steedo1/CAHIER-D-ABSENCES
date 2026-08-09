@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const RELAY_SYNC_PROTOCOL_VERSION = 1 as const;
 export const RELAY_SYNC_MAX_OPERATIONS = 100;
 const RECEIPT_PROCESSING_STALE_MS = 5 * 60 * 1000;
+const MAX_CAPTURE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const MAX_CAPTURE_AGE_MS = 31 * 24 * 60 * 60 * 1000;
 
 export type RelaySyncOperation = {
   protocol_version: 1;
@@ -93,6 +95,35 @@ function iso(value: unknown, label: string) {
   const normalized = text(value, label, 64);
   if (!Number.isFinite(Date.parse(normalized))) throw new Error(`${label}_invalid`);
   return new Date(normalized).toISOString();
+}
+
+/** Heure métier issue de l'appareil; occurred_at reste le repli des relais v1 historiques. */
+export function relayCapturedAtDevice(
+  operation: RelaySyncOperation,
+  payload: Record<string, unknown>,
+  now: Date,
+) {
+  const supplied = payload.captured_at_device;
+  const capturedAt = iso(supplied || operation.occurred_at, "captured_at_device");
+  const capturedMs = Date.parse(capturedAt);
+  if (supplied) {
+    const occurredMs = Date.parse(operation.occurred_at);
+    if (!Number.isFinite(occurredMs) || Math.abs(occurredMs - capturedMs) > 1_000) {
+      throw new RelayOperationError("blocked", 422, "captured_at_device_mismatch");
+    }
+  }
+  if (capturedMs > now.getTime() + MAX_CAPTURE_FUTURE_SKEW_MS) {
+    throw new RelayOperationError("blocked", 422, "captured_at_device_in_future");
+  }
+  if (capturedMs < now.getTime() - MAX_CAPTURE_AGE_MS) {
+    throw new RelayOperationError("blocked", 422, "captured_at_device_too_old");
+  }
+  return capturedAt;
+}
+
+function rpcRow(value: unknown) {
+  if (Array.isArray(value)) return value[0] as Record<string, unknown> | undefined;
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
 
 function nonNegativeInteger(value: unknown, label: string) {
@@ -440,10 +471,11 @@ function reopenableBlockedReceipt(
     : null;
 }
 
-async function applyTeacherSessionOpen(
+export async function applyTeacherSessionOpen(
   service: SupabaseClient,
   institutionId: string,
   operation: RelaySyncOperation,
+  now: Date,
 ) {
   if (operation.action !== "upsert") {
     throw new RelayOperationError("blocked", 422, "teacher_session_open_action_invalid");
@@ -462,7 +494,7 @@ async function applyTeacherSessionOpen(
   const periodId = text(payload.period_id, "period_id", 128);
   const weekday = isoWeekdayFromSessionDate(payload.session_date);
   const startedAt = iso(payload.started_at, "started_at");
-  const actualCallAt = iso(payload.actual_call_at || payload.requested_start_at || operation.occurred_at, "actual_call_at");
+  const actualCallAt = relayCapturedAtDevice(operation, payload, now);
 
   await resolveTeacherTimetable(service, {
     institutionId,
@@ -554,10 +586,11 @@ async function applyTeacherSessionOpen(
   return operation.entity_id;
 }
 
-async function applyTeacherSessionClose(
+export async function applyTeacherSessionClose(
   service: SupabaseClient,
   institutionId: string,
   operation: RelaySyncOperation,
+  now: Date,
 ) {
   if (operation.action !== "upsert") {
     throw new RelayOperationError("blocked", 422, "teacher_session_close_action_invalid");
@@ -567,37 +600,31 @@ async function applyTeacherSessionClose(
   if (!operationType.includes("session.close")) {
     throw new RelayOperationError("blocked", 422, "teacher_session_close_type_invalid");
   }
-  const closedAt = iso(payload.closed_at || operation.occurred_at, "closed_at");
-  const { data: session, error: sessionError } = await service
-    .from("teacher_sessions")
-    .select("id,institution_id,ended_at")
-    .eq("id", operation.entity_id)
-    .maybeSingle();
-  if (sessionError) throw new RelayOperationError("retryable", 503, "session_lookup_failed");
-  if (!session || String((session as any).institution_id) !== institutionId) {
-    throw new RelayOperationError("blocked", 404, "session_not_found");
-  }
-  const existingEnd = (session as any).ended_at ? Date.parse(String((session as any).ended_at)) : NaN;
-  if (Number.isFinite(existingEnd)) {
-    if (Math.abs(existingEnd - Date.parse(closedAt)) > 60_000) {
-      throw new RelayOperationError("conflict", 409, "session_already_closed_differently");
-    }
+  const closedAt = relayCapturedAtDevice(operation, payload, now);
+  const { data, error } = await service.rpc("close_relay_teacher_session_v2", {
+    p_institution_id: institutionId,
+    p_session_id: operation.entity_id,
+    p_closed_at: closedAt,
+  });
+  if (error) throw new RelayOperationError("retryable", 503, "session_close_atomic_failed");
+  const status = String(rpcRow(data)?.status || "");
+  if (status === "applied" || status === "already_closed_same") {
     return operation.entity_id;
   }
-  const { error: updateError } = await service
-    .from("teacher_sessions")
-    .update({ ended_at: closedAt, status: "submitted" })
-    .eq("id", operation.entity_id)
-    .eq("institution_id", institutionId)
-    .is("ended_at", null);
-  if (updateError) throw new RelayOperationError("retryable", 503, "session_close_failed");
-  return operation.entity_id;
+  if (status === "session_not_found") {
+    throw new RelayOperationError("blocked", 404, "session_not_found");
+  }
+  if (status === "session_already_closed_differently") {
+    throw new RelayOperationError("conflict", 409, "session_already_closed_differently");
+  }
+  throw new RelayOperationError("retryable", 503, "session_close_atomic_response_invalid");
 }
 
-async function applyAttendanceCall(
+export async function applyAttendanceCall(
   service: SupabaseClient,
   institutionId: string,
   operation: RelaySyncOperation,
+  now: Date,
 ): Promise<ApplyOperationResult> {
   if (operation.action !== "upsert") {
     throw new RelayOperationError("blocked", 422, "attendance_action_invalid");
@@ -619,7 +646,7 @@ async function applyAttendanceCall(
 
   const { data: session, error: sessionError } = await service
     .from("teacher_sessions")
-    .select("id,institution_id,class_id,teacher_id,expected_minutes,actual_call_at")
+    .select("id,institution_id,class_id,teacher_id,expected_minutes,actual_call_at,ended_at")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw new RelayOperationError("retryable", 503, "session_lookup_failed");
@@ -665,68 +692,74 @@ async function applyAttendanceCall(
     throw new RelayOperationError("blocked", 422, "student_not_enrolled_in_class");
   }
 
-  const { data: existingRows, error: existingError } = await service
-    .from("attendance_marks")
-    .select("student_id,status,minutes_late,hours_absent,reason")
-    .eq("session_id", sessionId)
-    .in("student_id", studentIds);
-  if (existingError) throw new RelayOperationError("retryable", 503, "attendance_existing_lookup_failed");
-  const existingByStudent = new Map(
-    (existingRows || []).map((row: any) => [String(row.student_id), row]),
-  );
-
-  const expectedMinutes = Math.max(1, Math.round(Number((session as any).expected_minutes || 60)));
-  const absentHours = Math.round((expectedMinutes / 60) * 100) / 100;
-  const toDelete: string[] = [];
-  const toUpsert: Array<Record<string, unknown>> = [];
-  for (const [studentId, mark] of normalized) {
-    const existing = existingByStudent.get(studentId) as any;
-    if (mark.status === "present") {
-      if (existing) toDelete.push(studentId);
-      continue;
-    }
-    const desiredLate = mark.status === "late" ? mark.late : 0;
-    const desiredAbsentHours = mark.status === "absent" ? absentHours : 0;
-    const unchanged = existing &&
-      String(existing.status || "") === mark.status &&
-      Number(existing.minutes_late || 0) === desiredLate &&
-      Math.abs(Number(existing.hours_absent || 0) - desiredAbsentHours) < 0.001 &&
-      nullableText(existing.reason, 500) === mark.comment;
-    if (unchanged) continue;
-    toUpsert.push({
-      session_id: sessionId,
+  const capturedAtDevice = relayCapturedAtDevice(operation, payload, now);
+  const { data, error } = await service.rpc("apply_relay_attendance_call_v2", {
+    p_institution_id: institutionId,
+    p_session_id: sessionId,
+    p_operation_id: operation.operation_id,
+    p_captured_at_device: capturedAtDevice,
+    p_marks: Array.from(normalized, ([studentId, mark]) => ({
       student_id: studentId,
       status: mark.status,
-      minutes_late: desiredLate,
-      hours_absent: desiredAbsentHours,
-      reason: mark.comment,
-    });
+      late_minutes: mark.late,
+      comment: mark.comment,
+    })),
+  });
+  if (error) {
+    const rpcError = [
+      (error as any)?.code,
+      (error as any)?.message,
+      (error as any)?.details,
+      (error as any)?.hint,
+    ].filter(Boolean).join(" ");
+    if (rpcError.includes("attendance_operation_stale")) {
+      throw new RelayOperationError("conflict", 409, "attendance_operation_stale");
+    }
+    if (rpcError.includes("attendance_operation_ambiguous")) {
+      throw new RelayOperationError("conflict", 409, "attendance_operation_ambiguous");
+    }
+    if (rpcError.includes("attendance_operation_payload_conflict")) {
+      throw new RelayOperationError(
+        "conflict",
+        409,
+        "attendance_operation_payload_conflict",
+      );
+    }
+    if (rpcError.includes("attendance_operation_capture_invalid")) {
+      throw new RelayOperationError("blocked", 422, "captured_at_device_invalid");
+    }
+    throw new RelayOperationError("retryable", 503, "attendance_atomic_apply_failed");
   }
-  if (toUpsert.length) {
-    const { error } = await service
-      .from("attendance_marks")
-      .upsert(toUpsert, { onConflict: "session_id,student_id" });
-    if (error) throw new RelayOperationError("retryable", 503, "attendance_upsert_failed");
+  const result = rpcRow(data);
+  const status = String(result?.status || "");
+  if (status === "session_not_found") {
+    throw new RelayOperationError("blocked", 404, "session_not_found");
   }
-  if (toDelete.length) {
-    const { error } = await service
-      .from("attendance_marks")
-      .delete()
-      .eq("session_id", sessionId)
-      .in("student_id", toDelete);
-    if (error) throw new RelayOperationError("retryable", 503, "attendance_delete_failed");
+  if (status === "session_closed") {
+    throw new RelayOperationError("conflict", 409, "session_closed");
   }
-  if (!(session as any).actual_call_at) {
-    const { error } = await service
-      .from("teacher_sessions")
-      .update({ actual_call_at: iso(payload.accepted_at || operation.occurred_at, "accepted_at") })
-      .eq("id", sessionId)
-      .is("actual_call_at", null);
-    if (error) throw new RelayOperationError("retryable", 503, "session_call_time_update_failed");
+  if (status === "attendance_operation_stale") {
+    throw new RelayOperationError("conflict", 409, "attendance_operation_stale");
+  }
+  if (status === "attendance_operation_ambiguous") {
+    throw new RelayOperationError("conflict", 409, "attendance_operation_ambiguous");
+  }
+  if (status === "attendance_operation_payload_conflict") {
+    throw new RelayOperationError(
+      "conflict",
+      409,
+      "attendance_operation_payload_conflict",
+    );
+  }
+  if (status === "attendance_payload_invalid") {
+    throw new RelayOperationError("blocked", 422, "attendance_payload_invalid");
+  }
+  if (status !== "applied" && status !== "already_applied") {
+    throw new RelayOperationError("retryable", 503, "attendance_atomic_response_invalid");
   }
   return {
     cloudEntityId: sessionId,
-    attendanceChanged: toUpsert.length > 0 || toDelete.length > 0,
+    attendanceChanged: status === "applied" && result?.changed === true,
   };
 }
 
@@ -734,22 +767,23 @@ async function applyOperation(
   service: SupabaseClient,
   institutionId: string,
   operation: RelaySyncOperation,
+  now: Date,
 ): Promise<ApplyOperationResult> {
   if (operation.entity_type === "attendance_call") {
-    return applyAttendanceCall(service, institutionId, operation);
+    return applyAttendanceCall(service, institutionId, operation, now);
   }
   if (operation.entity_type === "teacher_session") {
     const payload = operation.payload || {};
     const kind = String(payload.sync_operation_type || payload.operation_type || "").trim();
     if (kind === "teacher_session.open") {
       return {
-        cloudEntityId: await applyTeacherSessionOpen(service, institutionId, operation),
+        cloudEntityId: await applyTeacherSessionOpen(service, institutionId, operation, now),
         attendanceChanged: false,
       };
     }
     if (kind.includes("session.close")) {
       return {
-        cloudEntityId: await applyTeacherSessionClose(service, institutionId, operation),
+        cloudEntityId: await applyTeacherSessionClose(service, institutionId, operation, now),
         attendanceChanged: false,
       };
     }
@@ -767,7 +801,8 @@ export async function processRelaySyncOperation(
     now?: Date;
   },
 ): Promise<RelaySyncAcknowledgement> {
-  const nowIso = (input.now || new Date()).toISOString();
+  const now = input.now || new Date();
+  const nowIso = now.toISOString();
   try {
     let receipt = await loadReceipt(service, input.institutionId, input.operation.operation_id);
     if (receipt && receipt.payload_fingerprint !== input.operation.payload_fingerprint) {
@@ -851,7 +886,7 @@ export async function processRelaySyncOperation(
       };
     }
 
-    const applied = await applyOperation(service, input.institutionId, input.operation);
+    const applied = await applyOperation(service, input.institutionId, input.operation, now);
     await storeReceiptOutcome(service, {
       institutionId: input.institutionId,
       operationId: input.operation.operation_id,
