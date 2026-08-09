@@ -29,6 +29,7 @@ import {
 } from "@/lib/teacher-attendance-delivery";
 import {
   openTeacherAttendanceSessionOnRelay,
+  stageTeacherAttendanceSessionOpen,
   markTeacherSessionOpenedInCloud,
   teacherSessionDeliveryMessage,
 } from "@/lib/teacher-session-delivery";
@@ -170,6 +171,8 @@ type ConnectivityState = "checking" | "connected" | "slow" | "unavailable";
 
 type OpenSession = {
   id: string;
+  institution_id?: string | null;
+  actor_profile_id?: string | null;
   class_id: string;
   class_label: string;
   subject_id: string | null;
@@ -2649,7 +2652,7 @@ export default function ClassDevicePage() {
 
     setBusy(true);
     setSessionRuntimeState("opening");
-    setMsg("Ouverture de l’appel : relais local prioritaire, puis Cloud, puis stockage sécurisé sur ce téléphone…");
+    setMsg("Sécurisation du démarrage sur ce téléphone, puis réplication vers le relais et le Cloud…");
 
     try {
       const relayPolicy = selectedClass?.attendance_presence;
@@ -2718,9 +2721,74 @@ export default function ClassDevicePage() {
       ].join(":");
       const actualCallAtISO = observedAt.toISOString();
 
+      const institutionId = selectedClass?.institution_id || "";
+      const actorProfileId = selectedClass?.actor_profile_id || null;
+      const cls = classes.find((candidate) => candidate.id === classId);
+      const subj = (verifiedSubjects ?? []).find(
+        (subject) => subject.id === subjectId,
+      );
+
+      // 1) Journal local d'abord : le réseau ne décide plus si l'appel peut commencer.
+      const stagedOpen = await stageTeacherAttendanceSessionOpen({
+        institutionId,
+        classId,
+        periodId: verifiedPeriod.id!,
+        attemptKey,
+      });
+      const operationId = stagedOpen.operation_id;
+      const clientSessionId = `client:${operationId}`;
+      const pendingOpen: OpenSession = {
+        id: stagedOpen.session_id || clientSessionId,
+        institution_id: institutionId,
+        actor_profile_id: actorProfileId,
+        class_id: classId,
+        class_label: cls?.label || "Classe",
+        subject_id: stagedOpen.subject_id || subjectId,
+        subject_name: subj?.label || null,
+        started_at: stagedOpen.started_at || started.toISOString(),
+        actual_call_at: stagedOpen.actual_call_at || actualCallAtISO,
+        expected_minutes: effectiveDuration,
+        local_relay: stagedOpen.state === "relay_opened",
+        delivery_origin:
+          stagedOpen.state === "relay_opened"
+            ? "relay"
+            : stagedOpen.state === "cloud_opened"
+              ? "cloud_fallback"
+              : "local_pending",
+        open_operation_id: operationId,
+        period_id: verifiedPeriod.id,
+        scheduled_end_at: stagedOpen.scheduled_end_at,
+        grace_expires_at: stagedOpen.grace_expires_at,
+        session_state: stagedOpen.session_state || "open",
+        education_type: cls?.education_type || "general_secondary",
+        education_label: cls?.education_label || "Secondaire général",
+        education_short_label: cls?.education_short_label || "Général",
+        formation_code: cls?.formation_code || null,
+        formation_label: cls?.formation_label || null,
+        formation_level_code: cls?.formation_level_code || null,
+        formation_level_label: cls?.formation_level_label || null,
+        education_context_key:
+          cls?.education_context_key ||
+          cls?.education_type ||
+          "general_secondary",
+        education_context_label:
+          cls?.education_context_label ||
+          cls?.education_label ||
+          "Secondaire général",
+      };
+      await cacheSet("classDevice:local-open", pendingOpen);
+      openRef.current = pendingOpen;
+      setOpen(pendingOpen);
+      setSessionRuntimeState("open_local_pending");
+      setMsg(
+        "Appel ouvert et sécurisé sur ce téléphone. Vérification du relais et du Cloud en cours…",
+      );
+      await refreshPending();
+
+      // 2) Le relais puis le Cloud améliorent la réplication, sans bloquer l'écran.
       const relayAttemptStartedAt = performance.now();
       const relayDelivery = await openTeacherAttendanceSessionOnRelay({
-        institutionId: selectedClass?.institution_id || "",
+        institutionId,
         classId,
         periodId: verifiedPeriod.id!,
         attemptKey,
@@ -2736,42 +2804,24 @@ export default function ClassDevicePage() {
             relayDelivery.relay_time,
           );
         }
-        const cls = classes.find((candidate) => candidate.id === classId);
-        const subj = (verifiedSubjects ?? []).find(
+        const relaySubject = (verifiedSubjects ?? []).find(
           (subject) => subject.id === (relayDelivery.subject_id || subjectId),
         );
         const relayOpen: OpenSession = {
+          ...pendingOpen,
           id: relayDelivery.session_id,
-          class_id: classId,
-          class_label: cls?.label || "Classe",
           subject_id: relayDelivery.subject_id || subjectId || null,
-          subject_name: subj?.label || null,
-          started_at: relayDelivery.started_at || started.toISOString(),
-          actual_call_at: relayDelivery.actual_call_at || actualCallAtISO,
-          expected_minutes: effectiveDuration,
+          subject_name: relaySubject?.label || pendingOpen.subject_name,
+          started_at: relayDelivery.started_at || pendingOpen.started_at,
+          actual_call_at:
+            relayDelivery.actual_call_at || pendingOpen.actual_call_at,
           local_relay: true,
           delivery_origin: "relay",
-          open_operation_id: relayDelivery.operation_id,
-          period_id: verifiedPeriod.id,
           scheduled_end_at: relayDelivery.scheduled_end_at,
           grace_expires_at: relayDelivery.grace_expires_at,
           session_state: relayDelivery.session_state || "open",
-          education_type: cls?.education_type || "general_secondary",
-          education_label: cls?.education_label || "Secondaire général",
-          education_short_label: cls?.education_short_label || "Général",
-          formation_code: cls?.formation_code || null,
-          formation_label: cls?.formation_label || null,
-          formation_level_code: cls?.formation_level_code || null,
-          formation_level_label: cls?.formation_level_label || null,
-          education_context_key:
-            cls?.education_context_key ||
-            cls?.education_type ||
-            "general_secondary",
-          education_context_label:
-            cls?.education_context_label ||
-            cls?.education_label ||
-            "Secondaire général",
         };
+        openRef.current = relayOpen;
         setOpen(relayOpen);
         setSessionRuntimeState("open_relay");
         await cacheSet("classDevice:local-open", relayOpen);
@@ -2789,15 +2839,43 @@ export default function ClassDevicePage() {
             ? "slow"
             : "unavailable",
       );
+      const relayIssue = relayDelivery.state === "blocked"
+        ? teacherSessionDeliveryMessage(relayDelivery)
+        : null;
 
-      if (relayDelivery.state === "blocked") {
-        setSessionRuntimeState("recoverable_error");
-        setMsg(teacherSessionDeliveryMessage(relayDelivery));
-        return;
-      }
-
-      const operationId = relayDelivery.operation_id;
-      const clientSessionId = `client:${operationId}`;
+      const cloudStartInit = {
+        method: "POST" as const,
+        body: {
+          class_id: classId,
+          subject_id: subjectId,
+          period_id: verifiedPeriod.id,
+          expected_minutes: effectiveDuration,
+          actual_call_at: actualCallAtISO,
+          client_session_id: clientSessionId,
+          operation_id: operationId,
+        },
+      };
+      const cloudStartOptions = {
+        operationId,
+        mergeKey: `session-start:${attemptKey}`,
+        meta: {
+          operationType: "session-start",
+          clientSessionId,
+          institutionId,
+          classId,
+          periodId: verifiedPeriod.id,
+          subjectId,
+        },
+        timeoutMs: 6_000,
+      };
+      const queueCloudStartForRetry = async () => {
+        await offlineMutateJson(
+          "/api/class/sessions/start",
+          cloudStartInit,
+          { ...cloudStartOptions, queueOnly: true },
+        );
+        await refreshPending();
+      };
       const cloudResult = await offlineMutateJson<{
         item?: OpenSession & {
           period_id?: string | null;
@@ -2806,39 +2884,19 @@ export default function ClassDevicePage() {
         };
       }>(
         "/api/class/sessions/start",
-        {
-          method: "POST",
-          body: {
-            class_id: classId,
-            subject_id: subjectId,
-            period_id: verifiedPeriod.id,
-            expected_minutes: effectiveDuration,
-            actual_call_at: actualCallAtISO,
-            client_session_id: clientSessionId,
-            operation_id: operationId,
-          },
-        },
-        {
-          operationId,
-          mergeKey: `session-start:${attemptKey}`,
-          meta: {
-            operationType: "session-start",
-            clientSessionId,
-            institutionId: selectedClass?.institution_id || "",
-            classId,
-            periodId: verifiedPeriod.id,
-            subjectId,
-          },
-          timeoutMs: 6_000,
-        },
+        cloudStartInit,
+        cloudStartOptions,
       );
 
       if (cloudResult.ok === true) {
         const cloudItem = cloudResult.data?.item;
         if (!cloudItem?.id) {
           setCloudStatus("connected");
-          setSessionRuntimeState("recoverable_error");
-          setMsg("Le Cloud a répondu sans fournir l’identifiant de la séance. L’appel n’a pas été perdu ; réessayez.");
+          await queueCloudStartForRetry();
+          setSessionRuntimeState("open_local_pending");
+          setMsg(
+            "Le Cloud a répondu sans confirmer l'identifiant. L'appel reste sécurisé sur ce téléphone et sera rejoué avec le même identifiant.",
+          );
           return;
         }
         if (
@@ -2846,8 +2904,11 @@ export default function ClassDevicePage() {
           String(cloudItem.subject_id || "") !== subjectId
         ) {
           setCloudStatus("connected");
-          setSessionRuntimeState("recoverable_error");
-          setMsg("Réponse Cloud incohérente avec la classe ou la matière. Aucune seconde séance n’a été créée.");
+          await queueCloudStartForRetry();
+          setSessionRuntimeState("open_local_pending");
+          setMsg(
+            "Réponse Cloud incohérente. L'appel reste sécurisé sur ce téléphone ; aucune seconde séance ne sera créée.",
+          );
           return;
         }
 
@@ -2858,18 +2919,18 @@ export default function ClassDevicePage() {
         relayClockRef.current = captureLiveCloudClock(
           cloudItem.server_time,
         );
-        const cls = classes.find((candidate) => candidate.id === classId);
-        const subj = (verifiedSubjects ?? []).find(
-          (subject) => subject.id === subjectId,
-        );
         const cloudOpen: OpenSession = {
+          ...pendingOpen,
           ...cloudItem,
+          institution_id: institutionId,
+          actor_profile_id: actorProfileId,
           class_id: classId,
-          class_label: cloudItem.class_label || cls?.label || "Classe",
+          class_label: cloudItem.class_label || pendingOpen.class_label,
           subject_id: subjectId,
-          subject_name: cloudItem.subject_name || subj?.label || null,
-          started_at: cloudItem.started_at || started.toISOString(),
-          actual_call_at: cloudItem.actual_call_at || actualCallAtISO,
+          subject_name: cloudItem.subject_name || pendingOpen.subject_name,
+          started_at: cloudItem.started_at || pendingOpen.started_at,
+          actual_call_at:
+            cloudItem.actual_call_at || pendingOpen.actual_call_at,
           expected_minutes:
             cloudItem.expected_minutes ?? effectiveDuration,
           local_relay: false,
@@ -2879,11 +2940,12 @@ export default function ClassDevicePage() {
           session_state: cloudItem.session_state || "open",
         };
         setCloudStatus("connected");
+        openRef.current = cloudOpen;
         setOpen(cloudOpen);
         setSessionRuntimeState("open_cloud_fallback");
         await cacheSet("classDevice:local-open", cloudOpen);
         await markTeacherSessionOpenedInCloud({
-          institutionId: selectedClass?.institution_id || "",
+          institutionId,
           operationId,
           sessionId: cloudOpen.id,
           subjectId: cloudOpen.subject_id,
@@ -2892,8 +2954,10 @@ export default function ClassDevicePage() {
         });
         setMsg(
           cloudCorrectedPeriod
-            ? "Relais local indisponible. Le Cloud a recalé le créneau avec son heure serveur et l’appel continue sans GPS."
-            : "Relais local indisponible. L’appel continue via le Cloud.",
+            ? "Le Cloud a recalé le créneau avec son heure serveur. L'appel continue normalement."
+            : relayIssue
+              ? "Le relais n'a pas confirmé l'ouverture, mais le Cloud l'a sécurisée."
+              : "Relais local indisponible. L'appel continue via le Cloud.",
         );
         if (cloudCorrectedPeriod) setNowTick(Date.now());
         await refreshPending();
@@ -2908,69 +2972,41 @@ export default function ClassDevicePage() {
         setCloudStatus(
           cloudNetworkUnavailable ? "unavailable" : "connected",
         );
-        if (!preparedSchedule) {
-          setSessionRuntimeState("recoverable_error");
-          setMsg(
-            "Relais et Cloud indisponibles. Le planning local vérifié manque sur ce téléphone : relancez sa préparation dès qu’une connexion revient.",
-          );
-          return;
-        }
-
-        const cls = classes.find((candidate) => candidate.id === classId);
-        const subj = (verifiedSubjects ?? []).find(
-          (subject) => subject.id === subjectId,
-        );
-        const pendingOpen: OpenSession = {
-          id: clientSessionId,
-          class_id: classId,
-          class_label: cls?.label || "Classe",
-          subject_id: subjectId,
-          subject_name: subj?.label || null,
-          started_at: started.toISOString(),
-          actual_call_at: actualCallAtISO,
-          expected_minutes: effectiveDuration,
-          local_relay: false,
-          delivery_origin: "local_pending",
-          open_operation_id: operationId,
-          period_id: verifiedPeriod.id,
-          session_state: "open",
-          education_type: cls?.education_type || "general_secondary",
-          education_label: cls?.education_label || "Secondaire général",
-          education_short_label: cls?.education_short_label || "Général",
-          formation_code: cls?.formation_code || null,
-          formation_label: cls?.formation_label || null,
-          formation_level_code: cls?.formation_level_code || null,
-          formation_level_label: cls?.formation_level_label || null,
-          education_context_key:
-            cls?.education_context_key ||
-            cls?.education_type ||
-            "general_secondary",
-          education_context_label:
-            cls?.education_context_label ||
-            cls?.education_label ||
-            "Secondaire général",
-        };
-        setOpen(pendingOpen);
         setSessionRuntimeState("open_local_pending");
-        await cacheSet("classDevice:local-open", pendingOpen);
         setMsg(
-          cloudResult.status === 401
-            ? "Cloud joignable, mais la session doit être renouvelée. L’appel reste enregistré sur ce téléphone et sera synchronisé automatiquement."
-            : "Relais et Internet indisponibles. L’appel est enregistré sur ce téléphone et sera synchronisé automatiquement.",
+          relayIssue
+            ? `${relayIssue} L'appel reste sécurisé sur ce téléphone et le Cloud sera réessayé automatiquement.`
+            : cloudResult.status === 401
+              ? "La session Cloud doit être renouvelée. L'appel reste sécurisé sur ce téléphone et sera synchronisé automatiquement."
+              : "Relais et Internet indisponibles. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement.",
         );
         await refreshPending();
         return;
       }
 
+      // Une réponse métier explicite du Cloud reste bloquante : le mode hors ligne
+      // ne doit jamais contourner une règle d'autorisation ou de cohérence.
       setCloudStatus("connected");
+      openRef.current = null;
+      setOpen(null);
+      await cacheSet("classDevice:local-open", null);
       setSessionRuntimeState("recoverable_error");
       setMsg(
-        (cloudResult.ok === false ? cloudResult.error : null) ||
-          "Le Cloud a refusé l’ouverture pour une règle métier précise. Aucune donnée locale n’a été supprimée.",
+        cloudResult.ok === false && cloudResult.error
+          ? cloudResult.error
+          : "Le Cloud a refusé l'ouverture pour une règle métier. Vérifiez la classe, la matière ou l'autorisation de l'appareil.",
       );
     } catch (e: any) {
-      setSessionRuntimeState("recoverable_error");
-      setMsg(e?.message || "Échec démarrage séance");
+      if (openRef.current?.open_operation_id) {
+        setSessionRuntimeState("open_local_pending");
+        setMsg(
+          `L'appel reste sécurisé sur ce téléphone. ${e?.message || "La réplication réseau sera réessayée automatiquement."}`,
+        );
+        await refreshPending().catch(() => 0);
+      } else {
+        setSessionRuntimeState("recoverable_error");
+        setMsg(e?.message || "Impossible de sécuriser le démarrage sur cet appareil.");
+      }
     } finally {
       setBusy(false);
     }
@@ -2985,7 +3021,7 @@ export default function ClassDevicePage() {
     const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
     const confirmed = typeof window === "undefined" || window.confirm(
       `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
-      "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur.",
+      "L’appel sera enregistré avant la fermeture. L’heure réelle capturée sur cet appareil sera conservée pendant la synchronisation.",
     );
     if (!confirmed) return;
 
@@ -3023,7 +3059,8 @@ export default function ClassDevicePage() {
       }
       const completion: ClassDeviceCompletion = {
         version: 1,
-        institution_id: selectedClass?.institution_id || "",
+        institution_id:
+          selectedClass?.institution_id || cur.institution_id || "",
         class_id: cur.class_id,
         class_label: cur.class_label,
         session_id: cur.id,
@@ -3093,7 +3130,11 @@ export default function ClassDevicePage() {
       if (cur.local_relay) {
         const relayPolicy = selectedClass?.attendance_presence;
         const periodId = cur.period_id || null;
-        if (!selectedClass?.institution_id || !selectedClass.actor_profile_id || !periodId) {
+        const sessionInstitutionId =
+          selectedClass?.institution_id || cur.institution_id || "";
+        const sessionActorProfileId =
+          selectedClass?.actor_profile_id || cur.actor_profile_id || "";
+        if (!sessionInstitutionId || !sessionActorProfileId || !periodId) {
           setMsg("La séance reste ouverte : la préparation locale de cette classe doit être actualisée.");
           return;
         }
@@ -3103,8 +3144,8 @@ export default function ClassDevicePage() {
         let attendanceNeedsAttention = false;
         if (marks.length > 0) {
           const attendance = await deliverTeacherAttendance({
-            institutionId: selectedClass.institution_id,
-            actorProfileId: selectedClass.actor_profile_id,
+            institutionId: sessionInstitutionId,
+            actorProfileId: sessionActorProfileId,
             sessionId: cur.id,
             classId: cur.class_id,
             periodId,
@@ -3124,7 +3165,7 @@ export default function ClassDevicePage() {
         }
         const closed = attendanceSecured
           ? await closeTeacherAttendanceSessionOnRelay({
-              institutionId: selectedClass.institution_id,
+              institutionId: sessionInstitutionId,
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
@@ -3132,7 +3173,7 @@ export default function ClassDevicePage() {
               relayAccessToken: relayPolicy?.relay_access_token,
             })
           : await stageTeacherAttendanceSessionClose({
-              institutionId: selectedClass.institution_id,
+              institutionId: sessionInstitutionId,
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,

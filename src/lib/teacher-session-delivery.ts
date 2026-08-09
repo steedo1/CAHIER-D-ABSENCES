@@ -332,6 +332,30 @@ export async function openTeacherAttendanceSessionWithDependencies(
   }
 }
 
+/**
+ * Crée le journal local d'ouverture sans attendre le relais.
+ *
+ * Le même `attemptKey` retrouvera ensuite exactement le même `operation_id`
+ * lors de la tentative relais ou Cloud. Cette étape permet donc à l'écran
+ * d'appel de devenir utilisable dès que l'écriture locale est confirmée.
+ */
+export async function stageTeacherAttendanceSessionOpenWithDependencies(
+  input: OpenTeacherSessionOnRelayInput,
+  deps: TeacherSessionDeliveryDependencies,
+) {
+  const institutionId = normalizedText(input.institutionId);
+  const classId = normalizedText(input.classId);
+  const periodId = normalizedText(input.periodId);
+  const attemptKey = normalizedText(input.attemptKey) || `${classId}:${periodId}`;
+  if (!institutionId) throw new Error("institution_id_required");
+  if (!classId) throw new Error("class_id_required");
+  if (!periodId) throw new Error("period_id_required");
+  return await getOrCreateRecord(
+    { institutionId, classId, periodId, attemptKey },
+    deps,
+  );
+}
+
 function productionDependencies(): TeacherSessionDeliveryDependencies {
   return {
     store: createIndexedDbTeacherSessionStore(),
@@ -374,6 +398,26 @@ export async function openTeacherAttendanceSessionOnRelay(
   input: OpenTeacherSessionOnRelayInput,
 ) {
   const run = () => openTeacherAttendanceSessionWithDependencies(
+    input,
+    productionDependencies(),
+  );
+  const locks = typeof navigator === "undefined"
+    ? null
+    : (navigator as Navigator & {
+        locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+      }).locks;
+  return locks
+    ? await locks.request(
+        `moncahier-teacher-session:${input.institutionId}:${input.classId}:${input.periodId}`,
+        run,
+      )
+    : await run();
+}
+
+export async function stageTeacherAttendanceSessionOpen(
+  input: OpenTeacherSessionOnRelayInput,
+) {
+  const run = () => stageTeacherAttendanceSessionOpenWithDependencies(
     input,
     productionDependencies(),
   );

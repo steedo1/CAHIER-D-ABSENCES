@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   openTeacherAttendanceSessionWithDependencies,
+  stageTeacherAttendanceSessionOpenWithDependencies,
   teacherSessionDeliveryMessage,
   type TeacherSessionDeliveryDependencies,
   type TeacherSessionDeliveryRecord,
@@ -98,6 +99,35 @@ test("ouverture locale confirmée : identité dérivée conservée sans jeton ni
   const persisted = JSON.stringify(store.records);
   assert.equal(persisted.includes("signed-teacher-token-never-persisted"), false);
   assert.equal(persisted.includes("presence-proof-never-persisted"), false);
+});
+
+test("le démarrage est journalisé sur l'appareil avant toute tentative réseau", async () => {
+  const store = new TestStore();
+  let relayPosts = 0;
+  const deps = scenario(store, {
+    postRelay: async ({ payload }) => {
+      relayPosts += 1;
+      return success(payload.operation_id);
+    },
+  });
+
+  const staged = await stageTeacherAttendanceSessionOpenWithDependencies(
+    input({ attemptKey: "class-a:period-a:subject-a:2026-07-22" }),
+    deps,
+  );
+  assert.equal(staged.state, "device_pending");
+  assert.equal(staged.operation_id, "stable-session-open-operation");
+  assert.equal(relayPosts, 0);
+  assert.equal(store.records.length, 1);
+
+  const opened = await openTeacherAttendanceSessionWithDependencies(
+    input({ attemptKey: "class-a:period-a:subject-a:2026-07-22" }),
+    deps,
+  );
+  assert.equal(opened.state, "relay_opened");
+  assert.equal(opened.operation_id, staged.operation_id);
+  assert.equal(relayPosts, 1);
+  assert.equal(store.records.length, 1);
 });
 
 test("ancien relais 404 : opération IndexedDB conservée en device_pending", async (t) => {

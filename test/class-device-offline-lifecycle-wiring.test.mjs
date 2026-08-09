@@ -21,6 +21,56 @@ test("terminer hors ligne libère immédiatement l'écran et le cache de séance
   assert.match(page, /saveClassDeviceSnapshot<ClassPageSnapshotState>/);
   assert.match(page, /open: null,\s+rows: \{\}/);
   assert.match(page, /Séance précédente terminée/);
+  assert.match(
+    page,
+    /selectedClass\?\.institution_id \|\| cur\.institution_id/,
+  );
+  assert.match(
+    page,
+    /selectedClass\?\.actor_profile_id \|\| cur\.actor_profile_id/,
+  );
+  assert.match(page, /L’heure réelle capturée sur cet appareil/);
+});
+
+test("le démarrage est sécurisé localement avant le relais et le Cloud", async () => {
+  const page = await read("src/app/class/page.tsx");
+  const start = page.slice(
+    page.indexOf("async function startSession()"),
+    page.indexOf("async function endSession()"),
+  );
+
+  const localStage = start.indexOf("stageTeacherAttendanceSessionOpen");
+  const localCache = start.indexOf('cacheSet("classDevice:local-open", pendingOpen)');
+  const relayAttempt = start.indexOf("openTeacherAttendanceSessionOnRelay");
+  const cloudAttempt = start.indexOf('"/api/class/sessions/start"');
+
+  assert.ok(localStage >= 0);
+  assert.ok(localCache > localStage);
+  assert.ok(relayAttempt > localCache);
+  assert.ok(cloudAttempt > relayAttempt);
+  assert.match(start, /openRef\.current = pendingOpen/);
+  assert.match(start, /Appel ouvert et sécurisé sur ce téléphone/);
+  assert.doesNotMatch(
+    start,
+    /if \(relayDelivery\.state === "blocked"\)[\s\S]{0,160}return;/,
+  );
+});
+
+test("un refus métier Cloud reste bloquant et ne contourne pas les contrôles", async () => {
+  const page = await read("src/app/class/page.tsx");
+  const start = page.slice(
+    page.indexOf("async function startSession()"),
+    page.indexOf("async function endSession()"),
+  );
+
+  assert.match(
+    start,
+    /Une réponse métier explicite du Cloud reste bloquante/,
+  );
+  assert.match(start, /openRef\.current = null/);
+  assert.match(start, /setOpen\(null\)/);
+  assert.match(start, /cacheSet\("classDevice:local-open", null\)/);
+  assert.match(start, /setSessionRuntimeState\("recoverable_error"\)/);
 });
 
 test("le prochain créneau est recalculé depuis le bundle v5 sans Internet", async () => {

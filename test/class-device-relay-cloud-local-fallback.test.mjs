@@ -6,21 +6,30 @@ async function read(path) {
   return await readFile(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
-test("le démarrage suit relais puis Cloud puis appareil avec un même operation_id", async () => {
+test("le démarrage sécurise l'appareil puis tente le relais et le Cloud avec le même operation_id", async () => {
   const page = await read("src/app/class/page.tsx");
 
+  const localStageIndex = page.indexOf("stageTeacherAttendanceSessionOpen({");
+  const localCacheIndex = page.indexOf(
+    'cacheSet("classDevice:local-open", pendingOpen)',
+    localStageIndex,
+  );
   const relayIndex = page.indexOf("openTeacherAttendanceSessionOnRelay({");
   const cloudIndex = page.indexOf('"/api/class/sessions/start"', relayIndex);
-  const localIndex = page.indexOf('delivery_origin: "local_pending"', cloudIndex);
 
+  assert.ok(localStageIndex >= 0, "journal local absent");
+  assert.ok(localCacheIndex > localStageIndex, "cache local non confirmé");
+  assert.ok(relayIndex > localCacheIndex, "le relais doit venir après le stockage local");
   assert.ok(relayIndex >= 0, "tentative relais absente");
   assert.ok(cloudIndex > relayIndex, "le Cloud doit venir après le relais");
-  assert.ok(localIndex > cloudIndex, "le stockage local doit venir après le Cloud");
-  assert.match(page, /const operationId = relayDelivery\.operation_id/);
+  assert.match(page, /const operationId = stagedOpen\.operation_id/);
   assert.match(page, /operationId,\s+mergeKey: `session-start:\$\{attemptKey\}`/s);
   assert.match(page, /const clientSessionId = `client:\$\{operationId\}`/);
   assert.match(page, /meta: \{\s+operationType: "session-start",\s+clientSessionId/s);
-  assert.match(page, /if \(relayDelivery\.state === "blocked"\)/);
+  assert.doesNotMatch(
+    page,
+    /if \(relayDelivery\.state === "blocked"\)[\s\S]{0,160}return;/,
+  );
 });
 
 test("la séance locale pending survit au rechargement", async () => {
@@ -99,10 +108,10 @@ test("l'interface distingue Cloud, relais et synchronisation de l'appel", async 
   assert.match(page, /Cloud : \{connectivityLabel\(cloudStatus\)\}/);
   assert.match(page, /Relais local : \{connectivityLabel\(relayStatus\)\}/);
   assert.match(page, /Appel : \{callSyncLabel\}/);
-  assert.match(page, /Relais local indisponible\. L’appel continue via le Cloud\./);
+  assert.match(page, /Relais local indisponible\. L'appel continue via le Cloud\./);
   assert.match(
     page,
-    /Relais et Internet indisponibles\. L’appel est enregistré sur ce téléphone et sera synchronisé automatiquement\./,
+    /Relais et Internet indisponibles\. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement\./,
   );
 });
 
