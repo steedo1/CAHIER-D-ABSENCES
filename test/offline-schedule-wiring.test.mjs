@@ -69,7 +69,7 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
     read("src/components/admin/AttendancePresenceSettings.tsx"),
     read("src/components/admin/OfflineScheduleSyncBridge.tsx"),
   ]);
-  assert.match(contract, /RELAY_VERSION = "0\.2\.0"/);
+  assert.match(contract, /RELAY_VERSION = "0\.2\.1"/);
   assert.match(contract, /bootstrap_revision_ack_v1: true/);
   assert.match(contract, /admin_schedule_status_v1: true/);
   assert.match(server, /\/v1\/admin\/schedule-status/);

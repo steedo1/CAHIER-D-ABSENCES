@@ -6,6 +6,7 @@ import {
   CLASS_DEVICE_COHERENT_BUNDLE_KEY,
   classDeviceReadinessMessage,
   evaluateClassDeviceCoherence,
+  isClassDeviceOperationalReadiness,
   validateClassDeviceRelayAccessTokenScope,
   validateClassDeviceScheduleScope,
   type ClassDeviceCoherenceInput,
@@ -107,6 +108,14 @@ const schedule: ClassDeviceScheduleScope = {
 function accessToken(payload: Record<string, unknown>) {
   return `${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}.signature`;
 }
+
+
+test("ready_local reste opérationnel sans masquer les états réellement bloquants", () => {
+  assert.equal(isClassDeviceOperationalReadiness("ready"), true);
+  assert.equal(isClassDeviceOperationalReadiness("ready_local"), true);
+  assert.equal(isClassDeviceOperationalReadiness("relay_unreachable"), false);
+  assert.equal(isClassDeviceOperationalReadiness("class_data_missing"), false);
+});
 
 test("appareil v5 correctement préparé", () => {
   assert.equal(evaluateClassDeviceCoherence(readyInput), "ready");

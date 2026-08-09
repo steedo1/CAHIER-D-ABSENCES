@@ -1116,7 +1116,7 @@ export type RelayTeacherOfflineSchedule = {
   generated_at: string | null;
   relay_time?: string | null;
   snapshot_completeness: "complete";
-  source: "relay";
+  source: "relay" | "cloud";
   slots: Array<{
     key: string;
     period_id: string;

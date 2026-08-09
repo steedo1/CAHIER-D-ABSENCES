@@ -13,6 +13,10 @@ import {
   type OfflineRole,
   type TeacherScheduleAssessment,
 } from "@/lib/offline-readiness";
+import {
+  isClassDeviceOperationalReadiness,
+  type ClassDeviceReadinessStatus,
+} from "@/lib/offlineClassDevice";
 
 type Props = {
   role: OfflineRole;
@@ -53,6 +57,11 @@ export default function OfflineReadinessCard({
     useState<TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null>(
       null,
     );
+  const classDeviceStatus: ClassDeviceReadinessStatus | undefined =
+    role === "class-device"
+      ? (assessment as ClassDeviceScheduleAssessment | null)?.status ||
+        readiness?.class_device_compatibility
+      : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -98,10 +107,14 @@ export default function OfflineReadinessCard({
       !Number.isFinite(preparedAt) ||
       Date.now() - preparedAt > 24 * 60 * 60 * 1000;
     const scheduleStale =
-      (role === "teacher" || role === "class-device") &&
-      assessment?.status !== "ready";
+      role === "teacher"
+        ? assessment?.status !== "ready"
+        : role === "class-device"
+          ? classDeviceStatus === "ready_local" ||
+            !isClassDeviceOperationalReadiness(classDeviceStatus)
+          : false;
     return ageStale || scheduleStale;
-  }, [assessment?.status, readiness, role]);
+  }, [assessment?.status, classDeviceStatus, readiness, role]);
 
   async function handlePrepare() {
     if (preparing) return;
@@ -129,12 +142,20 @@ export default function OfflineReadinessCard({
               );
         setAssessment(checked);
         setReadiness(checked.readiness);
+        const operational =
+          role === "teacher"
+            ? checked.status === "ready"
+            : isClassDeviceOperationalReadiness(
+                (checked as ClassDeviceScheduleAssessment).status,
+              );
         setProgress(
-          checked.status === "ready"
-            ? "Préparation et cohérence vérifiées."
-            : "Données téléchargées, mais cohérence hors ligne non confirmée.",
+          operational
+            ? checked.status === "ready_local"
+              ? "Préparation locale vérifiée. La synchronisation reprendra automatiquement."
+              : "Préparation et cohérence vérifiées."
+            : "Données téléchargées, mais préparation d’appel non confirmée.",
         );
-        if (checked.status !== "ready") {
+        if (!operational) {
           throw new Error(checked.message);
         }
         await onPrepared?.(checked.readiness || next);
@@ -156,7 +177,9 @@ export default function OfflineReadinessCard({
       ? `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.bulletin_count} bulletin(s) et historique des communications`
       : role === "parent"
         ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
-        : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.slot_count} créneau(x), ${readiness.evaluation_count} évaluation(s), ${readiness.textbook_assignment_count} progression(s)`
+        : role === "class-device"
+          ? `${readiness.class_count} classe, ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
+          : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.slot_count} créneau(x), ${readiness.evaluation_count} évaluation(s), ${readiness.textbook_assignment_count} progression(s)`
     : "";
 
   const preparationDescription =
@@ -165,7 +188,7 @@ export default function OfflineReadinessCard({
       : role === "parent"
         ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
         : role === "class-device"
-          ? "Télécharge le planning borné à la classe autorisée, les élèves, les notes et le shell vérifié de cet appareil."
+          ? "Télécharge uniquement la classe autorisée, les élèves, les créneaux et les matières nécessaires à l’appel."
           : "Télécharge l’emploi du temps, les listes d’élèves, les évaluations, les notes et le cahier de texte sur cet appareil.";
 
   const relayConnectivity =
@@ -213,17 +236,25 @@ export default function OfflineReadinessCard({
               <CloudDownload className="h-5 w-5 text-slate-600" />
             )}
             {readiness
-              ? stale
-                ? role === "teacher" || role === "class-device"
-                  ? "Mode hors ligne non compatible"
-                  : "Mode hors ligne prêt — actualisation conseillée"
-                : "Mode hors ligne prêt"
-              : "Préparer le mode hors ligne"}
+              ? role === "class-device"
+                ? isClassDeviceOperationalReadiness(classDeviceStatus)
+                  ? stale
+                    ? "Appels hors ligne prêts — actualisation conseillée"
+                    : "Appels hors ligne prêts"
+                  : "Préparation des appels à actualiser"
+                : stale
+                  ? role === "teacher"
+                    ? "Mode hors ligne non compatible"
+                    : "Mode hors ligne prêt — actualisation conseillée"
+                  : "Mode hors ligne prêt"
+              : role === "class-device"
+                ? "Préparer les appels hors ligne"
+                : "Préparer le mode hors ligne"}
           </div>
 
           {readiness ? (
             <p className="mt-1 text-sm text-slate-700">
-              {preparedSummary} — mis à jour le{" "}
+              {preparedSummary} — {role === "class-device" ? "dernière préparation" : "mis à jour"} le{" "}
               {formatPreparedAt(readiness.prepared_at)}.
             </p>
           ) : (
@@ -247,7 +278,9 @@ export default function OfflineReadinessCard({
           {assessment && !assessment.cloud_reachable && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
-              Cloud indisponible : la cohérence est décidée avec le relais local.
+              {role === "class-device"
+                ? "Cloud indisponible : la dernière préparation valide reste utilisable sur ce téléphone."
+                : "Cloud indisponible : la cohérence est décidée avec le relais local."}
             </p>
           )}
         </div>

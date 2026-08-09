@@ -13,6 +13,7 @@ export type ClassDeviceRelayStatus =
 
 export type ClassDeviceReadinessStatus =
   | "ready"
+  | "ready_local"
   | "refresh_from_relay"
   | "not_prepared"
   | "web_release_stale"
@@ -32,6 +33,12 @@ export type ClassDeviceReadinessStatus =
   | "phone_stale"
   | "relay_stale"
   | "sources_diverged";
+
+export function isClassDeviceOperationalReadiness(
+  status: ClassDeviceReadinessStatus | null | undefined,
+) {
+  return status === "ready" || status === "ready_local";
+}
 
 export type ClassDeviceReadinessLike = {
   version?: number;
@@ -414,6 +421,8 @@ export function classDeviceReadinessMessage(
 ) {
   const messages: Record<ClassDeviceReadinessStatus, string> = {
     ready: "Le shell, le relais et les données de cette classe sont cohérents.",
+    ready_local:
+      "Les données d’appel sont vérifiées sur ce téléphone. Le relais peut être indisponible sans bloquer le travail.",
     refresh_from_relay:
       "Le relais possède un planning plus récent. Actualisation sécurisée requise.",
     not_prepared:
