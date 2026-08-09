@@ -1,20 +1,28 @@
 // web/src/app/layout.tsx
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Providers from "./providers";
 import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 
 export const metadata: Metadata = {
-  title: "Mon Cahier d’Absences",
-  description: "Portail web - Admin & Enseignants",
+  applicationName: "Mon Cahier",
+  title: "Mon Cahier",
+  description:
+    "Suivi scolaire, appels de présence et continuité hors ligne pour les établissements.",
+  manifest: "/manifest.webmanifest",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },   // si tu as mis le .ico
-      { url: "/favicon.png", type: "image/png" },
+      { url: "/favicon.png", type: "image/png", sizes: "1024x1024" },
+      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
     ],
     shortcut: "/favicon.png",
-    apple: "/favicon.png",
+    apple: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#059669",
+  colorScheme: "light",
 };
 
 export default function RootLayout({

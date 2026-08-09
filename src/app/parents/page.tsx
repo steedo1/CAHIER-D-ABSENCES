@@ -507,6 +507,7 @@ async function ensurePushSubscription() {
   if (!registration) {
     registration = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, {
       scope: "/",
+      updateViaCache: "none",
     });
   }
   registration = await navigator.serviceWorker.ready;

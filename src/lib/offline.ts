@@ -3,7 +3,10 @@
 
 type JsonValue = any;
 
-import { MON_CAHIER_SERVICE_WORKER_RELEASE } from "@/lib/offline-release";
+import {
+  MON_CAHIER_OFFLINE_SCHEMA_VERSION,
+  MON_CAHIER_SERVICE_WORKER_RELEASE,
+} from "@/lib/offline-release";
 
 type KVRow = {
   key: string;
@@ -97,9 +100,19 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
-const SW_BUILD = MON_CAHIER_SERVICE_WORKER_RELEASE;
-export { MON_CAHIER_SERVICE_WORKER_RELEASE };
-export const MON_CAHIER_SW_URL = `/moncahier-sw.js?v=${encodeURIComponent(SW_BUILD)}`;
+export {
+  MON_CAHIER_OFFLINE_SCHEMA_VERSION,
+  MON_CAHIER_SERVICE_WORKER_RELEASE,
+};
+
+// URL volontairement stable : le navigateur compare le contenu du script et
+// met à jour la même inscription au lieu de créer des variantes par commit.
+export const MON_CAHIER_SW_URL = "/moncahier-sw.js";
+
+export type OfflineWorkerInfo = {
+  release: string;
+  offlineSchemaVersion: number;
+};
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -273,43 +286,81 @@ export async function resolveOfflineSessionReference(sessionId: string): Promise
 
 /* ───────────────────────── Service Worker ───────────────────────── */
 
+const SERVICE_WORKER_READY_TIMEOUT_MS = 12_000;
+
+async function withBrowserTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+  }
+}
+
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (!isBrowser()) return null;
   if (!("serviceWorker" in navigator)) return null;
 
   try {
-    // Une seule URL versionnée pour éviter que plusieurs écrans se remplacent
-    // mutuellement le service worker avec des versions différentes.
-    const registration = await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
-    await navigator.serviceWorker.ready;
+    const registration = await navigator.serviceWorker.register(
+      MON_CAHIER_SW_URL,
+      { scope: "/", updateViaCache: "none" },
+    );
+
+    // La recherche de mise à jour reste asynchrone : une connexion absente ne
+    // doit jamais retenir l'écran de préparation.
+    void registration.update().catch(() => undefined);
+    await withBrowserTimeout(
+      navigator.serviceWorker.ready,
+      SERVICE_WORKER_READY_TIMEOUT_MS,
+      "Activation du service hors ligne trop longue.",
+    );
     return registration;
   } catch {
-    // Ne casse rien si SW indisponible
+    // Ne casse rien si le service worker est momentanément indisponible.
     return null;
   }
 }
 
+function isMonCahierWorker(worker: ServiceWorker | null) {
+  if (!worker) return false;
+  try {
+    return new URL(worker.scriptURL).pathname === MON_CAHIER_SW_URL;
+  } catch {
+    return false;
+  }
+}
+
 async function waitForOfflineWorker(
-  registration: ServiceWorkerRegistration
+  registration: ServiceWorkerRegistration,
 ): Promise<ServiceWorker | null> {
-  const expectedScriptUrl = new URL(MON_CAHIER_SW_URL, window.location.href).href;
-  const isExpected = (worker: ServiceWorker | null) =>
-    Boolean(worker && worker.scriptURL === expectedScriptUrl);
-  const findExpectedWorker = () =>
-    [registration.installing, registration.waiting, registration.active].find(
-      (worker): worker is ServiceWorker => isExpected(worker)
+  const findWorker = () =>
+    [registration.waiting, registration.installing, registration.active].find(
+      (worker): worker is ServiceWorker => isMonCahierWorker(worker),
     ) || null;
 
-  let candidate = findExpectedWorker();
+  let candidate = findWorker();
   if (!candidate) {
-    await registration.update();
-    candidate = findExpectedWorker();
+    await withBrowserTimeout(
+      registration.update(),
+      5_000,
+      "Recherche de mise à jour du service hors ligne trop longue.",
+    ).catch(() => undefined);
+    candidate = findWorker();
   }
   if (!candidate) return null;
 
-  // Un worker installe et en attente peut deja recevoir la commande de
-  // preparation. Cela permet de remplir son propre cache avant la fermeture
-  // des pages encore controlees par l'ancienne version.
+  // Un worker installé ou déjà actif peut préparer son propre cache sans
+  // imposer un rechargement de page ni interrompre une séance en cours.
   if (candidate.state === "installed" || candidate.state === "activated") {
     return candidate;
   }
@@ -317,7 +368,7 @@ async function waitForOfflineWorker(
   await new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(
       () => reject(new Error("Installation du service hors ligne trop longue.")),
-      15_000
+      15_000,
     );
     const check = () => {
       if (candidate.state === "installed" || candidate.state === "activated") {
@@ -332,7 +383,36 @@ async function waitForOfflineWorker(
     check();
   });
 
-  return isExpected(candidate) ? candidate : null;
+  return isMonCahierWorker(candidate) ? candidate : null;
+}
+
+async function requestOfflineWorkerInfo(
+  worker: ServiceWorker,
+): Promise<OfflineWorkerInfo | null> {
+  return await new Promise<OfflineWorkerInfo | null>((resolve) => {
+    const channel = new MessageChannel();
+    const timeout = window.setTimeout(() => {
+      channel.port1.close();
+      resolve(null);
+    }, 3_000);
+    channel.port1.onmessage = (event) => {
+      window.clearTimeout(timeout);
+      channel.port1.close();
+      if (event.data?.ok !== true || typeof event.data?.release !== "string") {
+        resolve(null);
+        return;
+      }
+      const rawSchema = Number(event.data?.offline_schema_version);
+      resolve({
+        release: event.data.release,
+        // Les workers Mon Cahier antérieurs à ce lot utilisaient déjà le
+        // schéma initial. L'absence du champ est donc migrée vers la version 1.
+        offlineSchemaVersion:
+          Number.isSafeInteger(rawSchema) && rawSchema > 0 ? rawSchema : 1,
+      });
+    };
+    worker.postMessage({ type: "MON_CAHIER_GET_RELEASE" }, [channel.port2]);
+  });
 }
 
 /**
@@ -354,8 +434,8 @@ export async function warmOfflineShell(urls: string[]): Promise<void> {
     new Set(
       urls
         .map((url) => String(url || "").trim())
-        .filter((url) => url.startsWith("/"))
-    )
+        .filter((url) => url.startsWith("/")),
+    ),
   );
   if (!normalized.length) return;
 
@@ -372,42 +452,29 @@ export async function warmOfflineShell(urls: string[]): Promise<void> {
       if (event.data?.ok) resolve();
       else {
         reject(
-          new Error(String(event.data?.error || "Préparation de l’application impossible."))
+          new Error(String(event.data?.error || "Préparation de l’application impossible.")),
         );
       }
     };
 
     worker.postMessage(
       { type: "MON_CAHIER_WARM_SHELL", urls: normalized },
-      [channel.port2]
+      [channel.port2],
     );
   });
 }
 
-export async function getActiveOfflineWorkerRelease(): Promise<string | null> {
+export async function getActiveOfflineWorkerInfo(): Promise<OfflineWorkerInfo | null> {
   if (!isBrowser() || !("serviceWorker" in navigator)) return null;
   const registration = await registerServiceWorker();
   if (!registration) return null;
   const worker = await waitForOfflineWorker(registration);
   if (!worker) return null;
+  return await requestOfflineWorkerInfo(worker);
+}
 
-  return await new Promise<string | null>((resolve) => {
-    const channel = new MessageChannel();
-    const timeout = window.setTimeout(() => {
-      channel.port1.close();
-      resolve(null);
-    }, 3_000);
-    channel.port1.onmessage = (event) => {
-      window.clearTimeout(timeout);
-      channel.port1.close();
-      resolve(
-        event.data?.ok === true && typeof event.data?.release === "string"
-          ? event.data.release
-          : null,
-      );
-    };
-    worker.postMessage({ type: "MON_CAHIER_GET_RELEASE" }, [channel.port2]);
-  });
+export async function getActiveOfflineWorkerRelease(): Promise<string | null> {
+  return (await getActiveOfflineWorkerInfo())?.release || null;
 }
 
 /* ───────────────────────── Fetch helpers ───────────────────────── */

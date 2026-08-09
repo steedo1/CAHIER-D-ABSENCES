@@ -3,7 +3,8 @@
 import {
   cacheGet,
   cacheSet,
-  getActiveOfflineWorkerRelease,
+  getActiveOfflineWorkerInfo,
+  MON_CAHIER_OFFLINE_SCHEMA_VERSION,
   MON_CAHIER_SERVICE_WORKER_RELEASE,
   warmOfflineShell,
 } from "@/lib/offline";
@@ -90,6 +91,7 @@ export type OfflineReadiness = {
   relay_connectivity?: RelayTeacherConnectivityResult;
   web_release?: string;
   service_worker_release?: string;
+  offline_schema_version?: number;
   schedule_revision?: number | null;
   schedule_generated_at?: string | null;
   data_presence?: {
@@ -478,6 +480,20 @@ async function prepareTextbook(
   return { classIds, assignmentCount: assignments.length };
 }
 
+function migrateOfflineReadinessSchema(
+  value: OfflineReadiness | null | undefined,
+): OfflineReadiness | null {
+  if (!value || (value.version !== 4 && value.version !== 5)) return null;
+  const rawSchema = Number(value.offline_schema_version);
+  const offlineSchemaVersion =
+    Number.isSafeInteger(rawSchema) && rawSchema > 0
+      ? rawSchema
+      : 1;
+  return value.offline_schema_version === offlineSchemaVersion
+    ? value
+    : { ...value, offline_schema_version: offlineSchemaVersion };
+}
+
 export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
   if (role === "class-device") {
     const bundle = await cacheGet<
@@ -488,13 +504,24 @@ export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineRea
       bundle.readiness?.version === 5 &&
       bundle.readiness.role === "class-device"
     ) {
-      return bundle.readiness;
+      const migrated = migrateOfflineReadinessSchema(bundle.readiness);
+      if (migrated && migrated !== bundle.readiness) {
+        const nextBundle = { ...bundle, readiness: migrated };
+        await cacheSet(CLASS_DEVICE_COHERENT_BUNDLE_KEY, nextBundle).catch(
+          () => undefined,
+        );
+        await cacheSet(readinessKey(role), migrated).catch(() => undefined);
+      }
+      return migrated;
     }
   }
   const value = await cacheGet<OfflineReadiness>(readinessKey(role));
-  return (value?.version === 4 || value?.version === 5) && value.role === role
-    ? value
-    : null;
+  const migrated =
+    value?.role === role ? migrateOfflineReadinessSchema(value) : null;
+  if (migrated && migrated !== value) {
+    await cacheSet(readinessKey(role), migrated).catch(() => undefined);
+  }
+  return migrated;
 }
 
 function completeRelayCapabilities(capabilities?: RelayCapabilities) {
@@ -543,6 +570,7 @@ async function applyTeacherScheduleFromRelay(
   const next: OfflineReadiness = {
     ...readiness,
     version: 5,
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     prepared_at: new Date().toISOString(),
     class_count: schedule.class_count,
     student_count: studentIds.size,
@@ -572,12 +600,12 @@ export async function assessTeacherOfflineReadiness(
     relay_revision: null,
     cloud_revision: null,
   };
+  const initialSchema = Number(initial?.offline_schema_version || 1);
   if (
     !initial ||
     initial.version !== 5 ||
     initial.role !== "teacher" ||
-    initial.web_release !== MON_CAHIER_WEB_RELEASE ||
-    initial.service_worker_release !== MON_CAHIER_SERVICE_WORKER_RELEASE ||
+    initialSchema !== MON_CAHIER_OFFLINE_SCHEMA_VERSION ||
     initial.data_presence?.slots !== initial.slot_count ||
     Number(initial.data_presence?.slots || 0) <= 0 ||
     Number(initial.data_presence?.classes || 0) <= 0
@@ -585,7 +613,10 @@ export async function assessTeacherOfflineReadiness(
     return {
       ...base,
       status: "not_prepared",
-      message: "La préparation de cet appareil doit être actualisée.",
+      message:
+        initial && initialSchema !== MON_CAHIER_OFFLINE_SCHEMA_VERSION
+          ? "Le format des données hors ligne a changé. Une nouvelle préparation est requise."
+          : "La préparation de cet appareil doit être actualisée.",
     };
   }
 
@@ -604,14 +635,14 @@ export async function assessTeacherOfflineReadiness(
     };
   }
 
-  const [cloud, relay, serviceWorkerRelease] = await Promise.all([
+  const [cloud, relay, workerInfo] = await Promise.all([
     probeCloudSchedule(),
     checkRelayTeacherConnectivity({
       institutionId,
       baseUrl: String(relayPolicy.relay_local_url),
       accessToken: String(relayPolicy.relay_access_token),
     }),
-    getActiveOfflineWorkerRelease(),
+    getActiveOfflineWorkerInfo(),
   ]);
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const relayRevision = safeRevision(relay.snapshot_revision);
@@ -621,12 +652,15 @@ export async function assessTeacherOfflineReadiness(
     relay_revision: relayRevision,
     cloud_revision: cloudRevision,
   };
-  if (serviceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+  if (
+    workerInfo &&
+    workerInfo.offlineSchemaVersion !== MON_CAHIER_OFFLINE_SCHEMA_VERSION
+  ) {
     return {
       ...state,
       status: "not_prepared",
       message:
-        "Le service worker actif n’est pas celui de cette version Web. Rechargez l’application puis réessayez.",
+        "Le format du service hors ligne est incompatible. Une actualisation complète est requise.",
     };
   }
   const initialPolicy = decideOfflineSchedulePolicy({
@@ -1213,6 +1247,7 @@ function refreshedClassDeviceReadiness(
     textbook_ready: false,
     shell_ready: true,
     service_worker_release: serviceWorkerRelease,
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     institution_id: schedule.institution_id,
     authorized_class_id: classId,
     authorized_actor_profile_id: String(
@@ -1252,11 +1287,12 @@ export async function assessClassDeviceOfflineReadiness(
   requested: ClassDeviceAssessmentContext = {},
 ): Promise<ClassDeviceScheduleAssessment> {
   const bundle = await readClassDeviceBundle();
-  const readiness =
+  const readiness = migrateOfflineReadinessSchema(
     bundle?.readiness?.version === 5 &&
-    bundle.readiness.role === "class-device"
+      bundle.readiness.role === "class-device"
       ? bundle.readiness
-      : initial;
+      : initial,
+  );
   const context = await resolveClassDeviceContext(readiness, requested);
   const institutionId = String(
     requested.institutionId || readiness?.institution_id || "",
@@ -1269,10 +1305,11 @@ export async function assessClassDeviceOfflineReadiness(
       readiness?.authorized_actor_profile_id ||
       "",
   ).trim();
-  const [cloud, activeServiceWorkerRelease] = await Promise.all([
+  const [cloud, workerInfo] = await Promise.all([
     probeCloudSchedule(),
-    getActiveOfflineWorkerRelease(),
+    getActiveOfflineWorkerInfo(),
   ]);
+  const activeServiceWorkerRelease = workerInfo?.release || null;
   const cloudRevision = safeRevision(cloud?.schedule_revision);
   const bundleValidation = validateClassDeviceScheduleScope(
     bundle?.schedule,
@@ -1287,11 +1324,19 @@ export async function assessClassDeviceOfflineReadiness(
     schedule: bundleValidation.ok ? bundle!.schedule : null,
   };
 
+  if (
+    workerInfo &&
+    workerInfo.offlineSchemaVersion !== MON_CAHIER_OFFLINE_SCHEMA_VERSION
+  ) {
+    return classDeviceAssessment("offline_schema_stale", baseState);
+  }
+
   const preflight = evaluateClassDeviceCoherence({
     readiness,
     expected_web_release: MON_CAHIER_WEB_RELEASE,
     expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
     active_service_worker_release: activeServiceWorkerRelease,
+    expected_offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     expected_institution_id: institutionId,
     expected_class_id: classId,
     expected_actor_profile_id: actorProfileId,
@@ -1410,6 +1455,7 @@ export async function assessClassDeviceOfflineReadiness(
     expected_web_release: MON_CAHIER_WEB_RELEASE,
     expected_service_worker_release: MON_CAHIER_SERVICE_WORKER_RELEASE,
     active_service_worker_release: activeServiceWorkerRelease,
+    expected_offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     expected_institution_id: context.institutionId,
     expected_class_id: context.classId,
     expected_actor_profile_id: context.actorProfileId,
@@ -1437,7 +1483,9 @@ export async function assessClassDeviceOfflineReadiness(
         relaySchedule,
         relay,
         cloudRevision,
-        activeServiceWorkerRelease!,
+        activeServiceWorkerRelease ||
+          readiness?.service_worker_release ||
+          MON_CAHIER_SERVICE_WORKER_RELEASE,
       );
       await persistClassDeviceBundle(refreshed, relaySchedule);
       await projectClassDeviceScheduleCaches(relaySchedule, context.classId);
@@ -1586,10 +1634,13 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     attendance: "/attendance",
     grades: "/grades",
   });
-  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
-  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
+  const workerInfo = await getActiveOfflineWorkerInfo();
+  if (
+    workerInfo &&
+    workerInfo.offlineSchemaVersion !== MON_CAHIER_OFFLINE_SCHEMA_VERSION
+  ) {
     throw new Error(
-      "Le nouveau service hors ligne n’est pas encore actif. Rechargez la page puis relancez la préparation.",
+      "Le format du service hors ligne est incompatible. Rechargez l’application puis relancez la préparation.",
     );
   }
 
@@ -1615,7 +1666,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     shell_ready: true,
     relay_connectivity: relayConnectivity,
     web_release: String(bootstrap.web_release || MON_CAHIER_WEB_RELEASE),
-    service_worker_release: activeServiceWorkerRelease,
+    service_worker_release:
+      workerInfo?.release || MON_CAHIER_SERVICE_WORKER_RELEASE,
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     schedule_revision: safeRevision(bootstrap.schedule_revision),
     schedule_generated_at: String(bootstrap.generated_at || "") || null,
     data_presence: {
@@ -1829,9 +1882,12 @@ async function prepareClassDevice(
   onProgress("Préparation du seul écran d’appel…");
   await warmOfflineShell(["/class"]);
   rememberOfflineBookDestinations({ attendance: "/class" });
-  const activeServiceWorkerRelease = await getActiveOfflineWorkerRelease();
-  if (activeServiceWorkerRelease !== MON_CAHIER_SERVICE_WORKER_RELEASE) {
-    throw new Error(classDeviceReadinessMessage("service_worker_stale"));
+  const workerInfo = await getActiveOfflineWorkerInfo();
+  if (
+    workerInfo &&
+    workerInfo.offlineSchemaVersion !== MON_CAHIER_OFFLINE_SCHEMA_VERSION
+  ) {
+    throw new Error(classDeviceReadinessMessage("offline_schema_stale"));
   }
 
   const roster = schedule.rosters?.[classId];
@@ -1867,7 +1923,9 @@ async function prepareClassDevice(
     shell_ready: true,
     relay_connectivity: relayConnectivity,
     web_release: MON_CAHIER_WEB_RELEASE,
-    service_worker_release: activeServiceWorkerRelease,
+    service_worker_release:
+      workerInfo?.release || MON_CAHIER_SERVICE_WORKER_RELEASE,
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     schedule_revision: selectedScope.revision,
     schedule_generated_at: schedule.generated_at,
     institution_id: institutionId,
@@ -1993,6 +2051,7 @@ async function prepareAdmin(onProgress: ProgressCallback): Promise<OfflineReadin
   return {
     version: 4,
     role: "admin",
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     prepared_at: new Date().toISOString(),
     class_count: classes.length,
     student_count: studentIds.size,
@@ -2072,6 +2131,7 @@ async function prepareParent(onProgress: ProgressCallback): Promise<OfflineReadi
   return {
     version: 4,
     role: "parent",
+    offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     prepared_at: new Date().toISOString(),
     class_count: 0,
     student_count: children.length,

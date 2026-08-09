@@ -121,13 +121,15 @@ test("la déconnexion compte aussi les appels et fermetures du nouveau protocole
   assert.match(page, /supprimer définitivement ces données/);
 });
 
-test("le Web et le service worker portent la même release recovery v5.4", async () => {
+test("le Web et le service worker portent la même release PWA stable v5.5", async () => {
   const [worker, release] = await Promise.all([
     read("public/moncahier-sw.js"),
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-08-01-class-device-recovery-v5-4";
+  const expected = "2026-08-09-pwa-stable-v5-5";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
+  assert.match(worker, /const OFFLINE_SCHEMA_VERSION = 1/);
+  assert.match(release, /MON_CAHIER_OFFLINE_SCHEMA_VERSION = 1/);
 });

@@ -18,6 +18,7 @@ export type ClassDeviceReadinessStatus =
   | "not_prepared"
   | "web_release_stale"
   | "service_worker_stale"
+  | "offline_schema_stale"
   | "shell_not_ready"
   | "relay_unreachable"
   | "relay_access_denied"
@@ -45,6 +46,7 @@ export type ClassDeviceReadinessLike = {
   role?: string;
   web_release?: string;
   service_worker_release?: string;
+  offline_schema_version?: number;
   shell_ready?: boolean;
   institution_id?: string | null;
   authorized_class_id?: string | null;
@@ -65,6 +67,7 @@ export type ClassDeviceCoherenceInput = {
   expected_web_release: string;
   expected_service_worker_release: string;
   active_service_worker_release: string | null;
+  expected_offline_schema_version: number;
   expected_institution_id: string;
   expected_class_id: string;
   expected_actor_profile_id: string;
@@ -324,16 +327,18 @@ export function evaluateClassDeviceCoherence(
   ) {
     return "not_prepared";
   }
-  if (readiness.web_release !== input.expected_web_release) {
-    return "web_release_stale";
-  }
-  if (
-    readiness.service_worker_release !== input.expected_service_worker_release ||
-    input.active_service_worker_release !== input.expected_service_worker_release ||
-    readiness.service_worker_release !== input.active_service_worker_release ||
-    !input.active_service_worker_release
-  ) {
-    return "service_worker_stale";
+  // Les releases Web et service worker changent à chaque déploiement. Elles
+  // servent au diagnostic et à la mise à jour, jamais à invalider les élèves,
+  // le planning ou les opérations déjà préparés.
+  const rawSchema = Number(readiness.offline_schema_version);
+  const offlineSchemaVersion =
+    Number.isSafeInteger(rawSchema) && rawSchema > 0
+      ? rawSchema
+      : readiness.version === 5
+        ? 1
+        : null;
+  if (offlineSchemaVersion !== input.expected_offline_schema_version) {
+    return "offline_schema_stale";
   }
   if (readiness.shell_ready !== true) return "shell_not_ready";
 
@@ -428,9 +433,11 @@ export function classDeviceReadinessMessage(
     not_prepared:
       "Cet appareil doit être préparé avec le nouveau contrat hors ligne v5.",
     web_release_stale:
-      "La version Web de cet appareil est ancienne. Rechargez l’application.",
+      "Une mise à jour de Mon Cahier est disponible. Les données hors ligne restent utilisables.",
     service_worker_stale:
-      "Le service worker actif est ancien. Rechargez l’application puis relancez la préparation.",
+      "Une mise à jour du service hors ligne est disponible. Elle ne bloque pas l’appel préparé.",
+    offline_schema_stale:
+      "Le format des données hors ligne a réellement changé. Une nouvelle préparation complète est requise.",
     shell_not_ready:
       "Le shell hors ligne est incomplet. Relancez la préparation de l’appareil.",
     relay_unreachable:

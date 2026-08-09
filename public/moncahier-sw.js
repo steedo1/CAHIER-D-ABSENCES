@@ -1,9 +1,18 @@
-/* Mon Cahier — shell hors ligne + cache des assets + notifications push. */
-const VERSION = "2026-08-01-class-device-recovery-v5-4";
+/* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
+const VERSION = "2026-08-09-pwa-stable-v5-5";
+const OFFLINE_SCHEMA_VERSION = 1;
+const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
-const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
-const ASSET_CACHE = `${CACHE_PREFIX}assets-${VERSION}`;
+const SHELL_CACHE = `${CACHE_PREFIX}shell-${CACHE_VERSION}`;
+const ASSET_CACHE = `${CACHE_PREFIX}assets-${CACHE_VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
+const PRECACHE_URLS = [
+  OFFLINE_URL,
+  "/manifest.webmanifest",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/badge-72.png",
+];
 const OFFLINE_PAGE_PATHS = new Set([
   "/choose-book",
   "/attendance",
@@ -24,37 +33,82 @@ function isOfflinePagePath(pathname) {
   return OFFLINE_PAGE_PATHS.has(pathname) || /^\/v\/[^/]+$/.test(pathname);
 }
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.add(new Request(OFFLINE_URL, { cache: "reload" })))
-      .then(() => self.skipWaiting())
+function isAssetPath(pathname) {
+  return (
+    pathname.startsWith("/_next/") ||
+    /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico|webmanifest)$/i.test(pathname)
   );
-});
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      const names = await caches.keys();
-      await Promise.all(
-        names
-          .filter(
-            (name) =>
-              name.startsWith(CACHE_PREFIX) &&
-              name !== SHELL_CACHE &&
-              name !== ASSET_CACHE
-          )
-          .map((name) => caches.delete(name))
-      );
-      await self.clients.claim();
-    })()
-  );
-});
+}
 
 function isCacheable(response) {
   return Boolean(response && response.ok && response.type !== "opaque");
 }
+
+async function precacheApplicationFiles() {
+  const shell = await caches.open(SHELL_CACHE);
+  const assets = await caches.open(ASSET_CACHE);
+
+  await Promise.allSettled(
+    PRECACHE_URLS.map(async (rawUrl) => {
+      const request = new Request(rawUrl, { cache: "reload" });
+      const response = await fetch(request);
+      if (!isCacheable(response)) return;
+      const target = isAssetPath(new URL(request.url).pathname) ? assets : shell;
+      await target.put(request, response.clone());
+    }),
+  );
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    (async () => {
+      await precacheApplicationFiles();
+      await self.skipWaiting();
+    })(),
+  );
+});
+
+function isLegacyMonCahierCache(name) {
+  return (
+    name !== SHELL_CACHE &&
+    name !== ASSET_CACHE &&
+    (name.startsWith("moncahier-") || name.startsWith("moncahier:"))
+  );
+}
+
+async function migrateLegacyCaches() {
+  const shell = await caches.open(SHELL_CACHE);
+  const assets = await caches.open(ASSET_CACHE);
+  const names = await caches.keys();
+  const legacyNames = names.filter(isLegacyMonCahierCache);
+
+  for (const name of legacyNames) {
+    const source = await caches.open(name);
+    const requests = await source.keys();
+    for (const request of requests) {
+      const response = await source.match(request);
+      if (!response) continue;
+      const pathname = new URL(request.url).pathname;
+      const target = isAssetPath(pathname) ? assets : shell;
+      if (!(await target.match(request))) {
+        await target.put(request, response.clone());
+      }
+    }
+  }
+
+  await Promise.all(legacyNames.map((name) => caches.delete(name)));
+}
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      // Les pages déjà préparées sont copiées avant le nettoyage des anciens
+      // caches. Un déploiement ne peut donc pas retirer l'écran /class hors ligne.
+      await migrateLegacyCaches();
+      await self.clients.claim();
+    })(),
+  );
+});
 
 async function fetchWithTimeout(request, timeoutMs = 5000) {
   const controller = new AbortController();
@@ -90,9 +144,16 @@ async function assetResponse(request) {
   const cached = await cache.match(request);
   if (cached) return cached;
 
-  const response = await fetch(request);
-  if (isCacheable(response)) await cache.put(request, response.clone());
-  return response;
+  try {
+    const response = await fetch(request);
+    if (isCacheable(response)) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (
+      cached ||
+      new Response(null, { status: 504, statusText: "Application hors connexion" })
+    );
+  }
 }
 
 self.addEventListener("fetch", (event) => {
@@ -102,22 +163,18 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Les réponses API sont gérées par IndexedDB avec leurs règles métier.
+  // Les réponses API et toutes les mutations restent gérées par IndexedDB et
+  // leurs contrats métier. Le service worker ne les met jamais en cache.
   if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
-    // Seuls les écrans explicitement préparés sont servis hors connexion.
     if (isOfflinePagePath(url.pathname)) {
       event.respondWith(navigationResponse(request));
     }
     return;
   }
 
-  if (
-    url.pathname.startsWith("/_next/static/") ||
-    url.pathname.startsWith("/_next/image") ||
-    /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)$/i.test(url.pathname)
-  ) {
+  if (isAssetPath(url.pathname)) {
     event.respondWith(assetResponse(request));
   }
 });
@@ -146,21 +203,19 @@ async function warmDocument(rawUrl) {
   await shell.put(request, response.clone());
 
   const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("text/html")) return;
+  if (!contentType.includes("text/html")) {
+    return { pathname: url.pathname, asset_count: 0 };
+  }
 
   const html = await response.text();
-  const assets = new Set();
+  const assetUrls = new Set();
   const attr = /(?:src|href)=["']([^"']+)["']/gi;
   let match;
   while ((match = attr.exec(html))) {
     try {
       const asset = new URL(match[1], url);
-      if (
-        asset.origin === self.location.origin &&
-        (asset.pathname.startsWith("/_next/") ||
-          /\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)$/i.test(asset.pathname))
-      ) {
-        assets.add(asset.href);
+      if (asset.origin === self.location.origin && isAssetPath(asset.pathname)) {
+        assetUrls.add(asset.href);
       }
     } catch {
       // Attribut non URL : ignoré.
@@ -169,7 +224,7 @@ async function warmDocument(rawUrl) {
 
   const assetCache = await caches.open(ASSET_CACHE);
   await Promise.all(
-    Array.from(assets).map(async (assetUrl) => {
+    Array.from(assetUrls).map(async (assetUrl) => {
       const assetRequest = new Request(assetUrl, { credentials: "include" });
       const assetResponseValue = await fetch(assetRequest);
       if (!isCacheable(assetResponseValue)) {
@@ -178,7 +233,7 @@ async function warmDocument(rawUrl) {
         );
       }
       await assetCache.put(assetRequest, assetResponseValue.clone());
-    })
+    }),
   );
 
   if (!(await shell.match(request))) {
@@ -186,7 +241,7 @@ async function warmDocument(rawUrl) {
   }
   const missingAsset = (
     await Promise.all(
-      Array.from(assets).map(async (assetUrl) => {
+      Array.from(assetUrls).map(async (assetUrl) => {
         const cached = await assetCache.match(assetUrl);
         return cached ? null : new URL(assetUrl).pathname;
       }),
@@ -196,12 +251,17 @@ async function warmDocument(rawUrl) {
     throw new Error(`Ressource essentielle absente du cache : ${missingAsset}`);
   }
 
-  return { pathname: url.pathname, asset_count: assets.size };
+  return { pathname: url.pathname, asset_count: assetUrls.size };
 }
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
-    event.ports?.[0]?.postMessage({ ok: true, release: VERSION });
+    event.ports?.[0]?.postMessage({
+      ok: true,
+      release: VERSION,
+      offline_schema_version: OFFLINE_SCHEMA_VERSION,
+      cache_version: CACHE_VERSION,
+    });
     return;
   }
 
@@ -220,10 +280,10 @@ self.addEventListener("message", (event) => {
           requests.map((request) =>
             protectedPaths.has(new URL(request.url).pathname)
               ? cache.delete(request)
-              : Promise.resolve(false)
-          )
+              : Promise.resolve(false),
+          ),
         );
-      })()
+      })(),
     );
     return;
   }
@@ -239,9 +299,9 @@ self.addEventListener("message", (event) => {
             return pathname === "/parents" || /^\/v\/[^/]+$/.test(pathname)
               ? cache.delete(request)
               : Promise.resolve(false);
-          })
+          }),
         );
-      })()
+      })(),
     );
     return;
   }
@@ -259,7 +319,7 @@ self.addEventListener("message", (event) => {
       } catch (error) {
         port?.postMessage({ ok: false, error: String(error?.message || error) });
       }
-    })()
+    })(),
   );
 });
 
@@ -274,8 +334,8 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "Mon Cahier";
   const options = {
     body: payload.body || payload.message || "Nouvelle notification",
-    icon: payload.icon || "/icon.png",
-    badge: payload.badge || "/icon.png",
+    icon: payload.icon || "/icons/icon-192.png",
+    badge: payload.badge || "/icons/badge-72.png",
     tag: payload.tag || undefined,
     data: { url: payload.url || payload.data?.url || "/" },
   };
@@ -292,6 +352,6 @@ self.addEventListener("notificationclick", (event) => {
         if (client.url === targetUrl && "focus" in client) return client.focus();
       }
       return self.clients.openWindow ? self.clients.openWindow(targetUrl) : undefined;
-    })()
+    })(),
   );
 });

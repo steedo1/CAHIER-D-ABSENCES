@@ -56,7 +56,10 @@ async function waitForServiceWorkerReady(timeoutMs = 12000) {
 
   const existing = await navigator.serviceWorker.getRegistration("/");
   if (!existing) {
-    await navigator.serviceWorker.register(MON_CAHIER_SW_URL, { scope: "/" });
+    await navigator.serviceWorker.register(MON_CAHIER_SW_URL, {
+      scope: "/",
+      updateViaCache: "none",
+    });
   }
 
   return await withTimeout(

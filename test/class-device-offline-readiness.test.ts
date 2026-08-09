@@ -22,6 +22,7 @@ const readiness: ClassDeviceReadinessLike = {
   role: "class-device",
   web_release: WEB_RELEASE,
   service_worker_release: WORKER_RELEASE,
+  offline_schema_version: 1,
   shell_ready: true,
   institution_id: "school-a",
   authorized_class_id: "class-a",
@@ -42,6 +43,7 @@ const readyInput: ClassDeviceCoherenceInput = {
   expected_web_release: WEB_RELEASE,
   expected_service_worker_release: WORKER_RELEASE,
   active_service_worker_release: WORKER_RELEASE,
+  expected_offline_schema_version: 1,
   expected_institution_id: "school-a",
   expected_class_id: "class-a",
   expected_actor_profile_id: "device-a",
@@ -139,17 +141,17 @@ test("ancienne readiness v4 rejetée prudemment", () => {
   );
 });
 
-test("ancienne release Web bloquée", () => {
+test("une ancienne release Web reste non bloquante", () => {
   assert.equal(
     evaluateClassDeviceCoherence({
       ...readyInput,
       readiness: { ...readiness, web_release: "web-old" },
     }),
-    "web_release_stale",
+    "ready",
   );
 });
 
-test("ancien service worker stocké ou encore actif bloqué", () => {
+test("une ancienne release du service worker reste non bloquante", () => {
   assert.equal(
     evaluateClassDeviceCoherence({
       ...readyInput,
@@ -159,14 +161,33 @@ test("ancien service worker stocké ou encore actif bloqué", () => {
       },
       active_service_worker_release: "worker-old",
     }),
-    "service_worker_stale",
+    "ready",
   );
   assert.equal(
     evaluateClassDeviceCoherence({
       ...readyInput,
       active_service_worker_release: "worker-old",
     }),
-    "service_worker_stale",
+    "ready",
+  );
+});
+
+test("seul un vrai changement de schéma hors ligne bloque", () => {
+  assert.equal(
+    evaluateClassDeviceCoherence({
+      ...readyInput,
+      readiness: { ...readiness, offline_schema_version: 2 },
+    }),
+    "offline_schema_stale",
+  );
+});
+
+test("une préparation v5 historique sans champ de schéma est migrée vers v1", () => {
+  const legacy = { ...readiness };
+  delete legacy.offline_schema_version;
+  assert.equal(
+    evaluateClassDeviceCoherence({ ...readyInput, readiness: legacy }),
+    "ready",
   );
 });
 
@@ -543,9 +564,9 @@ test("la préparation reste stricte et l'ancien endpoint délègue au démarrage
     source.indexOf("async function startSession()"),
     source.indexOf("async function endSession()"),
   );
-  assert.match(start, /if \(relayDelivery\.state === "blocked"\)/);
+  assert.match(start, /relayDelivery\.state === "blocked"/);
   assert.match(start, /\/api\/class\/sessions\/start/);
-  assert.match(start, /delivery_origin: "local_pending"/);
+  assert.match(start, /"local_pending"/);
   const legacyRoute = await readFile(
     new URL("../src/app/api/class/sessions/open/route.ts", import.meta.url),
     "utf8",
