@@ -11,7 +11,6 @@ import {
   Hourglass,
   Loader2,
   CircleDashed,
-  PlayCircle,
 } from "lucide-react";
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
 import {
@@ -90,7 +89,6 @@ function statusScore(s: MonitorStatus): number {
   if (s === "missing") return 6;
   if (s === "pending_absence") return 5;
   if (s === "late") return 4;
-  if (s === "started") return 3;
   if (s === "justified_absence") return 2;
   if (s === "not_started") return 1;
   return 0;
@@ -102,19 +100,19 @@ function statusHint(
   comment?: string | null
 ): string {
   if (s === "not_started") {
-    return "Cours attendu sur ce créneau ; l’appel n’a pas encore démarré.";
+    return "Ce créneau n’a pas encore commencé.";
   }
   if (s === "started") {
-    return "Séance démarrée, mais aucun appel validé n’a encore été reçu.";
+    return "Appel commencé dans le délai prévu.";
   }
   if (s === "missing") {
-    return "Aucun appel détecté pour cette classe sur ce créneau.";
+    return "Délai dépassé : aucun appel commencé pour cette classe.";
   }
   if (s === "late") {
-    return "Appel effectué mais en retard par rapport à l’horaire prévu.";
+    return "Appel commencé après le délai prévu.";
   }
   if (s === "pending_absence") {
-    return `Une justification d’absence enseignant est en attente de validation${
+    return `Une justification d’absence enseignant est à examiner${
       reason ? ` (${reason})` : ""
     }.`;
   }
@@ -123,15 +121,12 @@ function statusHint(
       comment ? ` — ${comment}` : ""
     }.`;
   }
-  return "Appel réalisé dans les délais du créneau.";
+  return "Appel commencé dans le délai prévu.";
 }
 
 function cellColorClasses(s: MonitorStatus): string {
   if (s === "not_started") {
     return "bg-slate-500 text-white border-slate-300 shadow-lg shadow-slate-300/40";
-  }
-  if (s === "started") {
-    return "bg-violet-600 text-white border-violet-400 shadow-lg shadow-violet-300/40";
   }
   if (s === "missing") {
     return "bg-red-600 text-white border-red-400 shadow-lg shadow-red-300/40";
@@ -412,9 +407,10 @@ export default function AppelsMatricePage() {
     return arr;
   }, [rows, activeSlot, levelFilter]);
 
-  const totalPresent = classCells.filter((c) => c.status === "ok").length;
+  const totalPresent = classCells.filter(
+    (c) => c.status === "ok" || c.status === "started"
+  ).length;
   const totalNotStarted = classCells.filter((c) => c.status === "not_started").length;
-  const totalStarted = classCells.filter((c) => c.status === "started").length;
   const totalLate = classCells.filter((c) => c.status === "late").length;
   const totalMissing = classCells.filter((c) => c.status === "missing").length;
   const totalPending = classCells.filter((c) => c.status === "pending_absence").length;
@@ -494,9 +490,8 @@ export default function AppelsMatricePage() {
               Appels par créneau — Tableau de classes
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Surveillez en temps réel quelles classes ont un enseignant présent,
-              quelles classes sont sans appel, quelles demandes sont en attente de validation et
-              quelles absences sont déjà justifiées.
+              Suivez le créneau en cours : appels conformes, appels en retard,
+              classes sans appel et justificatifs d’absence à traiter.
             </p>
           </div>
 
@@ -541,7 +536,7 @@ export default function AppelsMatricePage() {
           </div>
         </header>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-100/90 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wide text-slate-700">
@@ -551,72 +546,7 @@ export default function AppelsMatricePage() {
             </div>
             <div className="text-2xl font-semibold text-slate-900">{totalNotStarted}</div>
             <p className="text-[11px] text-slate-700/80">
-              Cours attendus, appel non démarré.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-violet-100 bg-violet-50/90 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-violet-900">
-                Démarrés
-              </span>
-              <PlayCircle className="h-5 w-5 text-violet-600" />
-            </div>
-            <div className="text-2xl font-semibold text-violet-900">{totalStarted}</div>
-            <p className="text-[11px] text-violet-900/80">
-              Séances ouvertes, appel non validé.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-red-800">
-                Sans appel
-              </span>
-              <AlertTriangle className="h-5 w-5 text-red-500" />
-            </div>
-            <div className="text-2xl font-semibold text-red-900">{totalMissing}</div>
-            <p className="text-[11px] text-red-800/80">
-              Cours prévu mais aucun appel détecté.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-amber-900">
-                En retard
-              </span>
-              <Clock className="h-5 w-5 text-amber-500" />
-            </div>
-            <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
-            <p className="text-[11px] text-amber-900/80">
-              Appels effectués hors délai.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-yellow-100 bg-yellow-50/80 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-yellow-900">
-                En attente de validation
-              </span>
-              <Hourglass className="h-5 w-5 text-yellow-600" />
-            </div>
-            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
-            <p className="text-[11px] text-yellow-900/80">
-              Justifications d’absence soumises, non encore validées.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wide text-blue-900">
-                Justifiées
-              </span>
-              <ShieldCheck className="h-5 w-5 text-blue-600" />
-            </div>
-            <div className="text-2xl font-semibold text-blue-900">{totalJustified}</div>
-            <p className="text-[11px] text-blue-900/80">
-              Absences validées par l’administration.
+              Créneaux qui n’ont pas encore commencé.
             </p>
           </div>
 
@@ -631,7 +561,59 @@ export default function AppelsMatricePage() {
               {totalPresent}
             </div>
             <p className="text-[11px] text-emerald-900/80">
-              Appels réalisés dans les délais.
+              Appels commencés dans le délai prévu.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-red-800">
+                Sans appel
+              </span>
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+            </div>
+            <div className="text-2xl font-semibold text-red-900">{totalMissing}</div>
+            <p className="text-[11px] text-red-800/80">
+              Délai dépassé, aucun appel commencé.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border border-amber-100 bg-amber-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-amber-900">
+                En retard
+              </span>
+              <Clock className="h-5 w-5 text-amber-500" />
+            </div>
+            <div className="text-2xl font-semibold text-amber-900">{totalLate}</div>
+            <p className="text-[11px] text-amber-900/80">
+              Appels commencés après le délai prévu.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border border-yellow-100 bg-yellow-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-yellow-900">
+                À valider
+              </span>
+              <Hourglass className="h-5 w-5 text-yellow-600" />
+            </div>
+            <div className="text-2xl font-semibold text-yellow-900">{totalPending}</div>
+            <p className="text-[11px] text-yellow-900/80">
+              Justifications reçues à examiner.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-blue-900">
+                Justifiées
+              </span>
+              <ShieldCheck className="h-5 w-5 text-blue-600" />
+            </div>
+            <div className="text-2xl font-semibold text-blue-900">{totalJustified}</div>
+            <p className="text-[11px] text-blue-900/80">
+              Absences validées par l’administration.
             </p>
           </div>
         </section>
@@ -653,28 +635,24 @@ export default function AppelsMatricePage() {
                   À venir
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-violet-600" />
-                  Démarré
-                </span>
-                <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-emerald-500" />
                   Conforme
                 </span>
                 <span className="inline-flex items-center gap-1">
+                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-red-600" />
+                  Sans appel
+                </span>
+                <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-amber-500" />
-                  Retard
+                  En retard
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-yellow-400" />
-                  En attente de validation
+                  À valider
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-blue-600" />
                   Justifiée
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="mc-blink inline-block h-3 w-3 rounded-sm bg-red-600" />
-                  Sans appel
                 </span>
               </div>
 
@@ -763,14 +741,12 @@ export default function AppelsMatricePage() {
                     <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase">
                       {cell.status === "not_started"
                         ? "À VENIR"
-                        : cell.status === "started"
-                        ? "DÉMARRÉ"
                         : cell.status === "missing"
                         ? "OFF"
                         : cell.status === "late"
                         ? "RETARD"
                         : cell.status === "pending_absence"
-                        ? "ATTENTE"
+                        ? "À VALIDER"
                         : cell.status === "justified_absence"
                         ? "JUSTIF."
                         : "OK"}
@@ -821,8 +797,8 @@ export default function AppelsMatricePage() {
           )}
 
           <p className="mt-3 text-[11px] text-slate-500">
-            Cette vue temps réel réutilise la surveillance des appels et est prête à
-            afficher aussi les demandes d&apos;autorisation d&apos;absence enseignants en attente ou validées.
+            Le statut du créneau dépend de l’heure de démarrage de l’appel : dans le délai,
+            l’appel est conforme ; après le délai, il est en retard.
           </p>
         </section>
       </div>
