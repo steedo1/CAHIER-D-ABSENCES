@@ -18,6 +18,7 @@ type LoginMode = "email" | "phone";
 type LoginCardProps = {
   redirectTo?: string;
   forcedMode?: ForcedMode;
+  onAuthenticated?: (destination: string) => void | Promise<void>;
 };
 
 type LoginResponse = {
@@ -106,7 +107,7 @@ function Spinner() {
   );
 }
 
-export default function LoginCard({ redirectTo = "/redirect", forcedMode }: LoginCardProps) {
+export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuthenticated }: LoginCardProps) {
   const initialMode: LoginMode = forcedMode === "emailOnly" ? "email" : "phone";
 
   const [mode, setMode] = useState<LoginMode>(initialMode);
@@ -256,6 +257,10 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
     clearPreviousBrowserSession();
     activateOfflineAccess(authorized);
     setStatusText("Connexion hors ligne autorisée sur cet appareil…");
+    if (onAuthenticated) {
+      await onAuthenticated(authorized.payload.destination);
+      return;
+    }
     window.location.assign(authorized.payload.destination);
   }
 
@@ -337,7 +342,16 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode }: Logi
         });
       }
 
-      // ✅ Navigation complète volontaire : évite les caches client/RSC et la course avec /redirect.
+      const destination = String(
+        role?.offline_access?.destination || redirectTo || "/redirect",
+      ).trim() || "/redirect";
+      if (onAuthenticated) {
+        await onAuthenticated(destination);
+        return;
+      }
+
+      // Navigation complète pour le login global. Le verrou PWA du téléphone de
+      // classe utilise onAuthenticated afin de conserver le runtime déjà chargé.
       window.location.assign(redirectTo || "/redirect");
       return;
     } catch (err: any) {

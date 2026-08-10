@@ -19,6 +19,8 @@ const DB_VERSION = 1;
 const STORE_NAME = "grants";
 const DEVICE_ID_KEY = "mc:offline-auth:device-id:v1";
 const ACTIVE_SESSION_KEY = "mc:offline-auth:active:v1";
+const OFFLINE_LOGOUT_LOCK_KEY = "mc:offline-auth:logout-lock:v1";
+export const OFFLINE_AUTH_STATE_EVENT = "moncahier:offline-auth-state";
 
 type LoginMode = "email" | "phone";
 
@@ -288,6 +290,29 @@ async function readActiveOfflineAccess(requirePathCookies: boolean) {
   } catch {
     return null;
   }
+}
+
+
+export function setOfflineLogoutLock(destination: string) {
+  if (!browser()) return;
+  const normalized = String(destination || "").trim();
+  if (!normalized.startsWith("/")) return;
+  window.sessionStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized);
+  window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
+}
+
+export function getOfflineLogoutLock() {
+  if (!browser()) return null;
+  const value = String(
+    window.sessionStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || "",
+  ).trim();
+  return value.startsWith("/") ? value : null;
+}
+
+export function clearOfflineLogoutLock() {
+  if (!browser()) return;
+  window.sessionStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY);
+  window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
 
 export async function getActiveOfflineAccess() {

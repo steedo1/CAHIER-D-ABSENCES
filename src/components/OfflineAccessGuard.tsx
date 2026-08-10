@@ -3,9 +3,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
+import LoginCard from "@/components/auth/LoginCard";
 import {
+  OFFLINE_AUTH_STATE_EVENT,
+  clearOfflineLogoutLock,
   getActiveOfflineAccess,
   getOfflineAccessIntent,
+  getOfflineLogoutLock,
 } from "@/lib/offline-auth-client";
 import { isOfflineAccessDestination } from "@/lib/offline-auth-contract";
 
@@ -33,18 +37,49 @@ function isClientProtectedPath(pathname: string) {
 type GuardState =
   | { status: "checking" }
   | { status: "allowed" }
-  | { status: "blocked"; destination: string | null; reason: string };
+  | {
+      status: "blocked";
+      destination: string | null;
+      reason: string;
+      inline_reauth?: boolean;
+    };
 
 export default function OfflineAccessGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { session, loading } = useAuth();
   const [state, setState] = useState<GuardState>({ status: "checking" });
+  const [authRevision, setAuthRevision] = useState(0);
+
+  useEffect(() => {
+    const handleOfflineAuthState = () =>
+      setAuthRevision((value) => value + 1);
+    window.addEventListener(OFFLINE_AUTH_STATE_EVENT, handleOfflineAuthState);
+    return () =>
+      window.removeEventListener(
+        OFFLINE_AUTH_STATE_EVENT,
+        handleOfflineAuthState,
+      );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
       if (!pathname || PUBLIC_PATHS.has(pathname)) {
         if (!cancelled) setState({ status: "allowed" });
+        return;
+      }
+
+      const logoutLock = getOfflineLogoutLock();
+      if (logoutLock === pathname && pathname === "/class") {
+        if (!cancelled) {
+          setState({
+            status: "blocked",
+            destination: pathname,
+            reason:
+              "Téléphone verrouillé après déconnexion. Saisis de nouveau les identifiants autorisés sur cet appareil.",
+            inline_reauth: true,
+          });
+        }
         return;
       }
 
@@ -94,13 +129,39 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
     return () => {
       cancelled = true;
     };
-  }, [loading, pathname, session]);
+  }, [authRevision, loading, pathname, session]);
 
   if (loading || state.status === "checking") {
     if (!pathname || !isClientProtectedPath(pathname)) return children;
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-sm text-slate-600">
         Vérification de l’accès…
+      </main>
+    );
+  }
+
+  if (
+    state.status === "blocked" &&
+    state.inline_reauth &&
+    pathname === "/class"
+  ) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md">
+          <LoginCard
+            forcedMode="phoneOnly"
+            redirectTo="/class"
+            onAuthenticated={async (destination) => {
+              if (destination !== "/class") {
+                throw new Error(
+                  "Cette autorisation hors ligne ne correspond pas au téléphone de classe.",
+                );
+              }
+              clearOfflineLogoutLock();
+              setState({ status: "allowed" });
+            }}
+          />
+        </div>
       </main>
     );
   }

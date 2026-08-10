@@ -4,7 +4,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
+import {
+  clearActiveOfflineAccess,
+  setOfflineLogoutLock,
+} from "@/lib/offline-auth-client";
 import {
   registerServiceWorker,
   offlineGetJson,
@@ -3576,6 +3579,8 @@ export default function ClassDevicePage() {
   async function logout() {
     if (loggingOut) return;
 
+    const offlineLogout =
+      typeof navigator !== "undefined" && navigator.onLine === false;
     let remaining = await countPendingForCurrentClass();
 
     if (remaining > 0) {
@@ -3652,9 +3657,19 @@ export default function ClassDevicePage() {
     } finally {
       // La session active est fermée, mais la préparation de la classe, les
       // opérations en attente et le grant appareil restent disponibles.
+      //
+      // En PWA sans Internet, on verrouille l'écran courant au lieu de forcer
+      // un rechargement complet vers /login. Le rechargement détruisait le
+      // runtime Next déjà chargé et pouvait redemander un chunk indisponible.
+      if (offlineLogout) setOfflineLogoutLock("/class");
       await clearActiveOfflineAccess().catch(() => {});
 
-      // 4) Retour écran de connexion global
+      if (offlineLogout) {
+        setLoggingOut(false);
+        return;
+      }
+
+      // En ligne, la déconnexion classique peut revenir au login global.
       window.location.href = "/login";
     }
   }

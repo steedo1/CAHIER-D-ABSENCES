@@ -125,5 +125,19 @@ test("le formulaire bascule toujours vers l'autorisation locale si le réseau é
   const login = await read("src/components/auth/LoginCard.tsx");
 
   assert.match(login, /catch \{\s*await openOfflineSession\(\);\s*return;\s*\}/);
+  assert.match(login, /if \(onAuthenticated\) \{\s*await onAuthenticated\(authorized\.payload\.destination\);\s*return;\s*\}/);
   assert.match(login, /window\.location\.assign\(authorized\.payload\.destination\)/);
+});
+
+test("la réauthentification embarquée peut garder le runtime PWA chargé", async () => {
+  const login = await read("src/components/auth/LoginCard.tsx");
+
+  assert.match(
+    login,
+    /onAuthenticated\?: \(destination: string\) => void \| Promise<void>/,
+  );
+  assert.match(
+    login,
+    /if \(onAuthenticated\) \{\s*await onAuthenticated\(destination\);\s*return;/,
+  );
 });
