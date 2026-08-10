@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
+import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -637,6 +638,7 @@ export default function TeacherNotesPage() {
 
   /* -------- Colonne active sur mobile -------- */
   const [activeEvalId, setActiveEvalId] = useState<string | null>(null);
+  const [voiceEvalId, setVoiceEvalId] = useState<string | null>(null);
 
   /* ==========================================
      Chargements
@@ -2311,6 +2313,15 @@ export default function TeacherNotesPage() {
     return evaluations.filter((ev) => ev.id === currentActiveEvalId);
   }, [isMobile, evaluations, currentActiveEvalId]);
 
+  const currentVoiceEvalId = useMemo(() => {
+    if (!evaluations.length) return null;
+    if (isMobile) return currentActiveEvalId;
+    if (voiceEvalId && evaluations.some((ev) => ev.id === voiceEvalId)) {
+      return voiceEvalId;
+    }
+    return evaluations[evaluations.length - 1]?.id ?? null;
+  }, [evaluations, isMobile, currentActiveEvalId, voiceEvalId]);
+
   /* ==========================================
      Rendu
   ========================================== */
@@ -2595,6 +2606,35 @@ export default function TeacherNotesPage() {
               </Button>
             </div>
           </div>
+
+          <VoiceGradeEntry
+            roster={roster}
+            evaluations={evaluations.map((ev) => ({
+              id: ev.id,
+              label: labelByEvalId[ev.id] ?? "NOTE",
+              scale: ev.scale,
+              disabled:
+                selectedPeriodClosed ||
+                isEvalLocked(ev.id) ||
+                !isEvaluationEditableForTeacher(ev),
+              disabledReason: selectedPeriodClosed
+                ? "Cette période est clôturée."
+                : isEvalLocked(ev.id)
+                  ? "Cette évaluation est verrouillée."
+                  : publicationLockReason(ev),
+            }))}
+            targetEvaluationId={currentVoiceEvalId}
+            onTargetEvaluationChange={(evaluationId) => {
+              setVoiceEvalId(evaluationId);
+              if (isMobile) setActiveEvalId(evaluationId);
+            }}
+            onGrade={(evaluationId, studentId, value) => {
+              const ev = evaluations.find((item) => item.id === evaluationId);
+              if (!ev) return;
+              setGrade(evaluationId, studentId, value, ev.scale);
+            }}
+            isOnline={isOnline}
+          />
 
           {/* Bandeau de boutons DEVOIR1, DEVOIR2, IE1… sur mobile */}
           {isMobile && evaluations.length > 0 && (
