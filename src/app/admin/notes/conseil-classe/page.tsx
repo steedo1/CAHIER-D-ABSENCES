@@ -919,74 +919,6 @@ function filterConductByActiveStudents(
 }
 
 
-type AiCouncilReport = {
-  generated_at: string;
-  summary: {
-    students_count: number;
-    class_average: number | null;
-    min_average: number | null;
-    max_average: number | null;
-    students_under_10: number;
-    students_under_8: number;
-    absences: number;
-    lates: number;
-    expected_teacher_sessions: number;
-    completed_teacher_sessions: number;
-    justified_teacher_absences: number;
-    unresolved_teacher_sessions: number;
-  };
-  difficult_students: Array<{
-    student_id: string;
-    full_name: string;
-    matricule?: string | null;
-    average: number;
-    priority: "priority" | "watch";
-    weak_subjects: Array<{ name: string; average: number }>;
-    absences: number;
-    lates: number;
-  }>;
-  problem_subjects: Array<{
-    subject_id: string;
-    subject_name: string;
-    average: number;
-    students_count: number;
-    under_10: number;
-    under_8: number;
-    weak_rate: number;
-  }>;
-  evaluation_alerts: Array<{
-    subject_id: string;
-    subject_name: string;
-    teacher_id: string;
-    teacher_name: string;
-    devoirs: number;
-    interrogations: number;
-    total: number;
-    severity: "high" | "watch";
-    message: string;
-  }>;
-  teacher_sessions: Array<{
-    subject_id: string;
-    subject_name: string;
-    teacher_id: string;
-    teacher_name: string;
-    expected: number;
-    completed: number;
-    justified: number;
-    unresolved: number;
-    completion_rate: number;
-  }>;
-  problems: string[];
-  recommendations: string[];
-  data_warnings: string[];
-};
-
-type AiCouncilApiResponse = {
-  ok: boolean;
-  error?: string;
-  report?: AiCouncilReport;
-};
-
 /* ───────── Page ───────── */
 
 export default function ConseilClassePage() {
@@ -1017,8 +949,6 @@ export default function ConseilClassePage() {
   const [generalObservation, setGeneralObservation] = useState("");
   const [problemsText, setProblemsText] = useState("");
   const [solutionsText, setSolutionsText] = useState("");
-  const [aiCouncilReport, setAiCouncilReport] = useState<AiCouncilReport | null>(null);
-  const [aiCouncilError, setAiCouncilError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
   const [yearRecapLoading, setYearRecapLoading] = useState(false);
@@ -1152,11 +1082,6 @@ export default function ConseilClassePage() {
     setDateTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
 
-  useEffect(() => {
-    setAiCouncilReport(null);
-    setAiCouncilError(null);
-  }, [selectedAcademicYear, selectedPeriodId, selectedClassId]);
-
   async function handleLoadCouncilData() {
     setErrorMsg(null);
 
@@ -1171,8 +1096,6 @@ export default function ConseilClassePage() {
 
     try {
       setLoading(true);
-      setAiCouncilReport(null);
-      setAiCouncilError(null);
       setConductSummary(null);
       setCurrentAffectations([]);
       setYearPeriodBulletins({});
@@ -1190,24 +1113,11 @@ export default function ConseilClassePage() {
       if (effectiveAcademicYear) params.set("academic_year", effectiveAcademicYear);
       if (effectivePeriodCode) params.set("period_code", effectivePeriodCode);
 
-      const aiParams = new URLSearchParams();
-      if (effectiveAcademicYear) aiParams.set("academic_year", effectiveAcademicYear);
-      aiParams.set("class_id", selectedClassId);
-      if (selectedPeriodId) aiParams.set("period_id", selectedPeriodId);
-
-      const aiReportRequest =
-        effectiveAcademicYear && selectedPeriodId
-          ? fetch(`/api/admin/notes/conseil-classe/ai-report?${aiParams.toString()}`, {
-              cache: "no-store",
-            })
-          : Promise.resolve(null);
-
-      const [activeIdsForClass, resBulletin, resConduct, resAffectations, resAiReport] = await Promise.all([
+      const [activeIdsForClass, resBulletin, resConduct, resAffectations] = await Promise.all([
         fetchActiveStudentIdsForClass(selectedClassId),
         fetch(`/api/admin/grades/bulletin?${params.toString()}`, { cache: "no-store" }),
         fetch(`/api/admin/conduite/averages?${params.toString()}`, { cache: "no-store" }),
         fetch(`/api/admin/affectations/current`, { cache: "no-store" }),
-        aiReportRequest,
       ]);
 
       setActiveStudentIds(activeIdsForClass ? Array.from(activeIdsForClass) : []);
@@ -1251,22 +1161,6 @@ export default function ConseilClassePage() {
       } else {
         console.warn("[ConseilClasse] affectations/current indisponible", resAffectations.status);
         setCurrentAffectations([]);
-      }
-
-      if (resAiReport) {
-        try {
-          const aiJson = (await resAiReport.json()) as AiCouncilApiResponse;
-          if (resAiReport.ok && aiJson?.ok && aiJson.report) {
-            setAiCouncilReport(aiJson.report);
-          } else {
-            setAiCouncilError(aiJson?.error || "Analyse préparatoire IA indisponible.");
-          }
-        } catch (err) {
-          console.warn("[ConseilClasse] lecture analyse IA impossible", err);
-          setAiCouncilError("Analyse préparatoire IA indisponible.");
-        }
-      } else {
-        setAiCouncilError("Sélectionnez une période configurée pour générer l’analyse IA.");
       }
 
       if (!headTeacherName) {
@@ -2435,16 +2329,6 @@ export default function ConseilClassePage() {
             </div>
           ) : null}
 
-          {aiCouncilReport ? (
-            <div className="mt-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-700">
-              La page préparatoire Mon Cahier IA est remplie automatiquement et intégrée à l’aperçu ainsi qu’à l’impression du conseil de classe.
-            </div>
-          ) : aiCouncilError ? (
-            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-              {aiCouncilError}
-            </div>
-          ) : null}
-
           {errorMsg ? (
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {errorMsg}
@@ -2742,136 +2626,6 @@ export default function ConseilClassePage() {
 
               <BrandFooter />
             </div>
-
-            {aiCouncilReport ? (
-              <div className="pv-page compact">
-                <OfficialHeader
-                  institution={institution}
-                  classLabel={currentClassLabel}
-                  title={`ANALYSE PRÉPARATOIRE MON CAHIER IA — ${String(currentClassLabel || "").toUpperCase()}`}
-                />
-
-                <div className="mt-2 grid grid-cols-3 gap-3 text-[10.5px]">
-                  <div><strong>Classe :</strong> {currentClassLabel}</div>
-                  <div className="text-center"><strong>Période :</strong> {currentPeriodLabel}</div>
-                  <div className="text-right"><strong>Année :</strong> {currentAcademicYear}</div>
-                </div>
-
-                <div className="mt-3 grid grid-cols-5 gap-1.5">
-                  {[
-                    ["Effectif", String(aiCouncilReport.summary.students_count)],
-                    ["Moyenne", `${formatNumber(aiCouncilReport.summary.class_average)}/20`],
-                    ["Sous 10", String(aiCouncilReport.summary.students_under_10)],
-                    ["Sous 8", String(aiCouncilReport.summary.students_under_8)],
-                    ["Abs. / ret.", `${aiCouncilReport.summary.absences} / ${aiCouncilReport.summary.lates}`],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-2 text-center">
-                      <div className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-                      <div className="mt-0.5 text-[13px] font-bold text-slate-900">{value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-3 grid grid-cols-[1.22fr_0.78fr] gap-3">
-                  <div>
-                    <OfficialBand>Élèves en difficulté</OfficialBand>
-                    {aiCouncilReport.difficult_students.length > 0 ? (
-                      <div className="mt-1 grid grid-cols-2 gap-1.5">
-                        {aiCouncilReport.difficult_students.map((student) => (
-                          <div
-                            key={student.student_id}
-                            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[9px] leading-4"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <strong className="min-w-0 truncate text-slate-900">{student.full_name}</strong>
-                              <span className={student.priority === "priority" ? "font-bold text-rose-700" : "font-bold text-amber-700"}>
-                                {formatNumber(student.average)}
-                              </span>
-                            </div>
-                            <div className="truncate text-slate-600">
-                              {student.weak_subjects.length > 0
-                                ? student.weak_subjects
-                                    .slice(0, 3)
-                                    .map((subject) => `${subject.name} ${formatNumber(subject.average)}`)
-                                    .join(" · ")
-                                : "Matières faibles à préciser"}
-                            </div>
-                            {(student.absences > 0 || student.lates > 0) ? (
-                              <div className="text-slate-500">Abs. {student.absences} · Ret. {student.lates}</div>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3 text-[10px] text-emerald-800">
-                        Aucun élève sous 10/20 dans les résultats officiels disponibles.
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <OfficialBand>Alertes pédagogiques</OfficialBand>
-                    <div className="mt-1 space-y-1.5 text-[9px] leading-4">
-                      {aiCouncilReport.problem_subjects.slice(0, 4).map((subject) => (
-                        <div key={`subject-${subject.subject_id}`} className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5">
-                          <strong>{subject.subject_name}</strong> : moyenne {formatNumber(subject.average)}/20 ; {subject.under_10} élève(s) sous 10.
-                        </div>
-                      ))}
-
-                      {aiCouncilReport.evaluation_alerts.slice(0, 4).map((alert) => (
-                        <div key={`eval-${alert.subject_id}-${alert.teacher_id}`} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5">
-                          <strong>{alert.subject_name} — {alert.teacher_name}</strong> : {alert.interrogations} interro(s), {alert.devoirs} devoir(s).
-                        </div>
-                      ))}
-
-                      {aiCouncilReport.teacher_sessions
-                        .filter((row) => row.unresolved > 0)
-                        .slice(0, 4)
-                        .map((row) => (
-                          <div key={`session-${row.subject_id}-${row.teacher_id}`} className="rounded-md border border-slate-300 bg-slate-50 px-2 py-1.5">
-                            <strong>{row.subject_name} — {row.teacher_name}</strong> : {row.completed}/{row.expected} séance(s) validée(s), {row.unresolved} à vérifier.
-                          </div>
-                        ))}
-
-                      {aiCouncilReport.problem_subjects.length === 0 &&
-                      aiCouncilReport.evaluation_alerts.length === 0 &&
-                      aiCouncilReport.teacher_sessions.every((row) => row.unresolved === 0) ? (
-                        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-2 text-emerald-800">
-                          Aucune alerte pédagogique majeure dans les données disponibles.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div>
-                    <OfficialBand>Problèmes détectés</OfficialBand>
-                    <ol className="mt-1 space-y-1 rounded-md border border-slate-300 bg-white px-4 py-2 text-[9.5px] leading-4">
-                      {aiCouncilReport.problems.slice(0, 5).map((item, index) => (
-                        <li key={`problem-${index}`}><strong>{index + 1}.</strong> {item}</li>
-                      ))}
-                    </ol>
-                  </div>
-                  <div>
-                    <OfficialBand>Recommandations proposées</OfficialBand>
-                    <ol className="mt-1 space-y-1 rounded-md border border-slate-300 bg-white px-4 py-2 text-[9.5px] leading-4">
-                      {aiCouncilReport.recommendations.slice(0, 5).map((item, index) => (
-                        <li key={`recommendation-${index}`}><strong>{index + 1}.</strong> {item}</li>
-                      ))}
-                    </ol>
-                  </div>
-                </div>
-
-                <div className="mt-2 border-t border-slate-300 pt-1.5 text-[8.5px] leading-3.5 text-slate-500">
-                  Analyse préparatoire générée automatiquement à partir des résultats officiels, des évaluations publiées,
-                  de l’assiduité et des séances enregistrées. Une séance non validée reste à vérifier et n’est pas automatiquement
-                  considérée comme une absence de l’enseignant. Les constats définitifs relèvent du conseil de classe.
-                </div>
-
-                <BrandFooter />
-              </div>
-            ) : null}
 
             <div className="pv-page pv-members-page compact">
               <OfficialHeader

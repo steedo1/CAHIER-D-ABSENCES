@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
-  CalendarDays,
   Ban,
   School,
   Users,
@@ -22,7 +21,6 @@ import {
   MessageSquare,
   HeartPulse,
   Trophy,
-  Award,
   History,
   SlidersHorizontal,
   BookOpenCheck,
@@ -173,55 +171,11 @@ function TextBadge({ text }: { text: string }) {
 ========================= */
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
-  {
-    href: "/admin/mon-cahier-ia",
-    label: "Mon Cahier IA",
-    Icon: BarChart3,
-    badge: "V2",
-  },
 ];
 
 const INFIRMARY_ITEMS: NavItem[] = [
   { href: "/admin/infirmerie/dashboard", label: "Tableau infirmerie", Icon: BarChart3 },
   { href: "/admin/infirmerie", label: "Billets infirmerie", Icon: HeartPulse },
-];
-
-const MONTAGE_EDT_ITEMS: NavItem[] = [
-  {
-    href: "/admin/montage-emploi-du-temps",
-    label: "Vue d’ensemble",
-    Icon: CalendarDays,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/volumes",
-    label: "Référentiels et services",
-    Icon: FileSpreadsheet,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/ressources",
-    label: "Salles et ressources",
-    Icon: School,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/indisponibilites",
-    label: "Indisponibilités",
-    Icon: Users,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/regles-terrain",
-    label: "Règles terrain",
-    Icon: Settings,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/generation",
-    label: "Services et génération",
-    Icon: BarChart3,
-  },
-  {
-    href: "/admin/montage-emploi-du-temps/publication",
-    label: "Publication",
-    Icon: ShieldCheck,
-  },
 ];
 
 const PREDICTION_ITEMS: NavItem[] = [
@@ -230,14 +184,6 @@ const PREDICTION_ITEMS: NavItem[] = [
     label: "Prédiction de réussite",
     Icon: BarChart3,
     badge: "IA",
-  },
-];
-
-const NON_CLASSES_ITEMS: NavItem[] = [
-  {
-    href: "/admin/notes/non-classes",
-    label: "Élèves non classés",
-    Icon: UserRoundCheck,
   },
 ];
 
@@ -280,6 +226,11 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     label: "Matrice matière",
     Icon: BarChart3,
   },
+  {
+    href: "/admin/notes/non-classes",
+    label: "Élèves non classés",
+    Icon: UserRoundCheck,
+  },
 ];
 
 /* =========================
@@ -307,11 +258,6 @@ const DISTINCTION_ITEMS: NavItem[] = [
     label: "Palmarès élèves",
     Icon: Trophy,
     exact: true,
-  },
-  {
-    href: "/admin/distinctions/enseignants",
-    label: "Distinctions enseignants",
-    Icon: Award,
   },
   {
     href: "/admin/distinctions/regles",
@@ -353,6 +299,7 @@ const ORGANISATION_ITEMS: NavItem[] = [
     label: "Import emplois du temps",
     Icon: Inbox,
   },
+  ...PREDICTION_ITEMS,
 ];
 
 /* =========================
@@ -1035,34 +982,6 @@ export default function SidebarNav() {
     [isFinanceManager, isFinanceOnlyShell, isInfirmier],
   );
 
-  const montageEdtItems = React.useMemo(
-    () =>
-      MONTAGE_EDT_ITEMS.filter(
-        () => !isEducator && !isInfirmier && !isFinanceManager && !isFinanceOnlyShell,
-      ),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
-  const predictionItems = React.useMemo(
-    () =>
-      PREDICTION_ITEMS.filter((item) => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
-        if (isEducator && item.href.startsWith("/admin/notes")) return false;
-        return true;
-      }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
-  const nonClassesItems = React.useMemo(
-    () =>
-      NON_CLASSES_ITEMS.filter((item) => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
-        if (isEducator && item.href.startsWith("/admin/notes")) return false;
-        return true;
-      }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
-
   const duplicataItems = React.useMemo(() => {
     if (isEducator || isInfirmier) return [];
     if (isFinanceManager || isFinanceOnlyShell) {
@@ -1117,10 +1036,14 @@ export default function SidebarNav() {
 
   const organisationItems = React.useMemo(() => {
     if (isInfirmier || isFinanceOnlyShell) return [];
-    return isFinanceManager
-      ? ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents")
-      : ORGANISATION_ITEMS;
-  }, [isInfirmier, isFinanceManager, isFinanceOnlyShell]);
+    if (isFinanceManager) {
+      return ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents");
+    }
+    if (isEducator) {
+      return ORGANISATION_ITEMS.filter((item) => item.href !== "/admin/notes/predictions");
+    }
+    return ORGANISATION_ITEMS;
+  }, [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
 
   const adminItems = React.useMemo(() => {
     if (isFinanceOnlyShell || isFinanceManager) return FINANCE_FULL_ITEMS;
@@ -1202,13 +1125,6 @@ export default function SidebarNav() {
     currentTab,
   );
 
-  const montageEdtActive =
-    !isEducator &&
-    !isInfirmier &&
-    !isFinanceManager &&
-    !isFinanceOnlyShell &&
-    groupHasActiveItem(pathname, montageEdtItems, currentTab);
-
   const adminActive = groupHasActiveItem(pathname, adminItems, currentTab);
 
   const callsControlActive = groupHasActiveItem(
@@ -1256,9 +1172,6 @@ export default function SidebarNav() {
   const [infirmaryOpen, setInfirmaryOpen] =
     React.useState<boolean>(infirmaryActive);
 
-  const [montageEdtOpen, setMontageEdtOpen] =
-    React.useState<boolean>(montageEdtActive);
-
   const [adminOpen, setAdminOpen] = React.useState<boolean>(adminActive);
 
   const [callsControlOpen, setCallsControlOpen] =
@@ -1297,10 +1210,6 @@ export default function SidebarNav() {
   React.useEffect(() => {
     if (infirmaryActive) setInfirmaryOpen(true);
   }, [infirmaryActive]);
-
-  React.useEffect(() => {
-    if (montageEdtActive) setMontageEdtOpen(true);
-  }, [montageEdtActive]);
 
   React.useEffect(() => {
     if (adminActive) setAdminOpen(true);
@@ -1365,45 +1274,6 @@ export default function SidebarNav() {
               />
             ))}
 
-            {infirmaryItems.length > 0 && (
-              <GroupSection
-                title="Infirmerie"
-                Icon={HeartPulse}
-                items={infirmaryItems}
-                pathname={pathname}
-                currentTab={currentTab}
-                open={infirmaryOpen}
-                onToggle={() => setInfirmaryOpen((v) => !v)}
-                accent="emerald"
-              />
-            )}
-
-            {predictionItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
-                pathname={pathname}
-                currentTab={currentTab}
-                accent="cyan"
-                pendingAbsenceCount={pendingAbsenceCount}
-                pendingGradePublicationCount={pendingGradePublicationCount}
-                topLevel
-              />
-            ))}
-
-            {nonClassesItems.map((item) => (
-              <NavLinkItem
-                key={item.href}
-                item={item}
-                pathname={pathname}
-                currentTab={currentTab}
-                accent="amber"
-                pendingAbsenceCount={pendingAbsenceCount}
-                pendingGradePublicationCount={pendingGradePublicationCount}
-                topLevel
-              />
-            ))}
-
             {!isEducator &&
               !isInfirmier &&
               !isFinanceOnlyShell &&
@@ -1433,36 +1303,6 @@ export default function SidebarNav() {
               />
             )}
 
-            {!isInfirmier && !isFinanceManager && conductManagementItems.length > 0 && (
-              <GroupSection
-                title="Gestion conduite"
-                Icon={ShieldCheck}
-                items={conductManagementItems}
-                pathname={pathname}
-                currentTab={currentTab}
-                open={conductManagementOpen}
-                onToggle={() => setConductManagementOpen((v) => !v)}
-                accent="amber"
-              />
-            )}
-
-            {!isEducator &&
-              !isInfirmier &&
-              !isFinanceManager &&
-              !isFinanceOnlyShell &&
-              distinctionItems.length > 0 && (
-                <GroupSection
-                  title="Distinctions"
-                  Icon={Trophy}
-                  items={distinctionItems}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  open={distinctionOpen}
-                  onToggle={() => setDistinctionOpen((v) => !v)}
-                  accent="amber"
-                />
-              )}
-
             {!isInfirmier && organisationItems.length > 0 && (
               <GroupSection
                 title="Organisation scolaire"
@@ -1475,22 +1315,6 @@ export default function SidebarNav() {
                 accent="sky"
               />
             )}
-
-            {!isEducator &&
-              !isFinanceManager &&
-              !isFinanceOnlyShell &&
-              montageEdtItems.length > 0 && (
-                <GroupSection
-                  title="Montage emploi du temps"
-                  Icon={CalendarDays}
-                  items={montageEdtItems}
-                  pathname={pathname}
-                  currentTab={currentTab}
-                  open={montageEdtOpen}
-                  onToggle={() => setMontageEdtOpen((v) => !v)}
-                  accent="sky"
-                />
-              )}
 
             {!isInfirmier && adminItems.length > 0 && (
               <GroupSection
@@ -1538,6 +1362,36 @@ export default function SidebarNav() {
                   accent="cyan"
                 />
               )}
+
+            {!isEducator &&
+              !isInfirmier &&
+              !isFinanceManager &&
+              !isFinanceOnlyShell &&
+              distinctionItems.length > 0 && (
+                <GroupSection
+                  title="Distinctions"
+                  Icon={Trophy}
+                  items={distinctionItems}
+                  pathname={pathname}
+                  currentTab={currentTab}
+                  open={distinctionOpen}
+                  onToggle={() => setDistinctionOpen((v) => !v)}
+                  accent="amber"
+                />
+              )}
+
+            {!isInfirmier && !isFinanceManager && conductManagementItems.length > 0 && (
+              <GroupSection
+                title="Gestion conduite"
+                Icon={ShieldCheck}
+                items={conductManagementItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={conductManagementOpen}
+                onToggle={() => setConductManagementOpen((v) => !v)}
+                accent="amber"
+              />
+            )}
 
             {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&
@@ -1590,6 +1444,19 @@ export default function SidebarNav() {
                   pendingGradePublicationCount={pendingGradePublicationCount}
                 />
               )}
+
+            {infirmaryItems.length > 0 && (
+              <GroupSection
+                title="Infirmerie"
+                Icon={HeartPulse}
+                items={infirmaryItems}
+                pathname={pathname}
+                currentTab={currentTab}
+                open={infirmaryOpen}
+                onToggle={() => setInfirmaryOpen((v) => !v)}
+                accent="emerald"
+              />
+            )}
 
             {!isInfirmier && !isFinanceManager &&
               !isFinanceOnlyShell &&

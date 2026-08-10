@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import { prepareOffline } from "@/lib/offline-readiness";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
@@ -18,10 +19,18 @@ import {
 const ROLE_TIMEOUT_MS = 5_000;
 const ADMIN_PREPARATION_TIMEOUT_MS = 12_000;
 
-type PreparationStatus = "idle" | "preparing" | "ready" | "error" | "unavailable";
 type RolePayload = { user_id?: string; role?: string; offline_access?: unknown };
 
 let preparationInFlight: Promise<void> | null = null;
+
+const ADMIN_ATTENDANCE_PATHS = new Set([
+  "/admin/absences/appels",
+  "/admin/absences/appels-matrice",
+]);
+
+function isAdminAttendancePath(pathname: string | null | undefined) {
+  return !!pathname && ADMIN_ATTENDANCE_PATHS.has(pathname);
+}
 
 function localDateInAbidjan() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -57,10 +66,10 @@ async function prepareAdminAttendanceView() {
   );
   try {
     const today = localDateInAbidjan();
-    await Promise.all([
-      fetchAdminAttendanceMonitor(today, today, controller.signal),
-      warmOfflineShell(["/admin/absences/appels-matrice"]),
-    ]);
+    await fetchAdminAttendanceMonitor(today, today, controller.signal);
+    // La préparation du shell est utile pour le secours hors ligne, mais elle ne
+    // doit jamais invalider une lecture Cloud déjà réussie.
+    await warmOfflineShell(["/admin/absences/appels-matrice"]).catch(() => undefined);
   } finally {
     window.clearTimeout(timeout);
   }
@@ -112,15 +121,16 @@ async function withCrossTabLock(task: () => Promise<void>) {
 
 export default function BackgroundAttendancePreparation() {
   const { session, loading } = useAuth();
+  const pathname = usePathname();
   const sessionRef = useRef(session);
   const loadingRef = useRef(loading);
-  const [status, setStatus] = useState<PreparationStatus>("idle");
-  const [message, setMessage] = useState("");
+  const pathnameRef = useRef(pathname);
 
   useEffect(() => {
     sessionRef.current = session;
     loadingRef.current = loading;
-  }, [loading, session]);
+    pathnameRef.current = pathname;
+  }, [loading, pathname, session]);
 
   const runRef = useRef<(force?: boolean) => void>(() => undefined);
 
@@ -158,13 +168,12 @@ export default function BackgroundAttendancePreparation() {
             userId = active?.payload.user_id || "";
           }
 
-          if (!role || !userId) {
-            if (!disposed) {
-              setStatus("unavailable");
-              setMessage("Préparation d’appel non disponible pour cette session.");
-            }
-            return;
-          }
+          if (!role || !userId) return;
+
+          // L'administration générale ne doit ni consulter ni attendre le relais.
+          // La préparation spécifique aux appels n'est autorisée que dans les
+          // deux écrans d'appel concernés.
+          if (role === "admin" && !isAdminAttendancePath(pathnameRef.current)) return;
 
           const scope = `${userId}:${role}`;
           const successKey = `mc:attendance-preparation:success:${scope}`;
@@ -178,10 +187,6 @@ export default function BackgroundAttendancePreparation() {
             lastAttempt: 0,
             force: false,
           })) {
-            if (!disposed) {
-              setStatus("ready");
-              setMessage("Données d’appel prêtes");
-            }
             return;
           }
           if (!shouldRunAttendancePreparation({
@@ -193,26 +198,16 @@ export default function BackgroundAttendancePreparation() {
           writeStorage(attemptKey, now);
 
           await withCrossTabLock(async () => {
-            if (!disposed) {
-              setStatus("preparing");
-              setMessage("Actualisation des appels en arrière-plan");
-            }
             if (role === "admin") {
               await prepareAdminAttendanceView();
             } else {
               await prepareOffline(role === "teacher" ? "teacher" : "class-device");
             }
             writeStorage(successKey, Date.now());
-            if (!disposed) {
-              setStatus("ready");
-              setMessage("Actualisation des appels terminée");
-            }
           });
         } catch {
-          if (!disposed) {
-            setStatus("error");
-            setMessage("Actualisation impossible, ancienne préparation conservée");
-          }
+          // Préparation opportuniste et silencieuse : une indisponibilité du relais
+          // ou du cache ne doit jamais devenir un état global de l'application.
         }
       })().finally(() => {
         preparationInFlight = null;
@@ -242,22 +237,5 @@ export default function BackgroundAttendancePreparation() {
     if (!loading) runRef.current(false);
   }, [loading, session?.user?.id]);
 
-  if (status === "idle" || (status === "unavailable" && !session)) return null;
-  const tone =
-    status === "error"
-      ? "border-amber-200 bg-amber-50 text-amber-900"
-      : status === "preparing"
-        ? "border-sky-200 bg-sky-50 text-sky-900"
-        : status === "unavailable"
-          ? "border-slate-200 bg-white text-slate-600"
-          : "border-emerald-200 bg-emerald-50 text-emerald-900";
-
-  return (
-    <div
-      aria-live="polite"
-      className={`fixed bottom-3 left-3 z-[130] max-w-xs rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-sm ${tone}`}
-    >
-      {message}
-    </div>
-  );
+  return null;
 }

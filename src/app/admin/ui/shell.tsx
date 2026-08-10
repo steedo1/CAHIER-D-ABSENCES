@@ -18,7 +18,6 @@ import {
   NotebookPen,
   Settings,
   FileSpreadsheet,
-  BarChart3,
   UserRoundCheck,
   HeartPulse,
   Loader2,
@@ -27,6 +26,7 @@ import { LogoutButton } from "@/components/LogoutButton";
 import TrueLogoutButton from "@/components/auth/TrueLogoutButton";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
+import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
 
 function LoadingOverlay({ label }: { label: string }) {
   return (
@@ -50,6 +50,7 @@ function LoadingOverlay({ label }: { label: string }) {
           <div className="h-full w-1/2 animate-pulse rounded-full bg-emerald-400" />
         </div>
       </div>
+
     </div>
   );
 }
@@ -167,6 +168,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const isAdmin = role === "admin";
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
+  const canUseMonCahierAi =
+    role === "admin" || role === "super_admin" || role === "educator";
 
   const mobileItems = useMemo(() => {
     if (isInfirmier) {
@@ -211,7 +214,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
     return [
       { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
-      { href: "/admin/mon-cahier-ia", label: "IA", Icon: BarChart3 },
       { href: "/admin/absences", label: "Absences", Icon: Ban },
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
@@ -385,6 +387,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           </nav>
         </div>
       </div>
+
+      {canUseMonCahierAi ? <MonCahierAiChatBubble /> : null}
     </div>
   );
 }
