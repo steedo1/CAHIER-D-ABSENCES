@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-08-09-pwa-stable-v5-5";
+const VERSION = "2026-08-09-phone-offline-login-v5-6";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -67,7 +67,10 @@ self.addEventListener("install", (event) => {
       await precacheApplicationFiles();
       // La page de connexion et ses chunks doivent être réellement utilisables
       // sans réseau, pas seulement son document HTML.
-      await warmDocument("/login").catch(() => undefined);
+      // La nouvelle version ne prend la main que si /login et tous ses assets
+      // statiques ont été préparés. En cas d'échec, l'ancien worker complet
+      // reste actif au lieu d'installer une version partielle.
+      await warmDocument("/login");
       await self.skipWaiting();
     })(),
   );
@@ -204,11 +207,11 @@ async function warmDocument(rawUrl) {
     throw new Error(`Session invalide pour ${url.pathname}`);
   }
 
-  const shell = await caches.open(SHELL_CACHE);
-  await shell.put(request, response.clone());
-
+  const responseForCache = response.clone();
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/html")) {
+    const shell = await caches.open(SHELL_CACHE);
+    await shell.put(request, responseForCache);
     return { pathname: url.pathname, asset_count: 0 };
   }
 
@@ -227,8 +230,7 @@ async function warmDocument(rawUrl) {
     }
   }
 
-  const assetCache = await caches.open(ASSET_CACHE);
-  await Promise.all(
+  const downloadedAssets = await Promise.all(
     Array.from(assetUrls).map(async (assetUrl) => {
       const assetRequest = new Request(assetUrl, { credentials: "include" });
       const assetResponseValue = await fetch(assetRequest);
@@ -237,9 +239,20 @@ async function warmDocument(rawUrl) {
           `Ressource essentielle indisponible (${assetResponseValue.status}) : ${new URL(assetUrl).pathname}`,
         );
       }
-      await assetCache.put(assetRequest, assetResponseValue.clone());
+      return { assetRequest, assetResponseValue };
     }),
   );
+
+  // Publication en deux temps : tous les assets doivent être téléchargés avant
+  // que le nouveau document HTML remplace la dernière version fonctionnelle.
+  const assetCache = await caches.open(ASSET_CACHE);
+  await Promise.all(
+    downloadedAssets.map(({ assetRequest, assetResponseValue }) =>
+      assetCache.put(assetRequest, assetResponseValue),
+    ),
+  );
+  const shell = await caches.open(SHELL_CACHE);
+  await shell.put(request, responseForCache);
 
   if (!(await shell.match(request))) {
     throw new Error(`Page essentielle absente du cache : ${url.pathname}`);

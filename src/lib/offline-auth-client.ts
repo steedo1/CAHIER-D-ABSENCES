@@ -12,6 +12,7 @@ import {
   equalOfflineSecret,
   type OfflineAccessGrantPayload,
 } from "@/lib/offline-auth-contract";
+import { assertOfflineFunctionPrepared } from "@/lib/offline-auth-readiness";
 
 const DB_NAME = "moncahier_offline_auth_v1";
 const DB_VERSION = 1;
@@ -211,9 +212,9 @@ export async function authenticateOfflineAccess(input: {
   if (!equalOfflineSecret(actual, decodeBase64Url(record.verifier))) {
     throw new Error("offline_credentials_invalid");
   }
-  const { assertOfflineFunctionPrepared } = await import(
-    "@/lib/offline-auth-readiness"
-  );
+  // Import statique volontaire : la vérification locale doit déjà appartenir
+  // au bundle de connexion et ne jamais réclamer un chunk au moment précis
+  // où Internet est indisponible.
   await assertOfflineFunctionPrepared(payload);
   return { loginHash: hash, grantToken: record.grant_token, payload };
 }
