@@ -20,7 +20,7 @@ export const MON_CAHIER_OFFLINE_SCHEMA_VERSION = 1;
  * est compatible et que le shell déjà préparé est disponible.
  */
 export const MON_CAHIER_SERVICE_WORKER_RELEASE =
-  "2026-08-09-pwa-stable-v5-5";
+  "2026-08-10-pwa-login-repeat-v5-7";
 
 /**
  * Version du format des caches PWA. Les noms de cache restent stables entre les

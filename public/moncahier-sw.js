@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-08-09-phone-offline-login-v5-6";
+const VERSION = "2026-08-10-pwa-login-repeat-v5-7";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -8,7 +8,6 @@ const ASSET_CACHE = `${CACHE_PREFIX}assets-${CACHE_VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
 const PRECACHE_URLS = [
   OFFLINE_URL,
-  "/login",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
@@ -133,7 +132,12 @@ async function navigationResponse(request) {
   try {
     const response = await fetchWithTimeout(request);
     if (response.status >= 500) throw new Error(`HTTP_${response.status}`);
-    if (isCacheable(response)) await cache.put(request, response.clone());
+
+    // Une navigation en ligne ne publie jamais directement un nouveau HTML
+    // dans le cache hors ligne. Les pages PWA sont publiées uniquement par
+    // warmDocument(), après téléchargement et vérification de tous leurs chunks.
+    // Cela évite qu'un retour sur /login remplace un shell complet par un HTML
+    // dont un chunk Next dynamique n'a pas encore été conservé.
     return response;
   } catch {
     return (
@@ -187,6 +191,50 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+function addDocumentAssetUrl(assetUrls, rawValue, documentUrl) {
+  const value = String(rawValue || "").trim();
+  if (!value) return;
+  try {
+    const asset = new URL(value, documentUrl);
+    if (asset.origin === self.location.origin && isAssetPath(asset.pathname)) {
+      assetUrls.add(asset.href);
+    }
+  } catch {
+    // Référence non URL : ignorée.
+  }
+}
+
+function extractDocumentAssetUrls(html, documentUrl) {
+  const assetUrls = new Set();
+
+  // 1) Ressources HTML classiques : <script src>, <link href>, images, etc.
+  const attr = /(?:src|href)=["']([^"']+)["']/gi;
+  let match;
+  while ((match = attr.exec(html))) {
+    addDocumentAssetUrl(assetUrls, match[1], documentUrl);
+  }
+
+  // 2) Next App Router annonce aussi des chunks dans les données Flight/RSC
+  // intégrées aux <script> inline, sans src/href. Après un premier cycle
+  // login -> class -> logout, ces chunks peuvent être redemandés au second
+  // login. On normalise les slashs JSON échappés puis on collecte les chemins.
+  const normalized = String(html || "")
+    .replace(/\\u002[fF]/g, "/")
+    .replace(/\\\//g, "/");
+
+  const absoluteNextAsset = /(?:https?:\/\/[^"'`\s<>]+)?\/_next\/static\/[A-Za-z0-9._~!$&'()*+,;=:@%\/-]+\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)(?:\?[^"'`\s<>]*)?/gi;
+  while ((match = absoluteNextAsset.exec(normalized))) {
+    addDocumentAssetUrl(assetUrls, match[0], documentUrl);
+  }
+
+  const flightAsset = /\bstatic\/(?:chunks|css|media)\/[A-Za-z0-9._~!$&'()*+,;=:@%\/-]+\.(?:js|css|woff2?|png|jpe?g|webp|svg|ico)(?:\?[^"'`\s<>]*)?/gi;
+  while ((match = flightAsset.exec(normalized))) {
+    addDocumentAssetUrl(assetUrls, `/_next/${match[0]}`, documentUrl);
+  }
+
+  return assetUrls;
+}
+
 async function warmDocument(rawUrl) {
   const url = new URL(rawUrl, self.location.origin);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
@@ -216,19 +264,7 @@ async function warmDocument(rawUrl) {
   }
 
   const html = await response.text();
-  const assetUrls = new Set();
-  const attr = /(?:src|href)=["']([^"']+)["']/gi;
-  let match;
-  while ((match = attr.exec(html))) {
-    try {
-      const asset = new URL(match[1], url);
-      if (asset.origin === self.location.origin && isAssetPath(asset.pathname)) {
-        assetUrls.add(asset.href);
-      }
-    } catch {
-      // Attribut non URL : ignoré.
-    }
-  }
+  const assetUrls = extractDocumentAssetUrls(html, url);
 
   const downloadedAssets = await Promise.all(
     Array.from(assetUrls).map(async (assetUrl) => {
