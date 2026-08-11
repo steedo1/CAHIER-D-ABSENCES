@@ -417,6 +417,13 @@ export function buildGradeContextPhrases(scale: number): VoiceContextPhrase[] {
     phrases.push({ phrase: `${phrase} virgule cinq`, boost: 5.8 });
   });
 
+  // Le maximum est souvent dicté comme « 20 sur 20 ». Ces formulations aident
+  // aussi le moteur vocal à privilégier « vingt » plutôt qu'un homophone.
+  if (max === 20) {
+    phrases.push({ phrase: "20 sur 20", boost: 7.0 });
+    phrases.push({ phrase: "vingt sur vingt", boost: 7.0 });
+  }
+
   return phrases.slice(0, 80);
 }
 
@@ -489,7 +496,12 @@ function parseMixedDecimal(input: string): number | null {
 
 export function parseSpokenGrade(input: string): number | null {
   const normalized = normalizeVoiceText(input)
-    .replace(/\bsur\s+\d{1,2}\b/g, " ")
+    // Erreurs STT fréquentes pour « vingt » observables en français oral.
+    // Cette normalisation ne s'applique qu'à l'étape NOTE, jamais aux noms.
+    .replace(/\b(?:vin|vain|ving|vins|vingts)\b/g, "vingt")
+    // Accepte aussi « vingt sur vingt » / « 20 sur 20 ».
+    .replace(/\bsur\s+(?:\d{1,2}|zero|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|dix\s+sept|dix\s+huit|dix\s+neuf|vingt)\b/g, " ")
+    .replace(/\bpoints?\b$/g, " ")
     .replace(/\bnote\b/g, " ")
     .replace(/\best\b/g, " ")
     .replace(/\bde\b/g, " ")
