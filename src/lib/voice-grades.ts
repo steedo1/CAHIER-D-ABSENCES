@@ -227,6 +227,35 @@ export function matchRosterStudent<T extends VoiceRosterItem>(
     return { status: "not_found", candidates: [] };
   }
 
+  const exactQueryTokens = meaningfulTokens(spokenName);
+
+  // Expérience fluide : un prénom/patronyme seul suffit lorsqu'il identifie
+  // exactement un élève de la classe. Exemple : « Joël » -> KONE JOEL.
+  // On exige au moins 3 caractères pour éviter les faux positifs sur « N'... ».
+  if (exactQueryTokens.length === 1 && exactQueryTokens[0].length >= 3) {
+    const exactToken = exactQueryTokens[0];
+    const exactMatches = roster.filter((student) =>
+      meaningfulTokens(student.full_name).includes(exactToken)
+    );
+
+    if (exactMatches.length === 1) {
+      return {
+        status: "matched",
+        candidate: { student: exactMatches[0], score: 0.995 },
+      };
+    }
+
+    if (exactMatches.length > 1) {
+      return {
+        status: "ambiguous",
+        candidates: exactMatches.slice(0, 4).map((student) => ({
+          student,
+          score: 0.995,
+        })),
+      };
+    }
+  }
+
   const ranked = roster
     .map((student) => ({ student, score: studentMatchScore(spokenName, student.full_name) }))
     .sort((a, b) => b.score - a.score);
@@ -239,7 +268,6 @@ export function matchRosterStudent<T extends VoiceRosterItem>(
     return { status: "not_found", candidates: suggestions };
   }
 
-  const exactQueryTokens = meaningfulTokens(spokenName);
   const exactTokenSubset = exactQueryTokens.every((token) =>
     meaningfulTokens(top.student.full_name).includes(token)
   );

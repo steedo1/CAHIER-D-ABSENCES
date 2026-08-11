@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
+import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
   gradesClassesKey,
@@ -2918,6 +2919,37 @@ export default function ClassDeviceNotesPage() {
             </div>
           </div>
 
+          <VoiceGradeEntry
+            roster={roster}
+            evaluations={evaluations.map((ev) => ({
+              id: ev.id,
+              label: labelByEvalId[ev.id] ?? "NOTE",
+              scale: ev.scale,
+              disabled:
+                selectedPeriodClosed ||
+                !!lockByEvalId[ev.id]?.locked ||
+                !isEvaluationEditable(ev),
+              disabledReason: selectedPeriodClosed
+                ? "Cette période est clôturée."
+                : lockByEvalId[ev.id]?.locked
+                  ? "Cette évaluation est verrouillée."
+                  : getPublicationStatus(ev) === "submitted"
+                    ? "Cette évaluation est soumise à validation."
+                    : getPublicationStatus(ev) === "published"
+                      ? "Cette évaluation est déjà publiée."
+                      : null,
+            }))}
+            targetEvaluationId={currentActiveEvalId}
+            onTargetEvaluationChange={(evaluationId) => {
+              setActiveEvalId(evaluationId);
+            }}
+            onGrade={(evaluationId, studentId, value) => {
+              const ev = evaluations.find((item) => item.id === evaluationId);
+              if (!ev) return;
+              setGrade(evaluationId, studentId, value, ev.scale);
+            }}
+            isOnline={isOnline}
+          />
 
           {isCurrentEvalLocked && currentActiveEval && (
             <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
