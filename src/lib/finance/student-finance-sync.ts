@@ -6,6 +6,7 @@ import {
   financeScheduleAppliesToStudent,
   financeScheduleLabelForClass,
   financeScheduleProfileVariantKey,
+  financeScheduleSemanticKey,
   inferFinanceOptionalComponentIds,
   normalizeFinanceText,
   selectFinanceSchedulesForClass,
@@ -364,7 +365,6 @@ export async function applyStudentFinanceReconciliation({
       .eq("school_id", institutionId)
       .eq("student_id", studentId)
       .eq("class_id", classId)
-      .in("fee_schedule_id", scheduleIds)
       .order("updated_at", { ascending: false }),
   ]);
 
@@ -373,8 +373,45 @@ export async function applyStudentFinanceReconciliation({
 
   const components = (componentsResult.data ?? []) as ComponentRow[];
   const componentsBySchedule = groupBy(components, (row) => row.fee_schedule_id);
-  const rawCharges = (chargesResult.data ?? []) as ChargeRow[];
+  const rawCharges = ((chargesResult.data ?? []) as ChargeRow[]).filter((row) => {
+    const rowYear = cleanId(row.academic_year);
+    return !academicYear || !rowYear || rowYear === academicYear;
+  });
   const chargeIds = rawCharges.map((row) => row.id);
+
+  // Une dette déjà créée peut encore pointer vers un ancien UUID de barème
+  // (barème recréé, catégorie recréée, ancien doublon, etc.). On recharge ces
+  // barèmes historiques pour reconnaître la rubrique métier avant de décider
+  // d'insérer une nouvelle dette. C'est le point clé pour rendre les passages
+  // Externe -> Interne -> Externe -> Interne réellement idempotents.
+  const selectedScheduleIds = new Set(scheduleIds);
+  const historicalScheduleIds = Array.from(
+    new Set(
+      rawCharges
+        .map((row) => cleanId(row.fee_schedule_id))
+        .filter((id) => Boolean(id) && !selectedScheduleIds.has(id)),
+    ),
+  );
+
+  let historicalSchedules: ScheduleRow[] = [];
+  if (historicalScheduleIds.length > 0) {
+    const { data: historicalScheduleRows, error: historicalScheduleError } = await srv
+      .schema("finance")
+      .from("fee_schedules")
+      .select(
+        "id,school_id,academic_year,class_id,fee_category_id,label,amount,due_date,is_active,notes,created_at,updated_at,applies_when_affecte,applies_when_boarder,amount_mode,profile_group_key",
+      )
+      .eq("school_id", institutionId)
+      .in("id", historicalScheduleIds);
+
+    if (historicalScheduleError) throw new Error(historicalScheduleError.message);
+    historicalSchedules = (historicalScheduleRows ?? []) as ScheduleRow[];
+  }
+
+  const schedulesByIdForExistingCharges = new Map<string, ScheduleRow>();
+  for (const schedule of [...schedules, ...historicalSchedules]) {
+    schedulesByIdForExistingCharges.set(schedule.id, schedule);
+  }
 
   const [balancesResult, selectionsResult, paidComponentsResult] = await Promise.all([
     chargeIds.length
@@ -434,10 +471,75 @@ export async function applyStudentFinanceReconciliation({
     (row) => row.student_charge_id,
   );
 
-  const chargesBySchedule = groupBy(
-    charges.filter((row) => Boolean(row.fee_schedule_id)),
-    (row) => cleanId(row.fee_schedule_id),
-  );
+  const selectedBySemanticKey = new Map<string, ScheduleRow>();
+  for (const schedule of selectedSchedules) {
+    selectedBySemanticKey.set(
+      financeScheduleSemanticKey(
+        schedule,
+        targetClass,
+        classesById,
+        categoriesById,
+      ),
+      schedule,
+    );
+  }
+
+  const retargetedChargeIds = new Set<string>();
+  const chargesBySchedule = new Map<string, ChargeState[]>();
+
+  for (const charge of charges) {
+    const sourceScheduleId = cleanId(charge.fee_schedule_id);
+    if (!sourceScheduleId) continue;
+
+    const storedSchedule = schedulesByIdForExistingCharges.get(sourceScheduleId);
+    const sourceSchedule: ScheduleRow =
+      storedSchedule ??
+      ({
+        id: sourceScheduleId,
+        school_id: institutionId,
+        academic_year: charge.academic_year,
+        class_id: charge.class_id,
+        fee_category_id: charge.fee_category_id,
+        label: charge.label,
+        amount: charge.base_amount,
+        due_date: charge.due_date,
+        amount_mode: "fixed",
+      } as ScheduleRow);
+
+    const semanticKey = financeScheduleSemanticKey(
+      sourceSchedule,
+      targetClass,
+      classesById,
+      categoriesById,
+    );
+    const canonicalSchedule = selectedBySemanticKey.get(semanticKey);
+
+    // Pour un barème variable à sous-rubriques, changer silencieusement l'UUID
+    // du barème nécessiterait aussi de migrer les liens de composants des reçus.
+    // Ce moteur laisse donc ce cas au flux spécialisé de transfert ; la
+    // réparation sémantique automatique ci-dessous reste limitée aux frais fixes.
+    let resolvedScheduleId = sourceScheduleId;
+    if (
+      canonicalSchedule &&
+      (canonicalSchedule.id === sourceScheduleId ||
+        (sourceSchedule.amount_mode !== "components" &&
+          canonicalSchedule.amount_mode !== "components"))
+    ) {
+      resolvedScheduleId = canonicalSchedule.id;
+    }
+
+    if (!selectedScheduleIds.has(resolvedScheduleId)) continue;
+
+    if (resolvedScheduleId !== sourceScheduleId) {
+      retargetedChargeIds.add(charge.id);
+    }
+
+    chargesBySchedule.set(resolvedScheduleId, [
+      ...(chargesBySchedule.get(resolvedScheduleId) ?? []),
+      charge,
+    ]);
+  }
+
   const existingBySchedule = new Map<string, ChargeState>();
   const duplicateIds = new Set<string>();
 
@@ -446,7 +548,7 @@ export async function applyStudentFinanceReconciliation({
     const paidActive = active.filter((row) => row.paid_amount > 0.01);
     if (paidActive.length > 1) {
       throw new Error(
-        `Synchronisation bloquée : plusieurs dettes actives déjà encaissées existent pour le même barème (${group[0]?.label || scheduleId}). Exécutez le diagnostic des doublons avant de continuer.`,
+        `Synchronisation bloquée : plusieurs dettes actives déjà encaissées existent pour la même rubrique (${group[0]?.label || scheduleId}). Exécutez le diagnostic des doublons avant de continuer.`,
       );
     }
 
@@ -475,7 +577,6 @@ export async function applyStudentFinanceReconciliation({
   );
   const applicableIds = new Set(applicable.map((row) => row.id));
   const scheduleById = new Map(selectedSchedules.map((row) => [row.id, row]));
-  const retargetedChargeIds = new Set<string>();
 
   for (const targetSchedule of applicable) {
     if (existingBySchedule.has(targetSchedule.id)) continue;

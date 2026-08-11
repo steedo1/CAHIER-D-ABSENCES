@@ -189,7 +189,31 @@ function stripKnownClassSuffixFromNormalizedLabel(
   return result || normalizedLabel;
 }
 
-function financeScheduleSemanticKey(
+function financeScheduleCategorySemanticKey(
+  schedule: FinanceScheduleLike,
+  categoriesById: Map<string, FinanceFeeCategoryLike>,
+) {
+  const categoryId = cleanFinanceId(schedule.fee_category_id);
+  const category = categoriesById.get(categoryId);
+  const scheduleKind = financeScheduleKind(schedule, categoriesById);
+
+  // Les catégories métier historiques peuvent avoir été recréées avec un autre
+  // UUID. Pour la scolarité / l'internat / le renforcement, l'identité métier
+  // prime donc sur l'identifiant technique afin d'éviter deux barèmes
+  // équivalents et, surtout, deux dettes pour la même rubrique. Le type peut
+  // aussi être reconnu depuis le libellé si l'ancienne catégorie n'existe plus.
+  if (scheduleKind !== "custom") return `kind:${scheduleKind}`;
+
+  const code = normalizeFinanceText(category?.code);
+  if (code) return `code:${code}`;
+
+  const name = normalizeFinanceText(category?.name);
+  if (name) return `name:${name}`;
+
+  return `id:${categoryId}`;
+}
+
+export function financeScheduleSemanticKey(
   schedule: FinanceScheduleLike,
   targetClass: FinanceClassLike,
   classesById: Map<string, FinanceClassLike>,
@@ -221,7 +245,7 @@ function financeScheduleSemanticKey(
 
   return [
     financeScheduleKind(schedule, categoriesById),
-    cleanFinanceId(schedule.fee_category_id),
+    financeScheduleCategorySemanticKey(schedule, categoriesById),
     normalizedLabel,
     cleanFinanceId(schedule.due_date),
   ].join("|");
@@ -417,7 +441,7 @@ export function financeScheduleProfileVariantKey(
   if (explicitGroupKey) {
     return [
       kind,
-      cleanFinanceId(schedule.fee_category_id),
+      financeScheduleCategorySemanticKey(schedule, categoriesById),
       normalizeFinanceText(explicitGroupKey),
     ].join("|");
   }
@@ -447,7 +471,7 @@ export function financeScheduleProfileVariantKey(
 
   return [
     kind,
-    cleanFinanceId(schedule.fee_category_id),
+    financeScheduleCategorySemanticKey(schedule, categoriesById),
     neutralLabel,
   ].join("|");
 }
