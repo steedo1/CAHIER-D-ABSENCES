@@ -25,3 +25,14 @@ test("la tâche de boot transmet des chemins explicites et non le profil SYSTEM"
   assert.match(runner, /MONCAHIER_RELAY_LOG_DIR\s*=\s*\$LogDirectory/);
   assert.doesNotMatch(runner, /\$env:LOCALAPPDATA/);
 });
+
+
+test("l'installation et la mise à jour ouvrent mDNS uniquement sur le profil privé", () => {
+  for (const name of ["install-relay.ps1", "update-relay.ps1"]) {
+    const script = windowsScript(name);
+    assert.match(script, /Mon Cahier Relay - mDNS 5353/);
+    assert.match(script, /-Protocol\s+UDP/);
+    assert.match(script, /-LocalPort\s+5353/);
+    assert.match(script, /-Profile\s+Private/);
+  }
+});

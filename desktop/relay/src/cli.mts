@@ -3,6 +3,12 @@ import { openRelayDatabase } from "./db.mjs";
 import { createRelayCloudSyncAgent, requeueTimetableReplacementChain, syncRelayOnce } from "./cloud-sync.mjs";
 import { createRelayServer } from "./server.mjs";
 import { configureCloudSync, configureRelay, relayLanUrls } from "./setup.mjs";
+import {
+  defaultRelayMdnsHostname,
+  relayMdnsUrl,
+  startRelayMdns,
+  type RelayMdnsAnnouncer,
+} from "./mdns.mjs";
 import { RelayStore } from "./store.mjs";
 
 async function main() {
@@ -41,6 +47,9 @@ async function main() {
   }
 
   const config = loadRelayConfig();
+  const mdnsHostname = config.mdnsHostname || defaultRelayMdnsHostname(config.institutionCode);
+  const mdnsEnabled = config.mdnsEnabled !== false;
+  const mdnsUrl = config.mdnsUrl || relayMdnsUrl(mdnsHostname, config.port);
 
   if (command === "access") {
     const institutionCode = String(flagOptional("--institution-code") || "").trim().toUpperCase();
@@ -60,6 +69,9 @@ async function main() {
     }
     console.log(JSON.stringify({
       admin_url: `http://127.0.0.1:${config.port}`,
+      lan_url: mdnsUrl,
+      lan_hostname: `${mdnsHostname}.local`,
+      mdns_enabled: mdnsEnabled,
       lan_urls: relayLanUrls(config.port),
       institution: selectedInstitution
         ? { code: selectedInstitution.code, name: selectedInstitution.name }
@@ -99,6 +111,9 @@ async function main() {
       config_path: config.configPath || null,
       database_path: config.databasePath,
       admin_url: `http://127.0.0.1:${config.port}`,
+      lan_url: mdnsUrl,
+      lan_hostname: `${mdnsHostname}.local`,
+      mdns_enabled: mdnsEnabled,
       lan_urls: relayLanUrls(config.port),
       cloud_sync: (config.institutions || []).map((institution) => ({
         institution_code: institution.code,
@@ -139,8 +154,12 @@ async function main() {
   if (command === "serve") {
     const server = createRelayServer(config, store);
     const cloudSyncAgent = createRelayCloudSyncAgent(config, store);
+    let mdnsAnnouncer: RelayMdnsAnnouncer | null = null;
+    let closing = false;
+
     server.once("error", (error) => {
       cloudSyncAgent.stop();
+      void mdnsAnnouncer?.stop();
       console.error(error instanceof Error ? error.message : error);
       db.close();
       process.exitCode = 1;
@@ -148,13 +167,38 @@ async function main() {
     server.listen(config.port, config.host, () => {
       console.log(`Mon Cahier Relay écoute sur http://${config.host}:${config.port}`);
       cloudSyncAgent.start();
+      if (mdnsEnabled) {
+        void startRelayMdns({
+          hostname: mdnsHostname,
+          port: config.port,
+          institutionCode: config.institutionCode,
+          log: (message) => console.warn(message),
+        }).then((announcer) => {
+          if (closing) {
+            void announcer.stop();
+            return;
+          }
+          mdnsAnnouncer = announcer;
+          const status = announcer.status();
+          console.log(`Relais LAN stable annoncé sur ${status.url}`);
+        }).catch((error) => {
+          console.warn(
+            `Annonce mDNS indisponible : ${error instanceof Error ? error.message : error}`,
+          );
+        });
+      }
     });
     const close = () => {
+      if (closing) return;
+      closing = true;
       cloudSyncAgent.stop();
-      server.close(() => {
-        db.close();
-        process.exit(0);
-      });
+      void (async () => {
+        await mdnsAnnouncer?.stop().catch(() => undefined);
+        server.close(() => {
+          db.close();
+          process.exit(0);
+        });
+      })();
     };
     process.once("SIGINT", close);
     process.once("SIGTERM", close);

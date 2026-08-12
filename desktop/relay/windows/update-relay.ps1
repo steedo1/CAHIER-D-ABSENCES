@@ -106,6 +106,36 @@ try {
     [Environment]::SetEnvironmentVariable("MONCAHIER_RELAY_CONFIG", $ConfigPath, "User")
     $env:MONCAHIER_RELAY_CONFIG = $ConfigPath
 
+    $HttpRuleName = "Mon Cahier Relay - Port 4317"
+    $ExistingHttpRule = Get-NetFirewallRule -DisplayName $HttpRuleName -ErrorAction SilentlyContinue
+    if ($ExistingHttpRule) {
+        $ExistingHttpRule | Set-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Private
+        $ExistingHttpRule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol TCP -LocalPort $Port
+    } else {
+        New-NetFirewallRule `
+            -DisplayName $HttpRuleName `
+            -Direction Inbound `
+            -Protocol TCP `
+            -LocalPort $Port `
+            -Action Allow `
+            -Profile Private | Out-Null
+    }
+
+    $MdnsRuleName = "Mon Cahier Relay - mDNS 5353"
+    $ExistingMdnsRule = Get-NetFirewallRule -DisplayName $MdnsRuleName -ErrorAction SilentlyContinue
+    if ($ExistingMdnsRule) {
+        $ExistingMdnsRule | Set-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Private
+        $ExistingMdnsRule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol UDP -LocalPort 5353
+    } else {
+        New-NetFirewallRule `
+            -DisplayName $MdnsRuleName `
+            -Direction Inbound `
+            -Protocol UDP `
+            -LocalPort 5353 `
+            -Action Allow `
+            -Profile Private | Out-Null
+    }
+
     # La tâche SYSTEM démarre avant toute connexion utilisateur et est recréée
     # pour pointer vers cette version du relais.
     & (Join-Path $PSScriptRoot "install-startup-task.ps1") `
@@ -135,12 +165,26 @@ try {
         throw "Le relais lancé n'est pas la nouvelle version attendue. Vérifiez qu'aucun ancien dossier ne redémarre le port $Port."
     }
 
+    $StableLanUrl = "Adresse LAN stable non détectée"
+    try {
+        $DoctorJson = & $NodeCommand.Source $CliPath "doctor"
+        if ($LASTEXITCODE -eq 0) {
+            $Doctor = $DoctorJson | ConvertFrom-Json
+            if ($Doctor.lan_url) { $StableLanUrl = [string]$Doctor.lan_url }
+        }
+    } catch {
+        # Le diagnostic mDNS ne doit pas annuler une mise à jour HTTP valide.
+    }
+
     Show-Info(
         "Mise à jour terminée avec succès.`n`n" +
         "Version relais : $($Health.relay_version)`n" +
         "Schéma de base : $($Health.schema_version)`n" +
-        "Port : $Port`n`n" +
+        "Port : $Port`n" +
+        "Adresse .local de secours : $StableLanUrl`n`n" +
         "Une sauvegarde de sécurité a été créée dans :`n$BackupRoot`n`n" +
+        "La réservation DHCP reste le mécanisme recommandé pour stabiliser l'IP du relais. " +
+        "Si le routeur, le Wi-Fi ou la carte réseau ont changé, lancez windows\Assistant-Reservation-DHCP.cmd.`n`n" +
         "Retournez dans Mon Cahier puis cliquez sur Tester et synchroniser."
     )
     exit 0

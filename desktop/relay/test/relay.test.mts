@@ -241,6 +241,11 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
     assert.equal(loaded.institutionName, "COLLEGE NOTRE-DAME");
     assert.deepEqual(loaded.institutionCodes, ["LMA-000101"]);
     assert.equal(loaded.databasePath, first.database_path);
+    assert.equal(loaded.mdnsEnabled, true);
+    assert.equal(loaded.mdnsHostname, "moncahier-relay-lma-000101");
+    assert.equal(loaded.mdnsUrl, "http://moncahier-relay-lma-000101.local:4317");
+    assert.equal(first.lan_hostname, "moncahier-relay-lma-000101.local");
+    assert.equal(first.lan_url, "http://moncahier-relay-lma-000101.local:4317");
     assert.deepEqual(loaded.allowedOrigins?.slice(0, 2), [
       "https://mon-cahier.com",
       "https://www.mon-cahier.com",
@@ -291,10 +296,12 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
     assert.notEqual(otherSchool.database_path, first.database_path);
 
     const file = JSON.parse(readFileSync(configPath, "utf8")) as any;
-    assert.equal(file.version, 3);
+    assert.equal(file.version, 4);
     assert.equal(file.institution_code, "TEST-000002");
     assert.deepEqual(file.institutions.map((item: any) => item.code), ["TEST-000002"]);
     assert.equal(file.database_path, otherSchool.database_path);
+    assert.equal(file.mdns_enabled, true);
+    assert.equal(file.mdns_hostname, "moncahier-relay-test-000002");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

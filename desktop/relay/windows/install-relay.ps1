@@ -150,7 +150,9 @@ try {
         "MONCAHIER_RELAY_HOST",
         "MONCAHIER_RELAY_PORT",
         "MONCAHIER_RELAY_TOKEN",
-        "MONCAHIER_RELAY_ALLOWED_ORIGINS"
+        "MONCAHIER_RELAY_ALLOWED_ORIGINS",
+        "MONCAHIER_RELAY_MDNS_ENABLED",
+        "MONCAHIER_RELAY_MDNS_HOSTNAME"
     )
     foreach ($VariableName in $LegacyVariables) {
         [Environment]::SetEnvironmentVariable($VariableName, $null, "User")
@@ -187,6 +189,21 @@ try {
             -Direction Inbound `
             -Protocol TCP `
             -LocalPort 4317 `
+            -Action Allow `
+            -Profile Private | Out-Null
+    }
+
+    $MdnsRuleName = "Mon Cahier Relay - mDNS 5353"
+    $ExistingMdnsRule = Get-NetFirewallRule -DisplayName $MdnsRuleName -ErrorAction SilentlyContinue
+    if ($ExistingMdnsRule) {
+        $ExistingMdnsRule | Set-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Private
+        $ExistingMdnsRule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol UDP -LocalPort 5353
+    } else {
+        New-NetFirewallRule `
+            -DisplayName $MdnsRuleName `
+            -Direction Inbound `
+            -Protocol UDP `
+            -LocalPort 5353 `
             -Action Allow `
             -Profile Private | Out-Null
     }
@@ -232,10 +249,15 @@ try {
     [System.Windows.Forms.Clipboard]::SetText([string]$Setup.token)
     Start-Process "https://www.mon-cahier.com/admin/parametres?tab=school"
 
-    $LanAddress = if ($Setup.lan_urls.Count -gt 0) {
+    $LanAddress = if ($Setup.lan_url) {
+        [string]$Setup.lan_url
+    } else {
+        "Adresse LAN stable non détectée"
+    }
+    $LanIpAddress = if ($Setup.lan_urls.Count -gt 0) {
         [string]$Setup.lan_urls[0]
     } else {
-        "Adresse LAN non détectée"
+        "IP LAN non détectée"
     }
     $ConfiguredSchools = @($Setup.institutions | ForEach-Object { $_.name }) -join ", "
     $RelayMode = if ($Setup.mode -eq "school_group") {
@@ -247,11 +269,23 @@ try {
         "$RelayMode configuré avec succès.`n`n" +
         "Établissement(s) autorisé(s) : $ConfiguredSchools`n`n" +
         "Adresse du poste Admin : http://127.0.0.1:4317`n" +
-        "Adresse du relais dans l'établissement : $LanAddress`n`n" +
+        "Adresse .local de secours : $LanAddress`n" +
+        "IP LAN actuelle à réserver dans le DHCP : $LanIpAddress`n`n" +
         "Le jeton Admin a été copié dans le presse-papiers. Collez-le une seule fois dans Mon Cahier, puis cliquez sur Tester et synchroniser.`n`n" +
         "Version relais : $($HealthCheck.relay_version) — schéma : $($HealthCheck.schema_version)`n`n" +
         "Le relais démarrera désormais automatiquement, sans commande PowerShell."
     )
+    $DhcpAssistant = Join-Path $PSScriptRoot "Assistant-Reservation-DHCP.cmd"
+    if (
+        (Test-Path $DhcpAssistant) -and
+        (Show-Question(
+            "Pour une installation fixe, Mon Cahier recommande maintenant de réserver l'IP du PC relais dans le DHCP du routeur.`n`n" +
+            "Cela évite que l'adresse du relais change après un redémarrage, même sans Internet.`n`n" +
+            "Voulez-vous lancer l'assistant de réservation DHCP maintenant ?"
+        ))
+    ) {
+        Start-Process -FilePath $DhcpAssistant
+    }
     exit 0
 } catch {
     [System.Windows.Forms.MessageBox]::Show(

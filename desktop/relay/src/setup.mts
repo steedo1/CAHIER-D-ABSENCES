@@ -3,6 +3,11 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
+  defaultRelayMdnsHostname,
+  normalizeRelayMdnsHostname,
+  relayMdnsUrl,
+} from "./mdns.mjs";
+import {
   DEFAULT_RELAY_ALLOWED_ORIGINS,
   defaultRelayConfigPath,
   readRelayConfigFile,
@@ -53,6 +58,9 @@ export type ConfigureRelayResult = {
   port: number;
   admin_url: string;
   lan_urls: string[];
+  lan_hostname: string;
+  lan_url: string;
+  mdns_enabled: boolean;
   token: string;
   token_reused: boolean;
 };
@@ -162,7 +170,7 @@ export function configureCloudSync(
   };
   const file: RelayConfigFile = {
     ...existing,
-    version: Math.max(3, Number(existing.version || 0)),
+    version: Math.max(4, Number(existing.version || 0)),
     institutions,
   };
   writeConfigAtomically(configPath, file);
@@ -239,9 +247,15 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
   const configuredPort = typeof existing.port === "number" && Number.isInteger(existing.port)
     ? existing.port
     : 4317;
+  const configuredMdnsHostname = normalizeRelayMdnsHostname(
+    preservingInstallation && existing.mdns_hostname
+      ? existing.mdns_hostname
+      : defaultRelayMdnsHostname(primaryInstitution.code),
+  );
+  const mdnsEnabled = existing.mdns_enabled !== false;
   const file: RelayConfigFile = {
     ...existing,
-    version: Math.max(3, Number(existing.version || 0)),
+    version: Math.max(4, Number(existing.version || 0)),
     institution_code: primaryInstitution.code,
     institution_name: primaryInstitution.name,
     institutions,
@@ -252,6 +266,8 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
     allowed_origins: Array.isArray(existing.allowed_origins) && existing.allowed_origins.length
       ? existing.allowed_origins
       : [...DEFAULT_RELAY_ALLOWED_ORIGINS],
+    mdns_enabled: mdnsEnabled,
+    mdns_hostname: configuredMdnsHostname,
   };
 
   mkdirSync(dirname(databasePath), { recursive: true });
@@ -269,6 +285,9 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
     port: configuredPort,
     admin_url: `http://127.0.0.1:${configuredPort}`,
     lan_urls: relayLanUrls(configuredPort),
+    lan_hostname: `${configuredMdnsHostname}.local`,
+    lan_url: relayMdnsUrl(configuredMdnsHostname, configuredPort),
+    mdns_enabled: mdnsEnabled,
     token: schoolToken,
     token_reused: Boolean(sameInstitution && existingSchoolToken && schoolToken === existingSchoolToken),
   };

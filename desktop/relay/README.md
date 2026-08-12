@@ -52,7 +52,9 @@ Variables disponibles :
 - `MONCAHIER_RELAY_DB` : chemin complet de la base, prioritaire ;
 - `MONCAHIER_RELAY_HOST` : `127.0.0.1` par défaut ;
 - `MONCAHIER_RELAY_PORT` : `4317` par défaut ;
-- `MONCAHIER_RELAY_TOKEN` : obligatoire si l'hôte n'est pas local.
+- `MONCAHIER_RELAY_TOKEN` : obligatoire si l'hôte n'est pas local ;
+- `MONCAHIER_RELAY_MDNS_ENABLED` : active/désactive l'annonce `.local` (active par défaut) ;
+- `MONCAHIER_RELAY_MDNS_HOSTNAME` : surcharge exceptionnelle du nom stable annoncé.
 
 Le relais n'est pas encore l'application Windows finale. L'enveloppe Tauri et
 l'appairage Wi-Fi/LAN arriveront dans les lots suivants sans modifier le contrat
@@ -73,7 +75,13 @@ L'assistant effectue automatiquement les opérations suivantes :
 - génération du jeton Admin de l'école et création de sa base SQLite ;
 - suppression des anciennes variables utilisateur susceptibles de forcer la
   base d'un autre établissement ;
-- autorisation du port 4317 uniquement sur les réseaux Windows privés ;
+- autorisation du port TCP 4317 uniquement sur les réseaux Windows privés ;
+- assistant `windows/Assistant-Reservation-DHCP.cmd` qui détecte
+  automatiquement la MAC, l’IPv4 actuelle et la passerelle du PC relais afin
+  de créer une réservation DHCP dans le routeur de l’établissement ;
+- annonce mDNS du relais sur UDP 5353, également limitée aux réseaux privés,
+  conservée comme mécanisme de secours sur les réseaux qui résolvent
+  correctement les noms `.local` ;
 - proposition explicite avant de classer le réseau courant comme privé ;
 - installation d'une tâche planifiée `Mon Cahier Relay`, exécutée par `SYSTEM`
   au démarrage du PC avant toute ouverture de session, avec dix reprises à une
@@ -103,15 +111,52 @@ Le groupe peut aussi choisir un PC relais distinct par école ; chaque
 installation possède alors sa propre configuration, sa propre base et son
 propre réseau local.
 
-Deux raccourcis de dépannage ne nécessitent aucune commande manuelle :
+Trois raccourcis d’exploitation ne nécessitent aucune commande manuelle :
 
 - `windows/Diagnostic-Mon-Cahier.cmd` vérifie la configuration, la base et si
   le service répond ;
 - `windows/Copier-Jeton-Admin.cmd` remet le jeton Admin dans le presse-papiers ;
-  en mode groupe, il demande le code de l'école concernée.
+  en mode groupe, il demande le code de l'école concernée ;
+- `windows/Assistant-Reservation-DHCP.cmd` prépare les informations nécessaires
+  pour réserver l’IP du PC relais dans le routeur, sans imposer d’IP statique
+  dans Windows.
 
 Le jeton Admin reste réservé au navigateur d'administration. Il n'est jamais
 communiqué aux enseignants et n'intervient pas dans leur preuve de présence.
+
+### Standard réseau recommandé : réservation DHCP
+
+Pour une installation fixe, la réservation DHCP est le mécanisme principal
+recommandé pour stabiliser l’adresse du PC relais. Windows reste en DHCP
+automatique ; le routeur associe l’adresse MAC de la carte réseau du PC à
+l’IPv4 qui lui a déjà été attribuée.
+
+Lancer simplement :
+
+```text
+windows\Assistant-Reservation-DHCP.cmd
+```
+
+L’assistant affiche et copie :
+
+- l’adresse MAC de la carte réseau réellement utilisée ;
+- l’IPv4 actuelle à réserver ;
+- la passerelle, qui correspond généralement à l’adresse d’administration du
+  routeur ;
+- le port du relais et le résultat du contrôle `/health`.
+
+Il crée également
+`%LOCALAPPDATA%\MonCahier\Relay\reservation-dhcp-a-configurer.txt` et
+`reservation-dhcp-plan.json`. Il ne modifie pas l’adressage Windows et ne
+configure pas le routeur automatiquement, car les interfaces d’administration
+DHCP diffèrent selon les constructeurs.
+
+Le guide terrain complet est disponible dans
+`docs/GUIDE-RESERVATION-DHCP.md`.
+
+Ne jamais créer de redirection Internet vers le port 4317. Le relais est un
+service LAN. Si le routeur ou la carte réseau du PC est remplacé, refaire la
+réservation une fois avec la nouvelle MAC ou le nouveau routeur.
 
 ### Reprise après coupure électrique
 
@@ -152,9 +197,15 @@ n'est pas affiché dans l'assistant et ne doit pas être copié dans le navigate
   Cette route utilise un accès enseignant signé par le Cloud et ne communique
   jamais le jeton administrateur du relais au téléphone.
 
-Pour les téléphones, l'administration renseigne dans Mon Cahier l'adresse LAN
-du PC relais (par exemple `http://192.168.1.20:4317`). Le navigateur obtient
-automatiquement un accès limité à l'enseignant connecté. Le PC relais doit être
+Pour les téléphones, l’installation fixe recommande une IPv4 stabilisée par
+réservation DHCP dans le routeur de l’établissement. Le relais publie aussi un
+nom mDNS dérivé du code de l'établissement, par exemple
+`http://moncahier-relay-lma-000101.local:4317`, comme mécanisme supplémentaire
+sur les réseaux qui prennent correctement en charge `.local`. Les adresses IPv4
+courantes restent exposées par `access` et `doctor` afin de diagnostiquer et
+valider le LAN. Le navigateur obtient automatiquement un accès limité à
+l'enseignant connecté.
+Le PC relais doit être
 lancé avec `MONCAHIER_RELAY_HOST=0.0.0.0` et une configuration protégée. Le
 jeton Admin propre à chaque école ne doit jamais être partagé avec les
 enseignants.

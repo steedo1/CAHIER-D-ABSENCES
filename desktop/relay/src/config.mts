@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import {
+  defaultRelayMdnsHostname,
+  normalizeRelayMdnsHostname,
+  relayMdnsUrl,
+} from "./mdns.mjs";
 
 export const DEFAULT_RELAY_ALLOWED_ORIGINS = [
   "https://mon-cahier.com",
@@ -39,6 +44,8 @@ export type RelayConfigFile = {
   cloud_sync_interval_seconds?: number;
   cloud_sync_batch_size?: number;
   cloud_sync_timeout_seconds?: number;
+  mdns_enabled?: boolean;
+  mdns_hostname?: string;
 };
 
 export type RelayConfig = {
@@ -56,6 +63,9 @@ export type RelayConfig = {
   cloudSyncIntervalMs?: number;
   cloudSyncBatchSize?: number;
   cloudSyncTimeoutMs?: number;
+  mdnsEnabled?: boolean;
+  mdnsHostname?: string;
+  mdnsUrl?: string;
 };
 
 function positivePort(value: string | number | undefined) {
@@ -136,6 +146,16 @@ function normalizedCloudSync(value: unknown): RelayCloudSyncInstitutionConfig | 
   };
 }
 
+
+function booleanSetting(value: unknown, fallback: boolean) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 function teacherAttendanceWritesEnabled(file: RelayConfigFile, env: NodeJS.ProcessEnv) {
   const configured = String(env.MONCAHIER_RELAY_TEACHER_ATTENDANCE_WRITES_ENABLED || "")
     .trim()
@@ -185,6 +205,17 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       ? file.allowed_origins.map((item) => String(item).trim()).filter(Boolean)
       : [...DEFAULT_RELAY_ALLOWED_ORIGINS];
   const institutions = relayInstitutionsFromConfigFile(file);
+  const mdnsEnabled = booleanSetting(
+    env.MONCAHIER_RELAY_MDNS_ENABLED ?? file.mdns_enabled,
+    true,
+  );
+  const mdnsHostname = normalizeRelayMdnsHostname(
+    String(
+      env.MONCAHIER_RELAY_MDNS_HOSTNAME ||
+        file.mdns_hostname ||
+        defaultRelayMdnsHostname(institutions[0]?.code || null),
+    ),
+  );
   if (!isLoopbackHost(host) && !token) {
     throw new Error("MONCAHIER_RELAY_TOKEN_required_for_lan");
   }
@@ -218,5 +249,8 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
       5,
       120,
     ) * 1000,
+    mdnsEnabled,
+    mdnsHostname,
+    mdnsUrl: relayMdnsUrl(mdnsHostname, positivePort(env.MONCAHIER_RELAY_PORT || file.port)),
   };
 }
