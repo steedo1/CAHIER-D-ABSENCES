@@ -45,6 +45,33 @@ test("la migration protège les corrections, les retries exacts et les payloads 
   assert.match(sql, /\^\[0-9a-f\]\{8\}.*\[0-9a-f\]\{12\}\$/);
 });
 
+test("la migration corrective caste absent et late vers attendance_status", async () => {
+  const [sql, historical] = await Promise.all([
+    read("supabase/migrations/20260814145815_fix_relay_attendance_status_enum.sql"),
+    read("migrations/20260809_relay_attendance_integrity_v2.sql"),
+  ]);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.apply_relay_attendance_call_v2/);
+  assert.match(sql, /\(item->>'status'\)::public\.attendance_status/);
+  assert.match(sql, /WHERE item->>'status' IN \('absent', 'late'\)/);
+  assert.doesNotMatch(sql, /^\s*item->>'status',\s*$/m);
+
+  const functionPattern = /CREATE OR REPLACE FUNCTION public\.apply_relay_attendance_call_v2[\s\S]*?\n\$\$;/;
+  const historicalFunction = historical.match(functionPattern)?.[0];
+  const correctiveFunction = sql.match(functionPattern)?.[0];
+  assert.ok(historicalFunction);
+  assert.ok(correctiveFunction);
+  const expectedFunction = historicalFunction.replace(
+    /^    item->>'status',$/m,
+    "    (item->>'status')::public.attendance_status,",
+  );
+  assert.notEqual(expectedFunction, historicalFunction);
+  const normalize = (value) => value
+    .replace(/^\s*--.*$/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  assert.equal(normalize(correctiveFunction), normalize(expectedFunction));
+});
+
 test("le synchroniseur relais accepte un rejeu exact et refuse un payload conflictuel", async () => {
   const source = await read("src/lib/relay-cloud-sync.ts");
   assert.match(source, /status !== "applied" && status !== "already_applied"/);
