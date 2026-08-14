@@ -1223,17 +1223,19 @@ export function createRelayCloudSyncAgent(
   options: SyncOptions = {},
 ) {
   let timer: ReturnType<typeof setInterval> | null = null;
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      await syncRelayOnce(config, store, options);
-    } catch {
-      // Chaque opération reste dans SQLite et sera reprise au passage suivant.
-    } finally {
-      running = false;
-    }
+  let currentRun: Promise<void> | null = null;
+  const tick = () => {
+    if (currentRun) return currentRun;
+    const run = syncRelayOnce(config, store, options)
+      .then(() => undefined)
+      .catch(() => {
+        // Chaque opération reste dans SQLite et sera reprise au passage suivant.
+      })
+      .finally(() => {
+        if (currentRun === run) currentRun = null;
+      });
+    currentRun = run;
+    return run;
   };
   return {
     start() {
@@ -1242,9 +1244,10 @@ export function createRelayCloudSyncAgent(
       timer = setInterval(() => void tick(), config.cloudSyncIntervalMs || 15_000);
       timer.unref();
     },
-    stop() {
+    async stop() {
       if (timer) clearInterval(timer);
       timer = null;
+      await currentRun;
     },
     runOnce: tick,
   };

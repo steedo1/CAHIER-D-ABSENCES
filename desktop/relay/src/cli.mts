@@ -157,14 +157,38 @@ async function main() {
     let mdnsAnnouncer: RelayMdnsAnnouncer | null = null;
     let closing = false;
 
+    const shutdown = (exitCode: 0 | 1, error?: unknown) => {
+      if (closing) return;
+      closing = true;
+      if (error !== undefined) {
+        console.error(error instanceof Error ? error.message : error);
+      }
+      const serverStopped = new Promise<void>((resolve) => {
+        if (!server.listening) {
+          resolve();
+          return;
+        }
+        server.close(() => resolve());
+      });
+      void (async () => {
+        await Promise.all([
+          cloudSyncAgent.stop(),
+          mdnsAnnouncer?.stop().catch(() => undefined),
+          serverStopped,
+        ]);
+        db.close();
+        if (exitCode === 0) {
+          process.exit(0);
+          return;
+        }
+        process.exitCode = 1;
+      })();
+    };
     server.once("error", (error) => {
-      cloudSyncAgent.stop();
-      void mdnsAnnouncer?.stop();
-      console.error(error instanceof Error ? error.message : error);
-      db.close();
-      process.exitCode = 1;
+      shutdown(1, error);
     });
     server.listen(config.port, config.host, () => {
+      if (closing) return;
       console.log(`Mon Cahier Relay écoute sur http://${config.host}:${config.port}`);
       cloudSyncAgent.start();
       if (mdnsEnabled) {
@@ -189,16 +213,7 @@ async function main() {
       }
     });
     const close = () => {
-      if (closing) return;
-      closing = true;
-      cloudSyncAgent.stop();
-      void (async () => {
-        await mdnsAnnouncer?.stop().catch(() => undefined);
-        server.close(() => {
-          db.close();
-          process.exit(0);
-        });
-      })();
+      shutdown(0);
     };
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
