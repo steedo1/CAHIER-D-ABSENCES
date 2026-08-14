@@ -2,6 +2,7 @@ import type { RelayDatabase } from "./db.mjs";
 import { getInstitutionMeta, setInstitutionMeta } from "./db.mjs";
 import {
   attendanceMarkSemanticIdentityProtected,
+  classEnrollmentSemanticIdentityProtected,
   collectionSpec,
   ENTITY_SPECS,
   materializeEntity,
@@ -337,11 +338,19 @@ function reconcileAcademicSnapshot(db: RelayDatabase, snapshot: BootstrapSnapsho
             AND local.entity_id = ${spec.table}.id
             AND local.local_dirty = 1
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM sync_outbox pending
+          WHERE pending.institution_id = ${spec.table}.institution_id
+            AND pending.entity_type = ?
+            AND pending.entity_id = ${spec.table}.id
+            AND pending.state IN ('pending', 'sending', 'blocked')
+        )
     `).run(
       snapshot.generated_at,
       snapshot.generated_at,
       snapshot.institution_id,
       collection,
+      spec.entityType,
       spec.entityType,
     );
     db.prepare(`
@@ -351,6 +360,13 @@ function reconcileAcademicSnapshot(db: RelayDatabase, snapshot: BootstrapSnapsho
         AND NOT EXISTS (
           SELECT 1 FROM academic_snapshot_entity_ids incoming
           WHERE incoming.collection = ? AND incoming.entity_id = sync_records.entity_id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM sync_outbox pending
+          WHERE pending.institution_id = sync_records.institution_id
+            AND pending.entity_type = sync_records.entity_type
+            AND pending.entity_id = sync_records.entity_id
+            AND pending.state IN ('pending', 'sending', 'blocked')
         )
     `).run(
       snapshot.generated_at,
@@ -980,6 +996,14 @@ function importWorkItem(
     (
       item.entityType === "attendance_mark" &&
       attendanceMarkSemanticIdentityProtected(
+        db,
+        snapshot.institution_id,
+        item.entityId,
+        item.row,
+      )
+    ) || (
+      item.entityType === "class_enrollment" &&
+      classEnrollmentSemanticIdentityProtected(
         db,
         snapshot.institution_id,
         item.entityId,

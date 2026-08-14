@@ -412,3 +412,135 @@ test("isolation multi-écoles, persistance après redémarrage et lecture sans I
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("class_enrollment legacy adopts the Cloud UUID transactionally", () => {
+  const db = openRelayDatabase(":memory:");
+  const legacyId = "academic-school:class-1:student-1:2026-09-01";
+  const cloudId = "3ed2c7cc-8da5-4603-a016-c56c5b118cba";
+  try {
+    const legacy = completeAcademicSnapshot(4841, "academic-4841-legacy");
+    legacy.entities.class_enrollments![0]!.id = legacyId;
+    legacy.entities.class_enrollments![0]!.official_track_code = "SERIE-A";
+    applyBootstrap(db, legacy);
+    db.prepare(`
+      INSERT INTO sync_inbox(
+        event_id, institution_id, entity_type, entity_id, action,
+        server_version, payload_json, occurred_at, applied_at
+      ) VALUES ('legacy-enrollment-event', ?, 'class_enrollment', ?, 'upsert', 0, NULL, ?, ?)
+    `).run(INSTITUTION_ID, legacyId, NOW, NOW);
+
+    const cloud = completeAcademicSnapshot(4842, "academic-4842-cloud");
+    cloud.entities.class_enrollments![0]!.id = cloudId;
+    delete cloud.entities.class_enrollments![0]!.official_track_code;
+    const result = applyBootstrap(db, cloud);
+
+    assert.equal(result.status, "applied");
+    const enrollments = db.prepare(`
+      SELECT id, official_track_code
+      FROM class_enrollments
+      WHERE institution_id = ? AND class_id = 'class-1' AND student_id = 'student-1'
+        AND start_date IS '2026-09-01' AND deleted_at IS NULL
+    `).all(INSTITUTION_ID) as Array<{ id: string; official_track_code: string | null }>;
+    assert.deepEqual(enrollments, [{ id: cloudId, official_track_code: "SERIE-A" }]);
+    assert.equal(Number((db.prepare(`
+      SELECT COUNT(*) AS count FROM sync_records
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).get(INSTITUTION_ID, legacyId) as { count: number }).count), 0);
+    assert.equal(Number((db.prepare(`
+      SELECT COUNT(*) AS count FROM sync_records
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).get(INSTITUTION_ID, cloudId) as { count: number }).count), 1);
+    assert.equal((db.prepare(`
+      SELECT entity_id FROM sync_inbox
+      WHERE institution_id = ? AND event_id = 'legacy-enrollment-event'
+    `).get(INSTITUTION_ID) as { entity_id: string }).entity_id, cloudId);
+    assert.deepEqual(db.pragma("foreign_key_check"), []);
+    assert.equal(getInstitutionMeta(db, INSTITUTION_ID, "academic_snapshot_complete"), "true");
+    assert.equal(getInstitutionMeta(db, INSTITUTION_ID, "academic_offline_ready"), "true");
+    assert.equal(getInstitutionMeta(db, INSTITUTION_ID, "academic_revision"), "4842");
+  } finally {
+    db.close();
+  }
+});
+
+test("class_enrollment NULL start_date uses explicit semantic identity", () => {
+  const db = openRelayDatabase(":memory:");
+  const legacyId = "academic-school:class-1:student-1:active";
+  const cloudId = "6d94b03c-d95d-41ee-9a16-93db169dff50";
+  try {
+    const legacy = completeAcademicSnapshot(50, "academic-50-null-legacy");
+    legacy.entities.class_enrollments![0]!.id = legacyId;
+    legacy.entities.class_enrollments![0]!.start_date = null;
+    applyBootstrap(db, legacy);
+
+    const cloud = completeAcademicSnapshot(51, "academic-51-null-cloud");
+    cloud.entities.class_enrollments![0]!.id = cloudId;
+    cloud.entities.class_enrollments![0]!.start_date = null;
+    assert.equal(applyBootstrap(db, cloud).status, "applied");
+
+    const rows = db.prepare(`
+      SELECT id FROM class_enrollments
+      WHERE institution_id = ? AND class_id = 'class-1' AND student_id = 'student-1'
+        AND start_date IS NULL AND deleted_at IS NULL
+    `).all(INSTITUTION_ID) as Array<{ id: string }>;
+    assert.deepEqual(rows, [{ id: cloudId }]);
+    assert.deepEqual(db.pragma("foreign_key_check"), []);
+  } finally {
+    db.close();
+  }
+});
+
+test("class_enrollment Cloud UUID inserts normally on a fresh database", () => {
+  const db = openRelayDatabase(":memory:");
+  const cloudId = "b911f1d4-5f24-487d-b6ee-df8bf06188b8";
+  try {
+    const snapshot = completeAcademicSnapshot(60, "academic-60-fresh");
+    snapshot.entities.class_enrollments![0]!.id = cloudId;
+    assert.equal(applyBootstrap(db, snapshot).status, "applied");
+    assert.deepEqual(db.prepare(`
+      SELECT id FROM class_enrollments
+      WHERE institution_id = ? AND class_id = 'class-1' AND student_id = 'student-1'
+    `).all(INSTITUTION_ID), [{ id: cloudId }]);
+    assert.deepEqual(db.pragma("foreign_key_check"), []);
+  } finally {
+    db.close();
+  }
+});
+
+test("class_enrollment pending outbox protects the local semantic row", () => {
+  const db = openRelayDatabase(":memory:");
+  const legacyId = "academic-school:class-1:student-1:2026-09-01";
+  const cloudId = "34945272-5cf7-4fbe-9a0e-9dfbeb52bd25";
+  try {
+    const legacy = completeAcademicSnapshot(70, "academic-70-protected-legacy");
+    legacy.entities.class_enrollments![0]!.id = legacyId;
+    applyBootstrap(db, legacy);
+    db.prepare(`
+      INSERT INTO sync_outbox(
+        operation_id, institution_id, device_id, entity_type, entity_id,
+        action, base_server_version, payload_json, occurred_at
+      ) VALUES ('pending-enrollment', ?, 'legacy-device', 'class_enrollment', ?,
+                'upsert', 0, '{"end_date":"2026-10-01"}', ?)
+    `).run(INSTITUTION_ID, legacyId, NOW);
+
+    const cloud = completeAcademicSnapshot(71, "academic-71-protected-cloud");
+    cloud.entities.class_enrollments![0]!.id = cloudId;
+    assert.equal(applyBootstrap(db, cloud).status, "applied");
+
+    assert.equal(Number((db.prepare(`
+      SELECT COUNT(*) AS count FROM class_enrollments
+      WHERE institution_id = ? AND id = ? AND deleted_at IS NULL
+    `).get(INSTITUTION_ID, legacyId) as { count: number }).count), 1);
+    assert.equal(Number((db.prepare(`
+      SELECT COUNT(*) AS count FROM class_enrollments
+      WHERE institution_id = ? AND id = ?
+    `).get(INSTITUTION_ID, cloudId) as { count: number }).count), 0);
+    assert.equal((db.prepare(`
+      SELECT deleted_at FROM sync_records
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).get(INSTITUTION_ID, legacyId) as { deleted_at: string | null }).deleted_at, null);
+    assert.deepEqual(db.pragma("foreign_key_check"), []);
+  } finally {
+    db.close();
+  }
+});

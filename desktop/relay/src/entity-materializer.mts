@@ -506,6 +506,231 @@ function attendanceMarkIdentityHasPendingWrite(
   `).get(institutionId, existingId, sessionId, studentId));
 }
 
+type ClassEnrollmentSemanticRow = {
+  id: string;
+};
+
+function classEnrollmentSemanticRows(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+) {
+  const classId = String(payload.class_id ?? "").trim();
+  const studentId = String(payload.student_id ?? "").trim();
+  if (!classId || !studentId) return [];
+  const startDate = payload.start_date === null || payload.start_date === undefined
+    ? null
+    : String(payload.start_date);
+  return db.prepare(`
+    SELECT id
+    FROM class_enrollments
+    WHERE institution_id = ?
+      AND class_id = ?
+      AND student_id = ?
+      AND start_date IS ?
+    ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END,
+             server_version DESC, updated_at DESC, id
+  `).all(
+    institutionId,
+    classId,
+    studentId,
+    startDate,
+    entityId,
+  ) as ClassEnrollmentSemanticRow[];
+}
+
+function classEnrollmentIdentityLocallyProtected(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+) {
+  return Boolean(db.prepare(`
+    SELECT 1
+    WHERE EXISTS (
+      SELECT 1
+      FROM sync_records local
+      WHERE local.institution_id = ?
+        AND local.entity_type = 'class_enrollment'
+        AND local.entity_id = ?
+        AND local.local_dirty = 1
+    ) OR EXISTS (
+      SELECT 1
+      FROM sync_outbox pending
+      WHERE pending.institution_id = ?
+        AND pending.entity_type = 'class_enrollment'
+        AND pending.entity_id = ?
+        AND pending.state IN ('pending', 'sending', 'blocked')
+    ) OR EXISTS (
+      SELECT 1
+      FROM sync_conflicts conflict
+      WHERE conflict.institution_id = ?
+        AND conflict.entity_type = 'class_enrollment'
+        AND conflict.entity_id = ?
+        AND conflict.resolved_at IS NULL
+    )
+    LIMIT 1
+  `).get(
+    institutionId,
+    entityId,
+    institutionId,
+    entityId,
+    institutionId,
+    entityId,
+  ));
+}
+
+export function classEnrollmentSemanticIdentityProtected(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+) {
+  return classEnrollmentSemanticRows(db, institutionId, entityId, payload).some(
+    (row) => row.id !== entityId && classEnrollmentIdentityLocallyProtected(
+      db,
+      institutionId,
+      row.id,
+    ),
+  );
+}
+
+function migrateClassEnrollmentSyncIdentity(
+  db: RelayDatabase,
+  institutionId: string,
+  legacyId: string,
+  canonicalId: string,
+) {
+  const canonicalSyncRecord = db.prepare(`
+    SELECT 1
+    FROM sync_records
+    WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+  `).get(institutionId, canonicalId);
+  if (canonicalSyncRecord) {
+    db.prepare(`
+      DELETE FROM sync_records
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).run(institutionId, legacyId);
+  } else {
+    db.prepare(`
+      UPDATE sync_records
+      SET entity_id = ?
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).run(canonicalId, institutionId, legacyId);
+  }
+
+  const canonicalFailure = db.prepare(`
+    SELECT 1
+    FROM sync_materialization_failures
+    WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+  `).get(institutionId, canonicalId);
+  if (canonicalFailure) {
+    db.prepare(`
+      DELETE FROM sync_materialization_failures
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).run(institutionId, legacyId);
+  } else {
+    db.prepare(`
+      UPDATE sync_materialization_failures
+      SET entity_id = ?
+      WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+    `).run(canonicalId, institutionId, legacyId);
+  }
+
+  db.prepare(`
+    UPDATE sync_inbox
+    SET entity_id = ?
+    WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+  `).run(canonicalId, institutionId, legacyId);
+  db.prepare(`
+    UPDATE sync_conflicts
+    SET entity_id = ?
+    WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+  `).run(canonicalId, institutionId, legacyId);
+  db.prepare(`
+    UPDATE audit_log
+    SET entity_id = ?
+    WHERE institution_id = ? AND entity_type = 'class_enrollment' AND entity_id = ?
+  `).run(canonicalId, institutionId, legacyId);
+}
+
+function materializeClassEnrollment(
+  db: RelayDatabase,
+  institutionId: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+  values: Record<string, unknown>,
+) {
+  const persist = db.transaction(() => {
+    const semanticRows = classEnrollmentSemanticRows(
+      db,
+      institutionId,
+      entityId,
+      payload,
+    );
+    const protectedLegacy = semanticRows.find(
+      (row) => row.id !== entityId && classEnrollmentIdentityLocallyProtected(
+        db,
+        institutionId,
+        row.id,
+      ),
+    );
+    if (protectedLegacy) {
+      throw new Error("class_enrollment_semantic_identity_locally_protected");
+    }
+
+    const canonicalExists = semanticRows.some((row) => row.id === entityId);
+    const legacyRows = semanticRows.filter((row) => row.id !== entityId);
+    if (!canonicalExists && legacyRows.length > 0) {
+      const adopted = legacyRows.shift()!;
+      db.prepare(`
+        UPDATE class_enrollments
+        SET id = ?
+        WHERE institution_id = ? AND id = ?
+      `).run(entityId, institutionId, adopted.id);
+      migrateClassEnrollmentSyncIdentity(db, institutionId, adopted.id, entityId);
+    }
+
+    for (const duplicate of legacyRows) {
+      db.prepare(`
+        UPDATE class_enrollments
+        SET end_date = COALESCE(end_date, (
+              SELECT end_date FROM class_enrollments
+              WHERE institution_id = ? AND id = ?
+            )),
+            official_track_code = COALESCE(official_track_code, (
+              SELECT official_track_code FROM class_enrollments
+              WHERE institution_id = ? AND id = ?
+            ))
+        WHERE institution_id = ? AND id = ?
+      `).run(
+        institutionId,
+        duplicate.id,
+        institutionId,
+        duplicate.id,
+        institutionId,
+        entityId,
+      );
+      migrateClassEnrollmentSyncIdentity(db, institutionId, duplicate.id, entityId);
+      db.prepare(`
+        DELETE FROM class_enrollments
+        WHERE institution_id = ? AND id = ?
+      `).run(institutionId, duplicate.id);
+    }
+
+    const columns = Object.keys(values);
+    const updates = columns
+      .filter((column) => column !== "id" && column !== "institution_id")
+      .map((column) => `${column} = excluded.${column}`);
+    db.prepare(`
+      INSERT INTO class_enrollments(${columns.join(", ")})
+      VALUES (${columns.map(() => "?").join(", ")})
+      ON CONFLICT(institution_id, id) DO UPDATE SET ${updates.join(", ")}
+    `).run(...columns.map((column) => values[column]));
+  });
+  persist();
+}
+
 export function attendanceMarkSemanticIdentityProtected(
   db: RelayDatabase,
   institutionId: string,
@@ -637,6 +862,10 @@ export function materializeEntity(
   }
   if (spec.entityType === "attendance_mark") {
     materializeAttendanceMark(db, institutionId, entityId, payload, values);
+    return;
+  }
+  if (spec.entityType === "class_enrollment") {
+    materializeClassEnrollment(db, institutionId, entityId, payload, values);
     return;
   }
 
