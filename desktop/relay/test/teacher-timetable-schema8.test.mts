@@ -32,7 +32,7 @@ type SnapshotOptions = {
 
 test("schema 8 neuf: identite Cloud composite, anciennes unicites retirees et aucune logique Finance", () => {
   const db = openRelayDatabase(":memory:");
-  assert.equal(schemaVersion(db), 8);
+  assert.equal(schemaVersion(db), 9);
   assert.deepEqual(primaryKeyColumns(db, "teacher_timetables"), ["institution_id", "id"]);
   assert.equal(hasLegacyTimetableUnique(db), false);
   assert.deepEqual(db.pragma("foreign_key_check"), []);
@@ -55,7 +55,7 @@ test("migration 7 vers 8: lignes, dirty, outbox et reference lifecycle sont pres
     schema7.close();
 
     let migrated = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     assert.equal(rowCount(migrated, "teacher_timetables"), 1);
     assert.equal(rowCount(migrated, "teacher_sessions"), 1);
     assert.equal(rowCount(migrated, "teacher_session_open_operations"), 1);
@@ -86,7 +86,7 @@ test("migration 7 vers 8: lignes, dirty, outbox et reference lifecycle sont pres
     migrated.close();
 
     migrated = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     assert.equal(Number((migrated.prepare(`
       SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8
     `).get() as { count: number }).count), 1);

@@ -292,7 +292,7 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(health.status, 200);
     const healthBody = await health.json() as any;
     assert.equal(healthBody.relay_version, "0.2.1");
-    assert.equal(healthBody.schema_version, 8);
+    assert.equal(healthBody.schema_version, 9);
     assert.equal(healthBody.protocol_version, 1);
     assert.equal(healthBody.teacher_attendance_writes_enabled, true);
     assert.equal(healthBody.snapshot_revision, 12);

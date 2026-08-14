@@ -262,7 +262,7 @@ function createSchema4(path: string) {
 
 test("le schéma 5 est neuf, rejouable et préserve une base schéma 4 peuplée", () => {
   const fresh = openRelayDatabase(":memory:");
-  assert.equal(schemaVersion(fresh), 8);
+  assert.equal(schemaVersion(fresh), 9);
   assert.ok(fresh.prepare(`
     SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'teacher_attendance_operations'
   `).get());
@@ -288,7 +288,7 @@ test("le schéma 5 est neuf, rejouable et préserve une base schéma 4 peuplée"
     schema4.close();
 
     const migrated = openRelayDatabase(path);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     const legacy = migrated.prepare(`
       SELECT protocol_version, payload_fingerprint FROM sync_outbox
       WHERE institution_id = 'inst-legacy' AND operation_id = 'legacy-op'
@@ -298,7 +298,7 @@ test("le schéma 5 est neuf, rejouable et préserve une base schéma 4 peuplée"
     migrated.close();
 
     const replayed = openRelayDatabase(path);
-    assert.equal(schemaVersion(replayed), 8);
+    assert.equal(schemaVersion(replayed), 9);
     assert.equal(Number((replayed.prepare(`
       SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 5
     `).get() as { count: number }).count), 1);
@@ -870,7 +870,7 @@ test("un redémarrage simulé conserve le reçu, l'outbox et la matérialisation
     first.close();
 
     const reopened = openRelayDatabase(path);
-    assert.equal(schemaVersion(reopened), 8);
+    assert.equal(schemaVersion(reopened), 9);
     assert.equal(count(reopened, "teacher_attendance_operations"), 1);
     assert.equal(count(reopened, "sync_outbox"), 1);
     assert.equal(count(reopened, "attendance_marks"), 1);

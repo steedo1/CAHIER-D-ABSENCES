@@ -692,7 +692,9 @@ function relayFailureDetails(
     relay_schema_version: safeRelayRevision(health?.schema_version),
     relay_protocol_version: safeRelayRevision(health?.protocol_version),
     snapshot_id: String(snapshot?.snapshot_id || "") || null,
-    expected_revision: safeRelayRevision(snapshot?.snapshot_revision),
+    expected_revision: safeRelayRevision(
+      snapshot?.academic_manifest ? snapshot?.academic_revision : snapshot?.snapshot_revision,
+    ),
     applied_revision: safeRelayRevision(result?.applied_snapshot_revision),
     rejected_entities: safeRelayRevision(result?.rejected_entities) || 0,
     source_skipped_entities: safeRelayRevision(result?.source_skipped_entities) || 0,
@@ -705,7 +707,9 @@ function relayFailureDetails(
 async function loadCompleteRelaySnapshot() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const snapshot = await cloudJson<any>("/api/admin/offline/bootstrap");
-    const snapshotRevision = safeRelayRevision(snapshot?.snapshot_revision);
+    const snapshotRevision = safeRelayRevision(
+      snapshot?.academic_manifest ? snapshot?.academic_revision : snapshot?.snapshot_revision,
+    );
     if (
       snapshot?.snapshot_completeness === "complete" &&
       snapshotRevision !== null
@@ -855,10 +859,12 @@ export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
       let appliedRevision = safeRelayRevision(result?.applied_snapshot_revision);
       let acknowledgementSource = "bootstrap_response";
       if (appliedRevision !== snapshotRevision) {
-        const verifiedRevision = await verifiedRelayScheduleRevision(institutionId);
-        if (verifiedRevision === snapshotRevision) {
-          appliedRevision = verifiedRevision;
-          acknowledgementSource = "schedule_status";
+        if (!snapshot?.academic_manifest) {
+          const verifiedRevision = await verifiedRelayScheduleRevision(institutionId);
+          if (verifiedRevision === snapshotRevision) {
+            appliedRevision = verifiedRevision;
+            acknowledgementSource = "schedule_status";
+          }
         }
       }
       if (appliedRevision === null) {

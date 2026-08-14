@@ -48,6 +48,7 @@ type CloudPullResponse =
       device_id: string;
       server_time: string;
       cloud_revision: number;
+      schedule_revision: number;
       revision_updated_at?: string | null;
     }
   | {
@@ -57,6 +58,8 @@ type CloudPullResponse =
       device_id: string;
       server_time: string;
       cloud_revision: number;
+      schedule_revision: number;
+      snapshot_scope: "academic" | "attendance_schedule";
       snapshot: Record<string, unknown>;
     };
 
@@ -593,6 +596,11 @@ function nonNegativeSafeInteger(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function storedAcademicRevision(db: RelayDatabase, institutionId: string) {
+  const raw = getInstitutionMeta(db, institutionId, "academic_revision");
+  return raw === null ? null : nonNegativeSafeInteger(raw);
+}
+
 function storedScheduleRevision(db: RelayDatabase, institutionId: string) {
   const raw = getInstitutionMeta(db, institutionId, "attendance_schedule_revision");
   return raw === null ? null : nonNegativeSafeInteger(raw);
@@ -605,12 +613,13 @@ function isCloudPullResponse(
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   const revision = nonNegativeSafeInteger(row.cloud_revision);
+  const scheduleRevision = nonNegativeSafeInteger(row.schedule_revision);
   if (
     row.protocol_version !== SYNC_PROTOCOL_VERSION ||
     row.device_id !== expectedDeviceId ||
     typeof row.institution_id !== "string" ||
     !row.institution_id.trim() ||
-    revision === null ||
+    revision === null || scheduleRevision === null ||
     !Number.isFinite(Date.parse(String(row.server_time || "")))
   ) {
     return false;
@@ -621,9 +630,14 @@ function isCloudPullResponse(
     return false;
   }
   const snapshot = row.snapshot as Record<string, unknown>;
-  return snapshot.institution_id === row.institution_id &&
-    nonNegativeSafeInteger(snapshot.snapshot_revision) === revision &&
-    snapshot.snapshot_completeness === "complete";
+  if (snapshot.institution_id !== row.institution_id || snapshot.snapshot_completeness !== "complete") {
+    return false;
+  }
+  return row.snapshot_scope === "academic"
+    ? nonNegativeSafeInteger(snapshot.academic_revision) === revision
+    : row.snapshot_scope === "attendance_schedule" &&
+      nonNegativeSafeInteger(snapshot.snapshot_revision) === scheduleRevision &&
+      snapshot.academic_manifest === undefined;
 }
 
 function writePullSuccess(
@@ -679,11 +693,17 @@ async function pullInstitutionSnapshot(
   }
 
   const knownRevision = input.localInstitutionId
+    ? storedAcademicRevision(store.db, input.localInstitutionId)
+    : null;
+  const knownScheduleRevision = input.localInstitutionId
     ? storedScheduleRevision(store.db, input.localInstitutionId)
     : null;
   const endpoint = new URL(cloud.pullEndpoint);
   if (knownRevision !== null) {
     endpoint.searchParams.set("known_revision", String(knownRevision));
+  }
+  if (knownScheduleRevision !== null) {
+    endpoint.searchParams.set("known_schedule_revision", String(knownScheduleRevision));
   }
 
   const attemptAt = now();
@@ -752,7 +772,9 @@ async function pullInstitutionSnapshot(
     const bootstrapResult = store.bootstrap(snapshot);
     if (
       (bootstrapResult.status !== "applied" && bootstrapResult.status !== "duplicate") ||
-      bootstrapResult.applied_snapshot_revision !== body.cloud_revision
+      bootstrapResult.applied_snapshot_revision !== (
+        body.snapshot_scope === "academic" ? body.cloud_revision : body.schedule_revision
+      )
     ) {
       writePullError(store.db, institutionId, attemptAt, "cloud_pull_snapshot_not_acknowledged");
       return { status: "retryable" as const, error: "cloud_pull_snapshot_not_acknowledged" };

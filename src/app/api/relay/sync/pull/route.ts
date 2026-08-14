@@ -1,7 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { buildRelayBootstrapSnapshot } from "@/lib/relay-bootstrap-snapshot";
+import {
+  buildRelayBootstrapSnapshot,
+  buildRelayScheduleSnapshot,
+} from "@/lib/relay-bootstrap-snapshot";
 import { RELAY_SYNC_PROTOCOL_VERSION } from "@/lib/relay-cloud-sync";
 
 export const runtime = "nodejs";
@@ -36,20 +39,22 @@ function secureEqualHex(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function knownRevision(request: NextRequest) {
-  const raw = new URL(request.url).searchParams.get("known_revision");
+function knownRevision(request: NextRequest, parameter: string) {
+  const raw = new URL(request.url).searchParams.get(parameter);
   if (raw === null || raw === "") return null;
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error("known_revision_invalid");
+    throw new Error(`${parameter}_invalid`);
   }
   return value;
 }
 
 export async function GET(request: NextRequest) {
   let known: number | null;
+  let knownSchedule: number | null;
   try {
-    known = knownRevision(request);
+    known = knownRevision(request, "known_revision");
+    knownSchedule = knownRevision(request, "known_schedule_revision");
   } catch (error) {
     return noStore({ error: error instanceof Error ? error.message : "invalid_request" }, 400);
   }
@@ -98,15 +103,35 @@ export async function GET(request: NextRequest) {
   }
 
   const { data: revisionRow, error: revisionError } = await service
+    .from("academic_revisions")
+    .select("revision,updated_at")
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+  if (revisionError) return noStore({ error: "academic_revision_unavailable" }, 503);
+
+  const revision = Number((revisionRow as any)?.revision ?? 0);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    return noStore({ error: "academic_revision_invalid" }, 503);
+  }
+
+  const { data: scheduleRevisionRow, error: scheduleRevisionError } = await service
     .from("attendance_schedule_revisions")
     .select("revision,updated_at")
     .eq("institution_id", institutionId)
     .maybeSingle();
-  if (revisionError) return noStore({ error: "schedule_revision_unavailable" }, 503);
-
-  const revision = Number((revisionRow as any)?.revision ?? 0);
-  if (!Number.isSafeInteger(revision) || revision < 0) {
+  if (scheduleRevisionError) return noStore({ error: "schedule_revision_unavailable" }, 503);
+  const scheduleRevision = Number((scheduleRevisionRow as any)?.revision ?? 0);
+  if (!Number.isSafeInteger(scheduleRevision) || scheduleRevision < 0) {
     return noStore({ error: "schedule_revision_invalid" }, 503);
+  }
+  if (knownSchedule !== null && knownSchedule > scheduleRevision) {
+    return noStore({
+      error: "relay_schedule_revision_ahead",
+      institution_id: institutionId,
+      device_id: deviceId,
+      known_schedule_revision: knownSchedule,
+      cloud_schedule_revision: scheduleRevision,
+    }, 409);
   }
   if (known !== null && known > revision) {
     return noStore({
@@ -126,7 +151,10 @@ export async function GET(request: NextRequest) {
       .eq("id", deviceId);
   };
 
-  if (known !== null && known === revision) {
+  if (
+    known !== null && known === revision &&
+    knownSchedule !== null && knownSchedule === scheduleRevision
+  ) {
     await touchDevice();
     return noStore({
       protocol_version: RELAY_SYNC_PROTOCOL_VERSION,
@@ -135,12 +163,19 @@ export async function GET(request: NextRequest) {
       device_id: deviceId,
       server_time: serverTime,
       cloud_revision: revision,
+      schedule_revision: scheduleRevision,
       revision_updated_at: String((revisionRow as any)?.updated_at || serverTime),
     });
   }
 
   try {
-    const snapshot = await buildRelayBootstrapSnapshot(service, institutionId);
+    const academicChanged = known === null || known !== revision;
+    const scheduleChanged = knownSchedule === null || knownSchedule !== scheduleRevision;
+    const snapshot = academicChanged
+      ? await buildRelayBootstrapSnapshot(service, institutionId, {
+        includeSchedule: scheduleChanged,
+      })
+      : await buildRelayScheduleSnapshot(service, institutionId);
     if (
       snapshot.snapshot_completeness !== "complete" ||
       !Number.isSafeInteger(Number(snapshot.snapshot_revision))
@@ -149,7 +184,7 @@ export async function GET(request: NextRequest) {
         error: "bootstrap_snapshot_not_complete",
         institution_id: institutionId,
         device_id: deviceId,
-        cloud_revision: Number(snapshot.snapshot_revision ?? revision),
+        cloud_revision: Number(snapshot.academic_revision ?? revision),
         diagnostics: snapshot.diagnostics,
       }, 409);
     }
@@ -160,7 +195,9 @@ export async function GET(request: NextRequest) {
       institution_id: institutionId,
       device_id: deviceId,
       server_time: serverTime,
-      cloud_revision: Number(snapshot.snapshot_revision),
+      cloud_revision: academicChanged ? Number(snapshot.academic_revision) : revision,
+      schedule_revision: Number(snapshot.snapshot_revision),
+      snapshot_scope: academicChanged ? "academic" : "attendance_schedule",
       snapshot,
     });
   } catch (error) {

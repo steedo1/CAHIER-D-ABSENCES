@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { requeueTimetableReplacementChain, syncRelayOnce } from "../src/cloud-sync.mjs";
 import type { RelayConfig } from "../src/config.mjs";
-import { getInstitutionMeta, openRelayDatabase } from "../src/db.mjs";
+import { getInstitutionMeta, openRelayDatabase, setInstitutionMeta } from "../src/db.mjs";
 import { RelayStore } from "../src/store.mjs";
 import { SYNC_PROTOCOL_VERSION } from "../src/types.mjs";
 
@@ -44,7 +44,7 @@ function bootstrapRevision(
   revision: number,
   snapshotId = `snapshot-${revision}`,
 ) {
-  return store.bootstrap({
+  const result = store.bootstrap({
     protocol_version: 1,
     snapshot_id: snapshotId,
     institution_id: "inst-1",
@@ -60,6 +60,8 @@ function bootstrapRevision(
     entities: {},
     diagnostics: { skipped_count: 0 },
   });
+  setInstitutionMeta(store.db, "inst-1", "academic_revision", String(revision));
+  return result;
 }
 
 function setup() {
@@ -618,6 +620,7 @@ test("le relais vérifie automatiquement la révision Cloud sans retélécharger
         device_id: DEVICE_ID,
         server_time: "2026-07-29T10:00:00.500Z",
         cloud_revision: 7,
+        schedule_revision: 7,
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -627,6 +630,7 @@ test("le relais vérifie automatiquement la révision Cloud sans retélécharger
 
   assert.deepEqual(requests.map((row) => row.method), ["GET"]);
   assert.match(requests[0]!.url, /known_revision=7/);
+  assert.match(requests[0]!.url, /known_schedule_revision=7/);
   assert.equal(result.pull_attempted_institutions, 1);
   assert.equal(result.pull_not_modified, 1);
   assert.equal(result.pull_snapshots_applied, 0);
@@ -656,11 +660,14 @@ test("un snapshot Cloud plus récent est appliqué atomiquement par l'agent auto
         device_id: DEVICE_ID,
         server_time: "2026-07-29T10:05:00.500Z",
         cloud_revision: 8,
+        schedule_revision: 8,
+        snapshot_scope: "academic",
         snapshot: {
           protocol_version: 1,
           snapshot_id: "snapshot-cloud-8",
           institution_id: "inst-1",
           snapshot_revision: 8,
+          academic_revision: 8,
           snapshot_completeness: "complete",
           schedule_manifest: { class_teachers: [] },
           generated_at: "2026-07-29T10:04:59.000Z",
@@ -691,6 +698,47 @@ test("un snapshot Cloud plus récent est appliqué atomiquement par l'agent auto
   ).get() as { name: string };
   assert.equal(institution.name, "École test actualisée");
   assert.equal(store.status().institutions[0]?.schedule_revision, 8);
+  db.close();
+});
+
+test("un changement planning seul applique un snapshot sans manifeste académique", async () => {
+  const { db, store } = setup();
+  bootstrapRevision(store, 7);
+
+  const result = await syncRelayOnce(configWithPull(), store, {
+    now: () => new Date("2026-07-29T10:07:00.000Z"),
+    fetchImpl: async (input) => {
+      assert.match(String(input), /known_revision=7/);
+      assert.match(String(input), /known_schedule_revision=7/);
+      return new Response(JSON.stringify({
+        protocol_version: 1,
+        status: "snapshot",
+        institution_id: "inst-1",
+        device_id: DEVICE_ID,
+        server_time: "2026-07-29T10:07:00.500Z",
+        cloud_revision: 7,
+        schedule_revision: 8,
+        snapshot_scope: "attendance_schedule",
+        snapshot: {
+          protocol_version: 1,
+          snapshot_id: "snapshot-schedule-8",
+          institution_id: "inst-1",
+          snapshot_revision: 8,
+          snapshot_completeness: "complete",
+          schedule_manifest: { class_teachers: [] },
+          generated_at: "2026-07-29T10:06:59.000Z",
+          cursor: "2026-07-29T10:06:59.000Z",
+          institution: { id: "inst-1", name: "École test", code: "SCH-000001" },
+          entities: { teacher_sessions: [], attendance_marks: [] },
+          diagnostics: { skipped_count: 0, snapshot_scope: "attendance_schedule" },
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+
+  assert.equal(result.pull_snapshots_applied, 1);
+  assert.equal(getInstitutionMeta(db, "inst-1", "academic_revision"), "7");
+  assert.equal(getInstitutionMeta(db, "inst-1", "attendance_schedule_revision"), "8");
   db.close();
 });
 
@@ -730,6 +778,7 @@ test("le cycle pousse les écritures locales avant de récupérer le Cloud", asy
         device_id: DEVICE_ID,
         server_time: "2026-07-29T10:10:00.500Z",
         cloud_revision: 3,
+        schedule_revision: 3,
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -786,11 +835,14 @@ test("un relais configuré mais vide reçoit son premier snapshot sans bootstrap
         device_id: DEVICE_ID,
         server_time: "2026-07-29T10:20:00.500Z",
         cloud_revision: 1,
+        schedule_revision: 1,
+        snapshot_scope: "academic",
         snapshot: {
           protocol_version: 1,
           snapshot_id: "snapshot-initial-cloud-1",
           institution_id: "inst-1",
           snapshot_revision: 1,
+          academic_revision: 1,
           snapshot_completeness: "complete",
           schedule_manifest: { class_teachers: [] },
           generated_at: "2026-07-29T10:19:59.000Z",

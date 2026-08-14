@@ -392,6 +392,51 @@ export class RelayStore {
       const value = Number(raw);
       return Number.isSafeInteger(value) && value >= 0 ? value : null;
     };
+    const academicStatus = (institutionId: string) => {
+      const revisionRaw = getInstitutionMeta(this.db, institutionId, "academic_revision");
+      const revisionValue = revisionRaw === null ? null : Number(revisionRaw);
+      const revision = Number.isSafeInteger(revisionValue) && Number(revisionValue) >= 0
+        ? Number(revisionValue)
+        : null;
+      const snapshotComplete =
+        getInstitutionMeta(this.db, institutionId, "academic_snapshot_complete") === "true";
+      const ready =
+        getInstitutionMeta(this.db, institutionId, "academic_offline_ready") === "true" &&
+        snapshotComplete &&
+        revision !== null;
+      const academicCount = (table: string) => scopedCount(
+        `SELECT COUNT(*) AS count FROM ${table} WHERE institution_id = ? AND deleted_at IS NULL`,
+        institutionId,
+      );
+      const teachers = Number((this.db.prepare(`
+        SELECT COUNT(DISTINCT teacher_id) AS count
+        FROM (
+          SELECT teacher_id FROM class_teachers
+          WHERE institution_id = ? AND deleted_at IS NULL
+          UNION
+          SELECT teacher_id FROM teacher_subjects
+          WHERE institution_id = ? AND deleted_at IS NULL
+        )
+      `).get(institutionId, institutionId) as { count: number }).count || 0);
+      return {
+        ready,
+        revision,
+        snapshot_complete: snapshotComplete,
+        last_sync_at: getInstitutionMeta(this.db, institutionId, "last_academic_sync_at"),
+        required_collections_complete:
+          ready && getInstitutionMeta(this.db, institutionId, "academic_required_collections") !== null,
+        counts: {
+          classes: academicCount("classes"),
+          students: academicCount("students"),
+          teachers,
+          subjects: academicCount("subjects"),
+          grading_periods: academicCount("grade_periods"),
+          assessments: academicCount("grade_evaluations"),
+          grades: academicCount("student_grades"),
+          published_scores: academicCount("grade_published_scores"),
+        },
+      };
+    };
     return {
       ok: true,
       schema_version: schemaVersion(this.db),
@@ -409,6 +454,7 @@ export class RelayStore {
         name: institution.name,
         code: institution.code,
         schedule_revision: scheduleRevision(institution.id),
+        academic: academicStatus(institution.id),
         last_cloud_sync_at: getInstitutionMeta(this.db, institution.id, "last_cloud_sync_at"),
         ...cloudPushState(institution.id),
         last_cloud_pull_at: getInstitutionMeta(this.db, institution.id, "last_cloud_pull_at"),

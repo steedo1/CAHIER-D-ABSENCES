@@ -18,6 +18,29 @@ export const SYNC_ENTITY_TYPES = [
   "grade_period",
   "grade_evaluation",
   "student_grade",
+  "class_teacher",
+  "educator_class_assignment",
+  "institution_level_subject",
+  "institution_subject_coeff",
+  "institution_subject_grade_policy",
+  "grade_subject_component",
+  "grade_published_score",
+  "grade_publication_event",
+  "grade_adjustment",
+  "grade_evaluation_lock",
+  "institution_grade_publication_setting",
+  "bulletin_subject_group",
+  "bulletin_subject_group_item",
+  "bulletin_nc_override",
+  "core_subject_weight",
+  "institution_conduct_policy",
+  "conduct_setting",
+  "conduct_event",
+  "conduct_penalty",
+  "student_penalty",
+  "conduct_average_override",
+  "conduct_rubric_override",
+  "teacher_signature",
   "textbook_assignment",
   "textbook_item",
   "textbook_session",
@@ -84,6 +107,23 @@ export type RelayStatus = {
     name: string;
     code: string | null;
     schedule_revision: number | null;
+    academic: {
+      ready: boolean;
+      revision: number | null;
+      snapshot_complete: boolean;
+      last_sync_at: string | null;
+      required_collections_complete: boolean;
+      counts: {
+        classes: number;
+        students: number;
+        teachers: number;
+        subjects: number;
+        grading_periods: number;
+        assessments: number;
+        grades: number;
+        published_scores: number;
+      };
+    };
     last_cloud_sync_at: string | null;
     last_cloud_sync_error_at: string | null;
     last_cloud_sync_error: string | null;

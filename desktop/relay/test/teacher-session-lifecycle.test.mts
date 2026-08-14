@@ -739,7 +739,7 @@ test("la migration 6 vers 7 est atomique, rejouable et refuse les doublons", () 
     );
     schema6.close();
     let migrated = openRelayDatabase(path);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     const backfilled = migrated.prepare(`
       SELECT session_date, session_state, scheduled_start_at, scheduled_end_at,
              grace_expires_at

@@ -163,7 +163,7 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
     assert.equal(validBody.institution_id, "inst-1");
     assert.ok(Number.isFinite(Date.parse(String(validBody.relay_time))));
     assert.equal(validBody.relay_version, "0.2.1");
-    assert.equal(validBody.schema_version, 8);
+    assert.equal(validBody.schema_version, 9);
     assert.equal(validBody.protocol_version, 1);
     assert.equal(validBody.teacher_attendance_writes_enabled, false);
     assert.equal(validBody.actor_kind, "teacher");

@@ -78,13 +78,20 @@ type BootstrapSnapshot = {
   institution_id: string;
   generated_at: string;
   snapshot_revision: number | null;
+  academic_revision: number | null;
   snapshot_completeness: "complete" | "partial";
+  academic_manifest: AcademicManifest | null;
   schedule_manifest: Record<string, unknown>;
   cursor: string | null;
   institution: Record<string, unknown>;
   entities: Record<string, Record<string, unknown>[]>;
   diagnostics: Record<string, unknown>;
   inputDiagnostics: BootstrapDiagnostic[];
+};
+
+type AcademicManifest = {
+  required_collections: string[];
+  collection_counts: Record<string, number>;
 };
 
 type DependencyRule = {
@@ -138,6 +145,68 @@ const DEPENDENCY_RULES: Record<string, readonly DependencyRule[]> = {
     { field: "evaluation_id", collection: "grade_evaluations" },
     { field: "student_id", collection: "students" },
   ],
+  class_teachers: [
+    { field: "class_id", collection: "classes" },
+    { field: "subject_id", collection: "subjects", optional: true },
+    { field: "teacher_id", collection: "profiles" },
+  ],
+  educator_class_assignments: [
+    { field: "profile_id", collection: "profiles" },
+    { field: "class_id", collection: "classes", optional: true },
+  ],
+  institution_level_subjects: [{ field: "subject_id", collection: "subjects" }],
+  institution_subject_coeffs: [{ field: "subject_id", collection: "subjects" }],
+  institution_subject_grade_policies: [{ field: "subject_id", collection: "subjects" }],
+  grade_subject_components: [{ field: "subject_id", collection: "subjects" }],
+  grade_published_scores: [
+    { field: "class_id", collection: "classes" },
+    { field: "evaluation_id", collection: "grade_evaluations" },
+    { field: "student_id", collection: "students" },
+    { field: "subject_id", collection: "subjects", optional: true },
+  ],
+  grade_publication_events: [{ field: "evaluation_id", collection: "grade_evaluations" }],
+  grade_adjustments: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+    { field: "subject_id", collection: "subjects", optional: true },
+  ],
+  grade_evaluation_locks: [
+    { field: "evaluation_id", collection: "grade_evaluations" },
+    { field: "class_id", collection: "classes" },
+  ],
+  bulletin_subject_group_items: [
+    { field: "group_id", collection: "bulletin_subject_groups" },
+    { field: "subject_id", collection: "subjects", optional: true },
+  ],
+  bulletin_nc_overrides: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+  ],
+  core_subject_weights: [{ field: "subject_id", collection: "subjects" }],
+  conduct_events: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+  ],
+  conduct_penalties: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+    { field: "subject_id", collection: "subjects", optional: true },
+  ],
+  student_penalties: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+    { field: "teacher_id", collection: "profiles" },
+    { field: "subject_id", collection: "subjects", optional: true },
+  ],
+  conduct_average_overrides: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+  ],
+  conduct_rubric_overrides: [
+    { field: "class_id", collection: "classes" },
+    { field: "student_id", collection: "students" },
+  ],
+  teacher_signatures: [{ field: "teacher_id", collection: "profiles" }],
   textbook_assignments: [
     { field: "class_id", collection: "classes" },
     { field: "subject_id", collection: "subjects" },
@@ -157,6 +226,42 @@ const DEPENDENCY_RULES: Record<string, readonly DependencyRule[]> = {
 };
 
 const FORBIDDEN_COLLECTION = /finance|payment|receipt|cash|payroll|expense|budget|charge|debt/i;
+export const ACADEMIC_REQUIRED_COLLECTIONS = [
+  "academic_years",
+  "profiles",
+  "user_roles",
+  "classes",
+  "subjects",
+  "teacher_subjects",
+  "class_teachers",
+  "educator_class_assignments",
+  "students",
+  "class_enrollments",
+  "grade_periods",
+  "institution_level_subjects",
+  "institution_subject_coeffs",
+  "institution_subject_grade_policies",
+  "grade_subject_components",
+  "grade_evaluations",
+  "student_grades",
+  "grade_published_scores",
+  "grade_publication_events",
+  "grade_adjustments",
+  "grade_evaluation_locks",
+  "institution_grade_publication_settings",
+  "bulletin_subject_groups",
+  "bulletin_subject_group_items",
+  "bulletin_nc_overrides",
+  "core_subject_weights",
+  "institution_conduct_policies",
+  "conduct_settings",
+  "conduct_events",
+  "conduct_penalties",
+  "student_penalties",
+  "conduct_average_overrides",
+  "conduct_rubric_overrides",
+  "teacher_signatures",
+] as const;
 const TIMETABLE_AUTHORITATIVE_COLLECTIONS = [
   "teacher_timetables",
   "institution_periods",
@@ -167,8 +272,100 @@ const TIMETABLE_AUTHORITATIVE_COLLECTIONS = [
   "user_roles",
 ] as const;
 
+function assertAcademicSnapshotIsComplete(snapshot: BootstrapSnapshot) {
+  const manifest = snapshot.academic_manifest;
+  if (!manifest) return;
+  if (
+    snapshot.snapshot_completeness !== "complete" ||
+    snapshot.snapshot_revision === null ||
+    snapshot.inputDiagnostics.length > 0
+  ) {
+    throw new Error("academic_snapshot_incomplete");
+  }
+  const declared = new Set(manifest.required_collections);
+  for (const collection of ACADEMIC_REQUIRED_COLLECTIONS) {
+    if (!declared.has(collection)) {
+      throw new Error(`academic_snapshot_required_collection_missing:${collection}`);
+    }
+    const rows = snapshot.entities[collection];
+    if (!Array.isArray(rows)) {
+      throw new Error(`academic_snapshot_collection_missing:${collection}`);
+    }
+    if (manifest.collection_counts[collection] !== rows.length) {
+      throw new Error(`academic_snapshot_collection_count_mismatch:${collection}`);
+    }
+  }
+}
+
+function reconcileAcademicSnapshot(db: RelayDatabase, snapshot: BootstrapSnapshot) {
+  const manifest = snapshot.academic_manifest;
+  if (!manifest) return;
+  db.exec(`
+    CREATE TEMP TABLE IF NOT EXISTS academic_snapshot_entity_ids (
+      collection TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      PRIMARY KEY (collection, entity_id)
+    ) WITHOUT ROWID;
+    DELETE FROM academic_snapshot_entity_ids;
+  `);
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO academic_snapshot_entity_ids(collection, entity_id)
+    VALUES (?, ?)
+  `);
+  for (const collection of ACADEMIC_REQUIRED_COLLECTIONS) {
+    for (const row of snapshot.entities[collection] || []) {
+      insert.run(collection, requiredText(row.id, `${collection}.id`));
+    }
+  }
+  const specByCollection = new Map(ENTITY_SPECS.map((spec) => [spec.collection, spec]));
+  for (const collection of ACADEMIC_REQUIRED_COLLECTIONS) {
+    const spec = specByCollection.get(collection);
+    if (!spec) throw new Error(`academic_snapshot_collection_unsupported:${collection}`);
+    db.prepare(`
+      UPDATE ${spec.table}
+      SET deleted_at = ?, updated_at = ?
+      WHERE institution_id = ?
+        AND deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM academic_snapshot_entity_ids incoming
+          WHERE incoming.collection = ? AND incoming.entity_id = ${spec.table}.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM sync_records local
+          WHERE local.institution_id = ${spec.table}.institution_id
+            AND local.entity_type = ?
+            AND local.entity_id = ${spec.table}.id
+            AND local.local_dirty = 1
+        )
+    `).run(
+      snapshot.generated_at,
+      snapshot.generated_at,
+      snapshot.institution_id,
+      collection,
+      spec.entityType,
+    );
+    db.prepare(`
+      UPDATE sync_records
+      SET deleted_at = ?, updated_at = ?
+      WHERE institution_id = ? AND entity_type = ? AND local_dirty = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM academic_snapshot_entity_ids incoming
+          WHERE incoming.collection = ? AND incoming.entity_id = sync_records.entity_id
+        )
+    `).run(
+      snapshot.generated_at,
+      snapshot.generated_at,
+      snapshot.institution_id,
+      spec.entityType,
+      collection,
+    );
+  }
+  db.exec("DELETE FROM academic_snapshot_entity_ids");
+}
+
 export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult {
   const snapshot = parseBootstrapSnapshot(raw);
+  assertAcademicSnapshotIsComplete(snapshot);
   const existing = db.prepare(`
     SELECT completed_at, status, imported_entities, preserved_local_entities,
            deferred_entities, rejected_entities, collections_json, diagnostics_json,
@@ -190,6 +387,9 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       snapshot.diagnostics.skipped_count ?? 0,
       "diagnostics.skipped_count",
     );
+    if (snapshot.academic_manifest && sourceSkippedEntities > 0) {
+      throw new Error("academic_snapshot_source_incomplete");
+    }
 
     assertInstitutionIdentityCompatible(db, snapshot);
     const institutionPayload = {
@@ -290,6 +490,11 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
             preserved += reconciliation.preserved;
           }
         } else {
+          if (snapshot.academic_manifest) {
+            throw new Error(
+              `academic_snapshot_materialization_failed:${item.collection}:${item.entityId}`,
+            );
+          }
           rejected += 1;
           diagnostics.push(outcome.diagnostic);
         }
@@ -300,6 +505,11 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
     }
 
     for (const item of remaining) {
+      if (snapshot.academic_manifest) {
+        throw new Error(
+          `academic_snapshot_dependency_missing:${item.collection}:${item.entityId}`,
+        );
+      }
       const missing = missingDependencies(item, available);
       const diagnosticRows = missing.length > 0
         ? missing.map((dependency) => ({
@@ -370,6 +580,9 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       snapshot.snapshot_completeness === "complete" &&
       snapshot.snapshot_revision !== null &&
       !partial;
+    if (snapshot.academic_manifest && !completeSnapshotApplied) {
+      throw new Error("academic_snapshot_not_applied_atomically");
+    }
     if (completeSnapshotApplied) {
       setInstitutionMeta(
         db,
@@ -389,6 +602,29 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
         "attendance_schedule_generated_at",
         snapshot.generated_at,
       );
+      if (snapshot.academic_manifest) {
+        reconcileAcademicSnapshot(db, snapshot);
+        setInstitutionMeta(
+          db,
+          snapshot.institution_id,
+          "academic_revision",
+          String(snapshot.academic_revision),
+        );
+        setInstitutionMeta(db, snapshot.institution_id, "academic_snapshot_complete", "true");
+        setInstitutionMeta(db, snapshot.institution_id, "academic_offline_ready", "true");
+        setInstitutionMeta(
+          db,
+          snapshot.institution_id,
+          "academic_required_collections",
+          canonicalJson(snapshot.academic_manifest.required_collections),
+        );
+        setInstitutionMeta(
+          db,
+          snapshot.institution_id,
+          "last_academic_sync_at",
+          snapshot.generated_at,
+        );
+      }
     }
     const storedStatus = partial ? "partial" : "completed";
     const resultStatus: BootstrapResult["status"] = partial ? "partial" : "applied";
@@ -450,8 +686,10 @@ export function applyBootstrap(db: RelayDatabase, raw: unknown): BootstrapResult
       snapshot_revision: snapshot.snapshot_revision,
       snapshot_completeness: snapshot.snapshot_completeness,
       applied_snapshot_revision: completeSnapshotApplied
-        ? snapshot.snapshot_revision
-        : storedScheduleRevision(db, snapshot.institution_id),
+        ? (snapshot.academic_manifest
+          ? snapshot.academic_revision
+          : snapshot.snapshot_revision)
+        : storedAppliedRevision(db, snapshot),
       materialization_failure_counters: materializationFailureCounters,
     };
   })();
@@ -490,10 +728,7 @@ function duplicateResult(
     completed_at: existing.completed_at,
     snapshot_revision: snapshot.snapshot_revision,
     snapshot_completeness: snapshot.snapshot_completeness,
-    applied_snapshot_revision: storedScheduleRevision(
-      db,
-      snapshot.institution_id,
-    ),
+    applied_snapshot_revision: storedAppliedRevision(db, snapshot),
     materialization_failure_counters: storedMaterializationFailureCounters(
       db,
       snapshot.institution_id,
@@ -511,6 +746,19 @@ function storedScheduleRevision(db: RelayDatabase, institutionId: string) {
   if (value === null) return null;
   const revision = Number(value);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function storedAcademicRevision(db: RelayDatabase, institutionId: string) {
+  const value = getInstitutionMeta(db, institutionId, "academic_revision");
+  if (value === null) return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function storedAppliedRevision(db: RelayDatabase, snapshot: BootstrapSnapshot) {
+  return snapshot.academic_manifest
+    ? storedAcademicRevision(db, snapshot.institution_id)
+    : storedScheduleRevision(db, snapshot.institution_id);
 }
 
 function emptyMaterializationFailureCounters(): MaterializationFailureCounters {
@@ -1324,6 +1572,33 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
   if (snapshotCompleteness === "complete" && snapshotRevision === null) {
     throw new Error("snapshot_revision_required_for_complete_snapshot");
   }
+  let academicManifest: AcademicManifest | null = null;
+  let academicRevision: number | null = null;
+  if (root.academic_manifest !== undefined && root.academic_manifest !== null) {
+    const rawManifest = record(root.academic_manifest, "academic_manifest");
+    if (!Array.isArray(rawManifest.required_collections)) {
+      throw new Error("academic_manifest.required_collections_invalid");
+    }
+    const requiredCollections = rawManifest.required_collections.map((value, index) =>
+      requiredText(value, `academic_manifest.required_collections[${index}]`)
+    );
+    if (new Set(requiredCollections).size !== requiredCollections.length) {
+      throw new Error("academic_manifest.required_collections_duplicate");
+    }
+    const rawCounts = record(rawManifest.collection_counts, "academic_manifest.collection_counts");
+    const collectionCounts: Record<string, number> = {};
+    for (const [collection, value] of Object.entries(rawCounts)) {
+      collectionCounts[collection] = nonNegativeInteger(
+        value,
+        `academic_manifest.collection_counts.${collection}`,
+      );
+    }
+    academicRevision = nonNegativeInteger(root.academic_revision, "academic_revision");
+    academicManifest = {
+      required_collections: requiredCollections,
+      collection_counts: collectionCounts,
+    };
+  }
   const cursor = root.cursor === null || root.cursor === undefined
     ? null
     : requiredText(root.cursor, "cursor");
@@ -1373,7 +1648,9 @@ function parseBootstrapSnapshot(raw: unknown): BootstrapSnapshot {
     institution_id: institutionId,
     generated_at: generatedAt,
     snapshot_revision: snapshotRevision,
+    academic_revision: academicRevision,
     snapshot_completeness: snapshotCompleteness,
+    academic_manifest: academicManifest,
     schedule_manifest: scheduleManifest,
     cursor,
     institution,

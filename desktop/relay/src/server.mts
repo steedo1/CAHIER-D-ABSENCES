@@ -60,6 +60,7 @@ export function createRelayServer(
         maintainTeacherAttendanceSessions(store.db, options.now?.() ?? new Date());
       }
       if (request.method === "GET" && url.pathname === "/health") {
+        const relayStatus = store.status();
         const institutionIds = store.db.prepare(`
           SELECT id FROM institutions WHERE deleted_at IS NULL ORDER BY id
         `).all() as Array<{ id: string }>;
@@ -81,6 +82,16 @@ export function createRelayServer(
             config.teacherAttendanceWritesEnabled === true,
           ),
           ...scoped,
+          academic:
+            relayStatus.institutions.length === 1
+              ? relayStatus.institutions[0]!.academic
+              : {
+                  ready: false,
+                  revision: null,
+                  snapshot_complete: false,
+                  last_sync_at: null,
+                  required_collections_complete: false,
+                },
           relay_period: null,
         });
       }

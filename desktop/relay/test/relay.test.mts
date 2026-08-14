@@ -1085,7 +1085,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma courant san
     legacy.close();
 
     let db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 8);
+    assert.equal(schemaVersion(db), 9);
     assert.equal(profileName(db, "inst-legacy", "profile-legacy"), "Mme Legacy");
     assert.equal(pendingOperationCount(db, "inst-legacy", "operation-legacy"), 1);
     assert.deepEqual(primaryKeyColumns(db, "profiles"), ["institution_id", "id"]);
@@ -1099,7 +1099,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma courant san
     db.close();
 
     db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 8);
+    assert.equal(schemaVersion(db), 9);
     assert.equal(String((db.prepare(`
       SELECT applied_at FROM schema_migrations WHERE version = 4
     `).get() as { applied_at: string }).applied_at), appliedAt);
@@ -1111,7 +1111,7 @@ test("une base schéma 3 peuplée migre atomiquement vers le schéma courant san
     db.close();
 
     db = openRelayDatabase(databasePath);
-    assert.equal(schemaVersion(db), 8);
+    assert.equal(schemaVersion(db), 9);
     assert.equal(String(db.pragma("integrity_check", { simple: true })), "ok");
     db.close();
   } finally {

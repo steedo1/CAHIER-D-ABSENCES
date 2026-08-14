@@ -246,7 +246,7 @@ function postOpen(url: string, body: unknown, token?: string) {
 
 test("le schéma 6 est neuf, migre une base schéma 5 peuplée et ne se rejoue pas", () => {
   const fresh = openRelayDatabase(":memory:");
-  assert.equal(schemaVersion(fresh), 8);
+  assert.equal(schemaVersion(fresh), 9);
   assert.ok(fresh.prepare(`
     SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'teacher_session_open_operations'
   `).get());
@@ -273,14 +273,14 @@ test("le schéma 6 est neuf, migre une base schéma 5 peuplée et ne se rejoue p
     schema5.close();
 
     let migrated = openRelayDatabase(path);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     assert.equal(count(migrated, "sync_outbox"), 1);
     assert.deepEqual(migrated.pragma("foreign_key_check"), []);
     assert.equal(String(migrated.pragma("integrity_check", { simple: true })), "ok");
     migrated.close();
 
     migrated = openRelayDatabase(path);
-    assert.equal(schemaVersion(migrated), 8);
+    assert.equal(schemaVersion(migrated), 9);
     assert.equal(Number((migrated.prepare(`
       SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 6
     `).get() as { count: number }).count), 1);
