@@ -1,9 +1,7 @@
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
-import {
-  syncRelayOnce as syncRelayOnceV4,
-  type RelayCloudSyncRunResult,
-} from "./cloud-sync-grade-v4.mjs";
+import type { RelayCloudSyncRunResult } from "./cloud-sync.mjs";
+import { syncRelayOnce as syncRelayOnceV4 } from "./cloud-sync-grade-v4.mjs";
 import { rekeyResolvedKeepLocalGradeOperations } from "./grade-conflict-rebase.mjs";
 
 type SyncOptions = {
