@@ -41,6 +41,7 @@ export async function readRelayStudentGradeServerVersion(
  * Le schéma métier student_grades ne porte pas de colonne server_version.
  * Le LOT 4 maintient donc la version logique dans relay_entity_versions et
  * l'injecte dans le snapshot académique avant son envoi au relais SQLite.
+ * Cela permet aussi d'installer un client V4 avant l'activation du canary CAS.
  */
 export async function attachRelayStudentGradeVersions(
   service: SupabaseClient,
