@@ -177,6 +177,7 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
       class_device_scope_v1: true,
       bootstrap_revision_ack_v1: true,
       admin_schedule_status_v1: true,
+      grades_workspace_v1: true,
     });
     assert.equal(validBody.snapshot_revision, null);
     assert.equal(validBody.schedule_status, "not_prepared");

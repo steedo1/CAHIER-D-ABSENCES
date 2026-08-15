@@ -26,6 +26,7 @@ import {
   relayRuntimeContract,
 } from "./schedule-contract.mjs";
 import { teacherOfflineSchedule } from "./teacher-offline-schedule.mjs";
+import { relayGradeWorkspace, RelayGradeWorkspaceError } from "./grade-workspace.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
@@ -34,6 +35,7 @@ const MAX_TEACHER_ATTENDANCE_BODY_BYTES = 128 * 1024;
 const MAX_TEACHER_SESSION_OPEN_BODY_BYTES = 16 * 1024;
 const MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES = 16 * 1024;
 const MAX_TEACHER_OFFLINE_SCHEDULE_BODY_BYTES = 4 * 1024;
+const MAX_GRADE_WORKSPACE_BODY_BYTES = 16 * 1024;
 const SESSION_MAINTENANCE_INTERVAL_MS = 30_000;
 
 export function createRelayServer(
@@ -144,6 +146,28 @@ export function createRelayServer(
             : "teacher_offline_schedule_failed";
           if (code === "schedule_snapshot_not_prepared") {
             return json(response, 409, { error: code });
+          }
+          return json(response, 401, { error: "unauthorized" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/grades/workspace") {
+        const body = await readJson(request, MAX_GRADE_WORKSPACE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        try {
+          const requestNow = options.now?.() ?? new Date();
+          const actor = authenticateRelayTeacherAccess(store.db, token, requestNow);
+          if (!configuredInstitutionAllows(config, store, actor.institution_id)) {
+            return json(response, 403, { error: "institution_not_allowed" });
+          }
+          return json(response, 200, relayGradeWorkspace(
+            store.db,
+            actor,
+            body && typeof body === "object" ? body : {},
+          ));
+        } catch (error) {
+          if (error instanceof RelayGradeWorkspaceError) {
+            return json(response, error.status, { error: error.code });
           }
           return json(response, 401, { error: "unauthorized" });
         }
