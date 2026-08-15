@@ -44,6 +44,7 @@ type RoleResponse = {
 };
 
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
+const AUTH_RETRY_TIMEOUT_MS = 15_000;
 
 async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -57,6 +58,15 @@ async function fetchWithTimeout(
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function isAbortError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 function humanError(error?: string | null) {
@@ -75,6 +85,9 @@ function humanError(error?: string | null) {
   }
   if (value === "SERVER_SESSION_NOT_PERSISTED") {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
+  }
+  if (value === "ONLINE_SERVICE_UNAVAILABLE") {
+    return "Le service en ligne de Mon Cahier est momentanément indisponible. Réessaie dans quelques secondes.";
   }
   if (value === "offline_access_not_prepared") {
     return "Cet appareil n’a pas encore été autorisé en ligne pour cette connexion.";
@@ -283,30 +296,49 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
     try {
       setStatusText("Vérification…");
+      const loginRequest: RequestInit = {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: mode === "email" ? email.trim() : undefined,
+          phone: mode === "phone" ? phone.trim() : undefined,
+          password,
+          country: "CI",
+        }),
+      };
+
       let res: Response;
       try {
-        res = await fetchWithTimeout("/api/auth/login", {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            email: mode === "email" ? email.trim() : undefined,
-            phone: mode === "phone" ? phone.trim() : undefined,
-            password,
-            country: "CI",
-          }),
-        });
-      } catch {
-        await openOfflineSession();
-        return;
+        res = await fetchWithTimeout("/api/auth/login", loginRequest);
+      } catch (cause) {
+        if (isAbortError(cause)) {
+          // Un délai dépassé ne prouve pas que l'appareil est hors Internet.
+          // On laisse une seconde chance au Cloud avant d'activer le secours local.
+          setStatusText("Connexion Internet lente, nouvelle tentative…");
+          try {
+            res = await fetchWithTimeout(
+              "/api/auth/login",
+              loginRequest,
+              AUTH_RETRY_TIMEOUT_MS,
+            );
+          } catch {
+            await openOfflineSession();
+            return;
+          }
+        } else {
+          await openOfflineSession();
+          return;
+        }
       }
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
+        // Une réponse HTTP du serveur prouve que le chemin Cloud a répondu.
+        // Un 5xx ne doit donc jamais être transformé en refus de préparation locale.
         if (res.status >= 500) {
-          await openOfflineSession();
-          return;
+          throw new Error("ONLINE_SERVICE_UNAVAILABLE");
         }
         // Un 401/403 explicite n'est jamais converti en connexion hors ligne.
         if (
