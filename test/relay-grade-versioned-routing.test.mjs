@@ -30,6 +30,13 @@ test("LOT4A: les student_grade ne passent au CAS que pour canary + client compat
   assert.match(pushRoute, /: await processRelaySyncOperation\(/);
 });
 
+test("LOT4A: un client V4 avant canary reçoit déjà la version créée par LOT3", () => {
+  assert.match(pushRoute, /readRelayStudentGradeServerVersion/);
+  assert.match(pushRoute, /gradeV4Capable &&\s*!gradeV4Enabled/s);
+  assert.match(pushRoute, /cloud_server_version: version/);
+  assert.match(pushRoute, /student_grade_version_lookup_failed_after_ack/);
+});
+
 test("LOT4A: le relais V4 annonce sa capacité sur push et pull", () => {
   assert.match(cloudV4Safe, /X-MonCahier-Grade-Sync-V4/);
   assert.match(cloudV4Safe, /withGradeV4Capability/);
