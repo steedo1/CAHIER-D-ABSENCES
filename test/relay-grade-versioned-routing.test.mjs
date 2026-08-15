@@ -15,9 +15,14 @@ const cli = fs.readFileSync(
   "utf8",
 );
 
-test("LOT4A: les student_grade sont routés vers le processeur CAS Cloud", () => {
-  assert.match(pushRoute, /operation\.entity_type === "student_grade"/);
+test("LOT4A: les student_grade ne passent au CAS que pour un relais canary", () => {
+  assert.match(pushRoute, /grade_sync_v4_enabled/);
+  assert.match(
+    pushRoute,
+    /operation\.entity_type === "student_grade" && gradeV4Enabled/,
+  );
   assert.match(pushRoute, /processRelayStudentGradeSyncOperationV4/);
+  assert.match(pushRoute, /: await processRelaySyncOperation\(/);
 });
 
 test("LOT4A: un ACK de note propage la version Cloud et nettoie local_dirty", () => {
@@ -35,6 +40,6 @@ test("LOT4A: un conflit CAS réutilise le moteur applyRemote existant", () => {
 
 test("LOT4A: le wrapper conserve le moteur historique pour le reste et le pull", () => {
   assert.match(cloudV4, /syncRelayOnceLegacy\(config, store, options\)/);
-  assert.match(cli, /from "\.\/cloud-sync-grade-v4\.mjs"/);
+  assert.match(cli, /from "\.\/cloud-sync-grade-v4-safe\.mjs"/);
   assert.match(cli, /requeueTimetableReplacementChain.*cloud-sync\.mjs/s);
 });
