@@ -10,19 +10,30 @@ const cloudV4 = fs.readFileSync(
   new URL("../desktop/relay/src/cloud-sync-grade-v4.mts", import.meta.url),
   "utf8",
 );
+const cloudV4Safe = fs.readFileSync(
+  new URL("../desktop/relay/src/cloud-sync-grade-v4-safe.mts", import.meta.url),
+  "utf8",
+);
 const cli = fs.readFileSync(
   new URL("../desktop/relay/src/cli.mts", import.meta.url),
   "utf8",
 );
 
-test("LOT4A: les student_grade ne passent au CAS que pour un relais canary", () => {
+test("LOT4A: les student_grade ne passent au CAS que pour canary + client compatible", () => {
   assert.match(pushRoute, /grade_sync_v4_enabled/);
+  assert.match(pushRoute, /x-moncahier-grade-sync-v4/);
   assert.match(
     pushRoute,
     /operation\.entity_type === "student_grade" && gradeV4Enabled/,
   );
   assert.match(pushRoute, /processRelayStudentGradeSyncOperationV4/);
   assert.match(pushRoute, /: await processRelaySyncOperation\(/);
+});
+
+test("LOT4A: le relais V4 annonce sa capacité sur push et pull", () => {
+  assert.match(cloudV4Safe, /X-MonCahier-Grade-Sync-V4/);
+  assert.match(cloudV4Safe, /withGradeV4Capability/);
+  assert.match(cloudV4Safe, /fetchImpl: withGradeV4Capability/);
 });
 
 test("LOT4A: un ACK de note propage la version Cloud et nettoie local_dirty", () => {
