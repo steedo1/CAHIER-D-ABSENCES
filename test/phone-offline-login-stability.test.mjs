@@ -121,12 +121,48 @@ test("la release diagnostique Web annonce le même worker PWA v5-7", async () =>
   assert.match(release, /2026-08-10-pwa-login-repeat-v5-7/);
 });
 
-test("le formulaire bascule toujours vers l'autorisation locale si le réseau échoue", async () => {
+test("un timeout de connexion retente le Cloud avant le secours hors ligne", async () => {
   const login = await read("src/components/auth/LoginCard.tsx");
 
-  assert.match(login, /catch \{\s*await openOfflineSession\(\);\s*return;\s*\}/);
+  assert.match(login, /const AUTH_RETRY_TIMEOUT_MS = 15_000;/);
+  assert.match(login, /function isAbortError\(error: unknown\)/);
+
+  const flowStart = login.indexOf("const loginRequest: RequestInit");
+  const flowEnd = login.indexOf("const json =", flowStart);
+  const onlineFlow = login.slice(flowStart, flowEnd);
+
+  assert.ok(flowStart >= 0 && flowEnd > flowStart);
+  assert.match(onlineFlow, /if \(isAbortError\(cause\)\)/);
+  assert.match(onlineFlow, /AUTH_RETRY_TIMEOUT_MS/);
+  assert.match(onlineFlow, /Connexion Internet lente, nouvelle tentative/);
+  assert.match(
+    onlineFlow,
+    /catch \{\s*await openOfflineSession\(\);\s*return;\s*\}/,
+    "le hors ligne doit rester le secours après l'échec de la seconde tentative Cloud",
+  );
   assert.match(login, /if \(onAuthenticated\) \{\s*await onAuthenticated\(authorized\.payload\.destination\);\s*return;\s*\}/);
   assert.match(login, /window\.location\.assign\(authorized\.payload\.destination\)/);
+});
+
+test("un 5xx Cloud n'est jamais transformé en erreur de préparation hors ligne", async () => {
+  const login = await read("src/components/auth/LoginCard.tsx");
+
+  const errorStart = login.indexOf("if (!res.ok || !json.ok)");
+  const serverEnd = login.indexOf("// Un 401/403 explicite", errorStart);
+  const serverFailure = login.slice(errorStart, serverEnd);
+
+  assert.ok(errorStart >= 0 && serverEnd > errorStart);
+  assert.match(serverFailure, /if \(res\.status >= 500\)/);
+  assert.match(serverFailure, /throw new Error\("ONLINE_SERVICE_UNAVAILABLE"\)/);
+  assert.doesNotMatch(
+    serverFailure,
+    /openOfflineSession/,
+    "une réponse serveur 5xx ne doit pas basculer vers l'autorisation locale",
+  );
+  assert.match(
+    login,
+    /if \(value === "ONLINE_SERVICE_UNAVAILABLE"\)/,
+  );
 });
 
 test("la réauthentification embarquée peut garder le runtime PWA chargé", async () => {
