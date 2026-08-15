@@ -121,20 +121,18 @@ test("la release diagnostique Web annonce le même worker PWA v5-7", async () =>
   assert.match(release, /2026-08-10-pwa-login-repeat-v5-7/);
 });
 
-test("un timeout de connexion retente le Cloud avant le secours hors ligne", async () => {
+test("un échec réseau retente le Cloud avant le secours hors ligne", async () => {
   const login = await read("src/components/auth/LoginCard.tsx");
 
   assert.match(login, /const AUTH_RETRY_TIMEOUT_MS = 15_000;/);
-  assert.match(login, /function isAbortError\(error: unknown\)/);
 
   const flowStart = login.indexOf("const loginRequest: RequestInit");
   const flowEnd = login.indexOf("const json =", flowStart);
   const onlineFlow = login.slice(flowStart, flowEnd);
 
   assert.ok(flowStart >= 0 && flowEnd > flowStart);
-  assert.match(onlineFlow, /if \(isAbortError\(cause\)\)/);
+  assert.match(onlineFlow, /Connexion réseau instable, nouvelle tentative/);
   assert.match(onlineFlow, /AUTH_RETRY_TIMEOUT_MS/);
-  assert.match(onlineFlow, /Connexion Internet lente, nouvelle tentative/);
   assert.match(
     onlineFlow,
     /catch \{\s*await openOfflineSession\(\);\s*return;\s*\}/,
@@ -144,7 +142,7 @@ test("un timeout de connexion retente le Cloud avant le secours hors ligne", asy
   assert.match(login, /window\.location\.assign\(authorized\.payload\.destination\)/);
 });
 
-test("un 5xx Cloud n'est jamais transformé en erreur de préparation hors ligne", async () => {
+test("un 5xx Cloud garde le secours local sans masquer une préparation incomplète", async () => {
   const login = await read("src/components/auth/LoginCard.tsx");
 
   const errorStart = login.indexOf("if (!res.ok || !json.ok)");
@@ -153,11 +151,9 @@ test("un 5xx Cloud n'est jamais transformé en erreur de préparation hors ligne
 
   assert.ok(errorStart >= 0 && serverEnd > errorStart);
   assert.match(serverFailure, /if \(res\.status >= 500\)/);
-  assert.match(serverFailure, /throw new Error\("ONLINE_SERVICE_UNAVAILABLE"\)/);
-  assert.doesNotMatch(
+  assert.match(
     serverFailure,
-    /openOfflineSession/,
-    "une réponse serveur 5xx ne doit pas basculer vers l'autorisation locale",
+    /try \{\s*await openOfflineSession\(\);\s*return;\s*\} catch \{\s*throw new Error\("ONLINE_SERVICE_UNAVAILABLE"\);\s*\}/,
   );
   assert.match(
     login,
