@@ -1,0 +1,33 @@
+name: LOT4 Relay Verify
+
+on:
+  push:
+    branches:
+      - lot4-grade-versioning-20260815
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relay-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci
+
+      - name: Verify relay
+        working-directory: desktop/relay
+        run: npm run verify
