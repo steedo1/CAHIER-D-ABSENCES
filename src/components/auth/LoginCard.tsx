@@ -44,6 +44,7 @@ type RoleResponse = {
 };
 
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
+const AUTH_RETRY_TIMEOUT_MS = 15_000;
 
 async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -75,6 +76,9 @@ function humanError(error?: string | null) {
   }
   if (value === "SERVER_SESSION_NOT_PERSISTED") {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
+  }
+  if (value === "ONLINE_SERVICE_UNAVAILABLE") {
+    return "Le service en ligne de Mon Cahier est momentanément indisponible. Réessaie dans quelques secondes.";
   }
   if (value === "offline_access_not_prepared") {
     return "Cet appareil n’a pas encore été autorisé en ligne pour cette connexion.";
@@ -283,30 +287,49 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
     try {
       setStatusText("Vérification…");
+      const loginRequest: RequestInit = {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: mode === "email" ? email.trim() : undefined,
+          phone: mode === "phone" ? phone.trim() : undefined,
+          password,
+          country: "CI",
+        }),
+      };
+
       let res: Response;
       try {
-        res = await fetchWithTimeout("/api/auth/login", {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            email: mode === "email" ? email.trim() : undefined,
-            phone: mode === "phone" ? phone.trim() : undefined,
-            password,
-            country: "CI",
-          }),
-        });
+        res = await fetchWithTimeout("/api/auth/login", loginRequest);
       } catch {
-        await openOfflineSession();
-        return;
+        // Une panne ponctuelle ou un timeout ne suffit pas à déclarer l'appareil hors ligne.
+        // On retente une fois le Cloud ; sans réseau réel, cet appel échoue généralement aussitôt.
+        setStatusText("Connexion réseau instable, nouvelle tentative…");
+        try {
+          res = await fetchWithTimeout(
+            "/api/auth/login",
+            loginRequest,
+            AUTH_RETRY_TIMEOUT_MS,
+          );
+        } catch {
+          await openOfflineSession();
+          return;
+        }
       }
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
         if (res.status >= 500) {
-          await openOfflineSession();
-          return;
+          // Le secours local reste disponible lors d'une panne Cloud, mais une
+          // préparation locale incomplète ne doit jamais masquer l'erreur serveur.
+          try {
+            await openOfflineSession();
+            return;
+          } catch {
+            throw new Error("ONLINE_SERVICE_UNAVAILABLE");
+          }
         }
         // Un 401/403 explicite n'est jamais converti en connexion hors ligne.
         if (
