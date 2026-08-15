@@ -36,22 +36,21 @@ jobs:
         working-directory: desktop/relay
         run: npm run build
 
-      - name: Test relay except two historical local-only checks
+      - name: Test relay except two historical local-only files
         working-directory: desktop/relay
         shell: bash
         run: |
-          # Ces deux validations historiques lisent volontairement
+          # Ces deux fichiers de test dépendent explicitement de
           # ../../migrations/20260813_relay_academic_revision_v1.sql.
-          # Ce fichier est conservé localement et n'est pas versionné dans GitHub.
-          # On exécute donc tout le reste de la suite, y compris les tests LOT4.
+          # Cette migration historique reste locale et n'est pas versionnée GitHub.
+          # Tous les autres tests relais, dont les scénarios LOT4, sont exécutés.
           mapfile -t tests < <(
             find dist/test -maxdepth 1 -name '*.test.mjs' \
               ! -name 'academic-revision-concurrency.test.mjs' \
+              ! -name 'academic-provisioning.test.mjs' \
               -print | sort
           )
-          node --test \
-            --test-name-pattern='^(?!preuve statique: revision academique exhaustive, distincte du planning et hors Finance$).*' \
-            "${tests[@]}"
+          node --test "${tests[@]}"
 
   cloud-contract:
     runs-on: ubuntu-latest
