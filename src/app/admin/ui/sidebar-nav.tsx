@@ -338,6 +338,12 @@ const DUPLICATA_BULLETIN_ITEM: NavItem = {
   Icon: FileSpreadsheet,
 };
 
+const ADMIN_DUPLICATA_CORRESPONDENCE_ITEM: NavItem = {
+  href: "/admin/duplicata/bulletins",
+  label: "Duplicata",
+  Icon: Copy,
+};
+
 const FINANCE_FULL_ITEMS: NavItem[] = [
   { href: "/admin/finance", label: "Tableau financier", Icon: LayoutDashboard },
   {
@@ -987,9 +993,7 @@ export default function SidebarNav() {
     if (isFinanceManager || isFinanceOnlyShell) {
       return [DUPLICATA_RECEIPT_ITEM];
     }
-    if (isAdmin) {
-      return [DUPLICATA_BULLETIN_ITEM];
-    }
+    if (isAdmin) return [];
     if (role === null) {
       if (pathname?.startsWith("/admin/duplicata/recus")) {
         return [DUPLICATA_RECEIPT_ITEM];
@@ -1010,15 +1014,25 @@ export default function SidebarNav() {
     role,
   ]);
 
-  const fileCorrespondenceItems = React.useMemo(
-    () =>
-      FILE_CORRESPONDENCE_ITEMS.filter(() => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
-        if (isEducator) return false;
-        return true;
-      }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
-  );
+  const fileCorrespondenceItems = React.useMemo(() => {
+    if (isInfirmier || isFinanceManager || isFinanceOnlyShell || isEducator) {
+      return [];
+    }
+
+    if (!isAdmin) return FILE_CORRESPONDENCE_ITEMS;
+
+    return FILE_CORRESPONDENCE_ITEMS.flatMap((item) =>
+      item.href === "/admin/bulletins"
+        ? [item, ADMIN_DUPLICATA_CORRESPONDENCE_ITEM]
+        : [item],
+    );
+  }, [
+    isAdmin,
+    isEducator,
+    isInfirmier,
+    isFinanceManager,
+    isFinanceOnlyShell,
+  ]);
 
   const conductManagementItems = React.useMemo(
     () =>
