@@ -4,6 +4,13 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
 import { isEducationType } from "@/lib/education-organization";
+import {
+  classDeviceTechnicalEmail,
+  classLoginIdentifierKey,
+  cleanClassLoginIdentifier,
+  legacyClassPhoneCandidates,
+  sameClassLoginIdentifier,
+} from "@/lib/class-device-identity";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
 
@@ -63,64 +70,104 @@ function cleanOfficialTrackCode(value: unknown) {
   return cleaned;
 }
 
-async function ensureAuthUserWithPasswordFlexible(phoneE164: string): Promise<{ uid: string; phoneUsed: string }> {
+async function ensureClassDeviceAuthUser(input: {
+  institutionId: string;
+  classId: string;
+  existingAuthUserId?: string | null;
+  legacyPhone?: string | null;
+}): Promise<string> {
+  const existingAuthUserId = String(input.existingAuthUserId || "").trim();
+  if (existingAuthUserId) return existingAuthUserId;
+
   const srv = getSupabaseServiceClient();
+  const legacyCandidates = legacyClassPhoneCandidates(input.legacyPhone);
 
-  const candidates: string[] = [];
-  const seen = new Set<string>();
-  const add = (v: string) => {
-    if (!seen.has(v)) {
-      seen.add(v);
-      candidates.push(v);
+  // Compatibilité legacy strictement limitée au même établissement et à un
+  // compte qui possède déjà le rôle class_device.
+  if (legacyCandidates.length) {
+    const { data: legacyProfiles, error: legacyError } = await srv
+      .from("profiles")
+      .select("id")
+      .eq("institution_id", input.institutionId)
+      .in("phone", legacyCandidates)
+      .limit(4);
+    if (legacyError) throw legacyError;
+
+    const reusableUserIds: string[] = [];
+    for (const profile of legacyProfiles || []) {
+      const uid = String(profile?.id || "").trim();
+      if (!uid) continue;
+
+      const [
+        { data: classRole, error: classRoleError },
+        { data: otherCanonicalClass, error: canonicalError },
+        { data: otherLegacyClass, error: legacyClassError },
+      ] = await Promise.all([
+        srv
+          .from("user_roles")
+          .select("profile_id")
+          .eq("profile_id", uid)
+          .eq("institution_id", input.institutionId)
+          .eq("role", "class_device")
+          .maybeSingle(),
+        srv
+          .from("classes")
+          .select("id")
+          .eq("class_device_auth_user_id", uid)
+          .neq("id", input.classId)
+          .limit(1)
+          .maybeSingle(),
+        srv
+          .from("classes")
+          .select("id")
+          .eq("institution_id", input.institutionId)
+          .in("class_phone_e164", legacyCandidates)
+          .neq("id", input.classId)
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      if (classRoleError) throw classRoleError;
+      if (canonicalError) throw canonicalError;
+      if (legacyClassError) throw legacyClassError;
+      if (!classRole || otherCanonicalClass || otherLegacyClass) continue;
+
+      const { data: authData, error: authError } =
+        await srv.auth.admin.getUserById(uid);
+      if (!authError && authData?.user?.id) reusableUserIds.push(uid);
     }
-  };
 
-  if (phoneE164.startsWith("+225")) {
-    const rest = phoneE164.slice(4);
-    const with0 = rest.startsWith("0") ? rest : "0" + rest.replace(/^0+/, "");
-    const no0 = rest.replace(/^0+/, "");
-    add("+225" + with0);
-    add("+225" + no0);
-    add(phoneE164);
-  } else {
-    add(phoneE164);
+    if (reusableUserIds.length === 1) return reusableUserIds[0];
   }
 
-  for (const p of candidates) {
-    const { data } = await srv.from("auth.users").select("id").eq("phone", p).maybeSingle();
-    if (data?.id) {
-      const uid = String(data.id);
-      try {
-        await srv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
-      } catch {}
-      return { uid, phoneUsed: p };
-    }
+  const technicalEmail = classDeviceTechnicalEmail(
+    input.institutionId,
+    input.classId,
+  );
+
+  // Recherche via profiles, pas via auth.users exposé par PostgREST.
+  const { data: existingTechnical, error: lookupError } = await srv
+    .from("profiles")
+    .select("id")
+    .eq("institution_id", input.institutionId)
+    .eq("email", technicalEmail)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existingTechnical?.id) {
+    const uid = String(existingTechnical.id);
+    const { data: authData, error: authError } =
+      await srv.auth.admin.getUserById(uid);
+    if (!authError && authData?.user?.id) return uid;
   }
 
-  for (const p of candidates) {
-    const { data: created } = await srv.auth.admin.createUser({
-      phone: p,
-      phone_confirm: true,
-      password: DEFAULT_TEMP_PASSWORD,
-    });
-
-    if (created?.user?.id) {
-      return { uid: String(created.user.id), phoneUsed: p };
-    }
+  const { data: created, error: createError } = await srv.auth.admin.createUser({
+    email: technicalEmail,
+    email_confirm: true,
+    password: DEFAULT_TEMP_PASSWORD,
+  });
+  if (createError || !created?.user?.id) {
+    throw createError || new Error("auth_user_create_failed");
   }
-
-  for (const p of candidates) {
-    const { data } = await srv.from("auth.users").select("id").eq("phone", p).maybeSingle();
-    if (data?.id) {
-      const uid = String(data.id);
-      try {
-        await srv.auth.admin.updateUserById(uid, { password: DEFAULT_TEMP_PASSWORD });
-      } catch {}
-      return { uid, phoneUsed: p };
-    }
-  }
-
-  throw new Error("auth_user_create_failed");
+  return String(created.user.id);
 }
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -133,7 +180,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
   const { data: current, error: currentErr } = await srv
     .from("classes")
-    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164")
+    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164,device_phone_e164,class_login_identifier,class_device_auth_user_id")
     .eq("id", id)
     .eq("institution_id", institution_id)
     .maybeSingle();
@@ -187,22 +234,42 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const country =
     typeof body?.country === "string" && body.country.trim() ? String(body.country).trim() : undefined;
 
-  let newClassPhoneE164: string | null | undefined = undefined;
-  if (Object.prototype.hasOwnProperty.call(body, "class_phone")) {
-    if (body.class_phone === null || body.class_phone === "") {
-      newClassPhoneE164 = null;
-    } else if (typeof body.class_phone === "string" || typeof body.class_phone === "number") {
-      const normalized = normalizePhone(String(body.class_phone), { defaultCountryAlpha2: country }) || null;
-      if (!normalized) {
-        return NextResponse.json({ error: "class_phone_invalid" }, { status: 400 });
-      }
-      newClassPhoneE164 = normalized;
-    } else {
-      return NextResponse.json({ error: "class_phone_bad_type" }, { status: 400 });
+  const hasClassIdentifier =
+    Object.prototype.hasOwnProperty.call(body, "class_identifier") ||
+    Object.prototype.hasOwnProperty.call(body, "class_phone");
+  let requestedClassIdentifier: string | null | undefined;
+  if (hasClassIdentifier) {
+    try {
+      requestedClassIdentifier = cleanClassLoginIdentifier(
+        Object.prototype.hasOwnProperty.call(body, "class_identifier")
+          ? body.class_identifier
+          : body.class_phone,
+      );
+    } catch (cause: any) {
+      return NextResponse.json(
+        { error: cause?.message || "class_identifier_invalid" },
+        { status: 400 },
+      );
     }
   }
 
-  if (Object.keys(row).length === 0 && typeof newClassPhoneE164 === "undefined") {
+  if (Object.prototype.hasOwnProperty.call(body, "device_phone")) {
+    if (body.device_phone === null || body.device_phone === "") {
+      row.device_phone_e164 = null;
+    } else if (typeof body.device_phone === "string" || typeof body.device_phone === "number") {
+      const normalized = normalizePhone(String(body.device_phone), {
+        defaultCountryAlpha2: country,
+      });
+      if (!normalized) {
+        return NextResponse.json({ error: "device_phone_invalid" }, { status: 400 });
+      }
+      row.device_phone_e164 = normalized;
+    } else {
+      return NextResponse.json({ error: "device_phone_bad_type" }, { status: 400 });
+    }
+  }
+
+  if (Object.keys(row).length === 0 && !hasClassIdentifier) {
     return NextResponse.json({ error: "bad_payload" }, { status: 400 });
   }
 
@@ -239,9 +306,38 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   }
 
   try {
-    if (typeof newClassPhoneE164 === "string" && newClassPhoneE164) {
-      const { uid, phoneUsed } = await ensureAuthUserWithPasswordFlexible(newClassPhoneE164);
-      row.class_phone_e164 = phoneUsed;
+    const currentIdentifier =
+      current.class_login_identifier ?? current.class_phone_e164 ?? null;
+    const identifierChanged =
+      hasClassIdentifier &&
+      !sameClassLoginIdentifier(currentIdentifier, requestedClassIdentifier);
+
+    if (identifierChanged && requestedClassIdentifier) {
+      const identifierKey = classLoginIdentifierKey(requestedClassIdentifier)!;
+      const { data: duplicate, error: duplicateError } = await srv
+        .from("classes")
+        .select("id")
+        .eq("institution_id", institution_id)
+        .eq("class_login_identifier_key", identifierKey)
+        .neq("id", id)
+        .limit(1)
+        .maybeSingle();
+      if (duplicateError) throw duplicateError;
+      if (duplicate?.id) {
+        return NextResponse.json(
+          { error: "class_identifier_already_used" },
+          { status: 409 },
+        );
+      }
+
+      const uid = await ensureClassDeviceAuthUser({
+        institutionId: institution_id,
+        classId: id,
+        existingAuthUserId: current.class_device_auth_user_id,
+        legacyPhone: current.class_phone_e164,
+      });
+      row.class_login_identifier = requestedClassIdentifier;
+      row.class_device_auth_user_id = uid;
 
       const { data: existingProfile } = await srv
         .from("profiles")
@@ -254,14 +350,13 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
           id: uid,
           institution_id,
           display_name: row.label ?? current.label ?? null,
-          email: null,
-          phone: phoneUsed,
+          email: classDeviceTechnicalEmail(institution_id, id),
+          phone: row.device_phone_e164 ?? current.device_phone_e164 ?? null,
         });
       } else {
         await srv
           .from("profiles")
           .update({
-            phone: phoneUsed,
             display_name: existingProfile.display_name ?? (row.label ?? current.label ?? null),
           })
           .eq("id", uid);
@@ -273,7 +368,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
           { profile_id: uid, institution_id, role: "class_device" },
           { onConflict: "profile_id,institution_id,role" }
         );
-    } else if (newClassPhoneE164 === null) {
+    } else if (identifierChanged && requestedClassIdentifier === null) {
+      row.class_login_identifier = null;
+      row.class_device_auth_user_id = null;
       row.class_phone_e164 = null;
     }
   } catch (e: any) {
@@ -283,12 +380,16 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     );
   }
 
+  if (Object.keys(row).length === 0) {
+    return NextResponse.json({ item: current });
+  }
+
   const { data, error: dbErr } = await srv
     .from("classes")
     .update(row)
     .eq("id", id)
     .eq("institution_id", institution_id)
-    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164")
+    .select("id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,class_phone_e164,device_phone_e164,class_login_identifier,class_device_auth_user_id")
     .maybeSingle();
 
   if (dbErr) {

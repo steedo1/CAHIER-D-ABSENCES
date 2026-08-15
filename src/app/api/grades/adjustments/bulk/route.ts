@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { computeAcademicYear } from "@/lib/academicYear";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,12 +117,12 @@ async function getAccessModeForClass(
   }
 
   if (roleSet.has("class_device")) {
-    const phone = profile.phone as string | null;
-
-    if (
-      phone &&
-      (phone === cls.class_phone_e164 || phone === cls.device_phone_e164)
-    ) {
+    if (await classDeviceMayAccessClass({
+      service: svc,
+      userId: profile.id,
+      userPhone: profile.phone,
+      classId,
+    })) {
       return {
         mode: "class_device",
         institutionId: cls.institution_id as string,

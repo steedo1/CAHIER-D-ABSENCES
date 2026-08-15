@@ -35,6 +35,8 @@ type ClassRow = {
   education_type?: EducationType | null;
   formation_code?: string | null;
   formation_level_code?: string | null;
+  class_login_identifier?: string | null;
+  device_phone_e164?: string | null;
   class_phone_e164?: string | null;
 };
 
@@ -238,6 +240,7 @@ export default function ClassesPage() {
   const [eAcademicYear, setEAcademicYear] = useState("");
   const [eOfficialTrackCode, setEOfficialTrackCode] = useState<OfficialTrackCode | "">("");
   const [ePhone, setEPhone] = useState("");
+  const [eSimPhone, setESimPhone] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [delOpen, setDelOpen] = useState(false);
@@ -480,7 +483,8 @@ export default function ClassesPage() {
 
       const j = await r.json().catch(() => ({}));
       const rows: ClassRow[] = (j.items || []).map((x: any) => {
-        const phone = x.class_phone_e164 ?? x.device_phone_e164 ?? null;
+        const identifier =
+          x.class_login_identifier ?? x.class_phone_e164 ?? null;
         return {
           id: x.id,
           name: x.name ?? x.label,
@@ -490,14 +494,18 @@ export default function ClassesPage() {
           education_type: x.education_type ?? null,
           formation_code: x.formation_code ?? null,
           formation_level_code: x.formation_level_code ?? null,
-          class_phone_e164: phone,
+          class_login_identifier: identifier,
+          device_phone_e164: x.device_phone_e164 ?? null,
+          class_phone_e164: x.class_phone_e164 ?? null,
         };
       });
 
       setItems(rows);
 
       const init: Record<string, string> = {};
-      for (const it of rows) init[it.id] = it.class_phone_e164 ?? "";
+      for (const it of rows) {
+        init[it.id] = it.class_login_identifier ?? it.class_phone_e164 ?? "";
+      }
       setPhoneDraft(init);
     } finally {
       setLoading(false);
@@ -677,7 +685,8 @@ export default function ClassesPage() {
         ? ""
         : row.official_track_code || inferOfficialTrackCode(row.level),
     );
-    setEPhone(row.class_phone_e164 ?? "");
+    setEPhone(row.class_login_identifier ?? row.class_phone_e164 ?? "");
+    setESimPhone(row.device_phone_e164 ?? "");
     setEditOpen(true);
   }
 
@@ -696,8 +705,17 @@ export default function ClassesPage() {
         items.find((item) => item.id === editId)?.education_type !== "general_secondary"
           ? null
           : eOfficialTrackCode || null,
-      class_phone: ePhone.trim() || null,
     };
+    const current = items.find((item) => item.id === editId);
+    const currentIdentifier =
+      current?.class_login_identifier ?? current?.class_phone_e164 ?? "";
+    const currentSim = current?.device_phone_e164 ?? "";
+    if (ePhone.trim() !== currentIdentifier) {
+      body.class_identifier = ePhone.trim() || null;
+    }
+    if (eSimPhone.trim() !== currentSim) {
+      body.device_phone = eSimPhone.trim() || null;
+    }
 
     const r = await fetch(`/api/admin/classes/${editId}`, {
       method: "PATCH",
@@ -767,7 +785,9 @@ export default function ClassesPage() {
     setSavingPhoneId(id);
     setMsgPhone(null);
 
-    const body: any = { class_phone: (phoneDraft[id] || "").trim() || null };
+    const body: any = {
+      class_identifier: (phoneDraft[id] || "").trim() || null,
+    };
     const r = await fetch(`/api/admin/classes/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -784,9 +804,9 @@ export default function ClassesPage() {
     if (!r.ok) {
       const t = await r.json().catch(() => ({}));
       if (r.status === 409) {
-        alert("Ce numéro est déjà utilisé par une autre classe de votre établissement.");
+        alert("Cet identifiant est déjà utilisé par une autre classe de votre établissement.");
       } else if (r.status === 400) {
-        alert("Numéro invalide. Saisissez un local ou un international : il sera normalisé.");
+        alert("Identifiant invalide. Utilisez au maximum 128 caractères sans caractère de contrôle.");
       } else {
         alert("Échec de mise à jour" + (t?.error ? ` : ${t.error}` : ""));
       }
@@ -794,7 +814,7 @@ export default function ClassesPage() {
     }
 
     await refresh();
-    setMsgPhone("Numéro enregistré.");
+    setMsgPhone("Identifiant enregistré.");
     setTimeout(() => setMsgPhone(null), 1500);
   }
 
@@ -1171,8 +1191,10 @@ export default function ClassesPage() {
                   {opened && (
                     <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
                       {arr.map((c) => {
-                        const draft = phoneDraft[c.id] ?? c.class_phone_e164 ?? "";
-                        const unchanged = (draft || "") === (c.class_phone_e164 || "");
+                        const storedIdentifier =
+                          c.class_login_identifier ?? c.class_phone_e164 ?? "";
+                        const draft = phoneDraft[c.id] ?? storedIdentifier;
+                        const unchanged = (draft || "") === storedIdentifier;
                         const detectedFormation = c.formation_code
                           ? formationChoices.find((item) => item.id === c.formation_code) || formationForLevel(c.formation_level_code || c.level)
                           : formationForLevel(c.formation_level_code || c.level);
@@ -1192,17 +1214,17 @@ export default function ClassesPage() {
                                 </div>
 
                                 <div className="mt-2 text-xs text-slate-600">
-                                  <span className="inline-block min-w-[140px] font-medium">Téléphone (optionnel)</span>
+                                  <span className="inline-block min-w-[140px] font-medium">Identifiant de la classe</span>
                                 </div>
                                 <div className="mt-1 flex items-center gap-2">
                                   <Input
-                                    placeholder="+2250701020304"
+                                    placeholder="0657 1 ou +2250701020304"
                                     value={draft}
                                     onChange={(e) => setDraft(c.id, e.target.value)}
                                     className="w-56"
                                   />
                                   <IconButton
-                                    title="Enregistrer le numéro"
+                                    title="Enregistrer l’identifiant"
                                     onClick={() => savePhone(c.id)}
                                     disabled={savingPhoneId === c.id || unchanged}
                                   >
@@ -1220,7 +1242,7 @@ export default function ClassesPage() {
                                   </IconButton>
                                 </div>
                                 <div className="mt-1 text-[11px] text-slate-500">
-                                  Saisissez un <i>numéro local</i> ou international. Il sera <b>normalisé automatiquement</b>.
+                                  Identifiant utilisé pour connecter l’appareil de classe. Il peut être attribué par l’établissement et conserve ses zéros.
                                 </div>
                               </div>
 
@@ -1253,9 +1275,14 @@ export default function ClassesPage() {
                                 </IconButton>
                               </div>
                             </div>
-                            {c.class_phone_e164 && (
+                            {storedIdentifier && (
                               <div className="mt-2 text-xs text-emerald-700">
-                                Numéro en vigueur : <b>{c.class_phone_e164}</b>
+                                Identifiant en vigueur : <b>{storedIdentifier}</b>
+                              </div>
+                            )}
+                            {c.device_phone_e164 && (
+                              <div className="mt-1 text-xs text-slate-600">
+                                Téléphone / SIM : <b>{c.device_phone_e164}</b>
                               </div>
                             )}
                           </div>
@@ -1330,10 +1357,17 @@ export default function ClassesPage() {
             </div>
           )}
           <div>
-            <div className="mb-1 text-xs text-slate-500">Téléphone de la classe (optionnel)</div>
-            <Input value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder="+2250701020304" inputMode="tel" autoComplete="tel" />
+            <div className="mb-1 text-xs text-slate-500">Identifiant de la classe</div>
+            <Input value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder="0657 1" inputMode="text" autoComplete="off" />
             <div className="mt-1 text-[11px] text-slate-500">
-              Saisissez un <i>numéro local</i> ou international. Il sera normalisé automatiquement.
+              Identifiant utilisé pour connecter l’appareil de classe. Il peut être attribué par l’établissement.
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-slate-500">Téléphone / SIM (optionnel)</div>
+            <Input value={eSimPhone} onChange={(e) => setESimPhone(e.target.value)} placeholder="+2250701020304" inputMode="tel" autoComplete="tel" />
+            <div className="mt-1 text-[11px] text-slate-500">
+              Ce champ est normalisé comme un vrai numéro de téléphone et reste distinct de l’identifiant de connexion.
             </div>
           </div>
         </div>

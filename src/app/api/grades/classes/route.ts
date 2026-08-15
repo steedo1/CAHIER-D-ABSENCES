@@ -9,6 +9,7 @@ import {
   isEducationType,
   type EducationType,
 } from "@/lib/education-organization";
+import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -224,42 +225,27 @@ export async function GET(_req: NextRequest) {
 
     /* ───────── Mode COMPTE CLASSE ───────── */
     if (!isTeacher && isClassDevice) {
-      const phone = (profile as any).phone as string | null;
-      if (!phone) {
-        const hydrated = await hydrateSubjects(items);
-        return NextResponse.json({ mode: "class_device", items: hydrated });
+      const authorizedClassIds = await resolveClassDeviceClassIds({
+        service: srv,
+        userId: profile.id,
+        userPhone: (profile as any).phone,
+      });
+      const { data: clsListRaw, error: classError } = authorizedClassIds.length
+        ? await srv
+            .from("classes")
+            .select(
+              "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164,education_type,formation_code,formation_level_code",
+            )
+            .eq("institution_id", profile.institution_id)
+            .in("id", authorizedClassIds)
+        : { data: [], error: null };
+      if (classError) {
+        console.error("[grades/classes] class-device identity error", classError);
       }
-
-      // 1) Classes liées à ce téléphone (class_phone_e164 ou device_phone_e164)
-      const { data: clsByClassPhone, error: clsErr1 } = await srv
-        .from("classes")
-        .select(
-          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164,education_type,formation_code,formation_level_code"
-        )
-        .eq("institution_id", profile.institution_id)
-        .eq("class_phone_e164", phone);
-
-      if (clsErr1) {
-        console.error("[grades/classes] classes by class_phone error", clsErr1);
-      }
-
-      const { data: clsByDevicePhone, error: clsErr2 } = await srv
-        .from("classes")
-        .select(
-          "id,label,level,academic_year,institution_id,class_phone_e164,device_phone_e164,education_type,formation_code,formation_level_code"
-        )
-        .eq("institution_id", profile.institution_id)
-        .eq("device_phone_e164", phone);
-
-      if (clsErr2) {
-        console.error("[grades/classes] classes by device_phone error", clsErr2);
-      }
-
-      const clsListRaw = [...(clsByClassPhone ?? []), ...(clsByDevicePhone ?? [])];
 
       const classById = new Map<string, any>();
       const classIds: string[] = [];
-      for (const c of clsListRaw) {
+      for (const c of clsListRaw || []) {
         if (!c.id) continue;
         if (!classById.has(c.id)) {
           classById.set(c.id, c);

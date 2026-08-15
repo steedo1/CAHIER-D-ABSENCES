@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -12,17 +13,19 @@ export async function GET(_req: NextRequest) {
 
   const srv = getSupabaseServiceClient();
 
-  const { data: au, error: auErr } = await srv
-    .from("auth.users").select("phone").eq("id", user.id).maybeSingle();
-  if (auErr) return NextResponse.json({ error: auErr.message }, { status: 400 });
-
-  const phone = (au?.phone || "").trim();
-  if (!phone) return NextResponse.json({ error: "no_phone" }, { status: 404 });
+  const classIds = await resolveClassDeviceClassIds({
+    service: srv,
+    userId: user.id,
+    userPhone: user.phone,
+  });
+  if (classIds.length !== 1) {
+    return NextResponse.json({ error: "class_not_found" }, { status: 404 });
+  }
 
   const { data: cls, error: cErr } = await srv
     .from("classes")
     .select("id,label,level,institution_id,class_phone_e164")
-    .eq("class_phone_e164", phone)
+    .eq("id", classIds[0])
     .maybeSingle();
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
   if (!cls) return NextResponse.json({ error: "class_not_found" }, { status: 404 });

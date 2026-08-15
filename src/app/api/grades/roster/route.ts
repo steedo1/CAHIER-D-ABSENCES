@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,12 +110,14 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Compte-classe : téléphone de la classe ou device
+    // Compte-classe : liaison canonique Auth -> classe, avec fallback legacy.
     if (!allowed && isClassDevice) {
-      const phone = (profile as any).phone as string | null;
-      if (phone && (cls.class_phone_e164 === phone || cls.device_phone_e164 === phone)) {
-        allowed = true;
-      }
+      allowed = await classDeviceMayAccessClass({
+        service: srv,
+        userId: profile.id,
+        userPhone: (profile as any).phone,
+        classId,
+      });
     }
 
     if (!allowed) {

@@ -6,6 +6,7 @@ import {
   attendanceClassContextIsComplete,
   isNonGeneralAttendanceEducation,
 } from "@/lib/education-attendance";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,40 +47,6 @@ function currentTimetableSubjectIds(rows: TimetableSubjectRow[]): string[] {
 
 function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
-}
-
-type PhoneVariants = { variants: string[]; likePatterns: string[] };
-
-function buildPhoneVariants(raw: string): PhoneVariants {
-  const t = String(raw || "").trim();
-  const digits = t.replace(/\D/g, "");
-  const local10 = digits ? digits.slice(-10) : "";
-  const localNo0 = local10.replace(/^0/, "");
-  const cc = "225";
-
-  const variants = uniq<string>([
-    t,
-    t.replace(/\s+/g, ""),
-    digits,
-    `+${digits}`,
-    `+${cc}${local10}`,
-    `+${cc}${localNo0}`,
-    `00${cc}${local10}`,
-    `00${cc}${localNo0}`,
-    `${cc}${local10}`,
-    `${cc}${localNo0}`,
-    local10,
-    localNo0 ? `0${localNo0}` : "",
-  ]);
-
-  const likePatterns = uniq<string>([
-    local10 ? `%${local10}%` : "",
-    local10 ? `%${cc}${local10}%` : "",
-    local10 ? `%+${cc}${local10}%` : "",
-    local10 ? `%00${cc}${local10}%` : "",
-  ]);
-
-  return { variants, likePatterns };
 }
 
 function hmsToMin(hms: string | null | undefined) {
@@ -399,23 +366,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    let phone = String((user as any).phone || "").trim();
-    if (!phone) {
-      const { data: au } = await srv
-        .schema("auth")
-        .from("users")
-        .select("phone")
-        .eq("id", user.id)
-        .maybeSingle();
-      phone = String(au?.phone || "").trim();
-    }
-
-    if (!phone) {
-      return NextResponse.json({ error: "no_phone" }, { status: 404 });
-    }
-
-    const { variants, likePatterns } = buildPhoneVariants(phone);
-
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id,label,level,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
@@ -429,19 +379,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ items: [] as SubjectItem[] });
     }
 
-    let match = false;
-    if (cls.class_phone_e164 && variants.includes(String(cls.class_phone_e164))) match = true;
-    if (!match && likePatterns.length) {
-      const stored = String(cls.class_phone_e164 || "");
-      match = likePatterns.some((p) => {
-        const pat = String(p).replace(/%/g, ".*");
-        try {
-          return new RegExp(pat).test(stored);
-        } catch {
-          return false;
-        }
-      });
-    }
+    const match = await classDeviceMayAccessClass({
+      service: srv,
+      userId: user.id,
+      userPhone: user.phone,
+      classId: class_id,
+    });
 
     if (!match) {
       return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });

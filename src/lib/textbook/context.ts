@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 
 export type TextbookRole =
   | "super_admin"
@@ -291,6 +292,20 @@ export async function findTextbookClassDevice(
   userId: string,
   institutionId: string,
 ) {
+  const linkedClassIds = await resolveClassDeviceClassIds({
+    service: srv,
+    userId,
+  });
+  if (linkedClassIds.length) {
+    const { data: linkedRows } = await srv
+      .from("classes")
+      .select("id,label,level,academic_year,institution_id,class_phone_e164,education_type,formation_code,formation_level_code")
+      .eq("institution_id", institutionId)
+      .in("id", linkedClassIds)
+      .limit(2);
+    if (Array.isArray(linkedRows) && linkedRows.length === 1) return linkedRows[0];
+  }
+
   const phones = await getAuthPhoneCandidates(srv, userId);
   const variants = uniqText(phones.flatMap((phone) => buildPhoneVariants(phone)));
   if (!variants.length) return null;

@@ -67,6 +67,12 @@ function humanError(error?: string | null) {
   if (value === "PASSWORD_REQUIRED") return "Mot de passe obligatoire.";
   if (value === "EMAIL_OR_PHONE_REQUIRED") return "Email ou téléphone obligatoire.";
   if (value === "PHONE_INVALID") return "Numéro de téléphone invalide.";
+  if (value === "CLASS_IDENTIFIER_INSTITUTION_REQUIRED") {
+    return "Cet identifiant existe dans plusieurs établissements. Saisissez aussi le code de l’établissement.";
+  }
+  if (value === "CLASS_IDENTIFIER_INSTITUTION_UNKNOWN") {
+    return "Code établissement inconnu pour cet identifiant de classe.";
+  }
   if (value === "SERVER_SESSION_NOT_PERSISTED") {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
   }
@@ -113,6 +119,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
   const [mode, setMode] = useState<LoginMode>(initialMode);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [institutionCode, setInstitutionCode] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -122,6 +129,12 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
   const busyRef = useRef(false);
 
   const modeLocked = !!forcedMode;
+  const offlineIdentifier =
+    mode === "email"
+      ? email
+      : institutionCode.trim()
+        ? `${institutionCode.trim().toUpperCase()}::${phone}`
+        : phone;
   const canSubmit = useMemo(() => {
     if (busy) return false;
     if (!password.trim()) return false;
@@ -250,7 +263,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
     setStatusText("Vérification de l’autorisation locale…");
     const authorized = await authenticateOfflineAccess({
       mode,
-      identifier: mode === "email" ? email : phone,
+      identifier: offlineIdentifier,
       password,
     });
     // Le nettoyage intervient seulement après une validation locale complète.
@@ -286,6 +299,10 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
           body: JSON.stringify({
             email: mode === "email" ? email.trim() : undefined,
             phone: mode === "phone" ? phone.trim() : undefined,
+            institution_code:
+              mode === "phone" && institutionCode.trim()
+                ? institutionCode.trim()
+                : undefined,
             password,
             country: "CI",
           }),
@@ -308,7 +325,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
         ) {
           await disableOfflineAccessForIdentifier({
             mode,
-            identifier: mode === "email" ? email : phone,
+            identifier: offlineIdentifier,
           }).catch(() => undefined);
         }
         throw new Error(json.error || `HTTP_${res.status}`);
@@ -334,7 +351,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
         setStatusText("Autorisation de cet appareil…");
         await provisionOfflineAccess({
           mode,
-          identifier: mode === "email" ? email : phone,
+          identifier: offlineIdentifier,
           password,
           grantToken,
         }).catch((cause) => {
@@ -387,7 +404,7 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
               mode === "phone" ? "bg-white text-slate-950 shadow-sm" : "hover:text-slate-950",
             ].join(" ")}
           >
-            Téléphone
+            Téléphone / identifiant
           </button>
           <button
             type="button"
@@ -418,21 +435,36 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
             />
           </label>
         ) : (
-          <label className="block">
+          <div className="block">
             <span className="mb-1.5 block text-sm font-semibold text-slate-700">
-              Téléphone
+              Téléphone ou identifiant de classe
             </span>
             <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
+              type="text"
+              inputMode="text"
+              autoComplete="username"
               value={phone}
               disabled={busy}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="07 13 02 37 62"
+              placeholder="+225 07 01 02 03 04 ou 0657 1"
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
             />
-          </label>
+            <span className="mt-1.5 block text-xs leading-5 text-slate-500">
+              L’identifiant de l’appareil de classe peut être attribué par l’établissement ; ce n’est pas nécessairement un numéro SIM.
+            </span>
+            <span className="mb-1.5 mt-3 block text-sm font-semibold text-slate-700">
+              Code établissement <span className="font-normal text-slate-500">(si nécessaire)</span>
+            </span>
+            <input
+              type="text"
+              autoComplete="organization"
+              value={institutionCode}
+              disabled={busy}
+              onChange={(e) => setInstitutionCode(e.target.value)}
+              placeholder="Ex. SCH-000001"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+            />
+          </div>
         )}
 
         <label className="block">

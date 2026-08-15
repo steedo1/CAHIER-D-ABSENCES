@@ -5,6 +5,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 // ✨ temps réel
 import { triggerPushDispatch } from "@/lib/push-dispatch";
 import { triggerSmsDispatch } from "@/lib/sms-dispatch";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,34 +19,6 @@ type Mark = {
   observed_at?: string | null;
   late_observed_at?: string | null;
 };
-
-function uniq<T>(arr: T[]) {
-  return Array.from(new Set((arr || []).filter(Boolean))) as T[];
-}
-
-function buildPhoneVariants(raw: string) {
-  const t = String(raw || "").trim();
-  const digits = t.replace(/\D/g, "");
-  const local10 = digits ? digits.slice(-10) : "";
-  const localNo0 = local10.replace(/^0/, "");
-  const cc = "225";
-  return {
-    variants: uniq<string>([
-      t,
-      t.replace(/\s+/g, ""),
-      digits,
-      `+${digits}`,
-      `+${cc}${local10}`,
-      `+${cc}${localNo0}`,
-      `00${cc}${local10}`,
-      `00${cc}${localNo0}`,
-      `${cc}${local10}`,
-      `${cc}${localNo0}`,
-      local10,
-      localNo0 ? `0${localNo0}` : "",
-    ]),
-  };
-}
 
 /** ISO parsing safe */
 function parseIsoDate(v: any): Date | null {
@@ -171,31 +144,13 @@ export async function POST(req: NextRequest) {
   let classDeviceAuthorized = false;
 
   if (!allowed) {
-    let phone = String((user as any).phone || "").trim();
-
-    if (!phone) {
-      const { data: au } = await srv
-        .schema("auth")
-        .from("users")
-        .select("phone")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      phone = String(au?.phone || "").trim();
-    }
-
-    if (phone) {
-      const { variants } = buildPhoneVariants(phone);
-      const { data: cls } = await srv
-        .from("classes")
-        .select("id")
-        .eq("id", session.class_id)
-        .in("class_phone_e164", variants.length ? variants : ["__no_match__"])
-        .maybeSingle();
-
-      allowed = !!cls;
-      classDeviceAuthorized = !!cls;
-    }
+    classDeviceAuthorized = await classDeviceMayAccessClass({
+      service: srv,
+      userId: user.id,
+      userPhone: user.phone,
+      classId: session.class_id,
+    });
+    allowed = classDeviceAuthorized;
   }
 
   if (!allowed) {

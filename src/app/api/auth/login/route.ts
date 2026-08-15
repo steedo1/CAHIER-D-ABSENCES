@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { resolveClassDeviceLogin } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -142,9 +144,40 @@ async function signInWithPhone(phone: string, password: string, country?: string
   return { data: null, error: lastErr };
 }
 
+async function signInWithClassDeviceIdentity(input: {
+  identifier: string;
+  institutionCode?: string;
+  password: string;
+}) {
+  const resolution = await resolveClassDeviceLogin({
+    service: getSupabaseServiceClient(),
+    identifier: input.identifier,
+    institutionCode: input.institutionCode,
+  });
+  if (resolution.status !== "resolved") return { resolution, response: null };
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+  const response = resolution.email
+    ? await supabase.auth.signInWithPassword({
+        email: resolution.email,
+        password: input.password,
+      })
+    : await supabase.auth.signInWithPassword({
+        phone: resolution.phone!,
+        password: input.password,
+      });
+  return { resolution, response };
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { email, phone, password, country } = await req.json();
+    const { email, phone, password, country, institution_code } = await req.json();
 
     if (!password) return jsonError("PASSWORD_REQUIRED", 400);
 
@@ -153,13 +186,37 @@ export async function POST(req: NextRequest) {
 
     if (!hasEmail && !hasPhone) return jsonError("EMAIL_OR_PHONE_REQUIRED", 400);
 
-    const resp = hasEmail
-      ? await signInWithEmail(String(email), String(password))
-      : await signInWithPhone(
+    let resp;
+    if (hasEmail) {
+      resp = await signInWithEmail(String(email), String(password));
+    } else {
+      const classLogin = await signInWithClassDeviceIdentity({
+        identifier: String(phone),
+        institutionCode:
+          typeof institution_code === "string" && institution_code.trim()
+            ? institution_code.trim()
+            : undefined,
+        password: String(password),
+      });
+      if (classLogin.resolution.status === "ambiguous") {
+        return jsonError("CLASS_IDENTIFIER_INSTITUTION_REQUIRED", 409);
+      }
+      if (classLogin.resolution.status === "institution_not_found") {
+        return jsonError("CLASS_IDENTIFIER_INSTITUTION_UNKNOWN", 400);
+      }
+      if (classLogin.response && !classLogin.response.error) {
+        resp = classLogin.response;
+      } else {
+        const phoneResponse = await signInWithPhone(
           String(phone),
           String(password),
-          typeof country === "string" ? country : undefined
+          typeof country === "string" ? country : undefined,
         );
+        resp = !phoneResponse.error
+          ? phoneResponse
+          : classLogin.response || phoneResponse;
+      }
+    }
 
     if (resp.error) {
       return jsonError(resp.error.message || "INVALID_LOGIN", 401);

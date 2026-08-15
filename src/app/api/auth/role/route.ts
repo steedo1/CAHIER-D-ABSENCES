@@ -3,7 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import type { AppRole } from "@/lib/auth/role";
 import { ROLE_PRIORITY } from "@/lib/auth/role";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { normalizePhone } from "@/lib/phone";
+import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 import {
   isOfflineAccessRole,
   issueOfflineAccessGrant,
@@ -18,29 +18,23 @@ function noStore(body: unknown, status = 200) {
   return response;
 }
 
-async function resolveClassDeviceScope(user: { phone?: string | null }) {
-  const rawPhone = String(user.phone || "").trim();
-  if (!rawPhone) return null;
-  const normalized = normalizePhone(rawPhone, {
-    defaultCountryAlpha2: "CI",
-  });
-  const variants = Array.from(
-    new Set(
-      [rawPhone, rawPhone.replace(/\s+/g, ""), normalized].filter(
-        (value): value is string => typeof value === "string" && !!value,
-      ),
-    ),
-  );
+async function resolveClassDeviceScope(user: { id: string; phone?: string | null }) {
   try {
     const service = getSupabaseServiceClient();
+    const classIds = await resolveClassDeviceClassIds({
+      service,
+      userId: user.id,
+      userPhone: user.phone,
+    });
+    if (classIds.length !== 1) return null;
     const { data, error } = await service
       .from("classes")
       .select("id,institution_id")
-      .in("class_phone_e164", variants)
-      .limit(2);
-    if (error || !Array.isArray(data) || data.length !== 1) return null;
-    const classId = String(data[0]?.id || "").trim();
-    const institutionId = String(data[0]?.institution_id || "").trim();
+      .eq("id", classIds[0])
+      .maybeSingle();
+    if (error || !data) return null;
+    const classId = String(data.id || "").trim();
+    const institutionId = String(data.institution_id || "").trim();
     return classId && institutionId ? { classId, institutionId } : null;
   } catch {
     return null;

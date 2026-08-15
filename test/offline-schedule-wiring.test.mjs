@@ -101,8 +101,8 @@ test("le service worker couvre les trois navigations professeur", async () => {
   assert.match(worker, /Ressource essentielle indisponible/);
   assert.match(worker, /Ressource essentielle absente du cache/);
   assert.match(worker, /verified/);
-  assert.match(worker, /2026-08-09-pwa-stable-v5-5/);
-  assert.match(release, /2026-08-09-pwa-stable-v5-5/);
+  assert.match(worker, /2026-08-10-pwa-login-repeat-v5-7/);
+  assert.match(release, /2026-08-10-pwa-login-repeat-v5-7/);
   assert.match(worker, /offline_schema_version: OFFLINE_SCHEMA_VERSION/);
   assert.match(offline, /getActiveOfflineWorkerInfo/);
   assert.match(offline, /MON_CAHIER_SW_URL = "\/moncahier-sw\.js"/);

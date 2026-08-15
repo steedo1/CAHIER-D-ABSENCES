@@ -5,6 +5,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { triggerPushDispatch } from "@/lib/push-dispatch"; // déclencheur temps réel (fire-and-forget)
 import { queuePenaltyNotifications } from "@/lib/notifications";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,30 +40,6 @@ type Item = { student_id: string; points: number; reason?: string | null };
 
 function uniq<T>(arr: T[]) {
   return Array.from(new Set((arr || []).filter(Boolean))) as T[];
-}
-
-function buildPhoneVariants(raw: string) {
-  const t = String(raw || "").trim();
-  const digits = t.replace(/\D/g, "");
-  if (!digits) return { variants: [] as string[] };
-  const cc = "225";
-  const local10 = digits.slice(-10);
-  const localNo0 = local10.replace(/^0/, "");
-  const variants = uniq<string>([
-    t,
-    t.replace(/\s+/g, ""),
-    digits,
-    `+${digits}`,
-    `+${cc}${local10}`,
-    `+${cc}${localNo0}`,
-    `00${cc}${local10}`,
-    `00${cc}${localNo0}`,
-    `${cc}${local10}`,
-    `${cc}${localNo0}`,
-    local10,
-    localNo0 ? `0${localNo0}` : "",
-  ]);
-  return { variants };
 }
 
 /**
@@ -172,32 +149,23 @@ export async function POST(req: NextRequest) {
     if (!class_id) return NextResponse.json({ error: "class_id_required" }, { status: 400 });
     if (items.length === 0) return NextResponse.json({ error: "empty_items" }, { status: 400 });
 
-    // Auth téléphone de classe (class device)
-    let phone = String((user as any).phone || "").trim();
-    if (!phone) {
-      const { data: au, error: auErr } = await srv
-        .schema("auth")
-        .from("users")
-        .select("phone")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (auErr) return NextResponse.json({ error: auErr.message }, { status: 400 });
-      phone = String(au?.phone || "").trim();
-    }
-    if (!phone) return NextResponse.json({ error: "no_phone" }, { status: 400 });
-
-    const { variants } = buildPhoneVariants(phone);
-
-    // Vérif classe + institution via class_phone_e164 ∈ variants
     const { data: cls, error: clsErr } = await srv
       .from("classes")
       .select("id,label,institution_id,class_phone_e164")
       .eq("id", class_id)
-      .in("class_phone_e164", variants.length ? variants : ["__no_match__"])
       .maybeSingle();
 
     if (clsErr) return NextResponse.json({ error: clsErr.message }, { status: 400 });
-    if (!cls) return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
+    if (!cls) return NextResponse.json({ error: "class_not_found" }, { status: 404 });
+    const allowed = await classDeviceMayAccessClass({
+      service: srv,
+      userId: user.id,
+      userPhone: user.phone,
+      classId: class_id,
+    });
+    if (!allowed) {
+      return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
+    }
 
     const nowIso = new Date().toISOString();
 

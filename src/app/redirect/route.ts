@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { routeForUser, type Book } from "@/lib/auth/routing";
+import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,21 +81,15 @@ export async function GET(req: Request) {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: adminUser } = await svc.auth.admin.getUserById(user.id);
-      const phone = (adminUser?.user?.phone || "").trim();
-
-      if (phone) {
-        const { data: cls } = await svc
-          .from("classes")
-          .select("id")
-          .eq("class_phone_e164", phone)
-          .maybeSingle();
-
-        if (cls?.id) {
-          const dest = book === "grades" ? "/grades/class-device" : "/class";
-          const res = NextResponse.redirect(new URL(dest, url));
-          return attachLastDest(res, dest, book);
-        }
+      const classIds = await resolveClassDeviceClassIds({
+        service: svc,
+        userId: user.id,
+        userPhone: user.phone,
+      });
+      if (classIds.length > 0) {
+        const dest = book === "grades" ? "/grades/class-device" : "/class";
+        const res = NextResponse.redirect(new URL(dest, url));
+        return attachLastDest(res, dest, book);
       }
     } catch {
       // On continue sur le routage standard.

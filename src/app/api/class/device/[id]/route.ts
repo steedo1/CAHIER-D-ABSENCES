@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,20 +19,6 @@ export async function GET(
 
   const srv = getSupabaseServiceClient();
 
-  // ✅ Téléphone du compte connecté (téléphone de la classe)
-  let phone = String(user.phone || "").trim();
-  if (!phone) {
-    const { data: au, error: auErr } = await srv
-      .schema("auth")
-      .from("users")
-      .select("phone")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (auErr) return NextResponse.json({ error: auErr.message }, { status: 400 });
-    phone = String(au?.phone || "").trim();
-  }
-  if (!phone) return NextResponse.json({ error: "no_phone" }, { status: 404 });
-
   // ✅ Classe demandée
   const { data: cls, error: cErr } = await srv
     .from("classes")
@@ -41,8 +28,13 @@ export async function GET(
   if (cErr) return NextResponse.json({ error: cErr.message }, { status: 400 });
   if (!cls) return NextResponse.json({ error: "class_not_found" }, { status: 404 });
 
-  // ✅ Sécurité : ce compte correspond-il au téléphone de la classe ?
-  if (String(cls.class_phone_e164 || "").trim() !== phone) {
+  const allowed = await classDeviceMayAccessClass({
+    service: srv,
+    userId: user.id,
+    userPhone: user.phone,
+    classId: id,
+  });
+  if (!allowed) {
     return NextResponse.json({ error: "forbidden_not_class_device" }, { status: 403 });
   }
 
