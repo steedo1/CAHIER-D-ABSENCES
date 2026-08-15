@@ -1,0 +1,84 @@
+name: LOT4 Relay Verify
+
+on:
+  push:
+    branches:
+      - lot4-grade-versioning-20260815
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relay-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci
+
+      - name: Typecheck relay
+        working-directory: desktop/relay
+        run: npm run typecheck
+
+      - name: Build relay
+        working-directory: desktop/relay
+        run: npm run build
+
+      - name: Test relay except two historical local-only files
+        working-directory: desktop/relay
+        shell: bash
+        run: |
+          # Ces deux fichiers de test dépendent explicitement de
+          # ../../migrations/20260813_relay_academic_revision_v1.sql.
+          # Cette migration historique reste locale et n'est pas versionnée GitHub.
+          # Tous les autres tests relais, dont les scénarios LOT4, sont exécutés.
+          mapfile -t tests < <(
+            find dist/test -maxdepth 1 -name '*.test.mjs' \
+              ! -name 'academic-revision-concurrency.test.mjs' \
+              ! -name 'academic-provisioning.test.mjs' \
+              -print | sort
+          )
+          node --test "${tests[@]}"
+
+  cloud-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Test LOT4 cloud contracts and LOT3B regression
+        run: |
+          node --test \
+            test/relay-student-grade-version-history.test.mjs \
+            test/relay-student-grade-cas.test.mjs \
+            test/relay-student-grade-delete-idempotence.test.mjs \
+            test/relay-grade-sync-v4-canary.test.mjs \
+            test/relay-student-grade-snapshot-version.test.mjs \
+            test/relay-grade-versioned-routing.test.mjs \
+            test/relay-student-grade-cloud-sync.test.mjs

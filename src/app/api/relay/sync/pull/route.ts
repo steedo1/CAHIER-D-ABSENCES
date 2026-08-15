@@ -5,6 +5,7 @@ import {
   buildRelayBootstrapSnapshot,
   buildRelayScheduleSnapshot,
 } from "@/lib/relay-bootstrap-snapshot";
+import { attachRelayStudentGradeVersions } from "@/lib/relay-grade-version-snapshot";
 import { RELAY_SYNC_PROTOCOL_VERSION } from "@/lib/relay-cloud-sync";
 
 export const runtime = "nodejs";
@@ -68,10 +69,11 @@ export async function GET(request: NextRequest) {
     return noStore({ error: "relay_device_mismatch" }, 401);
   }
 
+  const gradeV4Capable = request.headers.get("x-moncahier-grade-sync-v4") === "1";
   const service = getSupabaseServiceClient();
   const { data: device, error: deviceError } = await service
     .from("relay_sync_devices")
-    .select("id,institution_id,token_hash,is_active,revoked_at")
+    .select("id,institution_id,token_hash,is_active,revoked_at,grade_sync_v4_enabled")
     .eq("id", deviceId)
     .maybeSingle();
   if (deviceError) return noStore({ error: "relay_device_lookup_failed" }, 503);
@@ -88,6 +90,9 @@ export async function GET(request: NextRequest) {
 
   const institutionId = String((device as any).institution_id || "").trim();
   if (!institutionId) return noStore({ error: "relay_institution_missing" }, 403);
+  const gradeV4Enabled =
+    (device as any).grade_sync_v4_enabled === true &&
+    gradeV4Capable;
 
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
@@ -164,6 +169,7 @@ export async function GET(request: NextRequest) {
       server_time: serverTime,
       cloud_revision: revision,
       schedule_revision: scheduleRevision,
+      grade_sync_v4: gradeV4Enabled,
       revision_updated_at: String((revisionRow as any)?.updated_at || serverTime),
     });
   }
@@ -171,11 +177,17 @@ export async function GET(request: NextRequest) {
   try {
     const academicChanged = known === null || known !== revision;
     const scheduleChanged = knownSchedule === null || knownSchedule !== scheduleRevision;
-    const snapshot = academicChanged
+    const rawSnapshot = academicChanged
       ? await buildRelayBootstrapSnapshot(service, institutionId, {
         includeSchedule: scheduleChanged,
       })
       : await buildRelayScheduleSnapshot(service, institutionId);
+    // Un client V4 reçoit les vraies versions dès son bootstrap, même avant
+    // l'activation du CAS. Cela permet d'installer le nouveau relais sans
+    // fenêtre de compatibilité fragile.
+    const snapshot = academicChanged && gradeV4Capable
+      ? await attachRelayStudentGradeVersions(service, institutionId, rawSnapshot)
+      : rawSnapshot;
     if (
       snapshot.snapshot_completeness !== "complete" ||
       !Number.isSafeInteger(Number(snapshot.snapshot_revision))
@@ -197,6 +209,7 @@ export async function GET(request: NextRequest) {
       server_time: serverTime,
       cloud_revision: academicChanged ? Number(snapshot.academic_revision) : revision,
       schedule_revision: Number(snapshot.snapshot_revision),
+      grade_sync_v4: gradeV4Enabled,
       snapshot_scope: academicChanged ? "academic" : "attendance_schedule",
       snapshot,
     });

@@ -1,6 +1,7 @@
 import { loadRelayConfig } from "./config.mjs";
 import { openRelayDatabase } from "./db.mjs";
-import { createRelayCloudSyncAgent, requeueTimetableReplacementChain, syncRelayOnce } from "./cloud-sync.mjs";
+import { requeueTimetableReplacementChain } from "./cloud-sync.mjs";
+import { createRelayCloudSyncAgent, syncRelayOnce } from "./cloud-sync-grade-v4-safe.mjs";
 import { createRelayServer } from "./server.mjs";
 import { configureCloudSync, configureRelay, relayLanUrls } from "./setup.mjs";
 import {
