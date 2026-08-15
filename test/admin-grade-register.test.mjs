@@ -53,6 +53,14 @@ test("l'API admin attribue la nouvelle évaluation au professeur choisi", () => 
   assert.match(route, /EVALUATION_LOCKED/);
 });
 
+test("le registre lit les brouillons et les notes publiées depuis leurs sources de référence", () => {
+  assert.match(route, /workingEvaluationIds/);
+  assert.match(route, /\.from\("student_grades"\)/);
+  assert.match(route, /publishedEvaluationIds/);
+  assert.match(route, /\.from\("v_grade_scores_official_for_reports"\)/);
+  assert.match(route, /String\(ev\.publication_status \|\| ""\)\.toLowerCase\(\) === "published"/);
+});
+
 test("le registre est rangé dans le groupe Cahier de notes", () => {
   const notesStart = sidebar.indexOf("const NOTES_ITEMS");
   const registerLink = sidebar.indexOf('label: "Registre des notes"');
