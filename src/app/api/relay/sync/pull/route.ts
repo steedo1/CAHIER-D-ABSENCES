@@ -69,6 +69,7 @@ export async function GET(request: NextRequest) {
     return noStore({ error: "relay_device_mismatch" }, 401);
   }
 
+  const gradeV4Capable = request.headers.get("x-moncahier-grade-sync-v4") === "1";
   const service = getSupabaseServiceClient();
   const { data: device, error: deviceError } = await service
     .from("relay_sync_devices")
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
   if (!institutionId) return noStore({ error: "relay_institution_missing" }, 403);
   const gradeV4Enabled =
     (device as any).grade_sync_v4_enabled === true &&
-    request.headers.get("x-moncahier-grade-sync-v4") === "1";
+    gradeV4Capable;
 
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
@@ -168,6 +169,7 @@ export async function GET(request: NextRequest) {
       server_time: serverTime,
       cloud_revision: revision,
       schedule_revision: scheduleRevision,
+      grade_sync_v4: gradeV4Enabled,
       revision_updated_at: String((revisionRow as any)?.updated_at || serverTime),
     });
   }
@@ -180,7 +182,10 @@ export async function GET(request: NextRequest) {
         includeSchedule: scheduleChanged,
       })
       : await buildRelayScheduleSnapshot(service, institutionId);
-    const snapshot = academicChanged && gradeV4Enabled
+    // Un client V4 reçoit les vraies versions dès son bootstrap, même avant
+    // l'activation du CAS. Cela permet d'installer le nouveau relais sans
+    // fenêtre de compatibilité fragile.
+    const snapshot = academicChanged && gradeV4Capable
       ? await attachRelayStudentGradeVersions(service, institutionId, rawSnapshot)
       : rawSnapshot;
     if (
@@ -204,6 +209,7 @@ export async function GET(request: NextRequest) {
       server_time: serverTime,
       cloud_revision: academicChanged ? Number(snapshot.academic_revision) : revision,
       schedule_revision: Number(snapshot.snapshot_revision),
+      grade_sync_v4: gradeV4Enabled,
       snapshot_scope: academicChanged ? "academic" : "attendance_schedule",
       snapshot,
     });
