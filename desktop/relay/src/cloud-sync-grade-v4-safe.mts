@@ -9,14 +9,45 @@ type SyncOptions = {
   now?: () => Date;
 };
 
-function withGradeV4Capability(fetchImpl: typeof fetch): typeof fetch {
+function needsGradeVersionBootstrap(store: RelayStore) {
+  const row = store.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM student_grades
+    WHERE deleted_at IS NULL
+      AND server_version <= 0
+  `).get() as { count: number };
+  return Number(row.count || 0) > 0;
+}
+
+function forceAcademicSnapshotInput(input: Parameters<typeof fetch>[0]) {
+  if (input instanceof URL) {
+    const endpoint = new URL(input.toString());
+    endpoint.searchParams.delete("known_revision");
+    return endpoint;
+  }
+  if (typeof input === "string") {
+    const endpoint = new URL(input);
+    endpoint.searchParams.delete("known_revision");
+    return endpoint.toString();
+  }
+  return input;
+}
+
+function withGradeV4Capability(
+  fetchImpl: typeof fetch,
+  forceAcademicBootstrap: boolean,
+): typeof fetch {
   return (async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ) => {
     const headers = new Headers(init?.headers);
     headers.set("X-MonCahier-Grade-Sync-V4", "1");
-    return fetchImpl(input, { ...init, headers });
+    const method = String(init?.method || "GET").toUpperCase();
+    const requestInput = forceAcademicBootstrap && method === "GET"
+      ? forceAcademicSnapshotInput(input)
+      : input;
+    return fetchImpl(requestInput, { ...init, headers });
   }) as typeof fetch;
 }
 
@@ -26,9 +57,13 @@ export async function syncRelayOnce(
   options: SyncOptions = {},
 ): Promise<RelayCloudSyncRunResult> {
   rekeyResolvedKeepLocalGradeOperations(store.db, (options.now || (() => new Date()))());
+  const forceAcademicBootstrap = needsGradeVersionBootstrap(store);
   return syncRelayOnceV4(config, store, {
     ...options,
-    fetchImpl: withGradeV4Capability(options.fetchImpl || fetch),
+    fetchImpl: withGradeV4Capability(
+      options.fetchImpl || fetch,
+      forceAcademicBootstrap,
+    ),
   });
 }
 
