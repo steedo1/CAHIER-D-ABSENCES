@@ -38,6 +38,12 @@ type ScoreInput = {
   score?: number | null;
 };
 
+type ScoreRow = {
+  evaluation_id?: string | null;
+  student_id?: string | null;
+  score?: number | string | null;
+};
+
 function json(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, {
     status,
@@ -237,6 +243,25 @@ function isEvaluationEditable(ev: EvaluationRow, locked: boolean) {
   );
 }
 
+function appendScores(
+  target: Array<{ evaluation_id: string; student_id: string; score: number | null }>,
+  rows: ScoreRow[] | null | undefined,
+) {
+  for (const row of rows || []) {
+    const evaluationId = String(row.evaluation_id || "").trim();
+    const studentId = String(row.student_id || "").trim();
+    if (!evaluationId || !studentId) continue;
+
+    const raw = row.score;
+    const number = raw === null || raw === undefined ? null : Number(raw);
+    target.push({
+      evaluation_id: evaluationId,
+      student_id: studentId,
+      score: number !== null && Number.isFinite(number) ? number : null,
+    });
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAdmin();
@@ -315,23 +340,34 @@ export async function GET(req: NextRequest) {
     const evaluations = (evaluationsRaw || []) as unknown as EvaluationRow[];
     const evaluationIds = evaluations.map((ev) => ev.id);
 
+    const publishedEvaluationIds = evaluations
+      .filter(
+        (ev) =>
+          ev.is_published === true ||
+          String(ev.publication_status || "").toLowerCase() === "published",
+      )
+      .map((ev) => ev.id);
+    const publishedSet = new Set(publishedEvaluationIds);
+    const workingEvaluationIds = evaluationIds.filter((id) => !publishedSet.has(id));
+
     const scores: Array<{ evaluation_id: string; student_id: string; score: number | null }> = [];
-    if (evaluationIds.length) {
-      const { data: scoreRows, error: scoreError } = await srv
+
+    if (workingEvaluationIds.length) {
+      const { data: workingRows, error: workingError } = await srv
         .from("student_grades")
         .select("evaluation_id,student_id,score")
-        .in("evaluation_id", evaluationIds);
-      if (scoreError) throw scoreError;
+        .in("evaluation_id", workingEvaluationIds);
+      if (workingError) throw workingError;
+      appendScores(scores, workingRows as ScoreRow[] | null);
+    }
 
-      for (const row of scoreRows || []) {
-        const value = (row as any).score;
-        const number = value === null || value === undefined ? null : Number(value);
-        scores.push({
-          evaluation_id: String((row as any).evaluation_id),
-          student_id: String((row as any).student_id),
-          score: number !== null && Number.isFinite(number) ? number : null,
-        });
-      }
+    if (publishedEvaluationIds.length) {
+      const { data: officialRows, error: officialError } = await srv
+        .from("v_grade_scores_official_for_reports")
+        .select("evaluation_id,student_id,score")
+        .in("evaluation_id", publishedEvaluationIds);
+      if (officialError) throw officialError;
+      appendScores(scores, officialRows as ScoreRow[] | null);
     }
 
     const componentIds = Array.from(
