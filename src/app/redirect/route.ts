@@ -87,7 +87,16 @@ export async function GET(req: Request) {
         userPhone: user.phone,
       });
       if (classIds.length > 0) {
-        const dest = book === "grades" ? "/grades/class-device" : "/class";
+        // À la connexion normale, le téléphone de classe doit d'abord choisir
+        // son cahier. Un cahier explicite conserve son routage direct.
+        if (!book) {
+          return withNoStore(
+            NextResponse.redirect(new URL("/choose-book", url)),
+          );
+        }
+
+        const dest =
+          book === "grades" ? "/grades/class-device" : "/class";
         const res = NextResponse.redirect(new URL(dest, url));
         return attachLastDest(res, dest, book);
       }

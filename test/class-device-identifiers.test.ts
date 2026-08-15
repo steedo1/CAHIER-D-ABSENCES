@@ -244,7 +244,10 @@ test("connexion en ligne et préparation hors ligne utilisent l'identifiant opaq
   assert.match(loginRoute, /resolution\.email[\s\S]*signInWithPassword/);
   assert.match(loginRoute, /CLASS_IDENTIFIER_INSTITUTION_REQUIRED/);
   assert.match(loginCard, /offlineIdentifier/);
-  assert.match(loginCard, /institutionCode\.trim\(\)\.toUpperCase\(\)/);
-  assert.match(loginCard, /Téléphone ou identifiant de classe/);
+  assert.doesNotMatch(loginCard, /institutionCode/);
+  assert.doesNotMatch(loginCard, /Téléphone \/ identifiant/);
+  assert.doesNotMatch(loginCard, /Téléphone ou identifiant de classe/);
+  assert.doesNotMatch(loginCard, /Code établissement/);
+  assert.match(loginCard, />\s*Numéro\s*</);
   assert.match(roleRoute, /resolveClassDeviceClassIds/);
 });
