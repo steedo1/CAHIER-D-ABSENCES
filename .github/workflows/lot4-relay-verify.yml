@@ -52,3 +52,32 @@ jobs:
           node --test \
             --test-name-pattern='^(?!preuve statique: revision academique exhaustive, distincte du planning et hors Finance$).*' \
             "${tests[@]}"
+
+  cloud-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Test LOT4 cloud contracts and LOT3B regression
+        run: |
+          node --test \
+            test/relay-student-grade-version-history.test.mjs \
+            test/relay-student-grade-cas.test.mjs \
+            test/relay-student-grade-snapshot-version.test.mjs \
+            test/relay-grade-versioned-routing.test.mjs \
+            test/relay-student-grade-cloud-sync.test.mjs
