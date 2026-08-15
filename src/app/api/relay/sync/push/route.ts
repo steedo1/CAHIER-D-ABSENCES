@@ -9,6 +9,7 @@ import {
   RELAY_SYNC_PROTOCOL_VERSION,
   type RelaySyncAcknowledgement,
 } from "@/lib/relay-cloud-sync";
+import { processRelayStudentGradeSyncOperationV4 } from "@/lib/relay-student-grade-sync-v4";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,11 +107,17 @@ export async function POST(request: NextRequest) {
   const acknowledgements: RelaySyncAcknowledgement[] = [];
   let attendanceChanged = false;
   for (const operation of batch.operations) {
-    const acknowledgement = await processRelaySyncOperation(service, {
-      institutionId: batch.institution_id,
-      deviceId,
-      operation,
-    });
+    const acknowledgement = operation.entity_type === "student_grade"
+      ? await processRelayStudentGradeSyncOperationV4(service, {
+        institutionId: batch.institution_id,
+        deviceId,
+        operation,
+      })
+      : await processRelaySyncOperation(service, {
+        institutionId: batch.institution_id,
+        deviceId,
+        operation,
+      });
     acknowledgements.push(acknowledgement);
     if (
       operation.entity_type === "attendance_call" &&
