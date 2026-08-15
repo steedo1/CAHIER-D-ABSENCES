@@ -78,6 +78,7 @@ jobs:
           node --test \
             test/relay-student-grade-version-history.test.mjs \
             test/relay-student-grade-cas.test.mjs \
+            test/relay-student-grade-delete-idempotence.test.mjs \
             test/relay-student-grade-snapshot-version.test.mjs \
             test/relay-grade-versioned-routing.test.mjs \
             test/relay-student-grade-cloud-sync.test.mjs
