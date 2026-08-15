@@ -44,6 +44,24 @@ type ScoreRow = {
   score?: number | string | null;
 };
 
+type RosterItem = {
+  id: string;
+  full_name: string;
+  matricule: string | null;
+};
+
+type PeriodRow = {
+  id: string;
+  institution_id?: string | null;
+  academic_year?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_active?: boolean | null;
+  label?: string | null;
+  short_label?: string | null;
+  code?: string | null;
+};
+
 function json(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, {
     status,
@@ -53,6 +71,29 @@ function json(payload: Record<string, unknown>, status = 200) {
 
 function bad(error: string, status = 400, extra?: Record<string, unknown>) {
   return json({ ok: false, error, ...(extra || {}) }, status);
+}
+
+function cleanName(...parts: Array<string | null | undefined>) {
+  return parts
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)),
+  );
+}
+
+function chunks<T>(values: T[], size = 400): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 async function requireAdmin(): Promise<
@@ -129,43 +170,73 @@ async function resolveSubjectIds(
   rawSubjectId: string,
 ) {
   const raw = String(rawSubjectId || "").trim();
-  if (!raw) return { raw: "", globalId: "", instId: "" };
+  if (!raw) {
+    return { raw: "", globalId: "", ids: [] as string[], label: "Matière" };
+  }
 
-  const { data: direct } = await srv
+  const ids = new Set<string>([raw]);
+  let globalId = "";
+  let label = "";
+
+  const { data: direct, error: directError } = await srv
     .from("subjects")
     .select("id,name,code")
     .eq("id", raw)
     .maybeSingle();
+  if (directError) throw directError;
 
   if (direct?.id) {
-    const { data: inst } = await srv
+    globalId = String(direct.id);
+    label = String(direct.name || direct.code || "");
+  } else {
+    const { data: inst, error: instError } = await srv
       .from("institution_subjects")
       .select("id,subject_id,custom_name")
       .eq("institution_id", institutionId)
-      .eq("subject_id", direct.id)
+      .eq("id", raw)
       .maybeSingle();
+    if (instError) throw instError;
 
-    return {
-      raw,
-      globalId: String(direct.id),
-      instId: inst?.id ? String(inst.id) : "",
-      label: String(inst?.custom_name || direct.name || direct.code || "Matière"),
-    };
+    if (inst?.subject_id) {
+      globalId = String(inst.subject_id);
+      label = String(inst.custom_name || "");
+    }
   }
 
-  const { data: inst } = await srv
-    .from("institution_subjects")
-    .select("id,subject_id,custom_name,subj:subjects(id,name,code)")
-    .eq("institution_id", institutionId)
-    .eq("id", raw)
-    .maybeSingle();
+  if (!globalId) {
+    return { raw, globalId: "", ids: Array.from(ids), label: "Matière" };
+  }
 
-  const subject = (inst as any)?.subj || null;
+  ids.add(globalId);
+
+  const [{ data: links, error: linksError }, { data: baseSubject, error: baseError }] =
+    await Promise.all([
+      srv
+        .from("institution_subjects")
+        .select("id,subject_id,custom_name")
+        .eq("institution_id", institutionId)
+        .eq("subject_id", globalId),
+      srv.from("subjects").select("id,name,code").eq("id", globalId).maybeSingle(),
+    ]);
+
+  if (linksError) throw linksError;
+  if (baseError) throw baseError;
+
+  for (const row of links || []) {
+    if ((row as any).id) ids.add(String((row as any).id));
+    if ((row as any).subject_id) ids.add(String((row as any).subject_id));
+    if (!label && (row as any).custom_name) label = String((row as any).custom_name);
+  }
+
+  if (!label) {
+    label = String((baseSubject as any)?.name || (baseSubject as any)?.code || "Matière");
+  }
+
   return {
     raw,
-    globalId: String(inst?.subject_id || subject?.id || ""),
-    instId: String(inst?.id || ""),
-    label: String(inst?.custom_name || subject?.name || subject?.code || "Matière"),
+    globalId,
+    ids: Array.from(ids),
+    label,
   };
 }
 
@@ -174,9 +245,9 @@ async function ensureTeacherAssignment(
   institutionId: string,
   classId: string,
   teacherId: string,
-  subjectCandidates: string[],
+  subjectIds: string[],
 ) {
-  if (!teacherId || !subjectCandidates.length) return false;
+  if (!teacherId || !subjectIds.length) return false;
 
   const { data, error } = await srv
     .from("class_teachers")
@@ -184,7 +255,7 @@ async function ensureTeacherAssignment(
     .eq("institution_id", institutionId)
     .eq("class_id", classId)
     .eq("teacher_id", teacherId)
-    .in("subject_id", subjectCandidates)
+    .in("subject_id", subjectIds)
     .limit(1);
 
   if (error) throw error;
@@ -195,7 +266,7 @@ async function ensurePeriod(
   srv: ReturnType<typeof getSupabaseServiceClient>,
   institutionId: string,
   periodId: string,
-) {
+): Promise<PeriodRow | null> {
   const { data, error } = await srv
     .from("grade_periods")
     .select("id,institution_id,academic_year,start_date,end_date,is_active,label,short_label,code")
@@ -204,7 +275,7 @@ async function ensurePeriod(
     .maybeSingle();
 
   if (error) throw error;
-  return data || null;
+  return (data as PeriodRow | null) || null;
 }
 
 async function readLocks(
@@ -234,7 +305,7 @@ async function readLocks(
 }
 
 function isEvaluationEditable(ev: EvaluationRow, locked: boolean) {
-  const status = String(ev.publication_status || "draft");
+  const status = String(ev.publication_status || "draft").toLowerCase();
   return (
     !locked &&
     ev.is_published !== true &&
@@ -243,8 +314,8 @@ function isEvaluationEditable(ev: EvaluationRow, locked: boolean) {
   );
 }
 
-function appendScores(
-  target: Array<{ evaluation_id: string; student_id: string; score: number | null }>,
+function mergeScores(
+  target: Map<string, { evaluation_id: string; student_id: string; score: number | null }>,
   rows: ScoreRow[] | null | undefined,
 ) {
   for (const row of rows || []) {
@@ -254,12 +325,109 @@ function appendScores(
 
     const raw = row.score;
     const number = raw === null || raw === undefined ? null : Number(raw);
-    target.push({
+    target.set(`${evaluationId}:${studentId}`, {
       evaluation_id: evaluationId,
       student_id: studentId,
       score: number !== null && Number.isFinite(number) ? number : null,
     });
   }
+}
+
+async function loadRosterForPeriod(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  classId: string,
+  period: PeriodRow,
+) {
+  let query = srv
+    .from("class_enrollments")
+    .select("student_id,start_date,end_date,students:student_id(id,full_name,first_name,last_name,matricule)")
+    .eq("class_id", classId);
+
+  if (period.end_date) {
+    query = query.or(`start_date.lte.${period.end_date},start_date.is.null`);
+  }
+  if (period.start_date) {
+    query = query.or(`end_date.gte.${period.start_date},end_date.is.null`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const rosterMap = new Map<string, RosterItem>();
+  for (const row of data || []) {
+    const student = Array.isArray((row as any).students)
+      ? (row as any).students[0]
+      : (row as any).students || {};
+    const id = String(student?.id || (row as any).student_id || "").trim();
+    if (!id) continue;
+
+    const fullName =
+      cleanName(student?.last_name, student?.first_name) ||
+      cleanName(student?.full_name) ||
+      "Élève";
+
+    rosterMap.set(id, {
+      id,
+      full_name: fullName,
+      matricule: student?.matricule ? String(student.matricule) : null,
+    });
+  }
+
+  return rosterMap;
+}
+
+function buildPeriodScope(periodId: string, period: PeriodRow) {
+  const alternatives = [`grading_period_id.eq.${periodId}`];
+  const legacyDateScope = ["grading_period_id.is.null"];
+
+  if (period.start_date) legacyDateScope.push(`eval_date.gte.${period.start_date}`);
+  if (period.end_date) legacyDateScope.push(`eval_date.lte.${period.end_date}`);
+
+  if (legacyDateScope.length > 1) {
+    alternatives.push(`and(${legacyDateScope.join(",")})`);
+  }
+
+  return alternatives.join(",");
+}
+
+async function includeStudentsReferencedByScores(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  rosterMap: Map<string, RosterItem>,
+  scores: Array<{ evaluation_id: string; student_id: string; score: number | null }>,
+) {
+  const missingIds = uniqueStrings(
+    scores
+      .map((row) => row.student_id)
+      .filter((studentId) => !rosterMap.has(String(studentId || ""))),
+  );
+
+  if (!missingIds.length) return 0;
+
+  let added = 0;
+  for (const part of chunks(missingIds)) {
+    const { data, error } = await srv
+      .from("students")
+      .select("id,full_name,first_name,last_name,matricule")
+      .in("id", part);
+    if (error) throw error;
+
+    for (const student of data || []) {
+      const id = String((student as any).id || "").trim();
+      if (!id || rosterMap.has(id)) continue;
+      const fullName =
+        cleanName((student as any).last_name, (student as any).first_name) ||
+        cleanName((student as any).full_name) ||
+        "Élève";
+      rosterMap.set(id, {
+        id,
+        full_name: fullName,
+        matricule: (student as any).matricule ? String((student as any).matricule) : null,
+      });
+      added += 1;
+    }
+  }
+
+  return added;
 }
 
 export async function GET(req: NextRequest) {
@@ -283,102 +451,96 @@ export async function GET(req: NextRequest) {
     const period = await ensurePeriod(srv, institutionId, periodId);
     if (!period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
 
-    const subject = await resolveSubjectIds(srv, institutionId, rawSubjectId);
-    if (!subject.globalId) return bad("SUBJECT_NOT_FOUND", 404);
+    if (
+      period.academic_year &&
+      classRow.academic_year &&
+      String(period.academic_year) !== String(classRow.academic_year)
+    ) {
+      return bad("ACADEMIC_YEAR_MISMATCH", 400);
+    }
 
-    const subjectCandidates = Array.from(
-      new Set([subject.raw, subject.globalId, subject.instId].filter(Boolean)),
-    );
+    const subject = await resolveSubjectIds(srv, institutionId, rawSubjectId);
+    if (!subject.globalId || !subject.ids.length) return bad("SUBJECT_NOT_FOUND", 404);
+
     const assigned = await ensureTeacherAssignment(
       srv,
       institutionId,
       classId,
       teacherId,
-      subjectCandidates,
+      subject.ids,
     );
     if (!assigned) return bad("TEACHER_NOT_ASSIGNED", 403);
 
-    const { data: enrollments, error: rosterError } = await srv
-      .from("class_enrollments")
-      .select("student_id,students:student_id(id,first_name,last_name,matricule)")
-      .eq("class_id", classId);
+    const rosterMap = await loadRosterForPeriod(srv, classId, period);
 
-    if (rosterError) throw rosterError;
-
-    const rosterMap = new Map<string, { id: string; full_name: string; matricule: string | null }>();
-    for (const row of enrollments || []) {
-      const student = (row as any).students || {};
-      const id = String(student.id || (row as any).student_id || "").trim();
-      if (!id) continue;
-      const fullName = [student.last_name, student.first_name]
-        .filter(Boolean)
-        .join(" ")
-        .trim() || "Élève";
-      rosterMap.set(id, {
-        id,
-        full_name: fullName,
-        matricule: student.matricule ? String(student.matricule) : null,
-      });
-    }
-    const roster = Array.from(rosterMap.values()).sort((a, b) =>
-      a.full_name.localeCompare(b.full_name, "fr", { sensitivity: "base" }),
-    );
-
-    const { data: evaluationsRaw, error: evalError } = await srv
+    let evaluationQuery = srv
       .from("grade_evaluations")
       .select(
         "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
       )
       .eq("class_id", classId)
       .eq("teacher_id", teacherId)
-      .eq("subject_id", subject.globalId)
-      .eq("grading_period_id", periodId)
+      .in("subject_id", subject.ids)
+      .or(buildPeriodScope(periodId, period))
       .order("eval_date", { ascending: true })
       .order("id", { ascending: true });
 
+    const { data: evaluationsRaw, error: evalError } = await evaluationQuery;
     if (evalError) throw evalError;
+
     const evaluations = (evaluationsRaw || []) as unknown as EvaluationRow[];
-    const evaluationIds = evaluations.map((ev) => ev.id);
+    const evaluationIds = uniqueStrings(evaluations.map((ev) => ev.id));
 
     const publishedEvaluationIds = evaluations
-      .filter(
-        (ev) =>
-          ev.is_published === true ||
-          String(ev.publication_status || "").toLowerCase() === "published",
-      )
+      .filter((ev) => {
+        const status = String(ev.publication_status || "").toLowerCase();
+        return ev.is_published === true || status === "published";
+      })
       .map((ev) => ev.id);
     const publishedSet = new Set(publishedEvaluationIds);
     const workingEvaluationIds = evaluationIds.filter((id) => !publishedSet.has(id));
 
-    const scores: Array<{ evaluation_id: string; student_id: string; score: number | null }> = [];
+    const scoreMap = new Map<
+      string,
+      { evaluation_id: string; student_id: string; score: number | null }
+    >();
 
-    if (workingEvaluationIds.length) {
+    for (const part of chunks(workingEvaluationIds)) {
       const { data: workingRows, error: workingError } = await srv
         .from("student_grades")
         .select("evaluation_id,student_id,score")
-        .in("evaluation_id", workingEvaluationIds);
+        .in("evaluation_id", part);
       if (workingError) throw workingError;
-      appendScores(scores, workingRows as ScoreRow[] | null);
+      mergeScores(scoreMap, workingRows as ScoreRow[] | null);
     }
 
-    if (publishedEvaluationIds.length) {
+    for (const part of chunks(publishedEvaluationIds)) {
       const { data: officialRows, error: officialError } = await srv
         .from("v_grade_scores_official_for_reports")
         .select("evaluation_id,student_id,score")
-        .in("evaluation_id", publishedEvaluationIds);
+        .in("evaluation_id", part);
       if (officialError) throw officialError;
-      appendScores(scores, officialRows as ScoreRow[] | null);
+      mergeScores(scoreMap, officialRows as ScoreRow[] | null);
     }
 
-    const componentIds = Array.from(
-      new Set(evaluations.map((ev) => ev.subject_component_id).filter((id): id is string => !!id)),
+    const scores = Array.from(scoreMap.values());
+    const recoveredStudents = await includeStudentsReferencedByScores(srv, rosterMap, scores);
+    const roster = Array.from(rosterMap.values()).sort((a, b) =>
+      a.full_name.localeCompare(b.full_name, "fr", {
+        sensitivity: "base",
+        numeric: true,
+      }),
     );
+
+    const componentIds = uniqueStrings(evaluations.map((ev) => ev.subject_component_id));
     const componentLabels = new Map<string, string>();
     if (componentIds.length) {
-      const { data: componentRows } = await srv
+      const { data: componentRows, error: componentError } = await srv
         .from("grade_subject_components")
         .select("id,label,short_label")
         .in("id", componentIds);
+      if (componentError) throw componentError;
+
       for (const row of componentRows || []) {
         componentLabels.set(
           String((row as any).id),
@@ -387,18 +549,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const { data: componentsRaw } = await srv
+    const { data: componentsRaw, error: componentsError } = await srv
       .from("grade_subject_components")
       .select("id,label,short_label,coeff_in_subject,order_index,level,is_active")
       .eq("institution_id", institutionId)
       .eq("subject_id", subject.globalId)
       .eq("is_active", true)
       .order("order_index", { ascending: true });
+    if (componentsError) throw componentsError;
 
     const locks = await readLocks(srv, evaluationIds);
+    const legacyPeriodEvaluations = evaluations.filter((ev) => !ev.grading_period_id).length;
 
     return json({
       ok: true,
+      meta: {
+        subject_ids_used: subject.ids,
+        evaluations_count: evaluations.length,
+        published_evaluations_count: publishedEvaluationIds.length,
+        working_evaluations_count: workingEvaluationIds.length,
+        legacy_period_evaluations_count: legacyPeriodEvaluations,
+        recovered_students_from_scores: recoveredStudents,
+      },
       class: {
         id: classRow.id,
         label: classRow.label || "Classe",
@@ -409,6 +581,7 @@ export async function GET(req: NextRequest) {
       subject: {
         id: subject.globalId,
         raw_id: rawSubjectId,
+        ids_used: subject.ids,
         label: subject.label || "Matière",
       },
       teacher_id: teacherId,
@@ -465,34 +638,36 @@ export async function POST(req: NextRequest) {
       if (!classRow) return bad("CLASS_NOT_FOUND", 404);
       const period = await ensurePeriod(srv, institutionId, periodId);
       if (!period) return bad("GRADE_PERIOD_NOT_FOUND", 404);
-      if (period.academic_year && classRow.academic_year && period.academic_year !== classRow.academic_year) {
+      if (
+        period.academic_year &&
+        classRow.academic_year &&
+        String(period.academic_year) !== String(classRow.academic_year)
+      ) {
         return bad("ACADEMIC_YEAR_MISMATCH", 400);
       }
       if (period.start_date && evalDate < period.start_date) return bad("DATE_OUTSIDE_PERIOD", 400);
       if (period.end_date && evalDate > period.end_date) return bad("DATE_OUTSIDE_PERIOD", 400);
 
       const subject = await resolveSubjectIds(srv, institutionId, rawSubjectId);
-      if (!subject.globalId) return bad("SUBJECT_NOT_FOUND", 404);
-      const subjectCandidates = Array.from(
-        new Set([subject.raw, subject.globalId, subject.instId].filter(Boolean)),
-      );
+      if (!subject.globalId || !subject.ids.length) return bad("SUBJECT_NOT_FOUND", 404);
       const assigned = await ensureTeacherAssignment(
         srv,
         institutionId,
         classId,
         teacherId,
-        subjectCandidates,
+        subject.ids,
       );
       if (!assigned) return bad("TEACHER_NOT_ASSIGNED", 403);
 
       if (componentId) {
-        const { data: component } = await srv
+        const { data: component, error: componentError } = await srv
           .from("grade_subject_components")
           .select("id,subject_id,institution_id,is_active")
           .eq("id", componentId)
           .eq("institution_id", institutionId)
           .eq("subject_id", subject.globalId)
           .maybeSingle();
+        if (componentError) throw componentError;
         if (!component || component.is_active === false) return bad("INVALID_COMPONENT", 400);
       }
 
@@ -537,7 +712,7 @@ export async function POST(req: NextRequest) {
       const classRow = await ensureClass(srv, institutionId, String(evaluation.class_id));
       if (!classRow) return bad("FORBIDDEN", 403);
 
-      const status = String(evaluation.publication_status || "draft");
+      const status = String(evaluation.publication_status || "draft").toLowerCase();
       if (evaluation.is_published === true || status === "published" || status === "submitted") {
         return bad("EVALUATION_READ_ONLY", 423);
       }
@@ -550,7 +725,9 @@ export async function POST(req: NextRequest) {
         .select("student_id")
         .eq("class_id", evaluation.class_id);
       if (enrollmentError) throw enrollmentError;
-      const allowedStudents = new Set((enrollmentRows || []).map((row: any) => String(row.student_id)));
+      const allowedStudents = new Set(
+        (enrollmentRows || []).map((row: any) => String(row.student_id)),
+      );
 
       const scale = Number(evaluation.scale || 20);
       const upserts: Array<{

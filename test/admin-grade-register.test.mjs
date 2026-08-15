@@ -53,12 +53,35 @@ test("l'API admin attribue la nouvelle évaluation au professeur choisi", () => 
   assert.match(route, /EVALUATION_LOCKED/);
 });
 
-test("le registre lit les brouillons et les notes publiées depuis leurs sources de référence", () => {
+test("le registre lit brouillons et publications depuis leurs sources de référence", () => {
   assert.match(route, /workingEvaluationIds/);
   assert.match(route, /\.from\("student_grades"\)/);
   assert.match(route, /publishedEvaluationIds/);
   assert.match(route, /\.from\("v_grade_scores_official_for_reports"\)/);
-  assert.match(route, /String\(ev\.publication_status \|\| ""\)\.toLowerCase\(\) === "published"/);
+  assert.match(route, /status === "published"/);
+});
+
+test("le registre ne perd pas les anciennes évaluations de matière ou de période", () => {
+  assert.match(route, /ids: Array\.from\(ids\)/);
+  assert.match(route, /\.in\("subject_id", subject\.ids\)/);
+  assert.match(route, /grading_period_id\.eq\.\$\{periodId\}/);
+  assert.match(route, /grading_period_id\.is\.null/);
+  assert.match(route, /eval_date\.gte\.\$\{period\.start_date\}/);
+  assert.match(route, /eval_date\.lte\.\$\{period\.end_date\}/);
+});
+
+test("le registre construit le roster sur la période et récupère les élèves porteurs de notes", () => {
+  assert.match(route, /start_date\.lte\.\$\{period\.end_date\}/);
+  assert.match(route, /end_date\.gte\.\$\{period\.start_date\}/);
+  assert.match(route, /includeStudentsReferencedByScores/);
+  assert.match(route, /recovered_students_from_scores/);
+});
+
+test("le registre expose des métadonnées de contrôle d'exhaustivité", () => {
+  assert.match(route, /subject_ids_used/);
+  assert.match(route, /published_evaluations_count/);
+  assert.match(route, /working_evaluations_count/);
+  assert.match(route, /legacy_period_evaluations_count/);
 });
 
 test("le registre est rangé dans le groupe Cahier de notes", () => {
