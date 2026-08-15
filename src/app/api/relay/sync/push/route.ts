@@ -71,7 +71,9 @@ export async function POST(request: NextRequest) {
   ) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const gradeV4Enabled = (device as any).grade_sync_v4_enabled === true;
+  const gradeV4Enabled =
+    (device as any).grade_sync_v4_enabled === true &&
+    request.headers.get("x-moncahier-grade-sync-v4") === "1";
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
     .select("enabled,allow_local_relay")
