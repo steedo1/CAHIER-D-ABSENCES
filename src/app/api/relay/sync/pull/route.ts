@@ -5,6 +5,7 @@ import {
   buildRelayBootstrapSnapshot,
   buildRelayScheduleSnapshot,
 } from "@/lib/relay-bootstrap-snapshot";
+import { attachRelayStudentGradeVersions } from "@/lib/relay-grade-version-snapshot";
 import { RELAY_SYNC_PROTOCOL_VERSION } from "@/lib/relay-cloud-sync";
 
 export const runtime = "nodejs";
@@ -171,11 +172,14 @@ export async function GET(request: NextRequest) {
   try {
     const academicChanged = known === null || known !== revision;
     const scheduleChanged = knownSchedule === null || knownSchedule !== scheduleRevision;
-    const snapshot = academicChanged
+    const rawSnapshot = academicChanged
       ? await buildRelayBootstrapSnapshot(service, institutionId, {
         includeSchedule: scheduleChanged,
       })
       : await buildRelayScheduleSnapshot(service, institutionId);
+    const snapshot = academicChanged
+      ? await attachRelayStudentGradeVersions(service, institutionId, rawSnapshot)
+      : rawSnapshot;
     if (
       snapshot.snapshot_completeness !== "complete" ||
       !Number.isSafeInteger(Number(snapshot.snapshot_revision))
