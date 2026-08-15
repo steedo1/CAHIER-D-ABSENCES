@@ -15,6 +15,7 @@ export const RELAY_CAPABILITIES = {
   bootstrap_revision_ack_v1: true,
   admin_schedule_status_v1: true,
   grades_workspace_v1: true,
+  grades_score_write_v1: true,
 } as const;
 
 function storedRevision(db: RelayDatabase, institutionId: string) {

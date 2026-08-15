@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
 
 export const RELAY_SYNC_PROTOCOL_VERSION = 1 as const;
 export const RELAY_SYNC_MAX_OPERATIONS = 100;
@@ -763,6 +764,396 @@ export async function applyAttendanceCall(
   };
 }
 
+
+type RelayGradeEvaluationRow = {
+  id: string;
+  class_id: string;
+  subject_id: string | null;
+  scale: number | null;
+  grading_period_id: string | null;
+  is_published: boolean | null;
+  publication_status: string | null;
+  published_at: string | null;
+};
+
+async function relayGradeEvaluation(
+  service: SupabaseClient,
+  institutionId: string,
+  evaluationId: string,
+) {
+  const { data, error } = await service
+    .from("grade_evaluations")
+    .select(
+      "id,class_id,subject_id,scale,grading_period_id,is_published,publication_status,published_at",
+    )
+    .eq("id", evaluationId)
+    .maybeSingle();
+  if (error) {
+    throw new RelayOperationError("retryable", 503, "grade_evaluation_lookup_failed");
+  }
+  if (!data) {
+    throw new RelayOperationError("blocked", 404, "grade_evaluation_not_found");
+  }
+
+  const evaluation = data as RelayGradeEvaluationRow;
+  const classId = String(evaluation.class_id || "").trim();
+  if (!classId) {
+    throw new RelayOperationError("blocked", 422, "grade_evaluation_class_missing");
+  }
+  const { data: cls, error: classError } = await service
+    .from("classes")
+    .select("id,institution_id")
+    .eq("id", classId)
+    .maybeSingle();
+  if (classError) {
+    throw new RelayOperationError("retryable", 503, "grade_class_lookup_failed");
+  }
+  if (!cls || String((cls as any).institution_id || "") !== institutionId) {
+    throw new RelayOperationError("blocked", 404, "grade_class_not_found");
+  }
+  return evaluation;
+}
+
+async function assertRelayGradeActor(
+  service: SupabaseClient,
+  institutionId: string,
+  operation: RelaySyncOperation,
+  evaluation: RelayGradeEvaluationRow,
+  actorKind: string,
+) {
+  const actorId = text(operation.actor_profile_id, "actor_profile_id", 128);
+  if (actorKind === "class_device") {
+    let allowed = false;
+    try {
+      allowed = await classDeviceMayAccessClass({
+        service,
+        userId: actorId,
+        classId: String(evaluation.class_id),
+      });
+    } catch {
+      throw new RelayOperationError("retryable", 503, "class_device_scope_lookup_failed");
+    }
+    if (!allowed) {
+      throw new RelayOperationError("blocked", 403, "grade_class_not_allowed");
+    }
+    return;
+  }
+
+  if (actorKind !== "teacher") {
+    throw new RelayOperationError("blocked", 422, "grade_actor_kind_invalid");
+  }
+
+  const subjectId = text(evaluation.subject_id, "subject_id", 128);
+  const { data: role, error: roleError } = await service
+    .from("user_roles")
+    .select("profile_id")
+    .eq("profile_id", actorId)
+    .eq("institution_id", institutionId)
+    .eq("role", "teacher")
+    .maybeSingle();
+  if (roleError) {
+    throw new RelayOperationError("retryable", 503, "grade_teacher_role_lookup_failed");
+  }
+  if (!role) {
+    throw new RelayOperationError("blocked", 403, "grade_teacher_role_missing");
+  }
+
+  const { data: assignment, error: assignmentError } = await service
+    .from("class_teachers")
+    .select("id")
+    .eq("institution_id", institutionId)
+    .eq("class_id", evaluation.class_id)
+    .eq("subject_id", subjectId)
+    .eq("teacher_id", actorId)
+    .is("end_date", null)
+    .limit(1)
+    .maybeSingle();
+  if (assignmentError) {
+    throw new RelayOperationError("retryable", 503, "grade_assignment_lookup_failed");
+  }
+  if (!assignment) {
+    throw new RelayOperationError("blocked", 403, "grade_assignment_not_allowed");
+  }
+}
+
+async function assertRelayGradeEditable(
+  service: SupabaseClient,
+  evaluation: RelayGradeEvaluationRow,
+  now: Date,
+) {
+  const publicationStatus = String(evaluation.publication_status || "draft").trim();
+  if (evaluation.is_published === true || publicationStatus === "published") {
+    throw new RelayOperationError("conflict", 409, "grade_evaluation_published");
+  }
+  if (publicationStatus === "submitted") {
+    throw new RelayOperationError("conflict", 409, "grade_evaluation_submitted");
+  }
+
+  const { data: lock, error: lockError } = await service
+    .from("grade_evaluation_locks")
+    .select("is_locked")
+    .eq("evaluation_id", evaluation.id)
+    .maybeSingle();
+  if (lockError && (lockError as any)?.code !== "42P01") {
+    throw new RelayOperationError("retryable", 503, "grade_lock_lookup_failed");
+  }
+  if ((lock as any)?.is_locked === true) {
+    throw new RelayOperationError("conflict", 409, "grade_evaluation_locked");
+  }
+
+  const periodId = String(evaluation.grading_period_id || "").trim();
+  if (!periodId) return;
+  const { data: period, error: periodError } = await service
+    .from("grade_periods")
+    .select("id,end_date,is_active")
+    .eq("id", periodId)
+    .maybeSingle();
+  if (periodError) {
+    throw new RelayOperationError("retryable", 503, "grade_period_lookup_failed");
+  }
+  if (!period) {
+    throw new RelayOperationError("blocked", 422, "grade_period_not_found");
+  }
+  const endDate = String((period as any).end_date || "").slice(0, 10);
+  if (endDate && now.toISOString().slice(0, 10) > endDate) {
+    throw new RelayOperationError("conflict", 409, "grading_period_closed");
+  }
+}
+
+async function assertRelayStudentEnrolled(
+  service: SupabaseClient,
+  institutionId: string,
+  classId: string,
+  studentId: string,
+) {
+  const { data, error } = await service
+    .from("class_enrollments")
+    .select("student_id")
+    .eq("institution_id", institutionId)
+    .eq("class_id", classId)
+    .eq("student_id", studentId)
+    .is("end_date", null)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new RelayOperationError("retryable", 503, "grade_enrollment_lookup_failed");
+  }
+  if (!data) {
+    throw new RelayOperationError("blocked", 422, "student_not_enrolled_in_class");
+  }
+}
+
+async function applyStudentGrade(
+  service: SupabaseClient,
+  institutionId: string,
+  operation: RelaySyncOperation,
+  now: Date,
+): Promise<ApplyOperationResult> {
+  if (!operation.actor_profile_id) {
+    throw new RelayOperationError("blocked", 422, "actor_profile_id_required");
+  }
+
+  if (operation.action === "delete") {
+    const { data: existing, error: existingError } = await service
+      .from("student_grades")
+      .select("id,evaluation_id,student_id")
+      .eq("id", operation.entity_id)
+      .maybeSingle();
+    if (existingError) {
+      throw new RelayOperationError("retryable", 503, "student_grade_lookup_failed");
+    }
+    if (!existing) {
+      return {
+        cloudEntityId: operation.entity_id,
+        attendanceChanged: false,
+      };
+    }
+
+    const evaluation = await relayGradeEvaluation(
+      service,
+      institutionId,
+      text((existing as any).evaluation_id, "evaluation_id", 128),
+    );
+    const actorKind = String(operation.origin_device_id || "").startsWith("class_device:")
+      ? "class_device"
+      : "teacher";
+    await assertRelayGradeActor(
+      service,
+      institutionId,
+      operation,
+      evaluation,
+      actorKind,
+    );
+    await assertRelayGradeEditable(service, evaluation, now);
+    await assertRelayStudentEnrolled(
+      service,
+      institutionId,
+      String(evaluation.class_id),
+      text((existing as any).student_id, "student_id", 128),
+    );
+
+    const { error: deleteError } = await service
+      .from("student_grades")
+      .delete()
+      .eq("id", operation.entity_id);
+    if (deleteError) {
+      throw new RelayOperationError("retryable", 503, "student_grade_delete_failed");
+    }
+    return {
+      cloudEntityId: operation.entity_id,
+      attendanceChanged: false,
+    };
+  }
+
+  if (operation.action !== "upsert") {
+    throw new RelayOperationError("blocked", 422, "student_grade_action_invalid");
+  }
+
+  const payload = operation.payload || {};
+  if (text(payload.operation_type, "operation_type", 80) !== "grades.score.set") {
+    throw new RelayOperationError("blocked", 422, "student_grade_operation_type_invalid");
+  }
+  const evaluationId = text(payload.evaluation_id, "evaluation_id", 128);
+  const studentId = text(payload.student_id, "student_id", 128);
+  const actorKind = text(payload.actor_kind, "actor_kind", 32);
+  const originActorKind = String(operation.origin_device_id || "").startsWith("class_device:")
+    ? "class_device"
+    : String(operation.origin_device_id || "").startsWith("teacher:")
+      ? "teacher"
+      : "";
+  if (!originActorKind || actorKind !== originActorKind) {
+    throw new RelayOperationError("conflict", 409, "grade_actor_kind_mismatch");
+  }
+  if (text(payload.institution_id, "institution_id", 128) !== institutionId) {
+    throw new RelayOperationError("conflict", 409, "grade_institution_mismatch");
+  }
+  const evaluation = await relayGradeEvaluation(
+    service,
+    institutionId,
+    evaluationId,
+  );
+
+  if (
+    text(payload.class_id, "class_id", 128) !== String(evaluation.class_id) ||
+    text(payload.subject_id, "subject_id", 128) !== String(evaluation.subject_id || "")
+  ) {
+    throw new RelayOperationError("conflict", 409, "student_grade_evaluation_mismatch");
+  }
+  const payloadPeriodId = String(payload.grading_period_id || "").trim();
+  const evaluationPeriodId = String(evaluation.grading_period_id || "").trim();
+  if (payloadPeriodId && payloadPeriodId !== evaluationPeriodId) {
+    throw new RelayOperationError("conflict", 409, "student_grade_period_mismatch");
+  }
+
+  await assertRelayGradeActor(
+    service,
+    institutionId,
+    operation,
+    evaluation,
+    actorKind,
+  );
+  await assertRelayGradeEditable(service, evaluation, now);
+  await assertRelayStudentEnrolled(
+    service,
+    institutionId,
+    String(evaluation.class_id),
+    studentId,
+  );
+  relayCapturedAtDevice(operation, payload, now);
+
+  const score = Number(payload.score);
+  const scale = Number(evaluation.scale || 20);
+  if (
+    !Number.isFinite(score) ||
+    !Number.isFinite(scale) ||
+    scale <= 0 ||
+    score < 0 ||
+    score > scale
+  ) {
+    throw new RelayOperationError("blocked", 422, "grade_score_out_of_range");
+  }
+  const normalizedScore = Math.round(score * 100) / 100;
+  const comment = nullableText(payload.comment, 500);
+
+  const { data: byId, error: byIdError } = await service
+    .from("student_grades")
+    .select("id,evaluation_id,student_id")
+    .eq("id", operation.entity_id)
+    .maybeSingle();
+  if (byIdError) {
+    throw new RelayOperationError("retryable", 503, "student_grade_lookup_failed");
+  }
+  if (
+    byId &&
+    (
+      String((byId as any).evaluation_id) !== evaluationId ||
+      String((byId as any).student_id) !== studentId
+    )
+  ) {
+    throw new RelayOperationError("conflict", 409, "student_grade_id_already_used");
+  }
+
+  if (!byId) {
+    const { data: semantic, error: semanticError } = await service
+      .from("student_grades")
+      .select("id")
+      .eq("evaluation_id", evaluationId)
+      .eq("student_id", studentId)
+      .limit(2);
+    if (semanticError) {
+      throw new RelayOperationError("retryable", 503, "student_grade_semantic_lookup_failed");
+    }
+    const semanticRows = semantic || [];
+    if (semanticRows.length > 0) {
+      const semanticId = String((semanticRows[0] as any).id || "");
+      if (semanticId !== operation.entity_id) {
+        throw new RelayOperationError("conflict", 409, "student_grade_identity_conflict");
+      }
+    }
+  }
+
+  const row = {
+    id: operation.entity_id,
+    evaluation_id: evaluationId,
+    student_id: studentId,
+    score: normalizedScore,
+    comment,
+    updated_by: operation.actor_profile_id,
+  };
+
+  if (byId) {
+    const { error: updateError } = await service
+      .from("student_grades")
+      .update({
+        score: row.score,
+        comment: row.comment,
+        updated_by: row.updated_by,
+      })
+      .eq("id", operation.entity_id);
+    if (updateError) {
+      throw new RelayOperationError("retryable", 503, "student_grade_update_failed");
+    }
+  } else {
+    const { error: insertError } = await service
+      .from("student_grades")
+      .insert(row);
+    if (insertError) {
+      if ((insertError as any)?.code === "23505") {
+        throw new RelayOperationError("conflict", 409, "student_grade_identity_conflict");
+      }
+      if ((insertError as any)?.code === "23503") {
+        throw new RelayOperationError("blocked", 422, "student_grade_reference_invalid");
+      }
+      throw new RelayOperationError("retryable", 503, "student_grade_insert_failed");
+    }
+  }
+
+  return {
+    cloudEntityId: operation.entity_id,
+    attendanceChanged: false,
+  };
+}
+
 async function applyOperation(
   service: SupabaseClient,
   institutionId: string,
@@ -771,6 +1162,9 @@ async function applyOperation(
 ): Promise<ApplyOperationResult> {
   if (operation.entity_type === "attendance_call") {
     return applyAttendanceCall(service, institutionId, operation, now);
+  }
+  if (operation.entity_type === "student_grade") {
+    return applyStudentGrade(service, institutionId, operation, now);
   }
   if (operation.entity_type === "teacher_session") {
     const payload = operation.payload || {};

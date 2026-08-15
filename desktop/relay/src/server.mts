@@ -27,6 +27,7 @@ import {
 } from "./schedule-contract.mjs";
 import { teacherOfflineSchedule } from "./teacher-offline-schedule.mjs";
 import { relayGradeWorkspace, RelayGradeWorkspaceError } from "./grade-workspace.mjs";
+import { secureGradeScoreOperation, RelayGradeWriteError } from "./grade-write.mjs";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES = 32 * 1024 * 1024;
@@ -36,6 +37,7 @@ const MAX_TEACHER_SESSION_OPEN_BODY_BYTES = 16 * 1024;
 const MAX_TEACHER_SESSION_LIFECYCLE_BODY_BYTES = 16 * 1024;
 const MAX_TEACHER_OFFLINE_SCHEDULE_BODY_BYTES = 4 * 1024;
 const MAX_GRADE_WORKSPACE_BODY_BYTES = 16 * 1024;
+const MAX_GRADE_WRITE_BODY_BYTES = 16 * 1024;
 const SESSION_MAINTENANCE_INTERVAL_MS = 30_000;
 
 export function createRelayServer(
@@ -170,6 +172,34 @@ export function createRelayServer(
             return json(response, error.status, { error: error.code });
           }
           return json(response, 401, { error: "unauthorized" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/grades/score-operations") {
+        const body = await readJson(request, MAX_GRADE_WRITE_BODY_BYTES);
+        const token = teacherBearerToken(request);
+        if (!token) return json(response, 401, { error: "unauthorized" });
+        const requestNow = options.now?.() ?? new Date();
+        let actor;
+        try {
+          actor = authenticateRelayTeacherAccess(store.db, token, requestNow);
+        } catch {
+          return json(response, 401, { error: "unauthorized" });
+        }
+        if (!configuredInstitutionAllows(config, store, actor.institution_id)) {
+          return json(response, 403, { error: "institution_not_allowed" });
+        }
+        try {
+          const result = secureGradeScoreOperation(store, body, actor, requestNow);
+          return json(
+            response,
+            result.action === "noop" || result.idempotent ? 200 : 202,
+            result,
+          );
+        } catch (error) {
+          if (error instanceof RelayGradeWriteError) {
+            return json(response, error.status, { error: error.code });
+          }
+          return json(response, 500, { error: "grade_write_failed" });
         }
       }
       if (request.method === "POST" && url.pathname === "/v1/teacher/attendance-operations") {
