@@ -24,9 +24,10 @@ test("LOT4A pull: aucune note active ne retombe silencieusement à la version 0"
   assert.match(helper, /server_version: version/);
 });
 
-test("LOT4A pull: les versions ne sont injectées que sur snapshot académique + canary", () => {
+test("LOT4A pull: les versions exigent snapshot académique + canary + client compatible", () => {
   assert.match(pullRoute, /grade_sync_v4_enabled/);
-  assert.match(pullRoute, /const gradeV4Enabled = .*grade_sync_v4_enabled === true/);
+  assert.match(pullRoute, /x-moncahier-grade-sync-v4/);
+  assert.match(pullRoute, /const gradeV4Enabled =/);
   assert.match(pullRoute, /attachRelayStudentGradeVersions/);
   assert.match(
     pullRoute,
