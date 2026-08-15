@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
   const service = getSupabaseServiceClient();
   const { data: device, error: deviceError } = await service
     .from("relay_sync_devices")
-    .select("id,institution_id,token_hash,is_active,revoked_at")
+    .select("id,institution_id,token_hash,is_active,revoked_at,grade_sync_v4_enabled")
     .eq("id", deviceId)
     .maybeSingle();
   if (deviceError) return noStore({ error: "relay_device_lookup_failed" }, 503);
@@ -89,6 +89,7 @@ export async function GET(request: NextRequest) {
 
   const institutionId = String((device as any).institution_id || "").trim();
   if (!institutionId) return noStore({ error: "relay_institution_missing" }, 403);
+  const gradeV4Enabled = (device as any).grade_sync_v4_enabled === true;
 
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
@@ -177,7 +178,7 @@ export async function GET(request: NextRequest) {
         includeSchedule: scheduleChanged,
       })
       : await buildRelayScheduleSnapshot(service, institutionId);
-    const snapshot = academicChanged
+    const snapshot = academicChanged && gradeV4Enabled
       ? await attachRelayStudentGradeVersions(service, institutionId, rawSnapshot)
       : rawSnapshot;
     if (
