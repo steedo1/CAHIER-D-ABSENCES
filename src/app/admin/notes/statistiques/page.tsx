@@ -1,2554 +1,1188 @@
-// src/app/admin/notes/stats/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookOpen,
+  BookOpenCheck,
   CalendarDays,
-  Download,
-  FileSpreadsheet,
-  Printer,
+  Check,
+  ChevronDown,
+  Loader2,
+  Plus,
   RefreshCw,
-  School,
+  Save,
   Search,
+  UserRound,
+  X,
 } from "lucide-react";
-import {
-  educationStatisticsClassMatches,
-  resolveEducationStatisticsContext,
-} from "@/lib/education-statistics";
 
 type ClassRow = {
   id: string;
-  name?: string;
   label?: string | null;
+  name?: string | null;
   level?: string | null;
   academic_year?: string | null;
-  official_track_code?: string | null;
   education_type?: string | null;
-  formation_code?: string | null;
-  formation_label?: string | null;
   formation_level_code?: string | null;
-  formation_level_label?: string | null;
 };
 
 type GradePeriod = {
   id: string;
-  academic_year: string | null;
-  code: string | null;
-  label: string | null;
-  short_label: string | null;
-  start_date: string;
-  end_date: string;
+  academic_year?: string | null;
+  code?: string | null;
+  label?: string | null;
+  short_label?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
   order_index?: number | null;
-  coeff?: number | null;
   is_active?: boolean | null;
 };
 
-type BulletinSubject = {
-  subject_id: string;
-  subject_name: string;
-  coeff_bulletin?: number | null;
-  include_in_average?: boolean | null;
-};
-
-type PerSubjectAvg = {
-  subject_id: string;
-  avg20: number | null;
-  subject_rank?: number | null;
-  teacher_name?: string | null;
-  teacher_signature_png?: string | null;
-};
-
-type BulletinItem = {
-  student_id: string;
-  full_name: string;
-  matricule: string | null;
-  per_subject?: PerSubjectAvg[];
-  general_avg?: number | null;
-};
-
-type BulletinResponse = {
-  ok: boolean;
-  class?: {
-    id: string;
-    label?: string | null;
-    academic_year?: string | null;
-  };
-  period?: {
-    from: string | null;
-    to: string | null;
-    code?: string | null;
-    label?: string | null;
-    short_label?: string | null;
-    academic_year?: string | null;
-    coeff?: number | null;
-  };
-  subjects?: BulletinSubject[];
-  items?: BulletinItem[];
-};
-
-type CurrentAffectationItem = {
+type AffectationItem = {
   teacher?: {
     id?: string | null;
     display_name?: string | null;
     email?: string | null;
-    phone?: string | null;
   } | null;
   subject?: {
     id?: string | null;
     label?: string | null;
-    name?: string | null;
   } | null;
-  subject_id?: string | null;
-  subject_name?: string | null;
-  subject_label?: string | null;
-  class_id?: string | null;
   classes?: Array<{
     id?: string | null;
     name?: string | null;
-    label?: string | null;
     level?: string | null;
   }>;
 };
 
-type AffectationsResponse = {
-  ok?: boolean;
-  items?: CurrentAffectationItem[];
-  error?: string;
-};
-
-type SubjectOption = {
+type RosterItem = {
   id: string;
-  name: string;
-  notes_count: number;
-};
-
-type MatrixCell = {
-  avg: number | null;
-  rank: number | null;
-};
-
-type AnnualStatus = "complete" | "partial" | "empty";
-
-type MatrixRow = {
-  student_id: string;
   full_name: string;
-  matricule: string | null;
-  periods: Record<string, MatrixCell>;
-
-  // Annuel matière : calculé uniquement avec les périodes ayant une moyenne publiée.
-  // Le rang annuel n'est attribué que si l'élève est complet sur toutes les périodes affichées.
-  annual_avg: number | null;
-  annual_rank: number | null;
-  annual_status: AnnualStatus;
-  annual_available_periods: number;
-  annual_expected_periods: number;
+  matricule?: string | null;
 };
 
-type PeriodLoadState = {
-  period_id: string;
-  label: string;
-  status: "pending" | "ok" | "empty" | "error";
-  message?: string;
+type RegisterEvaluation = {
+  id: string;
+  eval_date: string;
+  eval_kind: "devoir" | "interro_ecrite" | "interro_orale" | string;
+  scale: number;
+  coeff: number;
+  is_published: boolean;
+  publication_status?: string | null;
+  subject_component_id?: string | null;
+  component_label?: string | null;
+  column_label?: string | null;
+  is_locked?: boolean;
+  editable?: boolean;
 };
 
-type InstitutionSettings = {
-  institution_name?: string | null;
-  institution_logo_url?: string | null;
-  institution_phone?: string | null;
-  institution_email?: string | null;
-  institution_region?: string | null;
-  institution_postal_address?: string | null;
-  institution_status?: string | null;
-  institution_head_name?: string | null;
-  institution_head_title?: string | null;
-  country_name?: string | null;
-  country_motto?: string | null;
-  ministry_name?: string | null;
-  institution_code?: string | null;
-  settings_json?: any;
+type RegisterScore = {
+  evaluation_id: string;
+  student_id: string;
+  score: number | null;
 };
 
-const BRAND_COMPANY = "Nexa Digital SARL";
-const BRAND_SITE = "www.mon-cahier.com";
+type SubjectComponent = {
+  id: string;
+  label?: string | null;
+  short_label?: string | null;
+};
 
-function clsLabel(c: ClassRow | null | undefined) {
-  if (!c) return "";
-  return c.label || c.name || "Classe";
-}
-
-function periodLabel(p: GradePeriod) {
-  return p.short_label || p.label || p.code || "Période";
-}
-
-function formatNumber(n: number | null | undefined, digits = 2) {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
-  return Number(n).toFixed(digits);
-}
-
-function formatRank(n: number | null | undefined) {
-  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
-  return String(n);
-}
-
-function formatAnnualAverage(row: MatrixRow, digits = 2) {
-  if (row.annual_avg === null || row.annual_avg === undefined) return "—";
-  if (!Number.isFinite(Number(row.annual_avg))) return "—";
-  const value = Number(row.annual_avg).toFixed(digits);
-  return row.annual_status === "partial" ? `${value}*` : value;
-}
-
-function formatAnnualRank(row: MatrixRow) {
-  if (row.annual_status !== "complete") return "NC";
-  return formatRank(row.annual_rank);
-}
-
-function formatDateFR(value?: string | null) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString("fr-FR");
-}
-
-function escapeHtml(value: unknown) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttr(value: unknown) {
-  return escapeHtml(value).replace(/`/g, "&#096;");
-}
-
-function generatedAtLabel() {
-  try {
-    return new Date().toLocaleString("fr-FR", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return new Date().toLocaleString("fr-FR");
-  }
-}
-
-function normalizeInstitutionSettings(json: any): InstitutionSettings {
-  const raw = json?.institution || json?.settings || json?.item || json || {};
-  const settingsJson = raw?.settings_json || {};
-
-  return {
-    ...settingsJson,
-    ...raw,
-    institution_name:
-      raw?.institution_name ||
-      raw?.name ||
-      settingsJson?.institution_name ||
-      settingsJson?.name ||
-      null,
-    institution_logo_url:
-      raw?.institution_logo_url ||
-      raw?.logo_url ||
-      settingsJson?.institution_logo_url ||
-      settingsJson?.logo_url ||
-      null,
-    institution_phone:
-      raw?.institution_phone ||
-      raw?.phone ||
-      settingsJson?.institution_phone ||
-      settingsJson?.phone ||
-      null,
-    institution_email:
-      raw?.institution_email ||
-      raw?.email ||
-      settingsJson?.institution_email ||
-      settingsJson?.email ||
-      null,
-    institution_region:
-      raw?.institution_region ||
-      raw?.region ||
-      settingsJson?.institution_region ||
-      settingsJson?.region ||
-      null,
-    institution_postal_address:
-      raw?.institution_postal_address ||
-      raw?.postal_address ||
-      raw?.address ||
-      settingsJson?.institution_postal_address ||
-      settingsJson?.postal_address ||
-      settingsJson?.address ||
-      null,
-    institution_status:
-      raw?.institution_status ||
-      raw?.status ||
-      settingsJson?.institution_status ||
-      settingsJson?.status ||
-      null,
-    institution_code:
-      raw?.institution_code ||
-      raw?.code ||
-      settingsJson?.institution_code ||
-      settingsJson?.code ||
-      null,
+type RegisterResponse = {
+  ok: boolean;
+  error?: string;
+  class?: {
+    id: string;
+    label?: string | null;
+    level?: string | null;
+    academic_year?: string | null;
   };
+  period?: GradePeriod;
+  subject?: {
+    id: string;
+    raw_id?: string | null;
+    label?: string | null;
+  };
+  teacher_id?: string;
+  roster?: RosterItem[];
+  evaluations?: RegisterEvaluation[];
+  scores?: RegisterScore[];
+  components?: SubjectComponent[];
+};
+
+type NewEvaluationForm = {
+  eval_date: string;
+  eval_kind: "devoir" | "interro_ecrite" | "interro_orale";
+  scale: 5 | 10 | 20 | 40 | 60;
+  coeff: number;
+  subject_component_id: string;
+};
+
+function classLabel(row?: ClassRow | null) {
+  return row?.label || row?.name || "Classe";
 }
 
-function csvCell(value: unknown) {
-  const v = value === null || value === undefined ? "" : String(value);
-  return `"${v.replace(/"/g, '""')}"`;
+function periodLabel(row?: GradePeriod | null) {
+  return row?.short_label || row?.label || row?.code || "Période";
 }
 
-function cleanAvg(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100) / 100;
+function levelLabel(row?: ClassRow | null) {
+  return row?.formation_level_code || row?.level || "Sans niveau";
 }
 
-function normalizeLabelForMatch(value: string | null | undefined): string {
-  return String(value ?? "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+function teacherLabel(item?: AffectationItem | null) {
+  return (
+    item?.teacher?.display_name ||
+    item?.teacher?.email ||
+    "Enseignant"
+  );
 }
 
-function subjectAliasesForMatch(value: string | null | undefined): Set<string> {
-  const normalized = normalizeLabelForMatch(value);
-  const aliases = new Set<string>();
+function subjectLabel(item?: AffectationItem | null) {
+  return item?.subject?.label || "Discipline";
+}
 
-  if (!normalized) return aliases;
+function evalKindLabel(kind: string) {
+  if (kind === "interro_ecrite") return "Interro écrite";
+  if (kind === "interro_orale") return "Interro orale";
+  return "Devoir";
+}
 
-  const compact = normalized.replace(/\s+/g, "");
-  aliases.add(normalized);
-  aliases.add(compact);
-
-  const stopWords = new Set([
-    "a",
-    "au",
-    "aux",
-    "d",
-    "de",
-    "des",
-    "du",
-    "et",
-    "la",
-    "le",
-    "les",
-    "l",
-    "education",
-    "enseignement",
-    "science",
-    "sciences",
-  ]);
-
-  const tokens = normalized.split(/\s+/).filter(Boolean);
-  const usefulTokens = tokens.filter((token) => !stopWords.has(token));
-
-  usefulTokens.forEach((token) => {
-    if (token.length >= 3) aliases.add(token);
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
   });
-
-  const acronym = usefulTokens.map((token) => token[0]).join("");
-  if (acronym.length >= 2) aliases.add(acronym);
-
-  if (normalized.includes("mathem")) {
-    aliases.add("math");
-    aliases.add("maths");
-    aliases.add("mathematique");
-    aliases.add("mathematiques");
-  }
-
-  if (normalized.includes("francais")) aliases.add("francais");
-  if (normalized.includes("anglais")) aliases.add("anglais");
-  if (normalized.includes("espagnol")) aliases.add("espagnol");
-  if (normalized.includes("allemand")) aliases.add("allemand");
-
-  if (
-    normalized.includes("histoire") &&
-    (normalized.includes("geo") || normalized.includes("geographie"))
-  ) {
-    aliases.add("hg");
-    aliases.add("histoire geographie");
-  }
-
-  if (normalized.includes("physique") && normalized.includes("chimie")) {
-    aliases.add("pc");
-    aliases.add("pct");
-    aliases.add("physique chimie");
-  }
-
-  if (
-    normalized === "svt" ||
-    (normalized.includes("science") &&
-      normalized.includes("vie") &&
-      normalized.includes("terre"))
-  ) {
-    aliases.add("svt");
-    aliases.add("science vie terre");
-    aliases.add("sciences vie terre");
-  }
-
-  if (
-    normalized === "eps" ||
-    (normalized.includes("education") && normalized.includes("physique"))
-  ) {
-    aliases.add("eps");
-  }
-
-  if (
-    normalized === "edhc" ||
-    normalized.includes("droits humains") ||
-    normalized.includes("citoyennete")
-  ) {
-    aliases.add("edhc");
-  }
-
-  if (normalized.includes("art") && normalized.includes("plastique")) {
-    aliases.add("arts plastiques");
-    aliases.add("art plastique");
-  }
-
-  if (normalized.includes("musique")) aliases.add("musique");
-  if (normalized.includes("conduite")) aliases.add("conduite");
-
-  return aliases;
 }
 
-function subjectLabelsMatch(a: string | null | undefined, b: string | null | undefined) {
-  const aliasesA = subjectAliasesForMatch(a);
-  const aliasesB = subjectAliasesForMatch(b);
-
-  if (aliasesA.size === 0 || aliasesB.size === 0) return false;
-
-  for (const alias of aliasesA) {
-    if (aliasesB.has(alias)) return true;
-  }
-
-  const normalizedA = normalizeLabelForMatch(a);
-  const normalizedB = normalizeLabelForMatch(b);
-
-  if (!normalizedA || !normalizedB) return false;
-
-  const compactA = normalizedA.replace(/\s+/g, "");
-  const compactB = normalizedB.replace(/\s+/g, "");
-
-  if (compactA.length >= 4 && compactB.length >= 4) {
-    if (compactA.includes(compactB) || compactB.includes(compactA)) return true;
-  }
-
-  return false;
+function parseGradeInput(value: string): number | null {
+  const normalized = String(value || "").trim().replace(",", ".");
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
 }
 
-function findSubjectCell(
-  item: BulletinItem,
-  subject: BulletinSubject | { subject_id: string; subject_name?: string | null }
-) {
-  const cells = item.per_subject ?? [];
-  const subjectId = String(subject.subject_id || "").trim();
-
-  return cells.find((cell) => String(cell.subject_id || "").trim() === subjectId) || null;
+function displayScore(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "";
+  }
+  return String(Number(value)).replace(".", ",");
 }
 
-function findBulletinSubject(
-  subjects: BulletinSubject[],
-  selectedSubjectId: string,
-  selectedSubjectName: string
-): BulletinSubject | null {
-  const exact =
-    subjects.find(
-      (subject) =>
-        String(subject.subject_id || "").trim() === String(selectedSubjectId || "").trim()
-    ) || null;
+function currentDateForPeriod(period?: GradePeriod | null) {
+  const today = new Date().toISOString().slice(0, 10);
+  const start = String(period?.start_date || "");
+  const end = String(period?.end_date || "");
+  if (start && today < start) return start;
+  if (end && today > end) return end;
+  return today;
+}
 
-  if (exact) return exact;
+function evaluationStatus(ev: RegisterEvaluation) {
+  if (ev.is_locked) return { label: "Verrouillé", className: "bg-slate-100 text-slate-600" };
+  const status = String(ev.publication_status || "");
+  if (ev.is_published || status === "published") {
+    return { label: "Publié", className: "bg-emerald-50 text-emerald-700" };
+  }
+  if (status === "submitted") {
+    return { label: "Soumis", className: "bg-amber-50 text-amber-700" };
+  }
+  if (status === "changes_requested") {
+    return { label: "À corriger", className: "bg-rose-50 text-rose-700" };
+  }
+  return { label: "Brouillon", className: "bg-sky-50 text-sky-700" };
+}
 
+function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    subjects.find((subject) =>
-      subjectLabelsMatch(subject.subject_name, selectedSubjectName)
-    ) || null
+    <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      {children}
+    </span>
   );
 }
 
-function buildRankMap(rows: Array<{ student_id: string; avg: number | null }>) {
-  const valid = rows
-    .filter((r) => typeof r.avg === "number" && Number.isFinite(r.avg))
-    .map((r) => ({ student_id: r.student_id, avg: Number(r.avg) }))
-    .sort((a, b) => b.avg - a.avg);
-
-  const map = new Map<string, number>();
-
-  let lastAvg: number | null = null;
-  let currentRank = 0;
-  let position = 0;
-
-  for (const row of valid) {
-    position += 1;
-
-    if (lastAvg === null || row.avg !== lastAvg) {
-      currentRank = position;
-      lastAvg = row.avg;
-    }
-
-    map.set(row.student_id, currentRank);
-  }
-
-  return map;
+function Select(
+  props: React.SelectHTMLAttributes<HTMLSelectElement> & {
+    children: React.ReactNode;
+  },
+) {
+  const { className = "", children, ...rest } = props;
+  return (
+    <div className="relative">
+      <select
+        {...rest}
+        className={[
+          "h-10 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-9 text-sm text-slate-800 shadow-sm outline-none transition",
+          "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
+          className,
+        ].join(" ")}
+      >
+        {children}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+    </div>
+  );
 }
 
-function Button(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-    tone?: "emerald" | "slate" | "amber";
-  }
-) {
-  const { tone = "emerald", className = "", ...rest } = props;
-
-  const tones = {
-    emerald:
-      "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500/30",
-    slate: "bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-500/30",
-    amber: "bg-amber-500 text-slate-950 hover:bg-amber-600 focus:ring-amber-500/30",
-  } as const;
+function Button({
+  tone = "primary",
+  className = "",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  tone?: "primary" | "secondary" | "ghost";
+}) {
+  const toneClass =
+    tone === "primary"
+      ? "bg-emerald-600 text-white hover:bg-emerald-700"
+      : tone === "secondary"
+        ? "bg-slate-900 text-white hover:bg-slate-800"
+        : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50";
 
   return (
     <button
-      {...rest}
+      {...props}
       className={[
-        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition",
-        "focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-50",
-        tones[tone],
+        "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold shadow-sm transition",
+        "focus:outline-none focus:ring-4 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-50",
+        toneClass,
         className,
       ].join(" ")}
     />
   );
 }
 
-function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { className = "", ...rest } = props;
-
-  return (
-    <button
-      {...rest}
-      className={[
-        "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition",
-        "hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-400/20 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      ].join(" ")}
-    />
-  );
-}
-
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  const { className = "", ...rest } = props;
-
-  return (
-    <select
-      {...rest}
-      className={[
-        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none transition",
-        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-400",
-        className,
-      ].join(" ")}
-    />
-  );
-}
-
-function getAffectationSubjectId(item: CurrentAffectationItem) {
-  const direct = String(item.subject?.id || item.subject_id || "").trim();
-  const label = String(
-    item.subject?.label || item.subject?.name || item.subject_name || item.subject_label || ""
-  ).trim();
-
-  if (direct) return direct;
-  if (label) return `label:${normalizeLabelForMatch(label)}`;
-  return "";
-}
-
-function getAffectationSubjectName(item: CurrentAffectationItem) {
-  return String(
-    item.subject?.label || item.subject?.name || item.subject_name || item.subject_label || ""
-  ).trim();
-}
-
-function affectationMatchesClass(item: CurrentAffectationItem, classId: string) {
-  const directClassId = String(item.class_id || "").trim();
-
-  if (directClassId && directClassId === classId) return true;
-
-  const classes = Array.isArray(item.classes) ? item.classes : [];
-  return classes.some((c) => String(c.id || "").trim() === classId);
-}
-
-export default function AdminNotesStatsPage() {
+export default function AdminGradeRegisterPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [classesLoading, setClassesLoading] = useState(false);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [selectedYear, setSelectedYear] = useState("");
+  const [selectedLevel, setSelectedLevel] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
-  const [selectedEducationType, setSelectedEducationType] =
-    useState("general_secondary");
-  const [selectedFormationCode, setSelectedFormationCode] = useState("");
-  const [selectedFormationLevelCode, setSelectedFormationLevelCode] =
-    useState("");
 
-  const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
 
-  const [subjectOptions, setSubjectOptions] = useState<SubjectOption[]>([]);
-  const [subjectsLoading, setSubjectsLoading] = useState(false);
-  const [subjectsMsg, setSubjectsMsg] = useState<string | null>(null);
+  const [affectations, setAffectations] = useState<AffectationItem[]>([]);
+  const [affectationsLoading, setAffectationsLoading] = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
+  const [selectedTeacherId, setSelectedTeacherId] = useState("");
 
-  const [matrixRows, setMatrixRows] = useState<MatrixRow[]>([]);
-  const [loadedPeriods, setLoadedPeriods] = useState<GradePeriod[]>([]);
-  const [periodStates, setPeriodStates] = useState<PeriodLoadState[]>([]);
-  const [loadingMatrix, setLoadingMatrix] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
+  const [register, setRegister] = useState<RegisterResponse | null>(null);
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [dirty, setDirty] = useState<Record<string, Record<string, string>>>({});
+  const [saving, setSaving] = useState(false);
 
-  const educationSettings = institution?.settings_json || institution || null;
+  const [showNewEvaluation, setShowNewEvaluation] = useState(false);
+  const [creatingEvaluation, setCreatingEvaluation] = useState(false);
+  const [newEvaluation, setNewEvaluation] = useState<NewEvaluationForm>({
+    eval_date: new Date().toISOString().slice(0, 10),
+    eval_kind: "devoir",
+    scale: 20,
+    coeff: 1,
+    subject_component_id: "",
+  });
 
-  const classContextById = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof resolveEducationStatisticsContext>>();
-    for (const item of classes) {
-      map.set(item.id, resolveEducationStatisticsContext(item, educationSettings));
-    }
-    return map;
-  }, [classes, educationSettings]);
-
-  const selectedClass = useMemo(
-    () => classes.find((c) => c.id === selectedClassId) || null,
-    [classes, selectedClassId]
-  );
-
-  const selectedClassContext = useMemo(
-    () => (selectedClass ? classContextById.get(selectedClass.id) || null : null),
-    [classContextById, selectedClass]
-  );
-
-  const selectedSubject = useMemo(
-    () => subjectOptions.find((s) => s.id === selectedSubjectId) || null,
-    [subjectOptions, selectedSubjectId]
-  );
-
-  const selectedSubjectName = selectedSubject?.name || "Matière";
-
-  const hasNonGeneralClasses = useMemo(
-    () =>
-      classes.some(
-        (item) =>
-          (classContextById.get(item.id)?.educationType || "general_secondary") !==
-          "general_secondary"
-      ),
-    [classes, classContextById]
-  );
-
-  const educationTypeOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of classes) {
-      const context = classContextById.get(item.id);
-      if (context) map.set(context.educationType, context.educationLabel);
-    }
-    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
-  }, [classes, classContextById]);
-
-  const formationOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of classes) {
-      const context = classContextById.get(item.id);
-      if (!context || context.educationType !== selectedEducationType) continue;
-      if (!context.formationCode) continue;
-      map.set(
-        context.formationCode,
-        context.formationLabel || context.formationCode
-      );
-    }
-    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
-  }, [classes, classContextById, selectedEducationType]);
-
-  const formationLevelOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of classes) {
-      const context = classContextById.get(item.id);
-      if (!context || context.educationType !== selectedEducationType) continue;
-      if (context.formationCode !== selectedFormationCode) continue;
-      if (!context.formationLevelCode) continue;
-      map.set(
-        context.formationLevelCode,
-        context.formationLevelLabel || context.formationLevelCode
-      );
-    }
-    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
-  }, [
-    classes,
-    classContextById,
-    selectedEducationType,
-    selectedFormationCode,
-  ]);
+  const loadSeq = useRef(0);
 
   const academicYears = useMemo(() => {
-    const set = new Set<string>();
+    return Array.from(
+      new Set(classes.map((row) => String(row.academic_year || "")).filter(Boolean)),
+    ).sort((a, b) => b.localeCompare(a, "fr", { numeric: true }));
+  }, [classes]);
 
-    classes.forEach((c) => c.academic_year && set.add(c.academic_year));
-    periods.forEach((p) => p.academic_year && set.add(p.academic_year));
+  const classesForYear = useMemo(
+    () => classes.filter((row) => !selectedYear || row.academic_year === selectedYear),
+    [classes, selectedYear],
+  );
 
-    return Array.from(set).sort().reverse();
-  }, [classes, periods]);
+  const levels = useMemo(() => {
+    return Array.from(new Set(classesForYear.map((row) => levelLabel(row)))).sort((a, b) =>
+      a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" }),
+    );
+  }, [classesForYear]);
 
-  const filteredClasses = useMemo(() => {
-    return classes
-      .filter(
-        (c) => !selectedAcademicYear || c.academic_year === selectedAcademicYear
-      )
-      .filter((c) =>
-        educationStatisticsClassMatches(c, {
-          educationType: selectedEducationType,
-          formationCode: selectedFormationCode,
-          formationLevelCode: selectedFormationLevelCode,
-        })
-      );
-  }, [
-    classes,
-    selectedAcademicYear,
-    selectedEducationType,
-    selectedFormationCode,
-    selectedFormationLevelCode,
-  ]);
+  const classOptions = useMemo(
+    () =>
+      classesForYear
+        .filter((row) => !selectedLevel || levelLabel(row) === selectedLevel)
+        .slice()
+        .sort((a, b) =>
+          classLabel(a).localeCompare(classLabel(b), "fr", {
+            numeric: true,
+            sensitivity: "base",
+          }),
+        ),
+    [classesForYear, selectedLevel],
+  );
 
-  useEffect(() => {
-    if (selectedEducationType === "general_secondary") {
-      if (selectedFormationCode) setSelectedFormationCode("");
-      if (selectedFormationLevelCode) setSelectedFormationLevelCode("");
-      return;
-    }
+  const selectedClass = useMemo(
+    () => classes.find((row) => row.id === selectedClassId) || null,
+    [classes, selectedClassId],
+  );
 
-    if (
-      selectedFormationCode &&
-      formationOptions.some((item) => item.code === selectedFormationCode)
-    ) {
-      return;
-    }
-
-    setSelectedFormationCode(formationOptions[0]?.code || "");
-  }, [selectedEducationType, selectedFormationCode, formationOptions]);
-
-  useEffect(() => {
-    if (selectedEducationType === "general_secondary") return;
-
-    if (
-      selectedFormationLevelCode &&
-      formationLevelOptions.some(
-        (item) => item.code === selectedFormationLevelCode
-      )
-    ) {
-      return;
-    }
-
-    setSelectedFormationLevelCode(formationLevelOptions[0]?.code || "");
-  }, [
-    selectedEducationType,
-    selectedFormationLevelCode,
-    formationLevelOptions,
-  ]);
-
-  useEffect(() => {
-    if (
-      selectedClassId &&
-      filteredClasses.some((item) => item.id === selectedClassId)
-    ) {
-      return;
-    }
-
-    setSelectedClassId(filteredClasses[0]?.id || "");
-    setSelectedPeriodId("");
-    setSelectedSubjectId("");
-    setMatrixRows([]);
-    setLoadedPeriods([]);
-    setErrorMsg(null);
-  }, [filteredClasses, selectedClassId]);
-
-  const matrixPeriods = useMemo(() => {
-    return periods
-      .filter((p) => p.is_active !== false)
-      .filter((p) => !selectedAcademicYear || p.academic_year === selectedAcademicYear)
-      .filter((p) => !!p.start_date && !!p.end_date)
-      .slice()
-      .sort((a, b) => {
-        const ai = Number(a.order_index ?? 999);
-        const bi = Number(b.order_index ?? 999);
-
-        if (ai !== bi) return ai - bi;
-
-        return String(a.start_date).localeCompare(String(b.start_date));
-      });
-  }, [periods, selectedAcademicYear]);
+  const periodOptions = useMemo(
+    () =>
+      periods
+        .filter((row) => row.is_active !== false)
+        .slice()
+        .sort((a, b) => {
+          const ai = Number(a.order_index ?? 999);
+          const bi = Number(b.order_index ?? 999);
+          if (ai !== bi) return ai - bi;
+          return String(a.start_date || "").localeCompare(String(b.start_date || ""));
+        }),
+    [periods],
+  );
 
   const selectedPeriod = useMemo(
-    () => matrixPeriods.find((p) => p.id === selectedPeriodId) || null,
-    [matrixPeriods, selectedPeriodId]
+    () => periodOptions.find((row) => row.id === selectedPeriodId) || null,
+    [periodOptions, selectedPeriodId],
   );
 
-  const selectedPeriodIsLast = useMemo(() => {
-    if (!selectedPeriodId || !matrixPeriods.length) return false;
-    return matrixPeriods[matrixPeriods.length - 1]?.id === selectedPeriodId;
-  }, [matrixPeriods, selectedPeriodId]);
-
-  const periodsToDisplay = useMemo(() => {
-    if (!selectedPeriod) return [];
-
-    if (selectedPeriodIsLast && matrixPeriods.length > 1) {
-      const selectedIndex = matrixPeriods.findIndex((p) => p.id === selectedPeriod.id);
-      return matrixPeriods.slice(0, selectedIndex + 1);
+  const subjectOptions = useMemo(() => {
+    const map = new Map<string, { id: string; label: string }>();
+    for (const item of affectations) {
+      const id = String(item.subject?.id || "").trim();
+      const label = subjectLabel(item).trim();
+      if (!id || !label) continue;
+      if (!map.has(id)) map.set(id, { id, label });
     }
+    return Array.from(map.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
+    );
+  }, [affectations]);
 
-    return [selectedPeriod];
-  }, [matrixPeriods, selectedPeriod, selectedPeriodIsLast]);
-
-  const showAnnualColumns = selectedPeriodIsLast && periodsToDisplay.length > 1;
-
-  const matrixPeriodsKey = useMemo(
-    () =>
-      matrixPeriods
-        .map((p) => `${p.id}:${p.start_date}:${p.end_date}:${p.coeff ?? ""}`)
-        .join("|"),
-    [matrixPeriods]
-  );
-
-  const periodsToDisplayKey = useMemo(
-    () =>
-      periodsToDisplay
-        .map((p) => `${p.id}:${p.start_date}:${p.end_date}:${p.coeff ?? ""}`)
-        .join("|"),
-    [periodsToDisplay]
-  );
-
-  const stats = useMemo(() => {
-    const valid = matrixRows
-      .map((r) => {
-        if (showAnnualColumns) return r.annual_avg;
-        const onlyPeriod = periodsToDisplay[0];
-        return onlyPeriod ? r.periods[onlyPeriod.id]?.avg ?? null : null;
-      })
-      .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
-
-    if (!valid.length) {
-      return {
-        count: matrixRows.length,
-        classAvg: null,
-        highest: null,
-        lowest: null,
-      };
+  const teacherOptions = useMemo(() => {
+    const map = new Map<string, { id: string; label: string }>();
+    for (const item of affectations) {
+      if (String(item.subject?.id || "") !== selectedSubjectId) continue;
+      const id = String(item.teacher?.id || "").trim();
+      if (!id) continue;
+      map.set(id, { id, label: teacherLabel(item) });
     }
+    return Array.from(map.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
+    );
+  }, [affectations, selectedSubjectId]);
 
-    const sum = valid.reduce((acc, n) => acc + n, 0);
+  const selectedSubject = useMemo(
+    () => subjectOptions.find((row) => row.id === selectedSubjectId) || null,
+    [subjectOptions, selectedSubjectId],
+  );
 
-    return {
-      count: matrixRows.length,
-      classAvg: Math.round((sum / valid.length) * 100) / 100,
-      highest: Math.round(Math.max(...valid) * 100) / 100,
-      lowest: Math.round(Math.min(...valid) * 100) / 100,
-    };
-  }, [matrixRows, periodsToDisplay, showAnnualColumns]);
+  const selectedTeacher = useMemo(
+    () => teacherOptions.find((row) => row.id === selectedTeacherId) || null,
+    [teacherOptions, selectedTeacherId],
+  );
+
+  const evaluations = register?.evaluations || [];
+  const roster = register?.roster || [];
+  const originalScoreMap = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const item of register?.scores || []) {
+      map.set(`${item.evaluation_id}:${item.student_id}`, item.score);
+    }
+    return map;
+  }, [register?.scores]);
+
+  const filteredRoster = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase("fr");
+    if (!query) return roster;
+    return roster.filter((student) => {
+      const haystack = `${student.full_name} ${student.matricule || ""}`.toLocaleLowerCase("fr");
+      return haystack.includes(query);
+    });
+  }, [roster, search]);
+
+  const dirtyCount = useMemo(
+    () =>
+      Object.values(dirty).reduce(
+        (total, perEvaluation) => total + Object.keys(perEvaluation).length,
+        0,
+      ),
+    [dirty],
+  );
 
   useEffect(() => {
     let cancelled = false;
-
-    async function loadInstitutionSettings() {
-      try {
-        const res = await fetch("/api/admin/institution/settings", {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const json = await res.json().catch(() => ({}));
-        if (!cancelled) setInstitution(normalizeInstitutionSettings(json));
-      } catch (e) {
-        console.warn("[Stats] paramètres établissement indisponibles", e);
-      }
-    }
-
-    loadInstitutionSettings();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
     async function loadClasses() {
-      setClassesLoading(true);
-      setErrorMsg(null);
-
       try {
-        const res = await fetch("/api/admin/classes", { cache: "no-store" });
-
-        if (!res.ok) throw new Error(`Erreur classes : ${res.status}`);
-
-        const json = await res.json().catch(() => null);
-
-        const items: ClassRow[] = Array.isArray(json)
-          ? json
-          : Array.isArray(json?.items)
-          ? json.items
-          : [];
-
+        setClassesLoading(true);
+        const response = await fetch(
+          "/api/admin/classes?academic_year=all&education_type=all&limit=5000",
+          { cache: "no-store" },
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || "Impossible de charger les classes.");
         if (cancelled) return;
-
-        setClasses(items);
-
-        if (!selectedClassId && items.length) {
-          const first =
-            items.find(
-              (item) =>
-                String(item.education_type || "general_secondary") ===
-                "general_secondary"
-            ) || items[0];
-
-          setSelectedEducationType(
-            String(first.education_type || "general_secondary")
-          );
-          setSelectedFormationCode(String(first.formation_code || ""));
-          setSelectedFormationLevelCode(
-            String(first.formation_level_code || "")
-          );
-          setSelectedClassId(first.id);
-          if (first.academic_year) {
-            setSelectedAcademicYear(first.academic_year);
-          }
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          setErrorMsg(e?.message || "Impossible de charger les classes.");
-        }
+        setClasses(Array.isArray(data?.items) ? data.items : []);
+      } catch (reason: any) {
+        if (!cancelled) setError(reason?.message || "Impossible de charger les classes.");
       } finally {
         if (!cancelled) setClassesLoading(false);
       }
     }
-
-    loadClasses();
-
+    void loadClasses();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (!cls) return;
+    if (!academicYears.length) return;
+    setSelectedYear((current) =>
+      current && academicYears.includes(current) ? current : academicYears[0],
+    );
+  }, [academicYears]);
 
-    if (cls.academic_year) {
-      setSelectedAcademicYear(cls.academic_year);
-    }
+  useEffect(() => {
+    setSelectedLevel((current) =>
+      current && levels.includes(current) ? current : levels[0] || "",
+    );
+  }, [levels]);
 
-    const context = classContextById.get(cls.id);
-    if (!context) return;
-
-    setSelectedEducationType(context.educationType);
-    setSelectedFormationCode(context.formationCode || "");
-    setSelectedFormationLevelCode(context.formationLevelCode || "");
-  }, [selectedClassId, classes, classContextById]);
+  useEffect(() => {
+    setSelectedClassId((current) =>
+      current && classOptions.some((row) => row.id === current)
+        ? current
+        : classOptions[0]?.id || "",
+    );
+  }, [classOptions]);
 
   useEffect(() => {
     let cancelled = false;
+    setRegister(null);
+    setDirty({});
+    setMessage(null);
+    setError(null);
 
-    async function loadPeriods() {
-      setPeriodsLoading(true);
-      setErrorMsg(null);
+    if (!selectedClassId || !selectedYear) {
+      setPeriods([]);
+      setAffectations([]);
+      return () => {
+        cancelled = true;
+      };
+    }
 
+    async function loadSelectionData() {
       try {
-        const params = new URLSearchParams();
+        setPeriodsLoading(true);
+        setAffectationsLoading(true);
+        const periodParams = new URLSearchParams({
+          academic_year: selectedYear,
+          class_id: selectedClassId,
+        });
+        const affectationParams = new URLSearchParams({
+          academic_year: selectedYear,
+          class_id: selectedClassId,
+          education_type: "all",
+        });
 
-        if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
-        if (selectedClassId) params.set("class_id", selectedClassId);
+        const [periodResponse, affectationResponse] = await Promise.all([
+          fetch(`/api/admin/institution/grading-periods?${periodParams.toString()}`, {
+            cache: "no-store",
+          }),
+          fetch(`/api/admin/affectations/current?${affectationParams.toString()}`, {
+            cache: "no-store",
+          }),
+        ]);
 
-        const url = `/api/admin/institution/grading-periods${
-          params.toString() ? `?${params.toString()}` : ""
-        }`;
+        const periodData = await periodResponse.json().catch(() => ({}));
+        const affectationData = await affectationResponse.json().catch(() => ({}));
 
-        const res = await fetch(url, { cache: "no-store" });
-
-        if (!res.ok) throw new Error(`Erreur périodes : ${res.status}`);
-
-        const json = await res.json().catch(() => null);
-
-        const items: GradePeriod[] = Array.isArray(json)
-          ? json
-          : Array.isArray(json?.items)
-          ? json.items
-          : [];
-
+        if (!periodResponse.ok) {
+          throw new Error(periodData?.error || "Impossible de charger les périodes.");
+        }
+        if (!affectationResponse.ok) {
+          throw new Error(affectationData?.error || "Impossible de charger les disciplines.");
+        }
         if (cancelled) return;
 
-        setPeriods(items);
-
-        if (!selectedAcademicYear && typeof json?.academic_year === "string") {
-          setSelectedAcademicYear(json.academic_year);
-        }
-      } catch (e: any) {
+        setPeriods(Array.isArray(periodData?.items) ? periodData.items : Array.isArray(periodData) ? periodData : []);
+        setAffectations(Array.isArray(affectationData?.items) ? affectationData.items : []);
+      } catch (reason: any) {
         if (!cancelled) {
           setPeriods([]);
-          setSelectedPeriodId("");
-          setErrorMsg(e?.message || "Impossible de charger les périodes.");
+          setAffectations([]);
+          setError(reason?.message || "Impossible de préparer le registre.");
         }
       } finally {
-        if (!cancelled) setPeriodsLoading(false);
+        if (!cancelled) {
+          setPeriodsLoading(false);
+          setAffectationsLoading(false);
+        }
       }
     }
 
-    loadPeriods();
-
+    void loadSelectionData();
     return () => {
       cancelled = true;
     };
-  }, [selectedAcademicYear, selectedClassId]);
+  }, [selectedClassId, selectedYear]);
 
   useEffect(() => {
-    if (!matrixPeriods.length) {
-      setSelectedPeriodId("");
+    setSelectedPeriodId((current) =>
+      current && periodOptions.some((row) => row.id === current)
+        ? current
+        : periodOptions[0]?.id || "",
+    );
+  }, [periodOptions]);
+
+  useEffect(() => {
+    setSelectedSubjectId((current) =>
+      current && subjectOptions.some((row) => row.id === current)
+        ? current
+        : subjectOptions[0]?.id || "",
+    );
+  }, [subjectOptions]);
+
+  useEffect(() => {
+    setSelectedTeacherId((current) =>
+      current && teacherOptions.some((row) => row.id === current)
+        ? current
+        : teacherOptions[0]?.id || "",
+    );
+  }, [teacherOptions]);
+
+  async function loadRegister(showBusy = true) {
+    const seq = ++loadSeq.current;
+    setError(null);
+    if (
+      !selectedClassId ||
+      !selectedPeriodId ||
+      !selectedSubjectId ||
+      !selectedTeacherId
+    ) {
+      setRegister(null);
       return;
     }
 
-    setSelectedPeriodId((prev) => {
-      if (prev && matrixPeriods.some((p) => p.id === prev)) return prev;
-      return matrixPeriods[0]?.id || "";
-    });
-  }, [matrixPeriodsKey, matrixPeriods]);
-
-  useEffect(() => {
-    setMatrixRows([]);
-    setLoadedPeriods([]);
-    setPeriodStates([]);
-    setErrorMsg(null);
-  }, [selectedClassId, selectedAcademicYear, selectedPeriodId, selectedSubjectId]);
-
-  useEffect(() => {
-    if (!selectedClassId) {
-      setSubjectOptions([]);
-      setSelectedSubjectId("");
-      setSubjectsMsg(null);
-      return;
+    try {
+      if (showBusy) setRegisterLoading(true);
+      const params = new URLSearchParams({
+        class_id: selectedClassId,
+        grading_period_id: selectedPeriodId,
+        subject_id: selectedSubjectId,
+        teacher_id: selectedTeacherId,
+      });
+      const response = await fetch(`/api/admin/grades/register?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const data = (await response.json().catch(() => ({}))) as RegisterResponse;
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || "Impossible de charger le registre des notes.");
+      }
+      if (seq !== loadSeq.current) return;
+      setRegister(data);
+      setDirty({});
+    } catch (reason: any) {
+      if (seq !== loadSeq.current) return;
+      setRegister(null);
+      setError(reason?.message || "Impossible de charger le registre des notes.");
+    } finally {
+      if (seq === loadSeq.current && showBusy) setRegisterLoading(false);
     }
+  }
 
-    loadSubjectOptions();
+  useEffect(() => {
+    setRegister(null);
+    setDirty({});
+    setSearch("");
+    setMessage(null);
+    if (
+      selectedClassId &&
+      selectedPeriodId &&
+      selectedSubjectId &&
+      selectedTeacherId
+    ) {
+      void loadRegister();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId, selectedAcademicYear]);
+  }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId]);
 
-  async function fetchBulletinForPeriod(classId: string, period: GradePeriod) {
-    const params = new URLSearchParams();
-
-    params.set("class_id", classId);
-    params.set("from", period.start_date);
-    params.set("to", period.end_date);
-    params.set("published", "true");
-
-    const res = await fetch(`/api/admin/grades/bulletin?${params.toString()}`, {
-      cache: "no-store",
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Erreur bulletin ${res.status}`);
-    }
-
-    const json = (await res.json().catch(() => null)) as BulletinResponse | null;
-
-    if (!json?.ok) throw new Error("Réponse bulletin invalide.");
-
-    return json;
+  function getCellValue(evaluationId: string, studentId: string) {
+    const dirtyValue = dirty[evaluationId]?.[studentId];
+    if (dirtyValue !== undefined) return dirtyValue;
+    return displayScore(originalScoreMap.get(`${evaluationId}:${studentId}`));
   }
 
-  async function fetchAssignedSubjectsForClass(classId: string): Promise<SubjectOption[]> {
-    const res = await fetch("/api/admin/affectations/current", { cache: "no-store" });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Erreur affectations ${res.status}`);
-    }
-
-    const json = (await res.json().catch(() => null)) as AffectationsResponse | null;
-    const items = Array.isArray(json?.items) ? json.items : [];
-
-    const map = new Map<string, SubjectOption>();
-
-    for (const item of items) {
-      if (!affectationMatchesClass(item, classId)) continue;
-
-      const id = getAffectationSubjectId(item);
-      const name = getAffectationSubjectName(item);
-
-      if (!id || !name) continue;
-
-      if (!map.has(id)) {
-        map.set(id, {
-          id,
-          name,
-          notes_count: 0,
-        });
-      }
-    }
-
-    return Array.from(map.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, {
-        sensitivity: "base",
-        numeric: true,
-      })
-    );
+  function setCellValue(evaluationId: string, studentId: string, value: string) {
+    setDirty((current) => ({
+      ...current,
+      [evaluationId]: {
+        ...(current[evaluationId] || {}),
+        [studentId]: value,
+      },
+    }));
+    setMessage(null);
   }
 
-  async function loadSubjectOptions() {
-    setSubjectsLoading(true);
-    setSubjectsMsg(null);
-    setSubjectOptions([]);
+  function studentAverage20(studentId: string) {
+    let numerator = 0;
+    let denominator = 0;
 
-    if (!selectedClassId) {
-      setSelectedSubjectId("");
-      setSubjectsLoading(false);
+    for (const evaluation of evaluations) {
+      const value = parseGradeInput(getCellValue(evaluation.id, studentId));
+      if (value === null) continue;
+      const scale = Number(evaluation.scale || 20);
+      const coeff = Number(evaluation.coeff || 1);
+      if (!Number.isFinite(scale) || scale <= 0) continue;
+      const weight = Number.isFinite(coeff) && coeff > 0 ? coeff : 1;
+      numerator += (value / scale) * 20 * weight;
+      denominator += weight;
+    }
+
+    return denominator > 0 ? numerator / denominator : null;
+  }
+
+  async function saveChanges() {
+    const entries = Object.entries(dirty).filter(([, items]) => Object.keys(items).length > 0);
+    if (!entries.length) {
+      setMessage("Aucune modification à enregistrer.");
       return;
     }
 
     try {
-      const options = await fetchAssignedSubjectsForClass(selectedClassId);
+      setSaving(true);
+      setError(null);
+      setMessage(null);
 
-      setSubjectOptions(options);
+      for (const [evaluationId, values] of entries) {
+        const evaluation = evaluations.find((row) => row.id === evaluationId);
+        if (!evaluation?.editable) continue;
 
-      setSelectedSubjectId((prev) => {
-        if (prev && options.some((o) => o.id === prev)) return prev;
-        return options[0]?.id || "";
-      });
+        const items = Object.entries(values).map(([student_id, raw]) => ({
+          student_id,
+          score: raw.trim() === "" ? null : parseGradeInput(raw),
+        }));
 
-      if (!options.length) {
-        setSubjectsMsg(
-          "Aucune matière affectée n’a été trouvée pour cette classe. Vérifiez les attributions des enseignants."
+        const invalid = items.find(
+          (item) =>
+            item.score !== null &&
+            (item.score < 0 || item.score > Number(evaluation.scale || 20)),
         );
+        if (invalid) {
+          const student = roster.find((row) => row.id === invalid.student_id);
+          throw new Error(
+            `${student?.full_name || "Une note"} doit être comprise entre 0 et ${evaluation.scale}.`,
+          );
+        }
+
+        const response = await fetch("/api/admin/grades/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "save_scores",
+            evaluation_id: evaluationId,
+            items,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error || "Échec de l’enregistrement des notes.");
+        }
       }
-    } catch (e: any) {
-      setSubjectOptions([]);
-      setSelectedSubjectId("");
-      setSubjectsMsg(e?.message || "Impossible de charger les matières affectées.");
+
+      setMessage("Notes enregistrées.");
+      await loadRegister(false);
+    } catch (reason: any) {
+      setError(reason?.message || "Échec de l’enregistrement des notes.");
     } finally {
-      setSubjectsLoading(false);
+      setSaving(false);
     }
   }
 
-  async function loadMatrix() {
-    setErrorMsg(null);
-    setMatrixRows([]);
-    setLoadedPeriods([]);
+  function openNewEvaluation() {
+    setNewEvaluation({
+      eval_date: currentDateForPeriod(selectedPeriod),
+      eval_kind: "devoir",
+      scale: 20,
+      coeff: 1,
+      subject_component_id: "",
+    });
+    setShowNewEvaluation(true);
+    setMessage(null);
+    setError(null);
+  }
 
-    if (!selectedClassId) {
-      setErrorMsg("Veuillez sélectionner une classe.");
+  async function createEvaluation() {
+    if (!selectedClassId || !selectedPeriodId || !selectedSubjectId || !selectedTeacherId) {
+      setError("Complétez d’abord les sélections du registre.");
       return;
     }
-
-    if (!selectedPeriodId || !selectedPeriod) {
-      setErrorMsg("Veuillez sélectionner une période.");
-      return;
-    }
-
-    if (!selectedSubjectId) {
-      setErrorMsg("Veuillez sélectionner une matière affectée à la classe.");
-      return;
-    }
-
-    if (!periodsToDisplay.length) {
-      setErrorMsg("Aucune période valide n’est disponible pour cette sélection.");
-      return;
-    }
-
-    setLoadingMatrix(true);
-    setLoadedPeriods(periodsToDisplay);
-
-    setPeriodStates(
-      periodsToDisplay.map((p) => ({
-        period_id: p.id,
-        label: periodLabel(p),
-        status: "pending",
-      }))
-    );
 
     try {
-      const students = new Map<string, MatrixRow>();
-
-      for (const period of periodsToDisplay) {
-        try {
-          const bulletin = await fetchBulletinForPeriod(selectedClassId, period);
-          const subjects = Array.isArray(bulletin.subjects) ? bulletin.subjects : [];
-          const items = Array.isArray(bulletin.items) ? bulletin.items : [];
-
-          const subject = findBulletinSubject(
-            subjects,
-            selectedSubjectId,
-            selectedSubjectName
-          );
-
-          if (!subject) {
-            for (const item of items) {
-              if (!students.has(item.student_id)) {
-                students.set(item.student_id, {
-                  student_id: item.student_id,
-                  full_name: item.full_name || "Élève",
-                  matricule: item.matricule ?? null,
-                  periods: {},
-                  annual_avg: null,
-                  annual_rank: null,
-                  annual_status: "empty",
-                  annual_available_periods: 0,
-                  annual_expected_periods: 0,
-                });
-              }
-
-              const row = students.get(item.student_id)!;
-              row.full_name = item.full_name || row.full_name;
-              row.matricule = item.matricule ?? row.matricule;
-              row.periods[period.id] = { avg: null, rank: null };
-            }
-
-            setPeriodStates((prev) =>
-              prev.map((s) =>
-                s.period_id === period.id
-                  ? {
-                      ...s,
-                      status: "empty",
-                      message: "Aucune moyenne publiée",
-                    }
-                  : s
-              )
-            );
-            continue;
-          }
-
-          const subjectRows = items.map((item) => ({
-            student_id: item.student_id,
-            avg: cleanAvg(findSubjectCell(item, subject)?.avg20),
-          }));
-
-          const ranks = buildRankMap(subjectRows);
-
-          const notedCount = subjectRows.filter(
-            (r) => typeof r.avg === "number" && Number.isFinite(r.avg)
-          ).length;
-
-          for (const item of items) {
-            if (!students.has(item.student_id)) {
-              students.set(item.student_id, {
-                student_id: item.student_id,
-                full_name: item.full_name || "Élève",
-                matricule: item.matricule ?? null,
-                periods: {},
-                annual_avg: null,
-                annual_rank: null,
-                annual_status: "empty",
-                annual_available_periods: 0,
-                annual_expected_periods: 0,
-              });
-            }
-
-            const row = students.get(item.student_id)!;
-            const avg = cleanAvg(findSubjectCell(item, subject)?.avg20);
-
-            row.full_name = item.full_name || row.full_name;
-            row.matricule = item.matricule ?? row.matricule;
-
-            row.periods[period.id] = {
-              avg,
-              rank: ranks.get(item.student_id) ?? null,
-            };
-          }
-
-          setPeriodStates((prev) =>
-            prev.map((s) =>
-              s.period_id === period.id
-                ? {
-                    ...s,
-                    status: notedCount ? "ok" : "empty",
-                    message: notedCount
-                      ? `${notedCount} moyenne(s) publiée(s)`
-                      : "Aucune moyenne publiée",
-                  }
-                : s
-            )
-          );
-        } catch (e: any) {
-          setPeriodStates((prev) =>
-            prev.map((s) =>
-              s.period_id === period.id
-                ? {
-                    ...s,
-                    status: "error",
-                    message: e?.message || "Erreur",
-                  }
-                : s
-            )
-          );
-        }
-      }
-
-      const rows = Array.from(students.values());
-
-      if (showAnnualColumns) {
-        const expectedPeriods = periodsToDisplay.length;
-
-        for (const row of rows) {
-          let num = 0;
-          let den = 0;
-          let availablePeriods = 0;
-
-          for (const period of periodsToDisplay) {
-            const avg = row.periods[period.id]?.avg;
-
-            // IMPORTANT : absence de note publiée = NC / —, jamais 0.
-            // Une vraie note 0 reste un nombre et sera donc bien prise en compte.
-            if (avg === null || avg === undefined || !Number.isFinite(avg)) continue;
-
-            const coeffRaw = Number(period.coeff ?? 1);
-            const coeff = Number.isFinite(coeffRaw) && coeffRaw > 0 ? coeffRaw : 1;
-
-            num += avg * coeff;
-            den += coeff;
-            availablePeriods += 1;
-          }
-
-          row.annual_available_periods = availablePeriods;
-          row.annual_expected_periods = expectedPeriods;
-          row.annual_avg = den > 0 ? Math.round((num / den) * 100) / 100 : null;
-          row.annual_status =
-            availablePeriods === 0
-              ? "empty"
-              : availablePeriods === expectedPeriods
-              ? "complete"
-              : "partial";
-        }
-
-        // Rang annuel officiel uniquement si l'élève est complet sur toutes les périodes affichées.
-        // Les moyennes annuelles partielles restent visibles avec astérisque et Rang = NC.
-        const annualRanks = buildRankMap(
-          rows.map((r) => ({
-            student_id: r.student_id,
-            avg: r.annual_status === "complete" ? r.annual_avg : null,
-          }))
-        );
-
-        rows.forEach((row) => {
-          row.annual_rank =
-            row.annual_status === "complete" ? annualRanks.get(row.student_id) ?? null : null;
-        });
-      } else {
-        rows.forEach((row) => {
-          row.annual_avg = null;
-          row.annual_rank = null;
-          row.annual_status = "empty";
-          row.annual_available_periods = 0;
-          row.annual_expected_periods = 0;
-        });
-      }
-
-      rows.sort((a, b) => {
-        if (showAnnualColumns) {
-          const order: Record<AnnualStatus, number> = {
-            complete: 0,
-            partial: 1,
-            empty: 2,
-          };
-
-          const ao = order[a.annual_status ?? "empty"] ?? 2;
-          const bo = order[b.annual_status ?? "empty"] ?? 2;
-          if (ao !== bo) return ao - bo;
-
-          const ar = a.annual_rank ?? 99999;
-          const br = b.annual_rank ?? 99999;
-          if (ar !== br) return ar - br;
-
-          const aa = a.annual_avg ?? -1;
-          const ba = b.annual_avg ?? -1;
-          if (aa !== ba) return ba - aa;
-        } else {
-          const period = periodsToDisplay[0];
-          const ar = period ? a.periods[period.id]?.rank ?? 99999 : 99999;
-          const br = period ? b.periods[period.id]?.rank ?? 99999 : 99999;
-
-          if (ar !== br) return ar - br;
-        }
-
-        return a.full_name.localeCompare(b.full_name, "fr", {
-          sensitivity: "base",
-          numeric: true,
-        });
+      setCreatingEvaluation(true);
+      setError(null);
+      setMessage(null);
+      const response = await fetch("/api/admin/grades/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_evaluation",
+          class_id: selectedClassId,
+          grading_period_id: selectedPeriodId,
+          subject_id: selectedSubjectId,
+          teacher_id: selectedTeacherId,
+          eval_date: newEvaluation.eval_date,
+          eval_kind: newEvaluation.eval_kind,
+          scale: Number(newEvaluation.scale),
+          coeff: Number(newEvaluation.coeff),
+          subject_component_id: newEvaluation.subject_component_id || null,
+        }),
       });
-
-      setMatrixRows(rows);
-
-      if (!rows.length) {
-        setErrorMsg("Aucun élève n’a été trouvé pour cette classe.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || "Impossible d’ajouter la nouvelle note.");
       }
+
+      setShowNewEvaluation(false);
+      setMessage("Nouvelle colonne ajoutée. Vous pouvez saisir les notes.");
+      await loadRegister(false);
+    } catch (reason: any) {
+      setError(reason?.message || "Impossible d’ajouter la nouvelle note.");
     } finally {
-      setLoadingMatrix(false);
+      setCreatingEvaluation(false);
     }
   }
 
-  function exportCsv() {
-    if (!matrixRows.length) {
-      setErrorMsg("Chargez d’abord la matrice avant d’exporter.");
-      return;
-    }
-
-    const headers = ["N°", "Matricule", "Nom et prénoms"];
-
-    for (const p of loadedPeriods) {
-      const label = periodLabel(p);
-      headers.push(`${label} moyenne`, `${label} rang`);
-    }
-
-    if (showAnnualColumns) {
-      headers.push("Moyenne annuelle matière", "Rang annuel matière");
-    }
-
-    const lines = [headers.map(csvCell).join(";")];
-
-    matrixRows.forEach((row, idx) => {
-      const cells: Array<string | number | null> = [
-        idx + 1,
-        row.matricule || "",
-        row.full_name,
-      ];
-
-      for (const p of loadedPeriods) {
-        const cell = row.periods[p.id] || { avg: null, rank: null };
-
-        cells.push(cell.avg !== null ? cell.avg.toFixed(2) : "", cell.rank ?? "");
-      }
-
-      if (showAnnualColumns) {
-        cells.push(
-          formatAnnualAverage(row),
-          formatAnnualRank(row)
-        );
-      }
-
-      lines.push(cells.map(csvCell).join(";"));
-    });
-
-    const csv = "\ufeff" + lines.join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-
-    const safeClass = clsLabel(selectedClass).replace(/[^a-z0-9_-]+/gi, "_");
-    const safeSubject = selectedSubjectName.replace(/[^a-z0-9_-]+/gi, "_");
-    const safeYear = (selectedAcademicYear || "annee").replace(/[^a-z0-9_-]+/gi, "_");
-    const safePeriod = (selectedPeriod ? periodLabel(selectedPeriod) : "periode").replace(
-      /[^a-z0-9_-]+/gi,
-      "_"
-    );
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `matrice_matiere_${safeSubject}_${safeClass}_${safeYear}_${safePeriod}.csv`;
-
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    URL.revokeObjectURL(url);
-  }
-
-  function exportPdf() {
-    if (!matrixRows.length) {
-      setErrorMsg("Chargez d’abord la matrice avant d’exporter.");
-      return;
-    }
-
-    const className = clsLabel(selectedClass);
-    const title = `Matrice matière — ${selectedSubjectName}`;
-    const periodText = selectedPeriod ? periodLabel(selectedPeriod) : "Période";
-    const contextText =
-      selectedClassContext &&
-      selectedClassContext.educationType !== "general_secondary"
-        ? ` • ${selectedClassContext.contextLabel}`
-        : "";
-    const subtitle = `${className || "Classe"}${contextText} • ${
-      selectedAcademicYear || "—"
-    } • ${periodText}`;
-    const generatedAt = generatedAtLabel();
-
-    const institutionName = institution?.institution_name || "ÉTABLISSEMENT";
-    const logoUrl = String(institution?.institution_logo_url || "").trim();
-    const institutionMetaParts = [
-      institution?.institution_postal_address,
-      institution?.institution_phone ? `Tél : ${institution.institution_phone}` : "",
-      institution?.institution_email,
-      institution?.institution_status,
-      institution?.institution_code ? `Code : ${institution.institution_code}` : "",
-    ]
-      .map((x) => String(x || "").trim())
-      .filter(Boolean);
-
-    const institutionMeta = institutionMetaParts
-      .map((x) => escapeHtml(x))
-      .join(" • ");
-
-    const logoHtml = logoUrl
-      ? `<img src="${escapeAttr(logoUrl)}" alt="Logo établissement" />`
-      : `<span>Logo</span>`;
-
-    const periodHeader = loadedPeriods
-      .map(
-        (p) => `
-          <th colspan="2">
-            ${escapeHtml(periodLabel(p))}
-            <br/>
-            <span>${escapeHtml(formatDateFR(p.start_date))} — ${escapeHtml(
-          formatDateFR(p.end_date)
-        )}</span>
-          </th>`
-      )
-      .join("");
-
-    const secondHeader = loadedPeriods
-      .map(() => `<th>Moy.</th><th>Rang</th>`)
-      .join("");
-
-    const annualHeader = showAnnualColumns ? `<th colspan="2">Annuel matière</th>` : "";
-    const annualSecondHeader = showAnnualColumns
-      ? `<th>Moy.</th><th>Rang</th>`
-      : "";
-
-    const body = matrixRows
-      .map((row, idx) => {
-        const periodCells = loadedPeriods
-          .map((p) => {
-            const cell = row.periods[p.id] || { avg: null, rank: null };
-
-            return `<td class="num">${escapeHtml(formatNumber(cell.avg))}</td><td class="num">${escapeHtml(formatRank(
-              cell.rank
-            ))}</td>`;
-          })
-          .join("");
-
-        const annualCells = showAnnualColumns
-          ? `<td class="num strong">${escapeHtml(formatAnnualAverage(row))}</td>
-             <td class="num strong">${escapeHtml(formatAnnualRank(row))}</td>`
-          : "";
-
-        return `<tr>
-          <td class="num">${idx + 1}</td>
-          <td>${escapeHtml(row.matricule || "")}</td>
-          <td class="student-name">${escapeHtml(row.full_name)}</td>
-          ${periodCells}
-          ${annualCells}
-        </tr>`;
-      })
-      .join("");
-
-    const noteHtml = showAnnualColumns
-      ? '<div class="note">* Moyenne calculée sur les périodes publiées disponibles. Rang annuel NC tant que l’année matière est incomplète.</div>'
-      : "";
-
-    const html = `<!doctype html>
-<html lang="fr">
-<head>
-<meta charset="utf-8" />
-<title>${escapeHtml(title)}</title>
-<style>
-  @page {
-    size: A4 landscape;
-    margin: 9mm;
-  }
-
-  * {
-    box-sizing: border-box;
-  }
-
-  html,
-  body {
-    margin: 0;
-    padding: 0;
-    color: #0f172a;
-    background: #f8fafc;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  body {
-    padding: 14px;
-  }
-
-  .sheet {
-    min-height: calc(100vh - 28px);
-    background: #ffffff;
-    border: 1px solid #dbe3ee;
-    border-radius: 18px;
-    padding: 14px;
-    box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
-  }
-
-  .print-header {
-    display: grid;
-    grid-template-columns: 88px 1fr 218px;
-    gap: 14px;
-    align-items: stretch;
-    position: relative;
-    overflow: hidden;
-    padding: 12px;
-    border: 1px solid #cbd5e1;
-    border-radius: 16px;
-    background:
-      linear-gradient(135deg, rgba(16, 185, 129, 0.10), rgba(15, 23, 42, 0.02)),
-      #ffffff;
-  }
-
-  .print-header::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-top: 5px solid #059669;
-    pointer-events: none;
-  }
-
-  .logo-box {
-    height: 76px;
-    width: 76px;
-    border: 1px solid #cbd5e1;
-    border-radius: 14px;
-    background: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    color: #94a3b8;
-    font-size: 10px;
-    font-weight: 800;
-    text-transform: uppercase;
-  }
-
-  .logo-box img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    padding: 5px;
-  }
-
-  .header-main {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 0;
-  }
-
-  .institution-name {
-    margin: 0;
-    color: #0f172a;
-    font-size: 18px;
-    line-height: 1.1;
-    font-weight: 950;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-  }
-
-  .institution-meta {
-    margin-top: 4px;
-    color: #475569;
-    font-size: 9.5px;
-    line-height: 1.35;
-  }
-
-  .doc-title {
-    width: fit-content;
-    margin-top: 8px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: #064e3b;
-    color: #ffffff;
-    font-size: 10px;
-    font-weight: 900;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .brand-line {
-    margin-top: 6px;
-    color: #334155;
-    font-size: 9.5px;
-  }
-
-  .brand-line strong {
-    color: #047857;
-    font-weight: 950;
-  }
-
-  .header-side {
-    border-left: 1px solid #cbd5e1;
-    padding-left: 12px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 5px;
-    color: #334155;
-    font-size: 10px;
-  }
-
-  .meta-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    border-bottom: 1px dashed #cbd5e1;
-    padding-bottom: 4px;
-  }
-
-  .meta-row:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .meta-row span:first-child {
-    color: #64748b;
-    font-weight: 800;
-  }
-
-  .meta-row span:last-child {
-    text-align: right;
-    color: #0f172a;
-    font-weight: 900;
-  }
-
-  .subtitle {
-    margin-top: 10px;
-    padding: 8px 10px;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    background: #f8fafc;
-    color: #334155;
-    font-size: 10.5px;
-    font-weight: 650;
-  }
-
-  .summary-grid {
-    margin-top: 10px;
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 8px;
-  }
-
-  .summary-card {
-    border: 1px solid #dbeafe;
-    border-radius: 13px;
-    padding: 8px 9px;
-    background: linear-gradient(180deg, #ffffff, #f8fafc);
-  }
-
-  .summary-label {
-    color: #64748b;
-    font-size: 7.8px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 950;
-  }
-
-  .summary-value {
-    margin-top: 3px;
-    color: #0f172a;
-    font-size: 15px;
-    font-weight: 950;
-  }
-
-  .summary-note {
-    margin-top: 2px;
-    color: #64748b;
-    font-size: 8px;
-  }
-
-  .table-wrap {
-    margin-top: 10px;
-    border: 1px solid #cbd5e1;
-    border-radius: 14px;
-    overflow: hidden;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    background: #ffffff;
-    font-size: 9.5px;
-  }
-
-  th,
-  td {
-    border: 1px solid #cbd5e1;
-    padding: 4px 5px;
-    vertical-align: middle;
-  }
-
-  thead th {
-    background: #eafaf4;
-    color: #064e3b;
-    font-size: 8px;
-    font-weight: 950;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    text-align: center;
-  }
-
-  th span {
-    color: #475569;
-    font-size: 7.5px;
-    font-weight: 650;
-    text-transform: none;
-    letter-spacing: 0;
-  }
-
-  tbody tr:nth-child(even) td {
-    background: #f8fafc;
-  }
-
-  .student-name {
-    font-weight: 750;
-    color: #0f172a;
-  }
-
-  td.num {
-    text-align: right;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  td.strong {
-    font-weight: 950;
-    background: #ecfdf5 !important;
-    color: #065f46;
-  }
-
-  .note {
-    margin-top: 8px;
-    padding: 7px 9px;
-    border: 1px solid #fde68a;
-    border-radius: 11px;
-    background: #fffbeb;
-    color: #92400e;
-    font-size: 9px;
-    font-weight: 800;
-  }
-
-  .footer {
-    margin-top: 10px;
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    border-top: 1px solid #cbd5e1;
-    padding-top: 8px;
-    color: #475569;
-    font-size: 9px;
-  }
-
-  .footer strong {
-    color: #047857;
-    font-weight: 950;
-  }
-
-  .footer-right {
-    text-align: right;
-    white-space: nowrap;
-  }
-
-  @media print {
-    body {
-      padding: 0;
-      background: #ffffff;
-    }
-
-    .sheet {
-      min-height: auto;
-      border: none;
-      border-radius: 0;
-      box-shadow: none;
-      padding: 0;
-    }
-
-    .print-header,
-    .summary-card,
-    .subtitle,
-    .table-wrap {
-      break-inside: avoid;
-    }
-
-    thead {
-      display: table-header-group;
-    }
-
-    tr {
-      break-inside: avoid;
-    }
-  }
-</style>
-</head>
-<body>
-  <main class="sheet">
-    <header class="print-header">
-      <div class="logo-box">${logoHtml}</div>
-
-      <div class="header-main">
-        <h1 class="institution-name">${escapeHtml(institutionName)}</h1>
-        ${institutionMeta ? `<div class="institution-meta">${institutionMeta}</div>` : ""}
-        <div class="doc-title">${escapeHtml(title)}</div>
-        <div class="brand-line">
-          <strong>${escapeHtml(BRAND_COMPANY)}</strong> • ${escapeHtml(BRAND_SITE)}
-        </div>
-      </div>
-
-      <aside class="header-side">
-        <div class="meta-row">
-          <span>Document</span>
-          <span>PDF</span>
-        </div>
-        <div class="meta-row">
-          <span>Généré le</span>
-          <span>${escapeHtml(generatedAt)}</span>
-        </div>
-        <div class="meta-row">
-          <span>Solution</span>
-          <span>Mon Cahier</span>
-        </div>
-      </aside>
-    </header>
-
-    <section class="subtitle">${escapeHtml(subtitle)}</section>
-
-    <section class="summary-grid">
-      <div class="summary-card">
-        <div class="summary-label">Classe</div>
-        <div class="summary-value">${escapeHtml(className || "—")}</div>
-        <div class="summary-note">Classe concernée</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Matière</div>
-        <div class="summary-value">${escapeHtml(selectedSubjectName)}</div>
-        <div class="summary-note">Discipline évaluée</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Élèves</div>
-        <div class="summary-value">${escapeHtml(matrixRows.length)}</div>
-        <div class="summary-note">Lignes affichées</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Moyenne matière</div>
-        <div class="summary-value">${escapeHtml(formatNumber(stats.classAvg))}</div>
-        <div class="summary-note">Sur la sélection</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Plus forte / faible</div>
-        <div class="summary-value">${escapeHtml(formatNumber(stats.highest))} / ${escapeHtml(formatNumber(stats.lowest))}</div>
-        <div class="summary-note">Extrêmes observés</div>
-      </div>
-    </section>
-
-    <section class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th rowspan="2">N°</th>
-            <th rowspan="2">Matricule</th>
-            <th rowspan="2">Nom et prénoms</th>
-            ${periodHeader}
-            ${annualHeader}
-          </tr>
-          <tr>${secondHeader}${annualSecondHeader}</tr>
-        </thead>
-        <tbody>${body}</tbody>
-      </table>
-    </section>
-
-    ${noteHtml}
-
-    <footer class="footer">
-      <div>
-        Document généré automatiquement depuis <strong>Mon Cahier</strong>.
-      </div>
-      <div class="footer-right">
-        ${escapeHtml(BRAND_COMPANY)} • <strong>${escapeHtml(BRAND_SITE)}</strong>
-      </div>
-    </footer>
-  </main>
-</body>
-</html>`;
-
-    const win = window.open("", "_blank");
-
-    if (!win) {
-      setErrorMsg(
-        "Impossible d’ouvrir la fenêtre d’impression. Vérifiez le blocage des popups."
-      );
-      return;
-    }
-
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-
-    setTimeout(() => {
-      try {
-        win.print();
-      } catch {
-        // silencieux
-      }
-    }, 400);
-  }
+  const ready = Boolean(
+    selectedYear &&
+      selectedLevel &&
+      selectedClassId &&
+      selectedPeriodId &&
+      selectedSubjectId &&
+      selectedTeacherId,
+  );
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
-      <header className="overflow-hidden rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-6 text-white shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-200/80">
-              Cahier de notes • Matrice matière
-            </p>
-
-            <h1 className="mt-2 text-2xl font-bold tracking-tight md:text-3xl">
-              Matrice des moyennes par matière
-            </h1>
-
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
-              Seules les matières affectées à la classe sont proposées. Choisissez la
-              période à produire ; le récap annuel apparaît uniquement sur la dernière période. Un astérisque signale une moyenne annuelle calculée avec des périodes publiées manquantes.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-center text-xs text-slate-200 sm:min-w-[520px] md:grid-cols-4">
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                Élèves
-              </div>
-              <div className="mt-1 text-xl font-bold text-white">{stats.count}</div>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                Moy. matière
-              </div>
-              <div className="mt-1 text-xl font-bold text-white">
-                {formatNumber(stats.classAvg)}
+    <div className="min-h-screen bg-slate-50/70 px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1700px] space-y-4">
+        <header className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                  <BookOpenCheck className="h-5 w-5" />
+                </span>
+                <div>
+                  <h1 className="text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">
+                    Registre des notes
+                  </h1>
+                  <p className="text-sm text-slate-500">
+                    Consulter et saisir les notes d’un enseignant.
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                Plus forte
-              </div>
-              <div className="mt-1 text-xl font-bold text-white">
-                {formatNumber(stats.highest)}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                Périodes
-              </div>
-              <div className="mt-1 text-xl font-bold text-white">
-                {loadedPeriods.length || periodsToDisplay.length || matrixPeriods.length}
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                tone="ghost"
+                onClick={() => void loadRegister()}
+                disabled={!ready || registerLoading}
+              >
+                <RefreshCw className={`h-4 w-4 ${registerLoading ? "animate-spin" : ""}`} />
+                Actualiser
+              </Button>
+              <Button type="button" tone="secondary" onClick={openNewEvaluation} disabled={!ready}>
+                <Plus className="h-4 w-4" />
+                Ajouter une note
+              </Button>
+              <Button type="button" onClick={() => void saveChanges()} disabled={!dirtyCount || saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Enregistrer{dirtyCount ? ` (${dirtyCount})` : ""}
+              </Button>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        {hasNonGeneralClasses && (
-          <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
-            <div className="mb-3">
-              <div className="text-sm font-semibold text-indigo-950">
-                Contexte pédagogique
-              </div>
-              <div className="text-xs text-indigo-700">
-                Les statistiques restent séparées par type d’enseignement, formation
-                et année de formation.
-              </div>
-            </div>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <label>
+              <FieldLabel>Année scolaire</FieldLabel>
+              <Select
+                value={selectedYear}
+                onChange={(event) => setSelectedYear(event.target.value)}
+                disabled={classesLoading || !academicYears.length}
+              >
+                {academicYears.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </Select>
+            </label>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <label>
+              <FieldLabel>Trimestre / période</FieldLabel>
+              <Select
+                value={selectedPeriodId}
+                onChange={(event) => setSelectedPeriodId(event.target.value)}
+                disabled={periodsLoading || !periodOptions.length}
+              >
+                {periodOptions.map((period) => (
+                  <option key={period.id} value={period.id}>{periodLabel(period)}</option>
+                ))}
+              </Select>
+            </label>
+
+            <label>
+              <FieldLabel>Niveau</FieldLabel>
+              <Select
+                value={selectedLevel}
+                onChange={(event) => setSelectedLevel(event.target.value)}
+                disabled={classesLoading || !levels.length}
+              >
+                {levels.map((level) => (
+                  <option key={level} value={level}>{level}</option>
+                ))}
+              </Select>
+            </label>
+
+            <label>
+              <FieldLabel>Classe</FieldLabel>
+              <Select
+                value={selectedClassId}
+                onChange={(event) => setSelectedClassId(event.target.value)}
+                disabled={classesLoading || !classOptions.length}
+              >
+                {classOptions.map((row) => (
+                  <option key={row.id} value={row.id}>{classLabel(row)}</option>
+                ))}
+              </Select>
+            </label>
+
+            <label>
+              <FieldLabel>Discipline</FieldLabel>
+              <Select
+                value={selectedSubjectId}
+                onChange={(event) => setSelectedSubjectId(event.target.value)}
+                disabled={affectationsLoading || !subjectOptions.length}
+              >
+                {subjectOptions.map((row) => (
+                  <option key={row.id} value={row.id}>{row.label}</option>
+                ))}
+              </Select>
+            </label>
+
+            <label>
+              <FieldLabel>Professeur</FieldLabel>
+              <Select
+                value={selectedTeacherId}
+                onChange={(event) => setSelectedTeacherId(event.target.value)}
+                disabled={affectationsLoading || !teacherOptions.length}
+              >
+                {teacherOptions.map((row) => (
+                  <option key={row.id} value={row.id}>{row.label}</option>
+                ))}
+              </Select>
+            </label>
+          </div>
+        </section>
+
+        {showNewEvaluation && (
+          <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                  Type d’enseignement
-                </label>
+                <h2 className="font-semibold text-slate-900">Nouvelle note</h2>
+                <p className="text-xs text-slate-500">
+                  La colonne sera attribuée à {selectedTeacher?.label || "l’enseignant sélectionné"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewEvaluation(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-800"
+                aria-label="Fermer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <label>
+                <FieldLabel>Date</FieldLabel>
+                <input
+                  type="date"
+                  value={newEvaluation.eval_date}
+                  min={selectedPeriod?.start_date || undefined}
+                  max={selectedPeriod?.end_date || undefined}
+                  onChange={(event) =>
+                    setNewEvaluation((current) => ({ ...current, eval_date: event.target.value }))
+                  }
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10"
+                />
+              </label>
+
+              <label>
+                <FieldLabel>Type</FieldLabel>
                 <Select
-                  value={selectedEducationType}
-                  onChange={(e) => {
-                    setSelectedEducationType(e.target.value);
-                    setSelectedFormationCode("");
-                    setSelectedFormationLevelCode("");
-                    setSelectedClassId("");
-                    setSelectedPeriodId("");
-                    setSelectedSubjectId("");
-                    setMatrixRows([]);
-                    setLoadedPeriods([]);
-                  }}
-                  disabled={classesLoading}
+                  value={newEvaluation.eval_kind}
+                  onChange={(event) =>
+                    setNewEvaluation((current) => ({
+                      ...current,
+                      eval_kind: event.target.value as NewEvaluationForm["eval_kind"],
+                    }))
+                  }
                 >
-                  {educationTypeOptions.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
-                    </option>
+                  <option value="devoir">Devoir</option>
+                  <option value="interro_ecrite">Interro écrite</option>
+                  <option value="interro_orale">Interro orale</option>
+                </Select>
+              </label>
+
+              <label>
+                <FieldLabel>Barème</FieldLabel>
+                <Select
+                  value={newEvaluation.scale}
+                  onChange={(event) =>
+                    setNewEvaluation((current) => ({
+                      ...current,
+                      scale: Number(event.target.value) as NewEvaluationForm["scale"],
+                    }))
+                  }
+                >
+                  {[5, 10, 20, 40, 60].map((value) => (
+                    <option key={value} value={value}>/{value}</option>
                   ))}
                 </Select>
-              </div>
+              </label>
 
-              {selectedEducationType !== "general_secondary" && (
-                <>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                      Formation / filière
-                    </label>
-                    <Select
-                      value={selectedFormationCode}
-                      onChange={(e) => {
-                        setSelectedFormationCode(e.target.value);
-                        setSelectedFormationLevelCode("");
-                        setSelectedClassId("");
-                        setSelectedPeriodId("");
-                        setSelectedSubjectId("");
-                        setMatrixRows([]);
-                        setLoadedPeriods([]);
-                      }}
-                      disabled={classesLoading || !formationOptions.length}
-                    >
-                      <option value="">— Sélectionner —</option>
-                      {formationOptions.map((item) => (
-                        <option key={item.code} value={item.code}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
+              <label>
+                <FieldLabel>Coefficient</FieldLabel>
+                <input
+                  type="number"
+                  min="0.25"
+                  max="20"
+                  step="0.25"
+                  value={newEvaluation.coeff}
+                  onChange={(event) =>
+                    setNewEvaluation((current) => ({
+                      ...current,
+                      coeff: Number(event.target.value),
+                    }))
+                  }
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10"
+                />
+              </label>
 
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                      Année de formation
-                    </label>
-                    <Select
-                      value={selectedFormationLevelCode}
-                      onChange={(e) => {
-                        setSelectedFormationLevelCode(e.target.value);
-                        setSelectedClassId("");
-                        setSelectedPeriodId("");
-                        setSelectedSubjectId("");
-                        setMatrixRows([]);
-                        setLoadedPeriods([]);
-                      }}
-                      disabled={classesLoading || !formationLevelOptions.length}
-                    >
-                      <option value="">— Sélectionner —</option>
-                      {formationLevelOptions.map((item) => (
-                        <option key={item.code} value={item.code}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                </>
+              {(register?.components || []).length > 0 && (
+                <label>
+                  <FieldLabel>Rubrique</FieldLabel>
+                  <Select
+                    value={newEvaluation.subject_component_id}
+                    onChange={(event) =>
+                      setNewEvaluation((current) => ({
+                        ...current,
+                        subject_component_id: event.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Aucune</option>
+                    {(register?.components || []).map((component) => (
+                      <option key={component.id} value={component.id}>
+                        {component.short_label || component.label || "Rubrique"}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
               )}
             </div>
-          </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button type="button" tone="ghost" onClick={() => setShowNewEvaluation(false)}>
+                Annuler
+              </Button>
+              <Button type="button" onClick={() => void createEvaluation()} disabled={creatingEvaluation}>
+                {creatingEvaluation ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Créer la colonne
+              </Button>
+            </div>
+          </section>
         )}
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-          <div className="lg:col-span-3">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <School className="h-4 w-4" /> Classe
-            </label>
-
-            <Select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              disabled={classesLoading}
-            >
-              <option value="">— Sélectionner une classe —</option>
-
-              {filteredClasses.map((c) => {
-                const context = classContextById.get(c.id);
-                const formationSuffix =
-                  context && context.educationType !== "general_secondary"
-                    ? ` • ${[context.formationLabel, context.formationLevelLabel]
-                        .filter(Boolean)
-                        .join(" • ")}`
-                    : c.level
-                      ? ` • ${c.level}`
-                      : "";
-
-                return (
-                  <option key={c.id} value={c.id}>
-                    {clsLabel(c)}
-                    {formationSuffix}
-                    {c.academic_year ? ` • ${c.academic_year}` : ""}
-                  </option>
-                );
-              })}
-            </Select>
-            {selectedClassContext &&
-              selectedClassContext.educationType !== "general_secondary" && (
-                <div className="mt-1 text-[11px] font-medium text-indigo-700">
-                  {selectedClassContext.contextLabel}
-                </div>
-              )}
-          </div>
-
-          <div className="lg:col-span-2">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <CalendarDays className="h-4 w-4" /> Année
-            </label>
-
-            <Select
-              value={selectedAcademicYear}
-              onChange={(e) => {
-                setSelectedAcademicYear(e.target.value);
-                setSelectedClassId("");
-                setSelectedPeriodId("");
-                setSelectedSubjectId("");
-                setMatrixRows([]);
-                setLoadedPeriods([]);
-                setErrorMsg(null);
-              }}
-              disabled={periodsLoading}
-            >
-              <option value="">Année courante</option>
-
-              {academicYears.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="lg:col-span-3">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <CalendarDays className="h-4 w-4" /> Période
-            </label>
-
-            <Select
-              value={selectedPeriodId}
-              onChange={(e) => setSelectedPeriodId(e.target.value)}
-              disabled={periodsLoading || !matrixPeriods.length}
-            >
-              <option value="">— Sélectionner une période —</option>
-
-              {matrixPeriods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {periodLabel(p)} • {formatDateFR(p.start_date)} →{" "}
-                  {formatDateFR(p.end_date)}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="lg:col-span-2">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <BookOpen className="h-4 w-4" /> Matière
-            </label>
-
-            <Select
-              value={selectedSubjectId}
-              onChange={(e) => setSelectedSubjectId(e.target.value)}
-              disabled={!selectedClassId || subjectsLoading || !subjectOptions.length}
-            >
-              <option value="">
-                {subjectsLoading
-                  ? "Chargement…"
-                  : "— Matière affectée —"}
-              </option>
-
-              {subjectOptions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="flex flex-wrap gap-2 lg:col-span-2 lg:justify-end">
-            <Button
-              onClick={loadMatrix}
-              disabled={
-                !selectedClassId ||
-                !selectedPeriodId ||
-                !selectedSubjectId ||
-                loadingMatrix
-              }
-            >
-              {loadingMatrix ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <Search className="h-4 w-4" />
-              )}
-              {loadingMatrix ? "Chargement…" : "Charger"}
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <GhostButton
-            type="button"
-            onClick={loadSubjectOptions}
-            disabled={!selectedClassId || subjectsLoading}
+        {(message || error) && (
+          <div
+            className={[
+              "flex items-center gap-2 rounded-xl border px-4 py-3 text-sm",
+              error
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800",
+            ].join(" ")}
           >
-            {subjectsLoading ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <BookOpen className="h-4 w-4" />
-            )}
-            Actualiser matières
-          </GhostButton>
+            {error ? <X className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+            <span>{error || message}</span>
+          </div>
+        )}
 
-          <GhostButton onClick={exportCsv} disabled={!matrixRows.length}>
-            <Download className="h-4 w-4" /> CSV
-          </GhostButton>
-
-          <GhostButton onClick={exportPdf} disabled={!matrixRows.length}>
-            <Printer className="h-4 w-4" /> PDF
-          </GhostButton>
-
-          <span className="text-xs text-slate-500">
-            {selectedClass ? clsLabel(selectedClass) : "Aucune classe"}
-            {selectedClassContext &&
-            selectedClassContext.educationType !== "general_secondary"
-              ? ` • ${selectedClassContext.contextLabel}`
-              : ""}{" "}
-            • {selectedAcademicYear || "année courante"} •{" "}
-            {selectedPeriod ? periodLabel(selectedPeriod) : "période"} •{" "}
-            {selectedSubjectName}
-          </span>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2 text-xs">
-          {periodsToDisplay.length ? (
-            periodsToDisplay.map((p) => (
-              <span
-                key={p.id}
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-600"
-              >
-                {periodLabel(p)} : {formatDateFR(p.start_date)} →{" "}
-                {formatDateFR(p.end_date)}
-              </span>
-            ))
-          ) : (
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
-              Sélectionnez une période pour produire le fichier.
-            </span>
-          )}
-
-          {selectedPeriodIsLast && matrixPeriods.length > 1 && (
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
-              Dernière période : récap annuel activé
-            </span>
-          )}
-
-          {showAnnualColumns && (
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">
-              Annuel : 15.00* = calcul sur périodes publiées disponibles • rang annuel NC si incomplet
-            </span>
-          )}
-        </div>
-
-        {periodStates.length > 0 && (
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-            {periodStates.map((s) => (
-              <div
-                key={s.period_id}
-                className={[
-                  "rounded-2xl border px-3 py-2 text-xs",
-                  s.status === "ok"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : s.status === "error"
-                    ? "border-red-200 bg-red-50 text-red-700"
-                    : s.status === "empty"
-                    ? "border-amber-200 bg-amber-50 text-amber-800"
-                    : "border-slate-200 bg-slate-50 text-slate-600",
-                ].join(" ")}
-              >
-                <div className="font-semibold">{s.label}</div>
-                <div>{s.status === "pending" ? "En attente…" : s.message || s.status}</div>
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <span className="font-bold text-slate-900">{classLabel(selectedClass)}</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-medium text-slate-700">{selectedSubject?.label || "Discipline"}</span>
+                <span className="text-slate-300">•</span>
+                <span className="inline-flex items-center gap-1 text-slate-600">
+                  <UserRound className="h-3.5 w-3.5" />
+                  {selectedTeacher?.label || "Professeur"}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="inline-flex items-center gap-1 text-slate-600">
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  {periodLabel(selectedPeriod)}
+                </span>
               </div>
-            ))}
-          </div>
-        )}
+              {register && (
+                <p className="mt-1 text-xs text-slate-500">
+                  {roster.length} élève{roster.length > 1 ? "s" : ""} · {evaluations.length} note{evaluations.length > 1 ? "s" : ""}
+                </p>
+              )}
+            </div>
 
-        {subjectsMsg && (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {subjectsMsg}
-          </div>
-        )}
-
-        {errorMsg && (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errorMsg}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">Tableau matière</h2>
-            <p className="text-sm text-slate-500">
-              {selectedSubjectName} •{" "}
-              {selectedClass ? clsLabel(selectedClass) : "Aucune classe"} •{" "}
-              {selectedAcademicYear || "année courante"} •{" "}
-              {selectedPeriod ? periodLabel(selectedPeriod) : "période"}
-            </p>
+            <label className="relative block w-full lg:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Rechercher un élève…"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+              />
+            </label>
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <FileSpreadsheet className="h-4 w-4" /> {matrixRows.length} ligne(s)
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <th
-                  rowSpan={2}
-                  className="sticky left-0 z-20 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
-                >
-                  N°
-                </th>
-
-                <th
-                  rowSpan={2}
-                  className="sticky left-12 z-20 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
-                >
-                  Matricule
-                </th>
-
-                <th
-                  rowSpan={2}
-                  className="sticky left-44 z-20 min-w-[260px] border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-left"
-                >
-                  Nom et prénoms
-                </th>
-
-                {loadedPeriods.map((p) => (
-                  <th
-                    key={p.id}
-                    colSpan={2}
-                    className="border-b border-r border-slate-200 bg-indigo-50 px-3 py-3 text-center text-indigo-800"
-                  >
-                    <div className="font-bold">{periodLabel(p)}</div>
-                    <div className="text-[10px] font-medium normal-case text-indigo-500">
-                      {formatDateFR(p.start_date)} → {formatDateFR(p.end_date)}
-                    </div>
-                  </th>
-                ))}
-
-                {showAnnualColumns && (
-                  <th
-                    colSpan={2}
-                    className="border-b border-slate-200 bg-emerald-50 px-3 py-3 text-center text-emerald-800"
-                  >
-                    Annuel matière
-                  </th>
-                )}
-              </tr>
-
-              <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                {loadedPeriods.map((p) => (
-                  <React.Fragment key={`${p.id}-sub`}>
-                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
-                      Moy.
+          {registerLoading ? (
+            <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Chargement du registre…
+            </div>
+          ) : !ready ? (
+            <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
+              Sélectionnez l’année, la période, le niveau, la classe, la discipline et le professeur.
+            </div>
+          ) : register && evaluations.length === 0 ? (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-6 text-center">
+              <div className="rounded-2xl bg-slate-50 p-3 text-slate-500">
+                <BookOpenCheck className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-800">Aucune note pour cette sélection.</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Ajoutez la première colonne de notes pour commencer la saisie.
+                </p>
+              </div>
+              <Button type="button" onClick={openNewEvaluation}>
+                <Plus className="h-4 w-4" />
+                Ajouter une note
+              </Button>
+            </div>
+          ) : register ? (
+            <div className="max-h-[68vh] overflow-auto">
+              <table className="min-w-max border-separate border-spacing-0 text-sm">
+                <thead className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur">
+                  <tr>
+                    <th className="sticky left-0 z-40 min-w-[250px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold text-slate-700">
+                      Élève
                     </th>
-                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
-                      Rang
-                    </th>
-                  </React.Fragment>
-                ))}
-
-                {showAnnualColumns && (
-                  <>
-                    <th className="border-b border-r border-slate-200 px-3 py-2 text-right">
-                      Moy.
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right">
-                      Rang
-                    </th>
-                  </>
-                )}
-              </tr>
-            </thead>
-
-            <tbody>
-              {matrixRows.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={3 + loadedPeriods.length * 2 + (showAnnualColumns ? 2 : 0)}
-                    className="px-6 py-14 text-center text-sm text-slate-500"
-                  >
-                    Sélectionnez une classe, une période et une matière affectée, puis chargez la matrice.
-                  </td>
-                </tr>
-              ) : (
-                matrixRows.map((row, idx) => (
-                  <tr
-                    key={row.student_id}
-                    className="group odd:bg-white even:bg-slate-50/70 hover:bg-emerald-50/50"
-                  >
-                    <td className="sticky left-0 z-10 border-b border-r border-slate-100 bg-inherit px-3 py-2 font-medium text-slate-600">
-                      {idx + 1}
-                    </td>
-
-                    <td className="sticky left-12 z-10 border-b border-r border-slate-100 bg-inherit px-3 py-2 text-slate-600">
-                      {row.matricule || "—"}
-                    </td>
-
-                    <td className="sticky left-44 z-10 min-w-[260px] border-b border-r border-slate-100 bg-inherit px-3 py-2 font-semibold text-slate-900">
-                      {row.full_name}
-                    </td>
-
-                    {loadedPeriods.map((p) => {
-                      const cell = row.periods[p.id] || { avg: null, rank: null };
-
+                    {evaluations.map((evaluation, index) => {
+                      const status = evaluationStatus(evaluation);
                       return (
-                        <React.Fragment key={`${row.student_id}-${p.id}`}>
-                          <td className="border-b border-r border-slate-100 px-3 py-2 text-right tabular-nums">
-                            {formatNumber(cell.avg)}
-                          </td>
-                          <td className="border-b border-r border-slate-100 px-3 py-2 text-right tabular-nums">
-                            {formatRank(cell.rank)}
-                          </td>
-                        </React.Fragment>
+                        <th
+                          key={evaluation.id}
+                          className="min-w-[150px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-center align-top"
+                        >
+                          <div className="font-bold text-slate-800">
+                            {evaluation.column_label || `Note ${index + 1}`}
+                          </div>
+                          <div className="mt-0.5 text-[11px] font-normal text-slate-500">
+                            {evalKindLabel(evaluation.eval_kind)} · {formatDate(evaluation.eval_date)} · /{evaluation.scale}
+                            {Number(evaluation.coeff || 1) !== 1 ? ` · Coef. ${evaluation.coeff}` : ""}
+                          </div>
+                          {evaluation.component_label && (
+                            <div className="mt-1 truncate text-[10px] font-medium text-violet-600">
+                              {evaluation.component_label}
+                            </div>
+                          )}
+                          <span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${status.className}`}>
+                            {status.label}
+                          </span>
+                        </th>
                       );
                     })}
-
-                    {showAnnualColumns && (
-                      <>
-                        <td
-                          className="border-b border-r border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900"
-                          title={
-                            row.annual_status === "partial"
-                              ? `Moyenne calculée sur ${row.annual_available_periods}/${row.annual_expected_periods} période(s) publiée(s). Rang annuel NC tant que l’année matière est incomplète.`
-                              : undefined
-                          }
-                        >
-                          {formatAnnualAverage(row)}
-                        </td>
-
-                        <td className="border-b border-slate-100 bg-emerald-50/60 px-3 py-2 text-right font-bold tabular-nums text-emerald-900">
-                          {formatAnnualRank(row)}
-                        </td>
-                      </>
-                    )}
+                    <th className="sticky right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
+                      Moyenne /20
+                    </th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {filteredRoster.map((student, rowIndex) => {
+                    const average = studentAverage20(student.id);
+                    return (
+                      <tr key={student.id} className={rowIndex % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                        <td className="sticky left-0 z-20 border-b border-r border-slate-100 bg-inherit px-4 py-2.5">
+                          <div className="font-medium text-slate-900">{student.full_name}</div>
+                          {student.matricule && (
+                            <div className="mt-0.5 text-[11px] text-slate-400">{student.matricule}</div>
+                          )}
+                        </td>
 
-        {showAnnualColumns && matrixRows.some((row) => row.annual_status === "partial") && (
-          <div className="border-t border-slate-100 px-5 py-3 text-xs font-medium text-amber-700">
-            * Moyenne calculée sur les périodes publiées disponibles.
-          </div>
-        )}
-      </section>
-    </main>
+                        {evaluations.map((evaluation) => {
+                          const value = getCellValue(evaluation.id, student.id);
+                          const editable = evaluation.editable === true;
+                          return (
+                            <td key={evaluation.id} className="border-b border-r border-slate-100 px-2 py-1.5 text-center">
+                              {editable ? (
+                                <input
+                                  value={value}
+                                  onChange={(event) =>
+                                    setCellValue(evaluation.id, student.id, event.target.value)
+                                  }
+                                  inputMode="decimal"
+                                  aria-label={`${evaluation.column_label || "Note"} de ${student.full_name}`}
+                                  className="h-9 w-24 rounded-lg border border-slate-200 bg-white px-2 text-center font-semibold tabular-nums text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10"
+                                  placeholder="—"
+                                />
+                              ) : (
+                                <span className="inline-flex h-9 min-w-16 items-center justify-center rounded-lg bg-slate-50 px-2 font-semibold tabular-nums text-slate-600">
+                                  {value || "—"}
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+
+                        <td className="sticky right-0 z-20 border-b border-l border-slate-200 bg-slate-100 px-4 py-2.5 text-center font-bold tabular-nums text-slate-900">
+                          {average === null ? "—" : average.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {filteredRoster.length === 0 && (
+                <div className="px-6 py-12 text-center text-sm text-slate-500">
+                  Aucun élève ne correspond à la recherche.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
+              Le registre apparaîtra ici dès que la sélection sera complète.
+            </div>
+          )}
+        </section>
+
+        <p className="px-1 text-xs leading-5 text-slate-400">
+          Les colonnes publiées, soumises ou verrouillées restent consultables mais ne sont pas modifiables depuis ce registre.
+        </p>
+      </div>
+    </div>
   );
 }
