@@ -12,6 +12,11 @@ const route = fs.readFileSync(
   "utf8",
 );
 
+const sidebar = fs.readFileSync(
+  new URL("../src/app/admin/ui/sidebar-nav.tsx", import.meta.url),
+  "utf8",
+);
+
 test("le registre propose les filtres métier dans l'ordre attendu", () => {
   const labels = [
     "Année scolaire",
@@ -46,4 +51,18 @@ test("l'API admin attribue la nouvelle évaluation au professeur choisi", () => 
   assert.match(route, /ADMIN_REQUIRED/);
   assert.match(route, /EVALUATION_READ_ONLY/);
   assert.match(route, /EVALUATION_LOCKED/);
+});
+
+test("le registre est rangé dans le groupe Cahier de notes", () => {
+  const notesStart = sidebar.indexOf("const NOTES_ITEMS");
+  const registerLink = sidebar.indexOf('label: "Registre des notes"');
+  const correspondenceStart = sidebar.indexOf("const FILE_CORRESPONDENCE_ITEMS");
+  const conductStart = sidebar.indexOf("const CONDUCT_MANAGEMENT_ITEMS");
+
+  assert.ok(registerLink > notesStart, "le registre doit être déclaré dans NOTES_ITEMS");
+  assert.equal(
+    sidebar.slice(correspondenceStart, conductStart).includes('/admin/notes/statistiques'),
+    false,
+    "le registre ne doit plus être rangé dans Correspondant fichier",
+  );
 });
