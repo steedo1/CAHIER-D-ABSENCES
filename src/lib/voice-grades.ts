@@ -496,6 +496,10 @@ function parseMixedDecimal(input: string): number | null {
 
 export function parseSpokenGrade(input: string): number | null {
   const normalized = normalizeVoiceText(input)
+    // Chrome/Edge peuvent ponctuer automatiquement une transcription finale
+    // (« quinze » -> « 15. »). On retire uniquement la ponctuation de phrase,
+    // jamais la virgule ou le point placés entre deux chiffres.
+    .replace(/^[,.]+|[,.]+$/g, " ")
     // Erreurs STT fréquentes pour « vingt » observables en français oral.
     // Cette normalisation ne s'applique qu'à l'étape NOTE, jamais aux noms.
     .replace(/\b(?:vin|vain|ving|vins|vingts)\b/g, "vingt")
@@ -505,6 +509,8 @@ export function parseSpokenGrade(input: string): number | null {
     .replace(/\bnote\b/g, " ")
     .replace(/\best\b/g, " ")
     .replace(/\bde\b/g, " ")
+    // Un mot supprimé peut laisser une virgule/un point en fin de chaîne.
+    .replace(/^[,.]+|[,.]+$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
