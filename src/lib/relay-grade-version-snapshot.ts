@@ -19,6 +19,24 @@ function validVersion(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+export async function readRelayStudentGradeServerVersion(
+  service: SupabaseClient,
+  institutionId: string,
+  entityId: string,
+) {
+  const { data, error } = await service
+    .from("relay_entity_versions")
+    .select("server_version")
+    .eq("institution_id", institutionId)
+    .eq("entity_type", "student_grade")
+    .eq("entity_id", entityId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`student_grade_version_lookup_failed:${error.message}`);
+  }
+  return validVersion((data as any)?.server_version);
+}
+
 /**
  * Le schéma métier student_grades ne porte pas de colonne server_version.
  * Le LOT 4 maintient donc la version logique dans relay_entity_versions et
