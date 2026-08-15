@@ -769,12 +769,48 @@ type RelayGradeEvaluationRow = {
   id: string;
   class_id: string;
   subject_id: string | null;
+  relay_subject_id?: string | null;
   scale: number | null;
   grading_period_id: string | null;
   is_published: boolean | null;
   publication_status: string | null;
   published_at: string | null;
 };
+
+async function relayGradeSubjectId(
+  service: SupabaseClient,
+  institutionId: string,
+  rawSubjectId: unknown,
+) {
+  const subjectId = text(rawSubjectId, "subject_id", 128);
+  const { data, error } = await service
+    .from("institution_subjects")
+    .select("id,subject_id")
+    .eq("institution_id", institutionId)
+    .or(`id.eq.${subjectId},subject_id.eq.${subjectId}`)
+    .limit(2);
+  if (error) {
+    throw new RelayOperationError("retryable", 503, "grade_subject_scope_lookup_failed");
+  }
+
+  const matches = (data || []) as Array<{ id?: unknown; subject_id?: unknown }>;
+  const exact = matches.find((row) => String(row.id || "").trim() === subjectId);
+  if (exact?.id) return String(exact.id).trim();
+
+  const byBaseSubject = matches.filter(
+    (row) => String(row.subject_id || "").trim() === subjectId,
+  );
+  if (byBaseSubject.length === 1 && byBaseSubject[0]?.id) {
+    return String(byBaseSubject[0].id).trim();
+  }
+  if (byBaseSubject.length > 1) {
+    throw new RelayOperationError("conflict", 409, "grade_subject_scope_ambiguous");
+  }
+
+  // Les nouvelles évaluations peuvent déjà référencer directement la matière
+  // d'établissement. On conserve alors l'identité reçue.
+  return subjectId;
+}
 
 async function relayGradeEvaluation(
   service: SupabaseClient,
@@ -811,7 +847,14 @@ async function relayGradeEvaluation(
   if (!cls || String((cls as any).institution_id || "") !== institutionId) {
     throw new RelayOperationError("blocked", 404, "grade_class_not_found");
   }
-  return evaluation;
+  return {
+    ...evaluation,
+    relay_subject_id: await relayGradeSubjectId(
+      service,
+      institutionId,
+      evaluation.subject_id,
+    ),
+  };
 }
 
 async function assertRelayGradeActor(
@@ -843,7 +886,11 @@ async function assertRelayGradeActor(
     throw new RelayOperationError("blocked", 422, "grade_actor_kind_invalid");
   }
 
-  const subjectId = text(evaluation.subject_id, "subject_id", 128);
+  const subjectId = text(
+    evaluation.relay_subject_id || evaluation.subject_id,
+    "subject_id",
+    128,
+  );
   const { data: role, error: roleError } = await service
     .from("user_roles")
     .select("profile_id")
@@ -1035,7 +1082,9 @@ async function applyStudentGrade(
 
   if (
     text(payload.class_id, "class_id", 128) !== String(evaluation.class_id) ||
-    text(payload.subject_id, "subject_id", 128) !== String(evaluation.subject_id || "")
+    text(payload.subject_id, "subject_id", 128) !== String(
+      evaluation.relay_subject_id || evaluation.subject_id || "",
+    )
   ) {
     throw new RelayOperationError("conflict", 409, "student_grade_evaluation_mismatch");
   }

@@ -36,6 +36,29 @@ test("LOT3B Cloud: identité et portée de l'opération sont vérifiées avant l
   assert.match(cloud, /operation_id_reused_with_different_payload/);
 });
 
+
+test("LOT3B Cloud: une evaluation legacy est comparee avec la matiere d'etablissement normalisee", async () => {
+  const cloud = await read("src/lib/relay-cloud-sync.ts");
+
+  assert.match(cloud, /async function relayGradeSubjectId/);
+  assert.match(cloud, /\.from\("institution_subjects"\)/);
+  assert.match(cloud, /grade_subject_scope_lookup_failed/);
+  assert.match(cloud, /grade_subject_scope_ambiguous/);
+  assert.match(cloud, /relay_subject_id: await relayGradeSubjectId/);
+
+  const actorStart = cloud.indexOf("async function assertRelayGradeActor");
+  const actorEnd = cloud.indexOf("async function assertRelayGradeEditable", actorStart);
+  const actorSlice = cloud.slice(actorStart, actorEnd);
+  assert.ok(actorStart >= 0 && actorEnd > actorStart);
+  assert.match(actorSlice, /evaluation\.relay_subject_id \|\| evaluation\.subject_id/);
+
+  const gradeStart = cloud.indexOf("async function applyStudentGrade");
+  const gradeEnd = cloud.indexOf("async function applyOperation", gradeStart);
+  const gradeSlice = cloud.slice(gradeStart, gradeEnd);
+  assert.ok(gradeStart >= 0 && gradeEnd > gradeStart);
+  assert.match(gradeSlice, /evaluation\.relay_subject_id \|\| evaluation\.subject_id/);
+});
+
 test("LOT3B LAN: l'API d'écriture et la capacité dédiée sont exposées", async () => {
   const [server, contract] = await Promise.all([
     read("desktop/relay/src/server.mts"),
