@@ -36,6 +36,13 @@ test("LOT4A: le relais V4 annonce sa capacité sur push et pull", () => {
   assert.match(cloudV4Safe, /fetchImpl: withGradeV4Capability/);
 });
 
+test("LOT4A: les notes historiques en version 0 forcent un snapshot académique initial", () => {
+  assert.match(cloudV4Safe, /needsGradeVersionBootstrap/);
+  assert.match(cloudV4Safe, /server_version <= 0/);
+  assert.match(cloudV4Safe, /searchParams\.delete\("known_revision"\)/);
+  assert.match(cloudV4Safe, /forceAcademicBootstrap && method === "GET"/);
+});
+
 test("LOT4A: un ACK de note propage la version Cloud et nettoie local_dirty", () => {
   assert.match(cloudV4, /cloud_server_version/);
   assert.match(cloudV4, /UPDATE student_grades\s+SET server_version = \?/s);
