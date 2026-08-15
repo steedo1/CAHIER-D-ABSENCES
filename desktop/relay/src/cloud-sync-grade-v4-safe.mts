@@ -9,13 +9,24 @@ type SyncOptions = {
   now?: () => Date;
 };
 
+function withGradeV4Capability(fetchImpl: typeof fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set("X-MonCahier-Grade-Sync-V4", "1");
+    return fetchImpl(input, { ...init, headers });
+  }) as typeof fetch;
+}
+
 export async function syncRelayOnce(
   config: RelayConfig,
   store: RelayStore,
   options: SyncOptions = {},
 ): Promise<RelayCloudSyncRunResult> {
   rekeyResolvedKeepLocalGradeOperations(store.db, (options.now || (() => new Date()))());
-  return syncRelayOnceV4(config, store, options);
+  return syncRelayOnceV4(config, store, {
+    ...options,
+    fetchImpl: withGradeV4Capability(options.fetchImpl || fetch),
+  });
 }
 
 export function createRelayCloudSyncAgent(
