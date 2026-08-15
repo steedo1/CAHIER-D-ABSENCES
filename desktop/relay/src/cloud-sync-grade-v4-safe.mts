@@ -10,7 +10,10 @@ type SyncOptions = {
 };
 
 function withGradeV4Capability(fetchImpl: typeof fetch): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  return (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
     const headers = new Headers(init?.headers);
     headers.set("X-MonCahier-Grade-Sync-V4", "1");
     return fetchImpl(input, { ...init, headers });
