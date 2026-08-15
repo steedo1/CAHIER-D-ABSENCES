@@ -222,11 +222,6 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   {
-    href: "/admin/notes/statistiques",
-    label: "Matrice matière",
-    Icon: BarChart3,
-  },
-  {
     href: "/admin/notes/non-classes",
     label: "Élèves non classés",
     Icon: UserRoundCheck,
@@ -462,6 +457,11 @@ const ABS_ITEMS: NavItem[] = [
 ========================= */
 const NOTES_ITEMS: NavItem[] = [
   { href: "/admin/notes", label: "Vue d’ensemble", Icon: NotebookPen },
+  {
+    href: "/admin/notes/statistiques",
+    label: "Registre des notes",
+    Icon: NotebookPen,
+  },
   {
     href: "/admin/notes/publication-requests",
     label: "Demandes de publication",
