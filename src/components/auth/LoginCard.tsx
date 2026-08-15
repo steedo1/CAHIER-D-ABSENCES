@@ -60,15 +60,6 @@ async function fetchWithTimeout(
   }
 }
 
-function isAbortError(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    (error as { name?: unknown }).name === "AbortError"
-  );
-}
-
 function humanError(error?: string | null) {
   const value = String(error || "").trim();
   if (!value) return "Connexion impossible. Vérifie les informations saisies.";
@@ -312,22 +303,17 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
       let res: Response;
       try {
         res = await fetchWithTimeout("/api/auth/login", loginRequest);
-      } catch (cause) {
-        if (isAbortError(cause)) {
-          // Un délai dépassé ne prouve pas que l'appareil est hors Internet.
-          // On laisse une seconde chance au Cloud avant d'activer le secours local.
-          setStatusText("Connexion Internet lente, nouvelle tentative…");
-          try {
-            res = await fetchWithTimeout(
-              "/api/auth/login",
-              loginRequest,
-              AUTH_RETRY_TIMEOUT_MS,
-            );
-          } catch {
-            await openOfflineSession();
-            return;
-          }
-        } else {
+      } catch {
+        // Une panne ponctuelle ou un timeout ne suffit pas à déclarer l'appareil hors ligne.
+        // On retente une fois le Cloud ; sans réseau réel, cet appel échoue généralement aussitôt.
+        setStatusText("Connexion réseau instable, nouvelle tentative…");
+        try {
+          res = await fetchWithTimeout(
+            "/api/auth/login",
+            loginRequest,
+            AUTH_RETRY_TIMEOUT_MS,
+          );
+        } catch {
           await openOfflineSession();
           return;
         }
@@ -335,10 +321,15 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
-        // Une réponse HTTP du serveur prouve que le chemin Cloud a répondu.
-        // Un 5xx ne doit donc jamais être transformé en refus de préparation locale.
         if (res.status >= 500) {
-          throw new Error("ONLINE_SERVICE_UNAVAILABLE");
+          // Le secours local reste disponible lors d'une panne Cloud, mais une
+          // préparation locale incomplète ne doit jamais masquer l'erreur serveur.
+          try {
+            await openOfflineSession();
+            return;
+          } catch {
+            throw new Error("ONLINE_SERVICE_UNAVAILABLE");
+          }
         }
         // Un 401/403 explicite n'est jamais converti en connexion hors ligne.
         if (
