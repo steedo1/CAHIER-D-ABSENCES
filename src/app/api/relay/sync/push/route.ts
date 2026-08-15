@@ -10,11 +10,16 @@ import {
   type RelaySyncAcknowledgement,
 } from "@/lib/relay-cloud-sync";
 import { processRelayStudentGradeSyncOperationV4 } from "@/lib/relay-student-grade-sync-v4";
+import { readRelayStudentGradeServerVersion } from "@/lib/relay-grade-version-snapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 1_500_000;
+
+type VersionedAcknowledgement = RelaySyncAcknowledgement & {
+  cloud_server_version?: number | null;
+};
 
 function bearerToken(request: NextRequest) {
   const authorization = String(request.headers.get("authorization") || "");
@@ -53,6 +58,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "relay_device_mismatch" }, { status: 401 });
   }
 
+  const gradeV4Capable = request.headers.get("x-moncahier-grade-sync-v4") === "1";
   const service = getSupabaseServiceClient();
   const { data: device, error: deviceError } = await service
     .from("relay_sync_devices")
@@ -73,7 +79,7 @@ export async function POST(request: NextRequest) {
   }
   const gradeV4Enabled =
     (device as any).grade_sync_v4_enabled === true &&
-    request.headers.get("x-moncahier-grade-sync-v4") === "1";
+    gradeV4Capable;
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
     .select("enabled,allow_local_relay")
@@ -107,10 +113,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "relay_institution_mismatch" }, { status: 403 });
   }
 
-  const acknowledgements: RelaySyncAcknowledgement[] = [];
+  const acknowledgements: VersionedAcknowledgement[] = [];
   let attendanceChanged = false;
   for (const operation of batch.operations) {
-    const acknowledgement = operation.entity_type === "student_grade" && gradeV4Enabled
+    let acknowledgement: VersionedAcknowledgement = operation.entity_type === "student_grade" && gradeV4Enabled
       ? await processRelayStudentGradeSyncOperationV4(service, {
         institutionId: batch.institution_id,
         deviceId,
@@ -121,6 +127,43 @@ export async function POST(request: NextRequest) {
         deviceId,
         operation,
       });
+
+    // Transition sans fenêtre fragile : un nouveau relais V4 peut être installé
+    // avant l'activation du canary. Tant que le CAS est désactivé, l'écriture
+    // garde la sémantique LOT3 mais la réponse fournit quand même la version
+    // logique créée par le trigger Cloud.
+    if (
+      operation.entity_type === "student_grade" &&
+      gradeV4Capable &&
+      !gradeV4Enabled &&
+      acknowledgement.status === "acknowledged"
+    ) {
+      try {
+        const version = await readRelayStudentGradeServerVersion(
+          service,
+          batch.institution_id,
+          operation.entity_id,
+        );
+        acknowledgement = version === null
+          ? {
+            ...acknowledgement,
+            status: "retryable",
+            http_status: 503,
+            error: "student_grade_version_missing_after_ack",
+            applied_now: false,
+          }
+          : { ...acknowledgement, cloud_server_version: version };
+      } catch {
+        acknowledgement = {
+          ...acknowledgement,
+          status: "retryable",
+          http_status: 503,
+          error: "student_grade_version_lookup_failed_after_ack",
+          applied_now: false,
+        };
+      }
+    }
+
     acknowledgements.push(acknowledgement);
     if (
       operation.entity_type === "attendance_call" &&
@@ -148,6 +191,7 @@ export async function POST(request: NextRequest) {
     institution_id: batch.institution_id,
     device_id: deviceId,
     server_time: serverTime,
+    grade_sync_v4: gradeV4Enabled,
     acknowledgements,
   }, { headers: { "Cache-Control": "no-store" } });
 }
