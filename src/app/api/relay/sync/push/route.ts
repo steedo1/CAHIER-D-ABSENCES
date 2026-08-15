@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   const service = getSupabaseServiceClient();
   const { data: device, error: deviceError } = await service
     .from("relay_sync_devices")
-    .select("id,institution_id,token_hash,is_active,revoked_at")
+    .select("id,institution_id,token_hash,is_active,revoked_at,grade_sync_v4_enabled")
     .eq("id", deviceId)
     .maybeSingle();
   if (deviceError) {
@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
   ) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  const gradeV4Enabled = (device as any).grade_sync_v4_enabled === true;
   const { data: policy, error: policyError } = await service
     .from("institution_attendance_policies")
     .select("enabled,allow_local_relay")
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
   const acknowledgements: RelaySyncAcknowledgement[] = [];
   let attendanceChanged = false;
   for (const operation of batch.operations) {
-    const acknowledgement = operation.entity_type === "student_grade"
+    const acknowledgement = operation.entity_type === "student_grade" && gradeV4Enabled
       ? await processRelayStudentGradeSyncOperationV4(service, {
         institutionId: batch.institution_id,
         deviceId,
