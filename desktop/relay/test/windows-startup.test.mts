@@ -36,3 +36,20 @@ test("l'installation et la mise à jour ouvrent mDNS uniquement sur le profil pr
     assert.match(script, /-Profile\s+Private/);
   }
 });
+
+test("l'installation et la mise à jour recommandent .local et gardent l'IPv4 en secours", () => {
+  for (const name of ["install-relay.ps1", "update-relay.ps1"]) {
+    const script = windowsScript(name);
+    assert.match(script, /Adresse recommandée/);
+    assert.match(script, /Adresse directe de secours/);
+    assert.doesNotMatch(script, /Adresse \.local de secours/);
+  }
+
+  const installer = windowsScript("install-relay.ps1");
+  assert.match(installer, /Le nom \.local reste l'adresse recommandée/);
+  assert.match(installer, /réservation DHCP sert seulement à stabiliser l'adresse directe de secours/);
+
+  const updater = windowsScript("update-relay.ps1");
+  assert.match(updater, /\$Doctor\.lan_urls/);
+  assert.match(updater, /La réservation DHCP est optionnelle/);
+});

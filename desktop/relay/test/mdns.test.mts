@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadRelayConfig } from "../src/config.mjs";
-import { configureRelay } from "../src/setup.mjs";
+import { configureRelay, relayLanUrls } from "../src/setup.mjs";
 import {
   buildRelayMdnsResponse,
   defaultRelayMdnsHostname,
@@ -126,6 +126,43 @@ test("la sélection d'adresse préfère le LAN privé et ignore loopback/APIPA",
   assert.deepEqual(relayMdnsIpv4Addresses(interfaces), ["10.20.30.40", "192.168.1.25"]);
 });
 
+test("les URL IPv4 LAN suivent le réseau courant sans conserver l'ancienne adresse DHCP", () => {
+  const firstNetwork = {
+    WiFi: [
+      {
+        address: "192.168.168.246",
+        netmask: "255.255.255.0",
+        family: "IPv4" as const,
+        mac: "00:00:00:00:00:10",
+        internal: false,
+        cidr: "192.168.168.246/24",
+      },
+    ],
+  };
+  const secondNetwork = {
+    WiFi: [
+      {
+        address: "192.168.206.246",
+        netmask: "255.255.255.0",
+        family: "IPv4" as const,
+        mac: "00:00:00:00:00:10",
+        internal: false,
+        cidr: "192.168.206.246/24",
+      },
+    ],
+  };
+
+  assert.deepEqual(relayLanUrls(4317, firstNetwork), ["http://192.168.168.246:4317"]);
+  assert.deepEqual(relayLanUrls(4317, secondNetwork), ["http://192.168.206.246:4317"]);
+  assert.equal(
+    relayLanUrls(4317, secondNetwork).includes("http://192.168.168.246:4317"),
+    false,
+  );
+  assert.equal(
+    relayMdnsUrl("moncahier-relay-lma-000101", 4317),
+    "http://moncahier-relay-lma-000101.local:4317",
+  );
+});
 
 test("la configuration persiste le hostname stable sans dépendre de l'IP DHCP", () => {
   const root = mkdtempSync(join(tmpdir(), "moncahier-mdns-config-"));
@@ -154,7 +191,6 @@ test("la configuration persiste le hostname stable sans dépendre de l'IP DHCP",
     rmSync(root, { recursive: true, force: true });
   }
 });
-
 
 test("une installation existante v3 obtient mDNS sans reconfiguration ni changement de jeton", () => {
   const root = mkdtempSync(join(tmpdir(), "moncahier-mdns-legacy-"));

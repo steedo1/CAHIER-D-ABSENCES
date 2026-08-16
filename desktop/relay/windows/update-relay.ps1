@@ -165,12 +165,16 @@ try {
         throw "Le relais lancé n'est pas la nouvelle version attendue. Vérifiez qu'aucun ancien dossier ne redémarre le port $Port."
     }
 
-    $StableLanUrl = "Adresse LAN stable non détectée"
+    $RecommendedLanAddress = "Adresse .local non détectée"
+    $DirectLanAddress = "Aucune IPv4 LAN détectée actuellement"
     try {
         $DoctorJson = & $NodeCommand.Source $CliPath "doctor"
         if ($LASTEXITCODE -eq 0) {
             $Doctor = $DoctorJson | ConvertFrom-Json
-            if ($Doctor.lan_url) { $StableLanUrl = [string]$Doctor.lan_url }
+            if ($Doctor.lan_url) { $RecommendedLanAddress = [string]$Doctor.lan_url }
+            if (@($Doctor.lan_urls).Count -gt 0) {
+                $DirectLanAddress = [string]$Doctor.lan_urls[0]
+            }
         }
     } catch {
         # Le diagnostic mDNS ne doit pas annuler une mise à jour HTTP valide.
@@ -181,10 +185,11 @@ try {
         "Version relais : $($Health.relay_version)`n" +
         "Schéma de base : $($Health.schema_version)`n" +
         "Port : $Port`n" +
-        "Adresse .local de secours : $StableLanUrl`n`n" +
+        "Adresse recommandée : $RecommendedLanAddress`n" +
+        "Adresse directe de secours : $DirectLanAddress`n`n" +
         "Une sauvegarde de sécurité a été créée dans :`n$BackupRoot`n`n" +
-        "La réservation DHCP reste le mécanisme recommandé pour stabiliser l'IP du relais. " +
-        "Si le routeur, le Wi-Fi ou la carte réseau ont changé, lancez windows\Assistant-Reservation-DHCP.cmd.`n`n" +
+        "La réservation DHCP est optionnelle : elle stabilise seulement l'adresse directe de secours. " +
+        "Si vous souhaitez la mettre à jour après un changement de routeur, de Wi-Fi ou de carte réseau, lancez windows\Assistant-Reservation-DHCP.cmd.`n`n" +
         "Retournez dans Mon Cahier puis cliquez sur Tester et synchroniser."
     )
     exit 0

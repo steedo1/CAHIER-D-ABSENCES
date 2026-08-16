@@ -249,15 +249,15 @@ try {
     [System.Windows.Forms.Clipboard]::SetText([string]$Setup.token)
     Start-Process "https://www.mon-cahier.com/admin/parametres?tab=school"
 
-    $LanAddress = if ($Setup.lan_url) {
+    $RecommendedLanAddress = if ($Setup.lan_url) {
         [string]$Setup.lan_url
     } else {
-        "Adresse LAN stable non détectée"
+        "Adresse .local non détectée"
     }
-    $LanIpAddress = if ($Setup.lan_urls.Count -gt 0) {
+    $DirectLanAddress = if (@($Setup.lan_urls).Count -gt 0) {
         [string]$Setup.lan_urls[0]
     } else {
-        "IP LAN non détectée"
+        "Aucune IPv4 LAN détectée actuellement"
     }
     $ConfiguredSchools = @($Setup.institutions | ForEach-Object { $_.name }) -join ", "
     $RelayMode = if ($Setup.mode -eq "school_group") {
@@ -269,8 +269,8 @@ try {
         "$RelayMode configuré avec succès.`n`n" +
         "Établissement(s) autorisé(s) : $ConfiguredSchools`n`n" +
         "Adresse du poste Admin : http://127.0.0.1:4317`n" +
-        "Adresse .local de secours : $LanAddress`n" +
-        "IP LAN actuelle à réserver dans le DHCP : $LanIpAddress`n`n" +
+        "Adresse recommandée : $RecommendedLanAddress`n" +
+        "Adresse directe de secours : $DirectLanAddress`n`n" +
         "Le jeton Admin a été copié dans le presse-papiers. Collez-le une seule fois dans Mon Cahier, puis cliquez sur Tester et synchroniser.`n`n" +
         "Version relais : $($HealthCheck.relay_version) — schéma : $($HealthCheck.schema_version)`n`n" +
         "Le relais démarrera désormais automatiquement, sans commande PowerShell."
@@ -279,8 +279,8 @@ try {
     if (
         (Test-Path $DhcpAssistant) -and
         (Show-Question(
-            "Pour une installation fixe, Mon Cahier recommande maintenant de réserver l'IP du PC relais dans le DHCP du routeur.`n`n" +
-            "Cela évite que l'adresse du relais change après un redémarrage, même sans Internet.`n`n" +
+            "Optionnel : vous pouvez réserver l'IPv4 actuelle du PC relais dans le DHCP du routeur.`n`n" +
+            "Le nom .local reste l'adresse recommandée. La réservation DHCP sert seulement à stabiliser l'adresse directe de secours.`n`n" +
             "Voulez-vous lancer l'assistant de réservation DHCP maintenant ?"
         ))
     ) {
