@@ -56,7 +56,7 @@ test("retirer un enseignant conserve son historique et un autre établissement a
   assert.doesNotMatch(route, /\.from\("class_teachers"\)\.delete/);
 });
 
-test("la migration impose au plus un groupe scolaire par établissement et garde les tables côté serveur", async () => {
+test("la migration sécurise le groupe scolaire et la réactivation d'un enseignant", async () => {
   const migration = await read(
     "supabase/migrations/20260816233000_school_group_teacher_pool.sql",
   );
@@ -66,4 +66,7 @@ test("la migration impose au plus un groupe scolaire par établissement et garde
   assert.match(migration, /unique \(institution_id\)/);
   assert.match(migration, /enable row level security/);
   assert.match(migration, /revoke all on table public\.school_groups from anon, authenticated/);
+  assert.match(migration, /ensure_teacher_profile_institution/);
+  assert.match(migration, /institution_id is null/);
+  assert.match(migration, /after insert or update of role, institution_id/);
 });
