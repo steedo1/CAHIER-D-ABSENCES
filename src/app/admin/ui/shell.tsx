@@ -22,11 +22,97 @@ import {
   HeartPulse,
   Loader2,
 } from "lucide-react";
+import { useAuth } from "@/app/providers";
 import { LogoutButton } from "@/components/LogoutButton";
 import TrueLogoutButton from "@/components/auth/TrueLogoutButton";
+import {
+  OFFLINE_AUTH_STATE_EVENT,
+  getOfflineAccessIntent,
+} from "@/lib/offline-auth-client";
+import {
+  OFFLINE_ADMIN_STATIC_PATHS,
+  isOfflinePathAllowedForRole,
+} from "@/lib/offline-auth-contract";
+import { warmOfflineShell } from "@/lib/offline";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
+
+const OFFLINE_ADMIN_NAV_ITEMS = [
+  {
+    href: "/admin/absences/appels-matrice",
+    label: "Appels",
+    Icon: Ban,
+  },
+  { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
+  { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet },
+  {
+    href: "/admin/notes/conseil-classe",
+    label: "Conseil",
+    Icon: NotebookPen,
+  },
+] as const;
+
+const adminShellWarmByUser = new Map<string, Promise<void>>();
+const adminShellWarmDone = new Set<string>();
+
+function warmAdminEssentialShellOnce(userId: string) {
+  if (adminShellWarmDone.has(userId)) return Promise.resolve();
+  const running = adminShellWarmByUser.get(userId);
+  if (running) return running;
+  const task = warmOfflineShell([...OFFLINE_ADMIN_STATIC_PATHS])
+    .then(() => {
+      adminShellWarmDone.add(userId);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      adminShellWarmByUser.delete(userId);
+    });
+  adminShellWarmByUser.set(userId, task);
+  return task;
+}
+
+function OfflineAdminEssentialNav({
+  pathname,
+}: {
+  pathname: string | null;
+}) {
+  return (
+    <nav className="flex h-full min-h-0 flex-col bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 p-3 text-white">
+      <div className="mb-3 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-3">
+        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-300">
+          Mode hors ligne
+        </div>
+        <div className="mt-1 text-sm font-semibold text-white">
+          Fonctions essentielles
+        </div>
+        <p className="mt-1 text-xs leading-5 text-slate-300">
+          Le menu complet revient automatiquement avec une session Cloud normale.
+        </p>
+      </div>
+      <div className="space-y-1">
+        {OFFLINE_ADMIN_NAV_ITEMS.map(({ href, label, Icon }) => {
+          const active = pathname === href || (pathname ?? "").startsWith(`${href}/`);
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={[
+                "flex items-center gap-3 rounded-xl border px-3 py-3 text-sm font-semibold transition",
+                active
+                  ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
+                  : "border-white/5 bg-white/[0.03] text-slate-200 hover:bg-white/[0.07]",
+              ].join(" ")}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span>{label}</span>
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
 
 function LoadingOverlay({ label }: { label: string }) {
   return (
@@ -56,11 +142,36 @@ function LoadingOverlay({ label }: { label: string }) {
 }
 
 export default function AdminShell({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const pathname = usePathname();
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeLabel, setRouteLabel] = useState("Chargement…");
+  const [offlineAdminMode, setOfflineAdminMode] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refresh = async () => {
+      if (session) {
+        if (!cancelled) setOfflineAdminMode(false);
+        return;
+      }
+      const intent = await getOfflineAccessIntent().catch(() => null);
+      if (!cancelled) {
+        setOfflineAdminMode(intent?.payload.role === "admin");
+      }
+    };
+
+    const handleAuthState = () => void refresh();
+    void refresh();
+    window.addEventListener(OFFLINE_AUTH_STATE_EVENT, handleAuthState);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(OFFLINE_AUTH_STATE_EVENT, handleAuthState);
+    };
+  }, [session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +192,22 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (role !== "admin" || !session?.user?.id) return;
+
+    // Préparation purement Cloud/PWA : aucune présence du relais n'est exigée.
+    // Elle tourne en arrière-plan et ne bloque jamais la navigation normale.
+    void warmAdminEssentialShellOnce(session.user.id);
+
+    if (
+      pathname &&
+      pathname.startsWith("/admin/classes/liste/") &&
+      isOfflinePathAllowedForRole("admin", pathname)
+    ) {
+      void warmOfflineShell([pathname]).catch(() => undefined);
+    }
+  }, [pathname, role, session?.user?.id]);
 
   useEffect(() => {
     setRouteLoading(false);
@@ -165,13 +292,16 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
   const isFinanceManager = role === "finance_manager";
   const isInfirmier = role === "infirmier";
-  const isAdmin = role === "admin";
+  const isAdmin = role === "admin" || offlineAdminMode;
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
   const canUseMonCahierAi =
-    role === "admin" || role === "super_admin" || role === "educator";
+    !offlineAdminMode &&
+    (role === "admin" || role === "super_admin" || role === "educator");
 
   const mobileItems = useMemo(() => {
+    if (offlineAdminMode) return [...OFFLINE_ADMIN_NAV_ITEMS];
+
     if (isInfirmier) {
       return [
         { href: "/admin/infirmerie", label: "Infirmerie", Icon: HeartPulse },
@@ -218,7 +348,14 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
     ];
-  }, [isAdmin, isFinanceManager, isFinancePath, isFounderFinance, isInfirmier]);
+  }, [
+    isAdmin,
+    isFinanceManager,
+    isFinancePath,
+    isFounderFinance,
+    isInfirmier,
+    offlineAdminMode,
+  ]);
 
   function isActive(href: string) {
     return pathname === href || (pathname ?? "").startsWith(href + "/");
@@ -263,7 +400,11 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="h-[calc(100%-3rem)] overflow-y-auto">
-            <SidebarNav />
+            {offlineAdminMode ? (
+              <OfflineAdminEssentialNav pathname={pathname} />
+            ) : (
+              <SidebarNav />
+            )}
           </div>
         </div>
 
@@ -283,7 +424,11 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         {/* Sidebar desktop */}
         <aside className="sticky top-0 hidden h-screen bg-slate-900 md:block">
           <div className="h-full overflow-y-auto scrollbar-thin scrollbar-track-slate-900 scrollbar-thumb-slate-700/70">
-            <SidebarNav />
+            {offlineAdminMode ? (
+              <OfflineAdminEssentialNav pathname={pathname} />
+            ) : (
+              <SidebarNav />
+            )}
           </div>
         </aside>
 
@@ -314,7 +459,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                       ? "Gestion financière · Établissement"
                       : isAdmin && isFinancePath
                         ? "Paie des enseignants"
-                        : "Absences & notes · Admin établissement"}
+                        : offlineAdminMode
+                          ? "Mode hors ligne · Admin établissement"
+                          : "Absences & notes · Admin établissement"}
                 </span>
               </div>
 
