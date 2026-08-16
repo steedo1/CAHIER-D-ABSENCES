@@ -9,6 +9,16 @@ export const OFFLINE_ROLE_DESTINATIONS = {
   admin: "/admin/absences/appels-matrice",
 } as const;
 
+export const OFFLINE_ADMIN_STATIC_PATHS = [
+  "/admin/absences/appels",
+  "/admin/absences/appels-matrice",
+  "/admin/parents",
+  "/admin/bulletins",
+  "/admin/notes/conseil-classe",
+] as const;
+
+export const OFFLINE_ADMIN_CLASS_LIST_PREFIX = "/admin/classes/liste/" as const;
+
 export type OfflineAccessRole = keyof typeof OFFLINE_ROLE_DESTINATIONS;
 export type OfflineAccessDestination =
   (typeof OFFLINE_ROLE_DESTINATIONS)[OfflineAccessRole];
@@ -82,6 +92,36 @@ export function isOfflineAccessDestination(
   return Object.values(OFFLINE_ROLE_DESTINATIONS).includes(
     pathname as OfflineAccessDestination,
   );
+}
+
+export function isOfflineAdminPath(pathname: string) {
+  if (OFFLINE_ADMIN_STATIC_PATHS.includes(
+    pathname as (typeof OFFLINE_ADMIN_STATIC_PATHS)[number],
+  )) {
+    return true;
+  }
+  if (!pathname.startsWith(OFFLINE_ADMIN_CLASS_LIST_PREFIX)) return false;
+  const classId = pathname.slice(OFFLINE_ADMIN_CLASS_LIST_PREFIX.length);
+  return Boolean(classId) && !classId.includes("/");
+}
+
+export function isOfflinePathAllowedForRole(
+  role: unknown,
+  pathname: string,
+) {
+  if (!isOfflineAccessRole(role)) return false;
+  if (role === "admin") return isOfflineAdminPath(pathname);
+  return OFFLINE_ROLE_DESTINATIONS[role] === pathname;
+}
+
+export function isOfflineAccessPath(pathname: string) {
+  return (Object.keys(OFFLINE_ROLE_DESTINATIONS) as OfflineAccessRole[]).some(
+    (role) => isOfflinePathAllowedForRole(role, pathname),
+  );
+}
+
+export function offlineCookiePathForRole(role: OfflineAccessRole) {
+  return role === "admin" ? "/admin" : OFFLINE_ROLE_DESTINATIONS[role];
 }
 
 function validPayload(value: unknown): value is OfflineAccessGrantPayload {
@@ -246,7 +286,7 @@ export async function verifyOfflineAccessGrant(input: {
   if (payload.issued_at > nowMs + 5 * 60_000 || payload.expires_at <= nowMs) {
     return null;
   }
-  if (payload.destination !== input.pathname) return null;
+  if (!isOfflinePathAllowedForRole(payload.role, input.pathname)) return null;
   if (input.deviceId && payload.device_id !== input.deviceId) return null;
   try {
     const actual = decodeBase64Url(encodedSignature);
