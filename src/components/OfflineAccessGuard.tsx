@@ -11,7 +11,10 @@ import {
   getOfflineAccessIntent,
   getOfflineLogoutLock,
 } from "@/lib/offline-auth-client";
-import { isOfflineAccessDestination } from "@/lib/offline-auth-contract";
+import {
+  isOfflineAccessPath,
+  isOfflinePathAllowedForRole,
+} from "@/lib/offline-auth-contract";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/recover", "/redirect"]);
 const CLIENT_PROTECTED_PREFIXES = [
@@ -83,15 +86,23 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
         return;
       }
 
+      // Une vraie session Cloud reste prioritaire. Un appareil déjà préparé
+      // hors ligne ne doit jamais réduire l'espace Admin lorsque Supabase est
+      // disponible et que l'utilisateur possède une session normale.
+      if (session) {
+        setState({ status: "allowed" });
+        return;
+      }
+
       const intent = await getOfflineAccessIntent();
       if (cancelled) return;
       if (intent) {
-        if (pathname !== intent.payload.destination) {
+        if (!isOfflinePathAllowedForRole(intent.payload.role, pathname)) {
           setState({
             status: "blocked",
             destination: intent.payload.destination,
             reason:
-              "La connexion hors ligne autorise uniquement la fonction préparée pour ce rôle.",
+              "Cette page n’est pas disponible dans le périmètre hors ligne préparé pour ce rôle.",
           });
           return;
         }
@@ -109,14 +120,13 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
         return;
       }
 
-      // Une session Supabase déjà ouverte continue normalement pendant une
-      // coupure. Sans session ni preuve locale, un document PWA mis en cache ne
+      // Sans session Cloud ni preuve locale, un document PWA mis en cache ne
       // doit pas devenir un contournement du middleware.
-      if (!session && isClientProtectedPath(pathname)) {
+      if (isClientProtectedPath(pathname)) {
         setState({
           status: "blocked",
           destination: null,
-          reason: isOfflineAccessDestination(pathname)
+          reason: isOfflineAccessPath(pathname)
             ? "Reconnectez-vous sur cet appareil pour ouvrir cet espace."
             : "Cette page ne fait pas partie des fonctions autorisées hors ligne.",
         });
