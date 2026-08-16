@@ -22,6 +22,16 @@ test("le vivier enseignant est indépendant de l'année scolaire et partageable 
   assert.match(helper, /return \[currentId\]/);
 });
 
+test("le filtre discipline fusionne le référentiel enseignant et les affectations historiques", async () => {
+  const route = await read("src/app/api/admin/teachers/by-subject/route.ts");
+
+  assert.match(route, /Promise\.all\(/);
+  assert.match(route, /\.from\("teacher_subjects"\)/);
+  assert.match(route, /\.from\("class_teachers"\)/);
+  assert.match(route, /row\.profile_id/);
+  assert.match(route, /row\.teacher_id/);
+});
+
 test("les affectations restent rattachées aux classes de l'année choisie", async () => {
   const route = await read("src/app/api/admin/associations/route.ts");
   const page = await read("src/app/admin/affectations/page.tsx");
