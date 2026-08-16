@@ -235,7 +235,8 @@ export async function POST(req: NextRequest) {
     srv,
     institutionId,
     classRow: (assignment as any).classes,
-    subjectId: resolvedSubject?.globalSubjectId ||
+    subjectId:
+      resolvedSubject?.globalSubjectId ||
       (assignment as any).subject_id ||
       (assignment as any).progression?.subject_id ||
       null,
@@ -284,8 +285,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Un rejeu après perte de la réponse réseau ne doit ni modifier de nouveau
-  // la date de complétion, ni ajouter une seconde ligne d'historique.
   if (String((existingCompletion as any)?.status || "") === status) {
     return NextResponse.json({
       ok: true,
@@ -294,30 +293,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (status === "completed") {
-    const { count: sessionCount, error: sessionCountErr } = await srv
-      .from("textbook_lesson_sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("institution_id", institutionId)
-      .eq("assignment_id", assignmentId)
-      .eq("item_id", itemId)
-      .eq("teacher_id", effectiveTeacherId);
-
-    if (sessionCountErr) {
-      return NextResponse.json(
-        { ok: false, error: sessionCountErr.message },
-        { status: 400 },
-      );
-    }
-
-    if (!sessionCount) {
-      return NextResponse.json(
-        { ok: false, error: "lesson_requires_session" },
-        { status: 400 },
-      );
-    }
-  }
-
+  // La progression est pilotée par la validation de la leçon elle-même.
+  // L'enregistrement détaillé d'une séance reste facultatif et indépendant.
   const completedAt = status === "completed" ? new Date().toISOString() : null;
 
   const payload = {

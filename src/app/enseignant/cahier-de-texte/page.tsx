@@ -2,21 +2,17 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  BookOpen,
+  BookOpenCheck,
   CalendarDays,
   CheckCircle2,
   Clock3,
   FileText,
   GraduationCap,
-  History,
-  ListChecks,
   Loader2,
   RefreshCw,
   RotateCcw,
   Save,
 } from "lucide-react";
-
-type TeacherTab = "program" | "entry" | "history";
 
 type Session = {
   id: string;
@@ -86,7 +82,15 @@ type Assignment = {
 type BootstrapPayload = {
   ok?: boolean;
   mode?: string;
+  academic_year?: string | null;
+  academic_years?: string[];
   items?: Assignment[];
+};
+
+type SyncPayload = {
+  ok?: boolean;
+  academic_year?: string | null;
+  academic_years?: string[];
 };
 
 type SessionForm = {
@@ -110,32 +114,6 @@ const ACTIONABLE_TYPES = new Set([
   "revision",
   "other",
 ]);
-
-const TABS: Array<{
-  id: TeacherTab;
-  label: string;
-  subtitle: string;
-  Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-}> = [
-  {
-    id: "program",
-    label: "Programme",
-    subtitle: "Voir ce qui reste à faire",
-    Icon: ListChecks,
-  },
-  {
-    id: "entry",
-    label: "Saisir la séance",
-    subtitle: "Enregistrer ce qui a été fait",
-    Icon: Save,
-  },
-  {
-    id: "history",
-    label: "Séances réalisées",
-    subtitle: "Relire les séances enregistrées",
-    Icon: History,
-  },
-];
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -231,8 +209,29 @@ function emptyForm(): SessionForm {
   };
 }
 
-function progressBar(value: number) {
+function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+function progressionStats(items: ProgressionItem[]) {
+  const actionable = items.filter(isActionableItem);
+  const completed = actionable.filter(
+    (item) => item.completion?.status === "completed",
+  );
+  const planned = actionable.reduce(
+    (sum, item) => sum + plannedMinutes(item),
+    0,
+  );
+  const done = completed.reduce(
+    (sum, item) => sum + plannedMinutes(item),
+    0,
+  );
+  const rate = planned
+    ? Math.round((done / planned) * 1000) / 10
+    : actionable.length
+      ? Math.round((completed.length / actionable.length) * 1000) / 10
+      : 0;
+  return { completed: completed.length, total: actionable.length, rate };
 }
 
 function randomUuid() {
@@ -269,24 +268,115 @@ async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
 export default function TeacherTextbookPage() {
   const [loading, setLoading] = useState(true);
   const [slotsLoading, setSlotsLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"save" | "status" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [academicYears, setAcademicYears] = useState<string[]>([]);
+  const [academicYear, setAcademicYear] = useState("");
   const [periodSlots, setPeriodSlots] = useState<PeriodSlot[]>([]);
   const [accessMode, setAccessMode] = useState<"teacher" | "class_device">(
     "teacher",
   );
+  const [selectedClassId, setSelectedClassId] = useState("");
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [activeTab, setActiveTab] = useState<TeacherTab>("program");
   const [form, setForm] = useState<SessionForm>(emptyForm);
 
-  const selectedAssignment = useMemo(
-    () =>
-      assignments.find((item) => item.id === selectedAssignmentId) || null,
-    [assignments, selectedAssignmentId],
-  );
+  async function load(
+    year?: string,
+    silent = false,
+    syncAssignments = true,
+  ) {
+    if (!silent) setLoading(true);
+    setError(null);
+
+    try {
+      let targetYear = String(year || academicYear || "").trim();
+      let syncYears: string[] = academicYears;
+
+      if (syncAssignments) {
+        const syncJson = await fetchJson<SyncPayload>(
+          "/api/teacher/textbook/sync",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              targetYear ? { academic_year: targetYear } : {},
+            ),
+          },
+        );
+        targetYear = targetYear || String(syncJson.academic_year || "").trim();
+        syncYears = Array.isArray(syncJson.academic_years)
+          ? syncJson.academic_years.filter(Boolean)
+          : syncYears;
+      }
+
+      const json = await fetchJson<BootstrapPayload>(
+        "/api/teacher/textbook/bootstrap",
+      );
+      const allAssignments = Array.isArray(json.items) ? json.items : [];
+      const assignmentYears = Array.from(
+        new Set(
+          allAssignments
+            .map((assignment) =>
+              String(
+                assignment.progression?.academic_year ||
+                  assignment.classes?.academic_year ||
+                  "",
+              ).trim(),
+            )
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => b.localeCompare(a));
+      const nextYears = Array.from(
+        new Set([...syncYears, ...assignmentYears, targetYear].filter(Boolean)),
+      ).sort((a, b) => b.localeCompare(a));
+      const resolvedYear = String(targetYear || nextYears[0] || "").trim();
+      const nextAssignments = resolvedYear
+        ? allAssignments.filter(
+            (assignment) =>
+              String(
+                assignment.progression?.academic_year ||
+                  assignment.classes?.academic_year ||
+                  "",
+              ).trim() === resolvedYear,
+          )
+        : allAssignments;
+
+      setAccessMode(
+        json.mode === "class_device" ? "class_device" : "teacher",
+      );
+      setAcademicYears(nextYears);
+      setAcademicYear(resolvedYear);
+      setAssignments(nextAssignments);
+
+      setSelectedClassId((current) => {
+        const available = new Set(
+          nextAssignments.map((assignment) => assignment.class_id),
+        );
+        return current && available.has(current)
+          ? current
+          : nextAssignments[0]?.class_id || "";
+      });
+      setSelectedAssignmentId((current) =>
+        current &&
+        nextAssignments.some((assignment) => assignment.id === current)
+          ? current
+          : nextAssignments[0]?.id || "",
+      );
+    } catch (cause: any) {
+      setError(cause?.message || "Chargement du cahier de texte impossible.");
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // Le premier chargement résout l'année scolaire active côté serveur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const classOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -305,29 +395,54 @@ export default function TeacherTextbookPage() {
       );
   }, [assignments]);
 
-  const subjectAssignments = useMemo(() => {
-    const classId = selectedAssignment?.class_id;
-    if (!classId) return [];
-    return assignments
-      .filter((assignment) => assignment.class_id === classId)
-      .sort((a, b) =>
-        String(a.progression?.subject_name || "").localeCompare(
-          String(b.progression?.subject_name || ""),
-          "fr",
+  const classAssignments = useMemo(
+    () =>
+      assignments
+        .filter((assignment) => assignment.class_id === selectedClassId)
+        .sort((a, b) =>
+          String(a.progression?.subject_name || "").localeCompare(
+            String(b.progression?.subject_name || ""),
+            "fr",
+          ),
         ),
-      );
-  }, [assignments, selectedAssignment?.class_id]);
+    [assignments, selectedClassId],
+  );
+
+  useEffect(() => {
+    if (!classOptions.length) {
+      if (selectedClassId) setSelectedClassId("");
+      return;
+    }
+    if (!classOptions.some((option) => option.id === selectedClassId)) {
+      setSelectedClassId(classOptions[0].id);
+    }
+  }, [classOptions, selectedClassId]);
+
+  useEffect(() => {
+    if (!classAssignments.length) {
+      if (selectedAssignmentId) setSelectedAssignmentId("");
+      return;
+    }
+    if (
+      !classAssignments.some(
+        (assignment) => assignment.id === selectedAssignmentId,
+      )
+    ) {
+      setSelectedAssignmentId(classAssignments[0].id);
+    }
+  }, [classAssignments, selectedAssignmentId]);
+
+  const selectedAssignment = useMemo(
+    () =>
+      classAssignments.find((item) => item.id === selectedAssignmentId) ||
+      null,
+    [classAssignments, selectedAssignmentId],
+  );
 
   const actionableItems = useMemo(
     () =>
       (selectedAssignment?.progression_items || []).filter(isActionableItem),
     [selectedAssignment],
-  );
-
-  const selectedItem = useMemo(
-    () =>
-      actionableItems.find((item) => item.id === selectedItemId) || null,
-    [actionableItems, selectedItemId],
   );
 
   const nextItem = useMemo(
@@ -340,92 +455,26 @@ export default function TeacherTextbookPage() {
     [actionableItems],
   );
 
-  const progressionStats = useMemo(() => {
-    const completed = actionableItems.filter(
-      (item) => item.completion?.status === "completed",
-    );
-    const planned = actionableItems.reduce(
-      (sum, item) => sum + plannedMinutes(item),
-      0,
-    );
-    const done = completed.reduce(
-      (sum, item) => sum + plannedMinutes(item),
-      0,
-    );
-    const rate = planned
-      ? Math.round((done / planned) * 1000) / 10
-      : actionableItems.length
-        ? Math.round((completed.length / actionableItems.length) * 1000) / 10
-        : 0;
-    return {
-      completed: completed.length,
-      total: actionableItems.length,
-      rate,
-    };
-  }, [actionableItems]);
-
-  const sessionHistory = useMemo(() => {
-    return actionableItems
-      .flatMap((item) =>
-        (item.sessions || []).map((session) => ({
-          ...session,
-          item_id: item.id,
-          item_title: item.title,
-        })),
-      )
-      .sort((a, b) => {
-        const byDate = String(b.session_date || "").localeCompare(
-          String(a.session_date || ""),
-        );
-        if (byDate) return byDate;
-        return String(b.session_start_time || "").localeCompare(
-          String(a.session_start_time || ""),
-        );
-      });
-  }, [actionableItems]);
-
-  async function load(silent = false) {
-    if (!silent) setLoading(true);
-    setError(null);
-
-    try {
-      // Association système : classe + matière + enseignant déterminent la progression.
-      await fetchJson("/api/teacher/textbook/sync", { method: "POST" });
-      const json = await fetchJson<BootstrapPayload>(
-        "/api/teacher/textbook/bootstrap",
-      );
-      const nextAssignments = Array.isArray(json.items) ? json.items : [];
-      setAccessMode(
-        json.mode === "class_device" ? "class_device" : "teacher",
-      );
-      setAssignments(nextAssignments);
-      setSelectedAssignmentId((current) =>
-        current &&
-        nextAssignments.some((assignment) => assignment.id === current)
-          ? current
-          : nextAssignments[0]?.id || "",
-      );
-    } catch (cause: any) {
-      setError(cause?.message || "Chargement du cahier de texte impossible.");
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
-
   useEffect(() => {
     if (!actionableItems.length) {
-      setSelectedItemId("");
+      if (selectedItemId) setSelectedItemId("");
       return;
     }
-
     if (!actionableItems.some((item) => item.id === selectedItemId)) {
-      setSelectedItemId(nextItem?.id || actionableItems[0]?.id || "");
+      setSelectedItemId(nextItem?.id || actionableItems[0].id);
     }
   }, [actionableItems, nextItem, selectedItemId]);
+
+  const selectedItem = useMemo(
+    () =>
+      actionableItems.find((item) => item.id === selectedItemId) || null,
+    [actionableItems, selectedItemId],
+  );
+
+  const selectedStats = useMemo(
+    () => progressionStats(actionableItems),
+    [actionableItems],
+  );
 
   useEffect(() => {
     setForm(emptyForm());
@@ -486,17 +535,33 @@ export default function TeacherTextbookPage() {
     };
   }, [selectedAssignment?.class_id]);
 
-  function selectClass(classId: string) {
-    const assignment = assignments.find(
-      (item) => item.class_id === classId,
-    );
-    setSelectedAssignmentId(assignment?.id || "");
-    setActiveTab("program");
+  function changeAcademicYear(value: string) {
+    setAcademicYear(value);
+    setSelectedClassId("");
+    setSelectedAssignmentId("");
+    setSelectedItemId("");
+    setMessage(null);
+    void load(value, false, true);
   }
 
-  function selectProgramItem(itemId: string) {
+  function changeClass(value: string) {
+    setSelectedClassId(value);
+    const first = assignments.find((item) => item.class_id === value);
+    setSelectedAssignmentId(first?.id || "");
+    setSelectedItemId("");
+  }
+
+  function selectLesson(itemId: string) {
     setSelectedItemId(itemId);
-    setActiveTab("entry");
+    setMessage(null);
+    setError(null);
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      window.setTimeout(() => {
+        document
+          .getElementById("lesson-workspace")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    }
   }
 
   function selectPeriod(periodId: string) {
@@ -505,6 +570,8 @@ export default function TeacherTextbookPage() {
         ...current,
         session_period_id: "",
         session_period_label: "Plage personnalisée",
+        session_start_time: "",
+        session_end_time: "",
       }));
       return;
     }
@@ -536,16 +603,12 @@ export default function TeacherTextbookPage() {
     event.preventDefault();
     if (!selectedAssignment || !selectedItem) return;
 
-    if (!form.content.trim()) {
-      setError("Renseignez le contenu réalisé.");
-      return;
-    }
     if (!form.session_start_time || !form.session_end_time) {
       setError("Choisissez un créneau ou une plage horaire.");
       return;
     }
 
-    setBusy(true);
+    setBusyAction("save");
     setError(null);
     setMessage(null);
 
@@ -566,22 +629,18 @@ export default function TeacherTextbookPage() {
       });
       setMessage("Séance enregistrée.");
       setForm(emptyForm());
-      await load(true);
+      await load(academicYear, true, false);
     } catch (cause: any) {
       setError(cause?.message || "Enregistrement impossible.");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function updateLessonStatus(status: "completed" | "reopened") {
     if (!selectedAssignment || !selectedItem) return;
-    if (status === "completed" && !(selectedItem.sessions?.length || 0)) {
-      setError("Enregistrez une séance avant de terminer cette leçon.");
-      return;
-    }
 
-    setBusy(true);
+    setBusyAction("status");
     setError(null);
     setMessage(null);
 
@@ -596,22 +655,19 @@ export default function TeacherTextbookPage() {
         }),
       });
       setMessage(
-        status === "completed"
-          ? "Leçon terminée."
-          : "Leçon rouverte.",
+        status === "completed" ? "Leçon terminée." : "Leçon rouverte.",
       );
-      await load(true);
-      if (status === "completed") setActiveTab("program");
+      await load(academicYear, true, false);
     } catch (cause: any) {
       setError(cause?.message || "Action impossible.");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 p-5 text-slate-900">
+      <main className="min-h-screen bg-slate-50 p-4 text-slate-900 sm:p-6">
         <div className="mx-auto flex max-w-6xl items-center gap-3 rounded-2xl border border-slate-200 bg-white p-6 text-sm font-bold text-slate-600 shadow-sm">
           <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
           Chargement du cahier de texte…
@@ -621,112 +677,90 @@ export default function TeacherTextbookPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 sm:px-6">
+    <main className="min-h-screen bg-slate-50 px-3 py-4 text-slate-900 sm:px-6 sm:py-5">
       <div className="mx-auto max-w-6xl space-y-4">
-        <header className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        <header className="rounded-[22px] border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-6 sm:py-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
-                {accessMode === "class_device"
-                  ? "Compte classe"
-                  : "Espace enseignant"}
+              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-emerald-700">
+                {accessMode === "class_device" ? "Compte classe" : "Espace enseignant"}
               </div>
               <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
                 Cahier de texte
               </h1>
             </div>
-
             <div className="flex items-center gap-2">
               {selectedAssignment?.progression?.document?.signed_url ? (
                 <a
                   href={selectedAssignment.progression.document.signed_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50"
                 >
                   <FileText className="h-4 w-4" />
-                  Programme PDF
+                  <span className="hidden sm:inline">Programme PDF</span>
+                  <span className="sm:hidden">PDF</span>
                 </a>
               ) : null}
               <button
                 type="button"
-                onClick={() => void load()}
-                disabled={busy}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60"
+                onClick={() => void load(academicYear, false, true)}
+                disabled={Boolean(busyAction)}
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60"
               >
                 <RefreshCw className="h-4 w-4" />
-                Actualiser
+                <span className="hidden sm:inline">Actualiser</span>
               </button>
             </div>
           </div>
+        </header>
 
-          {assignments.length ? (
-            <div className="mt-5 grid gap-3 border-t border-slate-100 pt-5 md:grid-cols-[1fr_1fr_220px]">
-              <label>
-                <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                  Classe
-                </span>
-                <div className="relative">
-                  <GraduationCap className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <select
-                    value={selectedAssignment?.class_id || ""}
-                    onChange={(event) => selectClass(event.target.value)}
-                    disabled={
-                      accessMode === "class_device" || classOptions.length <= 1
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-black outline-none focus:border-emerald-400 disabled:opacity-80"
-                  >
-                    {classOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </label>
+        <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label>
+              <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                Année scolaire
+              </span>
+              <select
+                value={academicYear}
+                onChange={(event) => changeAcademicYear(event.target.value)}
+                disabled={accessMode === "class_device" || Boolean(busyAction)}
+                className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-black outline-none focus:border-emerald-400 disabled:opacity-70"
+              >
+                {academicYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-              <label>
-                <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                  Discipline
-                </span>
+            <label>
+              <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                Classe
+              </span>
+              <div className="relative">
+                <GraduationCap className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <select
-                  value={selectedAssignmentId}
-                  onChange={(event) => {
-                    setSelectedAssignmentId(event.target.value);
-                    setActiveTab("program");
-                  }}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-black outline-none focus:border-emerald-400"
+                  value={selectedClassId}
+                  onChange={(event) => changeClass(event.target.value)}
+                  disabled={
+                    accessMode === "class_device" ||
+                    classOptions.length <= 1 ||
+                    Boolean(busyAction)
+                  }
+                  className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-11 pr-3 text-base font-black outline-none focus:border-emerald-400 disabled:opacity-70"
                 >
-                  {subjectAssignments.map((assignment) => (
-                    <option key={assignment.id} value={assignment.id}>
-                      {assignment.progression?.subject_name || "Matière"}
+                  {classOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
-              </label>
-
-              <div className="rounded-xl bg-emerald-50 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-black uppercase tracking-[0.1em] text-emerald-700">
-                    Avancement
-                  </span>
-                  <span className="text-xl font-black text-emerald-950">
-                    {progressionStats.rate}%
-                  </span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
-                  <div
-                    className="h-full rounded-full bg-emerald-600"
-                    style={{ width: `${progressBar(progressionStats.rate)}%` }}
-                  />
-                </div>
-                <div className="mt-1.5 text-right text-[11px] font-bold text-emerald-700">
-                  {progressionStats.completed}/{progressionStats.total} étapes
-                </div>
               </div>
-            </div>
-          ) : null}
-        </header>
+            </label>
+          </div>
+        </section>
 
         {message ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
@@ -741,293 +775,314 @@ export default function TeacherTextbookPage() {
         ) : null}
 
         {!assignments.length ? (
-          <section className="rounded-[24px] border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <BookOpen className="mx-auto h-10 w-10 text-slate-300" />
-            <h2 className="mt-4 text-xl font-black text-slate-950">
+          <section className="rounded-[22px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <BookOpenCheck className="mx-auto h-10 w-10 text-slate-300" />
+            <h2 className="mt-3 text-xl font-black text-slate-950">
               Aucune progression disponible
             </h2>
-            <p className="mx-auto mt-2 max-w-xl text-sm font-medium text-slate-500">
-              Le système associe automatiquement les programmes à vos classes et
-              disciplines à partir de vos affectations pédagogiques.
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              {academicYear || "Cette année scolaire"}
             </p>
           </section>
         ) : (
           <>
-            <nav className="grid gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm md:grid-cols-3">
-              {TABS.map(({ id, label, subtitle, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setActiveTab(id)}
-                  className={`min-h-[82px] rounded-2xl px-4 py-3 text-left transition ${
-                    activeTab === id
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
-                        activeTab === id ? "bg-white/15" : "bg-white"
+            <section className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-black text-slate-950 sm:text-xl">
+                  Progressions
+                </h2>
+                <span className="text-xs font-bold text-slate-500">
+                  {selectedAssignment?.classes?.label}
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {classAssignments.map((assignment) => {
+                  const stats = progressionStats(assignment.progression_items || []);
+                  const active = assignment.id === selectedAssignmentId;
+                  return (
+                    <button
+                      key={assignment.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedAssignmentId(assignment.id);
+                        setSelectedItemId("");
+                      }}
+                      className={`rounded-2xl border px-4 py-3 text-left transition ${
+                        active
+                          ? "border-emerald-500 bg-emerald-50"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
                       }`}
                     >
-                      <Icon className="h-5 w-5" />
-                    </span>
-                    <div>
-                      <div className="text-base font-black">{label}</div>
-                      <div
-                        className={`mt-0.5 text-xs font-semibold ${
-                          activeTab === id
-                            ? "text-emerald-50"
-                            : "text-slate-500"
-                        }`}
-                      >
-                        {subtitle}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </nav>
-
-            {activeTab === "program" ? (
-              <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                <div className="border-b border-slate-100 px-5 py-4">
-                  <h2 className="text-xl font-black text-slate-950">
-                    Programme
-                  </h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">
-                    {selectedAssignment?.progression?.subject_name} ·{" "}
-                    {selectedAssignment?.classes?.label}
-                  </p>
-                </div>
-
-                {actionableItems.length ? (
-                  <div className="divide-y divide-slate-100">
-                    {actionableItems.map((item, index) => {
-                      const completed =
-                        item.completion?.status === "completed";
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => selectProgramItem(item.id)}
-                          className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
-                        >
-                          <span
-                            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-black ${
-                              completed
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            {completed ? (
-                              <CheckCircle2 className="h-5 w-5" />
-                            ) : (
-                              index + 1
-                            )}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-black text-slate-950">
-                              {item.title}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-slate-500">
-                              <span>{typeLabel(item.item_type)}</span>
-                              {item.trimester ? <span>{item.trimester}</span> : null}
-                              {item.week_label ? <span>{item.week_label}</span> : null}
-                              {plannedMinutes(item) ? (
-                                <span>{plannedMinutes(item)} min prévues</span>
-                              ) : null}
-                            </div>
-                          </div>
-                          <span
-                            className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black uppercase ${
-                              completed
-                                ? "bg-emerald-50 text-emerald-700"
-                                : item.sessions?.length
-                                  ? "bg-sky-50 text-sky-700"
-                                  : "bg-amber-50 text-amber-700"
-                            }`}
-                          >
-                            {completed
-                              ? "Terminée"
-                              : item.sessions?.length
-                                ? "En cours"
-                                : "À faire"}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="px-6 py-10 text-center text-sm font-semibold text-slate-500">
-                    Aucune étape exploitable dans cette progression.
-                  </div>
-                )}
-              </section>
-            ) : null}
-
-            {activeTab === "entry" ? (
-              <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                {selectedItem ? (
-                  <form onSubmit={saveSession}>
-                    <div className="border-b border-slate-100 px-5 py-5">
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <div className="text-xs font-black uppercase tracking-[0.12em] text-emerald-700">
-                            {typeLabel(selectedItem.item_type)}
-                          </div>
-                          <h2 className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">
-                            {selectedItem.title}
-                          </h2>
-                        </div>
-                        <select
-                          value={selectedItemId}
-                          onChange={(event) =>
-                            setSelectedItemId(event.target.value)
-                          }
-                          className="max-w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
-                        >
-                          {actionableItems.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-5 p-5 sm:p-6">
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <label>
-                          <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                            Date
-                          </span>
-                          <div className="relative">
-                            <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                            <input
-                              type="date"
-                              value={form.session_date}
-                              onChange={(event) =>
-                                setForm((current) => ({
-                                  ...current,
-                                  session_date: event.target.value,
-                                }))
-                              }
-                              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-bold outline-none focus:border-emerald-400"
-                            />
-                          </div>
-                        </label>
-
-                        <label>
-                          <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                            Créneau
-                          </span>
-                          <select
-                            value={form.session_period_id || (form.session_period_label === "Plage personnalisée" ? "custom" : "")}
-                            onChange={(event) => selectPeriod(event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
-                          >
-                            <option value="">
-                              {slotsLoading
-                                ? "Chargement…"
-                                : "Choisir un créneau"}
-                            </option>
-                            {periodSlots.map((slot) => (
-                              <option key={slot.id} value={slot.id}>
-                                {slot.label} ·{" "}
-                                {formatTimeRange(
-                                  slot.start_hm,
-                                  addMinutes(
-                                    slot.start_hm,
-                                    slot.duration_minutes,
-                                  ),
-                                )}
-                              </option>
-                            ))}
-                            <option value="custom">Plage personnalisée</option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <label>
-                          <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                            Début
-                          </span>
-                          <input
-                            type="time"
-                            value={form.session_start_time}
-                            onChange={(event) =>
-                              setForm((current) => ({
-                                ...current,
-                                session_start_time: event.target.value,
-                              }))
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
-                          />
-                        </label>
-                        <label>
-                          <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                            Fin
-                          </span>
-                          <input
-                            type="time"
-                            value={form.session_end_time}
-                            onChange={(event) =>
-                              setForm((current) => ({
-                                ...current,
-                                session_end_time: event.target.value,
-                              }))
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold outline-none focus:border-emerald-400"
-                          />
-                        </label>
-                      </div>
-
-                      <label>
-                        <span className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.12em] text-slate-600">
-                          Contenu réalisé
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-base font-black text-slate-950">
+                          {assignment.progression?.subject_name || "Discipline"}
                         </span>
-                        <textarea
-                          rows={5}
-                          value={form.content}
-                          onChange={(event) =>
-                            setForm((current) => ({
-                              ...current,
-                              content: event.target.value,
-                            }))
-                          }
-                          placeholder="Ce qui a réellement été fait pendant la séance…"
-                          className="w-full resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                        <span className="text-lg font-black text-emerald-700">
+                          {stats.rate.toLocaleString("fr-FR", {
+                            maximumFractionDigits: 1,
+                          })}%
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-emerald-600"
+                          style={{ width: `${clampPercent(stats.rate)}%` }}
                         />
-                      </label>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-                      <details className="rounded-2xl border border-slate-200 bg-slate-50">
-                        <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-700">
-                          Devoir et observation — facultatif
-                        </summary>
-                        <div className="grid gap-4 border-t border-slate-200 p-4 md:grid-cols-2">
-                          <label>
-                            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                              Travail à faire
+            {selectedAssignment ? (
+              <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
+                <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                          Leçons
+                        </div>
+                        <h2 className="mt-1 text-xl font-black text-slate-950">
+                          {selectedAssignment.progression?.subject_name || "Programme"}
+                        </h2>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-black text-emerald-700">
+                          {selectedStats.rate.toLocaleString("fr-FR", {
+                            maximumFractionDigits: 1,
+                          })}%
+                        </div>
+                        <div className="text-[11px] font-bold text-slate-500">
+                          {selectedStats.completed}/{selectedStats.total}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {actionableItems.length ? (
+                    <div className="divide-y divide-slate-100">
+                      {actionableItems.map((item, index) => {
+                        const completed = item.completion?.status === "completed";
+                        const active = item.id === selectedItemId;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => selectLesson(item.id)}
+                            className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition sm:px-5 ${
+                              active ? "bg-emerald-50" : "hover:bg-slate-50"
+                            }`}
+                          >
+                            <span
+                              className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-black ${
+                                completed
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {completed ? (
+                                <CheckCircle2 className="h-5 w-5" />
+                              ) : (
+                                index + 1
+                              )}
                             </span>
-                            <textarea
-                              rows={3}
-                              value={form.homework}
-                              onChange={(event) =>
-                                setForm((current) => ({
-                                  ...current,
-                                  homework: event.target.value,
-                                }))
-                              }
-                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400"
-                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[15px] font-black leading-snug text-slate-950 sm:text-base">
+                                {item.title}
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-bold text-slate-500">
+                                {item.trimester ? <span>{item.trimester}</span> : null}
+                                {item.sessions?.length ? (
+                                  <span>{item.sessions.length} séance(s)</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <span
+                              className={`shrink-0 text-[11px] font-black ${
+                                completed ? "text-emerald-700" : "text-slate-400"
+                              }`}
+                            >
+                              {completed ? "Terminée" : typeLabel(item.item_type)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="px-5 py-8 text-center text-sm font-semibold text-slate-500">
+                      Aucune leçon disponible.
+                    </div>
+                  )}
+                </section>
+
+                <section
+                  id="lesson-workspace"
+                  className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-sm scroll-mt-4"
+                >
+                  {selectedItem ? (
+                    <form onSubmit={saveSession}>
+                      <div className="border-b border-slate-100 px-4 py-4 sm:px-6 sm:py-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-700">
+                              {typeLabel(selectedItem.item_type)}
+                              {selectedItem.trimester ? ` · ${selectedItem.trimester}` : ""}
+                            </div>
+                            <h2 className="mt-1 text-xl font-black leading-tight text-slate-950 sm:text-2xl">
+                              {selectedItem.title}
+                            </h2>
+                          </div>
+                          <span
+                            className={`rounded-full px-3 py-1.5 text-[11px] font-black ${
+                              selectedItem.completion?.status === "completed"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {selectedItem.completion?.status === "completed"
+                              ? "Terminée"
+                              : "En cours"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-5 p-4 sm:p-6">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label>
+                            <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                              Date
+                            </span>
+                            <div className="relative">
+                              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                              <input
+                                type="date"
+                                value={form.session_date}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    session_date: event.target.value,
+                                  }))
+                                }
+                                className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-3 text-base font-bold outline-none focus:border-emerald-400"
+                              />
+                            </div>
                           </label>
+
                           <label>
-                            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
-                              Observation
+                            <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                              Créneau
                             </span>
+                            <select
+                              value={
+                                form.session_period_id ||
+                                (form.session_period_label === "Plage personnalisée"
+                                  ? "custom"
+                                  : "")
+                              }
+                              onChange={(event) => selectPeriod(event.target.value)}
+                              className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold outline-none focus:border-emerald-400"
+                            >
+                              <option value="">
+                                {slotsLoading ? "Chargement…" : "Choisir un créneau"}
+                              </option>
+                              {periodSlots.map((slot) => (
+                                <option key={slot.id} value={slot.id}>
+                                  {slot.label} · {formatTimeRange(
+                                    slot.start_hm,
+                                    addMinutes(slot.start_hm, slot.duration_minutes),
+                                  )}
+                                </option>
+                              ))}
+                              <option value="custom">Plage personnalisée</option>
+                            </select>
+                          </label>
+                        </div>
+
+                        {form.session_period_label === "Plage personnalisée" ? (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label>
+                              <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                                Début
+                              </span>
+                              <input
+                                type="time"
+                                value={form.session_start_time}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    session_start_time: event.target.value,
+                                  }))
+                                }
+                                className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold outline-none focus:border-emerald-400"
+                              />
+                            </label>
+                            <label>
+                              <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.12em] text-slate-600">
+                                Fin
+                              </span>
+                              <input
+                                type="time"
+                                value={form.session_end_time}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    session_end_time: event.target.value,
+                                  }))
+                                }
+                                className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base font-bold outline-none focus:border-emerald-400"
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+
+                        <label className="block">
+                          <div className="mb-2 flex items-baseline justify-between gap-3">
+                            <span className="text-sm font-black uppercase tracking-[0.11em] text-slate-800">
+                              Contenu réalisé
+                            </span>
+                            <span className="text-xs font-bold text-slate-400">
+                              Facultatif
+                            </span>
+                          </div>
+                          <textarea
+                            rows={7}
+                            value={form.content}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                content: event.target.value,
+                              }))
+                            }
+                            placeholder="Ce qui a été fait pendant la séance…"
+                            className="w-full resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base font-medium leading-relaxed outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                          />
+                        </label>
+
+                        <label className="block rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                          <span className="mb-2 block text-sm font-black uppercase tracking-[0.11em] text-amber-900">
+                            Travail à faire
+                          </span>
+                          <textarea
+                            rows={4}
+                            value={form.homework}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                homework: event.target.value,
+                              }))
+                            }
+                            placeholder="Exercices, leçon à apprendre, recherche…"
+                            className="w-full resize-y rounded-xl border border-amber-200 bg-white px-4 py-3 text-base font-medium leading-relaxed outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                          />
+                        </label>
+
+                        <details className="rounded-xl border border-slate-200 bg-slate-50">
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-600">
+                            Observation facultative
+                          </summary>
+                          <div className="border-t border-slate-200 p-4">
                             <textarea
                               rows={3}
                               value={form.observations}
@@ -1039,116 +1094,98 @@ export default function TeacherTextbookPage() {
                               }
                               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-400"
                             />
-                          </label>
-                        </div>
-                      </details>
+                          </div>
+                        </details>
 
-                      <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-5">
-                        <button
-                          type="submit"
-                          disabled={busy}
-                          className="inline-flex min-h-[46px] flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-60 sm:flex-none"
-                        >
-                          {busy ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                        <div className="grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2">
+                          <button
+                            type="submit"
+                            disabled={Boolean(busyAction)}
+                            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3 text-base font-black text-white hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {busyAction === "save" ? (
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : (
+                              <Save className="h-5 w-5" />
+                            )}
+                            Enregistrer la séance
+                          </button>
+
+                          {selectedItem.completion?.status === "completed" ? (
+                            <button
+                              type="button"
+                              onClick={() => void updateLessonStatus("reopened")}
+                              disabled={Boolean(busyAction)}
+                              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              {busyAction === "status" ? (
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-5 w-5" />
+                              )}
+                              Rouvrir la leçon
+                            </button>
                           ) : (
-                            <Save className="h-4 w-4" />
+                            <button
+                              type="button"
+                              onClick={() => void updateLessonStatus("completed")}
+                              disabled={Boolean(busyAction)}
+                              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-base font-black text-white hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              {busyAction === "status" ? (
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="h-5 w-5" />
+                              )}
+                              Terminer la leçon
+                            </button>
                           )}
-                          Enregistrer la séance
-                        </button>
+                        </div>
 
-                        {selectedItem.completion?.status === "completed" ? (
-                          <button
-                            type="button"
-                            onClick={() => void updateLessonStatus("reopened")}
-                            disabled={busy}
-                            className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                            Rouvrir
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void updateLessonStatus("completed")}
-                            disabled={busy || !(selectedItem.sessions?.length || 0)}
-                            className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <CheckCircle2 className="h-4 w-4" />
-                            Terminer la leçon
-                          </button>
-                        )}
+                        {selectedItem.sessions?.length ? (
+                          <details className="rounded-xl border border-slate-200 bg-white">
+                            <summary className="cursor-pointer px-4 py-3 text-sm font-black text-slate-700">
+                              Séances enregistrées ({selectedItem.sessions.length})
+                            </summary>
+                            <div className="divide-y divide-slate-100 border-t border-slate-200">
+                              {selectedItem.sessions.map((session) => (
+                                <article key={session.id} className="px-4 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-black text-slate-900">
+                                      {formatDate(session.session_date)}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
+                                      <Clock3 className="h-3.5 w-3.5" />
+                                      {formatTimeRange(
+                                        session.session_start_time,
+                                        session.session_end_time,
+                                      ) || session.session_period_label || `${session.duration_minutes || 0} min`}
+                                    </div>
+                                  </div>
+                                  {session.content ? (
+                                    <p className="mt-2 text-sm font-medium leading-relaxed text-slate-600">
+                                      {session.content}
+                                    </p>
+                                  ) : null}
+                                  {session.homework ? (
+                                    <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                                      Travail à faire : {session.homework}
+                                    </div>
+                                  ) : null}
+                                </article>
+                              ))}
+                            </div>
+                          </details>
+                        ) : null}
                       </div>
+                    </form>
+                  ) : (
+                    <div className="px-6 py-12 text-center text-sm font-semibold text-slate-500">
+                      Sélectionnez une leçon.
                     </div>
-                  </form>
-                ) : (
-                  <div className="px-6 py-12 text-center text-sm font-semibold text-slate-500">
-                    Sélectionnez une étape du programme.
-                  </div>
-                )}
-              </section>
-            ) : null}
-
-            {activeTab === "history" ? (
-              <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-                <div className="border-b border-slate-100 px-5 py-4">
-                  <h2 className="text-xl font-black text-slate-950">
-                    Séances réalisées
-                  </h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">
-                    {selectedAssignment?.classes?.label} ·{" "}
-                    {selectedAssignment?.progression?.subject_name}
-                  </p>
-                </div>
-
-                {sessionHistory.length ? (
-                  <div className="divide-y divide-slate-100">
-                    {sessionHistory.map((session) => (
-                      <article
-                        key={session.id}
-                        className="grid gap-3 px-5 py-4 md:grid-cols-[150px_1fr_160px]"
-                      >
-                        <div>
-                          <div className="font-black text-slate-900">
-                            {formatDate(session.session_date)}
-                          </div>
-                          <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                            <Clock3 className="h-3.5 w-3.5" />
-                            {formatTimeRange(
-                              session.session_start_time,
-                              session.session_end_time,
-                            ) ||
-                              session.session_period_label ||
-                              `${session.duration_minutes || 0} min`}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="font-black text-slate-950">
-                            {session.item_title}
-                          </div>
-                          {session.content ? (
-                            <div className="mt-1 text-sm font-medium text-slate-600">
-                              {session.content}
-                            </div>
-                          ) : null}
-                          {session.homework ? (
-                            <div className="mt-2 text-xs font-semibold text-slate-500">
-                              Travail : {session.homework}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="text-right text-xs font-bold text-slate-500">
-                          {session.session_title || "Séance"}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="px-6 py-12 text-center text-sm font-semibold text-slate-500">
-                    Aucune séance enregistrée pour cette discipline.
-                  </div>
-                )}
-              </section>
+                  )}
+                </section>
+              </div>
             ) : null}
           </>
         )}

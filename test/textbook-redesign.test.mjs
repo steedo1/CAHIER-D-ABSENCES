@@ -22,6 +22,16 @@ const monitorRoute = fs.readFileSync(
   "utf8",
 );
 
+const lessonStatusRoute = fs.readFileSync(
+  new URL("../src/app/api/teacher/textbook/lesson-status/route.ts", import.meta.url),
+  "utf8",
+);
+
+const teacherSyncRoute = fs.readFileSync(
+  new URL("../src/app/api/teacher/textbook/sync/route.ts", import.meta.url),
+  "utf8",
+);
+
 test("le suivi admin propose seulement les deux vues utiles", () => {
   assert.match(adminPage, /Par classe/);
   assert.match(adminPage, /Par discipline/);
@@ -61,15 +71,47 @@ test("le filtre de période exploite réellement les métriques T1 T2 T3", () =>
   assert.match(adminPage, /combineMetrics\(selectedRows, period\)/);
 });
 
-test("le professeur dispose de trois tâches lisibles sans mode hors ligne", () => {
-  assert.match(teacherPage, /Programme/);
-  assert.match(teacherPage, /Saisir la séance/);
-  assert.match(teacherPage, /Séances réalisées/);
+test("le professeur suit le flux année, classe, progression, leçon, séance", () => {
+  assert.match(teacherPage, /Année scolaire/);
+  assert.match(teacherPage, /Classe/);
+  assert.match(teacherPage, /Progressions/);
+  assert.match(teacherPage, /Leçons/);
+  assert.match(teacherPage, /Date/);
+  assert.match(teacherPage, /Créneau/);
+  assert.match(teacherPage, /Contenu réalisé/);
+  assert.match(teacherPage, /Travail à faire/);
+  assert.match(teacherPage, /Enregistrer la séance/);
+  assert.match(teacherPage, /Terminer la leçon/);
+  assert.doesNotMatch(teacherPage, /TeacherTab/);
+  assert.doesNotMatch(teacherPage, /Saisir la séance/);
   assert.doesNotMatch(teacherPage, /OfflineSyncBar/);
   assert.doesNotMatch(teacherPage, /OfflineReadinessCard/);
   assert.doesNotMatch(teacherPage, /offline-textbook/);
   assert.doesNotMatch(teacherPage, /useOnlineStatus/);
-  assert.doesNotMatch(teacherPage, /conservée sur cet appareil/);
+});
+
+test("le contenu réalisé est facultatif et le travail à faire reste visible", () => {
+  assert.doesNotMatch(teacherPage, /if \(!form\.content\.trim\(\)\)/);
+  assert.match(teacherPage, /Contenu réalisé/);
+  assert.match(teacherPage, /Facultatif/);
+  assert.match(teacherPage, /Travail à faire/);
+  assert.doesNotMatch(teacherPage, /Devoir et observation/);
+});
+
+test("terminer une leçon ne dépend plus de l'enregistrement d'une séance", () => {
+  assert.doesNotMatch(lessonStatusRoute, /lesson_requires_session/);
+  assert.doesNotMatch(lessonStatusRoute, /textbook_lesson_sessions/);
+  assert.match(lessonStatusRoute, /textbook_lesson_completions/);
+  assert.match(teacherPage, /updateLessonStatus\("completed"\)/);
+});
+
+test("le changement d'année resynchronise les progressions correspondantes", () => {
+  assert.match(teacherPage, /academic_year/);
+  assert.match(teacherPage, /changeAcademicYear/);
+  assert.match(teacherPage, /syncAssignments/);
+  assert.match(teacherSyncRoute, /body\.academic_year/);
+  assert.match(teacherSyncRoute, /academic_years/);
+  assert.match(teacherSyncRoute, /syncTextbookAssignmentsFromTeaching/);
 });
 
 test("l'association des progressions suit les affectations pédagogiques réelles", () => {
