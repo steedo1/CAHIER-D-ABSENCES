@@ -2,21 +2,15 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3,
   BookOpenCheck,
-  CheckCircle2,
-  Clock3,
-  GraduationCap,
-  Layers3,
   Loader2,
   RefreshCw,
   School,
-  Users,
 } from "lucide-react";
 
 type PeriodCode = "T1" | "T2" | "T3";
 type PeriodFilter = "ALL" | PeriodCode;
-type MonitorTab = "overview" | "levels" | "classes" | "subjects" | "teachers";
+type MonitorView = "class" | "subject";
 
 type Metric = {
   expected_items: number;
@@ -52,24 +46,23 @@ type MonitorPayload = {
   error?: string;
 };
 
-type Aggregate = Metric & {
+type TableRow = {
   key: string;
-  label: string;
-  detail: string;
-  rows: MonitorItem[];
+  primary: string;
+  teacher: string;
+  metric: Metric;
 };
 
-const TABS: Array<{
-  id: MonitorTab;
-  label: string;
-  Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-}> = [
-  { id: "overview", label: "Vue d’ensemble", Icon: BarChart3 },
-  { id: "levels", label: "Niveaux", Icon: Layers3 },
-  { id: "classes", label: "Classes", Icon: School },
-  { id: "subjects", label: "Disciplines", Icon: BookOpenCheck },
-  { id: "teachers", label: "Enseignants", Icon: Users },
-];
+const EMPTY_METRIC: Metric = {
+  expected_items: 0,
+  completed_items: 0,
+  planned_minutes: 0,
+  completed_planned_minutes: 0,
+  completion_rate: 0,
+  sessions_count: 0,
+  realized_minutes: 0,
+  realized_hours: 0,
+};
 
 function unique<T>(values: T[]) {
   return Array.from(new Set(values));
@@ -81,82 +74,96 @@ function pct(done: number, total: number) {
 }
 
 function metricFor(item: MonitorItem, period: PeriodFilter): Metric {
-  return period === "ALL" ? item : item.periods?.[period] || {
-    expected_items: 0,
-    completed_items: 0,
-    planned_minutes: 0,
-    completed_planned_minutes: 0,
-    completion_rate: 0,
-    sessions_count: 0,
-    realized_minutes: 0,
-    realized_hours: 0,
+  if (period === "ALL") return item;
+  return item.periods?.[period] || EMPTY_METRIC;
+}
+
+function combineMetrics(rows: MonitorItem[], period: PeriodFilter): Metric {
+  const totals = rows.reduce(
+    (acc, item) => {
+      const metric = metricFor(item, period);
+      acc.expected_items += Number(metric.expected_items || 0);
+      acc.completed_items += Number(metric.completed_items || 0);
+      acc.planned_minutes += Number(metric.planned_minutes || 0);
+      acc.completed_planned_minutes += Number(
+        metric.completed_planned_minutes || 0,
+      );
+      acc.sessions_count += Number(metric.sessions_count || 0);
+      acc.realized_minutes += Number(metric.realized_minutes || 0);
+      return acc;
+    },
+    {
+      expected_items: 0,
+      completed_items: 0,
+      planned_minutes: 0,
+      completed_planned_minutes: 0,
+      sessions_count: 0,
+      realized_minutes: 0,
+    },
+  );
+
+  return {
+    ...totals,
+    completion_rate: totals.planned_minutes
+      ? pct(totals.completed_planned_minutes, totals.planned_minutes)
+      : pct(totals.completed_items, totals.expected_items),
+    realized_hours:
+      Math.round((totals.realized_minutes / 60) * 10) / 10,
   };
 }
 
-function aggregateRows(
+function subjectKey(item: MonitorItem) {
+  return String(item.subject_id || item.subject_name || "").trim();
+}
+
+function groupRows(
   rows: MonitorItem[],
-  keyOf: (row: MonitorItem) => string,
-  labelOf: (row: MonitorItem) => string,
-  detailOf: (rows: MonitorItem[]) => string,
   period: PeriodFilter,
-): Aggregate[] {
+  mode: MonitorView,
+): TableRow[] {
   const groups = new Map<string, MonitorItem[]>();
 
   for (const row of rows) {
-    const key = keyOf(row) || "non-renseigne";
+    const teacherKey = String(row.teacher_id || row.teacher_name || "teacher");
+    const key =
+      mode === "class"
+        ? `${subjectKey(row)}|${teacherKey}`
+        : `${row.class_id}|${teacherKey}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
   }
 
   return Array.from(groups.entries())
-    .map(([key, group]) => {
-      const totals = group.reduce(
-        (acc, item) => {
-          const metric = metricFor(item, period);
-          acc.expected_items += metric.expected_items;
-          acc.completed_items += metric.completed_items;
-          acc.planned_minutes += metric.planned_minutes;
-          acc.completed_planned_minutes += metric.completed_planned_minutes;
-          acc.sessions_count += metric.sessions_count;
-          acc.realized_minutes += metric.realized_minutes;
-          return acc;
-        },
-        {
-          expected_items: 0,
-          completed_items: 0,
-          planned_minutes: 0,
-          completed_planned_minutes: 0,
-          sessions_count: 0,
-          realized_minutes: 0,
-        },
-      );
-
-      return {
-        key,
-        label: labelOf(group[0]),
-        detail: detailOf(group),
-        rows: group,
-        ...totals,
-        completion_rate: totals.planned_minutes
-          ? pct(totals.completed_planned_minutes, totals.planned_minutes)
-          : pct(totals.completed_items, totals.expected_items),
-        realized_hours:
-          Math.round((totals.realized_minutes / 60) * 10) / 10,
-      };
-    })
+    .map(([key, group]) => ({
+      key,
+      primary:
+        mode === "class" ? group[0].subject_name : group[0].class_label,
+      teacher: group[0].teacher_name || "Enseignant",
+      metric: combineMetrics(group, period),
+    }))
     .sort((a, b) =>
-      a.label.localeCompare(b.label, "fr", { numeric: true }),
+      a.primary.localeCompare(b.primary, "fr", { numeric: true }),
     );
 }
 
-function ProgressBar({ value }: { value: number }) {
+function periodLabel(period: PeriodFilter) {
+  if (period === "ALL") return "Toute l’année";
+  return `Trimestre ${period.slice(1)}`;
+}
+
+function ProgressValue({ value }: { value: number }) {
   const safe = Math.max(0, Math.min(100, Number(value || 0)));
   return (
-    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-      <div
-        className="h-full rounded-full bg-emerald-600 transition-all"
-        style={{ width: `${safe}%` }}
-      />
+    <div className="flex min-w-[150px] items-center gap-3">
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-emerald-600 transition-all"
+          style={{ width: `${safe}%` }}
+        />
+      </div>
+      <span className="w-14 text-right text-sm font-black text-slate-950">
+        {safe.toLocaleString("fr-FR", { maximumFractionDigits: 1 })}%
+      </span>
     </div>
   );
 }
@@ -195,12 +202,11 @@ export default function AdminTextbookPage() {
   const [items, setItems] = useState<MonitorItem[]>([]);
   const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [academicYear, setAcademicYear] = useState("");
-  const [period, setPeriod] = useState<PeriodFilter>("ALL");
+  const [period, setPeriod] = useState<PeriodFilter>("T1");
   const [level, setLevel] = useState("");
   const [classId, setClassId] = useState("");
   const [subjectId, setSubjectId] = useState("");
-  const [teacherId, setTeacherId] = useState("");
-  const [activeTab, setActiveTab] = useState<MonitorTab>("overview");
+  const [view, setView] = useState<MonitorView>("class");
 
   async function load(year?: string, silent = false) {
     if (silent) setRefreshing(true);
@@ -213,10 +219,7 @@ export default function AdminTextbookPage() {
       const query = params.toString();
       const response = await fetch(
         `/api/admin/textbook/monitor${query ? `?${query}` : ""}`,
-        {
-          cache: "no-store",
-          credentials: "include",
-        },
+        { cache: "no-store", credentials: "include" },
       );
       const json = (await response.json().catch(() => null)) as
         | MonitorPayload
@@ -227,7 +230,9 @@ export default function AdminTextbookPage() {
       }
 
       setItems(Array.isArray(json.items) ? json.items : []);
-      setAcademicYears(Array.isArray(json.academic_years) ? json.academic_years : []);
+      setAcademicYears(
+        Array.isArray(json.academic_years) ? json.academic_years : [],
+      );
       setAcademicYear(json.academic_year || year || "");
     } catch (cause: any) {
       setError(cause?.message || "Chargement du suivi impossible.");
@@ -251,9 +256,22 @@ export default function AdminTextbookPage() {
     [items],
   );
 
+  useEffect(() => {
+    if (!levels.length) {
+      if (level) setLevel("");
+      return;
+    }
+    if (!level || !levels.includes(level)) setLevel(levels[0]);
+  }, [level, levels]);
+
+  const levelItems = useMemo(
+    () => items.filter((item) => !level || String(item.level || "") === level),
+    [items, level],
+  );
+
   const classes = useMemo(() => {
     const map = new Map<string, string>();
-    for (const item of items) {
+    for (const item of levelItems) {
       if (item.class_id) map.set(item.class_id, item.class_label);
     }
     return Array.from(map.entries())
@@ -261,142 +279,74 @@ export default function AdminTextbookPage() {
       .sort((a, b) =>
         a.label.localeCompare(b.label, "fr", { numeric: true }),
       );
-  }, [items]);
+  }, [levelItems]);
 
   const subjects = useMemo(() => {
     const map = new Map<string, string>();
-    for (const item of items) {
-      const id = item.subject_id || item.subject_name;
-      if (id) map.set(String(id), item.subject_name);
+    for (const item of levelItems) {
+      const id = subjectKey(item);
+      if (id) map.set(id, item.subject_name);
     }
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "fr"));
-  }, [items]);
+  }, [levelItems]);
 
-  const teachers = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of items) {
-      if (item.teacher_id) map.set(item.teacher_id, item.teacher_name);
+  useEffect(() => {
+    if (view !== "class") return;
+    if (!classes.length) {
+      if (classId) setClassId("");
+      return;
     }
-    return Array.from(map.entries())
-      .map(([id, label]) => ({ id, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
-  }, [items]);
+    if (!classId || !classes.some((item) => item.id === classId)) {
+      setClassId(classes[0].id);
+    }
+  }, [classId, classes, view]);
 
-  const filtered = useMemo(
-    () =>
-      items.filter((item) => {
-        if (level && String(item.level || "") !== level) return false;
-        if (classId && item.class_id !== classId) return false;
-        if (
-          subjectId &&
-          String(item.subject_id || item.subject_name) !== subjectId
-        ) {
-          return false;
-        }
-        if (teacherId && item.teacher_id !== teacherId) return false;
-        return true;
-      }),
-    [items, level, classId, subjectId, teacherId],
+  useEffect(() => {
+    if (view !== "subject") return;
+    if (!subjects.length) {
+      if (subjectId) setSubjectId("");
+      return;
+    }
+    if (!subjectId || !subjects.some((item) => item.id === subjectId)) {
+      setSubjectId(subjects[0].id);
+    }
+  }, [subjectId, subjects, view]);
+
+  const selectedRows = useMemo(() => {
+    if (view === "class") {
+      return levelItems.filter((item) => item.class_id === classId);
+    }
+    return levelItems.filter((item) => subjectKey(item) === subjectId);
+  }, [classId, levelItems, subjectId, view]);
+
+  const tableRows = useMemo(
+    () => groupRows(selectedRows, period, view),
+    [period, selectedRows, view],
   );
 
-  const totals = useMemo(() => {
-    const values = filtered.reduce(
-      (acc, item) => {
-        const metric = metricFor(item, period);
-        acc.expected += metric.expected_items;
-        acc.completed += metric.completed_items;
-        acc.planned += metric.planned_minutes;
-        acc.completedPlanned += metric.completed_planned_minutes;
-        acc.sessions += metric.sessions_count;
-        acc.realized += metric.realized_minutes;
-        acc.classes.add(item.class_id);
-        return acc;
-      },
-      {
-        expected: 0,
-        completed: 0,
-        planned: 0,
-        completedPlanned: 0,
-        sessions: 0,
-        realized: 0,
-        classes: new Set<string>(),
-      },
-    );
+  const summary = useMemo(
+    () => combineMetrics(selectedRows, period),
+    [period, selectedRows],
+  );
 
-    return {
-      completionRate: values.planned
-        ? pct(values.completedPlanned, values.planned)
-        : pct(values.completed, values.expected),
-      classes: values.classes.size,
-      sessions: values.sessions,
-      realizedHours: Math.round((values.realized / 60) * 10) / 10,
-    };
-  }, [filtered, period]);
-
-  const groupedRows = useMemo(() => {
-    if (activeTab === "levels") {
-      return aggregateRows(
-        filtered,
-        (row) => String(row.level || "Niveau non renseigné"),
-        (row) => String(row.level || "Niveau non renseigné"),
-        (rows) =>
-          `${unique(rows.map((row) => row.class_label)).length} classe(s) · ${unique(
-            rows.map((row) => row.subject_name),
-          ).length} discipline(s)`,
-        period,
-      );
-    }
-    if (activeTab === "classes") {
-      return aggregateRows(
-        filtered,
-        (row) => row.class_id,
-        (row) => row.class_label,
-        (rows) =>
-          unique(
-            rows.map(
-              (row) => `${row.subject_name} · ${row.teacher_name}`,
-            ),
-          ).join(" • "),
-        period,
-      );
-    }
-    if (activeTab === "subjects") {
-      return aggregateRows(
-        filtered,
-        (row) => String(row.subject_id || row.subject_name),
-        (row) => row.subject_name,
-        (rows) =>
-          `${unique(rows.map((row) => row.class_label)).length} classe(s) · ${unique(
-            rows.map((row) => row.teacher_name),
-          ).length} enseignant(s)`,
-        period,
-      );
-    }
-    if (activeTab === "teachers") {
-      return aggregateRows(
-        filtered,
-        (row) => String(row.teacher_id || row.teacher_name),
-        (row) => row.teacher_name,
-        (rows) =>
-          unique(
-            rows.map((row) => `${row.subject_name} · ${row.class_label}`),
-          ).join(" • "),
-        period,
-      );
-    }
-    return [];
-  }, [activeTab, filtered, period]);
+  const selectedClass = classes.find((item) => item.id === classId) || null;
+  const selectedSubject = subjects.find((item) => item.id === subjectId) || null;
 
   function changeAcademicYear(value: string) {
     setAcademicYear(value);
     setLevel("");
     setClassId("");
     setSubjectId("");
-    setTeacherId("");
-    setPeriod("ALL");
+    setPeriod("T1");
     void load(value);
+  }
+
+  function changeLevel(value: string) {
+    setLevel(value);
+    setClassId("");
+    setSubjectId("");
   }
 
   if (loading) {
@@ -410,9 +360,18 @@ export default function AdminTextbookPage() {
     );
   }
 
+  const summaryTitle =
+    view === "class"
+      ? selectedClass
+        ? `Exécution moyenne de ${selectedClass.label}`
+        : "Exécution moyenne de la classe"
+      : selectedSubject
+        ? `Exécution moyenne de ${selectedSubject.label} en ${level || "ce niveau"}`
+        : "Exécution moyenne de la discipline";
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-900 sm:px-6">
-      <div className="mx-auto max-w-[1500px] space-y-4">
+      <div className="mx-auto max-w-[1400px] space-y-4">
         <header className="rounded-[24px] border border-slate-200 bg-white px-5 py-5 shadow-sm sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -423,7 +382,7 @@ export default function AdminTextbookPage() {
                 Suivi des programmes
               </h1>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                Voir l’exécution du programme, sans gérer les affectations manuellement.
+                Suivre simplement l’exécution par classe ou par discipline.
               </p>
             </div>
             <button
@@ -440,8 +399,60 @@ export default function AdminTextbookPage() {
           </div>
         </header>
 
+        <section className="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setView("class")}
+              className={`flex min-h-[66px] items-center gap-3 rounded-2xl px-4 text-left transition ${
+                view === "class"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <span
+                className={`grid h-10 w-10 place-items-center rounded-xl ${
+                  view === "class" ? "bg-white/15" : "bg-white"
+                }`}
+              >
+                <School className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-base font-black">Par classe</span>
+                <span className="block text-xs font-semibold opacity-80">
+                  Voir tous les enseignants d’une classe
+                </span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setView("subject")}
+              className={`flex min-h-[66px] items-center gap-3 rounded-2xl px-4 text-left transition ${
+                view === "subject"
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-slate-50 text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <span
+                className={`grid h-10 w-10 place-items-center rounded-xl ${
+                  view === "subject" ? "bg-white/15" : "bg-white"
+                }`}
+              >
+                <BookOpenCheck className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-base font-black">Par discipline</span>
+                <span className="block text-xs font-semibold opacity-80">
+                  Comparer la même matière dans un niveau
+                </span>
+              </span>
+            </button>
+          </div>
+        </section>
+
         <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <SelectField
               label="Année scolaire"
               value={academicYear}
@@ -455,18 +466,17 @@ export default function AdminTextbookPage() {
             </SelectField>
 
             <SelectField
-              label="Trimestre"
+              label="Trimestre / période"
               value={period}
               onChange={(value) => setPeriod(value as PeriodFilter)}
             >
+              <option value="T1">Trimestre 1</option>
+              <option value="T2">Trimestre 2</option>
+              <option value="T3">Trimestre 3</option>
               <option value="ALL">Toute l’année</option>
-              <option value="T1">T1</option>
-              <option value="T2">T2</option>
-              <option value="T3">T3</option>
             </SelectField>
 
-            <SelectField label="Niveau" value={level} onChange={setLevel}>
-              <option value="">Tous</option>
+            <SelectField label="Niveau" value={level} onChange={changeLevel}>
               {levels.map((item) => (
                 <option key={item} value={item}>
                   {item}
@@ -474,66 +484,29 @@ export default function AdminTextbookPage() {
               ))}
             </SelectField>
 
-            <SelectField label="Classe" value={classId} onChange={setClassId}>
-              <option value="">Toutes</option>
-              {classes.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
-
-            <SelectField
-              label="Discipline"
-              value={subjectId}
-              onChange={setSubjectId}
-            >
-              <option value="">Toutes</option>
-              {subjects.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
-
-            <SelectField
-              label="Enseignant"
-              value={teacherId}
-              onChange={setTeacherId}
-            >
-              <option value="">Tous</option>
-              {teachers.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
+            {view === "class" ? (
+              <SelectField label="Classe" value={classId} onChange={setClassId}>
+                {classes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </SelectField>
+            ) : (
+              <SelectField
+                label="Discipline"
+                value={subjectId}
+                onChange={setSubjectId}
+              >
+                {subjects.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </SelectField>
+            )}
           </div>
         </section>
-
-        <nav className="grid gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-          {TABS.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveTab(id)}
-              className={`flex min-h-[64px] items-center gap-3 rounded-2xl px-4 py-3 text-left transition ${
-                activeTab === id
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "bg-slate-50 text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <span
-                className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${
-                  activeTab === id ? "bg-white/15" : "bg-white"
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-              </span>
-              <span className="text-sm font-black">{label}</span>
-            </button>
-          ))}
-        </nav>
 
         {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
@@ -541,169 +514,76 @@ export default function AdminTextbookPage() {
           </div>
         ) : null}
 
-        <section className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              Avancement
-            </div>
-            <div className="mt-3 text-3xl font-black text-slate-950">
-              {totals.completionRate}%
-            </div>
-            <div className="mt-3">
-              <ProgressBar value={totals.completionRate} />
-            </div>
-          </div>
-
-          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-              <GraduationCap className="h-4 w-4 text-sky-600" />
-              Classes suivies
-            </div>
-            <div className="mt-3 text-3xl font-black text-slate-950">
-              {totals.classes}
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-500">
-              selon les affectations pédagogiques
-            </div>
-          </div>
-
-          <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-              <Clock3 className="h-4 w-4 text-violet-600" />
-              Séances réalisées
-            </div>
-            <div className="mt-3 text-3xl font-black text-slate-950">
-              {totals.sessions}
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-500">
-              {totals.realizedHours} h enregistrées
-            </div>
-          </div>
-        </section>
-
-        {activeTab === "overview" ? (
-          <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-5 py-4">
-              <h2 className="text-lg font-black text-slate-950">
-                Exécution par classe et discipline
+        <section className="rounded-[24px] border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+                {periodLabel(period)}
+              </div>
+              <h2 className="mt-1 text-lg font-black text-slate-950 sm:text-xl">
+                {summaryTitle}
               </h2>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                La discipline affichée est celle réellement enseignée dans la classe.
+                {view === "class"
+                  ? `${tableRows.length} discipline(s) / enseignant(s) affiché(s)`
+                  : `${tableRows.length} classe(s) concernée(s)`}
               </p>
             </div>
-
-            {filtered.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[880px] text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-black uppercase tracking-[0.08em] text-slate-500">
-                    <tr>
-                      <th className="px-5 py-3">Classe</th>
-                      <th className="px-4 py-3">Discipline</th>
-                      <th className="px-4 py-3">Enseignant</th>
-                      <th className="px-4 py-3">Avancement</th>
-                      <th className="px-4 py-3 text-center">Séances</th>
-                      <th className="px-4 py-3 text-right">Heures</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filtered.map((item) => {
-                      const metric = metricFor(item, period);
-                      return (
-                        <tr key={item.assignment_id} className="hover:bg-slate-50/70">
-                          <td className="px-5 py-4">
-                            <div className="font-black text-slate-950">
-                              {item.class_label}
-                            </div>
-                            <div className="mt-0.5 text-xs font-semibold text-slate-400">
-                              {item.level || "—"}
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 font-bold text-slate-800">
-                            {item.subject_name}
-                          </td>
-                          <td className="px-4 py-4 font-semibold text-slate-600">
-                            {item.teacher_name}
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-24">
-                                <ProgressBar value={metric.completion_rate} />
-                              </div>
-                              <span className="font-black text-slate-900">
-                                {metric.completion_rate}%
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-center font-black text-slate-800">
-                            {metric.sessions_count}
-                          </td>
-                          <td className="px-4 py-4 text-right font-black text-slate-800">
-                            {metric.realized_hours} h
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            <div className="text-right">
+              <div className="text-4xl font-black tracking-tight text-emerald-700">
+                {summary.completion_rate.toLocaleString("fr-FR", {
+                  maximumFractionDigits: 1,
+                })}%
               </div>
-            ) : (
-              <div className="px-6 py-12 text-center text-sm font-semibold text-slate-500">
-                Aucun suivi ne correspond à cette sélection.
+              <div className="text-xs font-bold text-slate-500">
+                taux d’exécution moyen
               </div>
-            )}
-          </section>
-        ) : (
-          <section className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-5 py-4">
-              <h2 className="text-lg font-black text-slate-950">
-                {TABS.find((tab) => tab.id === activeTab)?.label}
-              </h2>
             </div>
+          </div>
 
-            {groupedRows.length ? (
-              <div className="divide-y divide-slate-100">
-                {groupedRows.map((group) => (
-                  <article
-                    key={group.key}
-                    className="grid gap-4 px-5 py-5 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.4fr)_180px_110px_110px] lg:items-center"
-                  >
-                    <div>
-                      <div className="text-base font-black text-slate-950">
-                        {group.label}
-                      </div>
-                      <div className="mt-1 line-clamp-2 text-xs font-semibold text-slate-500">
-                        {group.detail}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs font-bold text-slate-500">
-                        <span>Exécution</span>
-                        <span className="text-slate-900">
-                          {group.completion_rate}%
-                        </span>
-                      </div>
-                      <ProgressBar value={group.completion_rate} />
-                    </div>
-                    <div className="text-sm font-bold text-slate-600">
-                      {group.completed_items}/{group.expected_items} étapes
-                    </div>
-                    <div className="text-sm font-black text-slate-900">
-                      {group.sessions_count} séance(s)
-                    </div>
-                    <div className="text-sm font-black text-slate-900">
-                      {group.realized_hours} h
-                    </div>
-                  </article>
-                ))}
+          {tableRows.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[680px] border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-left text-[11px] font-black uppercase tracking-[0.12em] text-slate-500">
+                    <th className="px-5 py-3.5 sm:px-6">
+                      {view === "class" ? "Discipline" : "Classe"}
+                    </th>
+                    <th className="px-5 py-3.5">Enseignant</th>
+                    <th className="px-5 py-3.5 sm:px-6">Exécution</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((row) => (
+                    <tr
+                      key={row.key}
+                      className="border-t border-slate-100 text-sm"
+                    >
+                      <td className="px-5 py-4 font-black text-slate-950 sm:px-6">
+                        {row.primary}
+                      </td>
+                      <td className="px-5 py-4 font-semibold text-slate-700">
+                        {row.teacher}
+                      </td>
+                      <td className="px-5 py-4 sm:px-6">
+                        <ProgressValue value={row.metric.completion_rate} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="px-6 py-12 text-center">
+              <div className="text-base font-black text-slate-800">
+                Aucune progression à afficher
               </div>
-            ) : (
-              <div className="px-6 py-12 text-center text-sm font-semibold text-slate-500">
-                Aucun résultat pour cette sélection.
+              <div className="mt-1 text-sm font-medium text-slate-500">
+                Vérifiez la période ou les affectations pédagogiques de cette sélection.
               </div>
-            )}
-          </section>
-        )}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );

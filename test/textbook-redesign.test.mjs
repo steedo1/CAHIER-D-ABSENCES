@@ -22,36 +22,43 @@ const monitorRoute = fs.readFileSync(
   "utf8",
 );
 
-test("le suivi admin est centré sur la consultation et les filtres métier", () => {
-  const labels = [
-    'label="Année scolaire"',
-    'label="Trimestre"',
-    'label="Niveau"',
-    'label="Classe"',
-    'label="Discipline"',
-    'label="Enseignant"',
-  ];
+test("le suivi admin propose seulement les deux vues utiles", () => {
+  assert.match(adminPage, /Par classe/);
+  assert.match(adminPage, /Par discipline/);
+  assert.doesNotMatch(adminPage, /Vue d’ensemble/);
+  assert.doesNotMatch(adminPage, />Niveaux</);
+  assert.doesNotMatch(adminPage, />Classes</);
+  assert.doesNotMatch(adminPage, />Disciplines</);
+  assert.doesNotMatch(adminPage, />Enseignants</);
+  assert.doesNotMatch(adminPage, /Classes suivies/);
+  assert.doesNotMatch(adminPage, /Séances réalisées/);
+});
 
-  let cursor = -1;
-  for (const marker of labels) {
-    const next = adminPage.indexOf(marker);
-    assert.ok(next > cursor, `${marker} doit apparaître après le filtre précédent`);
-    cursor = next;
-  }
+test("la vue classe garde seulement année, période, niveau et classe", () => {
+  assert.match(adminPage, /label="Année scolaire"/);
+  assert.match(adminPage, /label="Trimestre \/ période"/);
+  assert.match(adminPage, /label="Niveau"/);
+  assert.match(adminPage, /view === "class"/);
+  assert.match(adminPage, /label="Classe"/);
+  assert.match(adminPage, /"Discipline" : "Classe"/);
+  assert.match(adminPage, />Enseignant</);
+  assert.match(adminPage, />Exécution</);
+});
 
-  for (const tab of [
-    "Vue d’ensemble",
-    "Niveaux",
-    "Classes",
-    "Disciplines",
-    "Enseignants",
-  ]) {
-    assert.match(adminPage, new RegExp(tab.replace(/[’]/g, "[’']")));
-  }
+test("la vue discipline compare les classes et enseignants du niveau", () => {
+  assert.match(adminPage, /view === "subject"/);
+  assert.match(adminPage, /label="Discipline"/);
+  assert.match(adminPage, /subjectKey\(item\) === subjectId/);
+  assert.match(adminPage, /Exécution moyenne de \$\{selectedSubject\.label\} en/);
+  assert.match(adminPage, /classe\(s\) concernée\(s\)/);
+});
 
-  assert.doesNotMatch(adminPage, /Progressions & affectations/);
-  assert.doesNotMatch(adminPage, /selectedClassIds/);
-  assert.doesNotMatch(adminPage, /Créer une progression/);
+test("le filtre de période exploite réellement les métriques T1 T2 T3", () => {
+  assert.match(adminPage, /<option value="T1">Trimestre 1<\/option>/);
+  assert.match(adminPage, /<option value="T2">Trimestre 2<\/option>/);
+  assert.match(adminPage, /<option value="T3">Trimestre 3<\/option>/);
+  assert.match(adminPage, /item\.periods\?\.\[period\]/);
+  assert.match(adminPage, /combineMetrics\(selectedRows, period\)/);
 });
 
 test("le professeur dispose de trois tâches lisibles sans mode hors ligne", () => {
