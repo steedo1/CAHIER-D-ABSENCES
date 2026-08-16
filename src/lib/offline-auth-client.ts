@@ -10,7 +10,9 @@ import {
   deriveOfflinePasswordVerifier,
   encodeBase64Url,
   equalOfflineSecret,
+  offlineCookiePathForRole,
   type OfflineAccessGrantPayload,
+  type OfflineAccessRole,
 } from "@/lib/offline-auth-contract";
 import { assertOfflineFunctionPrepared } from "@/lib/offline-auth-readiness";
 
@@ -236,16 +238,17 @@ export function activateOfflineAccess(input: {
 }) {
   const maxAge = Math.floor((input.payload.expires_at - Date.now()) / 1_000);
   if (maxAge <= 0) throw new Error("offline_access_expired");
+  const cookiePath = offlineCookiePathForRole(input.payload.role);
   setPathCookie(
     OFFLINE_ACCESS_COOKIE,
     input.grantToken,
-    input.payload.destination,
+    cookiePath,
     maxAge,
   );
   setPathCookie(
     OFFLINE_DEVICE_COOKIE,
     input.payload.device_id,
-    input.payload.destination,
+    cookiePath,
     maxAge,
   );
   const active: ActiveSession = {
@@ -347,6 +350,9 @@ export async function clearActiveOfflineAccess() {
   const paths = new Set<string>([
     "/",
     ...Object.values(OFFLINE_ROLE_DESTINATIONS),
+    ...(Object.keys(OFFLINE_ROLE_DESTINATIONS) as OfflineAccessRole[]).map(
+      offlineCookiePathForRole,
+    ),
   ]);
   if (decodedDestination) paths.add(decodedDestination);
   for (const path of paths) {
