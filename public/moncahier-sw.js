@@ -23,6 +23,8 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/enseignant/cahier-de-texte",
   "/parents",
   "/admin/bulletins",
+  "/admin/notes/conseil-classe",
+  "/admin/parents",
   "/admin/communication",
   "/admin/dashboard",
   "/admin/absences/appels",
@@ -31,7 +33,11 @@ const OFFLINE_PAGE_PATHS = new Set([
 ]);
 
 function isOfflinePagePath(pathname) {
-  return OFFLINE_PAGE_PATHS.has(pathname) || /^\/v\/[^/]+$/.test(pathname);
+  return (
+    OFFLINE_PAGE_PATHS.has(pathname) ||
+    /^\/admin\/classes\/liste\/[^/]+$/.test(pathname) ||
+    /^\/v\/[^/]+$/.test(pathname)
+  );
 }
 
 function isAssetPath(pathname) {
