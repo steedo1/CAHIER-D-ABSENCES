@@ -83,7 +83,7 @@ test("le shell Admin hors ligne expose seulement les quatre entrées essentielle
   assert.match(shell, /"\/admin\/parents"/);
   assert.match(shell, /"\/admin\/bulletins"/);
   assert.match(shell, /"\/admin\/notes\/conseil-classe"/);
-  assert.match(shell, /offlineAdminMode \? \(/);
+  assert.match(shell, /essentialAdminMode \? \(/);
   assert.match(shell, /<OfflineAdminEssentialNav pathname=\{pathname\} \/>/);
   assert.match(shell, /: \(\s*<SidebarNav \/>/);
 });
@@ -102,5 +102,27 @@ test("le service worker sait servir les écrans Admin essentiels et les listes d
   assert.match(worker, /"\/admin\/bulletins"/);
   assert.match(worker, /"\/admin\/notes\/conseil-classe"/);
   assert.match(worker, /"\/admin\/parents"/);
-  assert.match(worker, /\^\\\/admin\\\/classes\\\/liste\\\/\[\^/\]\+\$/);
+  assert.match(worker, /\^\\\/admin\\\/classes\\\/liste\\\/\[\^\/\]\+\$/);
+});
+
+
+test("le shell Admin bascule sur le périmètre essentiel quand le Cloud devient indisponible", async () => {
+  const shell = await read("src/app/admin/ui/shell.tsx");
+
+  assert.match(shell, /probeCloudSchedule\(2_500\)/);
+  assert.match(shell, /cloudReachable === false/);
+  assert.match(shell, /const essentialAdminMode = offlineAdminMode \|\| cloudFallbackAdminMode/);
+  assert.match(shell, /reachable \? 10_000 : 3_000/);
+});
+
+test("la navigation essentielle force une vraie navigation document hors ligne", async () => {
+  const shell = await read("src/app/admin/ui/shell.tsx");
+
+  const essentialNavStart = shell.indexOf("function OfflineAdminEssentialNav");
+  const loadingOverlayStart = shell.indexOf("function LoadingOverlay", essentialNavStart);
+  const essentialNav = shell.slice(essentialNavStart, loadingOverlayStart);
+
+  assert.match(essentialNav, /<a\s+[\s\S]*?href=\{href\}/);
+  assert.doesNotMatch(essentialNav, /<Link/);
+  assert.match(shell, /return essentialAdminMode \? \(\s*<a key=\{href\} href=\{href\}/);
 });

@@ -34,6 +34,7 @@ import {
   isOfflinePathAllowedForRole,
 } from "@/lib/offline-auth-contract";
 import { warmOfflineShell } from "@/lib/offline";
+import { probeCloudSchedule } from "@/lib/cloud-availability";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
@@ -94,7 +95,7 @@ function OfflineAdminEssentialNav({
         {OFFLINE_ADMIN_NAV_ITEMS.map(({ href, label, Icon }) => {
           const active = pathname === href || (pathname ?? "").startsWith(`${href}/`);
           return (
-            <Link
+            <a
               key={href}
               href={href}
               className={[
@@ -106,7 +107,7 @@ function OfflineAdminEssentialNav({
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span>{label}</span>
-            </Link>
+            </a>
           );
         })}
       </div>
@@ -149,19 +150,18 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeLabel, setRouteLabel] = useState("Chargement…");
   const [offlineAdminMode, setOfflineAdminMode] = useState(false);
+  const [adminOfflineGrantReady, setAdminOfflineGrantReady] = useState(false);
+  const [cloudReachable, setCloudReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     const refresh = async () => {
-      if (session) {
-        if (!cancelled) setOfflineAdminMode(false);
-        return;
-      }
       const intent = await getOfflineAccessIntent().catch(() => null);
-      if (!cancelled) {
-        setOfflineAdminMode(intent?.payload.role === "admin");
-      }
+      if (cancelled) return;
+      const adminGrantReady = intent?.payload.role === "admin";
+      setAdminOfflineGrantReady(adminGrantReady);
+      setOfflineAdminMode(!session && adminGrantReady);
     };
 
     const handleAuthState = () => void refresh();
@@ -172,6 +172,58 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       window.removeEventListener(OFFLINE_AUTH_STATE_EVENT, handleAuthState);
     };
   }, [session]);
+
+  useEffect(() => {
+    if (!session || (role !== "admin" && !adminOfflineGrantReady)) {
+      setCloudReachable(session ? true : null);
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+    let checking = false;
+
+    const scheduleNextCheck = (reachable: boolean) => {
+      if (cancelled) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(
+        () => void checkCloud(),
+        reachable ? 10_000 : 3_000,
+      );
+    };
+
+    const checkCloud = async () => {
+      if (cancelled || checking) return;
+      checking = true;
+      try {
+        const cloud = await probeCloudSchedule(2_500);
+        if (cancelled) return;
+        const reachable = Boolean(cloud);
+        setCloudReachable(reachable);
+        scheduleNextCheck(reachable);
+      } finally {
+        checking = false;
+      }
+    };
+
+    const refreshCloud = () => void checkCloud();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshCloud();
+    };
+
+    void checkCloud();
+    window.addEventListener("focus", refreshCloud);
+    window.addEventListener("online", refreshCloud);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener("focus", refreshCloud);
+      window.removeEventListener("online", refreshCloud);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [adminOfflineGrantReady, role, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,17 +342,23 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     startLoading("Traitement en cours…");
   }
 
+  const cloudFallbackAdminMode =
+    Boolean(session) &&
+    (role === "admin" || adminOfflineGrantReady) &&
+    cloudReachable === false;
+  const essentialAdminMode = offlineAdminMode || cloudFallbackAdminMode;
+
   const isFinanceManager = role === "finance_manager";
   const isInfirmier = role === "infirmier";
-  const isAdmin = role === "admin" || offlineAdminMode;
+  const isAdmin = role === "admin" || essentialAdminMode;
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
   const canUseMonCahierAi =
-    !offlineAdminMode &&
+    !essentialAdminMode &&
     (role === "admin" || role === "super_admin" || role === "educator");
 
   const mobileItems = useMemo(() => {
-    if (offlineAdminMode) return [...OFFLINE_ADMIN_NAV_ITEMS];
+    if (essentialAdminMode) return [...OFFLINE_ADMIN_NAV_ITEMS];
 
     if (isInfirmier) {
       return [
@@ -354,7 +412,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     isFinancePath,
     isFounderFinance,
     isInfirmier,
-    offlineAdminMode,
+    essentialAdminMode,
   ]);
 
   function isActive(href: string) {
@@ -400,7 +458,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="h-[calc(100%-3rem)] overflow-y-auto">
-            {offlineAdminMode ? (
+            {essentialAdminMode ? (
               <OfflineAdminEssentialNav pathname={pathname} />
             ) : (
               <SidebarNav />
@@ -424,7 +482,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         {/* Sidebar desktop */}
         <aside className="sticky top-0 hidden h-screen bg-slate-900 md:block">
           <div className="h-full overflow-y-auto scrollbar-thin scrollbar-track-slate-900 scrollbar-thumb-slate-700/70">
-            {offlineAdminMode ? (
+            {essentialAdminMode ? (
               <OfflineAdminEssentialNav pathname={pathname} />
             ) : (
               <SidebarNav />
@@ -459,7 +517,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                       ? "Gestion financière · Établissement"
                       : isAdmin && isFinancePath
                         ? "Paie des enseignants"
-                        : offlineAdminMode
+                        : essentialAdminMode
                           ? "Mode hors ligne · Admin établissement"
                           : "Absences & notes · Admin établissement"}
                 </span>
@@ -504,18 +562,15 @@ export default function AdminShell({ children }: { children: ReactNode }) {
               {mobileItems.map(({ href, label, Icon }) => {
                 const active = isActive(href);
 
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={[
-                      "flex flex-1 flex-col items-center justify-center gap-0.5 py-2.5 text-[11px]",
-                      "transition-colors",
-                      active
-                        ? "font-semibold text-emerald-700"
-                        : "text-slate-500 hover:text-slate-800",
-                    ].join(" ")}
-                  >
+                const className = [
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 py-2.5 text-[11px]",
+                  "transition-colors",
+                  active
+                    ? "font-semibold text-emerald-700"
+                    : "text-slate-500 hover:text-slate-800",
+                ].join(" ");
+                const content = (
+                  <>
                     <div
                       className={[
                         "flex h-9 w-9 items-center justify-center rounded-full border text-xs",
@@ -527,6 +582,16 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                       <Icon className="h-4 w-4" />
                     </div>
                     <span className="truncate">{label}</span>
+                  </>
+                );
+
+                return essentialAdminMode ? (
+                  <a key={href} href={href} className={className}>
+                    {content}
+                  </a>
+                ) : (
+                  <Link key={href} href={href} className={className}>
+                    {content}
                   </Link>
                 );
               })}
