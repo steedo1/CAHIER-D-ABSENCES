@@ -38,6 +38,7 @@ test("le filtre discipline fusionne le référentiel enseignant et les affectati
 test("les affectations restent rattachées aux classes de l'année choisie", async () => {
   const route = await read("src/app/api/admin/associations/route.ts");
   const page = await read("src/app/admin/affectations/page.tsx");
+  const bulkClasses = await read("src/app/api/admin/classes/bulk/route.ts");
 
   assert.match(route, /getClassIdsForAcademicYear/);
   assert.match(route, /\.eq\("academic_year", year\)/);
@@ -45,6 +46,10 @@ test("les affectations restent rattachées aux classes de l'année choisie", asy
   assert.match(page, /academic_year: selectedAcademicYear \|\| null/);
   assert.match(page, /\/api\/admin\/classes/);
   assert.match(page, /academic_year/);
+
+  assert.match(bulkClasses, /On ne réutilise plus une classe d'une ancienne année scolaire/);
+  assert.match(bulkClasses, /\.eq\("academic_year", academic_year\)/);
+  assert.match(bulkClasses, /\.insert\(rows\)/);
 });
 
 test("retirer un enseignant conserve son historique et un autre établissement actif", async () => {
