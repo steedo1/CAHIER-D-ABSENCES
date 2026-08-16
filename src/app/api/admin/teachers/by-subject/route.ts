@@ -283,37 +283,36 @@ export async function GET(req: NextRequest) {
       Array.from(teacherIds).filter((id) => allowedTeachers.has(id)),
     );
   } else if (subjectId) {
-    let filtered = await trySelect<any[]>(async () =>
-      await srv
-        .from("teacher_subjects")
-        .select("profile_id")
-        .in("institution_id", poolInstitutionIds)
-        .in("subject_id", allowedSubjectIds),
-    );
-
-    let allowedTeachers: Set<string> | null = null;
-    if (Array.isArray(filtered)) {
-      allowedTeachers = new Set(
-        filtered.map((row: any) => String(row.profile_id)),
-      );
-    } else {
-      filtered = await trySelect<any[]>(async () =>
+    const [subjectRows, assignmentRows] = await Promise.all([
+      trySelect<any[]>(async () =>
+        await srv
+          .from("teacher_subjects")
+          .select("profile_id")
+          .in("institution_id", poolInstitutionIds)
+          .in("subject_id", allowedSubjectIds),
+      ),
+      trySelect<any[]>(async () =>
         await srv
           .from("class_teachers")
           .select("teacher_id")
           .in("institution_id", poolInstitutionIds)
           .in("subject_id", allowedSubjectIds),
-      );
-      if (Array.isArray(filtered)) {
-        allowedTeachers = new Set(
-          filtered.map((row: any) => String(row.teacher_id)),
-        );
-      }
+      ),
+    ]);
+
+    const allowedTeachers = new Set<string>();
+    for (const row of subjectRows || []) {
+      const id = String(row.profile_id || "").trim();
+      if (id) allowedTeachers.add(id);
+    }
+    for (const row of assignmentRows || []) {
+      const id = String(row.teacher_id || "").trim();
+      if (id) allowedTeachers.add(id);
     }
 
-    if (allowedTeachers) {
+    if (Array.isArray(subjectRows) || Array.isArray(assignmentRows)) {
       teacherIds = new Set(
-        Array.from(teacherIds).filter((id) => allowedTeachers!.has(id)),
+        Array.from(teacherIds).filter((id) => allowedTeachers.has(id)),
       );
     }
   }
