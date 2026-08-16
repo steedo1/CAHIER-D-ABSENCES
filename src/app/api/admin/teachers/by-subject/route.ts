@@ -8,6 +8,7 @@ import {
   readEducationScopeFromSearchParams,
   type EducationScopeValue,
 } from "@/lib/education-scope";
+import { resolveTeacherPoolInstitutionIds } from "@/lib/teacher-pool-scope";
 
 /** Helper: exécute une requête Supabase et retourne data ou null. */
 async function trySelect<T>(
@@ -123,7 +124,7 @@ async function resolveScopedClassIds(
 
 async function resolveSubjectIds(
   srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
+  poolInstitutionIds: string[],
   subjectId: string,
 ) {
   const ids = new Set<string>([subjectId]);
@@ -131,7 +132,7 @@ async function resolveSubjectIds(
   const { data } = await srv
     .from("institution_subjects")
     .select("id")
-    .eq("institution_id", institutionId)
+    .in("institution_id", poolInstitutionIds)
     .eq("subject_id", subjectId);
 
   for (const row of data || []) ids.add(String(row.id));
@@ -195,10 +196,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", items: [] }, { status: 403 });
   }
 
+  let poolInstitutionIds: string[];
+  try {
+    poolInstitutionIds = await resolveTeacherPoolInstitutionIds(srv, institutionId);
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error?.message || "teacher_pool_scope_failed", items: [] },
+      { status: 400 },
+    );
+  }
+
   const roles = await srv
     .from("user_roles")
     .select("profile_id")
-    .eq("institution_id", institutionId)
+    .in("institution_id", poolInstitutionIds)
     .eq("role", "teacher");
 
   if (roles.error) {
@@ -210,7 +221,13 @@ export async function GET(req: NextRequest) {
   );
 
   if (!teacherIds.size) {
-    return NextResponse.json({ items: [] });
+    return NextResponse.json({
+      items: [],
+      meta: {
+        shared_pool: poolInstitutionIds.length > 1,
+        institution_count: poolInstitutionIds.length,
+      },
+    });
   }
 
   const scopedClassIds = await resolveScopedClassIds(
@@ -221,12 +238,18 @@ export async function GET(req: NextRequest) {
   );
   const classScopeActive = scopedClassIds !== null;
   const allowedSubjectIds = subjectId
-    ? await resolveSubjectIds(srv, institutionId, subjectId)
+    ? await resolveSubjectIds(srv, poolInstitutionIds, subjectId)
     : [];
 
   if (classScopeActive) {
     if (!scopedClassIds?.length) {
-      return NextResponse.json({ items: [] });
+      return NextResponse.json({
+        items: [],
+        meta: {
+          shared_pool: poolInstitutionIds.length > 1,
+          institution_count: poolInstitutionIds.length,
+        },
+      });
     }
 
     let serviceRows = await trySelect<any[]>(async () => {
@@ -264,7 +287,7 @@ export async function GET(req: NextRequest) {
       await srv
         .from("teacher_subjects")
         .select("profile_id")
-        .eq("institution_id", institutionId)
+        .in("institution_id", poolInstitutionIds)
         .in("subject_id", allowedSubjectIds),
     );
 
@@ -278,7 +301,7 @@ export async function GET(req: NextRequest) {
         await srv
           .from("class_teachers")
           .select("teacher_id")
-          .eq("institution_id", institutionId)
+          .in("institution_id", poolInstitutionIds)
           .in("subject_id", allowedSubjectIds),
       );
       if (Array.isArray(filtered)) {
@@ -296,13 +319,18 @@ export async function GET(req: NextRequest) {
   }
 
   if (!teacherIds.size) {
-    return NextResponse.json({ items: [] });
+    return NextResponse.json({
+      items: [],
+      meta: {
+        shared_pool: poolInstitutionIds.length > 1,
+        institution_count: poolInstitutionIds.length,
+      },
+    });
   }
 
   const profiles = await srv
     .from("profiles")
     .select("id, display_name, email, phone")
-    .eq("institution_id", institutionId)
     .in("id", Array.from(teacherIds))
     .order("display_name", { ascending: true });
 
@@ -320,5 +348,9 @@ export async function GET(req: NextRequest) {
       email: profile.email ?? null,
       phone: profile.phone ?? null,
     })),
+    meta: {
+      shared_pool: poolInstitutionIds.length > 1,
+      institution_count: poolInstitutionIds.length,
+    },
   });
 }
