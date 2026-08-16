@@ -153,6 +153,7 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const subjectId = String(url.searchParams.get("subject_id") || "").trim();
+  const groupPoolRequested = url.searchParams.get("pool") === "group";
   const scopeResult = readValidatedScope(url.searchParams);
   if (!scopeResult.ok) {
     return NextResponse.json({ error: scopeResult.error }, { status: 400 });
@@ -196,14 +197,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", items: [] }, { status: 403 });
   }
 
-  let poolInstitutionIds: string[];
-  try {
-    poolInstitutionIds = await resolveTeacherPoolInstitutionIds(srv, institutionId);
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: error?.message || "teacher_pool_scope_failed", items: [] },
-      { status: 400 },
-    );
+  let poolInstitutionIds = [institutionId];
+  if (groupPoolRequested) {
+    try {
+      poolInstitutionIds = await resolveTeacherPoolInstitutionIds(srv, institutionId);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error?.message || "teacher_pool_scope_failed", items: [] },
+        { status: 400 },
+      );
+    }
   }
 
   const roles = await srv
@@ -224,6 +227,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       items: [],
       meta: {
+        requested_pool: groupPoolRequested ? "group" : "institution",
         shared_pool: poolInstitutionIds.length > 1,
         institution_count: poolInstitutionIds.length,
       },
@@ -246,6 +250,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         items: [],
         meta: {
+          requested_pool: groupPoolRequested ? "group" : "institution",
           shared_pool: poolInstitutionIds.length > 1,
           institution_count: poolInstitutionIds.length,
         },
@@ -321,6 +326,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       items: [],
       meta: {
+        requested_pool: groupPoolRequested ? "group" : "institution",
         shared_pool: poolInstitutionIds.length > 1,
         institution_count: poolInstitutionIds.length,
       },
@@ -348,6 +354,7 @@ export async function GET(req: NextRequest) {
       phone: profile.phone ?? null,
     })),
     meta: {
+      requested_pool: groupPoolRequested ? "group" : "institution",
       shared_pool: poolInstitutionIds.length > 1,
       institution_count: poolInstitutionIds.length,
     },
