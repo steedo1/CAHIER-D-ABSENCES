@@ -6,10 +6,13 @@ async function read(relativePath) {
   return await readFile(new URL(`../${relativePath}`, import.meta.url), "utf8");
 }
 
-test("le vivier enseignant est indépendant de l'année scolaire et partageable par groupe", async () => {
+test("le vivier enseignant est indépendant de l'année scolaire et le groupe reste opt-in", async () => {
   const route = await read("src/app/api/admin/teachers/by-subject/route.ts");
   const helper = await read("src/lib/teacher-pool-scope.ts");
 
+  assert.match(route, /const groupPoolRequested = url\.searchParams\.get\("pool"\) === "group"/);
+  assert.match(route, /let poolInstitutionIds = \[institutionId\]/);
+  assert.match(route, /if \(groupPoolRequested\)/);
   assert.match(route, /resolveTeacherPoolInstitutionIds/);
   assert.match(route, /\.in\("institution_id", poolInstitutionIds\)/);
   assert.match(route, /\.from\("profiles"\)[\s\S]*\.in\("id", Array\.from\(teacherIds\)\)/);
