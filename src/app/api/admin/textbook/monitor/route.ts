@@ -312,31 +312,24 @@ export async function GET(req: NextRequest) {
   const teacherIds = uniq(Array.from(effectiveTeacherByAssignment.values()));
   const teacherNames = new Map<string, string>();
   if (teacherIds.length) {
-    const [teachersResult, profilesResult] = await Promise.all([
+    const [profilesResult, teachersResult] = await Promise.all([
+      srv.from("profiles").select("id,display_name").in("id", teacherIds),
       srv.from("teachers").select("id,full_name").in("id", teacherIds),
-      srv
-        .from("profiles")
-        .select("id,display_name,full_name,first_name,last_name")
-        .in("id", teacherIds),
     ]);
-
-    if (!teachersResult.error) {
-      for (const teacher of (teachersResult.data || []) as any[]) {
-        const id = String(teacher?.id || "").trim();
-        const name = String(teacher?.full_name || "").trim();
-        if (id && name) teacherNames.set(id, name);
-      }
-    }
 
     if (!profilesResult.error) {
       for (const profile of (profilesResult.data || []) as any[]) {
         const id = String(profile?.id || "").trim();
+        const name = String(profile?.display_name || "").trim();
+        if (id && name) teacherNames.set(id, name);
+      }
+    }
+
+    if (!teachersResult.error) {
+      for (const teacher of (teachersResult.data || []) as any[]) {
+        const id = String(teacher?.id || "").trim();
         if (!id || teacherNames.has(id)) continue;
-        const name = String(
-          profile?.display_name ||
-            profile?.full_name ||
-            `${profile?.first_name || ""} ${profile?.last_name || ""}`,
-        ).trim();
+        const name = String(teacher?.full_name || "").trim();
         if (name) teacherNames.set(id, name);
       }
     }
