@@ -312,19 +312,33 @@ export async function GET(req: NextRequest) {
   const teacherIds = uniq(Array.from(effectiveTeacherByAssignment.values()));
   const teacherNames = new Map<string, string>();
   if (teacherIds.length) {
-    const { data: profiles } = await srv
-      .from("profiles")
-      .select("id,display_name,full_name,first_name,last_name")
-      .in("id", teacherIds);
+    const [teachersResult, profilesResult] = await Promise.all([
+      srv.from("teachers").select("id,full_name").in("id", teacherIds),
+      srv
+        .from("profiles")
+        .select("id,display_name,full_name,first_name,last_name")
+        .in("id", teacherIds),
+    ]);
 
-    for (const profile of (profiles || []) as any[]) {
-      const name =
-        String(
+    if (!teachersResult.error) {
+      for (const teacher of (teachersResult.data || []) as any[]) {
+        const id = String(teacher?.id || "").trim();
+        const name = String(teacher?.full_name || "").trim();
+        if (id && name) teacherNames.set(id, name);
+      }
+    }
+
+    if (!profilesResult.error) {
+      for (const profile of (profilesResult.data || []) as any[]) {
+        const id = String(profile?.id || "").trim();
+        if (!id || teacherNames.has(id)) continue;
+        const name = String(
           profile?.display_name ||
             profile?.full_name ||
             `${profile?.first_name || ""} ${profile?.last_name || ""}`,
-        ).trim() || "Enseignant";
-      teacherNames.set(String(profile.id), name);
+        ).trim();
+        if (name) teacherNames.set(id, name);
+      }
     }
   }
 
@@ -464,7 +478,7 @@ export async function GET(req: NextRequest) {
           "Matière",
         teacher_id: teacherId,
         teacher_name: teacherId
-          ? teacherNames.get(teacherId) || "Enseignant"
+          ? teacherNames.get(teacherId) || "Nom enseignant indisponible"
           : "Enseignant non affecté",
         ...annual,
         periods,

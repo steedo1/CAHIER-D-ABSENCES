@@ -89,3 +89,14 @@ test("le monitoring calcule aussi l'exécution par trimestre", () => {
   assert.match(monitorRoute, /sessions_count/);
   assert.match(monitorRoute, /completion_rate/);
 });
+
+test("le monitoring résout le vrai nom du professeur", () => {
+  assert.match(monitorRoute, /\.from\("teachers"\)\.select\("id,full_name"\)/);
+  assert.match(monitorRoute, /\.from\("profiles"\)/);
+  assert.match(monitorRoute, /teacherNames\.has\(id\)/);
+  assert.doesNotMatch(
+    monitorRoute,
+    /teacherNames\.get\(teacherId\) \|\| "Enseignant"/,
+  );
+  assert.match(monitorRoute, /Nom enseignant indisponible/);
+});
