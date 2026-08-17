@@ -11,7 +11,22 @@ async function source() {
   return await readFile(sourcePath, "utf8");
 }
 
-test("la préparation admin des appels est isolée des autres pages administratives", async () => {
+test("la préparation Admin couvre les fonctions essentielles sans dépendre de la page ouverte", async () => {
+  const code = await source();
+
+  assert.match(code, /prepareAdminEssentialOffline/);
+  assert.doesNotMatch(
+    code,
+    /role === "admin"\s*&&\s*!isAdminAttendancePath\(pathnameRef\.current\)\) return/,
+  );
+  assert.match(code, /if \(role === "admin"\) \{/);
+  assert.match(
+    code,
+    /if \(sessionRef\.current\) \{\s*await prepareAdminEssentialOffline\(\);\s*\}/s,
+  );
+});
+
+test("la vue des appels conserve sa préparation relais spécifique", async () => {
   const code = await source();
 
   assert.match(code, /usePathname/);
@@ -19,11 +34,11 @@ test("la préparation admin des appels est isolée des autres pages administrati
   assert.match(code, /"\/admin\/absences\/appels-matrice"/);
   assert.match(
     code,
-    /role === "admin"\s*&&\s*!isAdminAttendancePath\(pathnameRef\.current\)\) return/,
+    /if \(isAdminAttendancePath\(pathnameRef\.current\)\) \{\s*await prepareAdminAttendanceView\(\);\s*\}/s,
   );
 });
 
-test("la préparation globale reste silencieuse et ne pollue plus le conseil de classe", async () => {
+test("la préparation globale reste silencieuse et ne pollue pas les écrans Admin", async () => {
   const code = await source();
 
   assert.doesNotMatch(code, /Actualisation impossible, ancienne préparation conservée/);
@@ -33,11 +48,11 @@ test("la préparation globale reste silencieuse et ne pollue plus le conseil de 
   assert.match(code, /return null;/);
 });
 
-test("un échec du shell hors ligne ne transforme pas une lecture admin réussie en échec", async () => {
+test("un échec du shell d'appels ne transforme pas une lecture admin réussie en échec", async () => {
   const code = await source();
   const start = code.indexOf("async function prepareAdminAttendanceView()");
   const end = code.indexOf("function numberFromStorage", start);
-  assert.ok(start >= 0 && end > start, "préparation admin introuvable");
+  assert.ok(start >= 0 && end > start, "préparation admin des appels introuvable");
   const preparation = code.slice(start, end);
 
   assert.match(preparation, /await fetchAdminAttendanceMonitor\(/);
