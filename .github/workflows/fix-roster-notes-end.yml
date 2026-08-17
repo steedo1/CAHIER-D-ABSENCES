@@ -63,7 +63,8 @@ jobs:
 
           body_pattern = re.compile(
               r'(?P<i>[ \t]*)<td className="col-name">\s*'
-              r'\{formatTraditionalStudentName\(student\)\}\s*'</n              r'</td>\s*'
+              r'\{formatTraditionalStudentName\(student\)\}\s*'
+              r'</td>\s*'
               r'<td className="col-series"></td>\s*'
               r'<td className="col-board"></td>\s*'
               r'<td className="col-lv2"></td>\s*'
