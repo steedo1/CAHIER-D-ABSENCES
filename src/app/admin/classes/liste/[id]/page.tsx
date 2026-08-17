@@ -244,6 +244,32 @@ function boardingShort(value: boolean | null | undefined) {
   return "";
 }
 
+function normalizeInstitutionRoleText(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function classListHeadRoleLabel(
+  institution: ClassListPayload["institution"] | null | undefined,
+) {
+  const haystack = normalizeInstitutionRoleText(
+    [institution?.status, institution?.head_title].filter(Boolean).join(" "),
+  );
+
+  if (
+    haystack.includes("directeur des etudes") ||
+    haystack.includes("directrice des etudes") ||
+    haystack.includes("prive") ||
+    haystack.includes("private")
+  ) {
+    return "Directeur des études";
+  }
+
+  return "Chef d’établissement";
+}
+
 const EDITABLE_STUDENT_FIELDS: Array<keyof EditableStudent> = [
   "first_name",
   "last_name",
@@ -593,6 +619,23 @@ export default function ClassListPrintPage() {
           padding: 14px 18px 18px;
           font-family: Arial, Helvetica, sans-serif;
           overflow: hidden;
+          position: relative;
+          isolation: isolate;
+        }
+
+        .class-list-watermark {
+          position: absolute;
+          left: 50%;
+          top: 54%;
+          width: min(40%, 340px);
+          max-height: 72%;
+          transform: translate(-50%, -50%);
+          object-fit: contain;
+          opacity: 0.12;
+          filter: grayscale(0.08) saturate(0.9);
+          pointer-events: none;
+          user-select: none;
+          z-index: 4;
         }
 
         .official-header {
@@ -785,6 +828,11 @@ export default function ClassListPrintPage() {
         }
 
         @media print {
+          .class-list-watermark {
+            width: 78mm !important;
+            opacity: 0.14 !important;
+          }
+
           html,
           body {
             background: white !important;
@@ -1376,6 +1424,14 @@ export default function ClassListPrintPage() {
       ) : data ? (
         <section className="class-list-print-root">
           <article className="class-list-sheet">
+            {data.institution.logo_url ? (
+              <img
+                src={data.institution.logo_url}
+                alt=""
+                aria-hidden="true"
+                className="class-list-watermark"
+              />
+            ) : null}
             <header className="official-header">
               <div className="school-block">
                 {data.institution.logo_url ? (
@@ -1435,7 +1491,7 @@ export default function ClassListPrintPage() {
                 <strong>Éducateur de niveau :</strong> {selectedEducator}
               </div>
               <div>
-                <strong>Chef d’établissement :</strong>{" "}
+                <strong>{classListHeadRoleLabel(data.institution)} :</strong>{" "}
                 {data.institution.head_name || "À renseigner"}
               </div>
             </div>
@@ -1447,13 +1503,13 @@ export default function ClassListPrintPage() {
                   <th className="col-matricule">Matricule</th>
                   <th className="col-name">Nom et prénoms</th>
                   <th className="col-series">Note1</th>
-                  <th className="col-affect">Aff.</th>
                   <th className="col-board">Note2</th>
+                  <th className="col-lv2">Note3</th>
+                  <th className="col-nat">Note4</th>
+                  <th className="col-affect">Aff.</th>
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
-                  <th className="col-lv2">Note3</th>
-                  <th className="col-nat">Note4</th>
                 </tr>
               </thead>
               <tbody>
@@ -1477,10 +1533,12 @@ export default function ClassListPrintPage() {
                         {formatTraditionalStudentName(student)}
                       </td>
                       <td className="col-series"></td>
+                      <td className="col-board"></td>
+                      <td className="col-lv2"></td>
+                      <td className="col-nat"></td>
                       <td className="col-affect">
                         {affectationShort(student.is_affecte)}
                       </td>
-                      <td className="col-board"></td>
                       <td className="col-date">
                         {formatDateFR(student.birthdate)}
                       </td>
@@ -1488,8 +1546,6 @@ export default function ClassListPrintPage() {
                       <td className="col-red">
                         {student.is_repeater ? "R" : ""}
                       </td>
-                      <td className="col-lv2"></td>
-                      <td className="col-nat"></td>
                     </tr>
                   ))
                 )}

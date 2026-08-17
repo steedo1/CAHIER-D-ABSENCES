@@ -563,7 +563,7 @@ export default function ImportEmploisDuTempsPage() {
         row.teacher_id !== selectedTeacherId
       ) {
         messages.push(
-          `Classe déjà occupée par ${occupancyTeacherLabel(row)} (${occupancySubjectLabel(row)}).`,
+          `Matière présente : ${occupancySubjectLabel(row)} avec ${occupancyTeacherLabel(row)} dans cette classe.`,
         );
       }
     }
@@ -576,7 +576,7 @@ export default function ImportEmploisDuTempsPage() {
         row.class_id !== classId
       ) {
         messages.push(
-          `${selectedTeacherLabel || "Ce professeur"} est déjà prévu en ${row.class_label || "une autre classe"}.`,
+          `Professeur déjà présent : ${selectedTeacherLabel || "Ce professeur"} est prévu en ${row.class_label || "une autre classe"} sur ce créneau.`,
         );
       }
     }
@@ -749,6 +749,20 @@ export default function ImportEmploisDuTempsPage() {
     if (!activeKey) return [];
     return cellSelection[activeKey] || [];
   }, [activeKey, cellSelection]);
+
+  function conflictStatusLabel(messages: string[], includePermission = true) {
+    let label = "Occupation présente";
+    if (messages.some((message) => message.startsWith("Matière présente"))) {
+      label = "Matière présente";
+    } else if (
+      messages.some((message) => message.startsWith("Professeur déjà présent"))
+    ) {
+      label = "Professeur déjà présent";
+    }
+    return includePermission
+      ? `${label} — enregistrement autorisé`
+      : label;
+  }
 
   const activeConflictMessages = activeCell
     ? Array.from(
@@ -1388,7 +1402,7 @@ export default function ImportEmploisDuTempsPage() {
                                       {hasConflict ? (
                                         <div className="mt-1 inline-flex items-center gap-1 font-semibold text-amber-800">
                                           <AlertTriangle className="h-3 w-3" />
-                                          Conflit signalé
+                                          {conflictStatusLabel(conflictMessages, false)}
                                         </div>
                                       ) : null}
                                     </>
@@ -1412,7 +1426,7 @@ export default function ImportEmploisDuTempsPage() {
                     </p>
                   ) : educationScope.classId ? (
                     <p className="mt-2 text-[11px] text-slate-500">
-                      La grille affiche maintenant uniquement les créneaux déjà occupés par ce professeur dans la classe choisie. Les chevauchements sont signalés en orange, sans bloquer la saisie.
+                      La grille affiche maintenant uniquement les créneaux déjà occupés par ce professeur dans la classe choisie. Les occupations déjà présentes sont précisées en orange, sans bloquer la saisie.
                     </p>
                   ) : (
                     <p className="mt-2 text-[11px] text-slate-500">
@@ -1425,7 +1439,7 @@ export default function ImportEmploisDuTempsPage() {
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       <div>
                         <div className="font-semibold">
-                          Conflit signalé — enregistrement autorisé.
+                          {conflictStatusLabel(activeConflictMessages)}.
                         </div>
                         <ul className="mt-1 list-disc space-y-0.5 pl-4">
                           {activeConflictMessages.map((message) => (
@@ -1582,7 +1596,7 @@ export default function ImportEmploisDuTempsPage() {
                               </span>
                               {hasConflict ? (
                                 <span className="mt-0.5 block text-[10px] font-semibold text-amber-800">
-                                  Conflit signalé — enregistrement autorisé
+                                  {conflictStatusLabel(conflictMessages)}
                                 </span>
                               ) : null}
                             </span>
@@ -1722,7 +1736,7 @@ export default function ImportEmploisDuTempsPage() {
                               </span>
                               {hasConflict ? (
                                 <span className="mt-0.5 block text-[10px] font-semibold text-amber-800">
-                                  Conflit signalé — enregistrement autorisé
+                                  {conflictStatusLabel(conflictMessages)}
                                 </span>
                               ) : null}
                             </span>
