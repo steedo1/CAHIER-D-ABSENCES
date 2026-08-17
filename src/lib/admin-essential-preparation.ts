@@ -41,6 +41,13 @@ export type AdminEssentialPreparationResult = {
   prepared_at: string;
 };
 
+const ADMIN_ESSENTIAL_STATIC_PATHS = [
+  "/admin/absences/appels-matrice",
+  "/admin/parents",
+  "/admin/bulletins",
+  "/admin/notes/conseil-classe",
+] as const;
+
 function itemsOf<T>(payload: any): T[] {
   if (Array.isArray(payload)) return payload as T[];
   return Array.isArray(payload?.items) ? payload.items : [];
@@ -243,6 +250,13 @@ export async function prepareAdminEssentialOffline(
     Boolean(String(item?.id || "").trim()),
   );
 
+  // Le document PWA et ses chunks doivent être rafraîchis AVANT les travaux
+  // lourds (rosters, bulletins, conduite). Sinon une seule classe défaillante ou
+  // une coupure pendant la préparation peut laisser un ancien shell en cache,
+  // avec ancien menu et ancien code de lecture hors ligne.
+  onProgress("Mise à jour des écrans essentiels…");
+  await warmOfflineShell([...ADMIN_ESSENTIAL_STATIC_PATHS]);
+
   let rosterCount = 0;
   onProgress(`Préparation de ${classes.length} liste(s) de classe…`);
   await mapLimit(classes, 4, async (classRow, index) => {
@@ -264,14 +278,6 @@ export async function prepareAdminEssentialOffline(
     // calcul aux élèves encore inscrits : elle fait partie du paquet obligatoire.
     await jsonGet(activeStudentsUrl(classId));
   });
-
-  onProgress("Préparation des écrans essentiels…");
-  await warmOfflineShell([
-    "/admin/absences/appels-matrice",
-    "/admin/parents",
-    "/admin/bulletins",
-    "/admin/notes/conseil-classe",
-  ]);
 
   // Les listes imprimables sont dynamiques. Une panne sur une classe ne doit
   // pas empêcher la consultation des trois autres fonctions essentielles.
