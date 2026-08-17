@@ -66,6 +66,33 @@ test("une erreur d'authentification n'est jamais masquée par une ancienne copie
   assert.doesNotMatch(code, /status === 403.*cached/s);
 });
 
+test("les listes essentielles passent Cloud puis relais puis cache sans modifier les pages", async () => {
+  const code = await read(bridgePath);
+
+  assert.match(code, /getRelayConfig/);
+  assert.match(code, /\/v1\/admin\/dashboard/);
+  assert.match(code, /isRelayBackedAdminReadPath/);
+  assert.match(code, /relayDashboard/);
+  assert.match(code, /relayRosterResponse/);
+  assert.match(code, /fallbackResponse/);
+  assert.match(code, /dataResponse\(payload, "relay"\)/);
+  assert.match(code, /storeResponse\(url, relay\)/);
+
+  for (const path of [
+    "/api/admin/classes",
+    "/api/admin/students",
+    "/api/admin/institution/settings",
+    "/api/admin/institution/academic-years",
+    "/api/admin/institution/grading-periods",
+  ]) {
+    assert.match(code, new RegExp(path.replaceAll("/", "\\/")));
+  }
+
+  assert.match(code, /\/api\\\/admin\\\/classes\\\/\(\[\^\/\]\+\)\\\/roster/);
+  assert.doesNotMatch(code, /isRelayBackedAdminReadPath[\s\S]*grades\/bulletin/);
+  assert.doesNotMatch(code, /isRelayBackedAdminReadPath[\s\S]*conduite\/averages/);
+});
+
 test("la préparation exige un scope Cloud confirmé puis couvre les écrans sans ouverture préalable", async () => {
   const code = await read(preparationPath);
 
