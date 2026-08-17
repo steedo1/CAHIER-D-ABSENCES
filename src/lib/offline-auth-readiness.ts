@@ -9,6 +9,11 @@ import {
   getOfflineReadiness,
 } from "@/lib/offline-readiness";
 import { hasInstitutionScopedAdminAttendanceMonitorCache } from "@/lib/local-relay";
+import {
+  adminEssentialPreparationKey,
+  isAdminEssentialPreparationMarker,
+  type AdminEssentialPreparationMarker,
+} from "@/lib/admin-essential-contract";
 import type { OfflineAccessGrantPayload } from "@/lib/offline-auth-contract";
 
 function todayInAbidjan() {
@@ -103,11 +108,20 @@ async function classDevicePrepared(payload: OfflineAccessGrantPayload) {
 
 async function adminPrepared(payload: OfflineAccessGrantPayload) {
   const date = todayInAbidjan();
-  return await hasInstitutionScopedAdminAttendanceMonitorCache(
+  const attendanceReady = await hasInstitutionScopedAdminAttendanceMonitorCache(
     payload.institution_id,
     date,
     date,
   );
+  if (!attendanceReady) return false;
+
+  const marker = await cacheGet<AdminEssentialPreparationMarker>(
+    adminEssentialPreparationKey(payload.user_id, payload.institution_id),
+  ).catch(() => null);
+  return isAdminEssentialPreparationMarker(marker, {
+    userId: payload.user_id,
+    institutionId: payload.institution_id,
+  });
 }
 
 export async function isOfflineFunctionPrepared(
