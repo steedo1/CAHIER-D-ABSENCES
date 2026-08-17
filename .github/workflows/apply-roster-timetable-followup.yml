@@ -1,0 +1,38 @@
+name: Apply roster timetable follow-up
+
+on:
+  push:
+    branches:
+      - fix/roster-notes-private-watermark-timetable-wording
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/roster-notes-private-watermark-timetable-wording
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply focused source changes
+        run: python3 scripts/apply-roster-timetable-followup.py
+
+      - name: Run focused regression test
+        run: node --test test/timetable-roster-ux.test.mjs
+
+      - name: Commit final changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(roster): group notes and clarify timetable occupations"
+          git push origin HEAD:fix/roster-notes-private-watermark-timetable-wording
