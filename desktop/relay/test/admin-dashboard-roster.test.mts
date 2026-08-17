@@ -3,7 +3,7 @@ import test from "node:test";
 import { adminDashboard } from "../src/admin-dashboard.mjs";
 import { openRelayDatabase } from "../src/db.mjs";
 
-test("le dashboard relais expose le roster de l'annee active sans inscriptions terminees", () => {
+test("le dashboard relais expose le roster, les annees et les periodes synchronisees", () => {
   const db = openRelayDatabase(":memory:");
   try {
     const now = "2026-08-17T00:00:00.000Z";
@@ -20,12 +20,13 @@ test("le dashboard relais expose le roster de l'annee active sans inscriptions t
       now,
     );
 
-    db.prepare(`
+    const insertYear = db.prepare(`
       INSERT INTO academic_years(
         id, institution_id, code, label, start_date, end_date, is_current,
         server_version, updated_at, deleted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)
-    `).run(
+    `);
+    insertYear.run(
       "year-current",
       "inst-1",
       "2026-2027",
@@ -35,12 +36,7 @@ test("le dashboard relais expose le roster de l'annee active sans inscriptions t
       1,
       now,
     );
-    db.prepare(`
-      INSERT INTO academic_years(
-        id, institution_id, code, label, start_date, end_date, is_current,
-        server_version, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)
-    `).run(
+    insertYear.run(
       "year-old",
       "inst-1",
       "2025-2026",
@@ -49,6 +45,28 @@ test("le dashboard relais expose le roster de l'annee active sans inscriptions t
       "2026-07-31",
       0,
       now,
+    );
+
+    db.prepare(`
+      INSERT INTO grade_periods(
+        id, institution_id, academic_year, label, start_date, end_date,
+        is_locked, server_version, updated_at, deleted_at, code, short_label,
+        order_index, is_active, kind, coeff
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, NULL, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "period-t1",
+      "inst-1",
+      "2026-2027",
+      "1er trimestre",
+      "2026-09-01",
+      "2026-12-20",
+      now,
+      "T1",
+      "T1",
+      1,
+      1,
+      "trimester",
+      1,
     );
 
     const insertClass = db.prepare(`
@@ -171,6 +189,16 @@ test("le dashboard relais expose le roster de l'annee active sans inscriptions t
 
     assert.equal(result.roster.academic_year, "2026-2027");
     assert.deepEqual(
+      result.roster.academic_years.map((row: any) => row.code),
+      ["2026-2027", "2025-2026"],
+    );
+    assert.equal(result.roster.academic_years[0].is_current, true);
+    assert.deepEqual(
+      result.roster.grading_periods.map((row: any) => row.code),
+      ["T1"],
+    );
+    assert.equal(result.roster.grading_periods[0].is_active, true);
+    assert.deepEqual(
       result.roster.classes.map((row: any) => row.id),
       ["class-current"],
     );
@@ -184,6 +212,7 @@ test("le dashboard relais expose le roster de l'annee active sans inscriptions t
     assert.equal(result.roster.students[0].birth_place, "Aboisso");
     assert.equal(result.roster.students[0].is_affecte, true);
     assert.equal(result.roster.institution_settings.institution_name, "College Test");
+    assert.equal(result.roster.institution_settings.institution_code, "TEST");
   } finally {
     db.close();
   }
