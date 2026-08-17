@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import { prepareOffline } from "@/lib/offline-readiness";
 import { prepareAdminEssentialOffline } from "@/lib/admin-essential-preparation";
+import { setAdminEssentialSessionUser } from "@/lib/admin-essential-fetch";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 import { warmOfflineShell } from "@/lib/offline";
 import {
@@ -20,7 +21,12 @@ import {
 const ROLE_TIMEOUT_MS = 5_000;
 const ADMIN_PREPARATION_TIMEOUT_MS = 12_000;
 
-type RolePayload = { user_id?: string; role?: string; offline_access?: unknown };
+type RolePayload = {
+  user_id?: string;
+  role?: string;
+  institution_id?: string | null;
+  offline_access?: unknown;
+};
 
 let preparationInFlight: Promise<void> | null = null;
 
@@ -127,6 +133,13 @@ export default function BackgroundAttendancePreparation() {
   const loadingRef = useRef(loading);
   const pathnameRef = useRef(pathname);
 
+  // Tous les layout effects sont exécutés avant les useEffect des pages. Le pont
+  // de lecture ne peut donc jamais reprendre le scope Cloud d'un ancien compte
+  // pendant qu'une nouvelle page Admin démarre ses propres lectures.
+  useLayoutEffect(() => {
+    setAdminEssentialSessionUser(session?.user?.id || null);
+  }, [session?.user?.id]);
+
   useEffect(() => {
     sessionRef.current = session;
     loadingRef.current = loading;
@@ -148,25 +161,31 @@ export default function BackgroundAttendancePreparation() {
       preparationInFlight = (async () => {
         let role: OfflineAccessRole | null = null;
         let userId = sessionRef.current?.user?.id || "";
+        let institutionId = "";
+        let cloudRoleVerified = false;
         try {
           if (sessionRef.current) {
             try {
               const payload = await fetchRole();
               role = isOfflineAccessRole(payload.role) ? payload.role : null;
-              userId = String(payload.user_id || userId);
+              userId = String(payload.user_id || userId).trim();
+              institutionId = String(payload.institution_id || "").trim();
+              cloudRoleVerified = Boolean(role && userId && institutionId);
             } catch (error) {
               // Une session Supabase peut encore être présente localement alors que
-              // le réseau est coupé. Dans ce cas seulement, l'intention déjà
-              // provisionnée permet de conserver les mêmes fonctions préparées.
+              // le réseau est coupé. Le grant local permet de continuer à utiliser
+              // le dernier paquet valide, mais jamais de le remplacer.
               const active = await getOfflineAccessIntent();
               if (!active || active.payload.user_id !== userId) throw error;
               role = active.payload.role;
               userId = active.payload.user_id;
+              institutionId = active.payload.institution_id;
             }
           } else {
             const active = await getOfflineAccessIntent();
             role = active?.payload.role || null;
             userId = active?.payload.user_id || "";
+            institutionId = active?.payload.institution_id || "";
           }
 
           if (!role || !userId) return;
@@ -196,24 +215,36 @@ export default function BackgroundAttendancePreparation() {
           writeStorage(attemptKey, now);
 
           await withCrossTabLock(async () => {
+            let prepared = false;
+
             if (role === "admin") {
               // Appels garde sa lecture Cloud -> relais -> cache, y compris lorsque
               // le Cloud est déjà coupé.
               if (isAdminAttendancePath(pathnameRef.current)) {
                 await prepareAdminAttendanceView();
+                prepared = true;
               }
 
-              // Le vrai hors-ligne Admin est préparé automatiquement pendant une
-              // session Cloud. L'utilisateur n'a pas à ouvrir Listes, Bulletins ou
-              // Conseil avant la panne. En session hors ligne pure, on conserve la
-              // dernière préparation valide sans tenter de la remplacer.
-              if (sessionRef.current) {
-                await prepareAdminEssentialOffline();
+              // Le vrai hors-ligne Admin est préparé uniquement après confirmation
+              // Cloud du compte ET de son établissement. L'utilisateur n'a pas à
+              // ouvrir Listes, Bulletins ou Conseil avant la panne.
+              if (
+                cloudRoleVerified &&
+                sessionRef.current &&
+                institutionId
+              ) {
+                await prepareAdminEssentialOffline({ userId, institutionId });
+                prepared = true;
               }
             } else {
               await prepareOffline(role === "teacher" ? "teacher" : "class-device");
+              prepared = true;
             }
-            writeStorage(successKey, Date.now());
+
+            // Une session Cloud résiduelle hors réseau sur une page Admin autre que
+            // Appels est un no-op : elle ne doit pas repousser la prochaine vraie
+            // préparation de six heures.
+            if (prepared) writeStorage(successKey, Date.now());
           });
         } catch {
           // Préparation opportuniste et silencieuse : une indisponibilité du Cloud,
