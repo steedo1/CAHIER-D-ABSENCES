@@ -26,73 +26,87 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('src/app/admin/classes/liste/[id]/page.tsx')
           text = path.read_text(encoding='utf-8')
 
-          old_header = '''                  <th className="col-name">Nom et prénoms</th>
-                  <th className="col-series">Note1</th>
-                  <th className="col-board">Note2</th>
-                  <th className="col-lv2">Note3</th>
-                  <th className="col-nat">Note4</th>
-                  <th className="col-affect">Aff.</th>
-                  <th className="col-date">Né(e) le</th>
-                  <th className="col-sex">Sexe</th>
-                  <th className="col-red">Red</th>'''
+          header_pattern = re.compile(
+              r'(?P<i>[ \t]*)<th className="col-name">Nom et prénoms</th>\s*'
+              r'<th className="col-series">Note1</th>\s*'
+              r'<th className="col-board">Note2</th>\s*'
+              r'<th className="col-lv2">Note3</th>\s*'
+              r'<th className="col-nat">Note4</th>\s*'
+              r'<th className="col-affect">Aff\.</th>\s*'
+              r'<th className="col-date">Né\(e\) le</th>\s*'
+              r'<th className="col-sex">Sexe</th>\s*'
+              r'<th className="col-red">Red</th>'
+          )
 
-          new_header = '''                  <th className="col-name">Nom et prénoms</th>
-                  <th className="col-affect">Aff.</th>
-                  <th className="col-date">Né(e) le</th>
-                  <th className="col-sex">Sexe</th>
-                  <th className="col-red">Red</th>
-                  <th className="col-series">Note1</th>
-                  <th className="col-board">Note2</th>
-                  <th className="col-lv2">Note3</th>
-                  <th className="col-nat">Note4</th>'''
+          def header_repl(match):
+              i = match.group('i')
+              return '\n'.join([
+                  f'{i}<th className="col-name">Nom et prénoms</th>',
+                  f'{i}<th className="col-affect">Aff.</th>',
+                  f'{i}<th className="col-date">Né(e) le</th>',
+                  f'{i}<th className="col-sex">Sexe</th>',
+                  f'{i}<th className="col-red">Red</th>',
+                  f'{i}<th className="col-series">Note1</th>',
+                  f'{i}<th className="col-board">Note2</th>',
+                  f'{i}<th className="col-lv2">Note3</th>',
+                  f'{i}<th className="col-nat">Note4</th>',
+              ])
 
-          old_body = '''                      <td className="col-name">
-                        {formatTraditionalStudentName(student)}
-                      </td>
-                      <td className="col-series"></td>
-                      <td className="col-board"></td>
-                      <td className="col-lv2"></td>
-                      <td className="col-nat"></td>
-                      <td className="col-affect">
-                        {affectationShort(student.is_affecte)}
-                      </td>
-                      <td className="col-date">
-                        {formatDateFR(student.birthdate)}
-                      </td>
-                      <td className="col-sex">{sexShort(student.gender)}</td>
-                      <td className="col-red">
-                        {student.is_repeater ? "R" : ""}
-                      </td>'''
+          text, header_count = header_pattern.subn(header_repl, text, count=1)
+          if header_count != 1:
+              raise SystemExit(f'expected one roster header block, found {header_count}')
 
-          new_body = '''                      <td className="col-name">
-                        {formatTraditionalStudentName(student)}
-                      </td>
-                      <td className="col-affect">
-                        {affectationShort(student.is_affecte)}
-                      </td>
-                      <td className="col-date">
-                        {formatDateFR(student.birthdate)}
-                      </td>
-                      <td className="col-sex">{sexShort(student.gender)}</td>
-                      <td className="col-red">
-                        {student.is_repeater ? "R" : ""}
-                      </td>
-                      <td className="col-series"></td>
-                      <td className="col-board"></td>
-                      <td className="col-lv2"></td>
-                      <td className="col-nat"></td>'''
+          body_pattern = re.compile(
+              r'(?P<i>[ \t]*)<td className="col-name">\s*'
+              r'\{formatTraditionalStudentName\(student\)\}\s*'</n              r'</td>\s*'
+              r'<td className="col-series"></td>\s*'
+              r'<td className="col-board"></td>\s*'
+              r'<td className="col-lv2"></td>\s*'
+              r'<td className="col-nat"></td>\s*'
+              r'<td className="col-affect">\s*'
+              r'\{affectationShort\(student\.is_affecte\)\}\s*'
+              r'</td>\s*'
+              r'<td className="col-date">\s*'
+              r'\{formatDateFR\(student\.birthdate\)\}\s*'
+              r'</td>\s*'
+              r'<td className="col-sex">\{sexShort\(student\.gender\)\}</td>\s*'
+              r'<td className="col-red">\s*'
+              r'\{student\.is_repeater \? "R" : ""\}\s*'
+              r'</td>'
+          )
 
-          if old_header not in text:
-              raise SystemExit('expected roster header block not found')
-          if old_body not in text:
-              raise SystemExit('expected roster body block not found')
+          def body_repl(match):
+              i = match.group('i')
+              c = i + '  '
+              return '\n'.join([
+                  f'{i}<td className="col-name">',
+                  f'{c}{{formatTraditionalStudentName(student)}}',
+                  f'{i}</td>',
+                  f'{i}<td className="col-affect">',
+                  f'{c}{{affectationShort(student.is_affecte)}}',
+                  f'{i}</td>',
+                  f'{i}<td className="col-date">',
+                  f'{c}{{formatDateFR(student.birthdate)}}',
+                  f'{i}</td>',
+                  f'{i}<td className="col-sex">{{sexShort(student.gender)}}</td>',
+                  f'{i}<td className="col-red">',
+                  f'{c}{{student.is_repeater ? "R" : ""}}',
+                  f'{i}</td>',
+                  f'{i}<td className="col-series"></td>',
+                  f'{i}<td className="col-board"></td>',
+                  f'{i}<td className="col-lv2"></td>',
+                  f'{i}<td className="col-nat"></td>',
+              ])
 
-          text = text.replace(old_header, new_header, 1)
-          text = text.replace(old_body, new_body, 1)
+          text, body_count = body_pattern.subn(body_repl, text, count=1)
+          if body_count != 1:
+              raise SystemExit(f'expected one roster body block, found {body_count}')
+
           path.write_text(text, encoding='utf-8')
           PY
 
