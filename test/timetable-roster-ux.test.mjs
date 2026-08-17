@@ -25,20 +25,29 @@ test("class timetable occupancy is returned and teacher conflicts remain warning
   );
   assert.match(page, /visibleOccupancyForCell/);
   assert.match(page, /conflictMessagesForClass/);
-  assert.match(page, /Conflit signalé — enregistrement autorisé/);
+  assert.match(page, /conflictStatusLabel/);
+  assert.match(page, /Matière présente :/);
+  assert.match(page, /Professeur déjà présent :/);
+  assert.doesNotMatch(page, /Conflit signalé/);
   assert.match(page, /créneaux déjà occupés de cette classe/);
 });
 
-test("printed roster uses four blank note columns instead of unused columns", () => {
-  const roster = (read("src/app/admin/classes/liste/[id]/page.tsx").split('<table className="roster-table">')[1] || "").split("</table>")[0];
+test("printed roster groups four blank note columns and keeps contextual school heading", () => {
+  const source = read("src/app/admin/classes/liste/[id]/page.tsx");
+  const roster = (source.split('<table className="roster-table">')[1] || "").split("</table>")[0];
   for (const label of ["Note1", "Note2", "Note3", "Note4"]) {
     assert.match(roster, new RegExp(`>${label}<`));
   }
+  assert.match(
+    roster,
+    /Note1<\/th>\s*<th[^>]*>Note2<\/th>\s*<th[^>]*>Note3<\/th>\s*<th[^>]*>Note4<\/th>/s,
+  );
   for (const label of ["Série", "Ext\\.", "LV2", "Nat"]) {
     assert.doesNotMatch(roster, new RegExp(`>${label}<`));
   }
-  assert.match(roster, /<td className="col-series"><\/td>/);
-  assert.match(roster, /<td className="col-board"><\/td>/);
-  assert.match(roster, /<td className="col-lv2"><\/td>/);
-  assert.match(roster, /<td className="col-nat"><\/td>/);
+  assert.match(source, /classListHeadRoleLabel/);
+  assert.match(source, /return "Directeur des études"/);
+  assert.match(source, /class-list-watermark/);
+  assert.match(source, /opacity: 0\.12/);
+  assert.match(source, /opacity: 0\.14 !important/);
 });
