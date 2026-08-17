@@ -349,7 +349,7 @@ function relayAcademicYear(roster: RelayDashboardRoster, code?: string | null) {
 function relayInstitutionPayload(
   dashboard: RelayDashboardPayload,
   roster: RelayDashboardRoster,
-) {
+): Record<string, any> {
   const settings = roster.institution_settings || {};
   const institution = dashboard.institution || {};
   return {
