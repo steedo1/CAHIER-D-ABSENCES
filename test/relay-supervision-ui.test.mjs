@@ -46,6 +46,9 @@ test("l'écran Admin propose test, synchronisation et diagnostic humain", async 
   assert.match(code, /Diagnostic technique/);
   assert.match(code, /Données disponibles localement/);
   assert.match(code, /Synchronisation & intégrité/);
+  assert.match(code, /syncAvailable/);
+  assert.match(code, /Indisponible/);
+  assert.match(code, /Diagnostic administrateur non disponible/);
   assert.doesNotMatch(code, /admin_token/);
   assert.doesNotMatch(code, /\.token\b/);
 });
