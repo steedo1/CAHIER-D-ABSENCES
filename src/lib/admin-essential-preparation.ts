@@ -1,13 +1,21 @@
 "use client";
 
-import { cacheSet, warmOfflineShell } from "@/lib/offline";
+import { cacheGet, cacheSet, warmOfflineShell } from "@/lib/offline";
 import { prepareOffline, type OfflineReadiness } from "@/lib/offline-readiness";
-import { rememberAdminEssentialScope } from "@/lib/admin-essential-fetch";
+import {
+  cacheAdminEssentialJson,
+  rememberAdminEssentialScope,
+} from "@/lib/admin-essential-fetch";
 import {
   ADMIN_ESSENTIAL_PREPARATION_VERSION,
   adminEssentialPreparationKey,
   type AdminEssentialPreparationMarker,
 } from "@/lib/admin-essential-contract";
+import {
+  adminBulletinConductKey,
+  adminBulletinDataKey,
+  adminBulletinPeriodsKey,
+} from "@/lib/offline-bulletins";
 
 type AdminClass = {
   id?: string | null;
@@ -16,6 +24,14 @@ type AdminClass = {
 
 type AdminClassesPayload = {
   items?: AdminClass[];
+};
+
+type AdminPeriod = {
+  id?: string | null;
+  academic_year?: string | null;
+  code?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
 };
 
 export type AdminEssentialPreparationResult = {
@@ -28,6 +44,12 @@ export type AdminEssentialPreparationResult = {
 function itemsOf<T>(payload: any): T[] {
   if (Array.isArray(payload)) return payload as T[];
   return Array.isArray(payload?.items) ? payload.items : [];
+}
+
+function unique(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((value) => String(value || "").trim()).filter(Boolean)),
+  );
 }
 
 async function jsonGet<T = any>(url: string): Promise<T> {
@@ -65,11 +87,11 @@ async function mapLimit<T>(
   await Promise.all(workers);
 }
 
-async function optional(task: () => Promise<unknown>) {
+async function optional<T>(task: () => Promise<T>, fallback: T): Promise<T> {
   try {
-    await task();
+    return await task();
   } catch {
-    // Une projection facultative ne doit pas invalider le paquet principal.
+    return fallback;
   }
 }
 
@@ -82,6 +104,97 @@ function rosterUrl(classId: string, academicYear?: string | null) {
   const base = `/api/admin/classes/${encodeURIComponent(classId)}/roster`;
   const year = String(academicYear || "").trim();
   return year ? `${base}?academic_year=${encodeURIComponent(year)}` : base;
+}
+
+function bulletinParams(classRow: AdminClass, period: AdminPeriod) {
+  const params = new URLSearchParams({
+    class_id: String(classRow.id || "").trim(),
+    from: String(period.start_date || "").trim(),
+    to: String(period.end_date || "").trim(),
+  });
+  const academicYear = String(
+    period.academic_year || classRow.academic_year || "",
+  ).trim();
+  const periodCode = String(period.code || "").trim();
+  if (academicYear) params.set("academic_year", academicYear);
+  if (periodCode) params.set("period_code", periodCode);
+  return params;
+}
+
+async function publishCouncilAliases(classes: AdminClass[]) {
+  const academicYears = unique(classes.map((item) => item.academic_year));
+  const years: Array<string | null> = academicYears.length ? academicYears : [null];
+  const periods: AdminPeriod[] = [];
+
+  for (const year of years) {
+    const cached = await cacheGet<any>(adminBulletinPeriodsKey(year)).catch(() => null);
+    periods.push(...itemsOf<AdminPeriod>(cached));
+  }
+
+  const periodMap = new Map<string, AdminPeriod>();
+  for (const period of periods) {
+    const from = String(period.start_date || "").trim();
+    const to = String(period.end_date || "").trim();
+    if (!from || !to) continue;
+    periodMap.set(
+      `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
+      period,
+    );
+  }
+  const uniquePeriods = Array.from(periodMap.values());
+  const tasks = classes.flatMap((classRow) =>
+    uniquePeriods
+      .filter(
+        (period) =>
+          !classRow.academic_year ||
+          !period.academic_year ||
+          classRow.academic_year === period.academic_year,
+      )
+      .map((period) => ({ classRow, period })),
+  );
+
+  await mapLimit(tasks, 4, async ({ classRow, period }) => {
+    const preparedParams = bulletinParams(classRow, period);
+    const bulletin = await cacheGet<any>(adminBulletinDataKey(preparedParams)).catch(
+      () => null,
+    );
+    const conduct = await cacheGet<any>(
+      adminBulletinConductKey(preparedParams),
+    ).catch(() => null);
+    if (!bulletin) throw new Error("admin_council_bulletin_not_prepared");
+    if (!conduct) throw new Error("admin_council_conduct_not_prepared");
+
+    // Le Conseil ajoute ces deux paramètres, mais l'API Bulletin applique déjà
+    // active_only=true par défaut et ne lit que les évaluations publiées. On
+    // publie donc le même snapshot officiel sous l'URL exacte du Conseil.
+    const councilParams = new URLSearchParams(preparedParams);
+    councilParams.set("published", "true");
+    councilParams.set("active_only", "true");
+    await Promise.all([
+      cacheAdminEssentialJson(
+        `/api/admin/grades/bulletin?${councilParams.toString()}`,
+        bulletin,
+      ),
+      cacheAdminEssentialJson(
+        `/api/admin/conduite/averages?${councilParams.toString()}`,
+        conduct,
+      ),
+    ]);
+
+    // Le récapitulatif annuel actuel du Conseil omet academic_year/period_code.
+    // Même contenu, autre URL : on crée un alias local, sans requête Cloud.
+    const annualParams = new URLSearchParams({
+      class_id: String(classRow.id || "").trim(),
+      from: String(period.start_date || "").trim(),
+      to: String(period.end_date || "").trim(),
+      published: "true",
+      active_only: "true",
+    });
+    await cacheAdminEssentialJson(
+      `/api/admin/grades/bulletin?${annualParams.toString()}`,
+      bulletin,
+    );
+  });
 }
 
 /**
@@ -106,16 +219,25 @@ export async function prepareAdminEssentialOffline(
   rememberAdminEssentialScope({ userId, institutionId });
 
   onProgress("Préparation des listes administratives…");
-  const [classesPayload] = await Promise.all([
+  const [classesPayload, affectationsPayload] = await Promise.all([
     jsonGet<AdminClassesPayload>("/api/admin/classes?limit=999"),
     // Le conseil de classe utilise cette URL sans limite ; on prépare aussi sa
     // clé exacte pour que son code actuel puisse fonctionner sans modification.
-    jsonGet<AdminClassesPayload>("/api/admin/classes"),
+    jsonGet<AdminClassesPayload>("/api/admin/classes").then(() =>
+      jsonGet<AdminClassesPayload>("/api/admin/classes?limit=999"),
+    ),
     jsonGet("/api/admin/students"),
     jsonGet("/api/admin/institution/settings"),
     jsonGet("/api/admin/institution/academic-years"),
-    optional(() => jsonGet("/api/admin/affectations/current")),
-  ]);
+    optional(() => jsonGet<any>("/api/admin/affectations/current"), { items: [] }),
+  ]).then((values) => [values[0], values[5]] as const);
+
+  // Si l'API facultative des affectations n'a pas répondu, Conseil doit recevoir
+  // une réponse vide plutôt qu'une exception réseau dans son Promise.all.
+  await cacheAdminEssentialJson(
+    "/api/admin/affectations/current",
+    affectationsPayload || { items: [] },
+  );
 
   const classes = itemsOf<AdminClass>(classesPayload).filter((item) =>
     Boolean(String(item?.id || "").trim()),
@@ -135,12 +257,12 @@ export async function prepareAdminEssentialOffline(
 
     const academicYear = String(classRow.academic_year || "").trim();
     if (academicYear) {
-      await optional(() => jsonGet(rosterUrl(classId, academicYear)));
+      await optional(() => jsonGet(rosterUrl(classId, academicYear)), null);
     }
 
-    // Le conseil commence par cette variante pour filtrer les élèves encore
-    // inscrits. La préparer suffit à éviter ses deux fallbacks Cloud suivants.
-    await optional(() => jsonGet(activeStudentsUrl(classId)));
+    // Cette variante est la première source utilisée par Conseil pour limiter le
+    // calcul aux élèves encore inscrits : elle fait partie du paquet obligatoire.
+    await jsonGet(activeStudentsUrl(classId));
   });
 
   onProgress("Préparation des écrans essentiels…");
@@ -156,17 +278,19 @@ export async function prepareAdminEssentialOffline(
   await mapLimit(classes, 3, async (classRow) => {
     const classId = String(classRow.id || "").trim();
     if (!classId) return;
-    await optional(() =>
-      warmOfflineShell([`/admin/classes/liste/${encodeURIComponent(classId)}`]),
+    await optional(
+      () => warmOfflineShell([`/admin/classes/liste/${encodeURIComponent(classId)}`]),
+      undefined,
     );
   });
 
   onProgress("Préparation des bulletins et du conseil de classe…");
-  // prepareOffline('admin') sait déjà parcourir toutes les classes et toutes les
-  // périodes, puis préparer Bulletin + Conduite. Comme le pont de lecture est
-  // installé avant cet appel, ces mêmes réponses alimentent aussi le secours du
-  // Conseil de classe sans double calcul métier.
+  // prepareOffline('admin') parcourt déjà toutes les classes et périodes et
+  // calcule Bulletin + Conduite via les API officielles.
   const readiness = await prepareOffline("admin", onProgress);
+
+  // Conseil réutilise les mêmes snapshots : aucune seconde vague de calcul Cloud.
+  await publishCouncilAliases(classes);
   const preparedAt = new Date().toISOString();
 
   // Ce marqueur est publié EN DERNIER. Une coupure au milieu de la préparation
