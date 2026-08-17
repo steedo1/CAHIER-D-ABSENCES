@@ -1,8 +1,13 @@
 "use client";
 
-import { warmOfflineShell } from "@/lib/offline";
+import { cacheSet, warmOfflineShell } from "@/lib/offline";
 import { prepareOffline, type OfflineReadiness } from "@/lib/offline-readiness";
 import { rememberAdminEssentialScope } from "@/lib/admin-essential-fetch";
+import {
+  ADMIN_ESSENTIAL_PREPARATION_VERSION,
+  adminEssentialPreparationKey,
+  type AdminEssentialPreparationMarker,
+} from "@/lib/admin-essential-contract";
 
 type AdminClass = {
   id?: string | null;
@@ -162,11 +167,31 @@ export async function prepareAdminEssentialOffline(
   // installé avant cet appel, ces mêmes réponses alimentent aussi le secours du
   // Conseil de classe sans double calcul métier.
   const readiness = await prepareOffline("admin", onProgress);
+  const preparedAt = new Date().toISOString();
+
+  // Ce marqueur est publié EN DERNIER. Une coupure au milieu de la préparation
+  // laisse l'ancien paquet valide intact et ne rend jamais un paquet partiel
+  // éligible à la connexion hors ligne.
+  const marker: AdminEssentialPreparationMarker = {
+    version: ADMIN_ESSENTIAL_PREPARATION_VERSION,
+    role: "admin",
+    user_id: userId,
+    institution_id: institutionId,
+    prepared_at: preparedAt,
+    class_count: classes.length,
+    roster_count: rosterCount,
+    bulletin_count: Number(readiness.bulletin_count || 0),
+    shell_ready: true,
+  };
+  await cacheSet(
+    adminEssentialPreparationKey(userId, institutionId),
+    marker,
+  );
 
   return {
     readiness,
     class_count: classes.length,
     roster_count: rosterCount,
-    prepared_at: new Date().toISOString(),
+    prepared_at: preparedAt,
   };
 }
