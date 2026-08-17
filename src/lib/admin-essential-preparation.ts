@@ -1,9 +1,8 @@
 "use client";
 
 import { warmOfflineShell } from "@/lib/offline";
-import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import { prepareOffline, type OfflineReadiness } from "@/lib/offline-readiness";
-import "@/lib/admin-essential-fetch";
+import { rememberAdminEssentialScope } from "@/lib/admin-essential-fetch";
 
 type AdminClass = {
   id?: string | null;
@@ -83,19 +82,23 @@ function rosterUrl(classId: string, academicYear?: string | null) {
 /**
  * Prépare sans interaction utilisateur les quatre fonctions Admin essentielles.
  *
- * Règle produit : ouvrir préalablement Listes/Bulletins/Conseil ne doit jamais
- * être une condition du mode hors ligne. Les lectures sont donc exécutées ici
- * pendant que le Cloud existe, puis le pont admin-essential-fetch les restitue
- * en cas de panne réseau. Les réponses officielles Bulletin/Conduite restent
- * produites par les API Cloud : aucune formule métier n'est dupliquée côté Web.
+ * Le scope utilisateur/établissement provient obligatoirement d'un /api/auth/role
+ * Cloud réussi. Le cache ne peut donc pas être alimenté sous l'identité résiduelle
+ * d'un autre compte présent auparavant dans le même navigateur.
  */
 export async function prepareAdminEssentialOffline(
+  input: {
+    userId: string;
+    institutionId: string;
+  },
   onProgress: (message: string) => void = () => undefined,
 ): Promise<AdminEssentialPreparationResult> {
-  const active = await getOfflineAccessIntent().catch(() => null);
-  if (!active || active.payload.role !== "admin") {
-    throw new Error("admin_offline_grant_required");
+  const userId = String(input.userId || "").trim();
+  const institutionId = String(input.institutionId || "").trim();
+  if (!userId || !institutionId) {
+    throw new Error("admin_cloud_scope_required");
   }
+  rememberAdminEssentialScope({ userId, institutionId });
 
   onProgress("Préparation des listes administratives…");
   const [classesPayload] = await Promise.all([
