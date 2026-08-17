@@ -1,0 +1,119 @@
+name: Fix roster notes block at end
+
+on:
+  push:
+    branches:
+      - fix/roster-notes-block-at-end
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/roster-notes-block-at-end
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Move notes block to far right
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/app/admin/classes/liste/[id]/page.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old_header = '''                  <th className="col-name">Nom et prénoms</th>
+                  <th className="col-series">Note1</th>
+                  <th className="col-board">Note2</th>
+                  <th className="col-lv2">Note3</th>
+                  <th className="col-nat">Note4</th>
+                  <th className="col-affect">Aff.</th>
+                  <th className="col-date">Né(e) le</th>
+                  <th className="col-sex">Sexe</th>
+                  <th className="col-red">Red</th>'''
+
+          new_header = '''                  <th className="col-name">Nom et prénoms</th>
+                  <th className="col-affect">Aff.</th>
+                  <th className="col-date">Né(e) le</th>
+                  <th className="col-sex">Sexe</th>
+                  <th className="col-red">Red</th>
+                  <th className="col-series">Note1</th>
+                  <th className="col-board">Note2</th>
+                  <th className="col-lv2">Note3</th>
+                  <th className="col-nat">Note4</th>'''
+
+          old_body = '''                      <td className="col-name">
+                        {formatTraditionalStudentName(student)}
+                      </td>
+                      <td className="col-series"></td>
+                      <td className="col-board"></td>
+                      <td className="col-lv2"></td>
+                      <td className="col-nat"></td>
+                      <td className="col-affect">
+                        {affectationShort(student.is_affecte)}
+                      </td>
+                      <td className="col-date">
+                        {formatDateFR(student.birthdate)}
+                      </td>
+                      <td className="col-sex">{sexShort(student.gender)}</td>
+                      <td className="col-red">
+                        {student.is_repeater ? "R" : ""}
+                      </td>'''
+
+          new_body = '''                      <td className="col-name">
+                        {formatTraditionalStudentName(student)}
+                      </td>
+                      <td className="col-affect">
+                        {affectationShort(student.is_affecte)}
+                      </td>
+                      <td className="col-date">
+                        {formatDateFR(student.birthdate)}
+                      </td>
+                      <td className="col-sex">{sexShort(student.gender)}</td>
+                      <td className="col-red">
+                        {student.is_repeater ? "R" : ""}
+                      </td>
+                      <td className="col-series"></td>
+                      <td className="col-board"></td>
+                      <td className="col-lv2"></td>
+                      <td className="col-nat"></td>'''
+
+          if old_header not in text:
+              raise SystemExit('expected roster header block not found')
+          if old_body not in text:
+              raise SystemExit('expected roster body block not found')
+
+          text = text.replace(old_header, new_header, 1)
+          text = text.replace(old_body, new_body, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Run focused regression test
+        run: node --test test/timetable-roster-ux.test.mjs
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Commit final fix
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-roster-notes-end.yml
+          rm -f .github/fix-roster-notes-end.trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git commit -m "fix(roster): placer le bloc notes en fin de tableau"
+          git push origin HEAD:fix/roster-notes-block-at-end
