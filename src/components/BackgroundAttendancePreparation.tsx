@@ -191,10 +191,17 @@ export default function BackgroundAttendancePreparation() {
           if (!role || !userId) return;
 
           const scope = `${userId}:${role}`;
-          // Noms historiques conservés pour ne pas perdre le throttle des appareils
-          // déjà préparés avant l'élargissement aux fonctions Admin essentielles.
-          const successKey = `mc:attendance-preparation:success:${scope}`;
-          const attemptKey = `mc:attendance-preparation:attempt:${scope}`;
+          // Le paquet Admin essentiel est plus riche que l'ancienne préparation
+          // des appels : une nouvelle clé force donc sa première exécution sur les
+          // appareils déjà utilisés avant ce LOT, sans attendre l'ancien TTL 6 h.
+          const successKey =
+            role === "admin"
+              ? `mc:admin-essential-preparation:success:v1:${scope}`
+              : `mc:attendance-preparation:success:${scope}`;
+          const attemptKey =
+            role === "admin"
+              ? `mc:admin-essential-preparation:attempt:v1:${scope}`
+              : `mc:attendance-preparation:attempt:${scope}`;
           const now = Date.now();
           const lastSuccess = numberFromStorage(successKey);
           const lastAttempt = numberFromStorage(attemptKey);
