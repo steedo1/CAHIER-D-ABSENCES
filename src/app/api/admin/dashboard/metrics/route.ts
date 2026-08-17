@@ -272,31 +272,26 @@ export async function GET(req: NextRequest) {
 
   const studentBreakdown = buildStudentBreakdown(studentProfileRows);
 
-  // Enseignants de l'année courante : enseignants affectés aux classes de l'année active.
-  const teacherIds = new Set<string>();
-  if (classIds.length > 0) {
-    for (const part of chunks(classIds)) {
-      const { data: teacherRows, error: teacherErr } = await srv
-        .from("class_teachers")
-        .select("teacher_id")
-        .eq("institution_id", institution_id)
-        .is("end_date", null)
-        .in("class_id", part)
-        .limit(10000);
+  // Vivier enseignant actif : indépendant de l'année scolaire.
+  // Les affectations classes/matières restent annuelles et ne sont pas recopiées
+  // automatiquement lors d'une nouvelle rentrée.
+  const { data: teacherRoleRows, error: teacherRolesErr } = await srv
+    .from("user_roles")
+    .select("profile_id")
+    .eq("institution_id", institution_id)
+    .eq("role", "teacher")
+    .limit(10000);
 
-      if (teacherErr) {
-        return NextResponse.json(
-          { ok: false, error: teacherErr.message, stage: "class_teachers" },
-          { status: 400 },
-        );
-      }
-
-      for (const row of teacherRows ?? []) {
-        const teacherId = String((row as any).teacher_id || "").trim();
-        if (teacherId) teacherIds.add(teacherId);
-      }
-    }
+  if (teacherRolesErr) {
+    return NextResponse.json(
+      { ok: false, error: teacherRolesErr.message, stage: "teacher_pool" },
+      { status: 400 },
+    );
   }
+
+  const teacherIds = new Set(
+    uniqStrings((teacherRoleRows ?? []).map((row: any) => row.profile_id)),
+  );
 
   // Parents de l'année courante : parents liés aux élèves inscrits dans les classes de l'année active.
   const parentIds = new Set<string>();
