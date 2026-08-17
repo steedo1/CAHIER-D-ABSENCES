@@ -291,7 +291,7 @@ const ORGANISATION_ITEMS: NavItem[] = [
   },
   {
     href: "/admin/import-emplois-du-temps",
-    label: "Import emplois du temps",
+    label: "Emploi du temps",
     Icon: Inbox,
   },
   ...PREDICTION_ITEMS,

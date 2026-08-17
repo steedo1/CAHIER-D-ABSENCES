@@ -932,9 +932,9 @@ export default function ClassListPrintPage() {
             Liste de classe imprimable
           </div>
           <div className="text-sm text-slate-600">
-            Vérifiez l’éducateur, corrigez au besoin Nom / Prénoms / Matricule /
-            Série / Affecté / Interne-Externe / Sexe / Red / LV2 / Nat, puis
-            exportez en PDF.
+            Vérifiez l’éducateur et les informations d’identité utiles, puis
+            exportez en PDF. Les colonnes Note1 à Note4 restent volontairement
+            vides pour la saisie manuelle des notes.
           </div>
         </div>
 
@@ -1446,14 +1446,14 @@ export default function ClassListPrintPage() {
                   <th className="col-no">N°</th>
                   <th className="col-matricule">Matricule</th>
                   <th className="col-name">Nom et prénoms</th>
-                  <th className="col-series">Série</th>
+                  <th className="col-series">Note1</th>
                   <th className="col-affect">Aff.</th>
-                  <th className="col-board">Ext.</th>
+                  <th className="col-board">Note2</th>
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
-                  <th className="col-lv2">LV2</th>
-                  <th className="col-nat">Nat</th>
+                  <th className="col-lv2">Note3</th>
+                  <th className="col-nat">Note4</th>
                 </tr>
               </thead>
               <tbody>
@@ -1476,15 +1476,11 @@ export default function ClassListPrintPage() {
                       <td className="col-name">
                         {formatTraditionalStudentName(student)}
                       </td>
-                      <td className="col-series">
-                        {studentSeriesLabel(student.official_track_code)}
-                      </td>
+                      <td className="col-series"></td>
                       <td className="col-affect">
                         {affectationShort(student.is_affecte)}
                       </td>
-                      <td className="col-board">
-                        {boardingShort(student.is_boarder)}
-                      </td>
+                      <td className="col-board"></td>
                       <td className="col-date">
                         {formatDateFR(student.birthdate)}
                       </td>
@@ -1492,10 +1488,8 @@ export default function ClassListPrintPage() {
                       <td className="col-red">
                         {student.is_repeater ? "R" : ""}
                       </td>
-                      <td className="col-lv2">{normalizeLv2(student.lv2)}</td>
-                      <td className="col-nat">
-                        {nationalityShort(student.nationality)}
-                      </td>
+                      <td className="col-lv2"></td>
+                      <td className="col-nat"></td>
                     </tr>
                   ))
                 )}
