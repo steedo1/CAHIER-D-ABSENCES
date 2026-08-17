@@ -40,12 +40,24 @@ type MetaPeriod = {
   end_time: string | null;
 };
 
+type TimetableOccupancy = {
+  weekday: number;
+  period_id: string;
+  class_id: string;
+  class_label: string;
+  teacher_id: string;
+  teacher_name?: string;
+  subject_id: string;
+  subject_label?: string;
+};
+
 type TimetablesMeta = {
   allClasses: MetaClass[];
   classes: MetaClass[];
   subjects: MetaSubject[];
   teachers: MetaTeacher[];
   periods: MetaPeriod[];
+  occupancy?: TimetableOccupancy[];
   scope?: EducationScopeValue;
 };
 
@@ -63,6 +75,8 @@ type ManualMeta = {
     class_id: string;
     class_label: string;
   }[];
+  occupancy: TimetableOccupancy[];
+  teacherOccupancy: TimetableOccupancy[];
 };
 
 function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -378,6 +392,8 @@ export default function ImportEmploisDuTempsPage() {
         teachers: json.teachers || [],
         teacherClasses: json.teacherClasses || [],
         existing: json.existing || [],
+        occupancy: json.occupancy || [],
+        teacherOccupancy: json.teacherOccupancy || [],
       });
 
       // si un enseignant est précisé, pré-remplir les cases avec l'existant
@@ -492,6 +508,81 @@ export default function ImportEmploisDuTempsPage() {
       [];
     return list.find((t) => t.id === selectedTeacherId)?.display_name ?? "";
   }, [manualMeta, meta, selectedTeacherId]);
+
+  const classScopedOccupancy = useMemo(() => {
+    const selectedClassId = educationScope.classId;
+    if (!selectedClassId) return [] as TimetableOccupancy[];
+    const source = manualMeta ? manualMeta.occupancy : meta?.occupancy || [];
+    return source.filter((row) => row.class_id === selectedClassId);
+  }, [educationScope.classId, manualMeta, meta]);
+
+  const visibleOccupancy = useMemo(() => {
+    if (!selectedTeacherId) return classScopedOccupancy;
+    return classScopedOccupancy.filter(
+      (row) => row.teacher_id === selectedTeacherId,
+    );
+  }, [classScopedOccupancy, selectedTeacherId]);
+
+  function occupancyTeacherLabel(row: TimetableOccupancy) {
+    if (row.teacher_name) return row.teacher_name;
+    return (
+      meta?.teachers?.find((teacher) => teacher.id === row.teacher_id)
+        ?.display_name || "Autre professeur"
+    );
+  }
+
+  function occupancySubjectLabel(row: TimetableOccupancy) {
+    if (row.subject_label) return row.subject_label;
+    return (
+      meta?.subjects?.find((subject) => subject.id === row.subject_id)?.label ||
+      "Autre matière"
+    );
+  }
+
+  function visibleOccupancyForCell(weekday: number, periodId: string) {
+    return visibleOccupancy.filter(
+      (row) => row.weekday === weekday && row.period_id === periodId,
+    );
+  }
+
+  function conflictMessagesForClass(
+    classId: string,
+    weekday: number,
+    periodId: string,
+  ) {
+    if (!selectedTeacherId) return [] as string[];
+
+    const source = manualMeta ? manualMeta.occupancy : meta?.occupancy || [];
+    const messages: string[] = [];
+
+    for (const row of source) {
+      if (
+        row.class_id === classId &&
+        row.weekday === weekday &&
+        row.period_id === periodId &&
+        row.teacher_id !== selectedTeacherId
+      ) {
+        messages.push(
+          `Classe déjà occupée par ${occupancyTeacherLabel(row)} (${occupancySubjectLabel(row)}).`,
+        );
+      }
+    }
+
+    for (const row of manualMeta?.teacherOccupancy || []) {
+      if (
+        row.teacher_id === selectedTeacherId &&
+        row.weekday === weekday &&
+        row.period_id === periodId &&
+        row.class_id !== classId
+      ) {
+        messages.push(
+          `${selectedTeacherLabel || "Ce professeur"} est déjà prévu en ${row.class_label || "une autre classe"}.`,
+        );
+      }
+    }
+
+    return Array.from(new Set(messages));
+  }
 
   function keyForCell(weekday: number, period_id: string) {
     return `${weekday}_${period_id}`;
@@ -658,6 +749,20 @@ export default function ImportEmploisDuTempsPage() {
     if (!activeKey) return [];
     return cellSelection[activeKey] || [];
   }, [activeKey, cellSelection]);
+
+  const activeConflictMessages = activeCell
+    ? Array.from(
+        new Set(
+          activeSelectedIds.flatMap((classId) =>
+            conflictMessagesForClass(
+              classId,
+              activeCell.weekday,
+              activeCell.period_id,
+            ),
+          ),
+        ),
+      )
+    : [];
 
   const activePeriodLabel = useMemo(() => {
     if (!activeCell) return "";
@@ -1186,6 +1291,22 @@ export default function ImportEmploisDuTempsPage() {
                             const active = isCellActive(wd, period);
                             const selected = isCellSelected(wd, period);
                             const disabled = !period;
+                            const occupiedRows = period
+                              ? visibleOccupancyForCell(wd, period.id)
+                              : [];
+                            const selectedIds = period
+                              ? cellSelection[keyForCell(wd, period.id)] || []
+                              : [];
+                            const conflictMessages = period
+                              ? Array.from(
+                                  new Set(
+                                    selectedIds.flatMap((classId) =>
+                                      conflictMessagesForClass(classId, wd, period.id),
+                                    ),
+                                  ),
+                                )
+                              : [];
+                            const hasConflict = conflictMessages.length > 0;
 
                             const cellLabel = period
                               ? `${period.start_time?.slice(0, 5) || "??:??"}–${
@@ -1199,15 +1320,23 @@ export default function ImportEmploisDuTempsPage() {
                                   type="button"
                                   disabled={disabled || !selectedSubjectId || !selectedTeacherId}
                                   onClick={() => handleCellClick(wd, period)}
-                                  title={cellLabel}
+                                  title={
+                                    hasConflict
+                                      ? `${cellLabel} — ${conflictMessages.join(" ")}`
+                                      : cellLabel
+                                  }
                                   className={[
                                     "w-full rounded-xl border px-2 py-3 text-[10px] md:text-[11px] leading-tight transition",
                                     disabled
                                       ? "border-slate-100 bg-slate-100 text-slate-300 cursor-not-allowed"
+                                      : hasConflict
+                                      ? "border-amber-400 bg-amber-50 text-amber-950 shadow-sm ring-2 ring-amber-300/40"
                                       : selected
                                       ? "border-emerald-600 bg-emerald-50 text-emerald-900 shadow-sm ring-2 ring-emerald-400/40"
                                       : active
                                       ? "border-emerald-400 bg-emerald-50/70 text-emerald-900"
+                                      : occupiedRows.length > 0
+                                      ? "border-sky-300 bg-sky-50 text-sky-950"
                                       : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
                                   ].join(" ")}
                                 >
@@ -1221,23 +1350,47 @@ export default function ImportEmploisDuTempsPage() {
                                       </div>
                                       <div className="mt-1 text-[10px]">
                                         {(() => {
-                                          const key = keyForCell(wd, period.id);
-                                          const selectedIds = cellSelection[key] || [];
-                                          if (!selectedIds.length) return "Aucun cours";
+                                          if (selectedIds.length > 0) {
+                                            const labels = classesForSelectedTeacher
+                                              .filter((c) => selectedIds.includes(c.id))
+                                              .map((c) => c.label);
+                                            if (labels.length > 0) {
+                                              const joined = labels.join(", ");
+                                              return joined.length > 24
+                                                ? `${labels.length} classe(s)`
+                                                : joined;
+                                            }
+                                            return `${selectedIds.length} classe(s)`;
+                                          }
 
-                                          const labels = classesForSelectedTeacher
-                                            .filter((c) => selectedIds.includes(c.id))
-                                            .map((c) => c.label);
-
-                                          if (labels.length > 0) {
+                                          if (occupiedRows.length > 0) {
+                                            if (selectedTeacherId) {
+                                              const labels = occupiedRows.map((row) =>
+                                                occupancySubjectLabel(row),
+                                              );
+                                              return labels.length > 1
+                                                ? `${labels.length} cours de ce prof`
+                                                : labels[0];
+                                            }
+                                            const labels = occupiedRows.map(
+                                              (row) =>
+                                                `${occupancyTeacherLabel(row)} · ${occupancySubjectLabel(row)}`,
+                                            );
                                             const joined = labels.join(", ");
-                                            return joined.length > 24
-                                              ? `${labels.length} classe(s)`
+                                            return joined.length > 28
+                                              ? `${labels.length} cours occupé(s)`
                                               : joined;
                                           }
-                                          return `${selectedIds.length} classe(s)`;
+
+                                          return "Aucun cours";
                                         })()}
                                       </div>
+                                      {hasConflict ? (
+                                        <div className="mt-1 inline-flex items-center gap-1 font-semibold text-amber-800">
+                                          <AlertTriangle className="h-3 w-3" />
+                                          Conflit signalé
+                                        </div>
+                                      ) : null}
                                     </>
                                   ) : (
                                     <span className="text-slate-400">—</span>
@@ -1253,14 +1406,35 @@ export default function ImportEmploisDuTempsPage() {
 
                   {!selectedSubjectId || !selectedTeacherId ? (
                     <p className="mt-2 text-[11px] text-slate-500">
-                      Sélectionnez une matière et un professeur pour activer le
-                      tableau.
+                      {educationScope.classId
+                        ? "Les créneaux déjà occupés de cette classe sont visibles en bleu. Sélectionnez ensuite une matière et un professeur pour modifier l’emploi du temps."
+                        : "Sélectionnez une matière et un professeur pour activer le tableau."}
+                    </p>
+                  ) : educationScope.classId ? (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      La grille affiche maintenant uniquement les créneaux déjà occupés par ce professeur dans la classe choisie. Les chevauchements sont signalés en orange, sans bloquer la saisie.
                     </p>
                   ) : (
                     <p className="mt-2 text-[11px] text-slate-500">
                       Cliquez une case : la liste des classes est à droite (cochage instantané).
                     </p>
                   )}
+
+                  {activeConflictMessages.length > 0 ? (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div>
+                        <div className="font-semibold">
+                          Conflit signalé — enregistrement autorisé.
+                        </div>
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                          {activeConflictMessages.map((message) => (
+                            <li key={message}>{message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1372,12 +1546,23 @@ export default function ImportEmploisDuTempsPage() {
                     <div className="grid grid-cols-1 gap-2 text-xs">
                       {filteredClasses.map((c) => {
                         const checked = activeSelectedIds.includes(c.id);
+                        const conflictMessages = activeCell
+                          ? conflictMessagesForClass(
+                              c.id,
+                              activeCell.weekday,
+                              activeCell.period_id,
+                            )
+                          : [];
+                        const hasConflict = checked && conflictMessages.length > 0;
                         return (
                           <label
                             key={c.id}
+                            title={conflictMessages.join(" ") || undefined}
                             className={[
                               "flex items-center gap-2 rounded-xl border px-2 py-2 cursor-pointer text-xs",
-                              checked
+                              hasConflict
+                                ? "border-amber-400 bg-amber-50"
+                                : checked
                                 ? "border-emerald-400 bg-emerald-50"
                                 : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
                             ].join(" ")}
@@ -1388,7 +1573,19 @@ export default function ImportEmploisDuTempsPage() {
                               checked={checked}
                               onChange={() => toggleClassForActiveCell(c.id)}
                             />
-                            <span className="truncate">{c.label}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate">{c.label}</span>
+                                {conflictMessages.length > 0 ? (
+                                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                ) : null}
+                              </span>
+                              {hasConflict ? (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-amber-800">
+                                  Conflit signalé — enregistrement autorisé
+                                </span>
+                              ) : null}
+                            </span>
                           </label>
                         );
                       })}
@@ -1489,12 +1686,23 @@ export default function ImportEmploisDuTempsPage() {
                     <div className="grid grid-cols-1 gap-2 text-xs">
                       {filteredClasses.map((c) => {
                         const checked = activeSelectedIds.includes(c.id);
+                        const conflictMessages = activeCell
+                          ? conflictMessagesForClass(
+                              c.id,
+                              activeCell.weekday,
+                              activeCell.period_id,
+                            )
+                          : [];
+                        const hasConflict = checked && conflictMessages.length > 0;
                         return (
                           <label
                             key={c.id}
+                            title={conflictMessages.join(" ") || undefined}
                             className={[
                               "flex items-center gap-2 rounded-xl border px-2 py-2 cursor-pointer text-xs",
-                              checked
+                              hasConflict
+                                ? "border-amber-400 bg-amber-50"
+                                : checked
                                 ? "border-emerald-400 bg-emerald-50"
                                 : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/60",
                             ].join(" ")}
@@ -1505,7 +1713,19 @@ export default function ImportEmploisDuTempsPage() {
                               checked={checked}
                               onChange={() => toggleClassForActiveCell(c.id)}
                             />
-                            <span className="truncate">{c.label}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate">{c.label}</span>
+                                {conflictMessages.length > 0 ? (
+                                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                ) : null}
+                              </span>
+                              {hasConflict ? (
+                                <span className="mt-0.5 block text-[10px] font-semibold text-amber-800">
+                                  Conflit signalé — enregistrement autorisé
+                                </span>
+                              ) : null}
+                            </span>
                           </label>
                         );
                       })}

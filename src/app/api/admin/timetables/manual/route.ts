@@ -207,6 +207,8 @@ export async function GET(req: NextRequest) {
         teachers: [],
         teacherClasses: [],
         existing: [],
+        occupancy: [],
+        teacherOccupancy: [],
         scope,
       });
     }
@@ -272,34 +274,99 @@ export async function GET(req: NextRequest) {
         return true;
       });
 
-    let existing: {
+    const { data: scopedTimetableRows, error: occupancyErr } = await srv
+      .from("teacher_timetables")
+      .select("weekday,period_id,class_id,teacher_id,subject_id")
+      .eq("institution_id", institution_id)
+      .in("class_id", classIds);
+
+    if (occupancyErr) {
+      return NextResponse.json(
+        { error: "occupancy_failed", message: occupancyErr.message },
+        { status: 400 },
+      );
+    }
+
+    const occupancy = (scopedTimetableRows || []).map((row: any) => ({
+      weekday: Number(row.weekday),
+      period_id: String(row.period_id),
+      class_id: String(row.class_id),
+      class_label: classesById.get(String(row.class_id)) || "",
+      teacher_id: String(row.teacher_id),
+      subject_id: String(row.subject_id),
+    }));
+
+    const existing = teacher_id
+      ? occupancy.filter(
+          (row) =>
+            row.teacher_id === teacher_id && row.subject_id === subject_id,
+        )
+      : [];
+
+    let teacherOccupancy: Array<{
       weekday: number;
       period_id: string;
       class_id: string;
       class_label: string;
-    }[] = [];
+      teacher_id: string;
+      subject_id: string;
+    }> = [];
 
     if (teacher_id) {
-      const { data: ttRows, error: ttErr } = await srv
-        .from("teacher_timetables")
-        .select("weekday,period_id,class_id")
-        .eq("institution_id", institution_id)
-        .eq("subject_id", subject_id)
-        .eq("teacher_id", teacher_id)
-        .in("class_id", classIds);
+      const { data: teacherTimetableRows, error: teacherTimetableErr } =
+        await srv
+          .from("teacher_timetables")
+          .select("weekday,period_id,class_id,teacher_id,subject_id")
+          .eq("institution_id", institution_id)
+          .eq("teacher_id", teacher_id);
 
-      if (ttErr) {
+      if (teacherTimetableErr) {
         return NextResponse.json(
-          { error: "existing_failed", message: ttErr.message },
+          {
+            error: "teacher_occupancy_failed",
+            message: teacherTimetableErr.message,
+          },
           { status: 400 },
         );
       }
 
-      existing = (ttRows || []).map((row: any) => ({
+      const teacherClassesById = new Map(classesById);
+      const missingClassIds = uniq(
+        (teacherTimetableRows || [])
+          .map((row: any) => String(row.class_id || ""))
+          .filter((classId) => classId && !teacherClassesById.has(classId)),
+      );
+
+      if (missingClassIds.length > 0) {
+        const { data: otherClasses, error: otherClassesErr } = await srv
+          .from("classes")
+          .select("id,label")
+          .eq("institution_id", institution_id)
+          .in("id", missingClassIds);
+
+        if (otherClassesErr) {
+          return NextResponse.json(
+            {
+              error: "teacher_occupancy_classes_failed",
+              message: otherClassesErr.message,
+            },
+            { status: 400 },
+          );
+        }
+
+        for (const row of otherClasses || []) {
+          teacherClassesById.set(String(row.id), String(row.label || ""));
+        }
+      }
+
+      teacherOccupancy = (teacherTimetableRows || []).map((row: any) => ({
         weekday: Number(row.weekday),
         period_id: String(row.period_id),
         class_id: String(row.class_id),
-        class_label: classesById.get(String(row.class_id)) || "",
+        class_label:
+          teacherClassesById.get(String(row.class_id)) || "Autre classe",
+        teacher_id: String(row.teacher_id),
+        subject_id: String(row.subject_id),
       }));
     }
 
@@ -308,6 +375,8 @@ export async function GET(req: NextRequest) {
       teachers,
       teacherClasses,
       existing,
+      occupancy,
+      teacherOccupancy,
       scope,
     });
   } catch (e: any) {
@@ -459,7 +528,13 @@ export async function POST(req: NextRequest) {
       const { error: delSlotErr } = await srv
         .from("teacher_timetables")
         .delete()
-        .match({ institution_id, subject_id, class_id, period_id });
+        .match({
+          institution_id,
+          subject_id,
+          teacher_id,
+          class_id,
+          period_id,
+        });
 
       if (delSlotErr) {
         return NextResponse.json(

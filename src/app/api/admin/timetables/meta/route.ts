@@ -234,12 +234,62 @@ export async function GET(req: NextRequest) {
       end_time: row.end_time ? String(row.end_time) : null,
     }));
 
+    let occupancy: Array<{
+      weekday: number;
+      period_id: string;
+      class_id: string;
+      class_label: string;
+      teacher_id: string;
+      teacher_name: string;
+      subject_id: string;
+      subject_label: string;
+    }> = [];
+
+    if (scope.classId && scopedClassIds.length > 0) {
+      const { data: timetableRows, error: timetableErr } = await srv
+        .from("teacher_timetables")
+        .select("weekday,period_id,class_id,teacher_id,subject_id")
+        .eq("institution_id", institution_id)
+        .in("class_id", scopedClassIds);
+
+      if (timetableErr) {
+        return NextResponse.json(
+          { error: "timetable_occupancy_failed", message: timetableErr.message },
+          { status: 400 },
+        );
+      }
+
+      const classLabels = new Map(
+        allClasses.map((row) => [row.id, String(row.label || "")]),
+      );
+      const teacherLabels = new Map(
+        outTeachers.map((row) => [row.id, row.display_name]),
+      );
+      const subjectLabels = new Map(
+        outSubjects.map((row) => [row.id, row.label]),
+      );
+
+      occupancy = (timetableRows || []).map((row: any) => ({
+        weekday: Number(row.weekday),
+        period_id: String(row.period_id),
+        class_id: String(row.class_id),
+        class_label: classLabels.get(String(row.class_id)) || "",
+        teacher_id: String(row.teacher_id),
+        teacher_name:
+          teacherLabels.get(String(row.teacher_id)) || "Autre professeur",
+        subject_id: String(row.subject_id),
+        subject_label:
+          subjectLabels.get(String(row.subject_id)) || "Autre matière",
+      }));
+    }
+
     return NextResponse.json({
       allClasses,
       classes: scopedClasses,
       subjects: outSubjects,
       teachers: outTeachers,
       periods: outPeriods,
+      occupancy,
       scope,
     });
   } catch (e: any) {
