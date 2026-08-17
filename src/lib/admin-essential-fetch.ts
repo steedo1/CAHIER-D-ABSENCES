@@ -169,6 +169,33 @@ async function storeResponse(url: URL, response: Response) {
   } satisfies AdminEssentialCachedResponse).catch(() => undefined);
 }
 
+/**
+ * Publie une réponse JSON déjà calculée sous une autre URL de lecture
+ * fonctionnellement équivalente. Utilisé notamment par Conseil de classe pour
+ * réemployer le snapshot Bulletin/Conduite préparé, sans seconde requête Cloud.
+ */
+export async function cacheAdminEssentialJson(
+  rawUrl: string,
+  payload: unknown,
+) {
+  if (typeof window === "undefined") return;
+  const url = new URL(rawUrl, window.location.origin);
+  if (
+    url.origin !== window.location.origin ||
+    !isAdminEssentialReadPath(url.pathname)
+  ) {
+    throw new Error("admin_essential_alias_path_forbidden");
+  }
+  const key = await cacheKey(url);
+  if (!key) throw new Error("admin_essential_scope_missing");
+  await cacheSet(key, {
+    body: JSON.stringify(payload),
+    status: 200,
+    content_type: "application/json; charset=utf-8",
+    saved_at: new Date().toISOString(),
+  } satisfies AdminEssentialCachedResponse);
+}
+
 export async function adminEssentialFetch(
   originalFetch: typeof window.fetch,
   input: RequestInfo | URL,
