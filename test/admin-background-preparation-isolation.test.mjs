@@ -20,9 +20,22 @@ test("la préparation Admin couvre les fonctions essentielles sans dépendre de 
     /role === "admin"\s*&&\s*!isAdminAttendancePath\(pathnameRef\.current\)\) return/,
   );
   assert.match(code, /if \(role === "admin"\) \{/);
+  assert.match(code, /cloudRoleVerified/);
+  assert.match(code, /institutionId = String\(payload\.institution_id \|\| ""\)\.trim\(\)/);
   assert.match(
     code,
-    /if \(sessionRef\.current\) \{\s*await prepareAdminEssentialOffline\(\);\s*\}/s,
+    /await prepareAdminEssentialOffline\(\{ userId, institutionId \}\)/,
+  );
+});
+
+test("le scope cache est remplacé avant les effets de lecture des pages", async () => {
+  const code = await source();
+
+  assert.match(code, /useLayoutEffect/);
+  assert.match(code, /setAdminEssentialSessionUser/);
+  assert.match(
+    code,
+    /setAdminEssentialSessionUser\(session\?\.user\?\.id \|\| null\)/,
   );
 });
 
@@ -34,7 +47,18 @@ test("la vue des appels conserve sa préparation relais spécifique", async () =
   assert.match(code, /"\/admin\/absences\/appels-matrice"/);
   assert.match(
     code,
-    /if \(isAdminAttendancePath\(pathnameRef\.current\)\) \{\s*await prepareAdminAttendanceView\(\);\s*\}/s,
+    /if \(isAdminAttendancePath\(pathnameRef\.current\)\) \{\s*await prepareAdminAttendanceView\(\);\s*prepared = true;\s*\}/s,
+  );
+});
+
+test("une session Cloud résiduelle hors réseau ne marque pas une fausse préparation réussie", async () => {
+  const code = await source();
+
+  assert.match(code, /let prepared = false/);
+  assert.match(code, /if \(prepared\) writeStorage\(successKey, Date\.now\(\)\)/);
+  assert.doesNotMatch(
+    code,
+    /await withCrossTabLock\([\s\S]*?\n\s*writeStorage\(successKey, Date\.now\(\)\);\n\s*\}\);/,
   );
 });
 
