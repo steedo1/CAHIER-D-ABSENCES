@@ -120,6 +120,17 @@ test("la préparation exige un scope Cloud confirmé puis couvre les écrans san
   assert.match(code, /\/admin\/classes\/liste\/\$\{encodeURIComponent\(classId\)\}/);
 });
 
+test("le shell essentiel est rafraîchi avant les rosters et calculs lourds", async () => {
+  const code = await read(preparationPath);
+  const shellIndex = code.indexOf("await warmOfflineShell([...ADMIN_ESSENTIAL_STATIC_PATHS])");
+  const rosterIndex = code.indexOf("let rosterCount = 0");
+  const bulletinIndex = code.indexOf('prepareOffline("admin", onProgress)');
+
+  assert.ok(shellIndex >= 0, "rafraîchissement du shell essentiel absent");
+  assert.ok(rosterIndex > shellIndex, "les rosters démarrent avant le shell essentiel");
+  assert.ok(bulletinIndex > rosterIndex, "les bulletins démarrent avant les rosters");
+});
+
 test("le marqueur complet est publié seulement après la préparation officielle des bulletins", async () => {
   const preparation = await read(preparationPath);
   const contract = await read(contractPath);
