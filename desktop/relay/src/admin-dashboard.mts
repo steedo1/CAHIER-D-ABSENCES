@@ -7,11 +7,17 @@ export function adminDashboard(
   options: { institutionId: string; date: string; now?: Date },
 ) {
   const institution = db.prepare(`
-    SELECT id, name, code, timezone
+    SELECT id, name, code, timezone, settings_json
     FROM institutions
     WHERE id = ? AND deleted_at IS NULL
   `).get(options.institutionId) as
-    | { id: string; name: string; code: string | null; timezone: string }
+    | {
+        id: string;
+        name: string;
+        code: string | null;
+        timezone: string;
+        settings_json: string;
+      }
     | undefined;
   if (!institution) throw new Error("institution_not_initialized");
 
@@ -22,7 +28,15 @@ export function adminDashboard(
     FROM academic_years
     WHERE institution_id = ? AND is_current = 1 AND deleted_at IS NULL
     LIMIT 1
-  `).get(options.institutionId) ?? null;
+  `).get(options.institutionId) as
+    | {
+        id: string;
+        code: string;
+        label: string;
+        start_date: string | null;
+        end_date: string | null;
+      }
+    | undefined;
   const rows = attendanceMonitor(db, {
     institutionId: options.institutionId,
     from: options.date,
@@ -76,11 +90,97 @@ export function adminDashboard(
     proposed_amount_status: "cloud_calculation_required",
   }));
 
+  const rosterClasses = db.prepare(`
+    SELECT id, label AS name, label, level, code, academic_year,
+           official_track_code, education_type, formation_code,
+           formation_level_code
+    FROM classes
+    WHERE institution_id = ?
+      AND deleted_at IS NULL
+      AND (? IS NULL OR academic_year = ?)
+    ORDER BY level, label, id
+  `).all(
+    options.institutionId,
+    currentYear?.code ?? null,
+    currentYear?.code ?? null,
+  ) as Array<Record<string, unknown>>;
+
+  const rosterStudents = db.prepare(`
+    SELECT student.id,
+           student.first_name,
+           student.last_name,
+           student.display_name AS full_name,
+           student.registration_number AS matricule,
+           enrollment.class_id,
+           class.label AS class_label,
+           class.level,
+           class.academic_year,
+           student.birthdate,
+           student.birthdate AS birth_date,
+           student.birth_place,
+           student.nationality,
+           student.gender,
+           student.regime,
+           student.is_repeater,
+           student.is_affecte,
+           student.is_boarder
+    FROM class_enrollments enrollment
+    JOIN students student
+      ON student.institution_id = enrollment.institution_id
+     AND student.id = enrollment.student_id
+    JOIN classes class
+      ON class.institution_id = enrollment.institution_id
+     AND class.id = enrollment.class_id
+    WHERE enrollment.institution_id = ?
+      AND enrollment.deleted_at IS NULL
+      AND enrollment.end_date IS NULL
+      AND student.deleted_at IS NULL
+      AND student.is_active = 1
+      AND class.deleted_at IS NULL
+      AND (? IS NULL OR class.academic_year = ?)
+    ORDER BY class.label, student.display_name, student.id
+  `).all(
+    options.institutionId,
+    currentYear?.code ?? null,
+    currentYear?.code ?? null,
+  ).map((row) => {
+    const value = row as Record<string, unknown>;
+    return {
+      ...value,
+      is_repeater: Boolean(value.is_repeater),
+      is_affecte: Boolean(value.is_affecte),
+      is_boarder: Boolean(value.is_boarder),
+      photo_url: null,
+      student_photo_url: null,
+    };
+  });
+
+  let institutionSettings: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(institution.settings_json || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      institutionSettings = parsed as Record<string, unknown>;
+    }
+  } catch {
+    institutionSettings = {};
+  }
+
   return {
     source: "relay",
     generated_at: new Date().toISOString(),
-    institution,
-    academic_year: currentYear,
+    institution: {
+      id: institution.id,
+      name: institution.name,
+      code: institution.code,
+      timezone: institution.timezone,
+    },
+    academic_year: currentYear ?? null,
+    roster: {
+      academic_year: currentYear?.code ?? null,
+      classes: rosterClasses,
+      students: rosterStudents,
+      institution_settings: institutionSettings,
+    },
     counts: {
       students: scalar(
         "SELECT COUNT(*) AS count FROM students WHERE institution_id = ? AND is_active = 1 AND deleted_at IS NULL",
