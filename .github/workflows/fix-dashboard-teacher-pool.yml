@@ -1,0 +1,103 @@
+name: Fix dashboard teacher pool new year
+
+on:
+  push:
+    branches:
+      - fix/dashboard-teacher-pool-new-year
+    paths:
+      - .github/fix-dashboard-teacher-pool.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/dashboard-teacher-pool-new-year
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Count active teacher pool independently of academic year
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/app/api/admin/dashboard/metrics/route.ts')
+          text = path.read_text(encoding='utf-8')
+
+          start_marker = "  // Enseignants de l'année courante : enseignants affectés aux classes de l'année active.\n"
+          end_marker = "  // Parents de l'année courante : parents liés aux élèves inscrits dans les classes de l'année active.\n"
+
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('teacher dashboard block not found')
+
+          replacement = '''  // Vivier enseignant actif : indépendant de l'année scolaire.\n  // Les affectations classes/matières restent annuelles et ne sont pas recopiées\n  // automatiquement lors d'une nouvelle rentrée.\n  const { data: teacherRoleRows, error: teacherRolesErr } = await srv\n    .from("user_roles")\n    .select("profile_id")\n    .eq("institution_id", institution_id)\n    .eq("role", "teacher")\n    .limit(10000);\n\n  if (teacherRolesErr) {\n    return NextResponse.json(\n      { ok: false, error: teacherRolesErr.message, stage: "teacher_pool" },\n      { status: 400 },\n    );\n  }\n\n  const teacherIds = new Set(\n    uniqStrings((teacherRoleRows ?? []).map((row: any) => row.profile_id)),\n  );\n\n'''
+
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          cat > test/dashboard-teacher-pool-academic-year.test.mjs <<'EOF'
+          import test from "node:test";
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+
+          const source = readFileSync(
+            "src/app/api/admin/dashboard/metrics/route.ts",
+            "utf8",
+          );
+
+          test("dashboard counts the active teacher pool independently of the academic year", () => {
+            const start = source.indexOf("// Vivier enseignant actif");
+            const end = source.indexOf("// Parents de l'année courante", start);
+            assert.ok(start >= 0 && end > start, "le bloc vivier enseignant doit exister");
+
+            const teacherBlock = source.slice(start, end);
+            assert.match(teacherBlock, /\.from\("user_roles"\)/);
+            assert.match(teacherBlock, /\.eq\("institution_id", institution_id\)/);
+            assert.match(teacherBlock, /\.eq\("role", "teacher"\)/);
+            assert.match(teacherBlock, /row\.profile_id/);
+            assert.doesNotMatch(teacherBlock, /class_teachers/);
+            assert.doesNotMatch(teacherBlock, /\.in\("class_id"/);
+            assert.match(source, /teachers: teacherIds\.size/);
+          });
+
+          test("current-year class assignments remain separate from the teacher pool", () => {
+            const associations = readFileSync(
+              "src/app/api/admin/associations/route.ts",
+              "utf8",
+            );
+            assert.match(associations, /getClassIdsForAcademicYear/);
+            assert.match(associations, /\.eq\("academic_year", year\)/);
+          });
+          EOF
+
+      - name: Run focused regressions
+        run: |
+          node --test \
+            test/dashboard-teacher-pool-academic-year.test.mjs \
+            test/teacher-pool-academic-year-scope.test.mjs
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Commit final fix
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-dashboard-teacher-pool.yml
+          rm -f .github/fix-dashboard-teacher-pool.trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/api/admin/dashboard/metrics/route.ts test/dashboard-teacher-pool-academic-year.test.mjs .github/workflows/fix-dashboard-teacher-pool.yml .github/fix-dashboard-teacher-pool.trigger
+          git diff --cached --check
+          git commit -m "fix(dashboard): conserver le vivier enseignant à la rentrée"
+          git push origin HEAD:fix/dashboard-teacher-pool-new-year
