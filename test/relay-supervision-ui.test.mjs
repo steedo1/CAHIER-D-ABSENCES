@@ -24,16 +24,22 @@ test("la supervision lit uniquement les endpoints locaux nécessaires", async ()
   assert.doesNotMatch(code, /method:\s*"DELETE"/);
 });
 
-test("le diagnostic expose l'état utile sans sérialiser le jeton administrateur", async () => {
+test("le diagnostic support est une liste blanche sans secret ni donnees metier", async () => {
   const code = await read(supervisionPath);
+  const diagnostic = code.slice(code.indexOf("export function sanitizedRelayDiagnostic"));
 
-  assert.match(code, /sanitizedRelayDiagnostic/);
-  assert.match(code, /configured: snapshot\.configured/);
-  assert.match(code, /base_url: snapshot\.base_url/);
-  assert.match(code, /health: snapshot\.health/);
-  assert.match(code, /dashboard: snapshot\.dashboard/);
-  assert.doesNotMatch(code, /token:\s*snapshot/);
-  assert.doesNotMatch(code, /admin_token/);
+  assert.match(diagnostic, /configured: snapshot\.configured/);
+  assert.match(diagnostic, /base_url: snapshot\.base_url/);
+  assert.match(diagnostic, /health: snapshot\.health/);
+  assert.match(diagnostic, /source: dashboard\.source/);
+  assert.match(diagnostic, /counts: dashboard\.counts/);
+  assert.match(diagnostic, /sync: dashboard\.sync/);
+  assert.doesNotMatch(diagnostic, /dashboard: snapshot\.dashboard/);
+  assert.doesNotMatch(diagnostic, /roster/);
+  assert.doesNotMatch(diagnostic, /attendance_rows/);
+  assert.doesNotMatch(diagnostic, /session_reviews/);
+  assert.doesNotMatch(diagnostic, /admin_token/);
+  assert.doesNotMatch(diagnostic, /token:/);
 });
 
 test("l'écran Admin propose test, synchronisation et diagnostic humain", async () => {
