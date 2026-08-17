@@ -383,6 +383,11 @@ const FINANCE_FULL_ITEMS: NavItem[] = [
 ========================= */
 const SETTINGS_ITEMS: NavItem[] = [
   {
+    href: "/admin/relais",
+    label: "Mon Cahier Relais",
+    Icon: Settings,
+  },
+  {
     href: "/admin/parametres?tab=security",
     label: "Accès & sécurité",
     Icon: ShieldCheck,
