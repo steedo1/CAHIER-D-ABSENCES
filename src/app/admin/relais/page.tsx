@@ -119,6 +119,7 @@ export default function RelaySupervisionPage() {
   const conflicts = number(sync?.unresolved_conflicts);
   const materialization = number(sync?.materialization_failures);
   const syncIncident = blocked + conflicts + materialization > 0 || Boolean(sync?.last_cloud_sync_error);
+  const syncAvailable = Boolean(snapshot?.dashboard);
 
   const diagnostic = useMemo(
     () => (snapshot ? JSON.stringify(sanitizedRelayDiagnostic(snapshot), null, 2) : ""),
@@ -213,10 +214,10 @@ export default function RelaySupervisionPage() {
             />
             <MiniCard
               title="Synchronisation"
-              value={syncIncident ? "À vérifier" : "Saine"}
-              detail={`${pending} opération(s) en attente · ${blocked} bloquée(s)`}
-              good={Boolean(snapshot.dashboard) && !syncIncident}
-              warning={syncIncident}
+              value={!syncAvailable ? "Indisponible" : syncIncident ? "À vérifier" : "Saine"}
+              detail={syncAvailable ? `${pending} opération(s) en attente · ${blocked} bloquée(s)` : "Diagnostic administrateur non disponible"}
+              good={syncAvailable && !syncIncident}
+              warning={syncAvailable && syncIncident}
             />
             <MiniCard
               title="Planning"
