@@ -1502,14 +1502,14 @@ export default function ClassListPrintPage() {
                   <th className="col-no">N°</th>
                   <th className="col-matricule">Matricule</th>
                   <th className="col-name">Nom et prénoms</th>
-                  <th className="col-series">Note1</th>
-                  <th className="col-board">Note2</th>
-                  <th className="col-lv2">Note3</th>
-                  <th className="col-nat">Note4</th>
                   <th className="col-affect">Aff.</th>
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
+                  <th className="col-series">Note1</th>
+                  <th className="col-board">Note2</th>
+                  <th className="col-lv2">Note3</th>
+                  <th className="col-nat">Note4</th>
                 </tr>
               </thead>
               <tbody>
@@ -1532,10 +1532,6 @@ export default function ClassListPrintPage() {
                       <td className="col-name">
                         {formatTraditionalStudentName(student)}
                       </td>
-                      <td className="col-series"></td>
-                      <td className="col-board"></td>
-                      <td className="col-lv2"></td>
-                      <td className="col-nat"></td>
                       <td className="col-affect">
                         {affectationShort(student.is_affecte)}
                       </td>
@@ -1546,6 +1542,10 @@ export default function ClassListPrintPage() {
                       <td className="col-red">
                         {student.is_repeater ? "R" : ""}
                       </td>
+                      <td className="col-series"></td>
+                      <td className="col-board"></td>
+                      <td className="col-lv2"></td>
+                      <td className="col-nat"></td>
                     </tr>
                   ))
                 )}

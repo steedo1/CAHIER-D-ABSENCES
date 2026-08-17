@@ -32,16 +32,23 @@ test("class timetable occupancy is returned and teacher conflicts remain warning
   assert.match(page, /créneaux déjà occupés de cette classe/);
 });
 
-test("printed roster groups four blank note columns and keeps contextual school heading", () => {
+test("printed roster puts the four blank note columns together at the far right", () => {
   const source = read("src/app/admin/classes/liste/[id]/page.tsx");
   const roster = (source.split('<table className="roster-table">')[1] || "").split("</table>")[0];
+
   for (const label of ["Note1", "Note2", "Note3", "Note4"]) {
     assert.match(roster, new RegExp(`>${label}<`));
   }
+
   assert.match(
     roster,
-    /Note1<\/th>\s*<th[^>]*>Note2<\/th>\s*<th[^>]*>Note3<\/th>\s*<th[^>]*>Note4<\/th>/s,
+    /Aff\.<\/th>\s*<th[^>]*>Né\(e\) le<\/th>\s*<th[^>]*>Sexe<\/th>\s*<th[^>]*>Red<\/th>\s*<th[^>]*>Note1<\/th>\s*<th[^>]*>Note2<\/th>\s*<th[^>]*>Note3<\/th>\s*<th[^>]*>Note4<\/th>/s,
   );
+
+  const note4Index = roster.indexOf(">Note4<");
+  assert.ok(note4Index >= 0, "Note4 doit exister");
+  assert.doesNotMatch(roster.slice(note4Index), /<th[^>]*>(?:Aff\.|Né\(e\) le|Sexe|Red)<\/th>/);
+
   for (const label of ["Série", "Ext\\.", "LV2", "Nat"]) {
     assert.doesNotMatch(roster, new RegExp(`>${label}<`));
   }
