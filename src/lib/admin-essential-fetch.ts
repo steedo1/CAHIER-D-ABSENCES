@@ -5,6 +5,7 @@ import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 
 const CACHE_PREFIX = "admin:essential:http:v1";
 const CACHE_SOURCE_HEADER = "X-Mon-Cahier-Data-Source";
+const SESSION_SCOPE_KEY = "mc:admin-essential:scope:v1";
 
 export type AdminEssentialCachedResponse = {
   body: string;
@@ -12,6 +13,13 @@ export type AdminEssentialCachedResponse = {
   content_type: string;
   saved_at: string;
 };
+
+type AdminEssentialScope = {
+  user_id: string;
+  institution_id: string;
+};
+
+let currentSessionUserId: string | null = null;
 
 function requestUrl(input: RequestInfo | URL) {
   if (input instanceof Request) return new URL(input.url);
@@ -54,19 +62,75 @@ export function isAdminEssentialReadPath(pathname: string) {
   );
 }
 
-async function adminScope() {
+export function setAdminEssentialSessionUser(userId: string | null | undefined) {
+  currentSessionUserId = String(userId || "").trim() || null;
+}
+
+export function rememberAdminEssentialScope(input: {
+  userId: string;
+  institutionId: string;
+}) {
+  if (typeof window === "undefined") return;
+  const userId = String(input.userId || "").trim();
+  const institutionId = String(input.institutionId || "").trim();
+  if (!userId || !institutionId) return;
+  currentSessionUserId = userId;
+  const value: AdminEssentialScope = {
+    user_id: userId,
+    institution_id: institutionId,
+  };
+  try {
+    window.sessionStorage.setItem(SESSION_SCOPE_KEY, JSON.stringify(value));
+  } catch {
+    // Le cache reste simplement indisponible dans cette session privée.
+  }
+}
+
+function currentCloudScope(): AdminEssentialScope | null {
+  if (typeof window === "undefined" || !currentSessionUserId) return null;
+  try {
+    const parsed = JSON.parse(
+      window.sessionStorage.getItem(SESSION_SCOPE_KEY) || "null",
+    ) as AdminEssentialScope | null;
+    if (
+      !parsed ||
+      String(parsed.user_id || "").trim() !== currentSessionUserId ||
+      !String(parsed.institution_id || "").trim()
+    ) {
+      return null;
+    }
+    return {
+      user_id: currentSessionUserId,
+      institution_id: String(parsed.institution_id).trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function adminScope(): Promise<AdminEssentialScope | null> {
+  // Une vraie connexion hors ligne est la source la plus forte : le grant est
+  // signé, lié à l'appareil et contient déjà utilisateur + établissement.
   const active = await getOfflineAccessIntent().catch(() => null);
-  if (!active || active.payload.role !== "admin") return null;
-  const userId = String(active.payload.user_id || "").trim();
-  const institutionId = String(active.payload.institution_id || "").trim();
-  if (!userId || !institutionId) return null;
-  return `${userId}:${institutionId}`;
+  if (active?.payload.role === "admin") {
+    const userId = String(active.payload.user_id || "").trim();
+    const institutionId = String(active.payload.institution_id || "").trim();
+    if (userId && institutionId) {
+      return { user_id: userId, institution_id: institutionId };
+    }
+  }
+
+  // En session Cloud normale, le scope n'est accepté que s'il correspond au
+  // user Supabase actuellement exposé par useAuth ET à l'établissement confirmé
+  // par /api/auth/role pendant cette même session d'onglet.
+  return currentCloudScope();
 }
 
 async function cacheKey(url: URL) {
   const scope = await adminScope();
   if (!scope) return null;
-  return `${CACHE_PREFIX}:${scope}:${encodeURIComponent(normalizedPath(url))}`;
+  const partition = `${scope.user_id}:${scope.institution_id}`;
+  return `${CACHE_PREFIX}:${partition}:${encodeURIComponent(normalizedPath(url))}`;
 }
 
 function cacheAllowedStatus(status: number) {
@@ -130,7 +194,7 @@ export async function adminEssentialFetch(
   try {
     const response = await originalFetch(input, init);
     if (response.ok) {
-      void storeResponse(url, response);
+      void storeResponse(url, response).catch(() => undefined);
       return response;
     }
 
@@ -164,6 +228,7 @@ export function uninstallAdminEssentialFetchBridgeForTests() {
   window.fetch = originalFetch;
   originalFetch = null;
   installed = false;
+  currentSessionUserId = null;
 }
 
 // Le composant de préparation est monté dans le layout racine. Installer ici
