@@ -50,12 +50,15 @@ test("l'écran Admin propose test, synchronisation et diagnostic humain", async 
   assert.doesNotMatch(code, /\.token\b/);
 });
 
-test("le voyant global reste léger et n'appelle que la sonde health", async () => {
+test("le voyant global reste léger et le relais demeure strictement optionnel", async () => {
   const badge = await read(badgePath);
   const layout = await read(layoutPath);
 
+  assert.match(badge, /getRelayConfig\(\)\.token/);
+  assert.match(badge, /if \(!getRelayConfig\(\)\.token\) return/);
   assert.match(badge, /probeRelayHealth/);
   assert.doesNotMatch(badge, /readRelaySupervision/);
+  assert.match(badge, /if \(!enabled\) return null/);
   assert.match(badge, /href="\/admin\/relais"/);
   assert.match(layout, /RelaySupervisionBadge/);
   assert.match(layout, /<RelaySupervisionBadge \/>/);
