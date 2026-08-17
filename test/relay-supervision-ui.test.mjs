@@ -6,6 +6,7 @@ const supervisionPath = new URL("../src/lib/relay-supervision.ts", import.meta.u
 const pagePath = new URL("../src/app/admin/relais/page.tsx", import.meta.url);
 const badgePath = new URL("../src/components/admin/RelaySupervisionBadge.tsx", import.meta.url);
 const layoutPath = new URL("../src/app/admin/layout.tsx", import.meta.url);
+const sidebarPath = new URL("../src/app/admin/ui/sidebar-nav.tsx", import.meta.url);
 
 async function read(path) {
   return await readFile(path, "utf8");
@@ -71,4 +72,12 @@ test("le voyant global reste léger et le relais demeure strictement optionnel",
   assert.match(badge, /href="\/admin\/relais"/);
   assert.match(layout, /RelaySupervisionBadge/);
   assert.match(layout, /<RelaySupervisionBadge \/>/);
+});
+
+test("la sidebar expose explicitement Mon Cahier Relais dans Paramètres", async () => {
+  const sidebar = await read(sidebarPath);
+
+  assert.match(sidebar, /href: "\/admin\/relais"/);
+  assert.match(sidebar, /label: "Mon Cahier Relais"/);
+  assert.match(sidebar, /const SETTINGS_ITEMS: NavItem\[\] = \[/);
 });
