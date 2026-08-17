@@ -23,20 +23,42 @@ export function adminDashboard(
 
   const scalar = (sql: string, ...params: unknown[]) =>
     Number((db.prepare(sql).get(...params) as { count: number }).count || 0);
-  const currentYear = db.prepare(`
-    SELECT id, code, label, start_date, end_date
+
+  const academicYears = db.prepare(`
+    SELECT id, code, label, start_date, end_date, is_current
     FROM academic_years
-    WHERE institution_id = ? AND is_current = 1 AND deleted_at IS NULL
-    LIMIT 1
-  `).get(options.institutionId) as
+    WHERE institution_id = ? AND deleted_at IS NULL
+    ORDER BY is_current DESC, start_date DESC, code DESC, id
+  `).all(options.institutionId).map((row) => {
+    const value = row as Record<string, unknown>;
+    return { ...value, is_current: Boolean(value.is_current) };
+  });
+
+  const currentYear = (academicYears.find((row) => row.is_current === true) ||
+    academicYears[0] || null) as
     | {
         id: string;
         code: string;
         label: string;
         start_date: string | null;
         end_date: string | null;
+        is_current: boolean;
       }
-    | undefined;
+    | null;
+
+  const gradingPeriods = db.prepare(`
+    SELECT id, academic_year, code, label, short_label, kind,
+           start_date, end_date, order_index, is_active, coeff,
+           scope_type, education_type, formation_code, display_code,
+           profile_period_key
+    FROM grade_periods
+    WHERE institution_id = ? AND deleted_at IS NULL
+    ORDER BY academic_year DESC, order_index ASC, start_date ASC, id
+  `).all(options.institutionId).map((row) => {
+    const value = row as Record<string, unknown>;
+    return { ...value, is_active: Boolean(value.is_active) };
+  });
+
   const rows = attendanceMonitor(db, {
     institutionId: options.institutionId,
     from: options.date,
@@ -164,6 +186,14 @@ export function adminDashboard(
   } catch {
     institutionSettings = {};
   }
+  institutionSettings = {
+    ...institutionSettings,
+    institution_name:
+      institutionSettings.institution_name || institution.name || null,
+    name: institutionSettings.name || institution.name || null,
+    institution_code:
+      institutionSettings.institution_code || institution.code || null,
+  };
 
   return {
     source: "relay",
@@ -174,9 +204,11 @@ export function adminDashboard(
       code: institution.code,
       timezone: institution.timezone,
     },
-    academic_year: currentYear ?? null,
+    academic_year: currentYear,
     roster: {
       academic_year: currentYear?.code ?? null,
+      academic_years: academicYears,
+      grading_periods: gradingPeriods,
       classes: rosterClasses,
       students: rosterStudents,
       institution_settings: institutionSettings,
