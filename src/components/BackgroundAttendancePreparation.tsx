@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import { prepareOffline } from "@/lib/offline-readiness";
+import { prepareAdminEssentialOffline } from "@/lib/admin-essential-preparation";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 import { warmOfflineShell } from "@/lib/offline";
 import {
@@ -109,7 +110,7 @@ async function withCrossTabLock(task: () => Promise<void>) {
     return;
   }
   await locks.request(
-    "moncahier-attendance-background-preparation",
+    "moncahier-offline-background-preparation",
     { mode: "exclusive", ifAvailable: true },
     async (lock) => {
       if (!lock) return undefined;
@@ -156,7 +157,7 @@ export default function BackgroundAttendancePreparation() {
             } catch (error) {
               // Une session Supabase peut encore être présente localement alors que
               // le réseau est coupé. Dans ce cas seulement, l'intention déjà
-              // provisionnée permet de préparer les mêmes données sans nouvel appel.
+              // provisionnée permet de conserver les mêmes fonctions préparées.
               const active = await getOfflineAccessIntent();
               if (!active || active.payload.user_id !== userId) throw error;
               role = active.payload.role;
@@ -170,12 +171,9 @@ export default function BackgroundAttendancePreparation() {
 
           if (!role || !userId) return;
 
-          // L'administration générale ne doit ni consulter ni attendre le relais.
-          // La préparation spécifique aux appels n'est autorisée que dans les
-          // deux écrans d'appel concernés.
-          if (role === "admin" && !isAdminAttendancePath(pathnameRef.current)) return;
-
           const scope = `${userId}:${role}`;
+          // Noms historiques conservés pour ne pas perdre le throttle des appareils
+          // déjà préparés avant l'élargissement aux fonctions Admin essentielles.
           const successKey = `mc:attendance-preparation:success:${scope}`;
           const attemptKey = `mc:attendance-preparation:attempt:${scope}`;
           const now = Date.now();
@@ -199,15 +197,27 @@ export default function BackgroundAttendancePreparation() {
 
           await withCrossTabLock(async () => {
             if (role === "admin") {
-              await prepareAdminAttendanceView();
+              // Appels garde sa lecture Cloud -> relais -> cache, y compris lorsque
+              // le Cloud est déjà coupé.
+              if (isAdminAttendancePath(pathnameRef.current)) {
+                await prepareAdminAttendanceView();
+              }
+
+              // Le vrai hors-ligne Admin est préparé automatiquement pendant une
+              // session Cloud. L'utilisateur n'a pas à ouvrir Listes, Bulletins ou
+              // Conseil avant la panne. En session hors ligne pure, on conserve la
+              // dernière préparation valide sans tenter de la remplacer.
+              if (sessionRef.current) {
+                await prepareAdminEssentialOffline();
+              }
             } else {
               await prepareOffline(role === "teacher" ? "teacher" : "class-device");
             }
             writeStorage(successKey, Date.now());
           });
         } catch {
-          // Préparation opportuniste et silencieuse : une indisponibilité du relais
-          // ou du cache ne doit jamais devenir un état global de l'application.
+          // Préparation opportuniste et silencieuse : une indisponibilité du Cloud,
+          // du relais ou du cache ne doit jamais devenir un état global de l'app.
         }
       })().finally(() => {
         preparationInFlight = null;
