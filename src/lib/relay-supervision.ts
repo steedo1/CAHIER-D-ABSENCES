@@ -324,6 +324,7 @@ export async function readRelaySupervision(
 }
 
 export function sanitizedRelayDiagnostic(snapshot: RelaySupervisionSnapshot) {
+  const dashboard = snapshot.dashboard;
   return {
     checked_at: snapshot.checked_at,
     state: snapshot.state,
@@ -334,7 +335,22 @@ export function sanitizedRelayDiagnostic(snapshot: RelaySupervisionSnapshot) {
     data_ready: snapshot.data_ready,
     institution_id: snapshot.institution_id,
     health: snapshot.health,
-    dashboard: snapshot.dashboard,
+    dashboard: dashboard
+      ? {
+          source: dashboard.source || null,
+          generated_at: dashboard.generated_at || null,
+          institution: dashboard.institution
+            ? {
+                id: dashboard.institution.id || null,
+                name: dashboard.institution.name || null,
+                code: dashboard.institution.code || null,
+                timezone: dashboard.institution.timezone || null,
+              }
+            : null,
+          counts: dashboard.counts || null,
+          sync: dashboard.sync || null,
+        }
+      : null,
     dashboard_error: snapshot.dashboard_error,
   };
 }
