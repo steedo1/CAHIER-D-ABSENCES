@@ -1,4 +1,4 @@
-﻿// src/app/api/admin/enrollments/assign/route.ts
+// src/app/api/admin/enrollments/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import {
@@ -119,10 +119,10 @@ export async function POST(req: NextRequest) {
         studentLast = (exist as any).last_name ?? null;
         studentMatricule = (exist as any).matricule ?? null;
 
-        // Cas transition d'annÃ©e dÃ©jÃ  partiellement saisie :
+        // Cas transition d'année déjà partiellement saisie :
         // la classe cible peut contenir une fiche 2026-2027 sans matricule
-        // pour le mÃªme enfant. Cette fiche courante reste la rÃ©fÃ©rence :
-        // on lui transfÃ¨re uniquement le matricule de la fiche historique.
+        // pour le même enfant. Cette fiche courante reste la référence :
+        // on lui transfère uniquement le matricule de la fiche historique.
         const historicalNameKey = normalizeStudentIdentityName(
           studentLast,
           studentFirst,
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json(
             {
               error:
-                "Plusieurs fiches sans matricule portent exactement ce nom dans la classe. RÃ©conciliation manuelle requise.",
+                "Plusieurs fiches sans matricule portent exactement ce nom dans la classe. Réconciliation manuelle requise.",
               code: "ambiguous_duplicate_student",
             },
             { status: 409 },
@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json(
               {
                 error: missingRpc
-                  ? "La migration de rÃ©conciliation des Ã©lÃ¨ves doit Ãªtre appliquÃ©e avant cette inscription."
+                  ? "La migration de réconciliation des élèves doit être appliquée avant cette inscription."
                   : message,
                 code: missingRpc
                   ? "student_reconciliation_migration_required"
@@ -337,6 +337,49 @@ export async function POST(req: NextRequest) {
             finance_sync: null,
           });
         }
+
+        const patch: any = {};
+          if (typeof isAffecte === "boolean") patch.is_affecte = isAffecte;
+          if (typeof isBoarder === "boolean") patch.is_boarder = isBoarder;
+          if (first_name) patch.first_name = first_name;
+          if (last_name) patch.last_name = last_name;
+
+          const { error: mergedStudentUpdateErr } = await srv
+            .from("students")
+            .update(patch)
+            .eq("id", studentId)
+            .eq("institution_id", inst);
+
+          if (mergedStudentUpdateErr) {
+            return NextResponse.json(
+              {
+                error: mergedStudentUpdateErr.message,
+                code: "merged_student_update_failed",
+              },
+              { status: 409 },
+            );
+          }
+
+          return NextResponse.json({
+            ok: true,
+            student: {
+              id: studentId,
+              first_name: first_name || studentFirst,
+              last_name: last_name || studentLast,
+              matricule: studentMatricule,
+            },
+            merged_existing_duplicate: true,
+            merge: mergeData,
+            closed_old_enrollments: Number(
+              (mergeData as any)?.closed_prior_enrollments || 0,
+            ),
+            reactivated_in_target: 0,
+            inserted_in_target: 0,
+            finance_transfer: null,
+            finance_sync: null,
+          });
+        }
+
         const patch: any = {};
         if (first_name && first_name !== (studentFirst ?? ""))
           patch.first_name = first_name;
@@ -487,10 +530,10 @@ export async function POST(req: NextRequest) {
 
   const today = isoToday();
 
-  // Le transfert de classe et le transfert financier doivent Ãªtre prÃ©parÃ©s
-  // avant de fermer l'ancienne inscription. En cas d'anomalie (barÃ¨me cible
-  // manquant, doublons dÃ©jÃ  encaissÃ©s, profil financier incomplet), aucune
-  // inscription n'est modifiÃ©e.
+  // Le transfert de classe et le transfert financier doivent être préparés
+  // avant de fermer l'ancienne inscription. En cas d'anomalie (barème cible
+  // manquant, doublons déjà encaissés, profil financier incomplet), aucune
+  // inscription n'est modifiée.
   let sameYearClassIds: string[] = [];
   let targetAcademicYearId: string | null = null;
   let targetAcademicYearStartDate: string | null = null;
@@ -541,10 +584,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Une fiche Ã©lÃ¨ve est stable entre les annÃ©es scolaires. Pour l'inscription,
-  // il faut donc clÃ´turer TOUTE ancienne inscription encore active, y compris
-  // celle de l'annÃ©e prÃ©cÃ©dente. En revanche, la finance ne se transfÃ¨re que
-  // lors d'un changement de classe dans la mÃªme annÃ©e scolaire.
+  // Une fiche élève est stable entre les années scolaires. Pour l'inscription,
+  // il faut donc clôturer TOUTE ancienne inscription encore active, y compris
+  // celle de l'année précédente. En revanche, la finance ne se transfère que
+  // lors d'un changement de classe dans la même année scolaire.
   const { data: sourceEnrollments, error: sourceEnrollmentErr } = await srv
     .from("class_enrollments")
     .select("id,class_id,start_date,end_date,classes:class_id(academic_year)")
@@ -619,7 +662,7 @@ export async function POST(req: NextRequest) {
         error:
           financeError instanceof Error
             ? financeError.message
-            : "Le transfert financier de l'Ã©lÃ¨ve a Ã©chouÃ©.",
+            : "Le transfert financier de l'élève a échoué.",
         code: "finance_class_transfer_failed",
       },
       { status: 409 },
@@ -751,7 +794,7 @@ export async function POST(req: NextRequest) {
         error:
           enrollmentError instanceof Error
             ? enrollmentError.message
-            : "Le transfert de classe a Ã©chouÃ©.",
+            : "Le transfert de classe a échoué.",
         code: rollbackFailed
           ? "class_transfer_rollback_incomplete"
           : "class_transfer_rolled_back",
@@ -853,4 +896,3 @@ export async function POST(req: NextRequest) {
     finance_sync: financeTransfer.reconciliation,
   });
 }
-
