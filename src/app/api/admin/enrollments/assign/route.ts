@@ -339,48 +339,6 @@ export async function POST(req: NextRequest) {
         }
 
         const patch: any = {};
-          if (typeof isAffecte === "boolean") patch.is_affecte = isAffecte;
-          if (typeof isBoarder === "boolean") patch.is_boarder = isBoarder;
-          if (first_name) patch.first_name = first_name;
-          if (last_name) patch.last_name = last_name;
-
-          const { error: mergedStudentUpdateErr } = await srv
-            .from("students")
-            .update(patch)
-            .eq("id", studentId)
-            .eq("institution_id", inst);
-
-          if (mergedStudentUpdateErr) {
-            return NextResponse.json(
-              {
-                error: mergedStudentUpdateErr.message,
-                code: "merged_student_update_failed",
-              },
-              { status: 409 },
-            );
-          }
-
-          return NextResponse.json({
-            ok: true,
-            student: {
-              id: studentId,
-              first_name: first_name || studentFirst,
-              last_name: last_name || studentLast,
-              matricule: studentMatricule,
-            },
-            merged_existing_duplicate: true,
-            merge: mergeData,
-            closed_old_enrollments: Number(
-              (mergeData as any)?.closed_prior_enrollments || 0,
-            ),
-            reactivated_in_target: 0,
-            inserted_in_target: 0,
-            finance_transfer: null,
-            finance_sync: null,
-          });
-        }
-
-        const patch: any = {};
         if (first_name && first_name !== (studentFirst ?? ""))
           patch.first_name = first_name;
         if (last_name && last_name !== (studentLast ?? ""))
