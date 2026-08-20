@@ -4,6 +4,7 @@ import {
   financeComponentIsOptional,
   financeExpectedAmountFromComponents,
   financeScheduleAppliesToStudent,
+  financeScheduleKind,
   financeScheduleLabelForClass,
   financeScheduleProfileVariantKey,
   financeScheduleSemanticKey,
@@ -305,13 +306,6 @@ export async function applyStudentFinanceReconciliation({
           : null,
   };
 
-  if (profile.is_affecte === null || profile.is_boarder === null) {
-    summary.warnings.push(
-      "Profil financier incomplet : renseignez Affecté/Non affecté et Interne/Externe. Aucune dette n'a été modifiée.",
-    );
-    return { summary, rollback: async () => undefined };
-  }
-
   const classes = (classesResult.data ?? []) as ClassRow[];
   const categories = (categoriesResult.data ?? []) as CategoryRow[];
   const classesById = new Map(classes.map((row) => [row.id, row]));
@@ -341,6 +335,33 @@ export async function applyStudentFinanceReconciliation({
     );
     return { summary, rollback: async () => undefined };
   }
+
+  const missingProfileWarnings: string[] = [];
+  const normalizedScheduleLabels = selectedSchedules.map((schedule) =>
+    normalizeFinanceText(schedule.label),
+  );
+  const requiresAffectation = selectedSchedules.some(
+    (schedule, index) =>
+      typeof schedule.applies_when_affecte === "boolean" ||
+      normalizedScheduleLabels[index].includes("affecte"),
+  );
+  const requiresBoarding = selectedSchedules.some(
+    (schedule) =>
+      typeof schedule.applies_when_boarder === "boolean" ||
+      financeScheduleKind(schedule, categoriesById) === "internat",
+  );
+
+  if (requiresAffectation && profile.is_affecte === null) {
+    missingProfileWarnings.push(
+      "Affecté/Non affecté non renseigné : seuls les frais indépendants de ce statut peuvent être générés.",
+    );
+  }
+  if (requiresBoarding && profile.is_boarder === null) {
+    missingProfileWarnings.push(
+      "Interne/Externe non renseigné : les frais d'internat sont ignorés tant que ce statut n'est pas précisé.",
+    );
+  }
+  summary.warnings.push(...missingProfileWarnings);
 
   const scheduleIds = selectedSchedules.map((row) => row.id);
   const academicYear = cleanId(targetClass.academic_year) || null;

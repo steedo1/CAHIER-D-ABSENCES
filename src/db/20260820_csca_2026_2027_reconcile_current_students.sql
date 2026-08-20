@@ -1,0 +1,602 @@
+-- CSCA 2026-2027 — RÉCONCILIATION DES MATRICULES
+-- À exécuter seulement après validation du dry-run.
+-- Principe : la fiche actuellement active en 2026-2027 reste la référence.
+-- On ne déplace AUCUN frais, reçu, note, appel ou paiement 2026-2027.
+-- Seuls les rapprochements exacts confirmés par le fichier officiel sont automatiques.
+
+begin;
+
+create temp table tmp_csca_context on commit drop as
+select i.id as institution_id, ay.id as academic_year_id, ay.code as academic_year
+from public.institutions i
+join public.academic_years ay on ay.institution_id=i.id
+where i.code_unique='000657'
+  and ay.code='2026-2027';
+
+do $$
+begin
+  if (select count(*) from tmp_csca_context) <> 1 then
+    raise exception 'Réconciliation annulée : contexte CSCA 2026-2027 introuvable ou ambigu.';
+  end if;
+end $$;
+
+create temp table tmp_csca_official_2026 (
+  matricule text primary key,
+  last_name text not null,
+  first_name text not null,
+  source_sheet text not null,
+  source_row integer not null,
+  is_affecte boolean null,
+  is_boarder boolean null
+) on commit drop;
+
+insert into tmp_csca_official_2026
+  (matricule,last_name,first_name,source_sheet,source_row,is_affecte,is_boarder)
+values
+  ('25215891U','MOUHA','KODJO JEAN PIERRE','6è',13,false,true),
+  ('25215927J','MOUHA','AKASSIMANDOU AUGUSTIN YANIS','6è',14,false,true),
+  ('25194846U','SAMY','KOUASSI MARC','6è',15,false,true),
+  ('25019636P','AGOUSSI','ABOKON PIERRE MARIE','5è 1',10,false,true),
+  ('25112537Q','AHOUSSOU','WA ELIAKIM PAUL-MARIE','5è 1',11,true,true),
+  ('25285413M','AISSI','SEDJRO MATYS ARMEL','5è 1',12,false,true),
+  ('25206792D','AKA','AMANGOUA DUVAL ARNOLD DIMITRI','5è 1',13,false,true),
+  ('25078801J','ASSI ABENON','GUY-JAURES ELVIS CLAUDE ARTHUR','5è 1',14,false,null),
+  ('25119280H','ESSAN','KIRIEL YAO KOUADIO NATHAN','5è 1',15,true,null),
+  ('25084520E','FESSOU','MOHAMED RAEL TIDIANE','5è 1',16,true,null),
+  ('24267414W','GOSSAN','ANGE-PAUL HENRI GAEL','5è 1',17,true,null),
+  ('25192724N','KADJA','ACKAH JOSHUA DAVID','5è 1',18,false,true),
+  ('25074846H','KAKOU','TANOH YOHAN GERMAIN','5è 1',19,true,null),
+  ('25032040J','KOFFI','SESS ARIEL EMMANUEL','5è 1',20,true,null),
+  ('25032183D','KOFFI','KOFFI KEDESCHK MATHIS','5è 1',21,true,null),
+  ('25101698W','KONAN','N''GOUAN BLESSING','5è 1',22,true,null),
+  ('25199799K','KONE','ABRAHAM SOUNA OYENAN','5è 1',23,true,null),
+  ('24352888V','KOUASSI','GBANFLIN ERIC','5è 1',24,false,true),
+  ('25055407G','MOSSOU','BENJAMIN MARC-AUREL','5è 1',25,false,true),
+  ('25206577V','N''DA','HEMERCK DELAUNAY KOMOHE N''GOUANDI','5è 1',26,false,null),
+  ('25084330T','N''DOLI','AMONTCHI CHRIST MONDESIR','5è 1',27,true,null),
+  ('25101700U','NENE','BI YANNIS MARC-AUREL','5è 1',28,true,null),
+  ('25028771C','N''GUESSAN','MARC DYLANN FRED','5è 1',29,true,null),
+  ('25199699U','NIAMKEY','NATHAN MAVERICK HELMONE','5è 1',30,true,null),
+  ('25146870W','TANOH','FRAM KENNY CHRIS MAEL YANNIS','5è 1',31,true,null),
+  ('25131482V','TRA','BI DJE HAMETHSY JUNIOR','5è 1',32,true,null),
+  ('25135399C','YOBOU','ARIEL NOAH','5è 1',33,true,true),
+  ('25096494Q','ZARASSE','YVAN EMMANUEL','5è 1',34,true,true),
+  ('25046106C','ADAM-YEBOUA','ETHAN GADIEL ABRAHAM','5è 2',10,true,null),
+  ('25059531X','ADJOBI','KOUA OTHNIEL MARVINE','5è 2',11,true,null),
+  ('25146872U','AHUI','GNAMIEN N''GOAN JOSUE MICHAEL','5è 2',12,true,null),
+  ('25101695T','ASSINDO','TANO GAEL EUCHARISTIE','5è 2',13,true,null),
+  ('25281579U','BEUGRE','HOREB-EFFRAIM','5è 2',14,false,null),
+  ('25206766A','BOUKARY','AMIDOU AZIZ DIOM','5è 2',15,true,true),
+  ('25074452Y','BOUNTOGO','ABDOUL GUEULOU','5è 2',16,null,null),
+  ('25276188K','COULIBALY','EGNON EDWIN HIRAM','5è 2',17,true,null),
+  ('25020084L','DIOMANDE','BEROUZE GAOUSSOU','5è 2',18,true,true),
+  ('25027834K','DRO','ZINGBE MORY PIERRE','5è 2',19,true,null),
+  ('25175984S','KACOU','HOUA YVES MARIE ELIYAKIM','5è 2',20,false,true),
+  ('24454075S','KACOU','WODIE JEAN STEVE','5è 2',21,true,true),
+  ('25293710F','KADJO','KOFFI KEVIN','5è 2',22,false,true),
+  ('25122600R','KAKOU','BENIE ANGE EMERITE','5è 2',23,false,null),
+  ('24423109L','KAMARA','GNAMINTCHE IBRAHIM','5è 2',24,false,true),
+  ('24506207G','KOFFI','JEAN MARC IRIEL','5è 2',25,false,null),
+  ('25245446U','KOFFI','LUCIEN CHRIST NATHAN','5è 2',26,false,true),
+  ('25180079T','KONE','HAMED BEN AMIR','5è 2',27,true,true),
+  ('25206808W','N''DRAMAN','BOSSO JEAN FRANCOIS','5è 2',28,true,true),
+  ('25032023K','SORO','ISRAEL OTHNIEL DOUGNIMANTON','5è 2',29,false,true),
+  ('24150178R','TAE','SEMOHO LOUIS CHARLES ELVIS','5è 2',30,true,null),
+  ('24107322J','TANOH','BOKO YANN CHRISTOPHANE','5è 2',31,false,true),
+  ('25027873M','TRAORE','KADJANA ABDOURAHIM','5è 2',32,true,null),
+  ('25106031G','ZANGRE','ABDOUL DRAMANE','5è 2',33,true,true),
+  ('24110007B','ZONGO','ABDOUL DJELID','5è 2',34,false,null),
+  ('24044547L','ABOUA','KASSI ANGE EPHRAIM OTHNIEL','4è 1(Esp)',10,true,null),
+  ('24109448U','ADJE','N''GUESSAN GUY HERMANN','4è 1(Esp)',11,true,null),
+  ('24010575X','AKA','JAMES YOHANN ETHAN MITISRANKPA','4è 1(Esp)',12,true,null),
+  ('23388034Y','ANO','TANOH  ANGE DANIEL','4è 1(Esp)',13,true,null),
+  ('24404553M','ATTA','AMENGOUA YANN PASCAL','4è 1(Esp)',14,true,null),
+  ('24035033J','AYAGBE','MAOUGNON CHARBEL','4è 1(Esp)',15,false,true),
+  ('24313368G','BAZIE','CHRIS CALEB YOHAN','4è 1(Esp)',16,true,null),
+  ('24046713V','BIKIENGA','IBRAHIM','4è 1(Esp)',17,true,true),
+  ('24360338P','DAGOU','ADON LORIS OTHNIEL','4è 1(Esp)',18,true,null),
+  ('24504714D','DEBOUHI','SOUKOU ANTONIO NATHAN','4è 1(Esp)',19,true,true),
+  ('24488133H','DEZA','SIEKOUET MERYL YOEL HUBERT','4è 1(Esp)',20,true,null),
+  ('24231720U','DJOMAN','DAVID','4è 1(Esp)',21,true,true),
+  ('24360320Z','EHILE','ISRAEL OLIVIER','4è 1(Esp)',22,true,null),
+  ('24360335Z','ESSE','ANGE ARIEL ELIPHAL','4è 1(Esp)',23,true,null),
+  ('24507467N','FORY','KARL ARIEL CHRISTOPHORE','4è 1(Esp)',24,true,true),
+  ('24518277C','GOORE','BI ZOKOU CHRIST EDEN','4è 1(Esp)',25,true,null),
+  ('24470284P','KESSE','CHRIS ERWAN MANOU','4è 1(Esp)',26,true,true),
+  ('24110095Y','KOFFI','KOBENAN ANGE JEREMIE','4è 1(Esp)',27,true,null),
+  ('24171170J','KONAN','ESDRAS DAVID DIEUDONNE','4è 1(Esp)',28,true,true),
+  ('24183701D','KONAN','KOUAKOU JEAN-ELI DELAS','4è 1(Esp)',29,true,null),
+  ('24148888L','KOUADIO','ASSEKA JOSEPH CONSTANT','4è 1(Esp)',30,false,true),
+  ('24493127F','KOUADIO','KOUAKOU JOEL CHRIST FRANCK','4è 1(Esp)',31,true,true),
+  ('24243114X','MELAN','YOBOU CHRISTIAN DYLAN','4è 1(Esp)',32,true,true),
+  ('23067401S','MONTON','N''DEDE GERARD','4è 1(Esp)',33,false,null),
+  ('24360323Q','N''GUESSAN','ADON BENJAMIN','4è 1(Esp)',34,null,null),
+  ('24427841L','NUTSUEGO','JANIS','4è 1(Esp)',35,true,true),
+  ('24175248R','OUATTARA','KWAMELAN ALLOU CALEB EVAN','4è 1(Esp)',36,true,null),
+  ('24025999H','SECA','ABE JEAN FRANCOIS DE SALES','4è 1(Esp)',37,true,null),
+  ('24204382J','TANOH','FRAM YANCEY ABOUKHERY ELIAM ADIEL','4è 1(Esp)',38,true,null),
+  ('24149646N','YAMOUA','KOUAME JUSTE EMERICK LAURIDAS','4è 1(Esp)',39,true,true),
+  ('24483325P','YOBOUE','NOBOU MARC ELIE','4è 1(Esp)',40,true,true),
+  ('24237176H','ZOGO','NOAH MATYS','4è 1(Esp)',41,true,true),
+  ('23063726G','ABRE','KASSY KAN GEORGES CEDRICK','4è 2(Esp)',9,true,null),
+  ('24062461W','ADAMA','KOUASSI KENNETT MESSI','4è 2(Esp)',10,false,true),
+  ('24518221L','ADECHI','ZAKKI KAMAL DINE','4è 2(Esp)',11,true,null),
+  ('24360341N','BASSOLE','SETH O''NEAL MATHIS','4è 2(Esp)',12,null,null),
+  ('24044487W','BATIONO','ALEXANDRE BASILE','4è 2(Esp)',13,true,null),
+  ('24036951T','BOSSON','GNANGBO JEAN PIERRE','4è 2(Esp)',14,false,true),
+  ('24228521W','BROU','AMAMAN JOSKY','4è 2(Esp)',15,true,null),
+  ('24514229E','DACRI','AHOUOTO ARIEL NOIC KERUN','4è 2(Esp)',16,false,true),
+  ('23915155Y','DIAKITE','SAMBA','4è 2(Esp)',17,true,null),
+  ('24146112W','DOUKOURE','MOUSTAPHA','4è 2(Esp)',18,false,true),
+  ('24463896E','EBROTTIE','CHRIS YVANN WESLEY','4è 2(Esp)',19,true,null),
+  ('23089451N','GAHON','BAH CHANCE MOREL','4è 2(Esp)',20,true,null),
+  ('24032401Y','KASSI','CHRIST MARIE PHILIPPE','4è 2(Esp)',21,false,true),
+  ('23738869D','KOFFI','ROCH EMMANUEL-MARIE YANN GETHEME','4è 2(Esp)',22,true,null),
+  ('24002170N','KOUA','KOBO NATHAN DIEUDONNE','4è 2(Esp)',23,false,true),
+  ('24148885W','KOUADIO','KOUAKOU JEAN LUC WILFRIED LEO','4è 2(Esp)',24,true,true),
+  ('24498382U','KOUADIO','MIENWA ETHAN PENIEL','4è 2(Esp)',25,false,true),
+  ('24091228Q','KOUADIO','NGUETTIA ANGE YANIS','4è 2(Esp)',26,true,true),
+  ('22889007F','KOUADJO','YAO GNAMIENHMAN EUNICE','4è 2(Esp)',27,true,null),
+  ('24454108R','KOUAME','CHENAL CHRISLAIN','4è 2(Esp)',28,false,null),
+  ('24260387J','MIEZAN EGNAKOU','PAPATCHI KEELYAN JEAN-FLORENT','4è 2(Esp)',29,true,true),
+  ('24111903N','N''DA','N''GOUANDI GOMEZ MANASSE','4è 2(Esp)',30,false,null),
+  ('24057062C','N''DRI','LOUIS MARIE AURELIEN MESSOUM','4è 2(Esp)',31,true,true),
+  ('24347683K','NKEOUA','YANIS-AMAEL YOUSSEF LUCAS','4è 2(Esp)',32,true,true),
+  ('24423465H','N''TCHOBO','CHRIST ISRAEL','4è 2(Esp)',33,true,null),
+  ('24039453N','N''TANON','AHI CHRIST ISRAEL','4è 2(Esp)',34,true,null),
+  ('24465533Z','PEHE','DEKEMAN URIEL DE GUEI','4è 2(Esp)',35,true,true),
+  ('21442623J','SOURABIE','ABOUDRAHIM','4è 2(Esp)',36,true,null),
+  ('24204386N','TOURE','THIO GNINLFANGAN DAVID ANICET','4è 2(Esp)',37,true,null),
+  ('24044548N','ABE','COME-DAMIEN HIRALESSOU ISAIAH','4è 3(ALL)',10,true,null),
+  ('23071712L','AHOLOUKPE','ORPHEE FARIS ORTHINEL','4è 3(ALL)',11,true,null),
+  ('22434825Y','AKA','EKPONON JEAN-DAVID','4è 3(ALL)',12,false,null),
+  ('24360763N','ASSINDJO','OPOUE OTHNIEL MELVINE','4è 3(ALL)',13,true,null),
+  ('23065449K','BAGAYOKO','SACKA','4è 3(ALL)',14,true,null),
+  ('24403200X','BOATENG','KOUADIO SERGE OLIVIER','4è 3(ALL)',15,true,null),
+  ('24039154N','BONKOUNGOU','ANGE MELAINE','4è 3(ALL)',16,true,true),
+  ('24413941R','BOVAUD','TANI FAITH HANNIEN','4è 3(ALL)',17,false,true),
+  ('24360339Q','CHEIKH','OULD SIDI ABDALLAH','4è 3(ALL)',18,true,null),
+  ('24090688U','CISSE','ABOUBAKAR SIDIK','4è 3(ALL)',19,true,null),
+  ('24094374K','COULIBALY','GNINLFANY SALOMON RYANN','4è 3(ALL)',20,false,true),
+  ('24140111U','DALI','OYOUROU SALOMON ARIEL MESSI','4è 3(ALL)',22,true,true),
+  ('24528014B','DÉKOU','ANGORAN WILHELM URIEL BAPTISTE','4è 3(ALL)',23,true,true),
+  ('24083509E','DIBI','ELIE YOHANN JORDY','4è 3(ALL)',24,true,true),
+  ('24475676X','DOUYERI','WANLAUD YANN ALEX','4è 3(ALL)',25,true,true),
+  ('24053433J','EBROTHIE','JOHANN ELIAS','4è 3(ALL)',26,false,true),
+  ('24218481J','GUEU','ANGE MEDERIC','4è 3(ALL)',27,true,true),
+  ('23065111S','KOFFI','AKA AOUELE EMMANUEL ELISHAMA','4è 3(ALL)',28,true,true),
+  ('23652884X','KOFFI','KOUAKOU BENI JEREMIE','4è 3(ALL)',29,true,null),
+  ('24456121Z','KOUAME','KOUAME ETHAN EWAN','4è 3(ALL)',30,true,true),
+  ('24423501X','KOUAME','ATTOBRA EMMANUEL JEREMIE EMILEN','4è 3(ALL)',31,true,null),
+  ('23663825N','N''DRAMAN','N''GUESSAN JOSEPH ANDRE','4è 3(ALL)',33,null,true),
+  ('24151552K','N''TCHOBO','KOUAME CHRISTOPHE ARCHANGE','4è 3(ALL)',34,false,true),
+  ('24423596G','OKOUBI','DACKO BENI MAEL EMERICK','4è 3(ALL)',35,true,null),
+  ('24173381M','SERY','BLE CHRIST NATHAN','4è 3(ALL)',36,true,null),
+  ('23388051D','TARE','SEYDOU ABOUDOU KADRE','4è 3(ALL)',37,false,null),
+  ('24147802S','THOMPSON','OKROU CHRIST RAYAN','4è 3(ALL)',38,false,true),
+  ('24423604R','TOURE','CHEICK ISMAEL MELKISEDEC','4è 3(ALL)',39,true,null),
+  ('24136524E','TRAORE','ZIE BILALL ADAMA','4è 3(ALL)',40,null,null),
+  ('23551958L','AHOUSSOU','WA BEAULATI DOMINIQUE MARIE OULIE','3è 1',10,true,true),
+  ('23368105P','AKOTCHAYE','SOUROU TIZIE ETHAN MARIE','3è 1',11,true,true),
+  ('23554973A','AMEHOU','KILIAN DAVID','3è 1',12,true,true),
+  ('23660884F','ASSAMOI','MENAHEM JACQUES ELIEL','3è 1',13,true,null),
+  ('23071991P','ASSEPO','MARC IVON','3è 1',14,false,null),
+  ('23558789W','BISSIE','JEAN MARIE BAPTISTE VIANNEY','3è 1',15,true,true),
+  ('23635561S','BOYA','MARC AUREL','3è 1',16,false,true),
+  ('23243810D','CATTIN','ALFRED YANNIS','3è 1',17,null,true),
+  ('23037268D','COULIBALY','OFFIANAN AARON OSWALD','3è 1',18,true,true),
+  ('23066699Y','DOSSA','PIERRE MARIE YVANN','3è 1',19,true,true),
+  ('23681020K','DZADE','KOFFI EVANS JACOB','3è 1',20,true,true),
+  ('23684909Y','ESSE','BROU LOUIS MICHELE MARIE','3è 1',21,true,null),
+  ('23613312E','ESSIS','ANGE DANIEL AARON','3è 1',22,true,true),
+  ('23746457A','GNACO','JOSEPH YOEL','3è 1',23,true,true),
+  ('23658201J','GNAGNE','MACKMEL''ES AIME CHRIST ELIE','3è 1',24,true,true),
+  ('23684999N','KEDIA','SANHOUN KENNY MOREL','3è 1',25,true,null),
+  ('23643339T','KHAMPRASEUTH','KISSTONE ELIE','3è 1',26,true,true),
+  ('23028241B','KIKOLA','NIMBI CHRIST ELISEE AIME DE D','3è 1',27,true,true),
+  ('23651931X','KOUAME','N''DEFE ANGE KILLIAN','3è 1',28,true,null),
+  ('23660899E','KOUAME','RASSOU LOUIS YANIS','3è 1',29,true,null),
+  ('23592642J','KOUASSI','ZELIA KAKAUF CHRIST IVAN','3è 1',30,true,true),
+  ('22483812F','KOUASSI','BROU REGIS ARCHANGES','3è 1',31,false,true),
+  ('23661777K','MASSOUO','AHILEY CHRIS CERAUNE','3è 1',32,true,true),
+  ('23071577J','MINLIN','BILE NEHEMIE ANGE MONDESIR','3è 1',33,true,null),
+  ('23065077Q','N''GUESSAN','KPANGNI PRINCE ISRAEL OTHNIEL','3è 1',34,true,null),
+  ('22482908A','N''GUETTIA','KOBENAN KARL YEBOUA','3è 1',35,true,null),
+  ('23670278Q','SIKA','ASSEU MAX PAUL MARIE','3è 1',36,true,true),
+  ('23065073J','TETE','CHRIST HONORE','3è 1',37,true,null),
+  ('23785668E','VANGAH','AYEMOU ARCHANGE YERIEL','3è 1',38,true,true),
+  ('23563157F','YORO','MONAO YANN-DERICK AARON','3è 1',39,true,null),
+  ('23646291U','ZIA','DEBA RAYAN YACINE HABIB','3è 1',40,true,null),
+  ('23002791B','BLEHOU','JOSEPH CHRIST DESIRE','3è 1',48,true,null),
+  ('23071999G','ADAGBA','ACHY JEAN-CLAUDE EMMANUEL','3è 3',10,true,null),
+  ('22796006Z','ADOU','KOUAME JORIS','3è 3',11,true,null),
+  ('21537191N','AKATCHI','KAUPHY EMMANUEL PATRICE','3è 3',12,true,null),
+  ('22843886L','AMESSAN','YAO PIRRE MARIE','3è 3',13,false,true),
+  ('23082599R','ATSIN','IPOUWAKAN YANN LOIC','3è 3',14,true,true),
+  ('23660915S','BAUDOUX','MOTTOH ELYSEE OZIL DECYRIAC','3è 3',15,true,null),
+  ('23736821L','BI DJETTI','SEKA DANIEL YVAN','3è 3',16,null,true),
+  ('21302124J','DAGNOGO','KIBEDANAN CHRIST PENIEL','3è 3',17,true,null),
+  ('23608972E','DAHON','VAO JEAN JACQUES EPIPHANE','3è 3',18,true,true),
+  ('23029316C','DIALLO','AHMED YANNIS','3è 3',19,false,true),
+  ('20490161D','DOMPE','HABIB','3è 3',20,null,true),
+  ('23012519A','EBROTTIE','AXEL MARIE YEDIDIA','3è 3',21,true,true),
+  ('22646496Y','EPINZA','ESSOI KAKOU YANIS AARON','3è 3',22,true,null),
+  ('22381829G','ETIEN','AFFALI NERIAD PALTIEL','3è 3',23,false,true),
+  ('23605431G','KOKO','KOFFI CHRISTOPHER EMMANUEL','3è 3',24,true,true),
+  ('23626912E','KPAN','TIEMON ETRINFEH ARIEL','3è 3',25,true,null),
+  ('22327644Z','LABEGA','DAMTARE MOUSSA MOHAMED','3è 3',26,true,null),
+  ('23064814H','N''DAKON','AKA SRAN ISAAC ROGER','3è 3',29,true,true),
+  ('22417336K','N''DRI','ATCHELOW ANDRE PAUL YVAN','3è 3',30,false,true),
+  ('23063215K','N''GNAGORAN','ANOH DAMOI ANILOVE','3è 3',31,true,null),
+  ('23549606S','N''GUESSAN','DJAVA SERGE','3è 3',32,true,true),
+  ('23039748Y','N''GUESSAN','YAPI REIYEL JOSEPH EMMANUEL','3è 3',33,true,null),
+  ('23684824U','N''GUETTIA','YAO YVAN MOREL','3è 3',34,true,null),
+  ('22774781C','OBOUO','NATHAN PETUEL','3è 3',35,true,null),
+  ('22404815U','OKEI','OKEI JEAN LEVY','3è 3',36,false,true),
+  ('23660981Q','SAWADOGO','ABDOUL RAZAK','3è 3',37,true,null),
+  ('23241678B','SEA','DEDI ANGE CEDRIC','3è 3',38,true,true),
+  ('23065678Q','TRA','MARVIN CHRIST SHAYANE','3è 3',39,true,null),
+  ('22643319U','ADIKO','MELEDJE CHRIST PRIGENT','2de',11,null,true),
+  ('22971201S','ASSI','MAXENCE AUREL BEDA','2de',15,null,true),
+  ('20493935T','BAMOGO','EMMANUEL','2de',16,null,true),
+  ('22927462Q','BLE','BOYA TETI ELIE DAVID','2de',17,null,true),
+  ('22821924M','BRANCO','MARC KENNETH','2de',18,null,true),
+  ('22861837J','DAH','SERGE ANDRES YOANN','2de',19,null,true),
+  ('22640624E','DIANDUE','BI KRA MICA LOUIS-EVANS','2de',21,null,true),
+  ('22640013G','KADJA','ASEIDA BERNIS LOIC-ETHAN','2de',23,null,true),
+  ('20482425E','KOFFI','KONAN MARDOCHE MAIVIGNE DILANE','2de',24,null,true),
+  ('21846888V','KOFFI','DAHANY MIENYOMAN MESSIE','2de',25,null,true),
+  ('21853804K','KONE','TENLO GNENEKAN DANIEL','2de',26,null,true),
+  ('22802308H','KOUAKOU','JEAN PIERRE NIAMIENSA','2de',28,null,true),
+  ('22915750U','KOUAME','YOHANN ATNIÈL BATIHYÉ','2de',29,null,true),
+  ('22150483N','KOUAO','BAZE DAVID- MARIE ELIAKIM','2de',30,null,true),
+  ('22823239C','LAGO','DIGBEU CHRIST LUCIEN','2de',31,null,true),
+  ('22868599T','MELAN','YOANN MAEL YAHVE','2de',32,null,true),
+  ('21131563T','NIMBO','AMANI ERIC DYLANE','2de',33,null,true),
+  ('20678906K','TAE','SEMOHO JEAN-MARC BLANCHARD','2de',34,null,true),
+  ('22888709V','TANO','KOFFI PRINCE SAMMUEL','2de',35,null,true),
+  ('22858812F','TANOH','ALLA PRINCE PREMAEL HOLANDE','2de',36,null,true),
+  ('21540302L','VOVO','CHRIST PENIEL MONDESIR','2de',37,null,true),
+  ('21117075X','WADJA','AIZAN CHRIST EMMANUEL','2de',38,null,true),
+  ('22266376B','YAO','CHRIST YVANN','2de',39,null,true),
+  ('20490907T','AKATCHI','KAUPHY JOHANN IVAN','1è A',10,null,null),
+  ('21856292C','ALLO','JEANPENIEL ELIE','1è A',11,null,true),
+  ('21847463N','BI DJETTI','YANNIS MAC  ELIE DENOVANE','1è A',12,null,true),
+  ('21830497V','EMOU','MAKOUGA YOHANN ANDRE VIANNEY','1è A',13,null,true),
+  ('21252314P','FALLE','JOSEPH- MARIE SAMUEL','1è A',14,null,true),
+  ('21657441W','GNAHORE','SIABA PIERRE MARIE TEDDY','1è A',15,null,true),
+  ('21252080K','GNEZENI','JONATHAN TEAGUE LEROY','1è A',16,null,true),
+  ('20414499X','HARDI','ABUBAKAR','1è A',17,true,null),
+  ('21540404W','KLA','N''GUESSAN MARC-EMMANUEL HAYN','1è A',18,null,true),
+  ('21308039R','KOFFI','LOICK EMMANUEL HETRAN','1è A',19,null,true),
+  ('18651979L','KOFFI','KOUADIO CHRIST EMMANUEL','1è A',20,null,true),
+  ('21667615T','KONATE','CHEICK MOHAMED','1è A',21,null,null),
+  ('20080287F','LOGOSSOU','PLAKOO HANS-ELIE','1è A',22,null,true),
+  ('21901372U','NANI','BADOU JEAN-PAUL ERIC','1è A',23,null,true),
+  ('21117594H','THOMPSON','AKALE PRINCE VINCENT DESCART','1è A',24,null,true),
+  ('21483486Q','ABAZE','YAPI HONORE CLAVER','1è D',10,true,null),
+  ('21874199G','ADINGRA','YAO CHRIST YOANN','1è D',11,null,true),
+  ('21522028P','ADJE','ADJOBI MICHEL MARIE ARIEL','1è D',12,null,true),
+  ('21207412Z','ADOMO','ELFRIED YVON BONAVENTURE','1è D',13,null,true),
+  ('20282569F','AHUA','KILLIAN PAUL-DESIRE','1è D',14,null,true),
+  ('21225320C','AKA','GBERY PHILIPPE KILYANE RUBEN','1è D',15,null,true),
+  ('21765074S','AKIAPO','WISEHO CHRIS-YOHAN','1è D',16,null,true),
+  ('21744565K','AMOAH','PAUL-ARIEL KOUASSI','1è D',17,null,true),
+  ('21400063D','AMONCHI','SOSTHENE ORNAN','1è D',18,null,true),
+  ('21426093J','ATSIN','IPOUWAKAN TITE EUPHREM','1è D',19,null,true),
+  ('21392263B','BASSOLE','SETH ARIEL MIKAEL','1è D',20,null,null),
+  ('21767187B','BISSIE','BENOIT DAVID JOSEPH','1è D',21,null,true),
+  ('21504496J','BONETTO-MANRY','LEVRY STEVE ARCHANGE','1è D',22,true,true),
+  ('21758051U','COULIBALY','SAMUEL ISAAC OGION','1è D',23,null,null),
+  ('18451638S','DJABIA','KOUAME JACQUES FERRAND','1è D',24,null,null),
+  ('20304738R','EHOUSSOU','KOUAME BRICE-ISRAËL','1è D',25,null,true),
+  ('21147771R','ETCHE','ANGE QUENUM','1è D',26,null,true),
+  ('21536295N','GNACO','NIABA  ARIEL ELISEE','1è D',27,null,true),
+  ('21515135D','GNENEAO','NISSIBLEY DAVID OTHNI','1è D',28,null,true),
+  ('21868383B','GOSSAN','GNAMIEN ARCHANGE AUREL','1è D',29,null,null),
+  ('21124554Q','KABLAN','ALLADE ANGE AURIEL','1è D',30,null,null),
+  ('20173499L','KASSI','JEAN BAPTISTE','1è D',31,null,null),
+  ('19005397B','KOFFI','GALLOH  ADOUKO HUBERT','1è D',32,null,null),
+  ('21188172F','KOTCHE','CHRIST PETHUEL JUNIOR','1è D',33,null,null),
+  ('21276479Z','KOUAME','KONAN YANN CHRIST MARCELLIN','1è D',34,null,null),
+  ('21609445Y','KOUAMELAN','AYE CHRIST-ANGEL','1è D',35,null,true),
+  ('21539581N','KOUASSI','N''GOUAN YOHANN ITHIEL','1è D',36,null,true),
+  ('21893865Q','KOUASSI','MOYE HANS MARVIN','1è D',37,null,true),
+  ('21835838T','MANDA','ODJE GOSSON RENE','1è D',38,null,true),
+  ('21755073T','MELESS','HAURWRAURD JOSUE SHADRAC','1è D',39,null,true),
+  ('21548501M','MINI','N''GUESSAN JACQUES WILFRIED','1è D',40,null,true),
+  ('21662174P','NUTSUEGO','JAURES','1è D',41,null,true),
+  ('21893728A','N''ZAI','ATTOUBOU CHRIST MIGUEL','1è D',42,null,null),
+  ('21853138Q','OTCHOUMOU','INSI PAUL EMMANUEL DELANGEVYL','1è D',43,true,true),
+  ('19385069G','OUEDRAOGO','ISSA','1è D',44,null,null),
+  ('20305945W','TOURE','THIO YEWELE MARCELIN','1è D',45,null,null),
+  ('19235772Q','TRAORE','ADAMA KOFFI ANGE EMMANUEL','1è D',46,null,true),
+  ('21326970X','YAMOUA','MARIE DANIEL YVANN','1è D',47,null,true),
+  ('21299482A','YAO','KOUASSI YANN LOIC','1è D',48,null,null),
+  ('19625265U','YAO-BI','MARC EMMANUEL','1è D',49,null,true),
+  ('21902950W','YAPO','PIERRE-MARIE BERNARD','1è D',50,null,true),
+  ('20482164M','YEDO','EMESS LEWI EMMANUEL','1è D',51,null,true),
+  ('21209420D','ZONGO','EMMANUEL MAHO YVAN-REGIS','1è D',52,null,true),
+  ('20249753H','AKA','MOCKEY MALCOM-ELIE','Tle D_1',10,false,true),
+  ('20249752G','AKA','EZALE MARVIN-ELISEE','Tle D_1',11,false,true),
+  ('20173889H','AMALAMAN','AMALAMAN ILAN LOIC EVRA','Tle D_1',12,false,null),
+  ('20173886B','AMANGOUA','EKPONON MAEL CHRISTIAN JUNIOR','Tle D_1',13,false,null),
+  ('20674301T','AMEVO','KODJO EDDY ERIC','Tle D_1',14,false,true),
+  ('20516058J','AMON','MIEZAN J-AURIOL','Tle D_1',15,false,true),
+  ('20660133W','ANOUMOU','CHRISTIAN DAVID','Tle D_1',16,false,true),
+  ('20434734X','ASSI','GILLES CHRIS EMMANUEL','Tle D_1',17,false,true),
+  ('20822321X','BESSOULO','CHRIST MARCEL','Tle D_1',18,false,true),
+  ('20072557M','BOLOU','DAVID OBEL','Tle D_1',19,false,true),
+  ('20173763R','COULIBALY','KINIELMAN  ELIEL','Tle D_1',20,false,true),
+  ('20494952P','KOUAME','N''GOUANTINDIN','Tle D_1',21,false,true),
+  ('20051339V','KOUAME','N''GOUANDA CHRIST-ELISEE EMMANUEL','Tle D_1',22,false,true),
+  ('19449406R','N''DRAMAN','N''GUESSAN PAUL-ANTHONY','Tle D_1',23,false,true),
+  ('20411794Z','NKEOUA','CHOISY JUSTE','Tle D_1',24,false,true),
+  ('20491404F','OUATTARA','RAOUL HABIB','Tle D_1',25,false,true),
+  ('20517303N','SANGARE','ZIE SIAKA TRESOR','Tle D_1',26,false,true),
+  ('20763430A','SEA','KPLINHNAO KRYS YANNICK','Tle D_1',27,false,true),
+  ('20080973J','SINHOUNI','ABDOUL AZIZ KOUADIO','Tle D_1',28,false,true),
+  ('20564392G','YAO','MOHAYE JEAN-PRINCE','Tle D_1',29,false,true),
+  ('20083578C','YAO','TAKY JEAN SAMUEL EBENEZER','Tle D_1',30,false,true),
+  ('20397099X','YAO','MANTANSOU AZIZ EDEN','Tle D_1',31,false,true),
+  ('20676588D','YEBOA','JEAN JONATHAN NIAMKEY','Tle D_1',32,false,true),
+  ('18117846V','AHON','SALOMON EVARISTE','Tle D_2',10,false,true),
+  ('18189850D','AMON','KACOU YANNICK OLIVIER','Tle D_2',11,false,true),
+  ('20363871V','API','YOAN PAUL','Tle D_2',12,false,true),
+  ('20173878R','ASSANVO','KOUAME RAPHAEL MARIE-EPIPHANE','Tle D_2',13,false,null),
+  ('20363742F','ASSY','YOANN EPHRAIM','Tle D_2',14,false,true),
+  ('18211481U','BOGLO','MEDY DIADHIOU ROGER','Tle D_2',15,false,true),
+  ('20711986J','CISSE','CHEIKH OUMAR','Tle D_2',16,false,true),
+  ('20174256J','COFFI','KADJO DYLAN','Tle D_2',17,false,true),
+  ('20079622L','DJIDJA','DESSI CHRIST-EMMANUEL','Tle D_2',18,false,true),
+  ('20824364M','DJIDJA','OSSEIN CHRIST YVAN','Tle D_2',19,false,true),
+  ('20673705X','DOUE','PEHEHI MAEL JORDAN','Tle D_2',20,false,true),
+  ('19229464Q','EKONAN','CHRIST MONDESIR','Tle D_2',21,false,true),
+  ('19009146S','GNAHORE','SIABA CHRIST ANDRE-MARIE PARFAIT','Tle D_2',22,false,true),
+  ('19006009D','KOFFI','BOUAFFOU PAUL MARIE YANNIS','Tle D_2',23,false,true),
+  ('20250478A','KONE','SORY KILLIAN EMMANUEL','Tle D_2',24,false,true),
+  ('20166776P','KOUADIO','KOUAKOU. JOSAPHAT','Tle D_2',25,false,true),
+  ('19321388E','KOUAKOU','EPHRAIM EVRAD','Tle D_2',26,false,true),
+  ('21344085H','LONZO','KOUASSI MOYEDAVID RYAN','Tle D_2',27,false,true),
+  ('20510724T','MANGLE','MALOU MOBIO BLAISE PENIEL','Tle D_2',28,false,true),
+  ('20496461A','N''DRI','JEAN JULES FAMIEN RYAN','Tle D_2',29,false,null),
+  ('17015808P','SOM','SIE EMMANUEL FULGENCE','Tle D_2',30,false,true),
+  ('20173818Q','TRAORE','NONTIA ADAMA SAID','Tle D_2',31,false,null),
+  ('20673816Q','YSSOUFFOU','IBRAHIM','Tle D_2',32,false,null),
+  ('19486872E','ZOGBOLOU','CHRISTIAN HENOC','Tle D_2',33,false,true),
+  ('19227757F','BOTTI','BI KOUASSI CHRIS JOAN RADOUAN','Tle A',11,false,true),
+  ('20610625C','COULIBALY','KIGNON ANGE-LEVY','Tle A',12,false,true),
+  ('19208531M','DJI','NIAMBESSOU ANGE HILLARY','Tle A',13,false,null),
+  ('19744272W','GAYE','HABIB KARIM MEDHY','Tle A',14,false,true),
+  ('20363854R','HOMENYOA','KWOBLA MARK-JOSEPH','Tle A',15,false,true),
+  ('19385865R','KANGA','MOAYE CHRIST','Tle A',16,false,null),
+  ('20564528J','KONAN','KANTH KOUASSY MARC EMMANUEL','Tle A',17,false,true),
+  ('20695008N','KOUAME','JEAN PLILIPPE','Tle A',18,false,true),
+  ('20055161F','MANLAN','ANOH CHRIST DAVID','Tle A',19,false,null),
+  ('20172322R','SALIU','FAHISU ADEYEMI','Tle A',20,false,null),
+  ('20322861S','YEO','M''BETIAN AZIZ EVRA','Tle A',21,false,true),
+  ('18217916B','ZAMBLE','BI TRA PAUL EMMANUEL','Tle A',22,null,true),
+  ('21171363V','ZEMIN','BEN DJAMA SAMUEL HANS EPIPHANE','Tle A',23,false,true),
+  ('21210234Z','ADJE','EPONON MAX AXEL BERTRAND','Tle A',32,false,true),
+  ('20676232P','DIE','KACOU AHI IVAN ARIOC MOULEY','Tle A',33,false,true),
+  ('20676231Y','KOUAKOU','JEAN EMMANUEL MOAHE','Tle A',34,false,true),
+  ('19320778K','OUATTARA','NOUR ANGE','Tle A',35,false,true),
+  ('20173812P','TCHEA','JEAN KYLIANN PAUL MOYE','Tle A',36,false,null);
+
+create temp table tmp_csca_reconcile_plan on commit drop as
+with official_norm as (
+  select o.*,
+    upper(regexp_replace(btrim(unaccent(coalesce(o.last_name,'')||' '||coalesce(o.first_name,''))),'\s+',' ','g')) as name_norm
+  from tmp_csca_official_2026 o
+),
+current_active as (
+  select distinct s.id,s.matricule,s.last_name,s.first_name,s.student_person_id,
+    upper(regexp_replace(btrim(unaccent(coalesce(s.last_name,'')||' '||coalesce(s.first_name,''))),'\s+',' ','g')) as name_norm
+  from public.students s
+  join public.class_enrollments ce
+    on ce.student_id=s.id and ce.institution_id=s.institution_id and ce.end_date is null
+  join public.classes c on c.id=ce.class_id
+  where s.institution_id=(select institution_id from tmp_csca_context)
+    and c.academic_year='2026-2027'
+),
+owners as (
+  select s.id,s.matricule,s.last_name,s.first_name,s.student_person_id,
+    upper(regexp_replace(btrim(unaccent(coalesce(s.last_name,'')||' '||coalesce(s.first_name,''))),'\s+',' ','g')) as name_norm,
+    exists(
+      select 1 from public.class_enrollments ce
+      join public.classes c on c.id=ce.class_id
+      where ce.student_id=s.id and ce.institution_id=s.institution_id
+        and ce.end_date is null and c.academic_year='2026-2027'
+    ) as active_2026
+  from public.students s
+  where s.institution_id=(select institution_id from tmp_csca_context)
+)
+select o.*,
+  cm.current_count,cm.current_id,cm.current_matricule,
+  mo.owner_id,mo.owner_name_norm,mo.owner_active_2026,
+  case
+    when coalesce(cm.current_count,0)=1
+     and nullif(regexp_replace(upper(unaccent(coalesce(cm.current_matricule,''))),'[^A-Z0-9]','','g'),'') is null
+     and mo.owner_id is not null and mo.owner_id<>cm.current_id
+     and mo.owner_active_2026=false and mo.owner_name_norm=o.name_norm
+      then 'TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+    when coalesce(cm.current_count,0)=1
+     and nullif(regexp_replace(upper(unaccent(coalesce(cm.current_matricule,''))),'[^A-Z0-9]','','g'),'') is null
+     and mo.owner_id is null
+      then 'ASSIGN_FREE_MATRICULE_TO_CURRENT'
+    else 'REVIEW'
+  end as action
+from official_norm o
+left join lateral (
+  select count(*)::int current_count,
+    min(ca.id::text)::uuid current_id,
+    min(ca.matricule) current_matricule
+  from current_active ca where ca.name_norm=o.name_norm
+) cm on true
+left join lateral (
+  select min(ow.id::text)::uuid owner_id,
+    min(ow.name_norm) owner_name_norm,
+    coalesce(bool_or(ow.active_2026),false) owner_active_2026
+  from owners ow
+  where regexp_replace(upper(unaccent(coalesce(ow.matricule,''))),'[^A-Z0-9]','','g')=o.matricule
+) mo on true;
+
+-- Garde-fou : aucun propriétaire historique transféré ne doit être actif en 2026-2027.
+do $$
+begin
+  if exists (
+    select 1 from tmp_csca_reconcile_plan
+    where action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+      and owner_active_2026=true
+  ) then
+    raise exception 'Réconciliation annulée : un propriétaire historique est déjà actif en 2026-2027.';
+  end if;
+end $$;
+
+-- 1) Libérer le matricule sur la fiche historique de l'année test.
+update public.students old
+set matricule=null,
+    lifecycle_status='duplicate_merged',
+    lifecycle_status_updated_at=now()
+from tmp_csca_reconcile_plan p
+where p.action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+  and old.id=p.owner_id
+  and old.institution_id=(select institution_id from tmp_csca_context);
+
+-- 2) Donner le matricule à la fiche réellement utilisée en 2026-2027.
+update public.students cur
+set matricule=p.matricule,
+    lifecycle_status='active',
+    lifecycle_status_updated_at=now(),
+    student_person_id=coalesce(cur.student_person_id,old.student_person_id)
+from tmp_csca_reconcile_plan p
+left join public.students old on old.id=p.owner_id
+where p.action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+  and cur.id=p.current_id
+  and cur.institution_id=(select institution_id from tmp_csca_context)
+  and nullif(btrim(coalesce(cur.matricule,'')),'') is null;
+
+-- 3) Matricules officiels inexistants en base mais correspondant exactement
+--    à une fiche active 2026-2027.
+update public.students cur
+set matricule=p.matricule,
+    lifecycle_status='active',
+    lifecycle_status_updated_at=now()
+from tmp_csca_reconcile_plan p
+where p.action='ASSIGN_FREE_MATRICULE_TO_CURRENT'
+  and cur.id=p.current_id
+  and cur.institution_id=(select institution_id from tmp_csca_context)
+  and nullif(btrim(coalesce(cur.matricule,'')),'') is null;
+
+-- 4) Faire pointer l'identité longitudinale vers la fiche courante quand elle existe.
+update public.student_persons sp
+set canonical_student_id=p.current_id,
+    updated_at=now()
+from tmp_csca_reconcile_plan p
+join public.students old on old.id=p.owner_id
+join public.students cur on cur.id=p.current_id
+where p.action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+  and sp.id=coalesce(cur.student_person_id,old.student_person_id);
+
+-- 5) Compléter les statuts annuels seulement lorsqu'ils sont encore absents.
+--    Aucun choix déjà saisi par le CSCA en 2026-2027 n'est écrasé.
+update public.students cur
+set is_affecte=coalesce(cur.is_affecte,p.is_affecte),
+    is_boarder=coalesce(cur.is_boarder,p.is_boarder)
+from tmp_csca_reconcile_plan p
+where p.action in ('TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT','ASSIGN_FREE_MATRICULE_TO_CURRENT')
+  and cur.id=p.current_id
+  and cur.institution_id=(select institution_id from tmp_csca_context);
+
+-- 6) Initialiser le profil annuel 2026-2027 sans rendre Finance obligatoire.
+insert into public.student_year_profiles (
+  institution_id, academic_year_id, academic_year, student_id, class_id, level,
+  is_boarder, boarding_status_raw, affectation_status, affectation_status_raw,
+  billing_affectation_group, scholarship_status, source, source_payload, updated_at
+)
+select
+  ctx.institution_id,
+  ctx.academic_year_id,
+  ctx.academic_year,
+  cur.id,
+  ce.class_id,
+  coalesce(nullif(cl.level,''),nullif(cl.label,''),'unknown'),
+  coalesce(cur.is_boarder,false),
+  case when cur.is_boarder is null then 'unknown' when cur.is_boarder then 'interne' else 'externe' end,
+  case when cur.is_affecte is null then 'unknown' when cur.is_affecte then 'affecte' else 'non_affecte' end,
+  case when cur.is_affecte is null then 'unknown' when cur.is_affecte then 'affecte' else 'non_affecte' end,
+  case when cur.is_affecte is null then 'unknown' when cur.is_affecte then 'affecte' else 'non_affecte' end,
+  'unknown',
+  'csca_2026_2027_reconciliation',
+  jsonb_build_object('matricule',p.matricule,'source_sheet',p.source_sheet,'source_row',p.source_row),
+  now()
+from tmp_csca_reconcile_plan p
+join public.students cur on cur.id=p.current_id
+join public.class_enrollments ce
+  on ce.student_id=cur.id and ce.institution_id=cur.institution_id and ce.end_date is null
+join public.classes cl on cl.id=ce.class_id and cl.academic_year='2026-2027'
+cross join tmp_csca_context ctx
+where p.action in ('TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT','ASSIGN_FREE_MATRICULE_TO_CURRENT')
+on conflict (institution_id,academic_year_id,student_id) do update set
+  class_id=excluded.class_id,
+  level=excluded.level,
+  is_boarder=excluded.is_boarder,
+  boarding_status_raw=excluded.boarding_status_raw,
+  affectation_status=excluded.affectation_status,
+  affectation_status_raw=excluded.affectation_status_raw,
+  billing_affectation_group=excluded.billing_affectation_group,
+  source=excluded.source,
+  source_payload=excluded.source_payload,
+  updated_at=now();
+
+-- 7) Journaliser la réconciliation sans déplacer les opérations 2026-2027.
+insert into public.student_lifecycle_events (
+  student_person_id, student_id, institution_id, academic_year, event_type,
+  event_date, reason, details_json, created_by
+)
+select
+  cur.student_person_id,
+  cur.id,
+  ctx.institution_id,
+  ctx.academic_year,
+  case when p.action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT' then 'duplicate_merge' else 'correction' end,
+  current_date,
+  case
+    when p.action='TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT'
+      then 'Réconciliation CSCA : matricule historique transféré vers la fiche réellement utilisée en 2026-2027.'
+    else 'Réconciliation CSCA : matricule officiel ajouté à la fiche 2026-2027.'
+  end,
+  jsonb_build_object(
+    'matricule',p.matricule,
+    'historical_student_id',p.owner_id,
+    'current_student_id',p.current_id,
+    'finance_moved',false,
+    'current_enrollment_moved',false,
+    'source_sheet',p.source_sheet,
+    'source_row',p.source_row
+  ),
+  null
+from tmp_csca_reconcile_plan p
+join public.students cur on cur.id=p.current_id
+cross join tmp_csca_context ctx
+where p.action in ('TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT','ASSIGN_FREE_MATRICULE_TO_CURRENT');
+
+-- Contrôles bloquants avant commit.
+do $$
+begin
+  if exists (
+    select 1 from tmp_csca_reconcile_plan p
+    join public.students cur on cur.id=p.current_id
+    where p.action in ('TRANSFER_HISTORICAL_MATRICULE_TO_CURRENT','ASSIGN_FREE_MATRICULE_TO_CURRENT')
+      and regexp_replace(upper(unaccent(coalesce(cur.matricule,''))),'[^A-Z0-9]','','g')<>p.matricule
+  ) then
+    raise exception 'Réconciliation annulée : au moins un matricule cible n''a pas été écrit.';
+  end if;
+end $$;
+
+select action,count(*) as nombre
+from tmp_csca_reconcile_plan
+group by action
+order by action;
+
+commit;

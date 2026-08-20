@@ -111,6 +111,34 @@ function parseBoolCell(raw: string): boolean | null {
   return null;
 }
 
+function parseAffectationCell(raw: string): boolean | null {
+  const s = stripAccents(raw || "")
+    .toLowerCase()
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return null;
+  if (["aff", "affecte", "affectee", "reaffecte", "re affecte"].includes(s))
+    return true;
+  if (
+    ["naff", "n aff", "non affecte", "non affectee", "nonaffecte"].includes(s)
+  )
+    return false;
+  return parseBoolCell(raw);
+}
+
+function parseBoardingCell(raw: string): boolean | null {
+  const s = stripAccents(raw || "")
+    .toLowerCase()
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return null;
+  if (["in", "int", "interne", "internat"].includes(s)) return true;
+  if (["ext", "ex", "externe", "externat"].includes(s)) return false;
+  return parseBoolCell(raw);
+}
+
 function parseGenderCell(raw: string): string | null {
   const s = stripAccents(raw || "")
     .toLowerCase()
@@ -219,10 +247,10 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
       /^(redoublant(e)?|redoublant|repeater|repeat)$/i.test(hCompact(h)),
     ),
     is_boarder: H.findIndex((h) =>
-      /^(interne|boarding|boarder)$/i.test(hCompact(h)),
+      /^(interne|externe|internat|externat|boarding|boarder)$/i.test(hCompact(h)),
     ),
     is_affecte: H.findIndex((h) =>
-      /^(affecte(e)?|affectation)$/i.test(hCompact(h)),
+      /^(affecte(e)?|affectation|dec|decision)$/i.test(hCompact(h)),
     ),
     photo: H.findIndex((h) =>
       /^(photo|photourl|photo_url|image|imageurl|image_url|avatar|avatarurl|avatar_url|profil|profile)$/i.test(
@@ -230,6 +258,42 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
       ),
     ),
   };
+
+  // Certains états officiels du CSCA utilisent un second en-tête "N°"
+  // pour une colonne contenant en réalité In/Int/Ext. On ne l'infère que
+  // lorsque les valeurs observées ressemblent clairement à un statut d'internat.
+  if (idx.is_boarder < 0) {
+    const numeroCandidates = H.map((h, index) => ({ h, index }))
+      .filter(({ h }) => /^(n°|nº|no|numero|num|#)$/i.test(hCompact(h)))
+      .map(({ index }) => index)
+      .filter((index) => index !== idx.numero);
+
+    for (const candidate of numeroCandidates) {
+      let recognized = 0;
+      let nonEmpty = 0;
+      for (const cols of rows.slice(1)) {
+        const raw = String(cols[candidate] ?? "").trim();
+        if (!raw) continue;
+        nonEmpty++;
+        const token = stripAccents(raw)
+          .toLowerCase()
+          .replace(/[._-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (
+          ["in", "int", "interne", "internat", "ext", "ex", "externe", "externat"].includes(
+            token,
+          )
+        ) {
+          recognized++;
+        }
+      }
+      if (recognized >= 2 && (nonEmpty === 0 || recognized / nonEmpty >= 0.5)) {
+        idx.is_boarder = candidate;
+        break;
+      }
+    }
+  }
 
   const body = rows.slice(1).map((cols, i) => {
     const cell = (k: number) => (k >= 0 ? String(cols[k] ?? "").trim() : "");
@@ -264,9 +328,9 @@ function parseCsvStudentsFlexible(raw: string): ParsedStudentRow[] {
     const is_repeater =
       idx.is_repeater >= 0 ? parseBoolCell(cell(idx.is_repeater)) : null;
     const is_boarder =
-      idx.is_boarder >= 0 ? parseBoolCell(cell(idx.is_boarder)) : null;
+      idx.is_boarder >= 0 ? parseBoardingCell(cell(idx.is_boarder)) : null;
     const is_affecte =
-      idx.is_affecte >= 0 ? parseBoolCell(cell(idx.is_affecte)) : null;
+      idx.is_affecte >= 0 ? parseAffectationCell(cell(idx.is_affecte)) : null;
 
     const photo_url = idx.photo >= 0 ? parsePhotoCell(cell(idx.photo)) : null;
 
@@ -535,9 +599,6 @@ export async function POST(req: NextRequest) {
         ? (existingByNameKey.get(String(row.full_name_key || "").trim()) || [])
         : [];
       const existing = byMatricule || (byName.length === 1 ? byName[0] : null);
-      const willBeImported = Boolean(matricule || existing);
-      if (!willBeImported) return false;
-
       const finalAffecte =
         typeof row.is_affecte === "boolean"
           ? row.is_affecte
@@ -550,16 +611,6 @@ export async function POST(req: NextRequest) {
     })
     .map((row) => row._row + 2);
 
-  if (incompleteFinanceRows.length > 0) {
-    return NextResponse.json(
-      {
-        error:
-          "Import annulé : Affecté/Non affecté et Interne/Externe sont obligatoires pour chaque élève.",
-        rows: incompleteFinanceRows.slice(0, 25),
-      },
-      { status: 400 },
-    );
-  }
 
   // 3) Créer les élèves manquants (UNIQUEMENT si matricule présent)
   const toInsert = parsed
@@ -787,26 +838,60 @@ export async function POST(req: NextRequest) {
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const idsArr = Array.from(allStudentIds);
   const targetAcademicYear = String((cls as any).academic_year || "").trim();
-  const { data: sameYearClasses, error: sameYearErr } = await srv
-    .from("classes")
-    .select("id")
-    .eq("institution_id", inst)
-    .eq("academic_year", targetAcademicYear);
-  if (sameYearErr) {
+
+  const [sameYearResult, academicYearsResult] = await Promise.all([
+    srv
+      .from("classes")
+      .select("id")
+      .eq("institution_id", inst)
+      .eq("academic_year", targetAcademicYear),
+    srv
+      .from("academic_years")
+      .select("id,code,start_date,end_date")
+      .eq("institution_id", inst),
+  ]);
+
+  if (sameYearResult.error) {
     await rollbackStudentMutations();
-    return NextResponse.json({ error: sameYearErr.message }, { status: 400 });
+    return NextResponse.json(
+      { error: sameYearResult.error.message },
+      { status: 400 },
+    );
   }
-  const sameYearClassIds = (sameYearClasses ?? [])
+  if (academicYearsResult.error) {
+    await rollbackStudentMutations();
+    return NextResponse.json(
+      { error: academicYearsResult.error.message },
+      { status: 400 },
+    );
+  }
+
+  const sameYearClassIds = (sameYearResult.data ?? [])
     .map((row: any) => String(row.id))
     .filter(Boolean);
+  const academicYearEndByCode = new Map<string, string>();
+  let targetAcademicYearId: string | null = null;
+  let targetAcademicYearStartDate: string | null = null;
+
+  for (const row of academicYearsResult.data ?? []) {
+    const code = String((row as any).code || "").trim();
+    const endDate = String((row as any).end_date || "").trim();
+    if (code && endDate) academicYearEndByCode.set(code, endDate);
+    if (code === targetAcademicYear) {
+      targetAcademicYearId = String((row as any).id || "").trim() || null;
+      targetAcademicYearStartDate =
+        String((row as any).start_date || "").trim() || null;
+    }
+  }
 
   const { data: enrollmentSnapshotRows, error: enrollmentSnapshotError } =
     await srv
       .from("class_enrollments")
-      .select("id,institution_id,class_id,student_id,start_date,end_date")
+      .select(
+        "id,institution_id,class_id,student_id,start_date,end_date,classes:class_id(academic_year)",
+      )
       .eq("institution_id", inst)
-      .in("student_id", idsArr)
-      .in("class_id", sameYearClassIds);
+      .in("student_id", idsArr);
   if (enrollmentSnapshotError) {
     await rollbackStudentMutations();
     return NextResponse.json(
@@ -815,14 +900,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const enrollmentSnapshots = (enrollmentSnapshotRows || []) as Array<{
-    id: string;
-    institution_id: string;
-    class_id: string;
-    student_id: string;
-    start_date: string;
-    end_date: string | null;
-  }>;
+  const enrollmentSnapshots = (enrollmentSnapshotRows || []).map((row: any) => {
+    const relation = row?.classes;
+    const academicYear = String(
+      (Array.isArray(relation) ? relation[0] : relation)?.academic_year || "",
+    ).trim();
+    return {
+      id: String(row.id),
+      institution_id: String(row.institution_id),
+      class_id: String(row.class_id),
+      student_id: String(row.student_id),
+      start_date: String(row.start_date),
+      end_date: row.end_date ?? null,
+      academic_year: academicYear,
+    };
+  });
   const enrollmentSnapshotIds = new Set(
     enrollmentSnapshots.map((row) => String(row.id)),
   );
@@ -861,7 +953,8 @@ export async function POST(req: NextRequest) {
           (row) =>
             row.student_id === studentId &&
             row.class_id !== class_id &&
-            row.end_date === null,
+            row.end_date === null &&
+            row.academic_year === targetAcademicYear,
         )
         .map((row) => row.class_id);
       const applied = await synchronizeStudentFinance({
@@ -956,17 +1049,32 @@ export async function POST(req: NextRequest) {
   let insertedTarget = 0;
 
   try {
-    const { data: closedRows, error: closeError } = await srv
-      .from("class_enrollments")
-      .update({ end_date: today })
-      .in("student_id", idsArr)
-      .neq("class_id", class_id)
-      .eq("institution_id", inst)
-      .is("end_date", null)
-      .in("class_id", sameYearClassIds)
-      .select("id");
-    if (closeError) throw new Error(closeError.message);
-    closedOld = (closedRows ?? []).length;
+    const activeSources = enrollmentSnapshots.filter(
+      (row) => row.end_date === null && row.class_id !== class_id,
+    );
+    const groupedByCloseDate = new Map<string, string[]>();
+
+    for (const row of activeSources) {
+      const closeDate =
+        row.academic_year && row.academic_year !== targetAcademicYear
+          ? academicYearEndByCode.get(row.academic_year) || today
+          : today;
+      groupedByCloseDate.set(closeDate, [
+        ...(groupedByCloseDate.get(closeDate) ?? []),
+        row.id,
+      ]);
+    }
+
+    for (const [closeDate, enrollmentIds] of groupedByCloseDate) {
+      const { data: closedRows, error: closeError } = await srv
+        .from("class_enrollments")
+        .update({ end_date: closeDate })
+        .eq("institution_id", inst)
+        .in("id", enrollmentIds)
+        .select("id");
+      if (closeError) throw new Error(closeError.message);
+      closedOld += (closedRows ?? []).length;
+    }
 
     const { data: reactivatedRows, error: reactivateError } = await srv
       .from("class_enrollments")
@@ -985,7 +1093,7 @@ export async function POST(req: NextRequest) {
           class_id,
           student_id: studentId,
           institution_id: inst,
-          start_date: today,
+          start_date: targetAcademicYearStartDate || today,
           end_date: null,
         })),
         {
@@ -996,6 +1104,52 @@ export async function POST(req: NextRequest) {
       .select("id");
     if (insertEnrollmentError) throw new Error(insertEnrollmentError.message);
     insertedTarget = (insertedRows ?? []).length;
+
+    if (targetAcademicYearId) {
+      const { data: profileStudents, error: profileStudentsError } = await srv
+        .from("students")
+        .select("id,is_affecte,is_boarder")
+        .eq("institution_id", inst)
+        .in("id", idsArr);
+      if (profileStudentsError) throw new Error(profileStudentsError.message);
+
+      const yearProfiles = (profileStudents ?? []).map((student: any) => {
+        const affecte =
+          typeof student.is_affecte === "boolean" ? student.is_affecte : null;
+        const boarder =
+          typeof student.is_boarder === "boolean" ? student.is_boarder : null;
+        return {
+          institution_id: inst,
+          academic_year_id: targetAcademicYearId,
+          academic_year: targetAcademicYear,
+          student_id: String(student.id),
+          class_id,
+          level: String((cls as any).level || (cls as any).label || "unknown"),
+          is_boarder: boarder === true,
+          boarding_status_raw:
+            boarder === null ? "unknown" : boarder ? "interne" : "externe",
+          affectation_status:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          affectation_status_raw:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          billing_affectation_group:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          scholarship_status: "unknown",
+          source: "students_import",
+          source_payload: { class_id },
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      if (yearProfiles.length > 0) {
+        const { error: yearProfileError } = await srv
+          .from("student_year_profiles")
+          .upsert(yearProfiles, {
+            onConflict: "institution_id,academic_year_id,student_id",
+          });
+        if (yearProfileError) throw new Error(yearProfileError.message);
+      }
+    }
   } catch (error) {
     const rollbackResults = [];
     rollbackResults.push(
@@ -1058,5 +1212,6 @@ export async function POST(req: NextRequest) {
       ...financeTransfer,
       warnings: Array.from(new Set(financeTransfer.warnings)),
     },
+    finance_profile_incomplete_rows: incompleteFinanceRows.slice(0, 100),
   });
 }

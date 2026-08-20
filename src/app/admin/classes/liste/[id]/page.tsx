@@ -457,30 +457,24 @@ export default function ClassListPrintPage() {
       setNewStudentMsg("Le nom et le prénom sont obligatoires.");
       return;
     }
-    if (!affectationValue || !boardingValue) {
-      setNewStudentMsg(
-        "Choisis aussi Affecté/Non affecté et Interne/Externe avant d’inscrire l’élève.",
-      );
-      return;
-    }
-
     setCreatingStudent(true);
     setNewStudentMsg(null);
     try {
-      const res = await fetch(
-        `/api/admin/classes/${encodeURIComponent(classId)}/roster`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            last_name: lastName,
-            first_name: firstName,
-            matricule: matricule || null,
-            is_affecte: affectationValue === "true",
-            is_boarder: boardingValue === "true",
-          }),
-        },
-      );
+      const res = await fetch("/api/admin/enrollments/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_and_assign",
+          class_id: classId,
+          last_name: lastName,
+          first_name: firstName,
+          matricule: matricule || null,
+          is_affecte:
+            affectationValue === "" ? null : affectationValue === "true",
+          is_boarder:
+            boardingValue === "" ? null : boardingValue === "true",
+        }),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok)
         throw new Error(json?.error || "Impossible d’inscrire l’élève.");
@@ -493,12 +487,26 @@ export default function ClassListPrintPage() {
         is_boarder: "",
       });
       setShowNewStudent(false);
-      const chargesCreated = Number(json?.charges_created || 0);
-      const financeWarning = json?.finance_warning
-        ? ` Alerte finance : ${json.finance_warning}`
-        : "";
+      const chargesCreated =
+        Number(json?.finance_sync?.inserted || 0) +
+        Number(json?.finance_sync?.reactivated || 0) +
+        Number(json?.finance_sync?.updated_amount || 0);
+      const financeWarnings = Array.from(
+        new Set([
+          ...(Array.isArray(json?.finance_sync?.warnings)
+            ? json.finance_sync.warnings
+            : []),
+          ...(Array.isArray(json?.finance_transfer?.warnings)
+            ? json.finance_transfer.warnings
+            : []),
+        ]),
+      ).filter(Boolean);
+      const financeWarning =
+        financeWarnings.length > 0
+          ? ` Alerte finance : ${financeWarnings.join(" ")}`
+          : "";
       setNewStudentMsg(
-        `Élève inscrit dans la classe. ${chargesCreated} dette(s) générée(s). La liste est à jour.${financeWarning}`,
+        `Élève inscrit dans la classe. ${chargesCreated} dette(s) générée(s) ou mise(s) à jour. La liste est à jour.${financeWarning}`,
       );
       await load();
     } catch (e: any) {
