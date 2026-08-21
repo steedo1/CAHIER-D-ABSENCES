@@ -48,6 +48,8 @@ const ADMIN_ESSENTIAL_STATIC_PATHS = [
   "/admin/notes/conseil-classe",
 ] as const;
 
+const ADMIN_ESSENTIAL_REQUEST_TIMEOUT_MS = 12_000;
+
 function itemsOf<T>(payload: any): T[] {
   if (Array.isArray(payload)) return payload as T[];
   return Array.isArray(payload?.items) ? payload.items : [];
@@ -60,19 +62,34 @@ function unique(values: Array<string | null | undefined>) {
 }
 
 async function jsonGet<T = any>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      String(payload?.error || payload?.message || `HTTP_${response.status}`),
-    );
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    ADMIN_ESSENTIAL_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(
+        String(payload?.error || payload?.message || `HTTP_${response.status}`),
+      );
+    }
+    return payload as T;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("admin_essential_request_timeout");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return payload as T;
 }
 
 async function mapLimit<T>(
