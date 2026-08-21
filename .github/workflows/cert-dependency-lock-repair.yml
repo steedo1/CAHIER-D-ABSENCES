@@ -6,6 +6,11 @@ on:
       - work/offline-go-live-20260821
     paths:
       - .github/workflows/cert-dependency-lock-repair.yml
+  pull_request:
+    branches:
+      - reprise-propre-5418ce7-20260729
+    paths:
+      - .github/workflows/cert-dependency-lock-repair.yml
 
 permissions:
   contents: write
