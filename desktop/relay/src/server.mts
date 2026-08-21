@@ -84,6 +84,7 @@ export function createRelayServer(
           ...relayRuntimeContract(
             store.db,
             config.teacherAttendanceWritesEnabled === true,
+            config.gradeScoreWritesEnabled === true,
           ),
           ...scoped,
           academic:
@@ -119,6 +120,7 @@ export function createRelayServer(
             ...relayRuntimeContract(
               store.db,
               config.teacherAttendanceWritesEnabled === true,
+              config.gradeScoreWritesEnabled === true,
             ),
             ...institutionScheduleContract(store.db, teacher.institution_id),
             ...teacherScheduleCompatibility(store, teacher.institution_id, body),
@@ -175,6 +177,9 @@ export function createRelayServer(
         }
       }
       if (request.method === "POST" && url.pathname === "/v1/grades/score-operations") {
+        if (config.gradeScoreWritesEnabled !== true) {
+          return json(response, 503, { error: "grade_score_writes_disabled" });
+        }
         const body = await readJson(request, MAX_GRADE_WRITE_BODY_BYTES);
         const token = teacherBearerToken(request);
         if (!token) return json(response, 401, { error: "unauthorized" });
@@ -346,6 +351,7 @@ export function createRelayServer(
           ...relayRuntimeContract(
             store.db,
             config.teacherAttendanceWritesEnabled === true,
+            config.gradeScoreWritesEnabled === true,
           ),
           ...institutionScheduleContract(store.db, institutionId),
         });

@@ -16,8 +16,6 @@ import {
   KeyRound,
   FileText,
 } from "lucide-react";
-import OfflineReadinessCard from "@/components/OfflineReadinessCard";
-import OfflineSyncBar from "@/components/OfflineSyncBar";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -32,6 +30,10 @@ import {
   gradesSettingsKey,
   saveGradesScores,
 } from "@/lib/offline-grades";
+import {
+  CLOUD_ONLY_GRADE_WRITE_MESSAGE,
+  gradeWritesRequireInternet,
+} from "@/lib/grade-write-capabilities";
 
 /* =========================
    Debug helpers (logs)
@@ -360,6 +362,7 @@ function GhostButton(
 export default function ClassDeviceNotesPage() {
   const isMobile = useIsMobile();
   const { isOnline } = useOnlineStatus();
+  const gradeWritesBlocked = gradeWritesRequireInternet(isOnline);
 
   // Nom établissement + année scolaire
   const [institutionName, setInstitutionName] = useState<string | null>(null);
@@ -643,6 +646,10 @@ export default function ClassDeviceNotesPage() {
   const [lockErr, setLockErr] = useState<string | null>(null);
 
   function openLockModal(action: LockAction, evaluation_id: string) {
+    if (!isOnline) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
     setLockModalAction(action);
     setLockModalEvalId(evaluation_id);
     setLockPin("");
@@ -1053,6 +1060,10 @@ export default function ClassDeviceNotesPage() {
     value: number | null,
     scale: number
   ) {
+    if (gradeWritesBlocked) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
       return;
@@ -1094,6 +1105,11 @@ export default function ClassDeviceNotesPage() {
       return;
     }
 
+    if (gradeWritesBlocked) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
+
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
       return;
@@ -1113,7 +1129,6 @@ export default function ClassDeviceNotesPage() {
     setMsg(null);
 
     const savedEvalIds: string[] = [];
-    const queuedEvalIds: string[] = [];
     const lockedEvalIds: string[] = [];
     const publicationLockedEvalIds: string[] = [];
 
@@ -1150,13 +1165,11 @@ export default function ClassDeviceNotesPage() {
             delete_if_null: true,
           });
 
-        if (!result.ok && result.queued) {
-          savedEvalIds.push(evaluation_id);
-          queuedEvalIds.push(evaluation_id);
-          continue;
-        }
-
-        const j: any = result.ok ? result.data : result.data || {};
+        const j: any = result.ok
+          ? result.data
+          : "data" in result
+            ? result.data || {}
+            : {};
 
         // 🧷 Verrouillage métier publication côté serveur
         if (!result.ok && result.status === 423 && isPublicationWorkflowLockError(j?.error)) {
@@ -1217,16 +1230,7 @@ export default function ClassDeviceNotesPage() {
         }
       }
 
-      if (queuedEvalIds.length > 0) {
-        const ignored: string[] = [];
-        if (publicationLockedEvalIds.length > 0) ignored.push("évaluations soumises/publiées ignorées");
-        if (lockedEvalIds.length > 0) ignored.push("évaluations verrouillées ignorées");
-        setMsg(
-          `Notes enregistrées sur cet appareil ✅ — ${queuedEvalIds.length} envoi(s) en attente de synchronisation${
-            ignored.length ? ` (${ignored.join(" ; ")})` : ""
-          }.`
-        );
-      } else if (publicationLockedEvalIds.length > 0 && savedEvalIds.length > 0) {
+      if (publicationLockedEvalIds.length > 0 && savedEvalIds.length > 0) {
         setMsg(
           "Notes enregistrées ✅ (certaines évaluations soumises/publiées ont été ignorées)."
         );
@@ -1248,7 +1252,6 @@ export default function ClassDeviceNotesPage() {
 
       logInfo("saveAllChanges -> terminé", {
         savedEvalIds,
-        queuedEvalIds,
         lockedEvalIds,
         publicationLockedEvalIds,
       });
@@ -1267,9 +1270,7 @@ export default function ClassDeviceNotesPage() {
       return;
     }
     if (!isOnline) {
-      setMsg(
-        "Hors connexion : vous pouvez saisir les évaluations déjà préparées. La création d’une nouvelle évaluation nécessite Internet."
-      );
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
 
@@ -1340,7 +1341,7 @@ export default function ClassDeviceNotesPage() {
     setMsg(null);
 
     if (!isOnline) {
-      setMsg("La publication d’une évaluation nécessite une connexion Internet.");
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
 
@@ -1412,7 +1413,7 @@ export default function ClassDeviceNotesPage() {
     logInfo("deleteEvaluation -> demande de suppression", ev);
 
     if (!isOnline) {
-      setMsg("La suppression d’une évaluation nécessite une connexion Internet.");
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
 
@@ -1702,9 +1703,7 @@ export default function ClassDeviceNotesPage() {
       return;
     }
     if (!isOnline) {
-      setMsg(
-        "Le calcul officiel des moyennes nécessite Internet dans cette version. Vos notes hors ligne restent enregistrées sur l’appareil."
-      );
+      setMsg("Le calcul officiel des moyennes nécessite une connexion Internet.");
       return;
     }
     setMode("moyennes");
@@ -2605,7 +2604,7 @@ export default function ClassDeviceNotesPage() {
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
               Saisissez les notes rapidement depuis le téléphone de la classe,
-              même sur mobile. Les évaluations déjà préparées restent saisissables sans Internet.
+              avec les mêmes règles de validation que l’espace enseignant.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2636,9 +2635,6 @@ export default function ClassDeviceNotesPage() {
           </div>
         </div>
       </header>
-
-      <OfflineSyncBar onMessage={setMsg} />
-      <OfflineReadinessCard role="class-device" />
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
@@ -2711,6 +2707,7 @@ export default function ClassDeviceNotesPage() {
           </div>
 
           {/* Création NOTE */}
+          {isOnline && (
           <div className="md:col-span-2">
             <div
               className={`grid grid-cols-2 gap-2 ${
@@ -2828,7 +2825,17 @@ export default function ClassDeviceNotesPage() {
               </Button>
             </div>
           </div>
+          )}
         </div>
+
+        {gradeWritesBlocked && (
+          <div
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            role="status"
+          >
+            {CLOUD_ONLY_GRADE_WRITE_MESSAGE}
+          </div>
+        )}
 
         {msg && (
           <div
@@ -2873,7 +2880,7 @@ export default function ClassDeviceNotesPage() {
                   logInfo("UI -> ouverture panneau publication");
                   setShowPublishPanel(true);
                 }}
-                disabled={!evaluations.length}
+                disabled={!evaluations.length || !isOnline}
               >
                 Gérer la publication
               </GhostButton>
@@ -2887,7 +2894,12 @@ export default function ClassDeviceNotesPage() {
               </GhostButton>
               <Button
                 onClick={saveAllChanges}
-                disabled={loading || totalChanges === 0 || selectedPeriodClosed}
+                disabled={
+                  loading ||
+                  totalChanges === 0 ||
+                  selectedPeriodClosed ||
+                  gradeWritesBlocked
+                }
               >
                 <Save className="h-4 w-4" /> Enregistrer
               </Button>
@@ -2900,7 +2912,7 @@ export default function ClassDeviceNotesPage() {
                       currentActiveEvalId
                     )
                   }
-                  disabled={loading}
+                  disabled={loading || !isOnline}
                   title={
                     isCurrentEvalLocked
                       ? "Déverrouiller l’évaluation (PIN)"
@@ -2926,18 +2938,21 @@ export default function ClassDeviceNotesPage() {
               label: labelByEvalId[ev.id] ?? "NOTE",
               scale: ev.scale,
               disabled:
+                gradeWritesBlocked ||
                 selectedPeriodClosed ||
                 !!lockByEvalId[ev.id]?.locked ||
                 !isEvaluationEditable(ev),
               disabledReason: selectedPeriodClosed
                 ? "Cette période est clôturée."
-                : lockByEvalId[ev.id]?.locked
-                  ? "Cette évaluation est verrouillée."
-                  : getPublicationStatus(ev) === "submitted"
-                    ? "Cette évaluation est soumise à validation."
-                    : getPublicationStatus(ev) === "published"
-                      ? "Cette évaluation est déjà publiée."
-                      : null,
+                : gradeWritesBlocked
+                  ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
+                  : lockByEvalId[ev.id]?.locked
+                    ? "Cette évaluation est verrouillée."
+                    : getPublicationStatus(ev) === "submitted"
+                      ? "Cette évaluation est soumise à validation."
+                      : getPublicationStatus(ev) === "published"
+                        ? "Cette évaluation est déjà publiée."
+                        : null,
             }))}
             targetEvaluationId={currentActiveEvalId}
             onTargetEvaluationChange={(evaluationId) => {
@@ -3054,7 +3069,11 @@ export default function ClassDeviceNotesPage() {
                               <button
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={!!publishBusy[ev.id] || !isEvaluationDeletable(ev)}
+                                disabled={
+                                  !isOnline ||
+                                  !!publishBusy[ev.id] ||
+                                  !isEvaluationDeletable(ev)
+                                }
                                 className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:opacity-60"
                                 title={
                                   isEvaluationDeletable(ev)
@@ -3129,6 +3148,7 @@ export default function ClassDeviceNotesPage() {
                                 }}
                                 disabled={
                                   loading ||
+                                  gradeWritesBlocked ||
                                   isEvaluationLockedByPublication(ev) ||
                                   (!!lockByEvalId[ev.id]?.locked && locksSupported)
                                 }
@@ -3221,6 +3241,7 @@ export default function ClassDeviceNotesPage() {
                           }}
                           disabled={
                             loading ||
+                            gradeWritesBlocked ||
                             selectedPeriodClosed ||
                             isEvaluationLockedByPublication(ev) ||
                             (!!lockByEvalId[ev.id]?.locked && locksSupported)
@@ -3249,7 +3270,10 @@ export default function ClassDeviceNotesPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={saveBonuses} disabled={loadingAvg || selectedPeriodClosed}>
+              <Button
+                onClick={saveBonuses}
+                disabled={loadingAvg || selectedPeriodClosed || !isOnline}
+              >
                 <Save className="h-4 w-4" /> Enregistrer bonus
               </Button>
             </div>
@@ -3358,6 +3382,8 @@ export default function ClassDeviceNotesPage() {
                               }));
                             }}
                             aria-label={`Bonus ${row.student.full_name}`}
+                            disabled={!isOnline || selectedPeriodClosed}
+                            title={!isOnline ? CLOUD_ONLY_GRADE_WRITE_MESSAGE : undefined}
                           />
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">
@@ -3471,6 +3497,8 @@ export default function ClassDeviceNotesPage() {
                             }));
                           }}
                           aria-label={`Bonus ${row.student.full_name}`}
+                          disabled={!isOnline || selectedPeriodClosed}
+                          title={!isOnline ? CLOUD_ONLY_GRADE_WRITE_MESSAGE : undefined}
                         />
                       </div>
                     </div>
@@ -3555,7 +3583,7 @@ export default function ClassDeviceNotesPage() {
               <Button
                 tone={lockModalAction === "lock" ? "amber" : "slate"}
                 onClick={submitLockModal}
-                disabled={lockBusy}
+                disabled={!isOnline || lockBusy}
               >
                 {lockModalAction === "lock" ? (
                   <>
@@ -3667,7 +3695,11 @@ export default function ClassDeviceNotesPage() {
                               type="button"
                               tone={publicationActionTone(ev)}
                               onClick={() => togglePublish(ev)}
-                              disabled={!!publishBusy[ev.id] || status === "submitted"}
+                              disabled={
+                                !isOnline ||
+                                !!publishBusy[ev.id] ||
+                                status === "submitted"
+                              }
                               className="px-3 py-1.5 text-xs"
                               title={
                                 status === "submitted"
@@ -3692,7 +3724,11 @@ export default function ClassDeviceNotesPage() {
                                 tone="red"
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
-                                disabled={!!publishBusy[ev.id] || !isEvaluationDeletable(ev)}
+                                disabled={
+                                  !isOnline ||
+                                  !!publishBusy[ev.id] ||
+                                  !isEvaluationDeletable(ev)
+                                }
                                 title={
                                   isEvaluationDeletable(ev)
                                     ? undefined

@@ -53,6 +53,8 @@ Variables disponibles :
 - `MONCAHIER_RELAY_HOST` : `127.0.0.1` par défaut ;
 - `MONCAHIER_RELAY_PORT` : `4317` par défaut ;
 - `MONCAHIER_RELAY_TOKEN` : obligatoire si l'hôte n'est pas local ;
+- `MONCAHIER_RELAY_GRADE_SCORE_WRITES_ENABLED` : capacité LOT3/LOT4 d'écriture
+  locale des notes, désactivée par défaut pour la rentrée 2026-2027 ;
 - `MONCAHIER_RELAY_MDNS_ENABLED` : active/désactive l'annonce `.local` (active par défaut) ;
 - `MONCAHIER_RELAY_MDNS_HOSTNAME` : surcharge exceptionnelle du nom stable annoncé.
 

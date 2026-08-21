@@ -219,6 +219,16 @@ test("une écoute LAN est refusée sans jeton", () => {
   );
 });
 
+test("l'écriture locale des notes est une capacité explicite, inactive par défaut", () => {
+  assert.equal(loadRelayConfig({}).gradeScoreWritesEnabled, false);
+  assert.equal(
+    loadRelayConfig({
+      MONCAHIER_RELAY_GRADE_SCORE_WRITES_ENABLED: "true",
+    }).gradeScoreWritesEnabled,
+    true,
+  );
+});
+
 test("l'assistant conserve l'école unique ou ajoute explicitement un groupe scolaire", () => {
   const root = mkdtempSync(join(tmpdir(), "moncahier-relay-setup-"));
   const configPath = join(root, "MonCahier", "Relay", "config.json");

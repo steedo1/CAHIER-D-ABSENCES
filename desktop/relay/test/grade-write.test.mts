@@ -475,6 +475,7 @@ test("LOT3B: l'API LAN sécurise une note du téléphone de classe", async () =>
     token: null,
     institutionCode: "NOTE-WRITE",
     institutionCodes: ["NOTE-WRITE"],
+    gradeScoreWritesEnabled: true,
   }, store, { now: () => now });
 
   await new Promise<void>((resolve) =>
@@ -509,6 +510,58 @@ test("LOT3B: l'API LAN sécurise une note du téléphone de classe", async () =>
           AND deleted_at IS NULL
       `).get(INSTITUTION_ID, EVALUATION_ID, STUDENT_ID) as any).score,
       19,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve()),
+    );
+    db.close();
+  }
+});
+
+test("Rentrée 2026: l'API LAN de note est dormante par défaut", async () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  seed(db);
+  const now = new Date("2026-08-15T03:05:01.000Z");
+  const server = createRelayServer({
+    databasePath: ":memory:",
+    host: "127.0.0.1",
+    port: 4317,
+    token: null,
+    institutionCode: "NOTE-WRITE",
+    institutionCodes: ["NOTE-WRITE"],
+  }, store, { now: () => now });
+
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", resolve),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/v1/grades/score-operations`,
+      {
+        method: "POST",
+        headers: {
+          Origin: "https://mon-cahier.com",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${classDeviceToken(now)}`,
+        },
+        body: JSON.stringify(requestBody("grade-op-disabled", 19)),
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: "grade_score_writes_disabled",
+    });
+    assert.equal(
+      (db.prepare(`
+        SELECT COUNT(*) AS n
+        FROM sync_outbox
+        WHERE operation_id = 'grade-op-disabled'
+      `).get() as any).n,
+      0,
     );
   } finally {
     await new Promise<void>((resolve, reject) =>

@@ -15,6 +15,10 @@ import {
   resolveBulletinEducationContext,
   resolveScopedInstitutionSettings,
 } from "@/lib/education-bulletins";
+import {
+  proposeEndOfYearDecision,
+  readCouncilYearDecision,
+} from "@/lib/end-of-year-decisions.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1518,6 +1522,72 @@ function applyPeriodNcOverridesToItems(
     item.rank = null;
     item.general_avg_is_complete = false;
     item.general_avg_status = "admin_nc";
+  }
+}
+
+async function attachOfficialEndOfYearDecisions(
+  srv: SupabaseClient,
+  items: any[],
+  input: {
+    institutionId: string;
+    classId: string;
+    academicYear: string | null | undefined;
+  },
+) {
+  const academicYear = String(input.academicYear || "").trim();
+  const studentIds = items
+    .map((item) => String(item?.student_id || "").trim())
+    .filter((id) => isUuid(id));
+
+  const attachAutomaticFallback = (storageAvailable: boolean) => {
+    for (const item of items) {
+      const annualAverage = cleanNumber(item?.annual_avg, 4);
+      item.end_of_year_decision = {
+        ...readCouncilYearDecision(null, annualAverage),
+        storage_available: storageAvailable,
+      };
+    }
+  };
+
+  if (!academicYear || studentIds.length === 0) {
+    attachAutomaticFallback(false);
+    return;
+  }
+
+  const { data, error } = await srv
+    .from("student_year_decisions")
+    .select(
+      "id, student_id, decision_type, decision_label, decided_at, decided_by, notes, metadata_json, updated_at",
+    )
+    .eq("institution_id", input.institutionId)
+    .eq("current_class_id", input.classId)
+    .eq("academic_year", academicYear)
+    .in("student_id", studentIds);
+
+  if (error) {
+    console.warn("[bulletin] décisions annuelles indisponibles; proposition automatique conservée", {
+      code: (error as any)?.code || null,
+      message: (error as any)?.message || null,
+    });
+    attachAutomaticFallback(false);
+    return;
+  }
+
+  const rowByStudent = new Map(
+    (data || []).map((row: any) => [String(row.student_id || ""), row]),
+  );
+  for (const item of items) {
+    const annualAverage = cleanNumber(item?.annual_avg, 4);
+    const decision = readCouncilYearDecision(
+      rowByStudent.get(String(item?.student_id || "")) || null,
+      annualAverage,
+    );
+    item.end_of_year_decision = {
+      ...decision,
+      automatic_proposal:
+        decision.automatic_proposal ?? proposeEndOfYearDecision(annualAverage),
+      storage_available: true,
+    };
   }
 }
 
@@ -3931,6 +4001,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  if (periodsDefined && isLastPeriod) {
+    await attachOfficialEndOfYearDecisions(srvClient, items, {
+      institutionId,
+      classId: classRow.id,
+      academicYear:
+        academicYearForPeriods ?? classRow.academic_year ?? periodMeta.academic_year ?? null,
+    });
+  } else {
+    for (const item of items as any[]) {
+      item.end_of_year_decision = {
+        ...readCouncilYearDecision(null, null),
+        storage_available: true,
+      };
+    }
+  }
+
   // ✅ Snapshot officiel pour la vérification QR.
   // La page publique ne doit pas reconstruire autrement les éléments sensibles
   // du bulletin (moyenne, conduite CSCA, groupes de matières, rangs).
@@ -3958,6 +4044,7 @@ export async function GET(req: NextRequest) {
           Number.isFinite(Number(it.annual_rank))
             ? Number(it.annual_rank)
             : null,
+        decision: it?.end_of_year_decision?.official_decision ?? null,
         subjects: subjectsForReport,
         subject_groups: subjectGroups,
         subject_components: subjectComponentsForReport,

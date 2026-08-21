@@ -7,6 +7,10 @@ import {
   offlineMutateJson,
   type MutateResult,
 } from "@/lib/offline";
+import {
+  CLOUD_ONLY_GRADE_WRITE_MESSAGE,
+  OFFLINE_GRADE_WRITES_ENABLED,
+} from "@/lib/grade-write-capabilities";
 
 export type GradesOfflineRole = "teacher" | "class-device";
 
@@ -120,9 +124,9 @@ async function applyScoresToLocalCache(
 }
 
 /**
- * Enregistre les notes immédiatement si le serveur répond, sinon conserve la
- * mutation dans l'outbox. Le cache est mis à jour dans les deux cas afin qu'un
- * rechargement hors ligne retrouve exactement la dernière saisie locale.
+ * Le chemin de rentrée appelle directement l'API Cloud et ne crée jamais de
+ * mutation locale. Le moteur LOT3/LOT4 reste disponible derrière la capacité
+ * explicite OFFLINE_GRADE_WRITES_ENABLED pour une réactivation ultérieure.
  */
 export async function saveGradesScores(
   role: GradesOfflineRole,
@@ -133,22 +137,57 @@ export async function saveGradesScores(
       ? "/api/teacher/grades/scores/bulk"
       : "/api/grades/scores/bulk";
 
-  const result = await offlineMutateJson(
-    endpoint,
-    {
-      method: "POST",
-      body: payload,
-    },
-    {
-      meta: {
-        operationType: "grades-scores",
-        role,
-        evaluationId: payload.evaluation_id,
-      },
-    }
-  );
+  let result: MutateResult<any>;
 
-  if (result.ok || result.queued) {
+  if (OFFLINE_GRADE_WRITES_ENABLED) {
+    result = await offlineMutateJson(
+      endpoint,
+      {
+        method: "POST",
+        body: payload,
+      },
+      {
+        meta: {
+          operationType: "grades-scores",
+          role,
+          evaluationId: payload.evaluation_id,
+        },
+      }
+    );
+  } else {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      result = response.ok
+        ? { ok: true, data, status: response.status }
+        : {
+            ok: false,
+            queued: false,
+            offline: false,
+            status: response.status,
+            error: String(
+              data?.message || data?.error || `HTTP ${response.status}`,
+            ),
+            data,
+          };
+    } catch {
+      result = {
+        ok: false,
+        queued: false,
+        offline: false,
+        status: 0,
+        error: CLOUD_ONLY_GRADE_WRITE_MESSAGE,
+      };
+    }
+  }
+
+  if (result.ok || (OFFLINE_GRADE_WRITES_ENABLED && result.queued)) {
     await applyScoresToLocalCache(role, payload);
   }
 

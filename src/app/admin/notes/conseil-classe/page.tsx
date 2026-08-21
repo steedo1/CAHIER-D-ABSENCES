@@ -3,6 +3,13 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Printer, RefreshCw, FileText, X } from "lucide-react";
+import {
+  canManageEndOfYearDecision,
+  COUNCIL_YEAR_DECISION_CONTRACT,
+  proposeEndOfYearDecision,
+  readCouncilYearDecision,
+  resolveEndOfYearDecision,
+} from "@/lib/end-of-year-decisions.mjs";
 
 /* ───────── UI helpers ───────── */
 
@@ -308,6 +315,26 @@ type CouncilStudentRow = BulletinItemWithRank & {
   conductOn20: number | null;
   mentions: CouncilMentions;
   appreciation: string;
+};
+
+type StoredYearDecisionRow = {
+  id?: string | null;
+  student_id: string;
+  decision_type?: string | null;
+  decision_label?: string | null;
+  decided_at?: string | null;
+  decided_by?: string | null;
+  notes?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+  updated_at?: string | null;
+};
+
+type CouncilDecisionDraft = {
+  enabled: boolean;
+  decision: "ADMIS" | "REDOUBLE";
+  reason: string;
+  state: "draft" | "validated";
+  dirty: boolean;
 };
 
 type SubjectCouncilStat = {
@@ -657,7 +684,7 @@ function shortPeriodLabel(
   return compact;
 }
 
-function annualDecisionLabel(
+function annualDistinctionLabel(
   avg: number | null | undefined,
   _complete = true,
   isCsca = false
@@ -953,6 +980,17 @@ export default function ConseilClassePage() {
   const [yearPeriodBulletins, setYearPeriodBulletins] = useState<Record<string, EnrichedBulletin>>({});
   const [yearRecapLoading, setYearRecapLoading] = useState(false);
   const [activeStudentIds, setActiveStudentIds] = useState<string[]>([]);
+  const [storedYearDecisions, setStoredYearDecisions] = useState<
+    Record<string, StoredYearDecisionRow>
+  >({});
+  const [councilDecisionDrafts, setCouncilDecisionDrafts] = useState<
+    Record<string, CouncilDecisionDraft>
+  >({});
+  const [decisionStorageAvailable, setDecisionStorageAvailable] = useState<
+    boolean | null
+  >(null);
+  const [decisionStorageMessage, setDecisionStorageMessage] = useState<string | null>(null);
+  const [decisionSaving, setDecisionSaving] = useState(false);
 
   const isCscaSchool = useMemo(
     () => Boolean(conductSummary?.is_csca) || isCscaInstitution(institution),
@@ -1082,6 +1120,89 @@ export default function ConseilClassePage() {
     setDateTo(p.end_date || "");
   }, [selectedPeriodId, periods]);
 
+  async function loadStoredYearDecisions(input: {
+    classId: string;
+    academicYear: string;
+    periodId: string;
+  }) {
+    const params = new URLSearchParams({
+      class_id: input.classId,
+      academic_year: input.academicYear,
+      period_id: input.periodId,
+    });
+
+    try {
+      const res = await fetch(
+        `/api/admin/notes/conseil-classe/year-decisions?${params.toString()}`,
+        { cache: "no-store" },
+      );
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 503 && json?.error === "DECISION_STORAGE_UNAVAILABLE") {
+          setStoredYearDecisions({});
+          setCouncilDecisionDrafts({});
+          setDecisionStorageAvailable(false);
+          setDecisionStorageMessage(
+            "Le stockage des décisions du conseil n'est pas disponible. Les propositions restent consultables, mais aucune dérogation ne peut être enregistrée.",
+          );
+          return;
+        }
+        throw new Error(json?.error || `Décisions indisponibles (${res.status}).`);
+      }
+
+      const rows: StoredYearDecisionRow[] = Array.isArray(json?.items) ? json.items : [];
+      const byStudent: Record<string, StoredYearDecisionRow> = {};
+      const drafts: Record<string, CouncilDecisionDraft> = {};
+
+      rows.forEach((row) => {
+        const studentId = String(row?.student_id || "").trim();
+        if (!studentId) return;
+        byStudent[studentId] = row;
+
+        const metadata =
+          row.metadata_json && typeof row.metadata_json === "object"
+            ? row.metadata_json
+            : null;
+        if (
+          metadata?.contract !== COUNCIL_YEAR_DECISION_CONTRACT ||
+          metadata?.entry_kind !== "council_override"
+        ) {
+          return;
+        }
+
+        const proposal = proposeEndOfYearDecision(metadata.annual_average_used);
+        const decision =
+          metadata.council_decision === "ADMIS" || metadata.council_decision === "REDOUBLE"
+            ? metadata.council_decision
+            : proposal;
+        if (!decision) return;
+
+        drafts[studentId] = {
+          enabled:
+            metadata.is_derogation === true ||
+            (proposal !== null && decision !== proposal),
+          decision,
+          reason: String(metadata.reason || row.notes || ""),
+          state: metadata.state === "validated" ? "validated" : "draft",
+          dirty: false,
+        };
+      });
+
+      setStoredYearDecisions(byStudent);
+      setCouncilDecisionDrafts(drafts);
+      setDecisionStorageAvailable(true);
+      setDecisionStorageMessage(null);
+    } catch (error: any) {
+      console.warn("[ConseilClasse] décisions annuelles indisponibles", error);
+      setStoredYearDecisions({});
+      setCouncilDecisionDrafts({});
+      setDecisionStorageAvailable(false);
+      setDecisionStorageMessage(
+        error?.message || "Impossible de charger les décisions du conseil.",
+      );
+    }
+  }
+
   async function handleLoadCouncilData() {
     setErrorMsg(null);
 
@@ -1099,6 +1220,10 @@ export default function ConseilClassePage() {
       setConductSummary(null);
       setCurrentAffectations([]);
       setYearPeriodBulletins({});
+      setStoredYearDecisions({});
+      setCouncilDecisionDrafts({});
+      setDecisionStorageAvailable(null);
+      setDecisionStorageMessage(null);
 
       const params = new URLSearchParams();
       params.set("class_id", selectedClassId);
@@ -1179,6 +1304,14 @@ export default function ConseilClassePage() {
       if (isLastPeriod && sortedPeriods.length > 0) {
         setYearRecapLoading(true);
         try {
+          const storedDecisionsPromise =
+            effectiveAcademicYear && selectedPeriodId
+              ? loadStoredYearDecisions({
+                  classId: selectedClassId,
+                  academicYear: effectiveAcademicYear,
+                  periodId: selectedPeriodId,
+                })
+              : Promise.resolve();
           const entries = await Promise.all(
             sortedPeriods.map(async (period) => {
               if (period.id === selectedPeriodId) {
@@ -1213,11 +1346,16 @@ export default function ConseilClassePage() {
             if (data) map[id] = data;
           });
           setYearPeriodBulletins(map);
+          await storedDecisionsPromise;
         } finally {
           setYearRecapLoading(false);
         }
       } else {
         setYearPeriodBulletins({});
+        setStoredYearDecisions({});
+        setCouncilDecisionDrafts({});
+        setDecisionStorageAvailable(null);
+        setDecisionStorageMessage(null);
       }
 
       setPreviewOpen(true);
@@ -1603,6 +1741,7 @@ export default function ConseilClassePage() {
         birthdate: string | null;
         annual_avg: number | null;
         annual_rank: number | null;
+        conductOn20: number | null;
         annual_is_complete: boolean;
         admin_annual_forced_nc: boolean;
       }
@@ -1659,6 +1798,10 @@ export default function ConseilClassePage() {
             Number.isFinite(Number(apiAnnualRank))
               ? apiAnnualRank
               : null,
+          conductOn20:
+            rowCurrent?.conductOn20 !== null && rowCurrent?.conductOn20 !== undefined
+              ? rowCurrent.conductOn20
+              : existing?.conductOn20 ?? null,
           annual_is_complete: annualComplete,
           admin_annual_forced_nc: annualForcedNc,
         });
@@ -1758,6 +1901,163 @@ export default function ConseilClassePage() {
         });
       });
   }, [isLastSelectedPeriod, annualPeriods, yearPeriodBulletins, councilRows]);
+
+  const annualDecisionRows = useMemo(() => {
+    return annualRecapRows.map((row) => {
+      const stored = readCouncilYearDecision(
+        storedYearDecisions[row.student_id] || null,
+        row.annual_avg,
+      );
+      const draft = councilDecisionDrafts[row.student_id] || null;
+      const resolution = draft?.enabled
+        ? resolveEndOfYearDecision({
+            annual_average: row.annual_avg,
+            council_override: {
+              decision: draft.decision,
+              reason: draft.reason,
+              state: draft.state,
+            },
+          })
+        : resolveEndOfYearDecision({ annual_average: row.annual_avg });
+
+      return {
+        ...row,
+        draft,
+        stored,
+        decision_manageable: canManageEndOfYearDecision({
+          is_last_period: isLastSelectedPeriod,
+          annual_average: row.annual_avg,
+        }),
+        distinction_annual: annualDistinctionLabel(
+          row.annual_avg,
+          row.annual_is_complete,
+          isCscaSchool,
+        ),
+        automatic_proposal: resolution.automatic_proposal,
+        council_decision: resolution.council_decision,
+        official_decision: resolution.official_decision,
+        official_source: resolution.official_source,
+        override_applied: resolution.override_applied,
+        decision_error: resolution.error,
+      };
+    });
+  }, [
+    annualRecapRows,
+    councilDecisionDrafts,
+    isCscaSchool,
+    isLastSelectedPeriod,
+    storedYearDecisions,
+  ]);
+
+  const annualDecisionByStudent = useMemo(
+    () => new Map(annualDecisionRows.map((row) => [row.student_id, row])),
+    [annualDecisionRows],
+  );
+
+  function updateCouncilDecisionDraft(
+    studentId: string,
+    updater: (current: CouncilDecisionDraft) => CouncilDecisionDraft,
+  ) {
+    const row = annualDecisionByStudent.get(studentId);
+    const proposal = row?.automatic_proposal;
+    if (!row || !proposal) return;
+
+    setCouncilDecisionDrafts((current) => {
+      const existing = current[studentId] || {
+        enabled: false,
+        decision: proposal === "ADMIS" ? "REDOUBLE" : "ADMIS",
+        reason: "",
+        state: "draft" as const,
+        dirty: false,
+      };
+      return { ...current, [studentId]: updater(existing) };
+    });
+  }
+
+  async function validateCouncilYearDecisions() {
+    if (
+      !decisionStorageAvailable ||
+      !selectedClassId ||
+      !selectedAcademicYear ||
+      !selectedPeriodId
+    ) {
+      setDecisionStorageMessage(
+        "Le stockage officiel des décisions n'est pas disponible pour ce contexte.",
+      );
+      return;
+    }
+
+    const rowsToSave = annualDecisionRows.filter((row) => {
+      const draft = row.draft;
+      if (!draft) return false;
+      if (draft.dirty) return true;
+      return draft.enabled && draft.state !== "validated";
+    });
+
+    if (rowsToSave.length === 0) {
+      setDecisionStorageMessage("Aucune dérogation nouvelle à enregistrer.");
+      return;
+    }
+
+    const missingReason = rowsToSave.find((row) => {
+      const draft = row.draft;
+      if (!draft?.enabled) return false;
+      return draft.decision !== row.automatic_proposal && !draft.reason.trim();
+    });
+    if (missingReason) {
+      setDecisionStorageMessage(
+        `Motif obligatoire pour la dérogation de ${missingReason.full_name}.`,
+      );
+      return;
+    }
+
+    const items = rowsToSave.map((row) => {
+      const draft = row.draft as CouncilDecisionDraft;
+      return {
+        student_id: row.student_id,
+        annual_avg: row.annual_avg,
+        annual_rank: row.annual_rank,
+        council_decision: draft.enabled
+          ? draft.decision
+          : row.automatic_proposal,
+        reason: draft.enabled ? draft.reason.trim() : null,
+      };
+    });
+
+    try {
+      setDecisionSaving(true);
+      setDecisionStorageMessage(null);
+      const res = await fetch("/api/admin/notes/conseil-classe/year-decisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          class_id: selectedClassId,
+          academic_year: selectedAcademicYear,
+          period_id: selectedPeriodId,
+          state: "validated",
+          items,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.error || `Enregistrement impossible (${res.status}).`);
+      }
+
+      await loadStoredYearDecisions({
+        classId: selectedClassId,
+        academicYear: selectedAcademicYear,
+        periodId: selectedPeriodId,
+      });
+      setDecisionStorageMessage(
+        "Décisions du conseil validées. Elles deviennent officielles pour les bulletins.",
+      );
+    } catch (error: any) {
+      console.error("[ConseilClasse] enregistrement décisions impossible", error);
+      setDecisionStorageMessage(error?.message || "Enregistrement impossible.");
+    } finally {
+      setDecisionSaving(false);
+    }
+  }
 
   const annualRecapStats = useMemo(() => {
     const vals = annualRecapRows
@@ -2303,7 +2603,7 @@ export default function ConseilClassePage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Chef d'établissement / Directeur</label>
+              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Chef d&apos;établissement / Directeur</label>
               <Input value={chairName} onChange={(e) => setChairName(e.target.value)} />
             </div>
 
@@ -2333,6 +2633,152 @@ export default function ConseilClassePage() {
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {errorMsg}
             </div>
+          ) : null}
+
+          {isLastSelectedPeriod && annualDecisionRows.length > 0 ? (
+            <section
+              className="mt-4 rounded-2xl border border-slate-200 bg-white p-4"
+              aria-labelledby="end-of-year-decisions-title"
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2
+                    id="end-of-year-decisions-title"
+                    className="text-sm font-bold uppercase tracking-wide text-slate-900"
+                  >
+                    Décisions de fin d’année
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    La proposition est calculée sans modifier les moyennes. Seule une dérogation
+                    validée devient la décision officielle du bulletin.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={decisionSaving || decisionStorageAvailable !== true}
+                    onClick={validateCouncilYearDecisions}
+                  >
+                    {decisionSaving ? "Validation…" : "Valider les décisions"}
+                  </Button>
+                </div>
+              </div>
+
+              {decisionStorageAvailable === false ? (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {decisionStorageMessage ||
+                    "Stockage indisponible : les propositions restent en lecture seule."}
+                </div>
+              ) : decisionStorageMessage ? (
+                <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  {decisionStorageMessage}
+                </div>
+              ) : null}
+
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-[1050px] w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                      <th className="border border-slate-200 px-2 py-2">Nom</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Moy. ann.</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Rang annuel</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Conduite</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Proposition Mon Cahier</th>
+                      <th className="border border-slate-200 px-2 py-2">Dérogation</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Décision officielle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {annualDecisionRows.map((row) => {
+                      const draft = row.draft;
+                      const enabled = draft?.enabled === true;
+                      return (
+                        <tr key={`decision-${row.student_id}`} className="align-top">
+                          <td className="border border-slate-200 px-2 py-2 font-semibold text-slate-900">
+                            {row.full_name}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-semibold">
+                            {formatNumber(row.annual_avg)}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center">
+                            {formatRankNC(row.annual_rank)}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center">
+                            {formatNumber(row.conductOn20)}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-bold">
+                            {row.automatic_proposal || "—"}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2">
+                            <label className="inline-flex items-center gap-2 font-medium text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={enabled}
+                                disabled={
+                                  decisionStorageAvailable !== true || !row.decision_manageable
+                                }
+                                onChange={(event) =>
+                                  updateCouncilDecisionDraft(row.student_id, (current) => ({
+                                    ...current,
+                                    enabled: event.target.checked,
+                                    state: "draft",
+                                    dirty: true,
+                                  }))
+                                }
+                              />
+                              Déroger
+                            </label>
+                            {enabled ? (
+                              <div className="mt-2 grid gap-2">
+                                <Select
+                                  value={draft?.decision || ""}
+                                  disabled={decisionStorageAvailable !== true}
+                                  onChange={(event) =>
+                                    updateCouncilDecisionDraft(row.student_id, (current) => ({
+                                      ...current,
+                                      decision: event.target.value as "ADMIS" | "REDOUBLE",
+                                      state: "draft",
+                                      dirty: true,
+                                    }))
+                                  }
+                                >
+                                  <option value="ADMIS">ADMIS</option>
+                                  <option value="REDOUBLE">REDOUBLE</option>
+                                </Select>
+                                <Input
+                                  value={draft?.reason || ""}
+                                  disabled={decisionStorageAvailable !== true}
+                                  placeholder="Motif obligatoire si la décision diffère"
+                                  onChange={(event) =>
+                                    updateCouncilDecisionDraft(row.student_id, (current) => ({
+                                      ...current,
+                                      reason: event.target.value,
+                                      state: "draft",
+                                      dirty: true,
+                                    }))
+                                  }
+                                />
+                                <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                                  {draft?.state === "validated" ? "Validée" : "Brouillon — non officiel"}
+                                </span>
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-extrabold">
+                            {row.official_decision || "—"}
+                            {row.override_applied ? (
+                              <div className="mt-1 text-[10px] font-semibold text-emerald-700">
+                                Conseil validé
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           ) : null}
         </div>
       </div>
@@ -2777,13 +3223,16 @@ export default function ConseilClassePage() {
                             <th style={{ width: "5%" }}>{shortPeriodLabel(p, idx)}<br />Rg</th>
                           </React.Fragment>
                         ))}
-                        <th style={{ width: "8%" }}>Moy. ann.</th>
-                        <th style={{ width: "6%" }}>Rg ann.</th>
-                        <th style={{ width: "12%" }}>Décision annuelle</th>
+                        <th style={{ width: "7%" }}>Moy. ann.</th>
+                        <th style={{ width: "5%" }}>Rg ann.</th>
+                        <th style={{ width: "6%" }}>Conduite</th>
+                        <th style={{ width: "10%" }}>Distinction annuelle</th>
+                        <th style={{ width: "9%" }}>Proposition</th>
+                        <th style={{ width: "10%" }}>Décision officielle</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {annualRecapRows.map((row, index) => (
+                      {annualDecisionRows.map((row, index) => (
                         <tr key={row.student_id}>
                           <OfficialTd center>{index + 1}</OfficialTd>
                           <OfficialTd strong>{row.full_name}</OfficialTd>
@@ -2796,7 +3245,10 @@ export default function ConseilClassePage() {
                           ))}
                           <OfficialTd center strong>{formatNumber(row.annual_avg)}</OfficialTd>
                           <OfficialTd center>{formatRankNC(row.annual_rank)}</OfficialTd>
-                          <OfficialTd center>{annualDecisionLabel(row.annual_avg, row.annual_is_complete, isCscaSchool)}</OfficialTd>
+                          <OfficialTd center>{formatNumber(row.conductOn20)}</OfficialTd>
+                          <OfficialTd center>{row.distinction_annual}</OfficialTd>
+                          <OfficialTd center strong>{row.automatic_proposal || "—"}</OfficialTd>
+                          <OfficialTd center strong>{row.official_decision || "—"}</OfficialTd>
                         </tr>
                       ))}
                     </tbody>
