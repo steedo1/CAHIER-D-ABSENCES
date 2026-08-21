@@ -1,0 +1,175 @@
+name: Certification SheetJS 0.20.3 Probe
+
+on:
+  push:
+    branches:
+      - probe/sheetjs-0203-20260821
+    paths:
+      - .github/workflows/cert-sheetjs-0203-probe.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cert-sheetjs-0203-probe
+  cancel-in-progress: true
+
+jobs:
+  verify-sheetjs-0203:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout probe branch
+        uses: actions/checkout@v4
+        with:
+          ref: probe/sheetjs-0203-20260821
+          fetch-depth: 0
+
+      - name: Confirm exact probe head
+        run: git pull --ff-only origin probe/sheetjs-0203-20260821
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact current tree
+        run: npm ci
+
+      - name: Snapshot package contract
+        run: cp package.json /tmp/package-before.json
+
+      - name: Install official SheetJS 0.20.3 tarball
+        run: npm install --save https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+
+      - name: Enforce isolated xlsx dependency change
+        shell: bash
+        run: |
+          set -euo pipefail
+          unexpected="$(git diff --name-only | grep -Ev '^(package.json|package-lock.json)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected"
+            echo '::error::SheetJS probe changed files outside package.json/package-lock.json.'
+            exit 1
+          fi
+          node <<'NODE'
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('/tmp/package-before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const expected = JSON.parse(JSON.stringify(before));
+          expected.dependencies.xlsx = after.dependencies.xlsx;
+          if (JSON.stringify(expected) !== JSON.stringify(after)) {
+            throw new Error('package.json changed beyond the xlsx dependency');
+          }
+          if (!String(after.dependencies.xlsx).includes('cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz')) {
+            throw new Error('Unexpected xlsx dependency: ' + after.dependencies.xlsx);
+          }
+          const installed = require('./node_modules/xlsx/package.json').version;
+          if (installed !== '0.20.3') throw new Error('Unexpected installed xlsx version: ' + installed);
+          NODE
+          git diff -- package.json package-lock.json
+
+      - name: Smoke test both Mon Cahier SheetJS import patterns
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const direct = await import('xlsx');
+          if (typeof direct.read !== 'function' || typeof direct.write !== 'function' || !direct.utils) {
+            throw new Error('Direct dynamic import contract is incompatible');
+          }
+          const fallback = direct.default || direct;
+          if (typeof fallback.read !== 'function' || !fallback.utils?.sheet_to_csv) {
+            throw new Error('Default-fallback import contract is incompatible');
+          }
+          const wb = direct.utils.book_new();
+          const ws = direct.utils.aoa_to_sheet([
+            ['Nom', 'Moyenne'],
+            ['Test Élève', 15.5],
+          ]);
+          direct.utils.book_append_sheet(wb, ws, 'BASE DE DONNEES');
+          const ref = direct.utils.encode_cell({ r: 1, c: 1 });
+          if (ref !== 'B2') throw new Error('encode_cell contract changed');
+          const range = direct.utils.decode_range('A1:B2');
+          if (range.e.r !== 1 || range.e.c !== 1) throw new Error('decode_range contract changed');
+          const buffer = direct.write(wb, { type: 'buffer', bookType: 'xlsx' });
+          if (!buffer || buffer.length < 100) throw new Error('XLSX write produced an invalid buffer');
+          const parsed = fallback.read(buffer, { type: 'buffer' });
+          const parsedSheet = parsed.Sheets['BASE DE DONNEES'];
+          if (!parsedSheet) throw new Error('Round-trip sheet missing');
+          const csv = fallback.utils.sheet_to_csv(parsedSheet, { FS: ';' });
+          if (!csv.includes('Test Élève') || !csv.includes('15.5')) throw new Error('CSV round-trip mismatch');
+          const macroBuffer = direct.write(wb, { type: 'buffer', bookType: 'xlsm', bookVBA: true, cellStyles: true });
+          if (!macroBuffer || macroBuffer.length < 100) throw new Error('XLSM write contract failed');
+          console.log('SheetJS 0.20.3 Mon Cahier smoke test OK');
+          NODE
+
+      - name: Reinstall candidate lockfile exactly
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Critical offline regression suite
+        run: |
+          node --test \
+            test/pwa-stability.test.mjs \
+            test/phone-offline-login-stability.test.mjs \
+            test/offline-auth-contract.test.mjs \
+            test/offline-auth-logout-wiring.test.mjs \
+            test/offline-schedule-wiring.test.mjs \
+            test/teacher-minimal-preparation.test.mjs \
+            test/class-device-minimal-preparation.test.mjs \
+            test/class-device-offline-lifecycle-wiring.test.mjs \
+            test/class-device-offline-logout-pwa.test.mjs \
+            test/class-device-relay-cloud-local-fallback.test.mjs \
+            test/admin-background-preparation-isolation.test.mjs \
+            test/admin-essential-offline-data.test.mjs \
+            test/admin-essential-request-timeout.test.mjs \
+            test/admin-offline-essential-navigation.test.mjs \
+            test/attendance-integrity-wiring.test.mjs \
+            test/relay-supervision-ui.test.mjs \
+            test/cloud-only-grade-writes.test.mjs
+
+      - name: Verify xlsx advisories are cleared from npm audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > /tmp/audit.json || true
+          node <<'NODE'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('/tmp/audit.json', 'utf8'));
+          const vulnerabilities = audit.vulnerabilities || {};
+          if (vulnerabilities.xlsx) {
+            console.error('xlsx is still reported by npm audit:', vulnerabilities.xlsx);
+            process.exit(1);
+          }
+          const unexpected = [];
+          const allowed = new Set(['next', 'postcss', 'sharp']);
+          for (const [name, info] of Object.entries(vulnerabilities)) {
+            const sev = info?.severity || 'unknown';
+            if ((sev === 'high' || sev === 'critical') && !allowed.has(name)) unexpected.push(`${name}:${sev}`);
+          }
+          console.log('Remaining expected Next-related high/critical:', Object.keys(vulnerabilities).filter((name) => allowed.has(name)).join(', ') || 'none');
+          if (unexpected.length) {
+            console.error('Unexpected high/critical vulnerabilities:', unexpected.join(', '));
+            process.exit(1);
+          }
+          NODE
+
+      - name: Refuse stale write and publish validated SheetJS probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin probe/sheetjs-0203-20260821
+          remote_head="$(git rev-parse origin/probe/sheetjs-0203-20260821)"
+          if [ "$remote_head" != "$GITHUB_SHA" ]; then
+            echo "::error::Probe branch moved from $GITHUB_SHA to $remote_head. Refusing stale write."
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m 'chore(security): passer SheetJS a la distribution officielle 0.20.3'
+          git push origin HEAD:probe/sheetjs-0203-20260821
