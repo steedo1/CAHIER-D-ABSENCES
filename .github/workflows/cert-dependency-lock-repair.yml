@@ -1,4 +1,4 @@
-name: Certification Dependency Lock Repair
+name: Certification Dependency Cleanup
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  repair-lockfile:
+  remove-unused-pdf-dependencies:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout certification branch
         uses: actions/checkout@v4
@@ -34,30 +34,79 @@ jobs:
       - name: Install exact current tree
         run: npm ci
 
-      - name: Inventory xlsx and jsPDF usage
+      - name: Prove jsPDF packages are unused by application code
         shell: bash
         run: |
-          echo '=== XLSX USAGE ==='
-          git grep -n -E "(from|require\().*['\"]xlsx['\"]|XLSX\." -- . ':!package-lock.json' ':!package.json' || true
-          echo '=== JSPDF USAGE ==='
-          git grep -n -E "(from|require\().*['\"]jspdf['\"]|jsPDF" -- . ':!package-lock.json' ':!package.json' || true
+          set -euo pipefail
+          matches="$(git grep -n -E "(from|require\().*['\"]jspdf(-autotable)?['\"]|jsPDF|autoTable" -- src public test scripts desktop 2>/dev/null || true)"
+          if [ -n "$matches" ]; then
+            echo "$matches"
+            echo '::error::jsPDF or jspdf-autotable is still referenced. Cleanup aborted.'
+            exit 1
+          fi
 
-      - name: Apply non-breaking npm audit fixes to lockfile only
-        run: npm audit fix --package-lock-only
+      - name: Remove only unused PDF dependencies
+        run: npm uninstall jspdf jspdf-autotable
 
-      - name: Show remaining production audit
+      - name: Enforce package-only diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          unexpected="$(git diff --name-only | grep -Ev '^(package.json|package-lock.json)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected"
+            echo '::error::Unexpected files changed by dependency cleanup.'
+            exit 1
+          fi
+          git diff -- package.json package-lock.json
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Critical offline regression suite
+        run: |
+          node --test \
+            test/pwa-stability.test.mjs \
+            test/phone-offline-login-stability.test.mjs \
+            test/offline-auth-contract.test.mjs \
+            test/offline-auth-logout-wiring.test.mjs \
+            test/offline-schedule-wiring.test.mjs \
+            test/teacher-minimal-preparation.test.mjs \
+            test/class-device-minimal-preparation.test.mjs \
+            test/class-device-offline-lifecycle-wiring.test.mjs \
+            test/class-device-offline-logout-pwa.test.mjs \
+            test/class-device-relay-cloud-local-fallback.test.mjs \
+            test/admin-background-preparation-isolation.test.mjs \
+            test/admin-essential-offline-data.test.mjs \
+            test/admin-essential-request-timeout.test.mjs \
+            test/admin-offline-essential-navigation.test.mjs \
+            test/attendance-integrity-wiring.test.mjs \
+            test/relay-supervision-ui.test.mjs \
+            test/cloud-only-grade-writes.test.mjs
+
+      - name: Production build
+        run: npm run build
+
+      - name: Report remaining production vulnerabilities
         shell: bash
         run: npm audit --omit=dev || true
 
-      - name: Commit lockfile repair when changed
+      - name: Commit only verified package cleanup
         shell: bash
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo 'No lockfile change produced.'
+          set -euo pipefail
+          if git diff --quiet -- package.json package-lock.json; then
+            echo 'No package change produced.'
             exit 0
+          fi
+          unexpected="$(git diff --name-only | grep -Ev '^(package.json|package-lock.json)$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected"
+            echo '::error::Refusing to commit unexpected files.'
+            exit 1
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
-          git commit -m 'chore(security): actualiser le lockfile sans breaking change'
+          git add package.json package-lock.json
+          git commit -m 'chore(security): retirer les dépendances jsPDF inutilisées'
           git push origin HEAD:work/offline-go-live-20260821
