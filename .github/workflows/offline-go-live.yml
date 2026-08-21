@@ -159,5 +159,5 @@ jobs:
           test -f desktop/relay/windows/install-startup-task.ps1
           test -f desktop/relay/migrations/0009_academic_provisioning.sql
           grep -q 'MON_CAHIER_OFFLINE_SCHEMA_VERSION' src/lib/offline-release.ts
-          grep -q 'schema_version -lt 8' desktop/relay/windows/install-relay.ps1
+          grep -q 'schema_version -lt 9' desktop/relay/windows/install-relay.ps1
           grep -q 'bootstrap_revision_ack_v1' desktop/relay/windows/install-relay.ps1
