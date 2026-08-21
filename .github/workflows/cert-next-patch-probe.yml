@@ -1,29 +1,32 @@
-name: Certification Next Patch Probe
+name: Certification Next Patch 15.5.23
 
 on:
-  pull_request:
+  push:
     branches:
-      - reprise-propre-5418ce7-20260729
+      - work/offline-go-live-20260821
     paths:
       - .github/workflows/cert-next-patch-probe.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: cert-next-patch-probe
+  group: cert-next-patch-15-5-23
   cancel-in-progress: true
 
 jobs:
-  probe-next-15-5-23:
+  verify-and-commit-next-patch:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout certification branch
         uses: actions/checkout@v4
         with:
           ref: work/offline-go-live-20260821
           fetch-depth: 0
+
+      - name: Confirm exact branch head
+        run: git pull --ff-only origin work/offline-go-live-20260821
 
       - name: Node 22
         uses: actions/setup-node@v4
@@ -35,13 +38,18 @@ jobs:
       - name: Install exact current tree
         run: npm ci
 
-      - name: Show current Next version
-        run: node -p "'Current Next: ' + require('./node_modules/next/package.json').version"
+      - name: Snapshot package contract
+        shell: bash
+        run: |
+          cp package.json /tmp/package-before.json
+          node -p "'Current Next: ' + require('./node_modules/next/package.json').version"
+          node -p "'Current React: ' + require('./node_modules/react/package.json').version"
+          node -p "'Current React DOM: ' + require('./node_modules/react-dom/package.json').version"
 
-      - name: Apply isolated Next 15.5.23 patch in runner only
-        run: npm install next@15.5.23 --save-exact
+      - name: Apply only Next 15.5.23 patch
+        run: npm install next@15.5.23 --save-prefix='^'
 
-      - name: Enforce dependency-only diff
+      - name: Enforce isolated dependency contract
         shell: bash
         run: |
           set -euo pipefail
@@ -51,7 +59,21 @@ jobs:
             echo '::error::Next patch changed files outside package.json/package-lock.json.'
             exit 1
           fi
-          node -e "const v=require('./node_modules/next/package.json').version; if(v!=='15.5.23'){throw new Error('Unexpected Next version: '+v)}"
+          node <<'NODE'
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('/tmp/package-before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const expected = JSON.parse(JSON.stringify(before));
+          expected.dependencies.next = after.dependencies.next;
+          if (JSON.stringify(expected) !== JSON.stringify(after)) {
+            throw new Error('package.json changed beyond the Next dependency');
+          }
+          if (after.dependencies.next !== '^15.5.23') {
+            throw new Error('Unexpected package.json Next range: ' + after.dependencies.next);
+          }
+          const installed = require('./node_modules/next/package.json').version;
+          if (installed !== '15.5.23') throw new Error('Unexpected installed Next version: ' + installed);
+          NODE
           git diff -- package.json package-lock.json
 
       - name: Typecheck web
@@ -78,10 +100,22 @@ jobs:
             test/relay-supervision-ui.test.mjs \
             test/cloud-only-grade-writes.test.mjs
 
-      - name: Production dependency audit after Next patch
+      - name: Report production dependency audit
         shell: bash
         run: npm audit --omit=dev || true
 
-      - name: Do not persist probe changes
+      - name: Refuse stale write and commit verified patch
+        shell: bash
         run: |
-          echo 'Probe successful. No package change is committed by this workflow.'
+          set -euo pipefail
+          git fetch origin work/offline-go-live-20260821
+          remote_head="$(git rev-parse origin/work/offline-go-live-20260821)"
+          if [ "$remote_head" != "$GITHUB_SHA" ]; then
+            echo "::error::Certification branch moved from $GITHUB_SHA to $remote_head. Refusing stale write."
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m 'chore(security): mettre Next a jour vers 15.5.23'
+          git push origin HEAD:work/offline-go-live-20260821
