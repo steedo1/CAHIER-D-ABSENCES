@@ -1,0 +1,59 @@
+name: Certification Dependency Lock Repair
+
+on:
+  push:
+    branches:
+      - work/offline-go-live-20260821
+    paths:
+      - .github/workflows/cert-dependency-lock-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout certification branch
+        uses: actions/checkout@v4
+        with:
+          ref: work/offline-go-live-20260821
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact current tree
+        run: npm ci
+
+      - name: Inventory xlsx and jsPDF usage
+        shell: bash
+        run: |
+          echo '=== XLSX USAGE ==='
+          git grep -n -E "(from|require\().*['\"]xlsx['\"]|XLSX\." -- . ':!package-lock.json' ':!package.json' || true
+          echo '=== JSPDF USAGE ==='
+          git grep -n -E "(from|require\().*['\"]jspdf['\"]|jsPDF" -- . ':!package-lock.json' ':!package.json' || true
+
+      - name: Apply non-breaking npm audit fixes to lockfile only
+        run: npm audit fix --package-lock-only
+
+      - name: Show remaining production audit
+        shell: bash
+        run: npm audit --omit=dev || true
+
+      - name: Commit lockfile repair when changed
+        shell: bash
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'No lockfile change produced.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore(security): actualiser le lockfile sans breaking change'
+          git push origin HEAD:work/offline-go-live-20260821
