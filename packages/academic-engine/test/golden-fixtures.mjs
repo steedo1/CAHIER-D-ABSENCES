@@ -203,6 +203,7 @@ export const goldenFixtures = {
   },
   end_of_year_decisions: {
     automatic: [
+      { annual_average: 9.8, expected: "REDOUBLE" },
       { annual_average: 9.99, expected: "REDOUBLE" },
       { annual_average: 10, expected: "ADMIS" },
       { annual_average: 10.01, expected: "ADMIS" },
@@ -210,13 +211,64 @@ export const goldenFixtures = {
     ],
     overrides: [
       {
-        annual_average: 9.82,
+        annual_average: 9.8,
+        council_override: {
+          decision: "REDOUBLE",
+          reason: "",
+          state: "validated",
+        },
+        expected_official: "REDOUBLE",
+        expected_adjustment: 0,
+        expected_official_average: 9.8,
+        expected_override_applied: false,
+      },
+      {
+        annual_average: 9.8,
         council_override: {
           decision: "ADMIS",
           reason: "Progression et avis favorable unanime.",
           state: "validated",
         },
         expected_official: "ADMIS",
+        expected_adjustment: 0.2,
+        expected_official_average: 10,
+        expected_override_applied: true,
+      },
+      {
+        annual_average: 9.99,
+        council_override: {
+          decision: "ADMIS",
+          reason: "Repêchage validé par le conseil.",
+          state: "validated",
+        },
+        expected_official: "ADMIS",
+        expected_adjustment: 0.01,
+        expected_official_average: 10,
+        expected_override_applied: true,
+      },
+      {
+        annual_average: 9.25,
+        council_override: {
+          decision: "ADMIS",
+          reason: "Décision souveraine motivée du conseil.",
+          state: "validated",
+        },
+        expected_official: "ADMIS",
+        expected_adjustment: 0.75,
+        expected_official_average: 10,
+        expected_override_applied: true,
+      },
+      {
+        annual_average: 10,
+        council_override: {
+          decision: "ADMIS",
+          reason: "",
+          state: "validated",
+        },
+        expected_official: "ADMIS",
+        expected_adjustment: 0,
+        expected_official_average: 10,
+        expected_override_applied: false,
       },
       {
         annual_average: 10.15,
@@ -226,6 +278,9 @@ export const goldenFixtures = {
           state: "validated",
         },
         expected_official: "REDOUBLE",
+        expected_adjustment: 0,
+        expected_official_average: 10.15,
+        expected_override_applied: true,
       },
     ],
   },

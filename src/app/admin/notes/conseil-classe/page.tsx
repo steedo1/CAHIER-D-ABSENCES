@@ -407,6 +407,12 @@ function formatNumber(n: number | null | undefined, digits = 2): string {
   return Number(n).toFixed(digits);
 }
 
+function formatCouncilAdjustment(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  const value = Number(n);
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
 function formatRankNC(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return "NC";
   return String(Number(n));
@@ -1170,7 +1176,9 @@ export default function ConseilClassePage() {
           return;
         }
 
-        const proposal = proposeEndOfYearDecision(metadata.annual_average_used);
+        const proposal = proposeEndOfYearDecision(
+          metadata.base_annual_average ?? metadata.annual_average_used,
+        );
         const decision =
           metadata.council_decision === "ADMIS" || metadata.council_decision === "REDOUBLE"
             ? metadata.council_decision
@@ -1935,6 +1943,8 @@ export default function ConseilClassePage() {
         ),
         automatic_proposal: resolution.automatic_proposal,
         council_decision: resolution.council_decision,
+        council_adjustment: resolution.council_adjustment,
+        official_annual_average: resolution.official_annual_average,
         official_decision: resolution.official_decision,
         official_source: resolution.official_source,
         override_applied: resolution.override_applied,
@@ -2649,8 +2659,8 @@ export default function ConseilClassePage() {
                     Décisions de fin d’année
                   </h2>
                   <p className="mt-1 text-xs text-slate-600">
-                    La proposition est calculée sans modifier les moyennes. Seule une dérogation
-                    validée devient la décision officielle du bulletin.
+                    La moyenne annuelle calculée reste immuable. Seule une dérogation ADMIS
+                    validée peut ajouter le repêchage strictement nécessaire pour atteindre 10,00.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -2676,15 +2686,18 @@ export default function ConseilClassePage() {
               ) : null}
 
               <div className="mt-3 overflow-x-auto">
-                <table className="min-w-[1050px] w-full border-collapse text-xs">
+                <table className="min-w-[1450px] w-full border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                       <th className="border border-slate-200 px-2 py-2">Nom</th>
-                      <th className="border border-slate-200 px-2 py-2 text-center">Moy. ann.</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Moyenne annuelle calculée</th>
                       <th className="border border-slate-200 px-2 py-2 text-center">Rang annuel</th>
                       <th className="border border-slate-200 px-2 py-2 text-center">Conduite</th>
                       <th className="border border-slate-200 px-2 py-2 text-center">Proposition Mon Cahier</th>
-                      <th className="border border-slate-200 px-2 py-2">Dérogation</th>
+                      <th className="border border-slate-200 px-2 py-2">Dérogation et motif</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Décision du Conseil</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Ajustement Conseil</th>
+                      <th className="border border-slate-200 px-2 py-2 text-center">Moyenne annuelle officielle</th>
                       <th className="border border-slate-200 px-2 py-2 text-center">Décision officielle</th>
                     </tr>
                   </thead>
@@ -2763,6 +2776,15 @@ export default function ConseilClassePage() {
                                 </span>
                               </div>
                             ) : null}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-bold">
+                            {row.council_decision || "—"}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-bold">
+                            {formatCouncilAdjustment(row.council_adjustment)}
+                          </td>
+                          <td className="border border-slate-200 px-2 py-2 text-center font-extrabold">
+                            {formatNumber(row.official_annual_average)}
                           </td>
                           <td className="border border-slate-200 px-2 py-2 text-center font-extrabold">
                             {row.official_decision || "—"}
@@ -3223,11 +3245,13 @@ export default function ConseilClassePage() {
                             <th style={{ width: "5%" }}>{shortPeriodLabel(p, idx)}<br />Rg</th>
                           </React.Fragment>
                         ))}
-                        <th style={{ width: "7%" }}>Moy. ann.</th>
+                        <th style={{ width: "7%" }}>Moy. calculée</th>
                         <th style={{ width: "5%" }}>Rg ann.</th>
                         <th style={{ width: "6%" }}>Conduite</th>
                         <th style={{ width: "10%" }}>Distinction annuelle</th>
                         <th style={{ width: "9%" }}>Proposition</th>
+                        <th style={{ width: "6%" }}>Ajust.</th>
+                        <th style={{ width: "7%" }}>Moy. officielle</th>
                         <th style={{ width: "10%" }}>Décision officielle</th>
                       </tr>
                     </thead>
@@ -3248,6 +3272,8 @@ export default function ConseilClassePage() {
                           <OfficialTd center>{formatNumber(row.conductOn20)}</OfficialTd>
                           <OfficialTd center>{row.distinction_annual}</OfficialTd>
                           <OfficialTd center strong>{row.automatic_proposal || "—"}</OfficialTd>
+                          <OfficialTd center strong>{formatCouncilAdjustment(row.council_adjustment)}</OfficialTd>
+                          <OfficialTd center strong>{formatNumber(row.official_annual_average)}</OfficialTd>
                           <OfficialTd center strong>{row.official_decision || "—"}</OfficialTd>
                         </tr>
                       ))}

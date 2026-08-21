@@ -144,26 +144,35 @@ test("P2.3B golden: proposition automatique de fin d'année", () => {
   );
 });
 
-test("P2.3B golden: dérogations validées sans altération de la moyenne", () => {
+test("P2.3B golden: décision et repêchage annuel officiel", () => {
   for (const fixture of goldenFixtures.end_of_year_decisions.overrides) {
     const result = resolveEndOfYearDecision(fixture);
     assert.equal(result.ok, true);
     assert.equal(result.official_decision, fixture.expected_official);
-    assert.equal(result.annual_average, fixture.annual_average);
-    assert.equal(result.override_applied, true);
+    assert.equal(result.base_annual_average, fixture.annual_average);
+    assert.equal(result.council_adjustment, fixture.expected_adjustment);
+    assert.equal(
+      result.official_annual_average,
+      fixture.expected_official_average,
+    );
+    assert.equal(result.override_applied, fixture.expected_override_applied);
   }
 
-  const automatic = resolveEndOfYearDecision({ annual_average: 9.82 });
+  const automatic = resolveEndOfYearDecision({ annual_average: 9.8 });
   assert.equal(automatic.official_decision, "REDOUBLE");
   assert.equal(automatic.official_source, "automatic");
+  assert.equal(automatic.council_adjustment, 0);
+  assert.equal(automatic.official_annual_average, 9.8);
 
   const refused = resolveEndOfYearDecision({
-    annual_average: 9.82,
+    annual_average: 9.8,
     council_override: { decision: "ADMIS", reason: "", state: "validated" },
   });
   assert.equal(refused.ok, false);
   assert.equal(refused.error, "MOTIVE_REQUIRED");
   assert.equal(refused.official_decision, "REDOUBLE");
+  assert.equal(refused.council_adjustment, 0);
+  assert.equal(refused.official_annual_average, 9.8);
 });
 
 test("P2.3 golden: mentions de conseil actuelles", () => {

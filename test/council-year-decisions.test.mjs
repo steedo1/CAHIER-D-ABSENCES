@@ -29,7 +29,7 @@ const baseInput = {
 test("P2.3B stockage: student_year_decisions conserve proposition, dérogation et audit", () => {
   const built = buildCouncilYearDecisionUpsert({
     ...baseInput,
-    annual_average: 9.82,
+    annual_average: 9.8,
     council_decision: "ADMIS",
     reason: "Avis favorable unanime du conseil.",
     state: "validated",
@@ -47,8 +47,13 @@ test("P2.3B stockage: student_year_decisions conserve proposition, dérogation e
   assert.equal(built.payload.metadata_json.automatic_proposal, "REDOUBLE");
   assert.equal(built.payload.metadata_json.council_decision, "ADMIS");
   assert.equal(built.payload.metadata_json.official_decision, "ADMIS");
-  assert.equal(built.payload.metadata_json.annual_average_used, 9.82);
+  assert.equal(built.payload.metadata_json.annual_average_used, 9.8);
+  assert.equal(built.payload.metadata_json.base_annual_average, 9.8);
+  assert.equal(built.payload.metadata_json.council_adjustment, 0.2);
+  assert.equal(built.payload.metadata_json.official_annual_average, 10);
   assert.equal(built.payload.metadata_json.is_derogation, true);
+  assert.equal(built.payload.metadata_json.annual_rank_used, baseInput.annual_rank);
+  assert.equal("annual_rank" in built.payload, false);
 });
 
 test("P2.3B stockage: un brouillon n'est jamais officiel", () => {
@@ -64,6 +69,8 @@ test("P2.3B stockage: un brouillon n'est jamais officiel", () => {
   assert.equal(built.payload.decision_label, "ADMIS");
   assert.equal(built.payload.decided_by, null);
   assert.equal(built.payload.decided_at, null);
+  assert.equal(built.payload.metadata_json.council_adjustment, 0);
+  assert.equal(built.payload.metadata_json.official_annual_average, 10.15);
 
   const read = readCouncilYearDecision(
     {
@@ -79,12 +86,30 @@ test("P2.3B stockage: un brouillon n'est jamais officiel", () => {
   assert.equal(read.council_state, "draft");
   assert.equal(read.official_decision, "ADMIS");
   assert.equal(read.official_source, "automatic");
+  assert.equal(read.official_annual_average, 10.15);
+});
+
+test("P2.3B stockage: le repêchage en brouillon n'altère pas la moyenne officielle", () => {
+  const built = buildCouncilYearDecisionUpsert({
+    ...baseInput,
+    annual_average: 9.8,
+    council_decision: "ADMIS",
+    reason: "Avis en cours de validation.",
+    state: "draft",
+  });
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal(built.payload.metadata_json.council_adjustment, 0.2);
+  assert.equal(built.payload.metadata_json.official_annual_average, 9.8);
+  assert.equal(built.payload.metadata_json.state, "draft");
+  assert.equal(built.payload.decided_by, null);
+  assert.equal(built.payload.decided_at, null);
 });
 
 test("P2.3B stockage: une dérogation divergente sans motif est refusée", () => {
   const built = buildCouncilYearDecisionUpsert({
     ...baseInput,
-    annual_average: 9.82,
+    annual_average: 9.8,
     council_decision: "ADMIS",
     reason: "",
     state: "validated",
@@ -97,7 +122,7 @@ test("P2.3B stockage: une dérogation divergente sans motif est refusée", () =>
 test("P2.3B stockage: revenir à la proposition retire la dérogation", () => {
   const built = buildCouncilYearDecisionUpsert({
     ...baseInput,
-    annual_average: 9.82,
+    annual_average: 9.8,
     council_decision: "REDOUBLE",
     reason: "",
     state: "validated",
@@ -112,11 +137,46 @@ test("P2.3B stockage: revenir à la proposition retire la dérogation", () => {
       student_id: baseInput.student_id,
       metadata_json: built.payload.metadata_json,
     },
-    9.82,
+    9.8,
   );
   assert.equal(read.council_decision, null);
   assert.equal(read.official_decision, "REDOUBLE");
   assert.equal(read.official_source, "automatic");
+  assert.equal(read.council_adjustment, 0);
+  assert.equal(read.official_annual_average, 9.8);
+});
+
+test("P2.3B stockage: 9.99 est repêché exactement à 10.00", () => {
+  const built = buildCouncilYearDecisionUpsert({
+    ...baseInput,
+    annual_average: 9.99,
+    council_decision: "ADMIS",
+    reason: "Repêchage validé.",
+    state: "validated",
+  });
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+
+  assert.equal(built.payload.metadata_json.base_annual_average, 9.99);
+  assert.equal(built.payload.metadata_json.automatic_proposal, "REDOUBLE");
+  assert.equal(built.payload.metadata_json.council_adjustment, 0.01);
+  assert.equal(built.payload.metadata_json.official_annual_average, 10);
+
+  const read = readCouncilYearDecision(
+    {
+      id: "decision-999",
+      student_id: baseInput.student_id,
+      metadata_json: built.payload.metadata_json,
+      decided_by: baseInput.author_id,
+      decided_at: baseInput.recorded_at,
+    },
+    8.5,
+  );
+  assert.equal(read.base_annual_average, 9.99);
+  assert.equal(read.council_adjustment, 0.01);
+  assert.equal(read.official_annual_average, 10);
+  assert.equal(read.official_decision, "ADMIS");
+  assert.equal(read.author_id, baseInput.author_id);
 });
 
 test("P2.3B API: isolation école/classe, dernière période et stockage existant", async () => {
@@ -135,15 +195,19 @@ test("P2.3B API: isolation école/classe, dernière période et stockage existan
 });
 
 test("P2.3B UI: section fin d'année, distinction séparée et bulletin officiel aligné", async () => {
-  const [council, bulletinPage, bulletinRoute] = await Promise.all([
+  const [council, bulletinPage, activeBulletinPage, bulletinRoute] = await Promise.all([
     source("src/app/admin/notes/conseil-classe/page.tsx"),
     source("src/app/admin/notes/bulletins/page.tsx"),
+    source("src/app/admin/bulletins/page.tsx"),
     source("src/app/api/admin/grades/bulletin/route.ts"),
   ]);
 
   assert.match(council, /isLastSelectedPeriod && annualDecisionRows\.length > 0/);
   assert.match(council, /Décisions de fin d’année/);
   assert.match(council, /Proposition Mon Cahier/);
+  assert.match(council, /Moyenne annuelle calculée/);
+  assert.match(council, /Ajustement Conseil/);
+  assert.match(council, /Moyenne annuelle officielle/);
   assert.match(council, /Brouillon — non officiel/);
   assert.match(council, /Distinction annuelle/);
   assert.match(council, /row\.conductOn20/);
@@ -153,8 +217,12 @@ test("P2.3B UI: section fin d'année, distinction séparée et bulletin officiel
 
   assert.match(bulletinRoute, /attachOfficialEndOfYearDecisions/);
   assert.match(bulletinRoute, /student_year_decisions/);
+  assert.match(bulletinRoute, /item\.annual_avg = decision\.official_annual_average/);
   assert.match(bulletinPage, /item\.end_of_year_decision\?\.official_decision/);
   assert.match(bulletinPage, /proposeEndOfYearDecision\(annualAvgOn20\)/);
+  assert.match(bulletinPage, /Moyenne annuelle officielle/);
+  assert.match(activeBulletinPage, /item\.end_of_year_decision\?\.official_source === "council"/);
+  assert.match(activeBulletinPage, /Moyenne annuelle officielle/);
 });
 
 test("P2.3B non-régression: aucune migration ou mutation Attendance ajoutée", async () => {
@@ -167,4 +235,5 @@ test("P2.3B non-régression: aucune migration ou mutation Attendance ajoutée", 
   assert.doesNotMatch(combined, /absence_minutes\s*\/\s*60/);
   assert.doesNotMatch(combined, /from\(["']student_grades["']\).*\.(insert|update|upsert|delete)/s);
   assert.doesNotMatch(combined, /attendance-operations|teacher_sessions|attendance_call/);
+  assert.doesNotMatch(combined, /local_dirty/);
 });

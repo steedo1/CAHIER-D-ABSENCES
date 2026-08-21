@@ -155,12 +155,16 @@ type BulletinAnnualCoverage = {
 };
 
 type EndOfYearDecisionView = {
+  base_annual_average: number | null;
+  council_adjustment: number;
+  official_annual_average: number | null;
   automatic_proposal: "ADMIS" | "REDOUBLE" | null;
   council_decision: "ADMIS" | "REDOUBLE" | null;
   council_state: "draft" | "validated" | null;
   official_decision: "ADMIS" | "REDOUBLE" | null;
   official_source: "automatic" | "council" | "unavailable";
   override_applied: boolean;
+  storage_contract?: string | null;
   storage_available?: boolean;
 };
 
@@ -207,6 +211,8 @@ type BulletinItemBase = {
 
   // ✅ ANNUEL (rempli par l’API seulement sur la dernière période)
   annual_avg?: number | null;
+  base_annual_avg?: number | null;
+  official_annual_avg?: number | null;
   annual_rank?: number | null;
   annual_coverage?: BulletinAnnualCoverage | null;
   annual_avg_is_complete?: boolean | null;
@@ -2259,7 +2265,9 @@ function StudentBulletinCard({
               </div>
 
               <div>
-                <div className="text-[9px] font-semibold uppercase">Annuel</div>
+                <div className="text-[9px] font-semibold uppercase">
+                  Moyenne annuelle officielle
+                </div>
                 <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     annualAvgOn20,

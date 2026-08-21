@@ -78,6 +78,9 @@ export type EndOfYearDecisionResolution = {
     | "MOTIVE_REQUIRED"
     | null;
   annual_average: number | null;
+  base_annual_average: number | null;
+  council_adjustment: number;
+  official_annual_average: number | null;
   automatic_proposal: EndOfYearDecision | null;
   council_decision: EndOfYearDecision | null;
   council_state: CouncilDecisionState | null;
