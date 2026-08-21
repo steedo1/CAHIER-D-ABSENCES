@@ -1,4 +1,8 @@
 import { loadRelayConfig } from "./config.mjs";
+import {
+  relayDiscoveryHostname,
+  startRelayDiscovery,
+} from "./discovery.mjs";
 import { openRelayDatabase } from "./db.mjs";
 import { requeueTimetableReplacementChain } from "./cloud-sync.mjs";
 import { createRelayCloudSyncAgent, syncRelayOnce } from "./cloud-sync-grade-v4-safe.mjs";
@@ -7,7 +11,6 @@ import { configureCloudSync, configureRelay, relayLanUrls } from "./setup.mjs";
 import {
   defaultRelayMdnsHostname,
   relayMdnsUrl,
-  startRelayMdns,
   type RelayMdnsAnnouncer,
 } from "./mdns.mjs";
 import { RelayStore } from "./store.mjs";
@@ -48,9 +51,11 @@ async function main() {
   }
 
   const config = loadRelayConfig();
-  const mdnsHostname = config.mdnsHostname || defaultRelayMdnsHostname(config.institutionCode);
+  const configuredMdnsHostname =
+    config.mdnsHostname || defaultRelayMdnsHostname(config.institutionCode);
+  const mdnsHostname = relayDiscoveryHostname(configuredMdnsHostname);
   const mdnsEnabled = config.mdnsEnabled !== false;
-  const mdnsUrl = config.mdnsUrl || relayMdnsUrl(mdnsHostname, config.port);
+  const mdnsUrl = relayMdnsUrl(mdnsHostname, config.port);
 
   if (command === "access") {
     const institutionCode = String(flagOptional("--institution-code") || "").trim().toUpperCase();
@@ -193,7 +198,7 @@ async function main() {
       console.log(`Mon Cahier Relay écoute sur http://${config.host}:${config.port}`);
       cloudSyncAgent.start();
       if (mdnsEnabled) {
-        void startRelayMdns({
+        void startRelayDiscovery({
           hostname: mdnsHostname,
           port: config.port,
           institutionCode: config.institutionCode,
