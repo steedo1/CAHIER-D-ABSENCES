@@ -1,0 +1,137 @@
+name: Certification Lockfile Nonbreaking Fix
+
+on:
+  push:
+    branches:
+      - probe/dependency-lockfix-20260821
+    paths:
+      - .github/workflows/cert-lockfile-fix-probe.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cert-lockfile-fix-probe
+  cancel-in-progress: true
+
+jobs:
+  verify-lockfile-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout probe branch
+        uses: actions/checkout@v4
+        with:
+          ref: probe/dependency-lockfix-20260821
+          fetch-depth: 0
+
+      - name: Confirm exact probe head
+        run: git pull --ff-only origin probe/dependency-lockfix-20260821
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install exact current tree
+        run: npm ci
+
+      - name: Snapshot package contract
+        run: cp package.json /tmp/package-before.json
+
+      - name: Apply only non-breaking lockfile audit fixes
+        run: npm audit fix --package-lock-only
+
+      - name: Enforce lockfile-only change
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp --silent /tmp/package-before.json package.json || {
+            echo '::error::package.json changed; refusing broad dependency update.'
+            diff -u /tmp/package-before.json package.json || true
+            exit 1
+          }
+          unexpected="$(git diff --name-only | grep -Ev '^package-lock.json$' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected"
+            echo '::error::Audit fix changed files outside package-lock.json.'
+            exit 1
+          fi
+          git diff --stat -- package-lock.json
+
+      - name: Reinstall repaired lockfile exactly
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Critical offline regression suite
+        run: |
+          node --test \
+            test/pwa-stability.test.mjs \
+            test/phone-offline-login-stability.test.mjs \
+            test/offline-auth-contract.test.mjs \
+            test/offline-auth-logout-wiring.test.mjs \
+            test/offline-schedule-wiring.test.mjs \
+            test/teacher-minimal-preparation.test.mjs \
+            test/class-device-minimal-preparation.test.mjs \
+            test/class-device-offline-lifecycle-wiring.test.mjs \
+            test/class-device-offline-logout-pwa.test.mjs \
+            test/class-device-relay-cloud-local-fallback.test.mjs \
+            test/admin-background-preparation-isolation.test.mjs \
+            test/admin-essential-offline-data.test.mjs \
+            test/admin-essential-request-timeout.test.mjs \
+            test/admin-offline-essential-navigation.test.mjs \
+            test/attendance-integrity-wiring.test.mjs \
+            test/relay-supervision-ui.test.mjs \
+            test/cloud-only-grade-writes.test.mjs
+
+      - name: Reject unexpected remaining high or critical vulnerabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > /tmp/audit.json || true
+          node <<'NODE'
+          const fs = require('fs');
+          const audit = JSON.parse(fs.readFileSync('/tmp/audit.json', 'utf8'));
+          const vulnerabilities = audit.vulnerabilities || {};
+          const allowedHigh = new Set(['xlsx', 'next', 'postcss', 'sharp']);
+          const remaining = [];
+          const unexpected = [];
+          for (const [name, info] of Object.entries(vulnerabilities)) {
+            const severity = info?.severity || 'unknown';
+            if (severity === 'high' || severity === 'critical') {
+              remaining.push(`${name}:${severity}`);
+              if (severity === 'critical' || !allowedHigh.has(name)) {
+                unexpected.push(`${name}:${severity}`);
+              }
+            }
+          }
+          console.log('Remaining high/critical:', remaining.length ? remaining.join(', ') : 'none');
+          if (unexpected.length) {
+            console.error('Unexpected high/critical vulnerabilities remain:', unexpected.join(', '));
+            process.exit(1);
+          }
+          NODE
+
+      - name: Refuse stale write and publish probe result
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package-lock.json; then
+            echo 'No non-breaking lockfile change was produced.'
+            exit 0
+          fi
+          git fetch origin probe/dependency-lockfix-20260821
+          remote_head="$(git rev-parse origin/probe/dependency-lockfix-20260821)"
+          if [ "$remote_head" != "$GITHUB_SHA" ]; then
+            echo "::error::Probe branch moved from $GITHUB_SHA to $remote_head. Refusing stale write."
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore(security): actualiser les transitives non-breaking'
+          git push origin HEAD:probe/dependency-lockfix-20260821
