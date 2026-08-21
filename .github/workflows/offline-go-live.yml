@@ -56,6 +56,7 @@ jobs:
             test/class-device-relay-cloud-local-fallback.test.mjs \
             test/admin-background-preparation-isolation.test.mjs \
             test/admin-essential-offline-data.test.mjs \
+            test/admin-essential-request-timeout.test.mjs \
             test/admin-offline-essential-navigation.test.mjs \
             test/attendance-integrity-wiring.test.mjs \
             test/relay-supervision-ui.test.mjs \
