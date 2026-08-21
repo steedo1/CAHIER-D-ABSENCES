@@ -23,6 +23,12 @@ function cleanMetadata(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function cleanFiniteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function compactPreviousRecord(metadata) {
   if (!metadata || typeof metadata !== "object") return null;
   const contract = String(metadata.contract || "");
@@ -32,6 +38,13 @@ function compactPreviousRecord(metadata) {
     automatic_proposal: metadata.automatic_proposal || null,
     council_decision: metadata.council_decision || null,
     official_decision: metadata.official_decision || null,
+    base_annual_average:
+      cleanFiniteNumber(metadata.base_annual_average) ??
+      cleanFiniteNumber(metadata.annual_average_used),
+    council_adjustment: cleanFiniteNumber(metadata.council_adjustment) ?? 0,
+    official_annual_average:
+      cleanFiniteNumber(metadata.official_annual_average) ??
+      cleanFiniteNumber(metadata.annual_average_used),
     reason: metadata.reason || null,
     recorded_at: metadata.recorded_at || null,
     author_id: metadata.author_id || null,
@@ -77,7 +90,7 @@ export function buildCouncilYearDecisionUpsert(input) {
 
   const metadata = {
     contract: COUNCIL_YEAR_DECISION_CONTRACT,
-    version: 1,
+    version: 2,
     source: "manual",
     entry_kind: "council_override",
     state,
@@ -91,6 +104,9 @@ export function buildCouncilYearDecisionUpsert(input) {
       is_last_period: input?.period?.is_last === true,
     },
     annual_average_used: resolution.annual_average,
+    base_annual_average: resolution.base_annual_average,
+    council_adjustment: resolution.council_adjustment,
+    official_annual_average: resolution.official_annual_average,
     annual_rank_used:
       input?.annual_rank !== null &&
       input?.annual_rank !== undefined &&
@@ -142,6 +158,13 @@ export function readCouncilYearDecision(row, annualAverage) {
   const hasCouncilOverride =
     isCouncilContract && metadata.is_derogation !== false;
   const state = metadata.state === "validated" ? "validated" : "draft";
+  const storedBaseAnnualAverage =
+    cleanFiniteNumber(metadata.base_annual_average) ??
+    cleanFiniteNumber(metadata.annual_average_used);
+  const calculationAnnualAverage =
+    isCouncilContract && storedBaseAnnualAverage !== null
+      ? storedBaseAnnualAverage
+      : annualAverage;
   const councilOverride = hasCouncilOverride
     ? {
         decision: metadata.council_decision,
@@ -150,9 +173,13 @@ export function readCouncilYearDecision(row, annualAverage) {
       }
     : null;
   const resolution = resolveEndOfYearDecision({
-    annual_average: annualAverage,
+    annual_average: calculationAnnualAverage,
     council_override: councilOverride,
   });
+  const persistedCouncilAdjustment = cleanFiniteNumber(metadata.council_adjustment);
+  const persistedOfficialAnnualAverage = cleanFiniteNumber(
+    metadata.official_annual_average,
+  );
 
   return {
     id: row?.id ? String(row.id) : null,
@@ -169,5 +196,17 @@ export function readCouncilYearDecision(row, annualAverage) {
       : null,
     storage_contract: isCouncilContract ? COUNCIL_YEAR_DECISION_CONTRACT : null,
     ...resolution,
+    base_annual_average:
+      isCouncilContract && storedBaseAnnualAverage !== null
+        ? storedBaseAnnualAverage
+        : resolution.base_annual_average,
+    council_adjustment:
+      isCouncilContract && persistedCouncilAdjustment !== null
+        ? persistedCouncilAdjustment
+        : resolution.council_adjustment,
+    official_annual_average:
+      isCouncilContract && persistedOfficialAnnualAverage !== null
+        ? persistedOfficialAnnualAverage
+        : resolution.official_annual_average,
   };
 }

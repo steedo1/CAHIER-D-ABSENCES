@@ -1542,10 +1542,14 @@ async function attachOfficialEndOfYearDecisions(
   const attachAutomaticFallback = (storageAvailable: boolean) => {
     for (const item of items) {
       const annualAverage = cleanNumber(item?.annual_avg, 4);
-      item.end_of_year_decision = {
+      const decision = {
         ...readCouncilYearDecision(null, annualAverage),
         storage_available: storageAvailable,
       };
+      item.base_annual_avg = annualAverage;
+      item.official_annual_avg = decision.official_annual_average;
+      item.annual_avg = decision.official_annual_average;
+      item.end_of_year_decision = decision;
     }
   };
 
@@ -1582,6 +1586,9 @@ async function attachOfficialEndOfYearDecisions(
       rowByStudent.get(String(item?.student_id || "")) || null,
       annualAverage,
     );
+    item.base_annual_avg = decision.base_annual_average;
+    item.official_annual_avg = decision.official_annual_average;
+    item.annual_avg = decision.official_annual_average;
     item.end_of_year_decision = {
       ...decision,
       automatic_proposal:

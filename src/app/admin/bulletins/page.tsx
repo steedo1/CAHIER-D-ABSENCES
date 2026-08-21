@@ -167,6 +167,20 @@ type BulletinPreviousPeriodAverage = {
   rank?: number | null;
 };
 
+type EndOfYearDecisionView = {
+  base_annual_average: number | null;
+  council_adjustment: number;
+  official_annual_average: number | null;
+  automatic_proposal: "ADMIS" | "REDOUBLE" | null;
+  council_decision: "ADMIS" | "REDOUBLE" | null;
+  council_state: "draft" | "validated" | null;
+  official_decision: "ADMIS" | "REDOUBLE" | null;
+  official_source: "automatic" | "council" | "unavailable";
+  override_applied: boolean;
+  storage_contract?: string | null;
+  storage_available?: boolean;
+};
+
 type BulletinItemBase = {
   student_id: string;
   full_name: string;
@@ -221,6 +235,8 @@ type BulletinItemBase = {
 
   // ✅ ANNUEL (rempli par l’API seulement sur la dernière période)
   annual_avg?: number | null;
+  base_annual_avg?: number | null;
+  official_annual_avg?: number | null;
   annual_rank?: number | null;
   annual_coverage?: BulletinAnnualCoverage | null;
   annual_avg_is_complete?: boolean | null;
@@ -241,6 +257,7 @@ type BulletinItemBase = {
   general_avg_before_admin_nc?: number | null;
   annual_avg_before_admin_nc?: number | null;
   annual_rank_before_admin_nc?: number | null;
+  end_of_year_decision?: EndOfYearDecisionView | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -1795,7 +1812,9 @@ function StudentBulletinCard({
 
   const showEndOfYearDecision = showAnnual && annualAvgHasValue;
   const endOfYearDecision = showEndOfYearDecision
-    ? endOfYearDecisionLabel(annualAvgOn20, { classInfo, item })
+    ? item.end_of_year_decision?.official_source === "council"
+      ? item.end_of_year_decision.official_decision || "—"
+      : endOfYearDecisionLabel(annualAvgOn20, { classInfo, item })
     : "—";
 
   const isCscaSchool = isCscaInstitution(institution);
@@ -2428,7 +2447,9 @@ function StudentBulletinCard({
               </div>
 
               <div>
-                <div className="text-[9px] font-semibold uppercase">Annuel</div>
+                <div className="text-[9px] font-semibold uppercase">
+                  Moyenne annuelle officielle
+                </div>
                 <div className="mt-[2px] text-[11px] font-bold">
                   {formatNumberOrNCWithMarker(
                     annualAvgOn20,

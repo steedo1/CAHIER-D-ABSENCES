@@ -284,8 +284,9 @@ export function canManageEndOfYearDecision(input) {
 }
 
 /**
- * Résout la décision officielle sans modifier la moyenne annuelle.
- * Un brouillon reste traçable mais ne remplace jamais la proposition automatique.
+ * Résout la décision et la moyenne annuelle officielles sans modifier la
+ * moyenne calculée. Un repêchage ADMIS sous 10 ajoute uniquement l'ajustement
+ * nécessaire pour afficher 10,00 ; un brouillon ne l'applique jamais.
  */
 export function resolveEndOfYearDecision(input) {
   const average = finiteNumber(input?.annual_average);
@@ -297,6 +298,9 @@ export function resolveEndOfYearDecision(input) {
       ok: override === null,
       error: override === null ? null : "ANNUAL_AVERAGE_REQUIRED",
       annual_average: average,
+      base_annual_average: average,
+      council_adjustment: 0,
+      official_annual_average: null,
       automatic_proposal: null,
       council_decision: null,
       council_state: null,
@@ -311,6 +315,9 @@ export function resolveEndOfYearDecision(input) {
       ok: true,
       error: null,
       annual_average: average,
+      base_annual_average: average,
+      council_adjustment: 0,
+      official_annual_average: average,
       automatic_proposal: proposal,
       council_decision: null,
       council_state: null,
@@ -329,6 +336,9 @@ export function resolveEndOfYearDecision(input) {
       ok: false,
       error: "INVALID_COUNCIL_DECISION",
       annual_average: average,
+      base_annual_average: average,
+      council_adjustment: 0,
+      official_annual_average: average,
       automatic_proposal: proposal,
       council_decision: null,
       council_state: state,
@@ -343,6 +353,9 @@ export function resolveEndOfYearDecision(input) {
       ok: false,
       error: "MOTIVE_REQUIRED",
       annual_average: average,
+      base_annual_average: average,
+      council_adjustment: 0,
+      official_annual_average: average,
       automatic_proposal: proposal,
       council_decision: decision,
       council_state: state,
@@ -353,10 +366,18 @@ export function resolveEndOfYearDecision(input) {
   }
 
   const validated = state === "validated";
+  const councilAdjustment =
+    decision === "ADMIS" && proposal === "REDOUBLE"
+      ? round(Math.max(0, 10 - average), 2)
+      : 0;
   return {
     ok: true,
     error: null,
     annual_average: average,
+    base_annual_average: average,
+    council_adjustment: councilAdjustment,
+    official_annual_average:
+      validated && councilAdjustment > 0 ? 10 : average,
     automatic_proposal: proposal,
     council_decision: decision,
     council_state: state,
