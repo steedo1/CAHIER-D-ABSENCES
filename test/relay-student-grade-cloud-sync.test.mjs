@@ -59,7 +59,7 @@ test("LOT3B Cloud: une evaluation legacy est comparee avec la matiere d'etabliss
   assert.match(gradeSlice, /evaluation\.relay_subject_id \|\| evaluation\.subject_id/);
 });
 
-test("LOT3B LAN: l'API d'écriture et la capacité dédiée sont exposées", async () => {
+test("Rentrée 2026: l'API d'écriture LOT3B reste présente mais dormante", async () => {
   const [server, contract] = await Promise.all([
     read("desktop/relay/src/server.mts"),
     read("desktop/relay/src/schedule-contract.mts"),
@@ -67,5 +67,8 @@ test("LOT3B LAN: l'API d'écriture et la capacité dédiée sont exposées", asy
 
   assert.match(server, /\/v1\/grades\/score-operations/);
   assert.match(server, /secureGradeScoreOperation/);
-  assert.match(contract, /grades_score_write_v1:\s*true/);
+  assert.match(server, /gradeScoreWritesEnabled !== true/);
+  assert.match(server, /grade_score_writes_disabled/);
+  assert.match(contract, /grades_score_write_v1:\s*false/);
+  assert.match(contract, /grades_score_write_v1:\s*gradeScoreWritesEnabled/);
 });

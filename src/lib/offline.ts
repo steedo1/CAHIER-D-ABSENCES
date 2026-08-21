@@ -7,6 +7,11 @@ import {
   MON_CAHIER_OFFLINE_SCHEMA_VERSION,
   MON_CAHIER_SERVICE_WORKER_RELEASE,
 } from "@/lib/offline-release";
+import {
+  isOfflineGradeMutation,
+  OFFLINE_GRADE_WRITES_DISABLED_ERROR,
+  OFFLINE_GRADE_WRITES_ENABLED,
+} from "@/lib/grade-write-capabilities";
 
 type KVRow = {
   key: string;
@@ -1018,6 +1023,37 @@ async function flushOutboxInternal(): Promise<FlushResult> {
     const body = rewriteBodyWithSessionMap(row.body, map);
     const operationType = outboxOperationType(row);
     const dependencyKey = outboxSessionDependencyKey(row, body);
+
+    // Conserve les mutations LOT3/LOT4 historiques sans jamais les rejouer
+    // pendant la phase Cloud-only. Une future réactivation explicite reprend
+    // uniquement celles que cette capacité avait mises en sommeil.
+    const isGradeMutation = isOfflineGradeMutation(
+      row.url,
+      row?.meta?.operationType,
+    );
+    if (isGradeMutation && !OFFLINE_GRADE_WRITES_ENABLED) {
+      await outboxUpdate(row.id, {
+        state: "blocked",
+        lastStatus: 409,
+        lastError: OFFLINE_GRADE_WRITES_DISABLED_ERROR,
+      });
+      continue;
+    }
+    if (
+      isGradeMutation &&
+      OFFLINE_GRADE_WRITES_ENABLED &&
+      row.state === "blocked" &&
+      row.lastError === OFFLINE_GRADE_WRITES_DISABLED_ERROR
+    ) {
+      row.state = "pending";
+      row.lastStatus = undefined;
+      row.lastError = undefined;
+      await outboxUpdate(row.id, {
+        state: "pending",
+        lastStatus: undefined,
+        lastError: undefined,
+      });
+    }
 
     // Une ouverture ou un appel bloqué ne doit jamais être dépassé par la
     // fermeture de la même séance. Les cours indépendants restent rejouables.

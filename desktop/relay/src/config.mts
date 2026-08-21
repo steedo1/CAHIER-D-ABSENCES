@@ -41,6 +41,7 @@ export type RelayConfigFile = {
   token?: string;
   allowed_origins?: string[];
   teacher_attendance_writes_enabled?: boolean;
+  grade_score_writes_enabled?: boolean;
   cloud_sync_interval_seconds?: number;
   cloud_sync_batch_size?: number;
   cloud_sync_timeout_seconds?: number;
@@ -60,6 +61,7 @@ export type RelayConfig = {
   institutions?: RelayInstitutionConfig[];
   institutionCodes?: string[];
   teacherAttendanceWritesEnabled?: boolean;
+  gradeScoreWritesEnabled?: boolean;
   cloudSyncIntervalMs?: number;
   cloudSyncBatchSize?: number;
   cloudSyncTimeoutMs?: number;
@@ -164,6 +166,14 @@ function teacherAttendanceWritesEnabled(file: RelayConfigFile, env: NodeJS.Proce
   return file.teacher_attendance_writes_enabled === true;
 }
 
+function gradeScoreWritesEnabled(file: RelayConfigFile, env: NodeJS.ProcessEnv) {
+  const configured = String(env.MONCAHIER_RELAY_GRADE_SCORE_WRITES_ENABLED || "")
+    .trim()
+    .toLowerCase();
+  if (configured) return ["1", "true", "yes", "on"].includes(configured);
+  return file.grade_score_writes_enabled === true;
+}
+
 export function relayInstitutionsFromConfigFile(file: RelayConfigFile) {
   const result = new Map<string, RelayInstitutionConfig>();
   const candidates = Array.isArray(file.institutions) ? file.institutions : [];
@@ -231,6 +241,7 @@ export function loadRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
     institutions,
     institutionCodes: institutions.map((item) => item.code),
     teacherAttendanceWritesEnabled: teacherAttendanceWritesEnabled(file, env),
+    gradeScoreWritesEnabled: gradeScoreWritesEnabled(file, env),
     cloudSyncIntervalMs: boundedInteger(
       env.MONCAHIER_RELAY_CLOUD_SYNC_INTERVAL_SECONDS ?? file.cloud_sync_interval_seconds,
       15,

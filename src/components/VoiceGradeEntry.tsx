@@ -19,6 +19,7 @@ import {
   type VoiceRosterItem,
   type VoiceStudentCandidate,
 } from "@/lib/voice-grades";
+import { CLOUD_ONLY_GRADE_WRITE_MESSAGE } from "@/lib/grade-write-capabilities";
 
 type VoiceGradeEvaluation = {
   id: string;
@@ -655,7 +656,7 @@ export default function VoiceGradeEntry<T extends VoiceRosterItem>({
                     {!supported
                       ? "Utilisez Chrome ou Edge récent. La saisie classique des notes reste disponible."
                       : !isOnline
-                        ? "La saisie et la synchronisation habituelles restent disponibles hors ligne."
+                        ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
                         : targetEvaluation?.disabledReason || "Choisissez une autre évaluation."}
                   </p>
                 </div>

@@ -295,6 +295,8 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(healthBody.schema_version, 9);
     assert.equal(healthBody.protocol_version, 1);
     assert.equal(healthBody.teacher_attendance_writes_enabled, true);
+    assert.equal(healthBody.grade_score_writes_enabled, false);
+    assert.equal(healthBody.capabilities.grades_score_write_v1, false);
     assert.equal(healthBody.snapshot_revision, 12);
     assert.equal(healthBody.schedule_status, "ready");
     assert.equal(JSON.stringify(healthBody).includes(SCHOOL_ONE_SECRET), false);
@@ -320,6 +322,8 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(body.snapshot_revision, 12);
     assert.equal(body.schedule_status, "ready");
     assert.equal(body.teacher_attendance_writes_enabled, true);
+    assert.equal(body.grade_score_writes_enabled, false);
+    assert.equal(body.capabilities.grades_score_write_v1, false);
     assert.equal(body.capabilities.attendance_transition, true);
     assert.equal(body.capabilities.class_device_scope_v1, true);
     assert.equal(body.capabilities.bootstrap_revision_ack_v1, true);

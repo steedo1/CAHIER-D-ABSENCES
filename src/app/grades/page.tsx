@@ -14,8 +14,6 @@ import {
   Lock,
   Unlock,
 } from "lucide-react";
-import OfflineReadinessCard from "@/components/OfflineReadinessCard";
-import OfflineSyncBar from "@/components/OfflineSyncBar";
 import VoiceGradeEntry from "@/components/VoiceGradeEntry";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import {
@@ -30,6 +28,10 @@ import {
   gradesSettingsKey,
   saveGradesScores,
 } from "@/lib/offline-grades";
+import {
+  CLOUD_ONLY_GRADE_WRITE_MESSAGE,
+  gradeWritesRequireInternet,
+} from "@/lib/grade-write-capabilities";
 
 type PrimaryButtonTone = "emerald" | "amber" | "slate" | "red";
 
@@ -399,6 +401,7 @@ function GhostButton(
 export default function TeacherNotesPage() {
   const isMobile = useIsMobile();
   const { isOnline } = useOnlineStatus();
+  const gradeWritesBlocked = gradeWritesRequireInternet(isOnline);
 
   // Nom établissement + année scolaire
   const [institutionName, setInstitutionName] = useState<string | null>(null);
@@ -914,6 +917,10 @@ export default function TeacherNotesPage() {
      Verrouillage (actions lock/unlock)
   ========================================== */
   function openLockModal(ev: Evaluation, mode: "lock" | "unlock") {
+    if (!isOnline) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
     setLockTargetEv(ev);
     setLockModalMode(mode);
     setPin("");
@@ -1030,6 +1037,10 @@ export default function TeacherNotesPage() {
     value: number | null,
     scale: number
   ) {
+    if (gradeWritesBlocked) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
     if (selectedPeriodClosed) return;
 
     const ev = evaluations.find((e) => e.id === evId);
@@ -1050,6 +1061,11 @@ export default function TeacherNotesPage() {
 
   async function saveAllChanges() {
     if (!selected) return;
+
+    if (gradeWritesBlocked) {
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
+      return;
+    }
 
     if (selectedPeriodClosed) {
       setMsg("Cette période est clôturée. La saisie des notes est fermée.");
@@ -1099,7 +1115,6 @@ export default function TeacherNotesPage() {
     setMsg(null);
 
     try {
-      let queuedCount = 0;
       for (const [evaluation_id, per] of perEval) {
         const items = Object.entries(per).map(([student_id, score]) => ({
           student_id,
@@ -1113,8 +1128,8 @@ export default function TeacherNotesPage() {
             strict: false,
           });
 
-        if (!result.ok && !result.queued) {
-          const payload: any = result.data;
+        if (!result.ok) {
+          const payload: any = "data" in result ? result.data : null;
           throw new Error(
             payload?.message || payload?.error || result.error || "Échec d’enregistrement."
           );
@@ -1123,7 +1138,6 @@ export default function TeacherNotesPage() {
           const payload: any = result.data;
           throw new Error(payload?.message || payload?.error || "Échec d’enregistrement.");
         }
-        if (!result.ok && result.queued) queuedCount += 1;
       }
 
       const savedEvalIds = new Set(perEval.map(([evaluation_id]) => evaluation_id));
@@ -1163,18 +1177,11 @@ export default function TeacherNotesPage() {
         notes.push("certaines colonnes soumises/publiées ont été ignorées");
       }
 
-      if (queuedCount > 0) {
-        const suffix = notes.length > 0 ? ` (${notes.join(" ; ")})` : "";
-        setMsg(
-          `Notes enregistrées sur cet appareil ✅ — ${queuedCount} envoi(s) en attente de synchronisation${suffix}.`
-        );
-      } else {
-        setMsg(
-          notes.length > 0
-            ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
-            : "Notes enregistrées ✅"
-        );
-      }
+      setMsg(
+        notes.length > 0
+          ? `Notes enregistrées ✅ (${notes.join(" ; ")})`
+          : "Notes enregistrées ✅"
+      );
     } catch (e: any) {
       setMsg(e?.message || "Échec d’enregistrement des notes.");
     } finally {
@@ -1185,9 +1192,7 @@ export default function TeacherNotesPage() {
   async function addEvaluation() {
     if (!selected) return;
     if (!isOnline) {
-      setMsg(
-        "Hors connexion : vous pouvez saisir les évaluations déjà préparées. La création d’une nouvelle évaluation nécessite Internet."
-      );
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
     if (selectedPeriodClosed) {
@@ -1244,7 +1249,7 @@ export default function TeacherNotesPage() {
   /* -------- Publication (panneau séparé) -------- */
   async function togglePublish(ev: Evaluation) {
     if (!isOnline) {
-      setMsg("La publication d’une évaluation nécessite une connexion Internet.");
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
     if (selectedPeriodClosed) {
@@ -1313,7 +1318,7 @@ export default function TeacherNotesPage() {
   /* -------- Suppression d’une évaluation (colonne) -------- */
   async function deleteEvaluation(ev: Evaluation) {
     if (!isOnline) {
-      setMsg("La suppression d’une évaluation nécessite une connexion Internet.");
+      setMsg(CLOUD_ONLY_GRADE_WRITE_MESSAGE);
       return;
     }
     if (selectedPeriodClosed) {
@@ -1581,9 +1586,7 @@ export default function TeacherNotesPage() {
   async function openAverages() {
     if (!selected) return;
     if (!isOnline) {
-      setMsg(
-        "Le calcul officiel des moyennes nécessite Internet dans cette version. Vos notes hors ligne restent enregistrées sur l’appareil."
-      );
+      setMsg("Le calcul officiel des moyennes nécessite une connexion Internet.");
       return;
     }
     setMode("moyennes");
@@ -2342,7 +2345,7 @@ export default function TeacherNotesPage() {
             </h1>
             <p className="text-xs md:text-sm text-indigo-100/85">
               Créez vos évaluations et saisissez les notes en quelques gestes,
-              même sur mobile. Les évaluations déjà préparées restent saisissables sans Internet.
+              sur ordinateur comme sur mobile.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -2373,9 +2376,6 @@ export default function TeacherNotesPage() {
           </div>
         </div>
       </header>
-
-      <OfflineSyncBar onMessage={setMsg} />
-      <OfflineReadinessCard role="teacher" />
 
       {/* Sélection + création NOTE */}
       <section className="rounded-2xl border border-emerald-200 bg-linear-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">
@@ -2439,6 +2439,7 @@ export default function TeacherNotesPage() {
           </div>
 
           {/* Création NOTE */}
+          {isOnline && (
           <div className="md:col-span-2">
             <div
               className={`grid grid-cols-2 gap-2 ${
@@ -2533,7 +2534,17 @@ export default function TeacherNotesPage() {
               </Button>
             </div>
           </div>
+          )}
         </div>
+
+        {gradeWritesBlocked && (
+          <div
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            role="status"
+          >
+            {CLOUD_ONLY_GRADE_WRITE_MESSAGE}
+          </div>
+        )}
 
         {selectedPeriodClosed && selectedPeriod && (
           <div
@@ -2586,7 +2597,7 @@ export default function TeacherNotesPage() {
               <GhostButton
                 tone="slate"
                 onClick={() => setShowPublishPanel(true)}
-                disabled={!evaluations.length || selectedPeriodClosed}
+                disabled={!evaluations.length || selectedPeriodClosed || !isOnline}
               >
                 Gérer la publication
               </GhostButton>
@@ -2600,7 +2611,12 @@ export default function TeacherNotesPage() {
               </GhostButton>
               <Button
                 onClick={saveAllChanges}
-                disabled={loading || totalChanges === 0 || selectedPeriodClosed}
+                disabled={
+                  loading ||
+                  totalChanges === 0 ||
+                  selectedPeriodClosed ||
+                  gradeWritesBlocked
+                }
               >
                 <Save className="h-4 w-4" /> Enregistrer
               </Button>
@@ -2614,11 +2630,14 @@ export default function TeacherNotesPage() {
               label: labelByEvalId[ev.id] ?? "NOTE",
               scale: ev.scale,
               disabled:
+                gradeWritesBlocked ||
                 selectedPeriodClosed ||
                 isEvalLocked(ev.id) ||
                 !isEvaluationEditableForTeacher(ev),
               disabledReason: selectedPeriodClosed
                 ? "Cette période est clôturée."
+                : gradeWritesBlocked
+                  ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
                 : isEvalLocked(ev.id)
                   ? "Cette évaluation est verrouillée."
                   : publicationLockReason(ev),
@@ -2693,6 +2712,7 @@ export default function TeacherNotesPage() {
                     onClick={() => openLockModal(ev, locked ? "unlock" : "lock")}
                     className="gap-2"
                     disabled={
+                      !isOnline ||
                       selectedPeriodClosed ||
                       !isEvaluationEditableForTeacher(ev) ||
                       !!lockBusy[ev.id]
@@ -2784,6 +2804,7 @@ export default function TeacherNotesPage() {
                                 )
                               }
                               disabled={
+                                !isOnline ||
                                 selectedPeriodClosed ||
                                 !isEvaluationEditableForTeacher(ev) ||
                                 !!lockBusy[ev.id]
@@ -2812,6 +2833,7 @@ export default function TeacherNotesPage() {
                               type="button"
                               onClick={() => deleteEvaluation(ev)}
                               disabled={
+                                !isOnline ||
                                 selectedPeriodClosed ||
                                 !isEvaluationDeletableForTeacher(ev) ||
                                 !!publishBusy[ev.id]
@@ -2879,12 +2901,15 @@ export default function TeacherNotesPage() {
                                 min={0}
                                 max={scale}
                                 disabled={
+                                  gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
                                   !isEvaluationEditableForTeacher(ev)
                                 }
                                 title={
-                                  selectedPeriodClosed
+                                  gradeWritesBlocked
+                                    ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
+                                    : selectedPeriodClosed
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
@@ -2987,12 +3012,15 @@ export default function TeacherNotesPage() {
                           min={0}
                           max={scale}
                                 disabled={
+                                  gradeWritesBlocked ||
                                   selectedPeriodClosed ||
                                   isEvalLocked(ev.id) ||
                                   !isEvaluationEditableForTeacher(ev)
                                 }
                                 title={
-                                  selectedPeriodClosed
+                                  gradeWritesBlocked
+                                    ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
+                                    : selectedPeriodClosed
                                     ? "Période clôturée"
                                     : isEvalLocked(ev.id)
                                     ? "Évaluation verrouillée"
@@ -3030,7 +3058,10 @@ export default function TeacherNotesPage() {
               {roster.length} élèves
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={saveBonuses} disabled={loadingAvg || selectedPeriodClosed}>
+              <Button
+                onClick={saveBonuses}
+                disabled={loadingAvg || selectedPeriodClosed || !isOnline}
+              >
                 <Save className="h-4 w-4" /> Enregistrer bonus
               </Button>
             </div>
@@ -3148,8 +3179,14 @@ export default function TeacherNotesPage() {
                                 }));
                               }}
                               aria-label={`Bonus ${row.student.full_name}`}
-                              disabled={selectedPeriodClosed}
-                              title={selectedPeriodClosed ? "Période clôturée" : undefined}
+                              disabled={selectedPeriodClosed || !isOnline}
+                              title={
+                                !isOnline
+                                  ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
+                                  : selectedPeriodClosed
+                                    ? "Période clôturée"
+                                    : undefined
+                              }
                             />
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
@@ -3274,8 +3311,14 @@ export default function TeacherNotesPage() {
                             }));
                           }}
                           aria-label={`Bonus ${row.student.full_name}`}
-                          disabled={selectedPeriodClosed}
-                          title={selectedPeriodClosed ? "Période clôturée" : undefined}
+                          disabled={selectedPeriodClosed || !isOnline}
+                          title={
+                            !isOnline
+                              ? CLOUD_ONLY_GRADE_WRITE_MESSAGE
+                              : selectedPeriodClosed
+                                ? "Période clôturée"
+                                : undefined
+                          }
                         />
                       </div>
                     </div>
@@ -3396,6 +3439,7 @@ export default function TeacherNotesPage() {
                                 className="px-2 py-1 text-xs shadow-none"
                                 onClick={() => togglePublish(ev)}
                                 disabled={
+                                  !isOnline ||
                                   selectedPeriodClosed ||
                                   isEvaluationSubmitted(ev) ||
                                   !!publishBusy[ev.id]
@@ -3434,6 +3478,7 @@ export default function TeacherNotesPage() {
                                 type="button"
                                 onClick={() => deleteEvaluation(ev)}
                                 disabled={
+                                  !isOnline ||
                                   selectedPeriodClosed ||
                                   !isEvaluationDeletableForTeacher(ev) ||
                                   !!publishBusy[ev.id]
@@ -3551,7 +3596,7 @@ export default function TeacherNotesPage() {
                 type="button"
                 tone={lockModalMode === "lock" ? "amber" : "emerald"}
                 onClick={submitLockModal}
-                disabled={!!lockBusy[lockTargetEv.id]}
+                disabled={!isOnline || !!lockBusy[lockTargetEv.id]}
               >
                 {lockModalMode === "lock" ? "Verrouiller" : "Déverrouiller"}
               </PrimaryButton>

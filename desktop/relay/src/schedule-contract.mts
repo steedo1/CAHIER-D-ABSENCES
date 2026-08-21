@@ -15,7 +15,7 @@ export const RELAY_CAPABILITIES = {
   bootstrap_revision_ack_v1: true,
   admin_schedule_status_v1: true,
   grades_workspace_v1: true,
-  grades_score_write_v1: true,
+  grades_score_write_v1: false,
 } as const;
 
 function storedRevision(db: RelayDatabase, institutionId: string) {
@@ -49,12 +49,17 @@ export function institutionScheduleContract(
 export function relayRuntimeContract(
   db: RelayDatabase,
   teacherAttendanceWritesEnabled: boolean,
+  gradeScoreWritesEnabled = false,
 ) {
   return {
     relay_version: RELAY_VERSION,
     schema_version: schemaVersion(db),
     protocol_version: SYNC_PROTOCOL_VERSION,
     teacher_attendance_writes_enabled: teacherAttendanceWritesEnabled,
-    capabilities: RELAY_CAPABILITIES,
+    grade_score_writes_enabled: gradeScoreWritesEnabled,
+    capabilities: {
+      ...RELAY_CAPABILITIES,
+      grades_score_write_v1: gradeScoreWritesEnabled,
+    },
   };
 }

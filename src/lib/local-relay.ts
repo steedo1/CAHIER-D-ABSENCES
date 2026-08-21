@@ -60,6 +60,8 @@ export type RelayCapabilities = {
   class_device_scope_v1?: boolean;
   bootstrap_revision_ack_v1?: boolean;
   admin_schedule_status_v1?: boolean;
+  grades_workspace_v1?: boolean;
+  grades_score_write_v1?: boolean;
 };
 
 export type RelayTeacherExpectedPeriod = {
@@ -91,6 +93,7 @@ export type RelayTeacherConnectivityResult = {
   schema_version?: number;
   protocol_version?: number;
   teacher_attendance_writes_enabled?: boolean;
+  grade_score_writes_enabled?: boolean;
   capabilities?: RelayCapabilities;
   snapshot_revision?: number | null;
   generated_at?: string | null;
@@ -1167,6 +1170,7 @@ export async function checkRelayTeacherConnectivity(input: {
       schema_version?: number;
       protocol_version?: number;
       teacher_attendance_writes_enabled?: boolean;
+      grade_score_writes_enabled?: boolean;
       capabilities?: RelayCapabilities;
       snapshot_revision?: number | null;
       generated_at?: string | null;
@@ -1208,6 +1212,7 @@ export async function checkRelayTeacherConnectivity(input: {
       protocol_version: response.protocol_version,
       teacher_attendance_writes_enabled:
         response.teacher_attendance_writes_enabled,
+      grade_score_writes_enabled: response.grade_score_writes_enabled,
       capabilities: response.capabilities,
       snapshot_revision:
         response.snapshot_revision === null

@@ -15,6 +15,7 @@ import {
   EDUCATION_TYPE_OPTIONS,
   type EducationType,
 } from "@/lib/education-organization";
+import { proposeEndOfYearDecision } from "@/lib/end-of-year-decisions.mjs";
 
 /* ───────── Types ───────── */
 
@@ -153,6 +154,16 @@ type BulletinAnnualCoverage = {
   status?: "complete" | "partial" | "empty" | "not_last_period" | string;
 };
 
+type EndOfYearDecisionView = {
+  automatic_proposal: "ADMIS" | "REDOUBLE" | null;
+  council_decision: "ADMIS" | "REDOUBLE" | null;
+  council_state: "draft" | "validated" | null;
+  official_decision: "ADMIS" | "REDOUBLE" | null;
+  official_source: "automatic" | "council" | "unavailable";
+  override_applied: boolean;
+  storage_available?: boolean;
+};
+
 type BulletinItemBase = {
   student_id: string;
   full_name: string;
@@ -213,6 +224,7 @@ type BulletinItemBase = {
   general_avg_before_admin_nc?: number | null;
   annual_avg_before_admin_nc?: number | null;
   annual_rank_before_admin_nc?: number | null;
+  end_of_year_decision?: EndOfYearDecisionView | null;
 };
 
 type BulletinItemWithRank = BulletinItemBase & {
@@ -1100,11 +1112,6 @@ function periodTitle(period: BulletinResponse["period"]) {
   return t || "Période";
 }
 
-function endOfYearDecisionLabel(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "—";
-  return Number(avg) >= 10 ? "ADMIS" : "REDOUBLE";
-}
-
 function safeUpper(s: string) {
   try {
     return s.toUpperCase();
@@ -1627,7 +1634,9 @@ function StudentBulletinCard({
 
   const showEndOfYearDecision = showAnnual && annualAvgHasValue;
   const endOfYearDecision = showEndOfYearDecision
-    ? endOfYearDecisionLabel(annualAvgOn20)
+    ? item.end_of_year_decision?.official_decision ??
+      proposeEndOfYearDecision(annualAvgOn20) ??
+      "—"
     : "—";
 
   const isCscaSchool = isCscaInstitution(institution);
