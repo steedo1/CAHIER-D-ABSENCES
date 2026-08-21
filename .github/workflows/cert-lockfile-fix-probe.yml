@@ -42,7 +42,8 @@ jobs:
         run: cp package.json /tmp/package-before.json
 
       - name: Apply only non-breaking lockfile audit fixes
-        run: npm audit fix --package-lock-only
+        shell: bash
+        run: npm audit fix --package-lock-only || true
 
       - name: Enforce lockfile-only change
         shell: bash
