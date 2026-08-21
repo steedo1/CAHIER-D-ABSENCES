@@ -1,9 +1,9 @@
 name: Certification Next Patch Probe
 
 on:
-  push:
+  pull_request:
     branches:
-      - work/offline-go-live-20260821
+      - reprise-propre-5418ce7-20260729
     paths:
       - .github/workflows/cert-next-patch-probe.yml
 
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cert-next-patch-probe-${{ github.ref }}
+  group: cert-next-patch-probe
   cancel-in-progress: true
 
 jobs:
