@@ -62,6 +62,50 @@ jobs:
             test/relay-supervision-ui.test.mjs \
             test/cloud-only-grade-writes.test.mjs
 
+  web-production-dependencies:
+    name: Web production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Reject high or critical production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+  relay-production-dependencies:
+    name: Relay production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci
+
+      - name: Reject high or critical relay dependency vulnerabilities
+        working-directory: desktop/relay
+        run: npm audit --omit=dev --audit-level=high
+
   relay-full-verify:
     name: Relay full verify
     runs-on: ubuntu-latest
