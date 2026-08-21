@@ -80,6 +80,16 @@ jobs:
       - name: Install web dependencies
         run: npm ci
 
+      - name: Inventory vulnerable direct package usage
+        shell: bash
+        run: |
+          echo '=== XLSX CODE USAGE ==='
+          git grep -n -E "(from|require\().*['\"]xlsx['\"]|XLSX\." -- . ':!package-lock.json' ':!package.json' || true
+          echo '=== JSPDF CODE USAGE ==='
+          git grep -n -E "(from|require\().*['\"]jspdf['\"]|jsPDF" -- . ':!package-lock.json' ':!package.json' || true
+          echo '=== DEPENDENCY PATHS ==='
+          npm ls xlsx jspdf axios @xmldom/xmldom form-data nanoid next postcss sharp ws || true
+
       - name: Reject high or critical production dependency vulnerabilities
         run: npm audit --omit=dev --audit-level=high
 
