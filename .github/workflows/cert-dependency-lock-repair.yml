@@ -89,8 +89,11 @@ jobs:
             test/relay-supervision-ui.test.mjs \
             test/cloud-only-grade-writes.test.mjs
 
-      - name: Production build
-        run: npm run build
+      - name: Explain build gate
+        shell: bash
+        run: |
+          echo 'GitHub Actions does not receive the Vercel Supabase build environment.'
+          echo 'The verified package-only commit is built by the existing Vercel preview deployment before acceptance.'
 
       - name: Report remaining production vulnerabilities
         shell: bash
