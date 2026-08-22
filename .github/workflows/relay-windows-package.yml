@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/relay-windows-release-20260822
+      - reprise-propre-5418ce7-20260729
     paths:
       - "desktop/relay/**"
       - ".github/workflows/relay-windows-package.yml"
