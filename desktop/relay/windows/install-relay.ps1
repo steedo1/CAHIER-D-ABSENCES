@@ -46,6 +46,7 @@ try {
     $CliPath = Join-Path $RelayRoot "dist\src\cli.mjs"
     $PackagePath = Join-Path $RelayRoot "package.json"
     $ConfigPath = Join-Path $env:LOCALAPPDATA "MonCahier\Relay\config.json"
+    $PackagedMode = $env:MONCAHIER_RELAY_PACKAGED -eq "1"
 
     if (-not (Test-Path $PackagePath)) {
         throw "Le dossier du relais est incomplet : package.json est introuvable."
@@ -112,19 +113,33 @@ try {
         )
     }
 
-    Push-Location $RelayRoot
-    try {
-        $DependenciesMissing =
-            -not (Test-Path (Join-Path $RelayRoot "node_modules\better-sqlite3")) -or
-            -not (Test-Path (Join-Path $RelayRoot "node_modules\.bin\tsc.cmd"))
-        if ($DependenciesMissing) {
-            & $NpmCommand.Source ci --no-audit --no-fund
-            if ($LASTEXITCODE -ne 0) { throw "L'installation des composants du relais a échoué." }
+    if ($PackagedMode) {
+        $RequiredPackagedPaths = @(
+            $CliPath,
+            (Join-Path $RelayRoot "dist\migrations"),
+            (Join-Path $RelayRoot "dist\protocol"),
+            (Join-Path $RelayRoot "node_modules\better-sqlite3")
+        )
+        foreach ($RequiredPath in $RequiredPackagedPaths) {
+            if (-not (Test-Path -LiteralPath $RequiredPath)) {
+                throw "Paquet Mon Cahier Relay incomplet : $RequiredPath est introuvable."
+            }
         }
-        & $NpmCommand.Source run build
-        if ($LASTEXITCODE -ne 0) { throw "La construction du relais a échoué." }
-    } finally {
-        Pop-Location
+    } else {
+        Push-Location $RelayRoot
+        try {
+            $DependenciesMissing =
+                -not (Test-Path (Join-Path $RelayRoot "node_modules\better-sqlite3")) -or
+                -not (Test-Path (Join-Path $RelayRoot "node_modules\.bin\tsc.cmd"))
+            if ($DependenciesMissing) {
+                & $NpmCommand.Source ci --no-audit --no-fund
+                if ($LASTEXITCODE -ne 0) { throw "L'installation des composants du relais a échoué." }
+            }
+            & $NpmCommand.Source run build
+            if ($LASTEXITCODE -ne 0) { throw "La construction du relais a échoué." }
+        } finally {
+            Pop-Location
+        }
     }
 
     $ConfigureArgs = @(
