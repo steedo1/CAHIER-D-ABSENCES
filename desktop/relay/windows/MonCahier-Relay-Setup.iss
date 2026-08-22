@@ -36,9 +36,6 @@ UninstallDisplayName=Mon Cahier Relay
 [Files]
 Source: "{#SourceDir}\App\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-[Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\windows\install-packaged-relay.ps1"""; Description: "Configurer et démarrer Mon Cahier Relay"; Flags: waituntilterminated
-
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\windows\uninstall-packaged-relay.ps1"""; Flags: runhidden waituntilterminated
 
@@ -46,9 +43,29 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  PowerShellExe: String;
+  InstallScript: String;
+  InstallArgs: String;
 begin
   if CurStep = ssInstall then
   begin
     Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "Mon Cahier Relay"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+
+  if CurStep = ssPostInstall then
+  begin
+    PowerShellExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+    InstallScript := ExpandConstant('{app}\windows\install-packaged-relay.ps1');
+    InstallArgs := '-NoProfile -ExecutionPolicy Bypass -File "' + InstallScript + '"';
+
+    if not Exec(PowerShellExe, InstallArgs, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
+    begin
+      RaiseException('Impossible de lancer la configuration Mon Cahier Relay.');
+    end;
+
+    if ResultCode <> 0 then
+    begin
+      RaiseException(Format('La configuration Mon Cahier Relay a échoué (code %d). Le Setup ne sera pas déclaré terminé.', [ResultCode]));
+    end;
   end;
 end;
