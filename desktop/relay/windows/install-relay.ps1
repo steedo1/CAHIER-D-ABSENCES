@@ -239,8 +239,8 @@ try {
 
     $HealthCheck = Invoke-RestMethod "http://127.0.0.1:4317/health" -TimeoutSec 5
     if (-not $HealthCheck.ok) { throw "Le relais a démarré mais son contrôle de santé a échoué." }
-    if ([int]$HealthCheck.schema_version -lt 8) {
-        throw "Le relais a démarré, mais sa base n'a pas été migrée vers le schéma 8."
+    if ([int]$HealthCheck.schema_version -lt 9) {
+        throw "Le relais a démarré, mais sa base n'a pas été migrée vers le schéma 9."
     }
     if (-not $HealthCheck.capabilities.bootstrap_revision_ack_v1) {
         throw "Une ancienne version du relais répond encore sur le port 4317. Fermez-la puis relancez l'installation."

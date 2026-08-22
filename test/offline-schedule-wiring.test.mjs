@@ -73,7 +73,7 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
   assert.match(contract, /bootstrap_revision_ack_v1: true/);
   assert.match(contract, /admin_schedule_status_v1: true/);
   assert.match(server, /\/v1\/admin\/schedule-status/);
-  assert.match(installer, /schema_version -lt 8/);
+  assert.match(installer, /schema_version -lt 9/);
   assert.match(installer, /bootstrap_revision_ack_v1/);
   assert.match(updater, /backups\\update-/);
   assert.match(updater, /Start-ScheduledTask -TaskName "Mon Cahier Relay"/);

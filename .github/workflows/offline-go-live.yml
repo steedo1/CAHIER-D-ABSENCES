@@ -1,0 +1,173 @@
+name: Offline Go-Live Gate
+
+on:
+  push:
+    branches:
+      - work/offline-go-live-20260821
+      - reprise-propre-5418ce7-20260729
+      - main
+  pull_request:
+    branches:
+      - reprise-propre-5418ce7-20260729
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-go-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-offline-critical:
+    name: Web offline critical
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+      - name: Critical offline regression suite
+        run: |
+          node --test \
+            test/pwa-stability.test.mjs \
+            test/phone-offline-login-stability.test.mjs \
+            test/offline-auth-contract.test.mjs \
+            test/offline-auth-logout-wiring.test.mjs \
+            test/offline-schedule-wiring.test.mjs \
+            test/teacher-minimal-preparation.test.mjs \
+            test/class-device-minimal-preparation.test.mjs \
+            test/class-device-offline-lifecycle-wiring.test.mjs \
+            test/class-device-offline-logout-pwa.test.mjs \
+            test/class-device-relay-cloud-local-fallback.test.mjs \
+            test/admin-background-preparation-isolation.test.mjs \
+            test/admin-essential-offline-data.test.mjs \
+            test/admin-essential-request-timeout.test.mjs \
+            test/admin-offline-essential-navigation.test.mjs \
+            test/attendance-integrity-wiring.test.mjs \
+            test/relay-supervision-ui.test.mjs \
+            test/cloud-only-grade-writes.test.mjs
+
+  web-production-dependencies:
+    name: Web production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Inventory vulnerable direct package usage
+        shell: bash
+        run: |
+          echo '=== XLSX CODE USAGE ==='
+          git grep -n -E "(from|require\().*['\"]xlsx['\"]|XLSX\." -- . ':!package-lock.json' ':!package.json' || true
+          echo '=== JSPDF CODE USAGE ==='
+          git grep -n -E "(from|require\().*['\"]jspdf['\"]|jsPDF" -- . ':!package-lock.json' ':!package.json' || true
+          echo '=== DEPENDENCY PATHS ==='
+          npm ls xlsx jspdf axios @xmldom/xmldom form-data nanoid next postcss sharp ws || true
+
+      - name: Reject high or critical production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+  relay-production-dependencies:
+    name: Relay production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci
+
+      - name: Reject high or critical relay dependency vulnerabilities
+        working-directory: desktop/relay
+        run: npm audit --omit=dev --audit-level=high
+
+  relay-full-verify:
+    name: Relay full verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require canonical academic revision migration
+        shell: bash
+        run: |
+          test -f migrations/20260813_relay_academic_revision_v1.sql || {
+            echo '::error file=migrations/20260813_relay_academic_revision_v1.sql::Migration academique historique absente de Git. Le go-live reste bloque tant que la migration appliquee au Cloud n est pas recuperee et versionnee.'
+            exit 1
+          }
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci
+
+      - name: Full relay verification without exclusions
+        working-directory: desktop/relay
+        run: npm run verify
+
+  release-contract:
+    name: Release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify critical release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f public/moncahier-sw.js
+          test -f src/lib/offline-release.ts
+          test -f src/lib/offline-auth-contract.ts
+          test -f src/lib/offline-auth-readiness.ts
+          test -f src/lib/offline-readiness.ts
+          test -f desktop/relay/windows/Installer-Mon-Cahier.cmd
+          test -f desktop/relay/windows/install-relay.ps1
+          test -f desktop/relay/windows/install-startup-task.ps1
+          test -f desktop/relay/migrations/0009_academic_provisioning.sql
+          grep -q 'MON_CAHIER_OFFLINE_SCHEMA_VERSION' src/lib/offline-release.ts
+          grep -q 'schema_version -lt 9' desktop/relay/windows/install-relay.ps1
+          grep -q 'bootstrap_revision_ack_v1' desktop/relay/windows/install-relay.ps1

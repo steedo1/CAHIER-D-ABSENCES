@@ -26,6 +26,12 @@ test("la tâche de boot transmet des chemins explicites et non le profil SYSTEM"
   assert.doesNotMatch(runner, /\$env:LOCALAPPDATA/);
 });
 
+test("l'installation exige le schéma académique courant v9", () => {
+  const installer = windowsScript("install-relay.ps1");
+  assert.match(installer, /schema_version\s+-lt\s+9/);
+  assert.match(installer, /migrée vers le schéma 9/);
+  assert.doesNotMatch(installer, /schema_version\s+-lt\s+8/);
+});
 
 test("l'installation et la mise à jour ouvrent mDNS uniquement sur le profil privé", () => {
   for (const name of ["install-relay.ps1", "update-relay.ps1"]) {
