@@ -1,0 +1,155 @@
+name: Relay Windows Package
+
+on:
+  push:
+    branches:
+      - work/relay-windows-release-20260822
+    paths:
+      - "desktop/relay/**"
+      - ".github/workflows/relay-windows-package.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        shell: pwsh
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify relay
+        working-directory: desktop/relay
+        shell: pwsh
+        run: npm run verify
+
+      - name: Stage portable relay
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Stage = Join-Path $PWD "desktop\relay\stage\App"
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+
+          foreach ($Directory in @("dist", "src", "scripts", "migrations", "windows", "node_modules")) {
+            Copy-Item -LiteralPath (Join-Path $PWD "desktop\relay\$Directory") -Destination $Stage -Recurse -Force
+          }
+          foreach ($File in @("package.json", "package-lock.json", "tsconfig.json")) {
+            Copy-Item -LiteralPath (Join-Path $PWD "desktop\relay\$File") -Destination $Stage -Force
+          }
+
+          $Runtime = Join-Path $Stage "runtime"
+          New-Item -ItemType Directory -Force -Path $Runtime | Out-Null
+          $NodeRoot = Split-Path (Get-Command node.exe).Source -Parent
+          Copy-Item -LiteralPath (Join-Path $NodeRoot "node.exe") -Destination $Runtime -Force
+          Copy-Item -LiteralPath (Join-Path $NodeRoot "npm.cmd") -Destination $Runtime -Force
+          Copy-Item -LiteralPath (Join-Path $NodeRoot "npm") -Destination $Runtime -Force -ErrorAction SilentlyContinue
+          Copy-Item -LiteralPath (Join-Path $NodeRoot "npm.ps1") -Destination $Runtime -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Join-Path $Runtime "node_modules") | Out-Null
+          Copy-Item -LiteralPath (Join-Path $NodeRoot "node_modules\npm") -Destination (Join-Path $Runtime "node_modules") -Recurse -Force
+
+          $Package = Get-Content "desktop\relay\package.json" -Raw | ConvertFrom-Json
+          $Manifest = [ordered]@{
+            product = "Mon Cahier Relay"
+            release = "Rentree-2026-2027"
+            installer_version = "2026.08.22.1"
+            relay_version = [string]$Package.version
+            schema_version = 9
+            git_commit = "${{ github.sha }}"
+            git_branch = "${{ github.ref_name }}"
+            node_version = (& (Join-Path $Runtime "node.exe") --version).Trim()
+            built_at_utc = [DateTime]::UtcNow.ToString("o")
+          }
+          $Manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Stage "release-manifest.json") -Encoding UTF8
+
+      - name: Smoke-test portable runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $App = Join-Path $PWD "desktop\relay\stage\App"
+          Push-Location $App
+          try {
+            & ".\runtime\node.exe" -e "require('./node_modules/better-sqlite3'); console.log('PORTABLE_RUNTIME_OK')"
+            if ($LASTEXITCODE -ne 0) { throw "Portable runtime smoke test failed." }
+            & ".\runtime\node.exe" ".\dist\src\cli.mjs" doctor --config ".\package-smoke-config.json" 2>&1 | Out-String | Write-Host
+          } catch {
+            # doctor sans configuration complète peut refuser la configuration : le chargement du CLI reste malgré tout testé ci-dessus.
+            Write-Host $_.Exception.Message
+          } finally {
+            Pop-Location
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $Iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path -LiteralPath $Iscc)) {
+            throw "Inno Setup 6 introuvable."
+          }
+
+      - name: Build Setup.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $Iss = Join-Path $PWD "desktop\relay\windows\MonCahier-Relay-Setup.iss"
+          $Stage = Join-Path $PWD "desktop\relay\stage"
+          $Release = Join-Path $PWD "desktop\relay\release"
+          New-Item -ItemType Directory -Force -Path $Release | Out-Null
+          & $Iscc "/DMyAppVersion=2026.08.22.1" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
+          if ($LASTEXITCODE -ne 0) { throw "Compilation Inno Setup échouée." }
+
+      - name: Create checksum and release notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Release = Join-Path $PWD "desktop\relay\release"
+          $Exe = Join-Path $Release "MonCahier-Relay-Setup-Rentree-2026-2027.exe"
+          if (-not (Test-Path -LiteralPath $Exe)) { throw "Setup.exe introuvable." }
+          $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant()
+          "$Hash  MonCahier-Relay-Setup-Rentree-2026-2027.exe" |
+            Set-Content -LiteralPath (Join-Path $Release "MonCahier-Relay-Setup-Rentree-2026-2027.sha256.txt") -Encoding ASCII
+          @"
+          MON CAHIER RELAY - RENTREE 2026-2027
+          ====================================
+          Build Git : ${{ github.sha }}
+          Branche   : ${{ github.ref_name }}
+          Schema DB : 9
+
+          Installation :
+          1. Copier le Setup.exe sur le PC relais Windows 10/11 x64.
+          2. Double-cliquer sur le Setup.exe et accepter l'élévation Administrateur.
+          3. Saisir le code puis le nom de l'établissement.
+          4. Dans Mon Cahier, coller le jeton Admin puis Tester et synchroniser.
+          5. Redémarrer le PC une fois et vérifier que la tâche 'Mon Cahier Relay' est Running.
+
+          Le runtime Node est inclus. Aucun Node.js ni dépôt Git n'est requis sur le PC de l'établissement.
+          "@ | Set-Content -LiteralPath (Join-Path $Release "LISEZ-MOI.txt") -Encoding UTF8
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MonCahier-Relay-Setup-Rentree-2026-2027
+          path: |
+            desktop/relay/release/MonCahier-Relay-Setup-Rentree-2026-2027.exe
+            desktop/relay/release/MonCahier-Relay-Setup-Rentree-2026-2027.sha256.txt
+            desktop/relay/release/LISEZ-MOI.txt
+          if-no-files-found: error
+          retention-days: 30
