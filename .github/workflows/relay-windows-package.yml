@@ -1,0 +1,136 @@
+name: Relay Windows Package
+
+on:
+  push:
+    branches:
+      - release/relay-windows-2026-2027
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-package:
+    name: Verify and package Windows relay
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22.22.1
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: desktop/relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: desktop/relay
+        run: npm ci --no-audit --no-fund
+
+      - name: Full relay verification
+        working-directory: desktop/relay
+        run: npm run verify
+
+      - name: Build autonomous Windows package
+        shell: powershell
+        run: |
+          & .\desktop\relay\packaging\build-windows-package.ps1 `
+            -RepositoryRoot "$env:GITHUB_WORKSPACE" `
+            -OutputDirectory "$env:GITHUB_WORKSPACE\artifacts\relay-windows" `
+            -ReleaseLabel "Rentree-2026-2027" `
+            -CertifiedRelaySha "f733eca85fdc3debe5ae734a23293a46076f2526" `
+            -PackageSourceSha "$env:GITHUB_SHA"
+
+      - name: Smoke test packaged runtime
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ArtifactDirectory = "$env:GITHUB_WORKSPACE\artifacts\relay-windows"
+          $Exe = @(Get-ChildItem -LiteralPath $ArtifactDirectory -Filter "*.exe")
+          $Zip = @(Get-ChildItem -LiteralPath $ArtifactDirectory -Filter "*.zip")
+          $Hashes = Join-Path $ArtifactDirectory "SHA256SUMS.txt"
+
+          if ($Exe.Count -ne 1) { throw "Un seul EXE est attendu, obtenu: $($Exe.Count)" }
+          if ($Zip.Count -ne 1) { throw "Un seul ZIP est attendu, obtenu: $($Zip.Count)" }
+          if (-not (Test-Path -LiteralPath $Hashes)) { throw "SHA256SUMS.txt absent." }
+          if ($Exe[0].Length -lt 1MB) { throw "EXE anormalement petit." }
+          if ($Zip[0].Length -lt 1MB) { throw "ZIP anormalement petit." }
+
+          $SmokeRoot = Join-Path $env:RUNNER_TEMP "moncahier-relay-package-smoke"
+          Remove-Item -LiteralPath $SmokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $SmokeRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $Zip[0].FullName -DestinationPath $SmokeRoot -Force
+
+          foreach ($RequiredWrapper in @(
+            "Installer-Mon-Cahier.cmd",
+            "bootstrap.ps1",
+            "relay-payload.zip",
+            "LISEZ-MOI.txt"
+          )) {
+            $Path = Join-Path $SmokeRoot $RequiredWrapper
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              throw "Wrapper incomplet : $RequiredWrapper"
+            }
+          }
+
+          $PayloadRoot = Join-Path $SmokeRoot "payload"
+          New-Item -ItemType Directory -Path $PayloadRoot -Force | Out-Null
+          Expand-Archive `
+            -LiteralPath (Join-Path $SmokeRoot "relay-payload.zip") `
+            -DestinationPath $PayloadRoot `
+            -Force
+
+          foreach ($RequiredPayload in @(
+            "runtime\node\node.exe",
+            "runtime\node\npm.cmd",
+            "dist\src\cli.mjs",
+            "node_modules\better-sqlite3",
+            "node_modules\.bin\tsc.cmd",
+            "windows\install-relay.ps1",
+            "windows\install-startup-task.ps1",
+            "RELEASE.json"
+          )) {
+            $Path = Join-Path $PayloadRoot $RequiredPayload
+            if (-not (Test-Path -LiteralPath $Path)) {
+              throw "Payload incomplet : $RequiredPayload"
+            }
+          }
+
+          Push-Location $PayloadRoot
+          try {
+            & ".\runtime\node\node.exe" -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.exec('create table t(x integer); insert into t values (1)'); const x=db.prepare('select x from t').get().x; db.close(); if(x!==1) process.exit(2); console.log('BUNDLED NODE + SQLITE: PASS')"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Le runtime Node/SQLite embarqué ne fonctionne pas."
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+          $Metadata = Get-Content -LiteralPath (Join-Path $PayloadRoot "RELEASE.json") -Raw | ConvertFrom-Json
+          if ($Metadata.certified_relay_sha -ne "f733eca85fdc3debe5ae734a23293a46076f2526") {
+            throw "SHA relais certifié inattendu dans RELEASE.json."
+          }
+          if ([int]$Metadata.schema_required -ne 9) {
+            throw "Schéma requis inattendu dans RELEASE.json."
+          }
+
+          Write-Host "=== PACKAGE WINDOWS : SMOKE PASS ===" -ForegroundColor Green
+          Get-ChildItem -LiteralPath $ArtifactDirectory | Select-Object Name, Length
+          Get-Content -LiteralPath $Hashes
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mon-Cahier-Relay-Rentree-2026-2027-f733eca8
+          path: artifacts/relay-windows/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
