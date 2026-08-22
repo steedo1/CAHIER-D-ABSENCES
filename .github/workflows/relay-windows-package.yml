@@ -7,6 +7,12 @@ on:
     paths:
       - "desktop/relay/**"
       - ".github/workflows/relay-windows-package.yml"
+  pull_request:
+    branches:
+      - reprise-propre-5418ce7-20260729
+    paths:
+      - "desktop/relay/**"
+      - ".github/workflows/relay-windows-package.yml"
   workflow_dispatch:
 
 permissions:
@@ -85,10 +91,12 @@ jobs:
           try {
             & ".\runtime\node.exe" -e "require('./node_modules/better-sqlite3'); console.log('PORTABLE_RUNTIME_OK')"
             if ($LASTEXITCODE -ne 0) { throw "Portable runtime smoke test failed." }
-            & ".\runtime\node.exe" ".\dist\src\cli.mjs" doctor --config ".\package-smoke-config.json" 2>&1 | Out-String | Write-Host
-          } catch {
-            # doctor sans configuration complète peut refuser la configuration : le chargement du CLI reste malgré tout testé ci-dessus.
-            Write-Host $_.Exception.Message
+
+            $Config = Join-Path $App "package-smoke-config.json"
+            & ".\runtime\node.exe" ".\dist\src\cli.mjs" configure --config $Config --institution-code "PKG-TEST" --institution-name "Package Smoke Test" | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Portable configure smoke test failed." }
+            & ".\runtime\node.exe" ".\dist\src\cli.mjs" doctor --config $Config | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "Portable doctor smoke test failed." }
           } finally {
             Pop-Location
           }
