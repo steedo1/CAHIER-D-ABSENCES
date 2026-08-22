@@ -47,12 +47,49 @@ jobs:
       - name: Build autonomous Windows package
         shell: powershell
         run: |
-          & .\desktop\relay\packaging\build-windows-package.ps1 `
-            -RepositoryRoot "$env:GITHUB_WORKSPACE" `
-            -OutputDirectory "$env:GITHUB_WORKSPACE\artifacts\relay-windows" `
-            -ReleaseLabel "Rentree-2026-2027" `
-            -CertifiedRelaySha "f733eca85fdc3debe5ae734a23293a46076f2526" `
-            -PackageSourceSha "$env:GITHUB_SHA"
+          $ErrorActionPreference = "Stop"
+          $ArtifactDirectory = "$env:GITHUB_WORKSPACE\artifacts\relay-windows"
+          $CertifiedSha = "f733eca85fdc3debe5ae734a23293a46076f2526"
+          $ArtifactBaseName = "Mon-Cahier-Relay-Rentree-2026-2027-f733eca8"
+
+          try {
+            & .\desktop\relay\packaging\build-windows-package.ps1 `
+              -RepositoryRoot "$env:GITHUB_WORKSPACE" `
+              -OutputDirectory $ArtifactDirectory `
+              -ReleaseLabel "Rentree-2026-2027" `
+              -CertifiedRelaySha $CertifiedSha `
+              -PackageSourceSha "$env:GITHUB_SHA"
+          }
+          catch {
+            $OriginalPackagingError = $_
+            Write-Warning "IExpress n'a pas produit l'EXE. Tentative du SFX .NET certifié."
+
+            $PortableZip = @(Get-ChildItem -LiteralPath $ArtifactDirectory -Filter "*.zip" -ErrorAction SilentlyContinue)
+            if ($PortableZip.Count -ne 1) {
+              throw $OriginalPackagingError
+            }
+
+            $OutputExe = Join-Path $ArtifactDirectory "$ArtifactBaseName.exe"
+            & .\desktop\relay\packaging\build-dotnet-self-extractor.ps1 `
+              -PortableZip $PortableZip[0].FullName `
+              -OutputExe $OutputExe
+
+            if (-not (Test-Path -LiteralPath $OutputExe -PathType Leaf)) {
+              throw "Le fallback .NET n'a pas produit l'EXE attendu."
+            }
+
+            $Hashes = @(
+              Get-FileHash -LiteralPath $OutputExe -Algorithm SHA256
+              Get-FileHash -LiteralPath $PortableZip[0].FullName -Algorithm SHA256
+            )
+            $HashLines = $Hashes | ForEach-Object {
+              "$($_.Hash.ToLowerInvariant())  $(Split-Path -Leaf $_.Path)"
+            }
+            Set-Content `
+              -LiteralPath (Join-Path $ArtifactDirectory "SHA256SUMS.txt") `
+              -Value $HashLines `
+              -Encoding ASCII
+          }
 
       - name: Smoke test packaged runtime
         shell: powershell
