@@ -156,13 +156,9 @@ type SearchStudentRow = {
 ========================= */
 
 function nomAvantPrenoms(full: string): string {
-  const t = (full || "").trim().replace(/\s+/g, " ");
-  if (!t) return "-";
-  const parts = t.split(" ");
-  if (parts.length === 1) return parts[0];
-  const last = parts[parts.length - 1];
-  const firsts = parts.slice(0, -1).join(" ");
-  return `${last} ${firsts}`;
+  // /api/admin/students fournit déjà full_name dans l'ordre officiel : NOM puis prénom(s).
+  // On normalise uniquement l'espacement, sans réinverser l'identité.
+  return (full || "").trim().replace(/\s+/g, " ") || "-";
 }
 
 function studentOfficialName(student: StudentRow): string {
