@@ -117,20 +117,20 @@ jobs:
             }
 
             $ParserHelper = Join-Path $env:TEMP "moncahier-parse-packaged-script.ps1"
-            $ParserHelperCode = @'
-param([Parameter(Mandatory = $true)][string]$Path)
-$Tokens = $null
-$Errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$Tokens, [ref]$Errors) | Out-Null
-if ($Errors.Count -gt 0) {
-    foreach ($ParseError in $Errors) {
-        [Console]::Error.WriteLine($ParseError.Message)
-    }
-    exit 1
-}
-exit 0
-'@
-            [System.IO.File]::WriteAllText($ParserHelper, $ParserHelperCode, [System.Text.Encoding]::ASCII)
+            $ParserHelperLines = @(
+              'param([Parameter(Mandatory = $true)][string]$Path)',
+              '$Tokens = $null',
+              '$Errors = $null',
+              '[System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$Tokens, [ref]$Errors) | Out-Null',
+              'if ($Errors.Count -gt 0) {',
+              '    foreach ($ParseError in $Errors) {',
+              '        [Console]::Error.WriteLine($ParseError.Message)',
+              '    }',
+              '    exit 1',
+              '}',
+              'exit 0'
+            )
+            [System.IO.File]::WriteAllLines($ParserHelper, $ParserHelperLines, [System.Text.Encoding]::ASCII)
 
             foreach ($Script in Get-ChildItem -LiteralPath (Join-Path $App "windows") -Filter "*.ps1" -File -Recurse) {
               $Bytes = [System.IO.File]::ReadAllBytes($Script.FullName)
