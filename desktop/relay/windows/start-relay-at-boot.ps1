@@ -20,5 +20,22 @@ $env:MONCAHIER_RELAY_LOG_DIR = $LogDirectory
 Set-Location -LiteralPath $ResolvedRelayRoot
 
 $LogPath = Join-Path $LogDirectory "relay.log"
-& $ResolvedNodePath $CliPath serve *>> $LogPath
-exit $LASTEXITCODE
+$ErrorLogPath = Join-Path $LogDirectory "relay-error.log"
+
+# Windows PowerShell 5.1 transforme parfois stderr d'une commande native en
+# NativeCommandError lorsque $ErrorActionPreference vaut Stop. Or le relais
+# utilise stderr pour des avertissements non fatals (par exemple un mDNS
+# temporairement indisponible) et doit continuer à servir l'API locale.
+# Start-Process sépare donc stdout/stderr sans interpréter stderr comme une
+# exception PowerShell. Le code de sortie réel de Node reste celui de la tâche.
+$Process = Start-Process `
+    -FilePath $ResolvedNodePath `
+    -ArgumentList @($CliPath, "serve") `
+    -WorkingDirectory $ResolvedRelayRoot `
+    -RedirectStandardOutput $LogPath `
+    -RedirectStandardError $ErrorLogPath `
+    -NoNewWindow `
+    -PassThru `
+    -Wait
+
+exit [int]$Process.ExitCode

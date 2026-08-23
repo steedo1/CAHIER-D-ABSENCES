@@ -26,6 +26,17 @@ test("la tâche de boot transmet des chemins explicites et non le profil SYSTEM"
   assert.doesNotMatch(runner, /\$env:LOCALAPPDATA/);
 });
 
+test("les warnings stderr de Node ne font pas tomber le wrapper PowerShell", () => {
+  const runner = windowsScript("start-relay-at-boot.ps1");
+  assert.match(runner, /Start-Process/);
+  assert.match(runner, /-RedirectStandardOutput\s+\$LogPath/);
+  assert.match(runner, /-RedirectStandardError\s+\$ErrorLogPath/);
+  assert.match(runner, /-PassThru/);
+  assert.match(runner, /-Wait/);
+  assert.match(runner, /exit\s+\[int\]\$Process\.ExitCode/);
+  assert.doesNotMatch(runner, /\*>>\s*\$LogPath/);
+});
+
 test("l'installation exige le schéma académique courant v9", () => {
   const installer = windowsScript("install-relay.ps1");
   assert.match(installer, /schema_version\s+-lt\s+9/);
