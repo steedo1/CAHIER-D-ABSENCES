@@ -198,6 +198,12 @@ export async function GET(req: NextRequest) {
       String(s.full_name || "").trim() ||
       "—";
 
+    const protectedPhotoUrl = buildProtectedStudentPhotoUrl({
+      id: sid,
+      photo_path: s.photo_path ?? null,
+      photo_updated_at: s.photo_updated_at ?? null,
+    });
+
     items.push({
       id: sid,
       first_name: (s.first_name ?? null) as string | null,
@@ -208,11 +214,12 @@ export async function GET(req: NextRequest) {
       class_label: (c.label ?? null) as string | null,
       class_level: (c.level ?? null) as string | null,
       academic_year: (c.academic_year ?? null) as string | null,
-      photo_url: buildProtectedStudentPhotoUrl({
-        id: sid,
-        photo_path: s.photo_path ?? null,
-        photo_updated_at: s.photo_updated_at ?? null,
-      }),
+      // L'attestation est ouverte dans un document blob:. Une URL relative /api/...
+      // y est mal résolue par certains navigateurs. On renvoie donc l'URL protégée
+      // complète, basée sur l'origine réelle de la requête (prod, preview ou local).
+      photo_url: protectedPhotoUrl
+        ? new URL(protectedPhotoUrl, url.origin).toString()
+        : null,
       birthdate: (s.birthdate ?? null) as string | null,
       birth_date: (s.birthdate ?? null) as string | null,
       birth_place: (s.birth_place ?? null) as string | null,
