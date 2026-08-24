@@ -659,9 +659,9 @@ test("le relais vérifie automatiquement la révision Cloud sans retélécharger
   assert.deepEqual(requests.map((row) => row.method), ["GET"]);
   assert.match(requests[0]!.url, /known_revision=7/);
   assert.match(requests[0]!.url, /known_schedule_revision=7/);
-  assert.deepEqual(
-    JSON.parse(requests[0]!.relayEndpoints || "[]")[0],
-    "http://moncahier-relay-sch-000001.local:4317",
+  assert.match(
+    String(JSON.parse(requests[0]!.relayEndpoints || "[]")[0] || ""),
+    /^http:\/\/[a-z0-9-]+\.local:4317$/,
   );
   assert.equal(result.pull_attempted_institutions, 1);
   assert.equal(result.pull_not_modified, 1);

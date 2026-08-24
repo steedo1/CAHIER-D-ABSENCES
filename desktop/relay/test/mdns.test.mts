@@ -173,6 +173,7 @@ test("la configuration persiste le hostname stable sans dépendre de l'IP DHCP",
       institutionName: "COLLEGE NOTRE-DAME",
       configPath,
       env: {},
+      platform: "linux",
     });
     assert.equal(configured.lan_hostname, "moncahier-relay-lma-000101.local");
     assert.equal(configured.lan_url, "http://moncahier-relay-lma-000101.local:4317");
