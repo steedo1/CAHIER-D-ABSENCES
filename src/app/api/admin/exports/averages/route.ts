@@ -25,6 +25,9 @@ type ClassRow = {
   official_track_code?: string | null;
   academic_year?: string | null;
   institution_id?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type StudentMetaRow = {
@@ -1339,16 +1342,29 @@ async function loadClasses(params: {
   institutionId: string;
   academicYear: string;
   classId: string;
+  generalSecondaryOnly?: boolean;
 }) {
-  const { supabase, institutionId, academicYear, classId } = params;
+  const {
+    supabase,
+    institutionId,
+    academicYear,
+    classId,
+    generalSecondaryOnly = false,
+  } = params;
 
   let classesQuery = supabase
     .from("classes")
-    .select("id, label, code, level, official_track_code, academic_year, institution_id")
+    .select("id, label, code, level, official_track_code, academic_year, institution_id, education_type, formation_code, formation_level_code")
     .eq("institution_id", institutionId)
     .eq("academic_year", academicYear)
     .order("level", { ascending: true })
     .order("label", { ascending: true });
+
+  if (generalSecondaryOnly) {
+    classesQuery = classesQuery.or(
+      "education_type.eq.general_secondary,education_type.is.null",
+    );
+  }
 
   if (classId) {
     if (!isUuid(classId)) return { classes: [] as ClassRow[], error: "INVALID_CLASS_ID" as const };
@@ -1887,6 +1903,7 @@ async function prepareDspsNotesExport(params: {
     institutionId,
     academicYear: resolvedPeriod.academicYear,
     classId,
+    generalSecondaryOnly: true,
   });
 
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
@@ -2012,6 +2029,7 @@ async function prepareDspsAnnualExport(params: {
     institutionId,
     academicYear,
     classId,
+    generalSecondaryOnly: true,
   });
 
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
@@ -2212,6 +2230,7 @@ async function prepareDespsTermSummaryExport(params: {
     institutionId,
     academicYear: resolvedPeriod.academicYear,
     classId,
+    generalSecondaryOnly: true,
   });
 
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
@@ -2356,6 +2375,7 @@ async function prepareDespsSubjectSummaryExport(params: {
     institutionId,
     academicYear: resolvedPeriod.academicYear,
     classId,
+    generalSecondaryOnly: true,
   });
 
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
@@ -2515,6 +2535,7 @@ async function prepareDespsDfaSummaryExport(params: {
     institutionId,
     academicYear,
     classId,
+    generalSecondaryOnly: true,
   });
 
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
@@ -2586,8 +2607,8 @@ async function prepareDespsDfaSummaryExport(params: {
     let lt10 = 0;
     let admitted = 0;
     let toReview = 0;
-    let repeaters = 0;
-    let excluded = 0;
+    const repeaters = 0;
+    const excluded = 0;
     let sum = 0;
 
     for (const studentId of studentIds) {
@@ -3265,7 +3286,13 @@ async function collectOfficialTermStats(params: {
   const resolvedPeriod = await resolvePeriod({ supabase, institutionId, academicYear, periodRef });
   if (!resolvedPeriod || resolvedPeriod.requestedKind !== "period") return { error: "INVALID_PERIOD_REF" as const, status: 400 };
 
-  const { classes, error: classError } = await loadClasses({ supabase, institutionId, academicYear: resolvedPeriod.academicYear, classId });
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear: resolvedPeriod.academicYear,
+    classId,
+    generalSecondaryOnly: true,
+  });
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND" as const, status: 404 };
 
@@ -3539,7 +3566,13 @@ async function prepareDespsOfficialAnnualExport(params: {
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
-  const { classes, error: classError } = await loadClasses({ supabase, institutionId, academicYear, classId });
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear,
+    classId,
+    generalSecondaryOnly: true,
+  });
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
 
@@ -3958,7 +3991,13 @@ async function prepareRapportFOfficialExport(params: {
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
-  const { classes, error: classError } = await loadClasses({ supabase, institutionId, academicYear, classId });
+  const { classes, error: classError } = await loadClasses({
+    supabase,
+    institutionId,
+    academicYear,
+    classId,
+    generalSecondaryOnly: true,
+  });
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
@@ -4345,6 +4384,7 @@ export async function GET(req: NextRequest) {
   const exportKind = String(searchParams.get("export_kind") || searchParams.get("mode") || "legacy")
     .trim()
     .toLowerCase() as ExportKind;
+  const generalSecondaryOnly = exportKind !== "legacy";
 
   if (!academicYear) {
     return NextResponse.json({ ok: false, error: "MISSING_ACADEMIC_YEAR" }, { status: 400 });
@@ -4481,7 +4521,19 @@ export async function GET(req: NextRequest) {
   }
 
   if ("error" in prepared) {
-    return NextResponse.json({ ok: false, error: prepared.error }, { status: prepared.status });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: prepared.error,
+        ...(generalSecondaryOnly && prepared.error === "NO_CLASSES_FOUND"
+          ? {
+              message:
+                "Cet export administratif est réservé aux classes du secondaire général.",
+            }
+          : {}),
+      },
+      { status: prepared.status },
+    );
   }
 
   return sendPreparedWorkbook(prepared, format);

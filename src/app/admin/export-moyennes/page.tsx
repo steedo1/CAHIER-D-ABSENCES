@@ -20,6 +20,9 @@ type ClassRow = {
   code?: string | null;
   level?: string | null;
   academic_year?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
 };
 
 type GradePeriodRow = {
@@ -237,8 +240,9 @@ export default async function ExportDespsPage() {
   const [{ data: classesData }, { data: periodsData }] = await Promise.all([
     supabase
       .from("classes")
-      .select("id, label, code, level, academic_year")
+      .select("id, label, code, level, academic_year, education_type, formation_code, formation_level_code")
       .eq("institution_id", institutionId)
+      .or("education_type.eq.general_secondary,education_type.is.null")
       .order("level", { ascending: true })
       .order("label", { ascending: true }),
 
@@ -327,6 +331,9 @@ export default async function ExportDespsPage() {
           </header>
 
           <div className="grid gap-4 p-5 sm:p-6 lg:grid-cols-2 lg:p-7">
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900 lg:col-span-2">
+              Secondaire général uniquement — les classes techniques, professionnelles et de cycle supérieur court sont volontairement exclues des modèles administratifs DESPS.
+            </div>
             <TermExportCard title="1er trimestre" term={1} period={firstTermPeriod} {...cardProps} />
             <TermExportCard title="2e trimestre" term={2} period={secondTermPeriod} {...cardProps} />
             <TermExportCard title="3e trimestre" term={3} period={thirdTermPeriod} {...cardProps} />
