@@ -148,26 +148,34 @@ function bulletinParams(classRow: AdminClass, period: AdminPeriod) {
 async function publishCouncilAliases(classes: AdminClass[]) {
   const academicYears = unique(classes.map((item) => item.academic_year));
   const years: Array<string | null> = academicYears.length ? academicYears : [null];
-  const periods: AdminPeriod[] = [];
+  const commonPeriods: AdminPeriod[] = [];
 
   for (const year of years) {
     const cached = await cacheGet<any>(adminBulletinPeriodsKey(year)).catch(() => null);
-    periods.push(...itemsOf<AdminPeriod>(cached));
+    commonPeriods.push(...itemsOf<AdminPeriod>(cached));
   }
 
-  const periodMap = new Map<string, AdminPeriod>();
-  for (const period of periods) {
-    const from = String(period.start_date || "").trim();
-    const to = String(period.end_date || "").trim();
-    if (!from || !to) continue;
-    periodMap.set(
-      `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
-      period,
-    );
-  }
-  const uniquePeriods = Array.from(periodMap.values());
-  const tasks = classes.flatMap((classRow) =>
-    uniquePeriods
+  const tasks: Array<{ classRow: AdminClass; period: AdminPeriod }> = [];
+  for (const classRow of classes) {
+    const classId = String(classRow.id || "").trim();
+    if (!classId) continue;
+    const cached = await cacheGet<any>(
+      adminBulletinPeriodsKey(classRow.academic_year || null, classId),
+    ).catch(() => null);
+    const scopedPeriods = itemsOf<AdminPeriod>(cached);
+    const sourcePeriods = scopedPeriods.length ? scopedPeriods : commonPeriods;
+    const periodMap = new Map<string, AdminPeriod>();
+    for (const period of sourcePeriods) {
+      const from = String(period.start_date || "").trim();
+      const to = String(period.end_date || "").trim();
+      if (!from || !to) continue;
+      periodMap.set(
+        `${period.academic_year || ""}|${period.code || ""}|${from}|${to}`,
+        period,
+      );
+    }
+    tasks.push(
+      ...Array.from(periodMap.values())
       .filter(
         (period) =>
           !classRow.academic_year ||
@@ -175,7 +183,8 @@ async function publishCouncilAliases(classes: AdminClass[]) {
           classRow.academic_year === period.academic_year,
       )
       .map((period) => ({ classRow, period })),
-  );
+    );
+  }
 
   await mapLimit(tasks, 4, async ({ classRow, period }) => {
     const preparedParams = bulletinParams(classRow, period);

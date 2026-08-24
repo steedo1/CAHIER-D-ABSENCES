@@ -3,6 +3,7 @@
 
 import React, {
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -14,7 +15,16 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  getClassFormationCode,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   getAdminBulletin,
   getAdminBulletinClasses,
@@ -25,11 +35,8 @@ import {
 
 /* ───────── Types ───────── */
 
-type ClassRow = {
-  id: string;
+type ClassRow = EducationScopedClass & {
   name?: string;
-  label?: string | null;
-  level?: string | null;
   academic_year?: string | null;
 };
 
@@ -273,6 +280,10 @@ type BulletinResponse = {
     level?: string | null;
     official_track_code?: string | null;
     academic_year?: string | null;
+    education_type?: string | null;
+    formation_code?: string | null;
+    formation_label?: string | null;
+    formation_level_code?: string | null;
     head_teacher?: {
       id: string;
       display_name: string | null;
@@ -2684,6 +2695,10 @@ function BulletinsPageContent() {
   const [selectedClassId, setSelectedClassId] = useState<string>(
     liveDuplicateClassId,
   );
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>({
+    ...DEFAULT_EDUCATION_SCOPE,
+    classId: liveDuplicateClassId,
+  });
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
@@ -2706,6 +2721,31 @@ function BulletinsPageContent() {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState<number>(1);
+
+  const selectClassContext = useCallback((row: ClassRow | null) => {
+    if (!row) {
+      setEducationScope(DEFAULT_EDUCATION_SCOPE);
+      setSelectedClassId("");
+      return;
+    }
+    setEducationScope({
+      educationType: normalizeClassEducationType(row),
+      formationCode: getClassFormationCode(row),
+      levelCode: getClassLevelCode(row),
+      classId: row.id,
+    });
+    setSelectedClassId(row.id);
+  }, []);
+
+  const changeEducationScope = useCallback((next: EducationScopeValue) => {
+    setEducationScope(next);
+    setSelectedClassId(next.classId);
+    setSelectedPeriodId("");
+    setDateFrom("");
+    setDateTo("");
+    setBulletinRaw(null);
+    setConductSummary(null);
+  }, []);
 
   const computePreviewZoom = () => {
     if (typeof window === "undefined") return 1;
@@ -2795,7 +2835,9 @@ function BulletinsPageContent() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
+        const preferredClass =
+          items.find((item) => item.id === liveDuplicateClassId) || items[0] || null;
+        if (preferredClass) selectClassContext(preferredClass);
       } catch (e: any) {
         console.error(e);
         setErrorMsg(e.message || "Erreur lors du chargement des classes.");
@@ -2804,8 +2846,7 @@ function BulletinsPageContent() {
       }
     };
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [duplicateIssueId]);
+  }, [duplicateIssueId, liveDuplicateClassId, selectClassContext]);
 
   useEffect(() => {
     if (duplicateIssueId || liveDuplicateMode) return;
@@ -2816,7 +2857,7 @@ function BulletinsPageContent() {
       setDateFrom("");
       setDateTo("");
     }
-  }, [selectedClassId, classes, duplicateIssueId]);
+  }, [selectedClassId, classes, duplicateIssueId, liveDuplicateMode]);
 
   useEffect(() => {
     if (duplicateIssueId) return;
@@ -2847,7 +2888,10 @@ function BulletinsPageContent() {
       try {
         setPeriodsLoading(true);
 
-        const json: any = await getAdminBulletinPeriods(selectedAcademicYear);
+        const json: any = await getAdminBulletinPeriods(
+          selectedAcademicYear,
+          selectedClassId,
+        );
         const items: GradePeriod[] = Array.isArray(json)
           ? json
           : Array.isArray(json.items)
@@ -2863,7 +2907,7 @@ function BulletinsPageContent() {
     };
 
     run();
-  }, [selectedAcademicYear, duplicateIssueId]);
+  }, [selectedAcademicYear, selectedClassId, duplicateIssueId]);
 
   const academicYears = useMemo(() => {
     const set = new Set<string>();
@@ -2876,6 +2920,13 @@ function BulletinsPageContent() {
     if (!selectedAcademicYear) return periods;
     return periods.filter((p) => p.academic_year === selectedAcademicYear);
   }, [periods, selectedAcademicYear]);
+
+  const classesForSelectedYear = useMemo(() => {
+    if (!selectedAcademicYear) return classes;
+    return classes.filter(
+      (row) => String(row.academic_year || "") === selectedAcademicYear,
+    );
+  }, [classes, selectedAcademicYear]);
 
   useEffect(() => {
     if (!selectedPeriodId) return;
@@ -4000,6 +4051,12 @@ function BulletinsPageContent() {
                 onChange={(e) => {
                   const year = e.target.value;
                   setSelectedAcademicYear(year);
+                  setEducationScope((current) => ({
+                    ...current,
+                    levelCode: "",
+                    classId: "",
+                  }));
+                  setSelectedClassId("");
                   setSelectedPeriodId("");
                   setDateFrom("");
                   setDateTo("");
@@ -4049,27 +4106,14 @@ function BulletinsPageContent() {
               </p>
             </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">
-                Classe
-              </label>
-              <Select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                disabled={classesLoading}
-              >
-                <option value="">Sélectionner une classe…</option>
-                {classes.map((c) => {
-                  const label = (c.name || c.label || "").trim();
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {label || "Classe"}
-                      {c.level ? ` (${c.level})` : ""}
-                    </option>
-                  );
-                })}
-              </Select>
-            </div>
+            <EducationScopeFilter
+              value={educationScope}
+              onChange={changeEducationScope}
+              classes={classesForSelectedYear}
+              disabled={classesLoading}
+              title="Contexte du bulletin"
+              className="md:col-span-6"
+            />
 
             <div className="md:col-span-3">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">

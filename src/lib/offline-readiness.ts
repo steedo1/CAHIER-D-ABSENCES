@@ -2093,8 +2093,18 @@ async function prepareAdmin(onProgress: ProgressCallback): Promise<OfflineReadin
     );
   }
   const uniquePeriodList = Array.from(periodMap.values());
+  const periodsByClassId = new Map<string, AdminBulletinPeriod[]>();
+  await mapLimit(classes, 3, async (classRow) => {
+    const classId = String(classRow.id || "").trim();
+    if (!classId) return;
+    const payload = await getAdminBulletinPeriods<any>(
+      classRow.academic_year || null,
+      classId,
+    );
+    periodsByClassId.set(classId, itemsOf<AdminBulletinPeriod>(payload));
+  });
   const tasks = classes.flatMap((classRow) =>
-    uniquePeriodList
+    (periodsByClassId.get(String(classRow.id || "")) || uniquePeriodList)
       .filter(
         (period) =>
           !classRow.academic_year ||
