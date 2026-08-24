@@ -50,6 +50,7 @@ import {
   checkRelayTeacherConnectivity,
   fetchRelayTeacherOfflineSchedule,
   LocalRelayHttpError,
+  preferredRelayBaseUrl,
   type RelayCapabilities,
   type RelayTeacherConnectivityResult,
   type RelayTeacherOfflineSchedule,
@@ -145,6 +146,7 @@ export type ClassDeviceAssessmentContext = {
   classId?: string | null;
   actorProfileId?: string | null;
   relayBaseUrl?: string | null;
+  relayBaseUrls?: string[] | null;
   relayAccessToken?: string | null;
 };
 
@@ -675,6 +677,9 @@ export async function assessTeacherOfflineReadiness(
       ? checkRelayTeacherConnectivity({
           institutionId,
           baseUrl: String(relayPolicy.relay_local_url),
+          baseUrls: Array.isArray(relayPolicy.relay_local_urls)
+            ? relayPolicy.relay_local_urls
+            : [],
           accessToken: String(relayPolicy.relay_access_token),
         })
       : Promise.resolve<RelayTeacherConnectivityResult>({
@@ -847,6 +852,7 @@ type CachedClassDevice = {
     authorized_class_id?: string | null;
     authorized_actor_profile_id?: string | null;
     relay_local_url?: string | null;
+    relay_local_urls?: string[];
     relay_access_token?: string | null;
     diagnostic?: string | null;
   } | null;
@@ -874,6 +880,7 @@ type ResolvedClassDeviceContext = {
   classId: string;
   actorProfileId: string;
   relayBaseUrl: string;
+  relayBaseUrls: string[];
   relayAccessToken: string;
 };
 
@@ -979,6 +986,9 @@ export function resolveClassDevicePreparationAccess(classPayload: unknown) {
     actorProfileId,
     relayPolicy: {
       relayLocalUrl: relayPolicy.relay_local_url,
+      relayLocalUrls: Array.isArray(relayPolicy.relay_local_urls)
+        ? relayPolicy.relay_local_urls
+        : [],
       relayAccessToken: relayPolicy.relay_access_token,
     },
   };
@@ -1162,9 +1172,16 @@ async function resolveClassDeviceContext(
       "",
   ).trim();
   const relay = cached?.attendance_presence;
-  const relayBaseUrl = String(
-    requested.relayBaseUrl || relay?.relay_local_url || "",
-  ).trim();
+  const relayBaseUrls = Array.isArray(requested.relayBaseUrls)
+    ? requested.relayBaseUrls
+    : Array.isArray(relay?.relay_local_urls)
+      ? relay.relay_local_urls
+      : [];
+  const relayBaseUrl = preferredRelayBaseUrl({
+    institutionId,
+    baseUrl: requested.relayBaseUrl || relay?.relay_local_url,
+    baseUrls: relayBaseUrls,
+  });
   const relayAccessToken = String(
     requested.relayAccessToken || relay?.relay_access_token || "",
   ).trim();
@@ -1201,6 +1218,7 @@ async function resolveClassDeviceContext(
     classId: requestedClassId,
     actorProfileId,
     relayBaseUrl,
+    relayBaseUrls,
     relayAccessToken,
   };
 }
@@ -1429,6 +1447,7 @@ export async function assessClassDeviceOfflineReadiness(
   const relay = await checkRelayTeacherConnectivity({
     institutionId: context.institutionId,
     baseUrl: context.relayBaseUrl,
+    baseUrls: context.relayBaseUrls,
     accessToken: context.relayAccessToken,
   });
   const relayRevision = safeRevision(relay.snapshot_revision);
@@ -1477,7 +1496,7 @@ export async function assessClassDeviceOfflineReadiness(
   try {
     relaySchedule = await fetchRelayTeacherOfflineSchedule({
       institutionId: context.institutionId,
-      baseUrl: context.relayBaseUrl,
+      baseUrl: relay.base_url || context.relayBaseUrl,
       accessToken: context.relayAccessToken,
     });
   } catch (error) {
@@ -1667,7 +1686,11 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     onProgress("Cloud indisponible : récupération du paquet d’appel depuis le relais…");
     const relaySchedule = await fetchRelayTeacherOfflineSchedule({
       institutionId,
-      baseUrl: String(relayPolicy.relay_local_url),
+      baseUrl: preferredRelayBaseUrl({
+        institutionId,
+        baseUrl: relayPolicy.relay_local_url,
+        baseUrls: relayPolicy.relay_local_urls,
+      }),
       accessToken: String(relayPolicy.relay_access_token),
     });
     bootstrap = { ...relaySchedule, web_release: MON_CAHIER_WEB_RELEASE };
@@ -1701,6 +1724,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
       ? await checkRelayTeacherConnectivity({
           institutionId,
           baseUrl: String(relayPolicy.relay_local_url),
+          baseUrls: Array.isArray(relayPolicy.relay_local_urls)
+            ? relayPolicy.relay_local_urls
+            : [],
           accessToken: String(relayPolicy.relay_access_token),
         })
       : { status: "unreachable", checked_at: new Date().toISOString() };
@@ -1798,6 +1824,7 @@ async function prepareClassDevice(
   let selectedClass: CachedClassDevice = {};
   let relayPolicy: {
     relayLocalUrl: string;
+    relayLocalUrls: string[];
     relayAccessToken: string;
   } | null = null;
   let accessError: unknown = null;
@@ -1860,6 +1887,7 @@ async function prepareClassDevice(
     relayConnectivity = await checkRelayTeacherConnectivity({
       institutionId,
       baseUrl: relayPolicy.relayLocalUrl,
+      baseUrls: relayPolicy.relayLocalUrls,
       accessToken: relayPolicy.relayAccessToken,
     });
     if (
@@ -1872,7 +1900,7 @@ async function prepareClassDevice(
       try {
         const candidate = await fetchRelayTeacherOfflineSchedule({
           institutionId,
-          baseUrl: relayPolicy.relayLocalUrl,
+          baseUrl: relayConnectivity.base_url || relayPolicy.relayLocalUrl,
           accessToken: relayPolicy.relayAccessToken,
         });
         const scope = validateClassDeviceScheduleScope(candidate, expectedScope);

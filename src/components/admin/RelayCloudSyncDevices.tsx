@@ -14,6 +14,8 @@ type RelayDevice = {
   label: string;
   is_active: boolean;
   last_seen_at: string | null;
+  observed_lan_urls?: string[] | null;
+  observed_lan_at?: string | null;
   revoked_at: string | null;
   created_at: string;
   updated_at: string;
@@ -28,6 +30,14 @@ type CreatedRelayDevice = {
   push_url: string;
   token: string;
   token_displayed_once: true;
+  enrollment: {
+    version: 1;
+    institution_code: string;
+    institution_name: string;
+    cloud_sync_endpoint: string;
+    device_id: string;
+    token: string;
+  };
 };
 
 function displayDate(value: string | null) {
@@ -104,6 +114,21 @@ export default function RelayCloudSyncDevices() {
     }
   }
 
+  function downloadEnrollment() {
+    if (!created) return;
+    const blob = new Blob(
+      [`${JSON.stringify(created.enrollment, null, 2)}\n`],
+      { type: "application/json" },
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "MonCahier-Relay-Enrollment.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setMessage("Configuration téléchargée. Laissez ce fichier à côté de l’installateur puis lancez le Setup.");
+  }
+
   async function createDevice() {
     const cleanLabel = label.trim();
     if (!cleanLabel) {
@@ -121,7 +146,7 @@ export default function RelayCloudSyncDevices() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(errorLabel(payload?.error, "Création impossible."));
       setCreated(payload.item as CreatedRelayDevice);
-      setMessage("Identité Cloud créée. Copiez immédiatement la commande sur le PC relais.");
+      setMessage("Identité Cloud créée. Téléchargez immédiatement la configuration de l’installateur.");
       await load();
     } catch (error: any) {
       setMessage(error?.message || "Création impossible.");
@@ -207,23 +232,17 @@ export default function RelayCloudSyncDevices() {
             Secret affiché une seule fois
           </div>
           <p className="mt-1 text-xs text-amber-900">
-            Copiez maintenant cette commande PowerShell. Après fermeture ou actualisation de la page,
-            le jeton ne pourra pas être récupéré ; il faudra révoquer ce relais et en créer un nouveau.
+            Téléchargez la configuration puis placez-la à côté du Setup sur le PC relais. Le Setup
+            configurera l’établissement et le Cloud sans commande PowerShell. Après fermeture ou
+            actualisation, le jeton ne pourra plus être récupéré.
           </p>
-          <textarea
-            readOnly
-            value={configureCommand}
-            rows={9}
-            className="mt-2 w-full rounded-lg border border-amber-300 bg-white p-2 font-mono text-[11px] leading-5 text-slate-800"
-            aria-label="Commande de configuration Cloud du relais"
-          />
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => void copyText(configureCommand, "Commande PowerShell copiée ✅")}
-              className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white"
+              onClick={downloadEnrollment}
+              className="rounded-lg bg-indigo-800 px-3 py-2 text-xs font-bold text-white"
             >
-              Copier la commande
+              Télécharger pour l’installateur
             </button>
             <button
               type="button"
@@ -240,6 +259,23 @@ export default function RelayCloudSyncDevices() {
               J'ai sauvegardé le secret
             </button>
           </div>
+          <details className="mt-3 text-xs text-amber-950">
+            <summary className="cursor-pointer font-semibold">Configuration avancée de secours</summary>
+            <textarea
+              readOnly
+              value={configureCommand}
+              rows={9}
+              className="mt-2 w-full rounded-lg border border-amber-300 bg-white p-2 font-mono text-[11px] leading-5 text-slate-800"
+              aria-label="Commande de configuration Cloud du relais"
+            />
+            <button
+              type="button"
+              onClick={() => void copyText(configureCommand, "Commande PowerShell copiée ✅")}
+              className="mt-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white"
+            >
+              Copier la commande avancée
+            </button>
+          </details>
         </div>
       ) : null}
 
@@ -266,6 +302,11 @@ export default function RelayCloudSyncDevices() {
                   <div className="mt-1 text-[11px] text-slate-500">
                     Créé le {displayDate(device.created_at)} · Dernier contact : {displayDate(device.last_seen_at)}
                   </div>
+                  {Array.isArray(device.observed_lan_urls) && device.observed_lan_urls.length ? (
+                    <div className="mt-2 space-y-0.5 font-mono text-[10px] text-emerald-700">
+                      {device.observed_lan_urls.map((url) => <div key={url}>{url}</div>)}
+                    </div>
+                  ) : null}
                 </div>
                 {active ? (
                   <button

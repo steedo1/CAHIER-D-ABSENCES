@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { requeueTimetableReplacementChain, syncRelayOnce } from "../src/cloud-sync.mjs";
+import {
+  relayReportedLanUrls,
+  requeueTimetableReplacementChain,
+  syncRelayOnce,
+} from "../src/cloud-sync.mjs";
 import type { RelayConfig } from "../src/config.mjs";
 import { getInstitutionMeta, openRelayDatabase, setInstitutionMeta } from "../src/db.mjs";
 import { RelayStore } from "../src/store.mjs";
@@ -38,6 +42,29 @@ function configWithPull(): RelayConfig {
     "https://mon-cahier.com/api/relay/sync/pull";
   return value;
 }
+
+test("le relais Windows publie son vrai nom machine et son IPv4 LAN", () => {
+  assert.deepEqual(
+    relayReportedLanUrls(config(), {
+      platform: "win32",
+      machineHostname: "LAPTOP-2SRLI1BS",
+      interfaces: {
+        WiFi: [{
+          address: "192.168.209.246",
+          netmask: "255.255.255.0",
+          family: "IPv4",
+          mac: "00:11:22:33:44:55",
+          internal: false,
+          cidr: "192.168.209.246/24",
+        }],
+      },
+    }),
+    [
+      "http://laptop-2srli1bs.local:4317",
+      "http://192.168.209.246:4317",
+    ],
+  );
+});
 
 function bootstrapRevision(
   store: RelayStore,
@@ -604,7 +631,7 @@ test("une chaîne bloquée reste intacte si le remplaçant sémantique est ambig
 test("le relais vérifie automatiquement la révision Cloud sans retélécharger un snapshot identique", async () => {
   const { db, store } = setup();
   bootstrapRevision(store, 7);
-  const requests: Array<{ method: string; url: string }> = [];
+  const requests: Array<{ method: string; url: string; relayEndpoints: string | null }> = [];
 
   const result = await syncRelayOnce(configWithPull(), store, {
     now: () => new Date("2026-07-29T10:00:00.000Z"),
@@ -612,6 +639,7 @@ test("le relais vérifie automatiquement la révision Cloud sans retélécharger
       requests.push({
         method: String(init?.method || "GET"),
         url: String(input),
+        relayEndpoints: new Headers(init?.headers).get("x-moncahier-relay-endpoints"),
       });
       return new Response(JSON.stringify({
         protocol_version: 1,
@@ -631,6 +659,10 @@ test("le relais vérifie automatiquement la révision Cloud sans retélécharger
   assert.deepEqual(requests.map((row) => row.method), ["GET"]);
   assert.match(requests[0]!.url, /known_revision=7/);
   assert.match(requests[0]!.url, /known_schedule_revision=7/);
+  assert.deepEqual(
+    JSON.parse(requests[0]!.relayEndpoints || "[]")[0],
+    "http://moncahier-relay-sch-000001.local:4317",
+  );
   assert.equal(result.pull_attempted_institutions, 1);
   assert.equal(result.pull_not_modified, 1);
   assert.equal(result.pull_snapshots_applied, 0);

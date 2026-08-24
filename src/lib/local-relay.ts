@@ -20,6 +20,7 @@ import {
   readCloudRelayCache,
   type AdminAttendanceDataSource,
 } from "@/lib/admin-attendance-monitor";
+import { relayEndpointCandidates } from "@/lib/relay-endpoints";
 
 export type LocalDataSource = AdminAttendanceDataSource;
 
@@ -82,6 +83,7 @@ export type RelayTeacherPeriodSummary = {
 export type RelayTeacherConnectivityResult = {
   status: RelayTeacherConnectivityStatus;
   checked_at: string;
+  base_url?: string;
   institution_id?: string;
   actor_kind?: "teacher" | "class_device";
   class_id?: string | null;
@@ -128,6 +130,7 @@ const INSTITUTION_ID_KEY = "moncahier:relay:institution-id";
 const LAST_BOOTSTRAP_KEY = "moncahier:relay:last-bootstrap-at";
 const ADMIN_SCHEDULE_SYNC_KEY = "moncahier:relay:schedule-sync-state";
 const ADMIN_SCHEDULE_SYNC_EVENT = "moncahier:relay:schedule-sync-state";
+const RELAY_LAST_GOOD_URL_PREFIX = "moncahier:relay:last-good-url:";
 const BOOTSTRAP_THROTTLE_MS = 5 * 60 * 1000;
 const MIN_RELAY_SCHEMA_VERSION = 8;
 const RELAY_PROTOCOL_VERSION = 1;
@@ -163,6 +166,43 @@ function normalizeBaseUrl(raw: string) {
   } catch {
     return fallback;
   }
+}
+
+function rememberedRelayBaseUrl(institutionId: string) {
+  if (!browser()) return null;
+  return String(
+    window.localStorage.getItem(`${RELAY_LAST_GOOD_URL_PREFIX}${institutionId}`) || "",
+  ).trim() || null;
+}
+
+function rememberRelayBaseUrl(institutionId: string, baseUrl: string) {
+  if (!browser()) return;
+  window.localStorage.setItem(
+    `${RELAY_LAST_GOOD_URL_PREFIX}${institutionId}`,
+    normalizeBaseUrl(baseUrl),
+  );
+}
+
+export function relayBaseUrlCandidates(input: {
+  institutionId?: string | null;
+  baseUrl?: string | null;
+  baseUrls?: string[] | null;
+}) {
+  const candidates = relayEndpointCandidates({
+    configuredUrl: input.baseUrl,
+    observedUrls: input.baseUrls,
+  });
+  const remembered = rememberedRelayBaseUrl(String(input.institutionId || "").trim());
+  if (!remembered || !candidates.includes(remembered)) return candidates;
+  return [remembered, ...candidates.filter((url) => url !== remembered)];
+}
+
+export function preferredRelayBaseUrl(input: {
+  institutionId?: string | null;
+  baseUrl?: string | null;
+  baseUrls?: string[] | null;
+}) {
+  return relayBaseUrlCandidates(input)[0] || String(input.baseUrl || "").trim();
 }
 
 type RelayTargetAddressSpace = "local" | "loopback";
@@ -1142,11 +1182,12 @@ function requiresLocalHttpException(baseUrl: string) {
   }
 }
 
-export async function checkRelayTeacherConnectivity(input: {
+async function checkRelayTeacherConnectivityAtUrl(input: {
   institutionId: string;
   baseUrl: string;
   accessToken: string;
   expectedPeriod?: RelayTeacherExpectedPeriod | null;
+  timeoutMs?: number;
 }): Promise<RelayTeacherConnectivityResult> {
   const checkedAt = new Date().toISOString();
   const institutionId = String(input.institutionId || "").trim();
@@ -1192,7 +1233,7 @@ export async function checkRelayTeacherConnectivity(input: {
     }, {
       baseUrl,
       includeConfiguredToken: false,
-      timeoutMs: RELAY_PERMISSION_TIMEOUT_MS,
+      timeoutMs: input.timeoutMs || RELAY_PERMISSION_TIMEOUT_MS,
     });
     if (response.ok !== true || String(response.institution_id || "").trim() !== institutionId) {
       return { status: "unreachable", checked_at: checkedAt };
@@ -1200,6 +1241,7 @@ export async function checkRelayTeacherConnectivity(input: {
     return {
       status: "reachable",
       checked_at: checkedAt,
+      base_url: baseUrl,
       institution_id: institutionId,
       actor_kind: response.actor_kind,
       class_id: response.class_id,
@@ -1222,19 +1264,57 @@ export async function checkRelayTeacherConnectivity(input: {
     };
   } catch (error) {
     if (error instanceof LocalRelayHttpError && error.status === 401) {
-      return { status: "access_denied", checked_at: checkedAt };
+      return { status: "access_denied", checked_at: checkedAt, base_url: baseUrl };
     }
     const permissionDenied =
       (error instanceof DOMException && error.name === "NotAllowedError") ||
       await localNetworkPermissionDenied(baseUrl);
     if (permissionDenied) {
-      return { status: "permission_denied", checked_at: checkedAt };
+      return { status: "permission_denied", checked_at: checkedAt, base_url: baseUrl };
     }
     if (requiresLocalHttpException(baseUrl) && !supportsRelayTargetAddressSpace()) {
-      return { status: "incompatible_browser", checked_at: checkedAt };
+      return { status: "incompatible_browser", checked_at: checkedAt, base_url: baseUrl };
     }
-    return { status: "unreachable", checked_at: checkedAt };
+    return { status: "unreachable", checked_at: checkedAt, base_url: baseUrl };
   }
+}
+
+export async function checkRelayTeacherConnectivity(input: {
+  institutionId: string;
+  baseUrl: string;
+  baseUrls?: string[] | null;
+  accessToken: string;
+  expectedPeriod?: RelayTeacherExpectedPeriod | null;
+}): Promise<RelayTeacherConnectivityResult> {
+  const candidates = relayBaseUrlCandidates({
+    institutionId: input.institutionId,
+    baseUrl: input.baseUrl,
+    baseUrls: input.baseUrls,
+  });
+  if (candidates.length === 0) {
+    return { status: "unreachable", checked_at: new Date().toISOString() };
+  }
+  let last: RelayTeacherConnectivityResult | null = null;
+  for (const baseUrl of candidates) {
+    const result = await checkRelayTeacherConnectivityAtUrl({
+      ...input,
+      baseUrl,
+      timeoutMs: candidates.length > 1 ? 7_000 : RELAY_PERMISSION_TIMEOUT_MS,
+    });
+    if (result.status === "reachable") {
+      rememberRelayBaseUrl(String(input.institutionId || "").trim(), baseUrl);
+      return result;
+    }
+    last = result;
+    if (
+      result.status === "access_denied" ||
+      result.status === "permission_denied" ||
+      result.status === "incompatible_browser"
+    ) {
+      return result;
+    }
+  }
+  return last || { status: "unreachable", checked_at: new Date().toISOString() };
 }
 
 export type RelayTeacherOfflineSchedule = {

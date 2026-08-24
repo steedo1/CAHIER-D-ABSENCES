@@ -13,6 +13,7 @@ export type AttendancePresencePolicy = {
   allow_local_relay: boolean;
   allow_gps_fallback: boolean;
   relay_local_url?: string | null;
+  relay_local_urls?: string[];
   relay_access_token?: string | null;
   max_gps_accuracy_m: number;
   gps_grace_m: number;

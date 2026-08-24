@@ -1,5 +1,6 @@
 import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
+import { relayEndpointCandidates } from "@/lib/relay-endpoints";
 
 export type ClassDeviceSourceRow = {
   id?: string | null;
@@ -25,6 +26,14 @@ type AttendancePolicyRow = {
   allow_local_relay?: boolean | null;
   relay_local_url?: string | null;
   relay_presence_secret?: string | null;
+};
+
+type RelayDeviceRow = {
+  institution_id?: string | null;
+  observed_lan_urls?: string[] | null;
+  last_seen_at?: string | null;
+  is_active?: boolean | null;
+  revoked_at?: string | null;
 };
 
 type QueryResult<T> = {
@@ -73,6 +82,7 @@ function secretValue(value: unknown) {
 function relayDiagnostic(
   row: ClassDeviceSourceRow,
   policy: AttendancePolicyRow | null,
+  relayLocalUrls: string[],
 ): ClassDeviceAccessDiagnostic | null {
   if (!text(row.institution_id)) return "institution_id_missing";
   if (!text(row.id)) return "class_id_missing";
@@ -81,7 +91,7 @@ function relayDiagnostic(
   if (policy.allow_local_relay !== true) {
     return "relay_local_access_disabled";
   }
-  if (!text(policy.relay_local_url)) return "relay_url_missing";
+  if (relayLocalUrls.length === 0) return "relay_url_missing";
   const secret = secretValue(policy.relay_presence_secret);
   if (!secret) return "relay_secret_missing";
   if (secret.length < 32) return "relay_secret_too_short";
@@ -170,7 +180,7 @@ export async function enrichClassDeviceAccess(input: {
     };
   }
 
-  const [institutionsResult, settingsResult, policiesResult] = await Promise.all([
+  const [institutionsResult, settingsResult, policiesResult, relayDevicesResult] = await Promise.all([
     readOptionalQuery<InstitutionRow>(() =>
       input.service
         .from("institutions")
@@ -189,6 +199,12 @@ export async function enrichClassDeviceAccess(input: {
         .select(
           "institution_id,enabled,allow_local_relay,relay_local_url,relay_presence_secret",
         )
+        .in("institution_id", institutionIds),
+    ),
+    readOptionalQuery<RelayDeviceRow>(() =>
+      input.service
+        .from("relay_sync_devices")
+        .select("institution_id,observed_lan_urls,last_seen_at,is_active,revoked_at")
         .in("institution_id", institutionIds),
     ),
   ]);
@@ -216,6 +232,18 @@ export async function enrichClassDeviceAccess(input: {
       row,
     ]),
   );
+  const observedUrlsByInstitution = new Map<string, string[]>();
+  if (!relayDevicesResult.error) {
+    for (const row of relayDevicesResult.data || []) {
+      if (row.is_active === false || text(row.revoked_at)) continue;
+      const institutionId = text(row.institution_id);
+      if (!institutionId || !Array.isArray(row.observed_lan_urls)) continue;
+      observedUrlsByInstitution.set(institutionId, [
+        ...(observedUrlsByInstitution.get(institutionId) || []),
+        ...row.observed_lan_urls,
+      ]);
+    }
+  }
   const aggregateDiagnostics = new Set<string>();
   if (institutionsResult.error) {
     aggregateDiagnostics.add("institution_metadata_unavailable");
@@ -232,7 +260,11 @@ export async function enrichClassDeviceAccess(input: {
     const institution = institutionById.get(institutionId);
     const settings = settingsById.get(institutionId);
     const policy = policyByInstitution.get(institutionId) || null;
-    const accessDiagnostic = relayDiagnostic(row, policy);
+    const relayLocalUrls = relayEndpointCandidates({
+      configuredUrl: policy?.relay_local_url,
+      observedUrls: observedUrlsByInstitution.get(institutionId),
+    });
+    const accessDiagnostic = relayDiagnostic(row, policy, relayLocalUrls);
     const metadataDiagnostics = new Set<string>();
     if (institutionsResult.error) {
       metadataDiagnostics.add("institution_metadata_unavailable");
@@ -310,8 +342,10 @@ export async function enrichClassDeviceAccess(input: {
         authorized_actor_profile_id: input.actorProfileId,
         relay_local_url:
           accessDiagnostic === null
-            ? text(policy?.relay_local_url)
+            ? relayLocalUrls[0]
             : null,
+        relay_local_urls:
+          accessDiagnostic === null ? relayLocalUrls : [],
         relay_access_token: relayAccessToken,
         diagnostic: accessDiagnostic,
       },

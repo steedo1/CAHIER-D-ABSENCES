@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
   if ("response" in context) return context.response;
   const { data, error } = await context.service
     .from("relay_sync_devices")
-    .select("id,institution_id,label,is_active,last_seen_at,revoked_at,created_at,updated_at")
+    .select("id,institution_id,label,is_active,last_seen_at,observed_lan_urls,observed_lan_at,revoked_at,created_at,updated_at")
     .eq("institution_id", context.institutionId)
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -106,6 +106,14 @@ export async function POST(request: NextRequest) {
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const pushUrl = `${new URL(request.url).origin}/api/relay/sync/push`;
+  const enrollment = {
+    version: 1,
+    institution_code: context.institution.code,
+    institution_name: context.institution.name,
+    cloud_sync_endpoint: pushUrl,
+    device_id: deviceId,
+    token,
+  };
   return NextResponse.json({
     ok: true,
     item: {
@@ -117,6 +125,7 @@ export async function POST(request: NextRequest) {
       push_url: pushUrl,
       token,
       token_displayed_once: true,
+      enrollment,
     },
   }, { status: 201, headers: { "Cache-Control": "no-store" } });
 }

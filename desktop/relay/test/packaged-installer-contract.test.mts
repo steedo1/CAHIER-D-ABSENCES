@@ -40,3 +40,22 @@ test("le Setup refuse de déclarer succès si la configuration PowerShell échou
   assert.match(innoSetup, /ResultCode\s*<>\s*0/);
   assert.match(innoSetup, /RaiseException/);
 });
+
+test("le Setup importe l'enrôlement Cloud sans saisie ni commande manuelle", () => {
+  assert.match(innoSetup, /MonCahier-Relay-Enrollment\.json/);
+  assert.match(innoSetup, /FileCopy\(EnrollmentSource, EnrollmentTarget/);
+  assert.match(installRelay, /cloud_sync_endpoint/);
+  assert.match(installRelay, /"sync-configure"/);
+  assert.match(installRelay, /Remove-Item\s+-LiteralPath\s+\$Candidate/);
+});
+
+test("diagnostic, copie du jeton et mise à jour préfèrent le runtime embarqué", () => {
+  for (const name of ["Diagnostic-Mon-Cahier.cmd", "Copier-Jeton-Admin.cmd"]) {
+    const source = readFileSync(resolve(relayRoot, `windows/${name}`), "utf8");
+    assert.match(source, /runtime\\node\.exe/i);
+  }
+  const updater = readFileSync(resolve(relayRoot, "windows/update-relay.ps1"), "utf8");
+  assert.match(updater, /runtime\\node\.exe/);
+  assert.match(updater, /runtime\\npm\.cmd/);
+  assert.doesNotMatch(updater, /Installez Node\.js/);
+});
