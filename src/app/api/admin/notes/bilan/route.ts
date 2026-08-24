@@ -2,11 +2,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  classMatchesEducationScope,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromSearchParams,
+  type EducationScopedClass,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   label: string | null;
   code?: string | null;
@@ -149,6 +156,32 @@ function cycleFromLevel(level: string): string {
     return "Second cycle";
   }
   return "Cycle non renseigné";
+}
+
+function educationTypeLabel(cls: ClassRow): string {
+  switch (normalizeClassEducationType(cls)) {
+    case "technical_secondary":
+      return "Enseignement technique secondaire";
+    case "vocational_training":
+      return "Formation professionnelle";
+    case "higher_technical_short_cycle":
+      return "Enseignement supérieur technique court";
+    default:
+      return "Secondaire général";
+  }
+}
+
+function classLevelLabel(cls: ClassRow): string {
+  const level = getClassLevelCode(cls);
+  return normalizeClassEducationType(cls) === "general_secondary"
+    ? normalizeLevel(level)
+    : cleanText(level) || "Niveau non renseigné";
+}
+
+function classCycleLabel(cls: ClassRow, level: string): string {
+  return normalizeClassEducationType(cls) === "general_secondary"
+    ? cycleFromLevel(level)
+    : educationTypeLabel(cls);
 }
 
 function splitName(fullName: string): { nom: string; prenoms: string } {
@@ -408,8 +441,8 @@ async function loadAbsenceCounts(params: {
 
   for (const row of marks as any[]) {
     const classId = cleanText(row.class_id);
-    if (!classId) continue;
-    const prev = out.get(classId) || { count: 0, minutes: 0 };
+    if (!classId || !out.has(classId)) continue;
+    const prev = out.get(classId)!;
     prev.count += 1;
     prev.minutes += Number(row.minutes || 0) || 0;
     out.set(classId, prev);
@@ -426,6 +459,14 @@ async function loadEvaluationLeaders(params: {
   to: string;
 }) {
   const classMap = new Map(params.classes.map((c) => [c.id, c]));
+
+  if (!classMap.size) {
+    return {
+      teacher_leaders: [],
+      class_leaders: [],
+      total_published_evaluations: 0,
+    };
+  }
 
   async function queryEvaluations(withPublicationStatus: boolean) {
     const select = withPublicationStatus
@@ -458,6 +499,10 @@ async function loadEvaluationLeaders(params: {
     evalRows = (first.data || []) as any[];
   }
 
+  evalRows = evalRows.filter((row) =>
+    classMap.has(cleanText(row.class_id)),
+  );
+
   const teacherIds = Array.from(new Set(evalRows.map((e) => cleanText(e.teacher_id)).filter(Boolean)));
   const teacherNames = await loadTeacherNames(params.srv, teacherIds);
 
@@ -478,7 +523,7 @@ async function loadEvaluationLeaders(params: {
       id: classId,
       label: classLabel(cls),
       count: 0,
-      meta: normalizeLevel(cls.level),
+      meta: classLevelLabel(cls),
     };
     cPrev.count += 1;
     byClass.set(classId, cPrev);
@@ -506,6 +551,7 @@ export async function GET(req: NextRequest) {
     const requestedReportMode = normalizeForMatch(
       url.searchParams.get("report_mode") || url.searchParams.get("mode"),
     );
+    const educationScope = readEducationScopeFromSearchParams(url.searchParams);
     const isAnnualRequested = requestedReportMode === "annual" || requestedReportMode === "annuel";
 
     const academicYear = requestedAcademicYear || (await getCurrentAcademicYear(srv, institutionId));
@@ -518,7 +564,7 @@ export async function GET(req: NextRequest) {
         .maybeSingle(),
       srv
         .from("classes")
-        .select("id,label,code,level,academic_year,institution_id,official_track_code")
+        .select("id,label,code,level,academic_year,institution_id,official_track_code,education_type,formation_code,formation_level_code")
         .eq("institution_id", institutionId)
         .eq("academic_year", academicYear)
         .order("level", { ascending: true })
@@ -531,7 +577,9 @@ export async function GET(req: NextRequest) {
         .order("order_index", { ascending: true }),
     ]);
 
-    const classes = ((classesRaw || []) as ClassRow[]).filter((c) => c.id);
+    const classes = ((classesRaw || []) as ClassRow[]).filter(
+      (c) => c.id && classMatchesEducationScope(c, educationScope),
+    );
     const periods = ((periodsRaw || []) as GradePeriodRow[])
       .filter((p) => p.is_active !== false && p.start_date && p.end_date)
       .sort((a, b) => {
@@ -641,7 +689,7 @@ export async function GET(req: NextRequest) {
 
         const fullName = cleanText(item.full_name) || "Élève";
         const names = splitName(fullName);
-        const level = normalizeLevel(res?.class?.level ?? cls.level);
+        const level = classLevelLabel(cls);
 
         const row: StudentPerformance = {
           student_id: cleanText(item.student_id),
@@ -652,7 +700,7 @@ export async function GET(req: NextRequest) {
           class_id: cls.id,
           class_label: classLabel(cls),
           level,
-          cycle: cycleFromLevel(level),
+          cycle: classCycleLabel(cls, level),
           moyenne: avg,
           rang_classe: isAnnual ? cleanNumber(item.annual_rank, 0) : cleanNumber(item.rank, 0),
           moyenne_scientifique: sciWeight > 0 ? cleanNumber(sciTotal / sciWeight) : null,
@@ -668,13 +716,13 @@ export async function GET(req: NextRequest) {
 
       const classAvg = average(classStudents.map((s) => s.moyenne));
       const abs = absenceMap.get(cls.id) || { count: 0, minutes: 0 };
-      const level = normalizeLevel(cls.level);
+      const level = classLevelLabel(cls);
 
       classSummaries.push({
         class_id: cls.id,
         class_label: classLabel(cls),
         level,
-        cycle: cycleFromLevel(level),
+        cycle: classCycleLabel(cls, level),
         effectif: Array.isArray(res?.items) ? res!.items!.length : 0,
         classes_count: classStudents.length,
         moyenne_classe: classAvg,
@@ -730,14 +778,17 @@ export async function GET(req: NextRequest) {
       classes: classes.map((c) => ({
         id: c.id,
         label: classLabel(c),
-        level: normalizeLevel(c.level),
-        cycle: cycleFromLevel(normalizeLevel(c.level)),
+        level: classLevelLabel(c),
+        cycle: classCycleLabel(c, classLevelLabel(c)),
         academic_year: c.academic_year,
+        education_type: normalizeClassEducationType(c),
+        formation_code: c.formation_code || null,
+        formation_level_code: getClassLevelCode(c) || null,
       })),
       top_by_class: classes.map((c) => ({
         class_id: c.id,
         class_label: classLabel(c),
-        level: normalizeLevel(c.level),
+        level: classLevelLabel(c),
         items: topByClass[c.id] || [],
       })),
       top_by_level: topByLevel,
@@ -757,6 +808,7 @@ export async function GET(req: NextRequest) {
         classes_count: classes.length,
         classed_students_count: allStudents.length,
         total_published_evaluations: evalLeaders.total_published_evaluations,
+        education_scope: educationScope,
       },
     });
   } catch (e: any) {
