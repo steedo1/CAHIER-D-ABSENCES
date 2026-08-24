@@ -3,6 +3,12 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
+import {
+  EDUCATION_TYPE_OPTIONS,
+  getConfiguredFormations,
+  type EducationOrganizationSettings,
+  type EducationType,
+} from "@/lib/education-organization";
 
 type ProfileMini = {
   id: string;
@@ -38,6 +44,9 @@ type ClassListPayload = {
     level: string | null;
     code: string | null;
     academic_year: string | null;
+    education_type: EducationType | null;
+    formation_code: string | null;
+    formation_level_code: string | null;
   };
   academic_year: {
     code: string | null;
@@ -335,6 +344,8 @@ export default function ClassListPrintPage() {
   const classId = String(params?.id || "").trim();
 
   const [data, setData] = useState<ClassListPayload | null>(null);
+  const [educationOrganization, setEducationOrganization] =
+    useState<EducationOrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [educatorName, setEducatorName] = useState("");
@@ -365,13 +376,16 @@ export default function ClassListPrintPage() {
       const qs = academicYear
         ? `?academic_year=${encodeURIComponent(academicYear)}`
         : "";
-      const res = await fetch(
-        `/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`,
-        {
+      const [res, organizationRes] = await Promise.all([
+        fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`, {
           cache: "no-store",
-        },
-      );
+        }),
+        fetch("/api/admin/institution/education-organization", {
+          cache: "no-store",
+        }),
+      ]);
       const json = await res.json().catch(() => ({}));
+      const organizationJson = await organizationRes.json().catch(() => ({}));
 
       if (res.status === 401)
         throw new Error("Session expirée. Reconnectez-vous puis réessayez.");
@@ -381,6 +395,11 @@ export default function ClassListPrintPage() {
         );
 
       setData(json as ClassListPayload);
+      setEducationOrganization(
+        organizationRes.ok && organizationJson?.organization
+          ? (organizationJson.organization as EducationOrganizationSettings)
+          : null,
+      );
       setEditable(
         cloneEditable(Array.isArray(json?.students) ? json.students : []),
       );
@@ -408,6 +427,30 @@ export default function ClassListPrintPage() {
   }, [customEducatorName, educatorName]);
 
   const academicYearLabel = buildAcademicYearLabel(data);
+  const classEducationType: EducationType =
+    data?.class?.education_type || "general_secondary";
+  const classEducationTypeLabel =
+    EDUCATION_TYPE_OPTIONS.find((item) => item.id === classEducationType)?.label ||
+    classEducationType;
+  const classFormation = useMemo(
+    () =>
+      educationOrganization && data?.class?.formation_code
+        ? getConfiguredFormations(educationOrganization).find(
+            (item) => item.key === data.class.formation_code,
+          ) || null
+        : null,
+    [data?.class?.formation_code, educationOrganization],
+  );
+  const classFormationLabel = classFormation
+    ? `${classFormation.diplomaLabel} — ${classFormation.name}`
+    : data?.class?.formation_code || "—";
+  const classFormationLevelLabel =
+    classFormation?.levels.find(
+      (item) => item.value === data?.class?.formation_level_code,
+    )?.label ||
+    data?.class?.formation_level_code ||
+    data?.class?.level ||
+    "—";
   const headTeacherLabel = personLabel(data?.staff?.head_teacher);
   const students = data?.students || [];
   const canEdit = data?.can_edit !== false;
@@ -1490,6 +1533,20 @@ export default function ClassListPrintPage() {
                 </span>
               </div>
             </header>
+
+            {classEducationType !== "general_secondary" ? (
+              <div className="mb-3 grid grid-cols-1 gap-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs sm:grid-cols-3 print:grid-cols-3 print:bg-white">
+                <div>
+                  <strong>Type d’enseignement :</strong> {classEducationTypeLabel}
+                </div>
+                <div>
+                  <strong>Formation :</strong> {classFormationLabel}
+                </div>
+                <div>
+                  <strong>Niveau de formation :</strong> {classFormationLevelLabel}
+                </div>
+              </div>
+            ) : null}
 
             <div className="staff-line">
               <div>
