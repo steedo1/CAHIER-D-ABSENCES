@@ -40,6 +40,10 @@ export async function POST(req: NextRequest) {
         audience_type: audienceType,
         target_type: targetType,
         target_value: targetValue,
+        education_type: s(body?.education_type) || null,
+        formation_code: s(body?.formation_code) || null,
+        formation_level_code: s(body?.formation_level_code) || null,
+        class_id: s(body?.class_id) || null,
       }
     );
 

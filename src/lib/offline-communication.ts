@@ -16,6 +16,10 @@ export type CommunicationOfflinePayload = {
   target_type: string;
   target_value: string | null;
   target_label?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
+  class_id?: string | null;
   channel: "push" | "sms" | "push_sms";
   title: string;
   body: string;

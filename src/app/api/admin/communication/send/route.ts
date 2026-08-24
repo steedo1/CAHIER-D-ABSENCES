@@ -87,6 +87,10 @@ export async function POST(req: NextRequest) {
     const audienceType = s(body?.audience_type) as CommunicationAudienceType;
     const targetType = s(body?.target_type);
     const targetValue = s(body?.target_value) || null;
+    const educationType = s(body?.education_type) || null;
+    const formationCode = s(body?.formation_code) || null;
+    const formationLevelCode = s(body?.formation_level_code) || null;
+    const classId = s(body?.class_id) || null;
     const channel = s(body?.channel) as CommunicationChannel;
     const title = safeText(body?.title, 120);
     const messageBody = safeText(body?.body, 900);
@@ -167,6 +171,10 @@ export async function POST(req: NextRequest) {
         audience_type: audienceType,
         target_type: targetType,
         target_value: targetValue,
+        education_type: educationType,
+        formation_code: formationCode,
+        formation_level_code: formationLevelCode,
+        class_id: classId,
       }
     );
 
@@ -217,6 +225,12 @@ export async function POST(req: NextRequest) {
         original_title: title,
         original_body: messageBody,
         client_operation_id: clientOperationId,
+        education_scope: {
+          education_type: educationType,
+          formation_code: formationCode,
+          formation_level_code: formationLevelCode,
+          class_id: classId,
+        },
       },
       sent_at: nowIso,
     } as any;
@@ -308,6 +322,12 @@ export async function POST(req: NextRequest) {
       target_type: targetType,
       target_value: targetValue,
       target_label: resolved.target_label,
+      education_scope: {
+        education_type: educationType,
+        formation_code: formationCode,
+        formation_level_code: formationLevelCode,
+        class_id: classId,
+      },
       institution: { id: ctx.institutionId, name: senderName },
       sender_name: senderName,
       created_at: nowIso,
