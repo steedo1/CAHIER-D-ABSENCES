@@ -20,6 +20,132 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  autofix-reachable-endpoint:
+    name: Apply reachable relay endpoint fix
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/relay-working-endpoint-20260824'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: fix/relay-working-endpoint-20260824
+          fetch-depth: 0
+
+      - name: Apply exact TeacherDashboard patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/components/teacher/TeacherDashboard.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          old_memo = '''  const relayBaseUrl = useMemo(() => preferredRelayBaseUrl({
+            institutionId: inst.institution_id,
+            baseUrl: inst.attendance_presence?.relay_local_url,
+            baseUrls: inst.attendance_presence?.relay_local_urls,
+          }), [
+            inst.institution_id,
+            inst.attendance_presence?.relay_local_url,
+            inst.attendance_presence?.relay_local_urls,
+          ]);'''
+          new_live = '''  // Recalcule à chaque rendu : après une sonde réussie, preferredRelayBaseUrl
+          // relit automatiquement l'adresse LAN mémorisée sans rechargement manuel.
+          const relayBaseUrl = preferredRelayBaseUrl({
+            institutionId: inst.institution_id,
+            baseUrl: inst.attendance_presence?.relay_local_url,
+            baseUrls: inst.attendance_presence?.relay_local_urls,
+          });'''
+          if old_memo in text:
+              text = text.replace(old_memo, new_live, 1)
+          elif new_live not in text:
+              raise SystemExit("relayBaseUrl pattern missing")
+
+          old_signature = '''  async function preparePresenceEvidence(
+    clientSessionId: string,
+    forceGps = false,
+  ): Promise<{'''
+          new_signature = '''  async function preparePresenceEvidence(
+    clientSessionId: string,
+    forceGps = false,
+    relayBaseUrlOverride?: string | null,
+  ): Promise<{'''
+          if old_signature in text:
+              text = text.replace(old_signature, new_signature, 1)
+          elif new_signature not in text:
+              raise SystemExit("preparePresenceEvidence signature missing")
+
+          old_presence_url = '''          baseUrl: relayBaseUrl,
+          accessToken: policy.relay_access_token,'''
+          new_presence_url = '''          baseUrl: relayBaseUrlOverride || relayBaseUrl,
+          accessToken: policy.relay_access_token,'''
+          if old_presence_url in text:
+              text = text.replace(old_presence_url, new_presence_url, 1)
+          elif new_presence_url not in text:
+              raise SystemExit("presence relay URL pattern missing")
+
+          old_cloud = '''      const cloudAvailable = await teacherSessionCloudAvailable();'''
+          new_cloud = '''      // Réutilise immédiatement l'adresse que la sonde vient de confirmer.
+      const activeRelayBaseUrl = liveRelayCheck?.base_url || relayBaseUrl;
+      const cloudAvailable = await teacherSessionCloudAvailable();'''
+          if old_cloud in text:
+              text = text.replace(old_cloud, new_cloud, 1)
+          elif new_cloud not in text:
+              raise SystemExit("cloud availability anchor missing")
+
+          old_open = '''          relayBaseUrl,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,'''
+          new_open = '''          relayBaseUrl: activeRelayBaseUrl,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,'''
+          if old_open in text:
+              text = text.replace(old_open, new_open, 1)
+          elif new_open not in text:
+              raise SystemExit("session open relay URL pattern missing")
+
+          old_presence_call = '''      const presence = await preparePresenceEvidence(
+        clientSessionId,
+        startDecision.force_gps,
+      );'''
+          new_presence_call = '''      const presence = await preparePresenceEvidence(
+        clientSessionId,
+        startDecision.force_gps,
+        activeRelayBaseUrl,
+      );'''
+          if old_presence_call in text:
+              text = text.replace(old_presence_call, new_presence_call, 1)
+          elif new_presence_call not in text:
+              raise SystemExit("presence call pattern missing")
+
+          path.write_text(text, encoding="utf-8")
+
+          test = Path("test/teacher-relay-working-endpoint-wiring.test.mjs")
+          test.write_text('''import assert from "node:assert/strict";\nimport fs from "node:fs";\nimport test from "node:test";\n\nconst source = fs.readFileSync(\n  new URL("../src/components/teacher/TeacherDashboard.tsx", import.meta.url),\n  "utf8",\n);\n\ntest("relay URL is recomputed after a successful fallback probe", () => {\n  assert.match(source, /const relayBaseUrl = preferredRelayBaseUrl\\(\\{/);\n  assert.doesNotMatch(source, /const relayBaseUrl = useMemo\\(\\(\\) => preferredRelayBaseUrl/);\n});\n\ntest("the live reachable endpoint is reused immediately for offline session opening", () => {\n  assert.match(source, /const activeRelayBaseUrl = liveRelayCheck\\?\\.base_url \\|\\| relayBaseUrl;/);\n  assert.match(source, /openTeacherAttendanceSessionOnRelay\\(\\{[\\s\\S]*?relayBaseUrl: activeRelayBaseUrl,/);\n});\n\ntest("the same reachable endpoint is used for local presence proof", () => {\n  assert.match(source, /relayBaseUrlOverride\\?: string \\| null/);\n  assert.match(source, /baseUrl: relayBaseUrlOverride \\|\\| relayBaseUrl/);\n  assert.match(source, /preparePresenceEvidence\\([\\s\\S]*?activeRelayBaseUrl,[\\s\\S]*?\\);/);\n});\n''', encoding="utf-8")
+
+          for temp in [
+              Path(".github/workflows/relay-working-endpoint-hotfix.yml"),
+              Path(".github/relay-working-endpoint-trigger.txt"),
+          ]:
+              if temp.exists():
+                  temp.unlink()
+
+      - name: Focused regression test
+        run: node --test test/teacher-relay-working-endpoint-wiring.test.mjs
+
+      - name: Commit exact fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git commit -m "fix(relay): reuse the reachable teacher endpoint"
+          git push origin HEAD:fix/relay-working-endpoint-20260824
+
   web-offline-critical:
     name: Web offline critical
     runs-on: ubuntu-latest
