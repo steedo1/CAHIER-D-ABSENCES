@@ -291,7 +291,7 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     const health = await fetch(`${relay.url}/health`);
     assert.equal(health.status, 200);
     const healthBody = await health.json() as any;
-    assert.equal(healthBody.relay_version, "0.2.1");
+    assert.equal(healthBody.relay_version, "0.2.2");
     assert.equal(healthBody.schema_version, 9);
     assert.equal(healthBody.protocol_version, 1);
     assert.equal(healthBody.teacher_attendance_writes_enabled, true);
@@ -340,7 +340,7 @@ test("health et connectivity exposent le contrat sans secret", async () => {
     assert.equal(statusBody.institution_id, "inst-1");
     assert.equal(statusBody.snapshot_revision, 12);
     assert.equal(statusBody.schedule_status, "ready");
-    assert.equal(statusBody.relay_version, "0.2.1");
+    assert.equal(statusBody.relay_version, "0.2.2");
     assert.equal(statusBody.capabilities.bootstrap_revision_ack_v1, true);
 
     const unauthorizedStatus = await fetch(

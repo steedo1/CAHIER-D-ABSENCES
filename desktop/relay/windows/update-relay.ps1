@@ -53,13 +53,23 @@ try {
         throw "Aucun relais déjà configuré n'a été trouvé. Utilisez d'abord Installer-Mon-Cahier.cmd."
     }
 
-    $NodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
-    $NpmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if (-not $NodeCommand -or -not $NpmCommand) {
-        throw "Node.js n'est pas installé. Installez Node.js 20 à 26 puis relancez la mise à jour."
+    $BundledNodePath = Join-Path $RelayRoot "runtime\node.exe"
+    $BundledNpmPath = Join-Path $RelayRoot "runtime\npm.cmd"
+    $NodePath = if (Test-Path -LiteralPath $BundledNodePath -PathType Leaf) {
+        $BundledNodePath
+    } else {
+        (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+    }
+    $NpmPath = if (Test-Path -LiteralPath $BundledNpmPath -PathType Leaf) {
+        $BundledNpmPath
+    } else {
+        (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $NodePath -or -not $NpmPath) {
+        throw "Le runtime autonome du relais est incomplet. Réinstallez le paquet Mon Cahier Relay."
     }
 
-    $NodeVersion = (& $NodeCommand.Source --version).TrimStart("v")
+    $NodeVersion = (& $NodePath --version).TrimStart("v")
     $NodeMajor = [int]($NodeVersion.Split(".")[0])
     if ($NodeMajor -lt 20 -or $NodeMajor -gt 26) {
         throw "Version Node.js incompatible : $NodeVersion. Utilisez une version comprise entre 20 et 26."
@@ -78,10 +88,10 @@ try {
             -not (Test-Path (Join-Path $RelayRoot "node_modules\better-sqlite3")) -or
             -not (Test-Path (Join-Path $RelayRoot "node_modules\.bin\tsc.cmd"))
         if ($DependenciesMissing) {
-            & $NpmCommand.Source ci --no-audit --no-fund
+            & $NpmPath ci --no-audit --no-fund
             if ($LASTEXITCODE -ne 0) { throw "L'installation des composants du relais a échoué." }
         }
-        & $NpmCommand.Source run build
+        & $NpmPath run build
         if ($LASTEXITCODE -ne 0) { throw "La construction de la nouvelle version du relais a échoué." }
     } finally {
         Pop-Location
@@ -91,6 +101,7 @@ try {
         throw "La nouvelle version du relais n'a pas produit dist\src\cli.mjs."
     }
 
+    Stop-ScheduledTask -TaskName "Mon Cahier Relay" -ErrorAction SilentlyContinue
     Stop-RelayListener $Port
 
     $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -141,7 +152,7 @@ try {
     & (Join-Path $PSScriptRoot "install-startup-task.ps1") `
         -RelayRoot $RelayRoot `
         -ConfigPath $ConfigPath `
-        -NodePath $NodeCommand.Source | Out-Null
+        -NodePath $NodePath | Out-Null
     Start-ScheduledTask -TaskName "Mon Cahier Relay"
 
     $Health = $null
@@ -168,7 +179,7 @@ try {
     $RecommendedLanAddress = "Adresse .local non détectée"
     $DirectLanAddress = "Aucune IPv4 LAN détectée actuellement"
     try {
-        $DoctorJson = & $NodeCommand.Source $CliPath "doctor"
+        $DoctorJson = & $NodePath $CliPath "doctor"
         if ($LASTEXITCODE -eq 0) {
             $Doctor = $DoctorJson | ConvertFrom-Json
             if ($Doctor.lan_url) { $RecommendedLanAddress = [string]$Doctor.lan_url }

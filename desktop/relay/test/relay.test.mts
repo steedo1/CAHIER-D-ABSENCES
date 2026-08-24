@@ -238,6 +238,7 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
       institutionName: "COLLEGE NOTRE-DAME",
       configPath,
       env: {},
+      platform: "linux",
     });
     assert.equal(first.token.length >= 32, true);
     assert.equal(first.token_reused, false);
@@ -266,6 +267,7 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
       institutionName: "COLLEGE NOTRE-DAME",
       configPath,
       env: {},
+      platform: "linux",
     });
     assert.equal(second.token_reused, true);
     assert.equal(second.token, first.token);
@@ -277,6 +279,7 @@ test("l'assistant conserve l'école unique ou ajoute explicitement un groupe sco
       configPath,
       addInstitution: true,
       env: {},
+      platform: "linux",
     });
     assert.equal(schoolGroup.mode, "school_group");
     assert.equal(schoolGroup.token_reused, false);

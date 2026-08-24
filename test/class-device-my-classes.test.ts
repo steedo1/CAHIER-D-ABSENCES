@@ -16,6 +16,7 @@ type FakeOptions = {
   institutions?: any[];
   settings?: any[];
   policies?: any[];
+  relayDevices?: any[];
   institutionError?: { code?: string; message?: string } | null;
   settingsError?: { code?: string; message?: string } | null;
   policyError?: { code?: string; message?: string } | null;
@@ -31,6 +32,12 @@ function fakeService(options: FakeOptions): ClassDeviceMetadataReader {
         select(columns) {
           return {
             async in() {
+              if (table === "relay_sync_devices") {
+                return {
+                  data: options.relayDevices || [],
+                  error: null,
+                };
+              }
               if (table === "institution_attendance_policies") {
                 if (options.throwPolicy) throw new Error("policy query failed");
                 return {
@@ -142,6 +149,32 @@ test("politique valide retourne URL et jeton class_device v2 borné", async () =
   assert.equal(payload.institution_id, "school-a");
   assert.equal(payload.class_id, "class-a");
   assert.equal(payload.actor_profile_id, "device-profile-a");
+});
+
+test("les endpoints observés remplacent automatiquement l'ancienne IPv4", async () => {
+  const result = await enrichClassDeviceAccess({
+    items: [classRow("class-a", "school-a")],
+    actorProfileId: "device-profile-a",
+    service: fakeService({
+      policies: [policy("school-a", {
+        relay_local_url: "http://192.168.206.246:4317",
+      })],
+      relayDevices: [{
+        institution_id: "school-a",
+        observed_lan_urls: [
+          "http://192.168.209.246:4317",
+          "http://laptop-2srli1bs.local:4317",
+        ],
+      }],
+    }),
+  });
+  const presence: any = (result.items[0] as any).attendance_presence;
+  assert.equal(presence.relay_local_url, "http://laptop-2srli1bs.local:4317");
+  assert.deepEqual(presence.relay_local_urls, [
+    "http://laptop-2srli1bs.local:4317",
+    "http://192.168.209.246:4317",
+    "http://192.168.206.246:4317",
+  ]);
 });
 
 test("deux écoles et deux classes ne mélangent jamais leurs jetons", async () => {

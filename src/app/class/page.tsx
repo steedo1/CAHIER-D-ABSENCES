@@ -50,6 +50,7 @@ import {
 } from "@/lib/class-device-attendance-recovery";
 import {
   fetchRelayTeacherOfflineSchedule,
+  preferredRelayBaseUrl,
   type RelayTeacherOfflineSchedule,
 } from "@/lib/local-relay";
 import {
@@ -150,6 +151,7 @@ type MyClass = {
     enabled?: boolean;
     allow_local_relay?: boolean;
     relay_local_url?: string | null;
+    relay_local_urls?: string[];
     relay_access_token?: string | null;
     access_contract_version?: number | null;
     actor_kind?: "class_device" | null;
@@ -158,6 +160,14 @@ type MyClass = {
     diagnostic?: string | null;
   } | null;
 };
+
+function classRelayBaseUrl(item: MyClass | null | undefined) {
+  return preferredRelayBaseUrl({
+    institutionId: item?.institution_id,
+    baseUrl: item?.attendance_presence?.relay_local_url,
+    baseUrls: item?.attendance_presence?.relay_local_urls,
+  });
+}
 type Subject = { id: string; label: string };
 type RosterItem = { id: string; full_name: string; matricule: string | null };
 type SessionDeliveryOrigin = "relay" | "cloud_fallback" | "local_pending";
@@ -792,7 +802,7 @@ export default function ClassDevicePage() {
       try {
         const schedule = await fetchRelayTeacherOfflineSchedule({
           institutionId: target.institution_id,
-          baseUrl: relay.relay_local_url!,
+          baseUrl: classRelayBaseUrl(target),
           accessToken: relay.relay_access_token!,
         });
         const applied = await applySchedule(schedule, "live");
@@ -1215,7 +1225,7 @@ export default function ClassDevicePage() {
             institutionId: selectedClass.institution_id,
             classId: selectedClass.id,
             actorProfileId: selectedClass.actor_profile_id,
-            relayBaseUrl: relay.relay_local_url,
+            relayBaseUrl: classRelayBaseUrl(selectedClass),
             relayAccessToken: relay.relay_access_token,
           });
           setRelayStatus(
@@ -1379,6 +1389,7 @@ export default function ClassDevicePage() {
     selectedClass?.institution_id,
     selectedClass?.actor_profile_id,
     selectedClass?.attendance_presence?.relay_local_url,
+    selectedClass?.attendance_presence?.relay_local_urls,
     selectedClass?.attendance_presence?.relay_access_token,
     pendingSync,
   ]);
@@ -1917,6 +1928,7 @@ export default function ClassDevicePage() {
     selectedClass?.id,
     selectedClass?.institution_id,
     selectedClass?.attendance_presence?.relay_local_url,
+    selectedClass?.attendance_presence?.relay_local_urls,
     selectedClass?.attendance_presence?.relay_access_token,
   ]);
 
@@ -2859,7 +2871,7 @@ export default function ClassDevicePage() {
         classId,
         periodId: verifiedPeriod.id!,
         attemptKey,
-        relayBaseUrl: relayPolicy?.relay_local_url,
+        relayBaseUrl: classRelayBaseUrl(selectedClass),
         relayAccessToken: relayPolicy?.relay_access_token,
       });
       const relayAttemptDuration = performance.now() - relayAttemptStartedAt;
@@ -3330,7 +3342,7 @@ export default function ClassDevicePage() {
             classId: cur.class_id,
             periodId,
             marks,
-            relayBaseUrl: relayPolicy?.relay_local_url,
+            relayBaseUrl: classRelayBaseUrl(selectedClass),
             relayAccessToken: relayPolicy?.relay_access_token,
             forceRelay: true,
             capturedAtDevice: attendanceCapturedAt,
@@ -3350,7 +3362,7 @@ export default function ClassDevicePage() {
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
-              relayBaseUrl: relayPolicy?.relay_local_url,
+              relayBaseUrl: classRelayBaseUrl(selectedClass),
               relayAccessToken: relayPolicy?.relay_access_token,
             })
           : await stageTeacherAttendanceSessionClose({
@@ -3604,7 +3616,7 @@ export default function ClassDevicePage() {
             institutionId: selectedClass.institution_id,
             classId: selectedClass.id,
             actorProfileId: selectedClass.actor_profile_id,
-            relayBaseUrl: relay.relay_local_url,
+            relayBaseUrl: classRelayBaseUrl(selectedClass),
             relayAccessToken: relay.relay_access_token,
           });
         }
@@ -3801,7 +3813,9 @@ export default function ClassDevicePage() {
           classId: selectedClass?.id,
           actorProfileId: selectedClass?.actor_profile_id,
           relayBaseUrl:
-            selectedClass?.attendance_presence?.relay_local_url,
+            classRelayBaseUrl(selectedClass),
+          relayBaseUrls:
+            selectedClass?.attendance_presence?.relay_local_urls,
           relayAccessToken:
             selectedClass?.attendance_presence?.relay_access_token,
         }}

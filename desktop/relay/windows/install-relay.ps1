@@ -47,6 +47,34 @@ try {
     $PackagePath = Join-Path $RelayRoot "package.json"
     $ConfigPath = Join-Path $env:LOCALAPPDATA "MonCahier\Relay\config.json"
     $PackagedMode = $env:MONCAHIER_RELAY_PACKAGED -eq "1"
+    $EnrollmentPath = $null
+    $Enrollment = $null
+    $EnrollmentCandidates = @(
+        (Join-Path $RelayRoot "MonCahier-Relay-Enrollment.json"),
+        (Join-Path $PSScriptRoot "MonCahier-Relay-Enrollment.json"),
+        (Join-Path $env:USERPROFILE "Downloads\MonCahier-Relay-Enrollment.json")
+    )
+    foreach ($Candidate in $EnrollmentCandidates) {
+        if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+            try {
+                $CandidateEnrollment = Get-Content -LiteralPath $Candidate -Raw | ConvertFrom-Json
+                if (
+                    [int]$CandidateEnrollment.version -eq 1 -and
+                    [string]$CandidateEnrollment.institution_code -and
+                    [string]$CandidateEnrollment.institution_name -and
+                    [string]$CandidateEnrollment.cloud_sync_endpoint -and
+                    [string]$CandidateEnrollment.device_id -and
+                    [string]$CandidateEnrollment.token
+                ) {
+                    $EnrollmentPath = $Candidate
+                    $Enrollment = $CandidateEnrollment
+                    break
+                }
+            } catch {
+                # Un fichier invalide n'empêche pas l'assistant manuel de démarrer.
+            }
+        }
+    }
 
     if (-not (Test-Path $PackagePath)) {
         throw "Le dossier du relais est incomplet : package.json est introuvable."
@@ -86,19 +114,24 @@ try {
         }
     }
 
-    $InstitutionCode = [Microsoft.VisualBasic.Interaction]::InputBox(
-        "Saisissez le code unique de l'établissement. Exemple : LMA-000101",
-        "Mon Cahier - Code établissement",
-        $DefaultCode
-    ).Trim()
-    if (-not $InstitutionCode) { throw "Installation annulée : le code établissement est obligatoire." }
+    if ($Enrollment) {
+        $InstitutionCode = ([string]$Enrollment.institution_code).Trim()
+        $InstitutionName = ([string]$Enrollment.institution_name).Trim()
+    } else {
+        $InstitutionCode = [Microsoft.VisualBasic.Interaction]::InputBox(
+            "Saisissez le code unique de l'établissement. Exemple : LMA-000101",
+            "Mon Cahier - Code établissement",
+            $DefaultCode
+        ).Trim()
+        if (-not $InstitutionCode) { throw "Installation annulée : le code établissement est obligatoire." }
 
-    $InstitutionName = [Microsoft.VisualBasic.Interaction]::InputBox(
-        "Saisissez le nom de l'établissement.",
-        "Mon Cahier - Nom établissement",
-        $DefaultName
-    ).Trim()
-    if (-not $InstitutionName) { throw "Installation annulée : le nom établissement est obligatoire." }
+        $InstitutionName = [Microsoft.VisualBasic.Interaction]::InputBox(
+            "Saisissez le nom de l'établissement.",
+            "Mon Cahier - Nom établissement",
+            $DefaultName
+        ).Trim()
+        if (-not $InstitutionName) { throw "Installation annulée : le nom établissement est obligatoire." }
+    }
 
     $NormalizedInstitutionCode = $InstitutionCode.Trim().ToUpperInvariant()
     $AddInstitution = $false
@@ -153,6 +186,25 @@ try {
     $SetupJson = & $NodeCommand.Source @ConfigureArgs
     if ($LASTEXITCODE -ne 0) { throw "La configuration du relais a échoué." }
     $Setup = $SetupJson | ConvertFrom-Json
+
+    if ($Enrollment) {
+        $CloudConfigureArgs = @(
+            $CliPath,
+            "sync-configure",
+            "--config", $ConfigPath,
+            "--institution-code", $InstitutionCode,
+            "--endpoint", ([string]$Enrollment.cloud_sync_endpoint),
+            "--device-id", ([string]$Enrollment.device_id),
+            "--token", ([string]$Enrollment.token)
+        )
+        & $NodeCommand.Source @CloudConfigureArgs | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "L'identité Cloud fournie par Mon Cahier est invalide ou incomplète."
+        }
+        foreach ($Candidate in $EnrollmentCandidates) {
+            Remove-Item -LiteralPath $Candidate -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     $ConfigIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $ConfigPath `
@@ -261,8 +313,10 @@ try {
         throw "Une ancienne version du relais répond encore sur le port 4317. Fermez-la puis relancez l'installation."
     }
 
-    [System.Windows.Forms.Clipboard]::SetText([string]$Setup.token)
-    Start-Process "https://www.mon-cahier.com/admin/parametres?tab=school"
+    if (-not $Enrollment) {
+        [System.Windows.Forms.Clipboard]::SetText([string]$Setup.token)
+        Start-Process "https://www.mon-cahier.com/admin/parametres?tab=school"
+    }
 
     $RecommendedLanAddress = if ($Setup.lan_url) {
         [string]$Setup.lan_url
@@ -286,7 +340,11 @@ try {
         "Adresse du poste Admin : http://127.0.0.1:4317`n" +
         "Adresse recommandée : $RecommendedLanAddress`n" +
         "Adresse directe de secours : $DirectLanAddress`n`n" +
-        "Le jeton Admin a été copié dans le presse-papiers. Collez-le une seule fois dans Mon Cahier, puis cliquez sur Tester et synchroniser.`n`n" +
+        $(if ($Enrollment) {
+            "L'identité Cloud et la découverte réseau ont été configurées automatiquement.`n`n"
+        } else {
+            "Le jeton Admin a été copié dans le presse-papiers. Collez-le une seule fois dans Mon Cahier, puis cliquez sur Tester et synchroniser.`n`n"
+        }) +
         "Version relais : $($HealthCheck.relay_version) — schéma : $($HealthCheck.schema_version)`n`n" +
         "Le relais démarrera désormais automatiquement, sans commande PowerShell."
     )

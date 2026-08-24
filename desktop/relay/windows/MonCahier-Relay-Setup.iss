@@ -46,6 +46,8 @@ var
   PowerShellExe: String;
   InstallScript: String;
   InstallArgs: String;
+  EnrollmentSource: String;
+  EnrollmentTarget: String;
 begin
   if CurStep = ssInstall then
   begin
@@ -54,6 +56,17 @@ begin
 
   if CurStep = ssPostInstall then
   begin
+    EnrollmentSource := ExpandConstant('{src}\MonCahier-Relay-Enrollment.json');
+    EnrollmentTarget := ExpandConstant('{app}\MonCahier-Relay-Enrollment.json');
+    DeleteFile(EnrollmentTarget);
+    if FileExists(EnrollmentSource) then
+    begin
+      if not FileCopy(EnrollmentSource, EnrollmentTarget, False) then
+      begin
+        RaiseException('Impossible de préparer la configuration automatique du relais.');
+      end;
+    end;
+
     PowerShellExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
     InstallScript := ExpandConstant('{app}\windows\install-packaged-relay.ps1');
     InstallArgs := '-NoProfile -ExecutionPolicy Bypass -File "' + InstallScript + '"';

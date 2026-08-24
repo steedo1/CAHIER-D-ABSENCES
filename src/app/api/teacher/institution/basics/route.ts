@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
+import { relayEndpointCandidates } from "@/lib/relay-endpoints";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,7 +75,7 @@ export async function GET() {
     return NextResponse.json({ error: perr2.message }, { status: 400 });
   }
 
-  const [policyResult, zonesResult, rolesResult] = await Promise.all([
+  const [policyResult, zonesResult, rolesResult, relayDevicesResult] = await Promise.all([
     service
       .from("institution_attendance_policies")
       .select(
@@ -92,6 +93,13 @@ export async function GET() {
       .select("role")
       .eq("profile_id", me.user.id)
       .eq("institution_id", instId),
+    service
+      .from("relay_sync_devices")
+      .select("observed_lan_urls,last_seen_at")
+      .eq("institution_id", instId)
+      .eq("is_active", true)
+      .is("revoked_at", null)
+      .order("last_seen_at", { ascending: false }),
   ]);
 
   const migrationMissing =
@@ -111,13 +119,19 @@ export async function GET() {
   const isTeacher = (rolesResult.data || []).some(
     (row: any) => String(row.role || "") === "teacher",
   );
+  const relayLocalUrls = relayEndpointCandidates({
+    configuredUrl: presencePolicy.relay_local_url,
+    observedUrls: (relayDevicesResult.data || []).flatMap(
+      (row: any) => Array.isArray(row.observed_lan_urls) ? row.observed_lan_urls : [],
+    ),
+  });
   const relayEnabled =
     !migrationMissing &&
     isTeacher &&
     presencePolicy.enabled === true &&
     presencePolicy.allow_local_relay !== false &&
     String(presencePolicy.relay_presence_secret || "").length >= 32 &&
-    Boolean(String(presencePolicy.relay_local_url || "").trim());
+    relayLocalUrls.length > 0;
   const relayAccessToken = relayEnabled
     ? createRelayAttendanceAccessToken({
         secret: String(presencePolicy.relay_presence_secret || ""),
@@ -138,7 +152,8 @@ export async function GET() {
       teacher_accounts_only: true,
       allow_local_relay: presencePolicy.allow_local_relay !== false,
       allow_gps_fallback: presencePolicy.allow_gps_fallback !== false,
-      relay_local_url: relayEnabled ? String(presencePolicy.relay_local_url) : null,
+      relay_local_url: relayEnabled ? relayLocalUrls[0] : null,
+      relay_local_urls: relayEnabled ? relayLocalUrls : [],
       relay_access_token: relayAccessToken,
       max_gps_accuracy_m: Number(presencePolicy.max_gps_accuracy_m || 60),
       gps_grace_m: Number(presencePolicy.gps_grace_m || 25),

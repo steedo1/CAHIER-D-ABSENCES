@@ -1,12 +1,40 @@
 import { createHash } from "node:crypto";
 import type { RelayConfig, RelayInstitutionConfig } from "./config.mjs";
 import { getInstitutionMeta, setInstitutionMeta, type RelayDatabase } from "./db.mjs";
+import { relayDiscoveryHostname } from "./discovery.mjs";
 import { canonicalJson, parseStoredJson } from "./json.mjs";
+import { defaultRelayMdnsHostname, relayMdnsUrl } from "./mdns.mjs";
+import { relayLanUrls } from "./setup.mjs";
 import type { RelayStore } from "./store.mjs";
 
 const SYNC_PROTOCOL_VERSION = 1 as const;
 const STALE_SENDING_AFTER_MS = 5 * 60 * 1000;
 const MAX_ERROR_LENGTH = 500;
+const RELAY_ENDPOINTS_HEADER = "X-MonCahier-Relay-Endpoints";
+
+export function relayReportedLanUrls(
+  config: RelayConfig,
+  options: {
+    platform?: NodeJS.Platform;
+    machineHostname?: string;
+    interfaces?: Parameters<typeof relayLanUrls>[1];
+  } = {},
+) {
+  const configuredHostname = String(
+    config.mdnsHostname || defaultRelayMdnsHostname(
+      config.institutionCode || config.institutions?.[0]?.code,
+    ),
+  );
+  const effectiveHostname = relayDiscoveryHostname(
+    configuredHostname,
+    options.platform,
+    options.machineHostname,
+  );
+  return Array.from(new Set([
+    relayMdnsUrl(effectiveHostname, config.port),
+    ...relayLanUrls(config.port, options.interfaces),
+  ])).slice(0, 8);
+}
 
 type ClaimedOperation = {
   operation_id: string;
@@ -714,6 +742,7 @@ async function pullInstitutionSnapshot(
         Authorization: `Bearer ${cloud.token}`,
         Accept: "application/json",
         "X-MonCahier-Relay-Device": cloud.deviceId,
+        [RELAY_ENDPOINTS_HEADER]: JSON.stringify(relayReportedLanUrls(config)),
       },
       signal: AbortSignal.timeout(config.cloudSyncTimeoutMs || 20_000),
     });

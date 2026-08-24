@@ -7,6 +7,7 @@ import {
   normalizeRelayMdnsHostname,
   relayMdnsUrl,
 } from "./mdns.mjs";
+import { relayDiscoveryHostname } from "./discovery.mjs";
 import {
   DEFAULT_RELAY_ALLOWED_ORIGINS,
   defaultRelayConfigPath,
@@ -23,6 +24,8 @@ export type ConfigureRelayInput = {
   rotateToken?: boolean;
   addInstitution?: boolean;
   env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  machineHostname?: string;
 };
 
 export type ConfigureCloudSyncInput = {
@@ -272,6 +275,11 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
 
   mkdirSync(dirname(databasePath), { recursive: true });
   writeConfigAtomically(configPath, file);
+  const effectiveMdnsHostname = relayDiscoveryHostname(
+    configuredMdnsHostname,
+    input.platform,
+    input.machineHostname,
+  );
 
   return {
     ok: true,
@@ -285,8 +293,8 @@ export function configureRelay(input: ConfigureRelayInput): ConfigureRelayResult
     port: configuredPort,
     admin_url: `http://127.0.0.1:${configuredPort}`,
     lan_urls: relayLanUrls(configuredPort),
-    lan_hostname: `${configuredMdnsHostname}.local`,
-    lan_url: relayMdnsUrl(configuredMdnsHostname, configuredPort),
+    lan_hostname: `${effectiveMdnsHostname}.local`,
+    lan_url: relayMdnsUrl(effectiveMdnsHostname, configuredPort),
     mdns_enabled: mdnsEnabled,
     token: schoolToken,
     token_reused: Boolean(sameInstitution && existingSchoolToken && schoolToken === existingSchoolToken),

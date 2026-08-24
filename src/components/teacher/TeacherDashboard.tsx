@@ -29,6 +29,7 @@ import {
 import {
   checkRelayTeacherConnectivity,
   LocalRelayHttpError,
+  preferredRelayBaseUrl,
   requestRelayAttendancePresenceProof,
   type RelayTeacherConnectivityResult,
 } from "@/lib/local-relay";
@@ -760,6 +761,15 @@ export default function TeacherDashboard() {
     },
   });
   const [periodsByDay, setPeriodsByDay] = useState<Record<number, Period[]>>({});
+  const relayBaseUrl = useMemo(() => preferredRelayBaseUrl({
+    institutionId: inst.institution_id,
+    baseUrl: inst.attendance_presence?.relay_local_url,
+    baseUrls: inst.attendance_presence?.relay_local_urls,
+  }), [
+    inst.institution_id,
+    inst.attendance_presence?.relay_local_url,
+    inst.attendance_presence?.relay_local_urls,
+  ]);
   const [slotLabel, setSlotLabel] = useState<string>(
     "Aucun créneau configuré (fallback automatique)"
   );
@@ -1454,7 +1464,7 @@ export default function TeacherDashboard() {
           institutionId: inst.institution_id,
           actorProfileId: inst.actor_profile_id,
           clientSessionId,
-          baseUrl: policy.relay_local_url,
+          baseUrl: relayBaseUrl,
           accessToken: policy.relay_access_token,
         });
         return {
@@ -1559,6 +1569,7 @@ export default function TeacherDashboard() {
         liveRelayCheck = await checkRelayTeacherConnectivity({
           institutionId: inst.institution_id,
           baseUrl: relayPolicy.relay_local_url,
+          baseUrls: relayPolicy.relay_local_urls,
           accessToken: relayPolicy.relay_access_token,
           expectedPeriod: {
             id: activeConfiguredSlot.id,
@@ -1615,7 +1626,7 @@ export default function TeacherDashboard() {
           classId: sel.class_id,
           periodId: activeConfiguredSlot.id,
           attemptKey: clientSessionId,
-          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
         if (local.state === "relay_opened" && local.session_id) {
@@ -1816,7 +1827,7 @@ export default function TeacherDashboard() {
             classId: open.class_id,
             periodId: open.period_id || null,
             marks,
-            relayBaseUrl: inst.attendance_presence?.relay_local_url,
+            relayBaseUrl,
             relayAccessToken: inst.attendance_presence?.relay_access_token,
             forceRelay: true,
             capturedAtDevice: attendanceCapturedAt,
@@ -1833,7 +1844,7 @@ export default function TeacherDashboard() {
         const closed = await closeTeacherAttendanceSessionOnRelay({
           institutionId: inst.institution_id,
           sessionId: open.id,
-          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
         if (closed.state !== "relay_confirmed") {
@@ -1862,7 +1873,7 @@ export default function TeacherDashboard() {
           classId: open.class_id,
           periodId: open.period_id || null,
           marks: finalMarks,
-          relayBaseUrl: inst.attendance_presence?.relay_local_url,
+          relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
           forceRelay: false,
           capturedAtDevice: attendanceCapturedAt,
@@ -1922,7 +1933,7 @@ export default function TeacherDashboard() {
         classId: transitionPrompt.classId,
         periodId: transitionPrompt.periodId,
         attemptKey: transitionPrompt.attemptKey,
-        relayBaseUrl: inst.attendance_presence?.relay_local_url,
+        relayBaseUrl,
         relayAccessToken: inst.attendance_presence?.relay_access_token,
       });
       if (transitioned.state !== "relay_confirmed" || !transitioned.new_session) {

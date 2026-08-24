@@ -332,7 +332,11 @@ migrations/20260728_relay_cloud_push_v1.sql
 
 La page **Admin → Paramètres → Périmètre des appels enseignants** permet de
 créer, suivre et révoquer les identités Cloud des PC relais. Le secret est
-affiché une seule fois avec une commande PowerShell prête à copier.
+affiché une seule fois. Le bouton **Télécharger pour l'installateur** produit
+`MonCahier-Relay-Enrollment.json` : laissez ce fichier à côté du Setup Windows,
+puis lancez le Setup. Le code et le nom de l'établissement ainsi que l'identité
+Cloud sont alors configurés automatiquement, sans commande PowerShell. Le
+fichier d'enrôlement contenant le secret est supprimé après son import réussi.
 
 L'API sous-jacente `POST /api/admin/offline/relay-devices?institution_id=...`
 crée une identité révocable pour le PC relais. Sa réponse contient :
@@ -345,7 +349,7 @@ Le jeton brut n'est jamais conservé dans Supabase. Seul son SHA-256 est stocké
 `DELETE /api/admin/offline/relay-devices` permet de révoquer un poste perdu ou
 remplacé.
 
-### Configuration protégée du PC relais
+### Configuration protégée du PC relais — secours avancé
 
 Sur le PC Windows, après avoir reçu les trois valeurs précédentes :
 
@@ -374,6 +378,17 @@ node dist\src\cli.mjs serve
 `doctor` et `/v1/status` exposent les compteurs en attente/bloqués, la dernière
 synchronisation réussie ainsi que la dernière erreur d'envoi, sans révéler le
 secret Cloud.
+
+### Découverte LAN sans adresse IP fixe
+
+À chaque pull Cloud authentifié, le relais publie son nom `.local` réellement
+utilisé par Windows et les IPv4 privées actuellement présentes sur ses cartes
+réseau. Le Cloud conserve au maximum huit endpoints et ne reçoit ni loopback ni
+destination Internet. Les routes métier professeur et appareil-classe renvoient
+la liste dans l'ordre suivant : nom `.local`, IPv4 actuelle, ancienne adresse
+configurée de secours. Le navigateur mémorise l'endpoint qui a répondu et le
+réutilise en priorité. Un changement DHCP ne demande donc aucune modification
+dans l'Admin ou sur les téléphones.
 
 Réglages facultatifs :
 

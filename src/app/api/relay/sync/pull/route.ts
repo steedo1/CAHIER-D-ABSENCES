@@ -7,6 +7,10 @@ import {
 } from "@/lib/relay-bootstrap-snapshot";
 import { attachRelayStudentGradeVersions } from "@/lib/relay-grade-version-snapshot";
 import { RELAY_SYNC_PROTOCOL_VERSION } from "@/lib/relay-cloud-sync";
+import {
+  parseReportedRelayEndpoints,
+  RELAY_ENDPOINTS_HEADER,
+} from "@/lib/relay-endpoints";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,10 +153,21 @@ export async function GET(request: NextRequest) {
   }
 
   const serverTime = new Date().toISOString();
+  const reportedRelayEndpoints = parseReportedRelayEndpoints(
+    request.headers.get(RELAY_ENDPOINTS_HEADER),
+  );
   const touchDevice = async () => {
+    const update: Record<string, unknown> = {
+      last_seen_at: serverTime,
+      updated_at: serverTime,
+    };
+    if (reportedRelayEndpoints.length > 0) {
+      update.observed_lan_urls = reportedRelayEndpoints;
+      update.observed_lan_at = serverTime;
+    }
     await service
       .from("relay_sync_devices")
-      .update({ last_seen_at: serverTime, updated_at: serverTime })
+      .update(update)
       .eq("id", deviceId);
   };
 

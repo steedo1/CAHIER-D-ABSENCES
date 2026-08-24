@@ -35,6 +35,7 @@ export default function AttendancePresenceSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [detectedRelayUrls, setDetectedRelayUrls] = useState<string[]>([]);
   const [relayAdminUrl, setRelayAdminUrl] = useState("http://127.0.0.1:4317");
   const [relayAdminToken, setRelayAdminToken] = useState("");
 
@@ -47,6 +48,9 @@ export default function AttendancePresenceSettings() {
       if (!response.ok) throw new Error(payload?.error || "Chargement impossible.");
       setPolicy({ ...DEFAULT_POLICY, ...(payload.policy || {}) });
       setZones(Array.isArray(payload.zones) ? payload.zones : []);
+      setDetectedRelayUrls(
+        Array.isArray(payload.relay_local_urls) ? payload.relay_local_urls : [],
+      );
     } catch (error: any) {
       setMessage(error?.message || "Chargement impossible.");
     } finally {
@@ -235,19 +239,18 @@ export default function AttendancePresenceSettings() {
       <RelayCloudSyncDevices />
 
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <label className="text-xs font-semibold text-slate-600 md:col-span-2">
-          Adresse du relais sur le réseau de l'établissement
-          <input
-            type="url"
-            value={policy.relay_local_url || ""}
-            onChange={(event) => setPolicy((current) => ({ ...current, relay_local_url: event.target.value || null }))}
-            placeholder="http://192.168.1.20:4317"
-            className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm"
-          />
-          <span className="mt-1 block font-normal text-slate-500">
-            Adresse LAN fixe du PC relais. Elle n'est utilisée que lorsque « relais local » est activé.
-          </span>
-        </label>
+        <div className="rounded-xl border bg-white p-3 text-xs text-slate-600 md:col-span-2">
+          <div className="font-bold text-slate-800">Adresses du relais détectées automatiquement</div>
+          {detectedRelayUrls.length ? (
+            <div className="mt-2 space-y-1 font-mono text-[11px]">
+              {detectedRelayUrls.map((url) => <div key={url}>{url}</div>)}
+            </div>
+          ) : (
+            <p className="mt-1">
+              En attente de la première connexion Cloud du PC relais. Aucune adresse IP ne doit être saisie manuellement.
+            </p>
+          )}
+        </div>
         <label className="text-xs font-semibold text-slate-600">
           Précision GPS maximale acceptée (m)
           <input

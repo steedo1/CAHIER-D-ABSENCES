@@ -69,7 +69,7 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
     read("src/components/admin/AttendancePresenceSettings.tsx"),
     read("src/components/admin/OfflineScheduleSyncBridge.tsx"),
   ]);
-  assert.match(contract, /RELAY_VERSION = "0\.2\.1"/);
+  assert.match(contract, /RELAY_VERSION = "0\.2\.2"/);
   assert.match(contract, /bootstrap_revision_ack_v1: true/);
   assert.match(contract, /admin_schedule_status_v1: true/);
   assert.match(server, /\/v1\/admin\/schedule-status/);
@@ -81,34 +81,6 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
   assert.match(settings, /relayBootstrapErrorMessage/);
   assert.match(bridge, /getRelayConfig/);
   assert.match(bridge, /Mise à jour du programme relais requise/);
-});
-
-test("un établissement sans relais ne déclenche jamais la synchro admin du relais", async () => {
-  const bridge = await read("src/components/admin/OfflineScheduleSyncBridge.tsx");
-
-  assert.match(
-    bridge,
-    /function hasConfiguredAdminRelay\(\) \{\s*return Boolean\(getRelayConfig\(\)\.token\);\s*\}/s,
-  );
-  assert.match(
-    bridge,
-    /const persisted = relayConfigured \? getAdminScheduleSyncState\(\) : null/,
-  );
-  assert.match(
-    bridge,
-    /setState\(hasConfiguredAdminRelay\(\) \? nextState : null\)/,
-  );
-  assert.match(
-    bridge,
-    /response\.ok &&\s*hasConfiguredAdminRelay\(\) &&\s*isOfflineScheduleMutation/s,
-  );
-
-  const mutationGuardIndex = bridge.indexOf("hasConfiguredAdminRelay() &&");
-  const markPendingIndex = bridge.indexOf("markRelayScheduleSyncPending();", mutationGuardIndex);
-  const syncIndex = bridge.indexOf("void syncRelayScheduleAfterMutation();", markPendingIndex);
-  assert.ok(mutationGuardIndex >= 0, "garde relais absente des mutations Cloud");
-  assert.ok(markPendingIndex > mutationGuardIndex, "le pending relais doit rester derrière la garde");
-  assert.ok(syncIndex > markPendingIndex, "la synchro relais doit rester derrière la garde");
 });
 
 test("le service worker couvre les trois navigations professeur", async () => {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { relayEndpointCandidates } from "@/lib/relay-endpoints";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,7 +83,7 @@ export async function GET() {
   if ("error" in access) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
-  const [policyResult, zonesResult] = await Promise.all([
+  const [policyResult, zonesResult, relayDevicesResult] = await Promise.all([
     access.service
       .from("institution_attendance_policies")
       .select(
@@ -95,6 +96,13 @@ export async function GET() {
       .select("id,name,latitude,longitude,radius_m,is_active")
       .eq("institution_id", access.institutionId)
       .order("name", { ascending: true }),
+    access.service
+      .from("relay_sync_devices")
+      .select("observed_lan_urls,last_seen_at")
+      .eq("institution_id", access.institutionId)
+      .eq("is_active", true)
+      .is("revoked_at", null)
+      .order("last_seen_at", { ascending: false }),
   ]);
   if (policyResult.error) {
     return NextResponse.json({ error: policyResult.error.message }, { status: 400 });
@@ -106,6 +114,12 @@ export async function GET() {
     ok: true,
     policy: { ...defaults(), ...(policyResult.data || {}) },
     zones: zonesResult.data || [],
+    relay_local_urls: relayEndpointCandidates({
+      configuredUrl: (policyResult.data as any)?.relay_local_url,
+      observedUrls: (relayDevicesResult.data || []).flatMap(
+        (row: any) => Array.isArray(row.observed_lan_urls) ? row.observed_lan_urls : [],
+      ),
+    }),
   });
 }
 
@@ -149,11 +163,25 @@ export async function PUT(request: NextRequest) {
       { status: 422 },
     );
   }
-  if (policy.enabled && policy.allow_local_relay && !policy.allow_gps_fallback && !policy.relay_local_url) {
-    return NextResponse.json(
-      { error: "Renseignez l'adresse locale du relais avant d'imposer le réseau local." },
-      { status: 422 },
-    );
+  if (policy.enabled && policy.allow_local_relay && !policy.allow_gps_fallback) {
+    const { data: relayDevices } = await access.service
+      .from("relay_sync_devices")
+      .select("observed_lan_urls")
+      .eq("institution_id", access.institutionId)
+      .eq("is_active", true)
+      .is("revoked_at", null);
+    const relayLocalUrls = relayEndpointCandidates({
+      configuredUrl: policy.relay_local_url,
+      observedUrls: (relayDevices || []).flatMap(
+        (row: any) => Array.isArray(row.observed_lan_urls) ? row.observed_lan_urls : [],
+      ),
+    });
+    if (relayLocalUrls.length === 0) {
+      return NextResponse.json(
+        { error: "Le PC relais doit se connecter au Cloud au moins une fois avant d'imposer le réseau local." },
+        { status: 422 },
+      );
+    }
   }
 
   const zones: Array<Record<string, unknown>> = [];
