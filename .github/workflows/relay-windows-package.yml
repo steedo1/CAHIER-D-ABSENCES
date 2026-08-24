@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/relay-windows-release-20260822
+      - work/relay-zero-config-lan-20260824
       - reprise-propre-5418ce7-20260729
     paths:
       - "desktop/relay/**"
@@ -85,7 +86,7 @@ jobs:
           $Manifest = [ordered]@{
             product = "Mon Cahier Relay"
             release = "Rentree-2026-2027"
-            installer_version = "2026.08.23.1"
+            installer_version = "2026.08.24.1"
             relay_version = [string]$Package.version
             schema_version = 9
             git_commit = "${{ github.sha }}"
@@ -173,7 +174,7 @@ jobs:
           $Stage = Join-Path $PWD "desktop\relay\stage"
           $Release = Join-Path $PWD "desktop\relay\release"
           New-Item -ItemType Directory -Force -Path $Release | Out-Null
-          & $Iscc "/DMyAppVersion=2026.08.23.1" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
+          & $Iscc "/DMyAppVersion=2026.08.24.1" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
           if ($LASTEXITCODE -ne 0) { throw "Compilation Inno Setup échouée." }
 
       - name: Create checksum and release notes
@@ -192,16 +193,17 @@ jobs:
           Build Git : ${{ github.sha }}
           Branche   : ${{ github.ref_name }}
           Schema DB : 9
-          Setup     : 2026.08.23.1
+          Setup     : 2026.08.24.1
 
           Installation :
-          1. Copier le Setup.exe sur le PC relais Windows 10/11 x64.
-          2. Double-cliquer sur le Setup.exe et accepter l'élévation Administrateur.
-          3. Saisir le code puis le nom de l'établissement.
-          4. Dans Mon Cahier, coller le jeton Admin puis Tester et synchroniser.
-          5. Redémarrer le PC une fois et vérifier que la tâche 'Mon Cahier Relay' est Running.
+          1. Dans Mon Cahier, créer l'identité du PC relais et télécharger MonCahier-Relay-Enrollment.json.
+          2. Placer ce fichier à côté du Setup.exe sur le PC relais Windows 10/11 x64.
+          3. Double-cliquer sur le Setup.exe et accepter l'élévation Administrateur.
+          4. Le Setup configure automatiquement l'établissement, le Cloud, le pare-feu privé et le démarrage Windows.
+          5. Si Windows le demande, confirmer uniquement qu'il s'agit bien du réseau privé de l'établissement.
 
           Le runtime Node est inclus. Aucun Node.js ni dépôt Git n'est requis sur le PC de l'établissement.
+          Aucun nom .local, aucune adresse IP et aucun jeton ne doivent être saisis manuellement.
           Les scripts PowerShell embarqués sont validés avec Windows PowerShell 5.1 avant publication.
           "@ | Set-Content -LiteralPath (Join-Path $Release "LISEZ-MOI.txt") -Encoding UTF8
 

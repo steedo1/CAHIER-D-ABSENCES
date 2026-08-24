@@ -5,7 +5,7 @@ import {
 } from "./db.mjs";
 import { SYNC_PROTOCOL_VERSION } from "./types.mjs";
 
-export const RELAY_VERSION = "0.2.1";
+export const RELAY_VERSION = "0.2.2";
 export const RELAY_CAPABILITIES = {
   attendance_session_open: true,
   attendance_write: true,
