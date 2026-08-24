@@ -22,7 +22,7 @@ concurrency:
 jobs:
   autofix-reachable-endpoint:
     name: Apply reachable relay endpoint fix
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/relay-working-endpoint-20260824'
+    if: (github.event_name == 'push' && github.ref_name == 'reprise-propre-5418ce7-20260729') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/relay-working-endpoint-20260824')
     permissions:
       contents: write
     runs-on: ubuntu-latest
