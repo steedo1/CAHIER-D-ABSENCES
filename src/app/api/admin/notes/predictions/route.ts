@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  getClassLevelCode,
+  normalizeClassEducationType,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -538,7 +542,9 @@ export async function POST(req: NextRequest) {
 
     const { data: cls, error: clsErr } = await srv
       .from("classes")
-      .select("id,label,level,academic_year,institution_id")
+      .select(
+        "id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code",
+      )
       .eq("id", class_id)
       .maybeSingle();
 
@@ -559,6 +565,27 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    if (
+      cls.academic_year &&
+      String(cls.academic_year) !== academic_year
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "class_year_mismatch",
+          message: "La classe ne correspond pas à l’année scolaire demandée.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const classLevelCode = getClassLevelCode(cls);
+    const classEducation = {
+      education_type: normalizeClassEducationType(cls),
+      formation_code: cls.formation_code || null,
+      formation_level_code: cls.formation_level_code || null,
+    };
 
     const { data: yearRow, error: yearErr } = await srv
       .from("academic_years")
@@ -815,8 +842,9 @@ export async function POST(req: NextRequest) {
         class: {
           id: cls.id,
           label: cls.label,
-          level: cls.level,
+          level: classLevelCode,
           academic_year: cls.academic_year,
+          ...classEducation,
         },
         input: {
           academic_year,
@@ -1001,8 +1029,9 @@ export async function POST(req: NextRequest) {
       class: {
         id: cls.id,
         label: cls.label,
-        level: cls.level,
+        level: classLevelCode,
         academic_year: cls.academic_year,
+        ...classEducation,
       },
       input: {
         academic_year,

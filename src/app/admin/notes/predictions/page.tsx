@@ -2,6 +2,13 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  getClassLevelCode,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   Activity,
   AlertTriangle,
@@ -17,7 +24,7 @@ import {
   Users,
 } from "lucide-react";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name: string;
   level?: string | null;
@@ -135,21 +142,6 @@ function Input(p: React.InputHTMLAttributes<HTMLInputElement>) {
       className={[
         "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800",
         "shadow-sm outline-none transition placeholder:text-slate-400",
-        "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
-        "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-        p.className || "",
-      ].join(" ")}
-    />
-  );
-}
-
-function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      {...p}
-      className={[
-        "w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800",
-        "shadow-sm outline-none transition",
         "focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/20",
         "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
         p.className || "",
@@ -384,8 +376,9 @@ export default function PredictionsPage() {
   const [authErr, setAuthErr] = useState(false);
   const [loadingInit, setLoadingInit] = useState(true);
 
-  const [levelFilter, setLevelFilter] = useState<string>("");
-  const [classId, setClassId] = useState<string>("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const classId = educationScope.classId;
 
   const [examDate, setExamDate] = useState<string>(() => {
     const d = new Date();
@@ -407,12 +400,17 @@ export default function PredictionsPage() {
 
     (async () => {
       try {
-        const j = await fetchJSON<{ items: any[] }>("/api/admin/classes?limit=999");
+        const j = await fetchJSON<{ items: any[] }>(
+          "/api/admin/classes?education_type=all&limit=5000",
+        );
         const items = (j.items || []).map((x: any) => ({
           id: String(x.id),
           name: String(x.name ?? x.label ?? "Classe"),
           level: x.level ?? null,
           academic_year: x.academic_year ?? null,
+          education_type: x.education_type ?? null,
+          formation_code: x.formation_code ?? null,
+          formation_level_code: x.formation_level_code ?? null,
         })) as ClassRow[];
 
         if (!cancelled) {
@@ -432,22 +430,15 @@ export default function PredictionsPage() {
     };
   }, []);
 
-  const levels = useMemo(
-    () =>
-      Array.from(
-        new Set(classes.map((c) => c.level).filter((x): x is string => !!x))
-      ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [classes]
-  );
-
-  const filteredClasses = useMemo(
-    () => classes.filter((c) => !levelFilter || c.level === levelFilter),
-    [classes, levelFilter]
-  );
-
   const selectedClass = useMemo(
     () => classes.find((c) => c.id === classId) || null,
     [classes, classId]
+  );
+  const contextLevelCount = useMemo(
+    () =>
+      new Set(classes.map((row) => getClassLevelCode(row)).filter(Boolean))
+        .size,
+    [classes],
   );
 
   useEffect(() => {
@@ -574,8 +565,7 @@ export default function PredictionsPage() {
   }
 
   function resetForm() {
-    setLevelFilter("");
-    setClassId("");
+    setEducationScope(DEFAULT_EDUCATION_SCOPE);
     setCoreSubjects([]);
     setResult(null);
     setError(null);
@@ -656,7 +646,7 @@ export default function PredictionsPage() {
                   {loadingInit ? "…" : classes.length}
                 </div>
                 <div className="mt-1 text-sm text-slate-200">
-                  Niveaux détectés : {loadingInit ? "…" : levels.length}
+                  Niveaux détectés : {loadingInit ? "…" : contextLevelCount}
                 </div>
               </div>
 
@@ -703,7 +693,7 @@ export default function PredictionsPage() {
             icon={<GraduationCap className="h-6 w-6" />}
             label="Classe choisie"
             value={selectedClass ? selectedClass.name : "—"}
-            hint={selectedClass?.level ? `Niveau : ${selectedClass.level}` : "Aucune classe"}
+            hint={selectedClass ? `Niveau : ${getClassLevelCode(selectedClass) || "—"}` : "Aucune classe"}
             tone="slate"
           />
 
@@ -738,53 +728,22 @@ export default function PredictionsPage() {
 
         <SectionCard
           title="Étape 1 • Choisir la classe et la date d’examen"
-          subtitle="Sélectionnez le niveau, la classe concernée et la date prévue d’examen."
+          subtitle="Sélectionnez le contexte pédagogique, la classe concernée et la date prévue d’examen."
           icon={<Users className="h-5 w-5" />}
         >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div>
-              <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
-                Filtrer par niveau
-              </div>
-              <Select
-                value={levelFilter}
-                onChange={(e) => {
-                  setLevelFilter(e.target.value);
-                  setClassId("");
-                  setCoreSubjects([]);
-                  setResult(null);
-                }}
-                disabled={loadingInit}
-              >
-                <option value="">— Tous les niveaux —</option>
-                {levels.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </Select>
-            </div>
+          <EducationScopeFilter
+            value={educationScope}
+            onChange={(value) => {
+              setEducationScope(value);
+              setCoreSubjects([]);
+              setResult(null);
+            }}
+            classes={classes}
+            disabled={loadingInit}
+            title="Contexte de la prédiction"
+          />
 
-            <div>
-              <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
-                Classe
-              </div>
-              <Select
-                value={classId}
-                onChange={(e) => setClassId(e.target.value)}
-                disabled={filteredClasses.length === 0 || loadingInit}
-              >
-                <option value="">
-                  {filteredClasses.length ? "— Choisir —" : "Aucune classe"}
-                </option>
-                {filteredClasses.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.level ? `(${c.level})` : ""}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
               <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">
                 Date d&apos;examen
