@@ -1,7 +1,7 @@
 // src/app/admin/classes/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   EDUCATION_TYPE_OPTIONS,
   getConfiguredFormations,
@@ -254,7 +254,6 @@ export default function ClassesPage() {
   const [organization, setOrganization] = useState<EducationOrganizationSettings | null>(null);
   const [classEducationType, setClassEducationType] = useState<EducationType>("general_secondary");
   const [selectedFormationId, setSelectedFormationId] = useState("");
-  const legacyContextSyncAttempted = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     loadAcademicYears();
@@ -605,15 +604,11 @@ export default function ClassesPage() {
     >();
 
     for (const classRow of items) {
-      const explicitFormation = classRow.formation_code
+      const educationType: EducationType =
+        classRow.education_type || "general_secondary";
+      const formation = classRow.formation_code
         ? formationChoices.find((item) => item.id === classRow.formation_code) || null
         : null;
-      const formation = explicitFormation || formationForLevel(classRow.formation_level_code || classRow.level);
-      // La formation reconnue est prioritaire. Cela permet de reclasser correctement
-      // les classes techniques/professionnelles créées avant l'ajout des colonnes V4,
-      // même si elles ont été provisoirement marquées comme secondaire général.
-      const educationType: EducationType =
-        formation?.educationType || classRow.education_type || "general_secondary";
       const educationLabel =
         EDUCATION_TYPE_OPTIONS.find((option) => option.id === educationType)?.label ||
         "Secondaire général";
@@ -698,7 +693,6 @@ export default function ClassesPage() {
 
     const body: any = {
       label: eLabel,
-      level: eLevel,
       academic_year: eAcademicYear || null,
       official_track_code:
         items.find((item) => item.id === editId)?.education_type &&
@@ -818,80 +812,26 @@ export default function ClassesPage() {
     setTimeout(() => setMsgPhone(null), 1500);
   }
 
-  useEffect(() => {
-    if (!items.length || !formationChoices.length) return;
-
-    const pending = items
-      .filter((row) => !legacyContextSyncAttempted.current.has(row.id))
-      .map((row) => {
-        const formation = row.formation_code
-          ? formationChoices.find((item) => item.id === row.formation_code) ||
-            formationForLevel(row.formation_level_code || row.level)
-          : formationForLevel(row.formation_level_code || row.level);
-        if (!formation) return null;
-
-        const levelConfig = formation.levels.find(
-          (item) =>
-            normalizeKey(item.value) ===
-            normalizeKey(row.formation_level_code || row.level),
-        );
-        if (!levelConfig) return null;
-
-        const contextAlreadyCorrect =
-          row.education_type === formation.educationType &&
-          row.formation_code === formation.id &&
-          normalizeKey(row.formation_level_code || "") ===
-            normalizeKey(levelConfig.value);
-
-        legacyContextSyncAttempted.current.add(row.id);
-        if (contextAlreadyCorrect) return null;
-
-        return { row, formation, levelConfig };
-      })
-      .filter(Boolean) as {
-      row: ClassRow;
-      formation: FormationChoice;
-      levelConfig: { value: string; label: string };
-    }[];
-
-    if (!pending.length) return;
-
-    void (async () => {
-      let updated = false;
-      for (const item of pending) {
-        const response = await fetch(`/api/admin/classes/${item.row.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            education_type: item.formation.educationType,
-            formation_code: item.formation.id,
-            formation_level_code: item.levelConfig.value,
-            official_track_code: null,
-          }),
-        });
-        if (response.ok) updated = true;
-      }
-      if (updated) await refresh();
-    })();
-    // Le Set empêche toute répétition pour une même classe pendant cette session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formationChoices, items]);
-
   const selectedAcademicYear = academicYears.find((row) => row.code === academicYear) || null;
+  const editingClass = items.find((item) => item.id === editId) || null;
+  const editingEducationType: EducationType =
+    editingClass?.education_type || "general_secondary";
+  const editingEducationTypeLabel =
+    EDUCATION_TYPE_OPTIONS.find((item) => item.id === editingEducationType)?.label ||
+    editingEducationType;
+  const editingFormation = editingClass?.formation_code
+    ? formationChoices.find((item) => item.id === editingClass.formation_code) || null
+    : null;
+  const editingLevelLabel = editingFormation?.levels.find(
+    (item) =>
+      normalizeKey(item.value) ===
+      normalizeKey(editingClass?.formation_level_code || editingClass?.level || ""),
+  )?.label;
   const canCreate =
     !!academicYear &&
     !loadingAcademicYears &&
     !organizationLoading &&
     (isGeneralMode || Boolean(selectedFormation));
-
-  function formationForLevel(value: string) {
-    const key = normalizeKey(value);
-    return (
-      formationChoices.find((formation) =>
-        formation.levels.some((option) => normalizeKey(option.value) === key),
-      ) || null
-    );
-  }
 
   if (authErr) {
     return (
@@ -1069,7 +1009,7 @@ export default function ClassesPage() {
           {academicYearError ? (
             <>{academicYearError}</>
           ) : !academicYear ? (
-            <>Définissez d'abord l'année scolaire dans les paramètres avant de créer les classes.</>
+            <>Définissez d’abord l’année scolaire dans les paramètres avant de créer les classes.</>
           ) : !isGeneralMode && !selectedFormation ? (
             <>Ajoutez d’abord une formation dans <b>Organisation pédagogique</b>.</>
           ) : isGeneralMode && isSeriesA(level) ? (
@@ -1159,7 +1099,7 @@ export default function ClassesPage() {
           <div className="text-sm text-slate-500">Aucune classe pour cette année scolaire.</div>
         ) : visibleGroups.length === 0 ? (
           <div className="rounded-xl border border-dashed bg-slate-50 px-4 py-6 text-sm text-slate-600">
-            Aucune classe n'est encore rattachée à cet enseignement pour l'année sélectionnée.
+            Aucune classe n’est encore rattachée à cet enseignement pour l’année sélectionnée.
           </div>
         ) : (
           visibleGroups.map((group) => {
@@ -1196,8 +1136,8 @@ export default function ClassesPage() {
                         const draft = phoneDraft[c.id] ?? storedIdentifier;
                         const unchanged = (draft || "") === storedIdentifier;
                         const detectedFormation = c.formation_code
-                          ? formationChoices.find((item) => item.id === c.formation_code) || formationForLevel(c.formation_level_code || c.level)
-                          : formationForLevel(c.formation_level_code || c.level);
+                          ? formationChoices.find((item) => item.id === c.formation_code) || null
+                          : null;
                         return (
                           <div key={c.id} className="rounded-xl border p-3">
                             <div className="flex items-start justify-between gap-3">
@@ -1323,7 +1263,22 @@ export default function ClassesPage() {
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Niveau / préfixe</div>
-            <Input value={eLevel} onChange={(e) => setELevel(e.target.value)} placeholder="ex: 1A / 1D / TC" />
+            <Input value={eLevel} readOnly className="cursor-not-allowed bg-slate-50 text-slate-600" />
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-950">
+            <div className="font-bold">Contexte pédagogique protégé</div>
+            <div className="mt-1">Type : {editingEducationTypeLabel}</div>
+            {editingFormation ? (
+              <div>
+                Formation : {editingFormation.diplomaLabel} — {editingFormation.name}
+              </div>
+            ) : null}
+            <div>
+              Niveau : {editingLevelLabel || editingClass?.formation_level_code || editingClass?.level || "—"}
+            </div>
+            <div className="mt-1 text-amber-800">
+              Le type, la formation et le niveau ne sont pas modifiables ici afin d’éviter de désynchroniser les élèves, affectations, notes et appels.
+            </div>
           </div>
           <div>
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
