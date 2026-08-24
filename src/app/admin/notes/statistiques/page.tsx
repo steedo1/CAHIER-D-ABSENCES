@@ -1,6 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   BookOpenCheck,
   CalendarDays,
@@ -15,13 +21,14 @@ import {
   X,
 } from "lucide-react";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   label?: string | null;
   name?: string | null;
   level?: string | null;
   academic_year?: string | null;
   education_type?: string | null;
+  formation_code?: string | null;
   formation_level_code?: string | null;
 };
 
@@ -123,10 +130,6 @@ function classLabel(row?: ClassRow | null) {
 
 function periodLabel(row?: GradePeriod | null) {
   return row?.short_label || row?.label || row?.code || "Période";
-}
-
-function levelLabel(row?: ClassRow | null) {
-  return row?.formation_level_code || row?.level || "Sans niveau";
 }
 
 function teacherLabel(item?: AffectationItem | null) {
@@ -257,8 +260,10 @@ export default function AdminGradeRegisterPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState("");
-  const [selectedLevel, setSelectedLevel] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedLevel = educationScope.levelCode;
+  const selectedClassId = educationScope.classId;
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
@@ -298,26 +303,6 @@ export default function AdminGradeRegisterPage() {
   const classesForYear = useMemo(
     () => classes.filter((row) => !selectedYear || row.academic_year === selectedYear),
     [classes, selectedYear],
-  );
-
-  const levels = useMemo(() => {
-    return Array.from(new Set(classesForYear.map((row) => levelLabel(row)))).sort((a, b) =>
-      a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" }),
-    );
-  }, [classesForYear]);
-
-  const classOptions = useMemo(
-    () =>
-      classesForYear
-        .filter((row) => !selectedLevel || levelLabel(row) === selectedLevel)
-        .slice()
-        .sort((a, b) =>
-          classLabel(a).localeCompare(classLabel(b), "fr", {
-            numeric: true,
-            sensitivity: "base",
-          }),
-        ),
-    [classesForYear, selectedLevel],
   );
 
   const selectedClass = useMemo(
@@ -441,20 +426,6 @@ export default function AdminGradeRegisterPage() {
   }, [academicYears]);
 
   useEffect(() => {
-    setSelectedLevel((current) =>
-      current && levels.includes(current) ? current : levels[0] || "",
-    );
-  }, [levels]);
-
-  useEffect(() => {
-    setSelectedClassId((current) =>
-      current && classOptions.some((row) => row.id === current)
-        ? current
-        : classOptions[0]?.id || "",
-    );
-  }, [classOptions]);
-
-  useEffect(() => {
     let cancelled = false;
     setRegister(null);
     setDirty({});
@@ -480,8 +451,17 @@ export default function AdminGradeRegisterPage() {
         const affectationParams = new URLSearchParams({
           academic_year: selectedYear,
           class_id: selectedClassId,
-          education_type: "all",
+          education_type: educationScope.educationType,
         });
+        if (educationScope.formationCode) {
+          affectationParams.set("formation_code", educationScope.formationCode);
+        }
+        if (educationScope.levelCode) {
+          affectationParams.set(
+            "formation_level_code",
+            educationScope.levelCode,
+          );
+        }
 
         const [periodResponse, affectationResponse] = await Promise.all([
           fetch(`/api/admin/institution/grading-periods?${periodParams.toString()}`, {
@@ -523,7 +503,18 @@ export default function AdminGradeRegisterPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedClassId, selectedYear]);
+  }, [educationScope, selectedClassId, selectedYear]);
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setPeriods([]);
+    setAffectations([]);
+    setSelectedPeriodId("");
+    setSelectedSubjectId("");
+    setSelectedTeacherId("");
+    setRegister(null);
+    setDirty({});
+  }
 
   useEffect(() => {
     setSelectedPeriodId((current) =>
@@ -804,12 +795,27 @@ export default function AdminGradeRegisterPage() {
         </header>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <EducationScopeFilter
+            value={educationScope}
+            onChange={changeEducationScope}
+            classes={classesForYear}
+            disabled={classesLoading}
+            title="Contexte du registre des notes"
+          />
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label>
               <FieldLabel>Année scolaire</FieldLabel>
               <Select
                 value={selectedYear}
-                onChange={(event) => setSelectedYear(event.target.value)}
+                onChange={(event) => {
+                  setSelectedYear(event.target.value);
+                  setEducationScope((current) => ({
+                    ...current,
+                    levelCode: "",
+                    classId: "",
+                  }));
+                }}
                 disabled={classesLoading || !academicYears.length}
               >
                 {academicYears.map((year) => (
@@ -827,32 +833,6 @@ export default function AdminGradeRegisterPage() {
               >
                 {periodOptions.map((period) => (
                   <option key={period.id} value={period.id}>{periodLabel(period)}</option>
-                ))}
-              </Select>
-            </label>
-
-            <label>
-              <FieldLabel>Niveau</FieldLabel>
-              <Select
-                value={selectedLevel}
-                onChange={(event) => setSelectedLevel(event.target.value)}
-                disabled={classesLoading || !levels.length}
-              >
-                {levels.map((level) => (
-                  <option key={level} value={level}>{level}</option>
-                ))}
-              </Select>
-            </label>
-
-            <label>
-              <FieldLabel>Classe</FieldLabel>
-              <Select
-                value={selectedClassId}
-                onChange={(event) => setSelectedClassId(event.target.value)}
-                disabled={classesLoading || !classOptions.length}
-              >
-                {classOptions.map((row) => (
-                  <option key={row.id} value={row.id}>{classLabel(row)}</option>
                 ))}
               </Select>
             </label>

@@ -43,7 +43,9 @@ export async function GET() {
     ] = await Promise.all([
       srv
         .from("classes")
-        .select("id,label,level,academic_year")
+        .select(
+          "id,label,level,academic_year,education_type,formation_code,formation_level_code",
+        )
         .eq("institution_id", institution_id)
         .order("level", { ascending: true })
         .order("label", { ascending: true }),

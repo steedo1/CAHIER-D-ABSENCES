@@ -3,7 +3,14 @@
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  getEducationScopeWriteError,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   getCommunicationHistory,
   getCommunicationMeta,
@@ -24,7 +31,7 @@ import { History, Megaphone, MessageSquare, Send, Smartphone, Users } from "luci
 type AudienceType = "parents" | "staff";
 type Channel = "push" | "sms" | "push_sms";
 
-type ClassItem = {
+type ClassItem = EducationScopedClass & {
   id: string;
   label: string;
   level: string;
@@ -211,8 +218,7 @@ export default function AdminCommunicationPage() {
   const [audienceType, setAudienceType] = useState<AudienceType>("parents");
   const [parentTargetType, setParentTargetType] = useState<"all" | "cycle" | "level" | "class">("cycle");
   const [cycle, setCycle] = useState<"first_cycle" | "second_cycle">("first_cycle");
-  const [level, setLevel] = useState("6e");
-  const [classId, setClassId] = useState("");
+  const [educationScope, setEducationScope] = useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
   const [staffTargetType, setStaffTargetType] = useState<"staff_all" | "teachers" | "head_teachers">("staff_all");
   const [channel, setChannel] = useState<Channel>("push");
   const [title, setTitle] = useState("");
@@ -221,12 +227,29 @@ export default function AdminCommunicationPage() {
 
   const automaticSignature = meta?.institution_name ? `— ${meta.institution_name}` : "— Mon Cahier";
 
-  const levels = useMemo(() => {
-    const list = meta?.levels?.length ? meta.levels : ["6e", "5e", "4e", "3e", "2nde", "1re", "Terminale"];
-    return Array.from(new Set(list));
-  }, [meta?.levels]);
-
   const classesForSelect = useMemo(() => meta?.classes || [], [meta?.classes]);
+
+  const targetEducationScope = useMemo(() => {
+    if (audienceType !== "parents") {
+      return {
+        education_type: null,
+        formation_code: null,
+        formation_level_code: null,
+        class_id: null,
+      };
+    }
+
+    return {
+      education_type: educationScope.educationType,
+      formation_code: educationScope.formationCode || null,
+      formation_level_code:
+        parentTargetType === "level" || parentTargetType === "class"
+          ? educationScope.levelCode || null
+          : null,
+      class_id:
+        parentTargetType === "class" ? educationScope.classId || null : null,
+    };
+  }, [audienceType, educationScope, parentTargetType]);
 
   const selectedTarget = useMemo(() => {
     if (audienceType === "staff") {
@@ -234,10 +257,10 @@ export default function AdminCommunicationPage() {
     }
 
     if (parentTargetType === "cycle") return { target_type: "cycle", target_value: cycle };
-    if (parentTargetType === "level") return { target_type: "level", target_value: level };
-    if (parentTargetType === "class") return { target_type: "class", target_value: classId };
+    if (parentTargetType === "level") return { target_type: "level", target_value: educationScope.levelCode };
+    if (parentTargetType === "class") return { target_type: "class", target_value: educationScope.classId };
     return { target_type: "all", target_value: null as string | null };
-  }, [audienceType, staffTargetType, parentTargetType, cycle, level, classId]);
+  }, [audienceType, staffTargetType, parentTargetType, cycle, educationScope.levelCode, educationScope.classId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,9 +281,6 @@ export default function AdminCommunicationPage() {
           setMeta(null);
         } else {
           setMeta(metaJson);
-          const firstClass = metaJson.classes?.[0]?.id || "";
-          if (!classId && firstClass) setClassId(firstClass);
-          if (!level && metaJson.levels?.[0]) setLevel(metaJson.levels[0]);
         }
 
         setCampaigns(Array.isArray(historyJson?.items) ? historyJson.items : []);
@@ -281,7 +301,16 @@ export default function AdminCommunicationPage() {
     setPreview(null);
     setSuccess(null);
     setError(null);
-  }, [audienceType, parentTargetType, cycle, level, classId, staffTargetType, channel]);
+  }, [audienceType, parentTargetType, cycle, educationScope, staffTargetType, channel]);
+
+  useEffect(() => {
+    if (
+      parentTargetType === "cycle" &&
+      educationScope.educationType !== "general_secondary"
+    ) {
+      setParentTargetType("all");
+    }
+  }, [educationScope.educationType, parentTargetType]);
 
   useEffect(() => {
     if (!meta) return;
@@ -293,12 +322,26 @@ export default function AdminCommunicationPage() {
     setCampaigns(Array.isArray(json?.items) ? json.items : []);
   }
 
+  function validateParentTarget() {
+    if (audienceType !== "parents") return;
+
+    const scopeError = getEducationScopeWriteError(educationScope);
+    if (scopeError) throw new Error(scopeError);
+    if (parentTargetType === "level" && !educationScope.levelCode) {
+      throw new Error("Choisis un niveau avant de continuer.");
+    }
+    if (parentTargetType === "class" && !educationScope.classId) {
+      throw new Error("Choisis une classe avant de continuer.");
+    }
+  }
+
   async function handlePreview() {
     setBusy(true);
     setError(null);
     setSuccess(null);
 
     try {
+      validateParentTarget();
       if (!isOnline) {
         throw new Error(
           "L’aperçu des destinataires nécessite Internet. Vous pouvez toutefois conserver le message pour l’envoyer à la reconnexion."
@@ -311,6 +354,7 @@ export default function AdminCommunicationPage() {
           audience_type: audienceType,
           target_type: selectedTarget.target_type,
           target_value: selectedTarget.target_value,
+          ...targetEducationScope,
         }),
       });
 
@@ -335,9 +379,7 @@ export default function AdminCommunicationPage() {
 
     try {
       if (!title.trim() || !body.trim()) throw new Error("Renseigne le titre et le message.");
-      if (audienceType === "parents" && parentTargetType === "class" && !classId) {
-        throw new Error("Choisis une classe avant l’envoi.");
-      }
+      validateParentTarget();
 
       const fallbackTargetLabel =
         audienceType === "staff"
@@ -349,15 +391,16 @@ export default function AdminCommunicationPage() {
           : parentTargetType === "cycle"
             ? cycle === "first_cycle" ? "Parents — premier cycle" : "Parents — second cycle"
             : parentTargetType === "level"
-              ? `Parents — niveau ${level}`
+              ? `Parents — niveau ${educationScope.levelCode}`
               : parentTargetType === "class"
-                ? `Parents — ${classesForSelect.find((item) => item.id === classId)?.label || "classe"}`
+                ? `Parents — ${classesForSelect.find((item) => item.id === educationScope.classId)?.label || "classe"}`
                 : "Tous les parents";
 
       const { mutation, history } = await saveCommunication({
         audience_type: audienceType,
         target_type: selectedTarget.target_type,
         target_value: selectedTarget.target_value,
+        ...targetEducationScope,
         target_label: preview?.target_label || fallbackTargetLabel,
         channel,
         title: title.trim(),
@@ -467,9 +510,20 @@ export default function AdminCommunicationPage() {
 
             {audienceType === "parents" ? (
               <div className="mt-4 space-y-4">
+                <EducationScopeFilter
+                  value={educationScope}
+                  onChange={setEducationScope}
+                  classes={classesForSelect}
+                  showLevel={parentTargetType === "level" || parentTargetType === "class"}
+                  showClass={parentTargetType === "class"}
+                  title="Contexte des destinataires"
+                />
+
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <ChoiceCard active={parentTargetType === "all"} title="Tous les parents" onClick={() => setParentTargetType("all")} />
-                  <ChoiceCard active={parentTargetType === "cycle"} title="Selon le cycle" onClick={() => setParentTargetType("cycle")} />
+                  {educationScope.educationType === "general_secondary" ? (
+                    <ChoiceCard active={parentTargetType === "cycle"} title="Selon le cycle" onClick={() => setParentTargetType("cycle")} />
+                  ) : null}
                   <ChoiceCard active={parentTargetType === "level"} title="Selon le niveau" onClick={() => setParentTargetType("level")} />
                   <ChoiceCard active={parentTargetType === "class"} title="Selon la classe" onClick={() => setParentTargetType("class")} />
                 </div>
@@ -484,28 +538,6 @@ export default function AdminCommunicationPage() {
                   </div>
                 ) : null}
 
-                {parentTargetType === "level" ? (
-                  <div>
-                    <Label>Niveau</Label>
-                    <Select value={level} onChange={(e) => setLevel(e.target.value)}>
-                      {levels.map((item) => (
-                        <option key={item} value={item}>{item}</option>
-                      ))}
-                    </Select>
-                  </div>
-                ) : null}
-
-                {parentTargetType === "class" ? (
-                  <div>
-                    <Label>Classe</Label>
-                    <Select value={classId} onChange={(e) => setClassId(e.target.value)}>
-                      <option value="">Choisir une classe</option>
-                      {classesForSelect.map((cls) => (
-                        <option key={cls.id} value={cls.id}>{cls.label} — {cls.level}</option>
-                      ))}
-                    </Select>
-                  </div>
-                ) : null}
               </div>
             ) : (
               <div className="mt-4 grid gap-3 sm:grid-cols-3">

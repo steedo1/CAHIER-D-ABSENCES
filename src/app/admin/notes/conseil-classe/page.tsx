@@ -3,6 +3,12 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Printer, RefreshCw, FileText, X } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   canManageEndOfYearDecision,
   COUNCIL_YEAR_DECISION_CONTRACT,
@@ -81,7 +87,7 @@ function Button({ variant = "primary", ...props }: ButtonProps) {
 
 /* ───────── Types ───────── */
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name?: string;
   label?: string | null;
@@ -964,7 +970,9 @@ export default function ConseilClassePage() {
 
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedClassId = educationScope.classId;
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1007,7 +1015,10 @@ export default function ConseilClassePage() {
     const run = async () => {
       try {
         setClassesLoading(true);
-        const res = await fetch("/api/admin/classes", { cache: "no-store" });
+        const res = await fetch(
+          "/api/admin/classes?academic_year=all&education_type=all&limit=5000",
+          { cache: "no-store" },
+        );
         if (!res.ok) throw new Error(`Erreur classes: ${res.status}`);
         const json = await res.json();
         const items: ClassRow[] = Array.isArray(json)
@@ -1016,7 +1027,14 @@ export default function ConseilClassePage() {
           ? json.items
           : [];
         setClasses(items);
-        if (items.length > 0 && !selectedClassId) setSelectedClassId(items[0].id);
+        const years = Array.from(
+          new Set(
+            items
+              .map((row) => row.academic_year)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ).sort().reverse();
+        setSelectedAcademicYear((current) => current || years[0] || "");
       } catch (e: any) {
         setErrorMsg(e?.message || "Erreur lors du chargement des classes.");
       } finally {
@@ -1024,7 +1042,6 @@ export default function ConseilClassePage() {
       }
     };
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1057,6 +1074,7 @@ export default function ConseilClassePage() {
         setPeriodsLoading(true);
         const params = new URLSearchParams();
         if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedClassId) params.set("class_id", selectedClassId);
         const qs = params.toString();
         const url = "/api/admin/institution/grading-periods" + (qs ? `?${qs}` : "");
         const res = await fetch(url, { cache: "no-store" });
@@ -1081,7 +1099,7 @@ export default function ConseilClassePage() {
       }
     };
     run();
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
 
   const academicYears = useMemo(() => {
     const s = new Set<string>();
@@ -1100,18 +1118,16 @@ export default function ConseilClassePage() {
     return classes.filter((c) => c.academic_year === selectedAcademicYear);
   }, [classes, selectedAcademicYear]);
 
-  useEffect(() => {
-    if (!selectedAcademicYear) return;
-    if (!selectedClassId) return;
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (cls && cls.academic_year !== selectedAcademicYear) {
-      setSelectedClassId("");
-      setActiveStudentIds([]);
-      setBulletinRaw(null);
-      setYearPeriodBulletins({});
-      setErrorMsg(null);
-    }
-  }, [classes, selectedAcademicYear, selectedClassId]);
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setSelectedPeriodId("");
+    setDateFrom("");
+    setDateTo("");
+    setActiveStudentIds([]);
+    setBulletinRaw(null);
+    setYearPeriodBulletins({});
+    setErrorMsg(null);
+  }
 
   const selectedPeriod = useMemo(
     () => periods.find((p) => p.id === selectedPeriodId) || null,
@@ -2536,6 +2552,15 @@ export default function ConseilClassePage() {
             </div>
           </div>
 
+          <EducationScopeFilter
+            value={educationScope}
+            onChange={changeEducationScope}
+            classes={filteredClasses}
+            disabled={classesLoading}
+            title="Contexte du conseil de classe"
+            className="mt-4"
+          />
+
           <div className="mt-4 grid gap-3 md:grid-cols-6">
             <div className="md:col-span-2">
               <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Année scolaire</label>
@@ -2543,7 +2568,11 @@ export default function ConseilClassePage() {
                 value={selectedAcademicYear}
                 onChange={(e) => {
                   setSelectedAcademicYear(e.target.value);
-                  setSelectedClassId("");
+                  setEducationScope((current) => ({
+                    ...current,
+                    levelCode: "",
+                    classId: "",
+                  }));
                   setSelectedPeriodId("");
                   setDateFrom("");
                   setDateTo("");
@@ -2572,16 +2601,6 @@ export default function ConseilClassePage() {
                   <option key={p.id} value={p.id}>
                     {p.label || p.short_label || p.code || `${p.start_date} → ${p.end_date}`}
                   </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase text-slate-500">Classe</label>
-              <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)} disabled={classesLoading}>
-                <option value="">Sélectionner une classe…</option>
-                {filteredClasses.map((c) => (
-                  <option key={c.id} value={c.id}>{(c.label || c.name || "").trim() || c.id}</option>
                 ))}
               </Select>
             </div>

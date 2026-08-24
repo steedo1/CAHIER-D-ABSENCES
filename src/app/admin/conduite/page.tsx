@@ -2,6 +2,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 /* UI helpers */
 function Select(p: React.SelectHTMLAttributes<HTMLSelectElement>) {
@@ -123,7 +129,12 @@ function generatedAtLabel() {
 }
 
 /* Types */
-type ClassItem = { id: string; name: string; level: string };
+type ClassItem = EducationScopedClass & {
+  id: string;
+  name: string;
+  level: string;
+  academic_year?: string | null;
+};
 
 type RubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
 
@@ -338,8 +349,9 @@ function normalizeInstitutionSettings(json: any): InstitutionSettings {
 export default function ConduitePage() {
   // classes et filtres
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
-  const [level, setLevel] = useState("");
-  const [classId, setClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const classId = educationScope.classId;
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
@@ -393,7 +405,9 @@ export default function ConduitePage() {
 
   /* ───────── Chargement classes ───────── */
   useEffect(() => {
-    fetch("/api/admin/classes?limit=500", { cache: "no-store" })
+    fetch("/api/admin/classes?academic_year=all&education_type=all&limit=5000", {
+      cache: "no-store",
+    })
       .then((r) => r.json())
       .then((j) => setAllClasses(j.items || []))
       .catch(() => setAllClasses([]));
@@ -476,7 +490,10 @@ export default function ConduitePage() {
   }, []);
 
   /* ───────── Chargement périodes pour une année scolaire ───────── */
-  async function loadPeriods(academicYearOverride?: string) {
+  async function loadPeriods(
+    academicYearOverride?: string,
+    classIdOverride: string = classId,
+  ) {
     setLoadingPeriods(true);
     setPeriodError(null);
     try {
@@ -485,6 +502,7 @@ export default function ConduitePage() {
       if (year) {
         params.set("academic_year", year);
       }
+      if (classIdOverride) params.set("class_id", classIdOverride);
       const url =
         "/api/admin/institution/grading-periods" +
         (params.size ? `?${params.toString()}` : "");
@@ -536,30 +554,16 @@ export default function ConduitePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ───────── Liste des niveaux ───────── */
-  const levels = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of allClasses) if (c.level) s.add(c.level);
-    return Array.from(s).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true }),
-    );
-  }, [allClasses]);
-
-  const classesOfLevel = useMemo(
+  const classesForSelectedYear = useMemo(
     () =>
-      allClasses
-        .filter((c) => !level || c.level === level)
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, undefined, { numeric: true }),
-        ),
-    [allClasses, level],
+      allClasses.filter(
+        (row) =>
+          !selectedAcademicYear ||
+          !row.academic_year ||
+          row.academic_year === selectedAcademicYear,
+      ),
+    [allClasses, selectedAcademicYear],
   );
-
-  useEffect(() => {
-    setClassId("");
-    setItems([]);
-    setClassLabel("");
-  }, [level]);
 
   /* ───────── Options d'années scolaires ───────── */
   const academicYearOptions = useMemo(() => {
@@ -585,6 +589,11 @@ export default function ConduitePage() {
   ) {
     const year = e.target.value;
     setSelectedAcademicYear(year);
+    setEducationScope((current) => ({
+      ...current,
+      levelCode: "",
+      classId: "",
+    }));
     setSelectedPeriodCode("");
     setFrom("");
     setTo("");
@@ -592,10 +601,21 @@ export default function ConduitePage() {
     setClassLabel("");
     setNotice(null);
     if (year) {
-      await loadPeriods(year);
+      await loadPeriods(year, "");
     } else {
-      await loadPeriods();
+      await loadPeriods(undefined, "");
     }
+  }
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setSelectedPeriodCode("");
+    setFrom("");
+    setTo("");
+    setItems([]);
+    setClassLabel("");
+    setNotice(null);
+    void loadPeriods(selectedAcademicYear, value.classId);
   }
 
   /* ───────── Changement de période bulletin → applique automatiquement Du / Au ───────── */
@@ -1115,7 +1135,7 @@ export default function ConduitePage() {
     const logoUrl = institution?.institution_logo_url || "";
     const className =
       classLabel ||
-      classesOfLevel.find((c) => c.id === classId)?.name ||
+      allClasses.find((c) => c.id === classId)?.name ||
       "";
 
     const academicYear = selectedAcademicYear || currentAcademicYear || "";
@@ -1753,14 +1773,21 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">{conductDisplayLabel} — Moyennes par élève</h1>
         <p className="text-slate-600">
-          Sélectionne l&apos;année scolaire, la période, le niveau et la classe.
+          Sélectionne l&apos;année scolaire, la période et le contexte de la classe.
           Clique sur Assiduité, Tenue, Moralité ou Discipline pour corriger une rubrique.
           La moyenne finale officielle est ensuite recalculée automatiquement.
         </p>
       </div>
 
       <Card title="Filtres">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={changeEducationScope}
+          classes={classesForSelectedYear}
+          title="Contexte de la conduite"
+        />
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
             <Select
@@ -1803,38 +1830,6 @@ export default function ConduitePage() {
             </div>
           </div>
 
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select value={level} onChange={(e) => setLevel(e.target.value)}>
-              <option value="">— Sélectionner —</option>
-              {levels.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div>
-            <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select
-              value={classId}
-              onChange={(e) => {
-                setClassId(e.target.value);
-                setItems([]);
-                setClassLabel("");
-                setNotice(null);
-              }}
-              disabled={!level}
-            >
-              <option value="">— Sélectionner —</option>
-              {classesOfLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </div>
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">

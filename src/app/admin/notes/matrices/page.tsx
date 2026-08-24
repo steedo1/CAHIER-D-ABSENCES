@@ -2,6 +2,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   Download,
   FileSpreadsheet,
@@ -11,7 +17,7 @@ import {
   Search,
 } from "lucide-react";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name?: string;
   label?: string | null;
@@ -247,7 +253,9 @@ export default function MatricesTrimestriellesPage() {
   const [periods, setPeriods] = useState<PeriodRow[]>([]);
   const [institution, setInstitution] = useState<InstitutionSettings | null>(null);
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedClassId = educationScope.classId;
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [subjects, setSubjects] = useState<BulletinSubject[]>([]);
   const [rows, setRows] = useState<MatrixRow[]>([]);
@@ -285,15 +293,6 @@ export default function MatricesTrimestriellesPage() {
       .sort((a, b) => Number(a.order_index ?? 999) - Number(b.order_index ?? 999));
   }, [periods, selectedAcademicYear]);
 
-  useEffect(() => {
-    if (!selectedAcademicYear || !filteredClasses.length) return;
-    setSelectedClassId((current) =>
-      current && filteredClasses.some((c) => c.id === current)
-        ? current
-        : filteredClasses[0]?.id || "",
-    );
-  }, [selectedAcademicYear, filteredClasses]);
-
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -307,7 +306,7 @@ export default function MatricesTrimestriellesPage() {
       setErrorMsg(null);
       try {
         const [classRes, instRes] = await Promise.all([
-          fetch("/api/admin/classes?academic_year=all&limit=5000", { cache: "no-store" }),
+          fetch("/api/admin/classes?academic_year=all&education_type=all&limit=5000", { cache: "no-store" }),
           fetch("/api/admin/institution/settings", { cache: "no-store" }),
         ]);
 
@@ -318,11 +317,8 @@ export default function MatricesTrimestriellesPage() {
             .sort()
             .reverse();
           const initialYear = years[0] || items[0]?.academic_year || "";
-          const initialClass = items.find((c) => c.academic_year === initialYear) || items[0];
-
           setClasses(items);
           setSelectedAcademicYear(initialYear);
-          if (initialClass?.id) setSelectedClassId(initialClass.id);
         }
 
         if (instRes.ok) {
@@ -347,6 +343,7 @@ export default function MatricesTrimestriellesPage() {
       if (!selectedAcademicYear) return;
       try {
         const params = new URLSearchParams({ academic_year: selectedAcademicYear });
+        if (selectedClassId) params.set("class_id", selectedClassId);
         const res = await fetch(`/api/admin/institution/grading-periods?${params.toString()}`, { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         const items: PeriodRow[] = Array.isArray(json) ? json : Array.isArray(json?.items) ? json.items : [];
@@ -363,7 +360,24 @@ export default function MatricesTrimestriellesPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
+
+  function changeAcademicYear(value: string) {
+    setSelectedAcademicYear(value);
+    setEducationScope((current) => ({
+      ...current,
+      levelCode: "",
+      classId: "",
+    }));
+    setRows([]);
+    setSubjects([]);
+  }
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setRows([]);
+    setSubjects([]);
+  }
 
   async function loadMatrix() {
     setErrorMsg(null);
@@ -549,17 +563,11 @@ tr:nth-child(even) td { background: #f8fafc; }
             </div>
           </div>
 
-          <div className="grid w-full gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[130px_minmax(180px,1fr)_minmax(180px,1fr)_auto] xl:max-w-4xl">
+          <div className="grid w-full gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[130px_minmax(180px,1fr)_auto] xl:max-w-2xl">
             <div>
               <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Année</label>
-              <Select value={selectedAcademicYear} onChange={(e) => setSelectedAcademicYear(e.target.value)}>
+              <Select value={selectedAcademicYear} onChange={(e) => changeAcademicYear(e.target.value)}>
                 {academicYears.length ? academicYears.map((y) => <option key={y} value={y}>{y}</option>) : <option value="">Année</option>}
-              </Select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Classe</label>
-              <Select value={selectedClassId} onChange={(e) => setSelectedClassId(e.target.value)}>
-                {filteredClasses.length ? filteredClasses.map((c) => <option key={c.id} value={c.id}>{clsLabel(c)}</option>) : <option value="">Aucune classe</option>}
               </Select>
             </div>
             <div>
@@ -576,6 +584,14 @@ tr:nth-child(even) td { background: #f8fafc; }
             </div>
           </div>
         </div>
+
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={changeEducationScope}
+          classes={filteredClasses}
+          title="Contexte de la matrice trimestrielle"
+          className="mt-4"
+        />
       </section>
 
       {errorMsg && (

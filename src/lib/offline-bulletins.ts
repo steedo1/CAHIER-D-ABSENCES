@@ -2,7 +2,7 @@
 
 import { cacheSet, offlineGetJson } from "@/lib/offline";
 
-export const ADMIN_BULLETIN_CLASSES_KEY = "admin:bulletins:classes";
+export const ADMIN_BULLETIN_CLASSES_KEY = "admin:bulletins:classes:v2";
 export const ADMIN_BULLETIN_SETTINGS_KEY = "admin:bulletins:settings";
 
 function part(value: string | null | undefined) {
@@ -19,8 +19,12 @@ function normalizedParams(value: URLSearchParams | string) {
   return new URLSearchParams(entries).toString();
 }
 
-export function adminBulletinPeriodsKey(academicYear?: string | null) {
-  return `admin:bulletins:periods:${part(academicYear)}`;
+export function adminBulletinPeriodsKey(
+  academicYear?: string | null,
+  classId?: string | null,
+) {
+  const base = `admin:bulletins:periods:${part(academicYear)}`;
+  return classId ? `${base}:class:${part(classId)}` : base;
 }
 
 export function adminBulletinDataKey(params: URLSearchParams | string) {
@@ -133,13 +137,15 @@ export async function getAdminBulletinSettings<T = any>(): Promise<T> {
 
 export async function getAdminBulletinPeriods<T = any>(
   academicYear?: string | null,
+  classId?: string | null,
 ): Promise<T> {
   const params = new URLSearchParams();
   if (academicYear) params.set("academic_year", academicYear);
+  if (classId) params.set("class_id", classId);
   const query = params.toString();
   return await offlineGetJson<T>(
     `/api/admin/institution/grading-periods${query ? `?${query}` : ""}`,
-    adminBulletinPeriodsKey(academicYear),
+    adminBulletinPeriodsKey(academicYear, classId),
   );
 }
 

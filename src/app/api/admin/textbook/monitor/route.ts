@@ -11,6 +11,12 @@ import {
 } from "@/lib/textbook/subject-matching";
 import { decorateTextbookClassEducation } from "@/lib/textbook/education-context";
 import { syncTextbookAssignmentsFromTeaching } from "@/lib/textbook/auto-assignment";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  readEducationScopeFromSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -146,6 +152,22 @@ export async function GET(req: NextRequest) {
   const { srv, institutionId, userId } = auth.ctx;
 
   const url = new URL(req.url);
+  const hasEducationScope = [
+    "education_type",
+    "formation_code",
+    "formation_level_code",
+    "level_code",
+    "class_id",
+    "classId",
+  ].some((key) => url.searchParams.has(key));
+  const educationScope: EducationScopeValue = hasEducationScope
+    ? readEducationScopeFromSearchParams(url.searchParams)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
   const academicYear =
     cleanText(url.searchParams.get("academic_year"), 30) ||
     (await getCurrentAcademicYearCode(srv, institutionId));
@@ -234,7 +256,10 @@ export async function GET(req: NextRequest) {
     if (String(progression?.status || "") !== "active") return false;
     const year =
       String(progression?.academic_year || classRow?.academic_year || "").trim();
-    return !academicYear || year === academicYear;
+    return (
+      (!academicYear || year === academicYear) &&
+      classMatchesEducationScope(classRow, educationScope)
+    );
   });
 
   const assignmentIds = uniq(assignments.map((row) => row?.id));
@@ -457,6 +482,8 @@ export async function GET(req: NextRequest) {
         class_label: classRow?.label || "Classe",
         level: classRow?.level || progression?.level || null,
         education_type: classRow?.education_type || "general_secondary",
+        formation_code: classRow?.formation_code || null,
+        formation_level_code: classRow?.formation_level_code || null,
         education_label: classRow?.education_label || "Secondaire général",
         education_context_label:
           classRow?.education_context_label || "Secondaire général",
@@ -524,6 +551,12 @@ export async function GET(req: NextRequest) {
     academic_years: academicYears.includes(academicYear)
       ? academicYears
       : [academicYear, ...academicYears],
+    education_scope: {
+      education_type: educationScope.educationType,
+      formation_code: educationScope.formationCode || null,
+      formation_level_code: educationScope.levelCode || null,
+      class_id: educationScope.classId || null,
+    },
     totals: {
       ...totals,
       completion_rate: totals.planned_minutes

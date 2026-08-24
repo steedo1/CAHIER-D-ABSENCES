@@ -1,6 +1,15 @@
 // src/app/api/admin/notes/evaluations/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromSearchParams,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +33,7 @@ type ScoreRow = {
   score: number | null;
 };
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   label?: string | null;
   level?: string | null;
@@ -99,6 +108,21 @@ export async function GET(req: NextRequest) {
   const published = url.searchParams.get("published"); // "true" | "false" | null
   const pageParam = url.searchParams.get("page") || "1";
   const limitParam = url.searchParams.get("limit") || "30";
+  const hasEducationScope = [
+    "education_type",
+    "formation_code",
+    "formation_level_code",
+    "level_code",
+    "class_id",
+  ].some((key) => url.searchParams.has(key));
+  const educationScope: EducationScopeValue = hasEducationScope
+    ? readEducationScopeFromSearchParams(url.searchParams)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
 
   let page = Number(pageParam);
   let limit = Number(limitParam);
@@ -109,28 +133,32 @@ export async function GET(req: NextRequest) {
   const fromIdx = (page - 1) * limit;
   const toIdx = fromIdx + limit - 1;
 
-  // Si classId est fourni, on refuse si la classe n'appartient pas à l'institution
-  if (classId) {
-    const { data: cls, error: clsErr } = await supabase
-      .from("classes")
-      .select("id, institution_id")
-      .eq("id", classId)
-      .maybeSingle();
+  const { data: classRowsData, error: classRowsError } = await supabase
+    .from("classes")
+    .select(
+      "id,label,level,institution_id,education_type,formation_code,formation_level_code",
+    )
+    .eq("institution_id", institutionId);
 
-    if (clsErr) {
-      console.error("[admin.notes.evaluations] classes check error", clsErr);
-      return NextResponse.json(
-        { ok: false, error: "CLASSES_ERROR" },
-        { status: 500 }
-      );
-    }
+  if (classRowsError) {
+    console.error("[admin.notes.evaluations] classes scope error", classRowsError);
+    return NextResponse.json(
+      { ok: false, error: "CLASSES_ERROR" },
+      { status: 500 },
+    );
+  }
 
-    if (!cls || (cls as any).institution_id !== institutionId) {
-      return NextResponse.json(
-        { ok: false, error: "FORBIDDEN_CLASS" },
-        { status: 403 }
-      );
-    }
+  const institutionClasses = (classRowsData || []) as ClassRow[];
+  const scopedClasses = institutionClasses.filter((row) =>
+    classMatchesEducationScope(row, educationScope),
+  );
+  const scopedClassIds = scopedClasses.map((row) => row.id);
+
+  if (classId && !scopedClassIds.includes(classId)) {
+    return NextResponse.json(
+      { ok: false, error: "FORBIDDEN_CLASS_SCOPE" },
+      { status: 403 },
+    );
   }
 
   /* ───────── Résolution robuste du subject_id ─────────
@@ -203,19 +231,6 @@ export async function GET(req: NextRequest) {
 
   const subjectIdsForQuery = uniqueStrings(Array.from(acceptedSubjectIds));
 
-  console.log("[admin.notes.evaluations] PARAMS", {
-    from,
-    to,
-    classId,
-    subjectIdRaw,
-    canonicalSubjectId,
-    subjectIdsForQuery,
-    published,
-    page,
-    limit,
-    institution_id: institutionId,
-  });
-
   /* ───────── Évaluations (SCOPÉES institution) ───────── */
   let query = supabase
     .from("grade_evaluations")
@@ -226,6 +241,22 @@ export async function GET(req: NextRequest) {
     .eq("classes.institution_id", institutionId)
     .order("eval_date", { ascending: false });
 
+  if (!scopedClassIds.length) {
+    return NextResponse.json({
+      ok: true,
+      meta: {
+        page,
+        limit,
+        total: 0,
+        from,
+        to,
+        education_scope: educationScope,
+      },
+      items: [],
+    });
+  }
+
+  query = query.in("class_id", scopedClassIds);
   if (from) query = query.gte("eval_date", from);
   if (to) query = query.lte("eval_date", to);
   if (classId) query = query.eq("class_id", classId);
@@ -297,28 +328,24 @@ export async function GET(req: NextRequest) {
   }
 
   /* ───────── Métadonnées classes (SCOPÉES institution) ───────── */
-  const classesById: Record<string, { label: string; level: string | null }> = {};
-  if (classIds.length) {
-    const { data: classesData, error: classesErr } = await supabase
-      .from("classes")
-      .select("id, label, level")
-      .in("id", classIds)
-      .eq("institution_id", institutionId);
-
-    if (classesErr) {
-      console.error("[admin.notes.evaluations] classes error", classesErr);
-      return NextResponse.json(
-        { ok: false, error: "CLASSES_ERROR" },
-        { status: 500 }
-      );
+  const classesById: Record<
+    string,
+    {
+      label: string;
+      level: string | null;
+      education_type: string;
+      formation_code: string | null;
+      formation_level_code: string | null;
     }
-
-    for (const c of (classesData || []) as ClassRow[]) {
-      classesById[c.id] = {
-        label: (c.label || "Classe").trim(),
-        level: (c.level || null) ?? null,
-      };
-    }
+  > = {};
+  for (const c of scopedClasses.filter((row) => classIds.includes(row.id))) {
+    classesById[c.id] = {
+      label: String(c.label || "Classe").trim(),
+      level: getClassLevelCode(c) || null,
+      education_type: normalizeClassEducationType(c),
+      formation_code: c.formation_code || null,
+      formation_level_code: c.formation_level_code || null,
+    };
   }
 
   /* ───────── Métadonnées matières (custom + fallback global) ───────── */
@@ -503,6 +530,9 @@ export async function GET(req: NextRequest) {
       class_id: ev.class_id,
       class_label: cls?.label ?? "Classe",
       level: cls?.level ?? null,
+      education_type: cls?.education_type ?? null,
+      formation_code: cls?.formation_code ?? null,
+      formation_level_code: cls?.formation_level_code ?? null,
       subject_id: ev.subject_id,
       subject_name: subj?.name ?? null,
       teacher_id: ev.teacher_id,
@@ -528,6 +558,7 @@ export async function GET(req: NextRequest) {
       to,
       subject_id: canonicalSubjectId,
       subject_ids_used: subjectIdsForQuery,
+      education_scope: educationScope,
     },
     items,
   });

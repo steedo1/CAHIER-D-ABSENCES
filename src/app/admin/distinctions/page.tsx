@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  classMatchesEducationScope,
+  DEFAULT_EDUCATION_SCOPE,
+  getClassLevelCode,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   AlertTriangle,
   Award,
@@ -32,7 +40,7 @@ import {
   type StudentPalmaresMode,
 } from "@/lib/distinctions";
 
-type SchoolClass = {
+type SchoolClass = EducationScopedClass & {
   id: string;
   label: string;
   level?: string | null;
@@ -635,8 +643,10 @@ export default function DistinctionsStudentsPage() {
   const [settingsSourceLabel, setSettingsSourceLabel] = useState("Règles générales Mon Cahier");
   const [academicYear, setAcademicYear] = useState("");
   const [periodId, setPeriodId] = useState("");
-  const [level, setLevel] = useState("");
-  const [classId, setClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const level = educationScope.levelCode;
+  const classId = educationScope.classId;
   const [mode, setMode] = useState<StudentPalmaresMode>("individual");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -686,8 +696,17 @@ export default function DistinctionsStudentsPage() {
     let cancelled = false;
     (async () => {
       try {
+        const params = new URLSearchParams({ academic_year: academicYear });
+        const scopeWithoutClass = { ...educationScope, classId: "" };
+        const representativeClass = classes.find(
+          (row) =>
+            (!academicYear || row.academic_year === academicYear) &&
+            classMatchesEducationScope(row, scopeWithoutClass),
+        );
+        const periodClassId = classId || representativeClass?.id || "";
+        if (periodClassId) params.set("class_id", periodClassId);
         const data = await readJson<any>(
-          await fetch(`/api/admin/institution/grading-periods?academic_year=${encodeURIComponent(academicYear)}`, { cache: "no-store" }),
+          await fetch(`/api/admin/institution/grading-periods?${params.toString()}`, { cache: "no-store" }),
         );
         if (cancelled) return;
         const nextPeriods = (Array.isArray(data.items) ? data.items : []).filter((period: GradePeriod) => period.is_active !== false);
@@ -704,44 +723,25 @@ export default function DistinctionsStudentsPage() {
     return () => {
       cancelled = true;
     };
-  }, [academicYear]);
+  }, [academicYear, classId, classes, educationScope]);
 
   const yearClasses = useMemo(
     () => classes.filter((schoolClass) => !academicYear || String(schoolClass.academic_year || "") === academicYear),
     [classes, academicYear],
   );
 
-  const levels = useMemo(
-    () =>
-      Array.from(new Set(yearClasses.map((schoolClass) => safeText(schoolClass.level)).filter(Boolean))).sort((a, b) =>
-        a.localeCompare(b, "fr", { numeric: true }),
-      ),
-    [yearClasses],
-  );
-
-  useEffect(() => {
-    if (!levels.length) {
-      setLevel("");
-      return;
-    }
-    if (!levels.includes(level)) setLevel(levels[0]);
-  }, [levels, level]);
-
   const levelClasses = useMemo(
     () =>
       yearClasses
-        .filter((schoolClass) => !level || safeText(schoolClass.level) === level)
+        .filter((schoolClass) =>
+          classMatchesEducationScope(schoolClass, {
+            ...educationScope,
+            classId: "",
+          }),
+        )
         .sort((a, b) => safeText(a.label).localeCompare(safeText(b.label), "fr", { numeric: true })),
-    [yearClasses, level],
+    [educationScope, yearClasses],
   );
-
-  useEffect(() => {
-    if (!levelClasses.length) {
-      setClassId("");
-      return;
-    }
-    if (!levelClasses.some((schoolClass) => schoolClass.id === classId)) setClassId(levelClasses[0].id);
-  }, [levelClasses, classId]);
 
   const selectedPeriod = useMemo(() => periods.find((period) => period.id === periodId) || null, [periods, periodId]);
 
@@ -771,7 +771,7 @@ export default function DistinctionsStudentsPage() {
       classInfo: {
         id: schoolClass.id,
         label: bulletin.class?.label || schoolClass.label,
-        level: bulletin.class?.level || schoolClass.level || null,
+        level: getClassLevelCode(schoolClass) || bulletin.class?.level || null,
         academic_year: bulletin.class?.academic_year || schoolClass.academic_year || null,
       },
       subjects: bulletin.subjects || [],
@@ -791,6 +791,10 @@ export default function DistinctionsStudentsPage() {
     setLoadedClasses([]);
     if (!selectedPeriod?.start_date || !selectedPeriod?.end_date) {
       setError("Choisis une période possédant une date de début et une date de fin.");
+      return;
+    }
+    if (!level) {
+      setError("Choisis une année de formation ou un niveau.");
       return;
     }
 
@@ -1125,7 +1129,9 @@ export default function DistinctionsStudentsPage() {
                 onClick={() => {
                   setMode(itemMode);
                   setLoadedClasses([]);
-                  if (itemMode !== "general" && !classId) setClassId(levelClasses[0]?.id || "");
+                  if (itemMode === "general" && classId) {
+                    setEducationScope((current) => ({ ...current, classId: "" }));
+                  }
                 }}
                 className={`rounded-2xl border p-4 text-left transition ${active ? "border-amber-400 bg-amber-50 shadow-md ring-2 ring-amber-200" : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"}`}
               >
@@ -1142,10 +1148,22 @@ export default function DistinctionsStudentsPage() {
         </section>
 
         <section className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <EducationScopeFilter
+            value={educationScope}
+            onChange={(value) => {
+              setEducationScope(value);
+              setLoadedClasses([]);
+              setPeriodId("");
+            }}
+            classes={yearClasses}
+            showClass={mode !== "general"}
+            title="Contexte du palmarès"
+          />
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <label className="block">
               <span className="text-xs font-black uppercase tracking-wide text-slate-500">Année scolaire</span>
-              <select value={academicYear} onChange={(event) => { setAcademicYear(event.target.value); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
+              <select value={academicYear} onChange={(event) => { setAcademicYear(event.target.value); setEducationScope((current) => ({ ...current, levelCode: "", classId: "" })); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
                 {years.map((year) => <option key={year.code} value={year.code}>{year.label || year.code}</option>)}
               </select>
             </label>
@@ -1155,12 +1173,6 @@ export default function DistinctionsStudentsPage() {
                 {periods.map((period) => <option key={period.id} value={period.id}>{period.label || period.short_label || period.code}</option>)}
               </select>
             </label>
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Niveau</span>
-              <select value={level} onChange={(event) => { setLevel(event.target.value); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
-                {levels.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </label>
             {mode === "general" ? (
               <div className="block xl:col-span-1">
                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Portée</span>
@@ -1168,14 +1180,7 @@ export default function DistinctionsStudentsPage() {
                   Toutes les classes du niveau seront prises en compte.
                 </div>
               </div>
-            ) : (
-              <label className="block">
-                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Classe</span>
-                <select value={classId} onChange={(event) => { setClassId(event.target.value); setLoadedClasses([]); }} className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-semibold text-slate-900">
-                  {levelClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.label}</option>)}
-                </select>
-              </label>
-            )}
+            ) : null}
             <div className="flex items-end">
               <button type="button" onClick={generate} disabled={generating || !periodId || (mode !== "general" && !classId)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-black text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                 {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}

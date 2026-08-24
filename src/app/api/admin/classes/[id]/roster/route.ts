@@ -414,7 +414,7 @@ async function requireAdminContext(
   const { data: cls, error: classErr } = await srv
     .from("classes")
     .select(
-      "id,label,level,code,academic_year,official_track_code,head_teacher_id",
+      "id,label,level,code,academic_year,official_track_code,education_type,formation_code,formation_level_code,head_teacher_id",
     )
     .eq("id", classId)
     .eq("institution_id", institutionId)
@@ -622,6 +622,9 @@ export async function GET(
       code: (cls as any).code ?? null,
       academic_year: (cls as any).academic_year ?? null,
       official_track_code: (cls as any).official_track_code ?? null,
+      education_type: (cls as any).education_type ?? null,
+      formation_code: (cls as any).formation_code ?? null,
+      formation_level_code: (cls as any).formation_level_code ?? null,
     },
     academic_year: academicYearRes.data
       ? {

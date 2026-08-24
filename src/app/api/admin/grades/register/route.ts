@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import {
+  getClassLevelCode,
+  normalizeClassEducationType,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -155,7 +159,9 @@ async function ensureClass(
 ) {
   const { data, error } = await srv
     .from("classes")
-    .select("id,label,level,academic_year,institution_id")
+    .select(
+      "id,label,level,academic_year,institution_id,education_type,formation_code,formation_level_code",
+    )
     .eq("id", classId)
     .eq("institution_id", institutionId)
     .maybeSingle();
@@ -473,7 +479,7 @@ export async function GET(req: NextRequest) {
 
     const rosterMap = await loadRosterForPeriod(srv, classId, period);
 
-    let evaluationQuery = srv
+    const evaluationQuery = srv
       .from("grade_evaluations")
       .select(
         "id,class_id,subject_id,subject_component_id,grading_period_id,academic_year,teacher_id,eval_date,eval_kind,scale,coeff,is_published,published_at,publication_status,submitted_at,reviewed_at",
@@ -557,6 +563,11 @@ export async function GET(req: NextRequest) {
       .eq("is_active", true)
       .order("order_index", { ascending: true });
     if (componentsError) throw componentsError;
+    const classLevelCode = getClassLevelCode(classRow);
+    const components = (componentsRaw || []).filter((row: any) => {
+      const componentLevel = String(row?.level || "").trim();
+      return !componentLevel || componentLevel === classLevelCode;
+    });
 
     const locks = await readLocks(srv, evaluationIds);
     const legacyPeriodEvaluations = evaluations.filter((ev) => !ev.grading_period_id).length;
@@ -570,11 +581,20 @@ export async function GET(req: NextRequest) {
         working_evaluations_count: workingEvaluationIds.length,
         legacy_period_evaluations_count: legacyPeriodEvaluations,
         recovered_students_from_scores: recoveredStudents,
+        education_scope: {
+          education_type: normalizeClassEducationType(classRow),
+          formation_code: classRow.formation_code || null,
+          formation_level_code: classRow.formation_level_code || null,
+          class_id: classRow.id,
+        },
       },
       class: {
         id: classRow.id,
         label: classRow.label || "Classe",
-        level: classRow.level || null,
+        level: classLevelCode || null,
+        education_type: normalizeClassEducationType(classRow),
+        formation_code: classRow.formation_code || null,
+        formation_level_code: classRow.formation_level_code || null,
         academic_year: classRow.academic_year || null,
       },
       period,
@@ -596,7 +616,7 @@ export async function GET(req: NextRequest) {
         editable: isEvaluationEditable(ev, locks.get(ev.id) === true),
       })),
       scores,
-      components: Array.isArray(componentsRaw) ? componentsRaw : [],
+      components,
     });
   } catch (error: any) {
     console.error("[admin/grades/register] GET", error);
@@ -662,13 +682,20 @@ export async function POST(req: NextRequest) {
       if (componentId) {
         const { data: component, error: componentError } = await srv
           .from("grade_subject_components")
-          .select("id,subject_id,institution_id,is_active")
+          .select("id,subject_id,institution_id,is_active,level")
           .eq("id", componentId)
           .eq("institution_id", institutionId)
           .eq("subject_id", subject.globalId)
           .maybeSingle();
         if (componentError) throw componentError;
         if (!component || component.is_active === false) return bad("INVALID_COMPONENT", 400);
+        const componentLevel = String(component.level || "").trim();
+        if (
+          componentLevel &&
+          componentLevel !== getClassLevelCode(classRow)
+        ) {
+          return bad("COMPONENT_CLASS_CONTEXT_MISMATCH", 400);
+        }
       }
 
       const { data, error } = await srv

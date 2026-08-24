@@ -20,6 +20,10 @@ type MonitorOptions = {
   lateThresholdMinutes?: number;
   missingWindowMinutes?: number;
   includeExpectedStatuses?: boolean;
+  educationType?: string | null;
+  formationCode?: string | null;
+  levelCode?: string | null;
+  classId?: string | null;
 };
 
 type PeriodRow = {
@@ -37,6 +41,10 @@ type TimetableRow = {
   subject_id: string;
   teacher_id: string;
   class_label: string;
+  class_level: string | null;
+  education_type: string | null;
+  formation_code: string | null;
+  formation_level_code: string | null;
   subject_name: string;
   teacher_name: string;
   teacher_phone: string | null;
@@ -62,6 +70,46 @@ type AbsenceRow = {
 
 const MAX_CARRY_AFTER_END_MINUTES = 120;
 
+function clean(value: unknown) {
+  return String(value || "").trim();
+}
+
+function effectiveEducationType(row: TimetableRow) {
+  return clean(row.education_type) || "general_secondary";
+}
+
+function effectiveLevelCode(row: TimetableRow) {
+  return effectiveEducationType(row) === "general_secondary"
+    ? clean(row.class_level)
+    : clean(row.formation_level_code || row.class_level);
+}
+
+function timetableMatchesScope(row: TimetableRow, options: MonitorOptions) {
+  const educationType = clean(options.educationType);
+  const formationCode = clean(options.formationCode);
+  const levelCode = clean(options.levelCode);
+  const classId = clean(options.classId);
+
+  if (
+    educationType &&
+    educationType !== "all" &&
+    effectiveEducationType(row) !== educationType
+  ) {
+    return false;
+  }
+  if (formationCode && clean(row.formation_code) !== formationCode) {
+    return false;
+  }
+  if (levelCode && effectiveLevelCode(row) !== levelCode) {
+    return false;
+  }
+  if (classId && row.class_id !== classId) {
+    return false;
+  }
+
+  return true;
+}
+
 export function attendanceMonitor(
   db: RelayDatabase,
   options: MonitorOptions,
@@ -83,7 +131,9 @@ export function attendanceMonitor(
   `).all(options.institutionId) as PeriodRow[];
   const timetables = db.prepare(`
     SELECT tt.period_id, tt.weekday, tt.class_id, tt.subject_id, tt.teacher_id,
-           c.label AS class_label, s.name AS subject_name,
+           c.label AS class_label, c.level AS class_level,
+           c.education_type, c.formation_code, c.formation_level_code,
+           s.name AS subject_name,
            COALESCE(NULLIF(TRIM(p.display_name), ''), NULLIF(TRIM(p.email), ''),
                     NULLIF(TRIM(p.phone), ''), 'Enseignant') AS teacher_name,
            p.phone AS teacher_phone
@@ -102,6 +152,9 @@ export function attendanceMonitor(
      AND p.deleted_at IS NULL
     WHERE tt.institution_id = ? AND tt.deleted_at IS NULL
   `).all(options.institutionId) as TimetableRow[];
+  const scopedTimetables = timetables.filter((row) =>
+    timetableMatchesScope(row, options),
+  );
 
   const dateAfterTo = new Date(toDate);
   dateAfterTo.setUTCDate(dateAfterTo.getUTCDate() + 1);
@@ -132,10 +185,10 @@ export function attendanceMonitor(
   const periodById = new Map(periods.map((period) => [period.id, period]));
   const sessionsIndex = indexSessions(sessions);
   const absenceIndex = indexAbsences(absences);
-  const nextStart = nextStartBySlot(timetables, periodById);
+  const nextStart = nextStartBySlot(scopedTimetables, periodById);
   const rows: AttendanceMonitorViewRow[] = [];
 
-  for (const timetable of timetables) {
+  for (const timetable of scopedTimetables) {
     const period = periodById.get(timetable.period_id);
     if (!period || !sameWeekday(period.weekday, timetable.weekday)) continue;
     const dates = datesByWeekday.get(period.weekday) ?? [];
@@ -214,7 +267,12 @@ export function attendanceMonitor(
         period_label: period.label || `${hm(period.start_time)} – ${hm(period.end_time)}`,
         planned_start: hm(period.start_time),
         planned_end: hm(period.end_time),
+        class_id: timetable.class_id,
         class_label: timetable.class_label || null,
+        class_level: clean(timetable.class_level) || null,
+        education_type: effectiveEducationType(timetable),
+        formation_code: clean(timetable.formation_code) || null,
+        formation_level_code: clean(timetable.formation_level_code) || null,
         subject_name: timetable.subject_name || null,
         teacher_name: timetable.teacher_name,
         teacher_phone: timetable.teacher_phone,

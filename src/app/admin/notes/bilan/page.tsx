@@ -12,6 +12,13 @@ import {
   School,
   Trophy,
 } from "lucide-react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  buildEducationScopeSearchParams,
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type PeriodRow = {
   id: string;
@@ -506,6 +513,9 @@ export default function BilanTrimestrielAnnuelPage() {
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [classes, setClasses] = useState<EducationScopedClass[]>([]);
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
 
   const periods = data?.periods || [];
   const selectedPeriod = useMemo(
@@ -521,7 +531,9 @@ export default function BilanTrimestrielAnnuelPage() {
     setErrorMsg(null);
 
     try {
-      const params = new URLSearchParams();
+      const params = buildEducationScopeSearchParams(educationScope, {
+        includeClass: false,
+      });
       const annualMode = nextPeriodId === ANNUAL_SELECTOR_VALUE;
       const periodIdForRequest = annualMode
         ? periods[periods.length - 1]?.id || data?.selected_period?.id || ""
@@ -549,9 +561,39 @@ export default function BilanTrimestrielAnnuelPage() {
   }
 
   useEffect(() => {
+    let cancelled = false;
+
+    void fetch("/api/admin/classes?education_type=all&limit=5000", {
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        setClasses(
+          Array.isArray(json?.items)
+            ? (json.items as EducationScopedClass[])
+            : [],
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setClasses([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     void loadReport("", "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function changeEducationScope(nextScope: EducationScopeValue) {
+    setEducationScope(nextScope);
+    setData(null);
+    setErrorMsg(null);
+  }
 
   function printReport() {
     if (!data) return;
@@ -622,6 +664,15 @@ export default function BilanTrimestrielAnnuelPage() {
           </div>
         </div>
       </section>
+
+      <EducationScopeFilter
+        value={educationScope}
+        onChange={changeEducationScope}
+        classes={classes}
+        showClass={false}
+        title="Contexte du bilan"
+        className="mt-4"
+      />
 
       {errorMsg && (
         <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">

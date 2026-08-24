@@ -377,6 +377,12 @@ export function createRelayServer(
             from,
             to,
             includeExpectedStatuses: url.searchParams.get("include_expected") === "1",
+            educationType: url.searchParams.get("education_type"),
+            formationCode: url.searchParams.get("formation_code"),
+            levelCode:
+              url.searchParams.get("formation_level_code") ||
+              url.searchParams.get("level_code"),
+            classId: url.searchParams.get("class_id"),
           }),
         });
       }

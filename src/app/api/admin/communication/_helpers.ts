@@ -4,6 +4,16 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getInstitutionSmsPolicy, isPushEnabled, isSmsPremiumEnabled, resolveSmsProvider } from "@/lib/sms/policy";
 import { normalizePhone } from "@/lib/phone";
+import { isEducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromRecord,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const FIRST_CYCLE_LEVELS = new Set(["6e", "5e", "4e", "3e"]);
 export const SECOND_CYCLE_LEVELS = new Set(["2nde", "seconde", "1re", "1ere", "premiere", "première", "tle", "terminale", "terminal"]);
@@ -15,6 +25,18 @@ export type CommunicationTarget = {
   audience_type: CommunicationAudienceType;
   target_type: string;
   target_value?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
+  class_id?: string | null;
+};
+
+type CommunicationClass = EducationScopedClass & {
+  id: string;
+  label: string;
+  level: string;
+  academic_year: string | null;
+  head_teacher_id: string | null;
 };
 
 export type CommunicationRecipient = {
@@ -67,6 +89,52 @@ function cycleForLevel(level: unknown): "first_cycle" | "second_cycle" | null {
   if (FIRST_CYCLE_LEVELS.has(normalized)) return "first_cycle";
   if (SECOND_CYCLE_LEVELS.has(normalized)) return "second_cycle";
   return null;
+}
+
+function communicationEducationScope(
+  target: CommunicationTarget,
+): EducationScopeValue {
+  const hasScope = Boolean(
+    s(target.education_type) ||
+      s(target.formation_code) ||
+      s(target.formation_level_code) ||
+      s(target.class_id),
+  );
+
+  if (!hasScope) {
+    return {
+      educationType: ALL_EDUCATION_TYPES,
+      formationCode: "",
+      levelCode: "",
+      classId: "",
+    };
+  }
+
+  const rawEducationType = s(target.education_type);
+  if (
+    rawEducationType &&
+    rawEducationType !== ALL_EDUCATION_TYPES &&
+    !isEducationType(rawEducationType)
+  ) {
+    throw new Error("education_type_invalid");
+  }
+
+  const scope = readEducationScopeFromRecord({
+    education_type: target.education_type,
+    formation_code: target.formation_code,
+    formation_level_code: target.formation_level_code,
+    class_id: target.class_id,
+  });
+
+  if (
+    scope.educationType !== ALL_EDUCATION_TYPES &&
+    scope.educationType !== "general_secondary" &&
+    !scope.formationCode
+  ) {
+    throw new Error("formation_required_for_education_type");
+  }
+
+  return scope;
 }
 
 async function getCurrentAcademicYear(
@@ -200,7 +268,7 @@ export async function getCommunicationClasses(
 ) {
   let query = srv
     .from("classes")
-    .select("id,label,level,academic_year,head_teacher_id")
+    .select("id,label,level,academic_year,head_teacher_id,education_type,formation_code,formation_level_code")
     .eq("institution_id", institutionId);
 
   if (academicYear) query = query.eq("academic_year", academicYear);
@@ -215,10 +283,16 @@ export async function getCommunicationClasses(
   return (data || []).map((row: any) => ({
     id: String(row.id),
     label: s(row.label) || "Classe",
-    level: normalizeLevel(row.level),
+    level:
+      normalizeClassEducationType(row) === "general_secondary"
+        ? normalizeLevel(row.level)
+        : getClassLevelCode(row),
     academic_year: row.academic_year ? String(row.academic_year) : null,
     head_teacher_id: row.head_teacher_id ? String(row.head_teacher_id) : null,
-  }));
+    education_type: row.education_type ?? null,
+    formation_code: row.formation_code ?? null,
+    formation_level_code: row.formation_level_code ?? null,
+  })) as CommunicationClass[];
 }
 
 async function fetchPhonesByProfile(
@@ -401,11 +475,30 @@ async function resolveParentRecipients(
   const classes = await getCommunicationClasses(srv, institutionId, academicYear);
   const targetType = s(target.target_type) || "all";
   const targetValue = s(target.target_value);
+  const educationScope = communicationEducationScope(target);
+
+  if (
+    targetType === "cycle" &&
+    educationScope.educationType !== ALL_EDUCATION_TYPES &&
+    educationScope.educationType !== "general_secondary"
+  ) {
+    throw new Error("cycle_general_secondary_only");
+  }
 
   const selectedClasses = classes.filter((cls) => {
+    if (!classMatchesEducationScope(cls, educationScope)) return false;
     if (targetType === "all") return true;
-    if (targetType === "cycle") return cycleForLevel(cls.level) === targetValue;
-    if (targetType === "level") return normalizeLevel(cls.level) === normalizeLevel(targetValue);
+    if (targetType === "cycle") {
+      return (
+        normalizeClassEducationType(cls) === "general_secondary" &&
+        cycleForLevel(cls.level) === targetValue
+      );
+    }
+    if (targetType === "level") {
+      return normalizeClassEducationType(cls) === "general_secondary"
+        ? normalizeLevel(cls.level) === normalizeLevel(targetValue)
+        : getClassLevelCode(cls) === targetValue;
+    }
     if (targetType === "class") return cls.id === targetValue;
     return false;
   });
@@ -585,7 +678,26 @@ async function fetchProfilesById(srv: SupabaseClient, profileIds: string[]) {
   return out;
 }
 
-export function targetLabelFor(target: CommunicationTarget, classes: Array<{ id: string; label: string; level: string }>) {
+function communicationContextLabel(target: CommunicationTarget) {
+  const scope = communicationEducationScope(target);
+  if (scope.educationType === ALL_EDUCATION_TYPES) return "";
+
+  const typeLabel =
+    scope.educationType === "technical_secondary"
+      ? "enseignement technique secondaire"
+      : scope.educationType === "vocational_training"
+        ? "formation professionnelle"
+        : scope.educationType === "higher_technical_short_cycle"
+          ? "enseignement supérieur technique court"
+          : "secondaire général";
+  const formation = scope.formationCode ? ` • ${scope.formationCode}` : "";
+  return `${typeLabel}${formation}`;
+}
+
+export function targetLabelFor(
+  target: CommunicationTarget,
+  classes: Array<{ id: string; label: string; level: string }>,
+) {
   const targetType = s(target.target_type) || "all";
   const targetValue = s(target.target_value);
 
@@ -598,12 +710,18 @@ export function targetLabelFor(target: CommunicationTarget, classes: Array<{ id:
   if (targetType === "cycle") {
     return targetValue === "second_cycle" ? "Parents du second cycle" : "Parents du premier cycle";
   }
-  if (targetType === "level") return `Parents du niveau ${normalizeLevel(targetValue)}`;
+  if (targetType === "level") {
+    const contextLabel = communicationContextLabel(target);
+    return contextLabel
+      ? `Parents du niveau ${targetValue} — ${contextLabel}`
+      : `Parents du niveau ${targetValue}`;
+  }
   if (targetType === "class") {
     const cls = classes.find((item) => item.id === targetValue);
     return cls ? `Parents de la classe ${cls.label}` : "Parents d’une classe";
   }
-  return "Tous les parents";
+  const contextLabel = communicationContextLabel(target);
+  return contextLabel ? `Tous les parents — ${contextLabel}` : "Tous les parents";
 }
 
 export function summarizeRecipients(recipients: Array<CommunicationRecipient & { has_push?: boolean; has_sms_phone?: boolean }>) {

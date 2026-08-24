@@ -44,12 +44,14 @@ test("le suivi admin propose seulement les deux vues utiles", () => {
   assert.doesNotMatch(adminPage, /Séances réalisées/);
 });
 
-test("la vue classe garde seulement année, période, niveau et classe", () => {
+test("la vue classe utilise le contexte pédagogique partagé", () => {
+  assert.match(adminPage, /<EducationScopeFilter/);
+  assert.match(adminPage, /title="Contexte du suivi"/);
+  assert.match(adminPage, /showClass=\{view === "class"\}/);
   assert.match(adminPage, /label="Année scolaire"/);
   assert.match(adminPage, /label="Trimestre \/ période"/);
-  assert.match(adminPage, /label="Niveau"/);
   assert.match(adminPage, /view === "class"/);
-  assert.match(adminPage, /label="Classe"/);
+  assert.match(adminPage, /item\.class_id === educationScope\.classId/);
   assert.match(adminPage, /"Discipline" : "Classe"/);
   assert.match(adminPage, />Enseignant</);
   assert.match(adminPage, />Exécution</);

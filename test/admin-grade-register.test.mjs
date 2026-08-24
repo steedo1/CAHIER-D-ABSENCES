@@ -17,22 +17,24 @@ const sidebar = fs.readFileSync(
   "utf8",
 );
 
-test("le registre propose les filtres métier dans l'ordre attendu", () => {
+test("le registre propose le contexte pédagogique puis les filtres métier", () => {
   const labels = [
+    "Contexte du registre des notes",
     "Année scolaire",
     "Trimestre / période",
-    "Niveau",
-    "Classe",
     "Discipline",
     "Professeur",
   ];
 
   let cursor = -1;
   for (const label of labels) {
-    const next = page.indexOf(label);
+    const next = page.indexOf(label, cursor + 1);
     assert.ok(next > cursor, `${label} doit apparaître après le filtre précédent`);
     cursor = next;
   }
+  assert.match(page, /<EducationScopeFilter/);
+  assert.match(page, /classes=\{classesForYear\}/);
+  assert.match(page, /classId: ""/);
 });
 
 test("le registre affiche un vrai cahier de notes et permet la saisie admin", () => {

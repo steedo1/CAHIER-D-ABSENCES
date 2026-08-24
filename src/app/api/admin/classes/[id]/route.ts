@@ -220,6 +220,44 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       : null;
   }
 
+  const currentEducationType = isEducationType(current.education_type)
+    ? current.education_type
+    : "general_secondary";
+  const nextEducationType = Object.prototype.hasOwnProperty.call(row, "education_type")
+    ? isEducationType(row.education_type)
+      ? row.education_type
+      : "general_secondary"
+    : currentEducationType;
+  const nextFormationCode = Object.prototype.hasOwnProperty.call(row, "formation_code")
+    ? String(row.formation_code || "").trim()
+    : String(current.formation_code || "").trim();
+  const nextFormationLevelCode = Object.prototype.hasOwnProperty.call(
+    row,
+    "formation_level_code",
+  )
+    ? String(row.formation_level_code || "").trim()
+    : String(current.formation_level_code || "").trim();
+  const nextLevel = Object.prototype.hasOwnProperty.call(row, "level")
+    ? String(row.level || "").trim()
+    : String(current.level || "").trim();
+  const contextChanged =
+    nextEducationType !== currentEducationType ||
+    nextFormationCode !== String(current.formation_code || "").trim() ||
+    nextFormationLevelCode !==
+      String(current.formation_level_code || "").trim() ||
+    nextLevel !== String(current.level || "").trim();
+
+  if (contextChanged) {
+    return NextResponse.json(
+      {
+        error: "class_context_change_blocked",
+        message:
+          "Le contexte pédagogique d’une classe ne peut pas être modifié depuis cet écran. Une correction dédiée doit auditer ses élèves, affectations, notes et appels.",
+      },
+      { status: 409 },
+    );
+  }
+
   if (
     Object.prototype.hasOwnProperty.call(body, "official_track_code") ||
     Object.prototype.hasOwnProperty.call(body, "officialTrackCode")

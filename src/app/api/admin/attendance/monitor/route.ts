@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { isEducationType } from "@/lib/education-organization";
+import {
+  ALL_EDUCATION_TYPES,
+  classMatchesEducationScope,
+  getClassFormationCode,
+  getClassLevelCode,
+  normalizeClassEducationType,
+  readEducationScopeFromSearchParams,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +31,12 @@ type MonitorRow = {
   period_label?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  class_id?: string | null;
   class_label?: string | null;
+  class_level?: string | null;
+  education_type?: string | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_name?: string | null;
   teacher_name: string;
   teacher_phone?: string | null;
@@ -145,6 +160,33 @@ export async function GET(req: NextRequest) {
   const toParam = url.searchParams.get("to");
   const debug = url.searchParams.get("debug") === "1";
   const includeExpectedStatuses = url.searchParams.get("include_expected") === "1";
+  const hasEducationScope = [
+    "education_type",
+    "formation_code",
+    "formation_level_code",
+    "level_code",
+    "class_id",
+  ].some((key) => url.searchParams.has(key));
+  const rawEducationType = String(
+    url.searchParams.get("education_type") || "",
+  ).trim();
+
+  if (
+    rawEducationType &&
+    rawEducationType !== ALL_EDUCATION_TYPES &&
+    !isEducationType(rawEducationType)
+  ) {
+    return NextResponse.json({ error: "bad_education_type" }, { status: 400 });
+  }
+
+  const educationScope: EducationScopeValue = hasEducationScope
+    ? readEducationScopeFromSearchParams(url.searchParams)
+    : {
+        educationType: ALL_EDUCATION_TYPES,
+        formationCode: "",
+        levelCode: "",
+        classId: "",
+      };
 
   const {
     data: { user },
@@ -239,7 +281,12 @@ export async function GET(req: NextRequest) {
       .from("teacher_timetables")
       .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id")
       .eq("institution_id", institution_id),
-    srv.from("classes").select("id,label").eq("institution_id", institution_id),
+    srv
+      .from("classes")
+      .select(
+        "id,label,level,education_type,formation_code,formation_level_code",
+      )
+      .eq("institution_id", institution_id),
     srv
       .from("institution_subjects")
       .select("id,custom_name,subjects:subject_id(id,name)")
@@ -270,6 +317,16 @@ export async function GET(req: NextRequest) {
     console.error("[attendance/monitor] teachers_err", { error: tErr.message });
     return NextResponse.json({ error: tErr.message }, { status: 400 });
   }
+
+  const scopedClasses = (classes || []).filter((row: any) =>
+    classMatchesEducationScope(row, educationScope),
+  );
+  const scopedClassIds = new Set(
+    scopedClasses.map((row: any) => String(row.id)),
+  );
+  const scopedTimetables = (tts || []).filter((row: any) =>
+    scopedClassIds.has(String(row.class_id)),
+  );
   const dateMinIso = new Date(fromDate.getTime());
   dateMinIso.setUTCHours(0, 0, 0, 0);
   const dateMaxIso = new Date(toDate.getTime());
@@ -345,9 +402,9 @@ export async function GET(req: NextRequest) {
     datesByWeekday.set(wdDb, arr);
   }
 
-  const classLabelById = new Map<string, string>();
-  (classes || []).forEach((c: any) => {
-    classLabelById.set(String(c.id), String(c.label || ""));
+  const classById = new Map<string, any>();
+  scopedClasses.forEach((c: any) => {
+    classById.set(String(c.id), c);
   });
 
   const subjectNameById = new Map<string, string>();
@@ -474,7 +531,7 @@ export async function GET(req: NextRequest) {
   const nextStartMinBySlot = new Map<string, number | null>();
   const slotsByGroup = new Map<string, Map<string, SlotLite>>();
 
-  (tts || []).forEach((tt: any) => {
+  scopedTimetables.forEach((tt: any) => {
     const period = periodById.get(String(tt.period_id));
     if (!period) return;
 
@@ -507,7 +564,7 @@ export async function GET(req: NextRequest) {
 
   const rows: MonitorRow[] = [];
 
-  (tts || []).forEach((tt: any) => {
+  scopedTimetables.forEach((tt: any) => {
     const period = periodById.get(String(tt.period_id));
     if (!period) return;
 
@@ -522,7 +579,9 @@ export async function GET(req: NextRequest) {
     const subjectId = String(tt.subject_id || "");
     const teacherId = String(tt.teacher_id);
 
-    const classLabel = classLabelById.get(classId) || "";
+    const classRow = classById.get(classId);
+    if (!classRow) return;
+    const classLabel = String(classRow.label || "");
 
     let subjName = subjectNameById.get(subjectId) || "";
     if (!subjName) {
@@ -638,7 +697,13 @@ export async function GET(req: NextRequest) {
         period_label: periodLabel || null,
         planned_start: normalizeTimeFromDb(period.start_time),
         planned_end: normalizeTimeFromDb(period.end_time),
+        class_id: classId,
         class_label: classLabel || null,
+        class_level: String(classRow.level || "").trim() || null,
+        education_type: normalizeClassEducationType(classRow),
+        formation_code: getClassFormationCode(classRow) || null,
+        formation_level_code:
+          String(classRow.formation_level_code || "").trim() || null,
         subject_name: subjName || null,
         teacher_name: teacherName,
         teacher_phone: teacherPhone,
@@ -677,6 +742,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       institution_id,
       rows,
+      education_scope: educationScope,
       debug: {
         todayYmd,
         nowUtcHHMM: `${String(now.getUTCHours()).padStart(2, "0")}:${String(
@@ -686,7 +752,7 @@ export async function GET(req: NextRequest) {
         range: { from: toYMD(fromDate), to: toYMD(toDate), days: dates.length },
         counts: {
           periods: (periods || []).length,
-          tts: (tts || []).length,
+          tts: scopedTimetables.length,
           sessions: (sessions || []).length,
           absenceRequests: (absenceRequests || []).length,
           rows: rows.length,
@@ -694,12 +760,12 @@ export async function GET(req: NextRequest) {
         weekdayMode,
         weekdays: {
           periodWeekdaysDistinct: distinctNums(periods || [], "weekday"),
-          ttWeekdaysDistinct: distinctNums(tts || [], "weekday"),
+          ttWeekdaysDistinct: distinctNums(scopedTimetables, "weekday"),
           datesByWeekdayKeys: Array.from(datesByWeekday.keys()).sort((a, b) => a - b),
         },
       },
     });
   }
 
-  return NextResponse.json({ institution_id, rows });
+  return NextResponse.json({ institution_id, education_scope: educationScope, rows });
 }
