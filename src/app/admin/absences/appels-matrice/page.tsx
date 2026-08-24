@@ -18,6 +18,15 @@ import {
   adminAttendanceViewReducer,
   initialAdminAttendanceViewState,
 } from "@/lib/admin-attendance-monitor";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import type { EducationType } from "@/lib/education-organization";
+import {
+  classMatchesEducationScope,
+  DEFAULT_EDUCATION_SCOPE,
+  getClassDisplayLabel,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 
 type MonitorStatus =
   | "not_started"
@@ -35,7 +44,12 @@ type MonitorRow = {
   period_label?: string | null;
   planned_start?: string | null;
   planned_end?: string | null;
+  class_id?: string | null;
   class_label?: string | null;
+  class_level?: string | null;
+  education_type?: EducationType | null;
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_name?: string | null;
   teacher_name: string;
   teacher_phone?: string | null;
@@ -56,6 +70,7 @@ type Slot = {
 };
 
 type ClassCell = {
+  class_id: string;
   class_label: string;
   status: MonitorStatus;
   subjects: string[];
@@ -64,6 +79,37 @@ type ClassCell = {
   absence_reason_label?: string | null;
   absence_admin_comment?: string | null;
 };
+
+function classFromMonitorRow(row: MonitorRow): EducationScopedClass | null {
+  const id = String(row.class_id || "").trim();
+  if (!id) return null;
+
+  return {
+    id,
+    label: row.class_label || id,
+    level: row.class_level || null,
+    education_type: row.education_type || null,
+    formation_code: row.formation_code || null,
+    formation_level_code: row.formation_level_code || null,
+  };
+}
+
+function rowMatchesScope(
+  row: MonitorRow,
+  scope: EducationScopeValue,
+  knownClasses: EducationScopedClass[],
+) {
+  let classRow = classFromMonitorRow(row);
+
+  if (!classRow && row.class_label) {
+    const matches = knownClasses.filter(
+      (candidate) => getClassDisplayLabel(candidate) === row.class_label,
+    );
+    if (matches.length === 1) classRow = matches[0] || null;
+  }
+
+  return classRow ? classMatchesEducationScope(classRow, scope) : false;
+}
 
 function toLocalDateInputValue(d: Date) {
   const yyyy = d.getFullYear();
@@ -143,42 +189,6 @@ function cellColorClasses(s: MonitorStatus): string {
   return "bg-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-300/40";
 }
 
-const LEVEL_ORDER: string[] = [
-  "6e",
-  "5e",
-  "4e",
-  "3e",
-  "seconde",
-  "première",
-  "terminale",
-];
-
-function inferLevelFromClassLabel(label?: string | null): string | null {
-  if (!label) return null;
-  const s = label.toLowerCase().trim();
-
-  if (s.startsWith("6e") || s.startsWith("6ème") || s.startsWith("6 eme")) return "6e";
-  if (s.startsWith("5e") || s.startsWith("5ème") || s.startsWith("5 eme")) return "5e";
-  if (s.startsWith("4e") || s.startsWith("4ème") || s.startsWith("4 eme")) return "4e";
-  if (s.startsWith("3e") || s.startsWith("3ème") || s.startsWith("3 eme")) return "3e";
-
-  if (s.startsWith("2nde") || s.startsWith("2de") || s.startsWith("2nd")) return "seconde";
-  if (s.startsWith("1re") || s.startsWith("1ère") || s.startsWith("1er")) return "première";
-
-  if (s.startsWith("t") || s.startsWith("term")) return "terminale";
-
-  return null;
-}
-
-function compareLevels(a: string, b: string): number {
-  const ia = LEVEL_ORDER.indexOf(a);
-  const ib = LEVEL_ORDER.indexOf(b);
-  if (ia === -1 && ib === -1) return a.localeCompare(b, "fr");
-  if (ia === -1) return 1;
-  if (ib === -1) return -1;
-  return ia - ib;
-}
-
 export default function AppelsMatricePage() {
   const [rowsState, dispatchRows] = useReducer(
     adminAttendanceViewReducer<MonitorRow>,
@@ -188,16 +198,41 @@ export default function AppelsMatricePage() {
   const savedAt = rowsState.savedAt;
 
   const [now, setNow] = useState<Date>(() => new Date());
-  const [levelFilter, setLevelFilter] = useState<string>("all");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const [availableClasses, setAvailableClasses] = useState<
+    EducationScopedClass[]
+  >([]);
   const [pollCycle, setPollCycle] = useState(0);
 
-  const inFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const loadRows = useCallback(async (requestedAt = new Date()) => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+  useEffect(() => {
+    let cancelled = false;
 
+    void fetch("/api/admin/classes?education_type=all&limit=5000", {
+      cache: "no-store",
+    })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (cancelled) return;
+        setAvailableClasses(
+          Array.isArray(payload?.items)
+            ? (payload.items as EducationScopedClass[])
+            : [],
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableClasses([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadRows = useCallback(async (requestedAt = new Date()) => {
+    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setNow(requestedAt);
@@ -210,7 +245,7 @@ export default function AppelsMatricePage() {
         requestedDate,
         requestedDate,
         controller.signal,
-        undefined,
+        educationScope,
         { includeExpectedStatuses: true },
       );
       dispatchRows({
@@ -229,11 +264,12 @@ export default function AppelsMatricePage() {
         error: e?.message || "Erreur lors du chargement des données.",
       });
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      inFlightRef.current = false;
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       if (!controller.signal.aborted) setPollCycle((value) => value + 1);
     }
-  }, []);
+  }, [educationScope]);
 
   useEffect(() => {
     void loadRows(new Date());
@@ -289,23 +325,21 @@ export default function AppelsMatricePage() {
   }, []);
 
   const rows = useMemo(() => rowsState.data ?? [], [rowsState.data]);
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        rowMatchesScope(row, educationScope, availableClasses),
+      ),
+    [availableClasses, educationScope, rows],
+  );
   const currentTime = nowHHMM(now);
-  const initialLoading = rowsState.loading && rows.length === 0;
-  const refreshing = rowsState.loading && rows.length > 0;
-
-  const levelOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of rows) {
-      const lvl = inferLevelFromClassLabel(r.class_label);
-      if (lvl) s.add(lvl);
-    }
-    return Array.from(s.values()).sort(compareLevels);
-  }, [rows]);
+  const initialLoading = rowsState.loading && filteredRows.length === 0;
+  const refreshing = rowsState.loading && filteredRows.length > 0;
 
   const slots: Slot[] = useMemo(() => {
     const map = new Map<string, Slot>();
 
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const start = timeFromRowPart(r.planned_start);
       const end = timeFromRowPart(r.planned_end);
       if (!start || !end) continue;
@@ -324,7 +358,7 @@ export default function AppelsMatricePage() {
     const list = Array.from(map.values());
     list.sort((a, b) => a.start.localeCompare(b.start));
     return list;
-  }, [rows]);
+  }, [filteredRows]);
 
   const activeSlot: Slot | null = useMemo(() => {
     if (!slots.length) return null;
@@ -345,7 +379,7 @@ export default function AppelsMatricePage() {
 
     const byClass = new Map<string, ClassCell>();
 
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const start = timeFromRowPart(r.planned_start);
       const end = timeFromRowPart(r.planned_end);
       if (!start || !end) continue;
@@ -354,8 +388,10 @@ export default function AppelsMatricePage() {
       if (key !== activeSlot.key) continue;
 
       const label = r.class_label || "Classe ?";
+      const classKey = String(r.class_id || label);
 
-      const existing = byClass.get(label) || {
+      const existing = byClass.get(classKey) || {
+        class_id: String(r.class_id || ""),
         class_label: label,
         status: r.status,
         subjects: [] as string[],
@@ -391,21 +427,13 @@ export default function AppelsMatricePage() {
         }
       }
 
-      byClass.set(label, existing);
+      byClass.set(classKey, existing);
     }
 
-    let arr = Array.from(byClass.values()).sort((a, b) =>
-      a.class_label.localeCompare(b.class_label, "fr")
+    return Array.from(byClass.values()).sort((a, b) =>
+      a.class_label.localeCompare(b.class_label, "fr"),
     );
-
-    if (levelFilter !== "all") {
-      arr = arr.filter(
-        (cell) => inferLevelFromClassLabel(cell.class_label) === levelFilter
-      );
-    }
-
-    return arr;
-  }, [rows, activeSlot, levelFilter]);
+  }, [activeSlot, filteredRows]);
 
   const totalPresent = classCells.filter(
     (c) => c.status === "ok" || c.status === "started"
@@ -536,6 +564,13 @@ export default function AppelsMatricePage() {
           </div>
         </header>
 
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={setEducationScope}
+          classes={availableClasses}
+          title="Contexte de surveillance"
+        />
+
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-100/90 p-4 shadow-sm">
             <div className="flex items-center justify-between">
@@ -656,39 +691,17 @@ export default function AppelsMatricePage() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-1">
-                <span className="text-slate-600">Niveau :</span>
-                <select
-                  value={levelFilter}
-                  onChange={(e) => setLevelFilter(e.target.value)}
-                  disabled={!levelOptions.length}
-                  className="rounded-full border border-slate-200 bg-white/90 px-2 py-1 text-[11px] text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-60"
-                >
-                  <option value="all">Tous les niveaux</option>
-                  {levelOptions.map((lvl) => (
-                    <option key={lvl} value={lvl}>
-                      {lvl === "seconde"
-                        ? "Seconde"
-                        : lvl === "première"
-                        ? "Première"
-                        : lvl === "terminale"
-                        ? "Terminale"
-                        : lvl.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
           </div>
 
-          {dataSource === "cache" && rows.length > 0 && (
+          {dataSource === "cache" && filteredRows.length > 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               Cloud et relais indisponibles : la dernière vue locale valide reste affichée
               {savedAtLabel ? ` (enregistrée le ${savedAtLabel})` : ""}.
             </div>
           )}
 
-          {rowsState.error && rows.length > 0 && (
+          {rowsState.error && filteredRows.length > 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               Actualisation impossible : les cartes précédentes sont conservées. {rowsState.error}
             </div>
@@ -704,7 +717,7 @@ export default function AppelsMatricePage() {
                 Veuillez patienter quelques instants.
               </p>
             </div>
-          ) : rowsState.error && rows.length === 0 ? (
+          ) : rowsState.error && filteredRows.length === 0 ? (
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {rowsState.error}
             </div>
@@ -719,15 +732,14 @@ export default function AppelsMatricePage() {
             </div>
           ) : classCells.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              {levelFilter === "all"
-                ? "Aucun cours planifié sur ce créneau ou aucune donnée de surveillance n'a été générée pour l'instant."
-                : "Aucun cours planifié sur ce créneau pour ce niveau, ou aucune donnée de surveillance n'a été générée pour l'instant."}
+              Aucun cours planifié sur ce créneau dans le contexte pédagogique
+              sélectionné, ou aucune donnée de surveillance n’a encore été générée.
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {classCells.map((cell) => (
                 <div
-                  key={cell.class_label}
+                  key={cell.class_id || cell.class_label}
                   className={[
                     "relative flex flex-col rounded-2xl border px-3 py-3 text-xs",
                     cell.status === "not_started" ? "" : "mc-blink",

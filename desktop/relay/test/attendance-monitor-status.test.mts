@@ -141,3 +141,111 @@ test("deux cours successifs ne réutilisent pas le démarrage du cours suivant",
 
   db.close();
 });
+
+test("le moniteur cloisonne le secondaire général, le CAP Élevage et le BEP Élevage", () => {
+  const db = openRelayDatabase(":memory:");
+  const store = new RelayStore(db);
+  const updatedAt = "2026-08-24T07:00:00.000Z";
+  store.ensureInstitution("inst-scope", "Collège Notre-Dame", updatedAt);
+
+  db.prepare(`INSERT INTO subjects(id,institution_id,name,updated_at)
+              VALUES ('elevage','inst-scope','Élevage',?)`).run(updatedAt);
+  db.prepare(`
+    INSERT INTO institution_periods(id,institution_id,weekday,label,start_time,end_time,updated_at)
+    VALUES ('p1','inst-scope',1,'Cours 1','08:00:00','09:00:00',?)
+  `).run(updatedAt);
+
+  const contexts = [
+    {
+      id: "general",
+      label: "6e A",
+      level: "6e",
+      educationType: null,
+      formationCode: null,
+      levelCode: null,
+    },
+    {
+      id: "cap",
+      label: "CAP Élevage A",
+      level: "CAP",
+      educationType: "vocational_training",
+      formationCode: "catalog:vocational_cap_elevage",
+      levelCode: "1CAP ELEV",
+    },
+    {
+      id: "bep",
+      label: "BEP Élevage A",
+      level: "BEP",
+      educationType: "vocational_training",
+      formationCode: "custom:local_1784826086189_elevage",
+      levelCode: "1BEP ELEV",
+    },
+  ];
+
+  for (const context of contexts) {
+    db.prepare(`
+      INSERT INTO classes(
+        id,institution_id,academic_year,label,level,education_type,
+        formation_code,formation_level_code,updated_at
+      ) VALUES (?, 'inst-scope', '2026-2027', ?, ?, ?, ?, ?, ?)
+    `).run(
+      `class-${context.id}`,
+      context.label,
+      context.level,
+      context.educationType,
+      context.formationCode,
+      context.levelCode,
+      updatedAt,
+    );
+    db.prepare(`INSERT INTO profiles(id,institution_id,display_name,updated_at)
+                VALUES (?, 'inst-scope', ?, ?)`).run(
+      `teacher-${context.id}`,
+      `Prof ${context.id}`,
+      updatedAt,
+    );
+    db.prepare(`
+      INSERT INTO teacher_timetables(
+        id,institution_id,class_id,subject_id,teacher_id,period_id,weekday,updated_at
+      ) VALUES (?, 'inst-scope', ?, 'elevage', ?, 'p1', 1, ?)
+    `).run(
+      `tt-${context.id}`,
+      `class-${context.id}`,
+      `teacher-${context.id}`,
+      updatedAt,
+    );
+  }
+
+  const rowsFor = (scope: {
+    educationType: string;
+    formationCode?: string;
+    levelCode?: string;
+  }) =>
+    attendanceMonitor(db, {
+      institutionId: "inst-scope",
+      from: "2026-08-24",
+      to: "2026-08-24",
+      now: new Date("2026-08-24T08:05:00.000Z"),
+      includeExpectedStatuses: true,
+      ...scope,
+    }).map((row) => row.class_label);
+
+  assert.deepEqual(rowsFor({ educationType: "general_secondary" }), ["6e A"]);
+  assert.deepEqual(
+    rowsFor({
+      educationType: "vocational_training",
+      formationCode: "catalog:vocational_cap_elevage",
+      levelCode: "1CAP ELEV",
+    }),
+    ["CAP Élevage A"],
+  );
+  assert.deepEqual(
+    rowsFor({
+      educationType: "vocational_training",
+      formationCode: "custom:local_1784826086189_elevage",
+      levelCode: "1BEP ELEV",
+    }),
+    ["BEP Élevage A"],
+  );
+
+  db.close();
+});
