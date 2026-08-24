@@ -1,0 +1,77 @@
+name: Relay working endpoint hotfix
+
+on:
+  push:
+    branches:
+      - fix/relay-working-endpoint-20260824
+    paths:
+      - .github/workflows/relay-working-endpoint-hotfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/relay-working-endpoint-20260824
+          fetch-depth: 0
+
+      - name: Apply exact TeacherDashboard relay endpoint fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/components/teacher/TeacherDashboard.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          old_memo = '''  const relayBaseUrl = useMemo(() => preferredRelayBaseUrl({
+            institutionId: inst.institution_id,
+            baseUrl: inst.attendance_presence?.relay_local_url,
+            baseUrls: inst.attendance_presence?.relay_local_urls,
+          }), [
+            inst.institution_id,
+            inst.attendance_presence?.relay_local_url,
+            inst.attendance_presence?.relay_local_urls,
+          ]);'''
+          new_live = '''  // Recalcule à chaque rendu afin qu'une URL relais validée pendant la session
+          // (par exemple la nouvelle IPv4 après DHCP) soit utilisée sans rechargement de page.
+          const relayBaseUrl = preferredRelayBaseUrl({
+            institutionId: inst.institution_id,
+            baseUrl: inst.attendance_presence?.relay_local_url,
+            baseUrls: inst.attendance_presence?.relay_local_urls,
+          });'''
+
+          if text.count(old_memo) != 1:
+              raise SystemExit(f"relayBaseUrl memo pattern count={text.count(old_memo)}")
+          text = text.replace(old_memo, new_live, 1)
+
+          old_open = '''          relayBaseUrl,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,'''
+          new_open = '''          // La sonde vient d'essayer toutes les adresses candidates. Si elle a
+          // trouvé une IPv4/.local fonctionnelle, l'ouverture doit utiliser exactement
+          // cette adresse, sans attendre un nouveau rendu React.
+          relayBaseUrl: liveRelayCheck?.base_url || relayBaseUrl,
+          relayAccessToken: inst.attendance_presence?.relay_access_token,'''
+
+          if text.count(old_open) < 1:
+              raise SystemExit("teacher session open relayBaseUrl pattern missing")
+          text = text.replace(old_open, new_open, 1)
+          path.write_text(text, encoding="utf-8")
+
+          test = Path("test/teacher-relay-working-endpoint-wiring.test.mjs")
+          test.write_text('''import assert from "node:assert/strict";\nimport fs from "node:fs";\nimport test from "node:test";\n\nconst source = fs.readFileSync(\n  new URL("../src/components/teacher/TeacherDashboard.tsx", import.meta.url),\n  "utf8",\n);\n\ntest("teacher relay endpoint is recomputed after a successful fallback probe", () => {\n  assert.match(\n    source,\n    /const relayBaseUrl = preferredRelayBaseUrl\\(\\{[\\s\\S]*?baseUrls: inst\\.attendance_presence\\?\\.relay_local_urls,[\\s\\S]*?\\}\\);/,\n  );\n  assert.doesNotMatch(source, /const relayBaseUrl = useMemo\\(\\(\\) => preferredRelayBaseUrl/);\n});\n\ntest("offline session opening uses the endpoint that the live probe actually reached", () => {\n  assert.match(\n    source,\n    /openTeacherAttendanceSessionOnRelay\\(\\{[\\s\\S]*?relayBaseUrl: liveRelayCheck\\?\\.base_url \\|\\| relayBaseUrl,[\\s\\S]*?relayAccessToken:/,\n  );\n});\n''', encoding="utf-8")
+
+      - name: Run focused regression test
+        run: node --test test/teacher-relay-working-endpoint-wiring.test.mjs
+
+      - name: Commit generated hotfix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/teacher/TeacherDashboard.tsx test/teacher-relay-working-endpoint-wiring.test.mjs
+          git diff --cached --check
+          git commit -m "fix(relay): reuse the reachable teacher endpoint"
+          git push origin HEAD:fix/relay-working-endpoint-20260824
