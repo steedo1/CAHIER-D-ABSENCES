@@ -1,6 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  buildEducationScopeSearchParams,
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   Calendar,
   Filter,
@@ -107,7 +114,7 @@ function escapeHtml(str: string | null | undefined) {
 /* ───────── Types ───────── */
 type EvalKind = "devoir" | "interro_ecrite" | "interro_orale";
 
-type ClassItem = {
+type ClassItem = EducationScopedClass & {
   id: string;
   name: string;
   label?: string | null;
@@ -322,8 +329,9 @@ export default function AdminNotesEvaluationsPage() {
   const [status, setStatus] = useState<"all" | "published" | "draft">("all");
 
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
-  const [selectedLevel, setSelectedLevel] = useState<string>("");
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedClassId = educationScope.classId;
   const [subjects, setSubjects] = useState<SubjectItem[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>("");
 
@@ -396,7 +404,9 @@ export default function AdminNotesEvaluationsPage() {
 
   /* Charger classes (comme sur la matrice d'absences) */
   useEffect(() => {
-    fetch("/api/admin/classes?limit=500", { cache: "no-store" })
+    fetch("/api/admin/classes?academic_year=all&education_type=all&limit=5000", {
+      cache: "no-store",
+    })
       .then((r) => r.json())
       .then((j) => {
         const arr = (j.items || []) as ClassItem[];
@@ -481,22 +491,14 @@ export default function AdminNotesEvaluationsPage() {
     return periods.find((p) => p.code === selectedPeriodCode) ?? null;
   }, [periods, selectedPeriodCode]);
 
-  const levels = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of allClasses) if (c.level) s.add(c.level);
-    return Array.from(s).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
-    );
-  }, [allClasses]);
-
-  const classesOfLevel = useMemo(() => {
-    if (!selectedLevel) return [];
-    return allClasses
-      .filter((c) => c.level === selectedLevel)
-      .sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
-      );
-  }, [allClasses, selectedLevel]);
+  const classesForSelectedYear = useMemo(
+    () =>
+      allClasses.filter(
+        (row) =>
+          !selectedYearCode || row.academic_year === selectedYearCode,
+      ),
+    [allClasses, selectedYearCode],
+  );
 
   const selectedClass = useMemo(
     () => allClasses.find((c) => c.id === selectedClassId) || null,
@@ -507,6 +509,13 @@ export default function AdminNotesEvaluationsPage() {
     () => subjects.find((s) => s.id === selectedSubjectId) || null,
     [subjects, selectedSubjectId]
   );
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setSelectedSubjectId("");
+    setSubjects([]);
+    setSelectedPeriodCode("");
+  }
 
   // Initialiser l'année scolaire par défaut à partir des années disponibles
   useEffect(() => {
@@ -597,7 +606,7 @@ export default function AdminNotesEvaluationsPage() {
     setErrorMsg(null);
 
     try {
-      const qs = new URLSearchParams();
+      const qs = buildEducationScopeSearchParams(educationScope);
       qs.set("page", String(page));
       qs.set("limit", "30");
       if (from) qs.set("from", from);
@@ -1050,13 +1059,6 @@ export default function AdminNotesEvaluationsPage() {
     win.focus();
   }
 
-  // changement de niveau → reset classe & matières
-  useEffect(() => {
-    setSelectedClassId("");
-    setSelectedSubjectId("");
-    setSubjects([]);
-  }, [selectedLevel]);
-
   const totalPages = useMemo(() => {
     if (!meta.total || !meta.limit) return 1;
     return Math.max(1, Math.ceil(meta.total / meta.limit));
@@ -1198,7 +1200,16 @@ export default function AdminNotesEvaluationsPage() {
           </div>
         )}
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-7">
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={changeEducationScope}
+          classes={classesForSelectedYear}
+          title="Contexte des évaluations"
+          classLabel="Classe (optionnelle)"
+          className="mt-3"
+        />
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Du</div>
             <Input
@@ -1220,38 +1231,6 @@ export default function AdminNotesEvaluationsPage() {
                 setTo(e.target.value);
               }}
             />
-          </div>
-          <div className="md:col-span-1">
-            <div className="mb-1 text-xs text-slate-500">Niveau</div>
-            <Select
-              value={selectedLevel}
-              onChange={(e) => setSelectedLevel(e.target.value)}
-            >
-              <option value="">— Tous —</option>
-              {levels.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="md:col-span-1">
-            <div className="mb-1 text-xs text-slate-500">Classe</div>
-            <Select
-              value={selectedClassId}
-              onChange={(e) => {
-                setSelectedClassId(e.target.value);
-                setSelectedPeriodCode("");
-              }}
-              disabled={!selectedLevel}
-            >
-              <option value="">— Toutes —</option>
-              {classesOfLevel.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
           </div>
           <div className="md:col-span-1">
             <div className="mb-1 text-xs text-slate-500">Matière</div>
@@ -1352,8 +1331,7 @@ export default function AdminNotesEvaluationsPage() {
               setTo("");
               setSelectedYearCode("");
               setSelectedPeriodCode("");
-              setSelectedLevel("");
-              setSelectedClassId("");
+              setEducationScope(DEFAULT_EDUCATION_SCOPE);
               setSelectedSubjectId("");
               setSubjects([]);
               setStatus("all");
