@@ -60,7 +60,8 @@ jobs:
             test/admin-offline-essential-navigation.test.mjs \
             test/attendance-integrity-wiring.test.mjs \
             test/relay-supervision-ui.test.mjs \
-            test/cloud-only-grade-writes.test.mjs
+            test/cloud-only-grade-writes.test.mjs \
+            test/relay-opt-in-isolation.test.mjs
 
   web-production-dependencies:
     name: Web production dependency audit

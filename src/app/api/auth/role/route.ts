@@ -41,6 +41,52 @@ async function resolveClassDeviceScope(user: { id: string; phone?: string | null
   }
 }
 
+type InstitutionRelayState = {
+  configured: boolean;
+  enabled: boolean;
+  local_url: string | null;
+};
+
+const RELAY_DISABLED: InstitutionRelayState = {
+  configured: false,
+  enabled: false,
+  local_url: null,
+};
+
+async function resolveInstitutionRelayState(
+  institutionId: string,
+): Promise<InstitutionRelayState> {
+  const expectedInstitutionId = String(institutionId || "").trim();
+  if (!expectedInstitutionId) return RELAY_DISABLED;
+
+  try {
+    const service = getSupabaseServiceClient();
+    const { data, error } = await service
+      .from("institution_attendance_policies")
+      .select("enabled,allow_local_relay,relay_local_url")
+      .eq("institution_id", expectedInstitutionId)
+      .maybeSingle();
+
+    // L'absence de politique signifie explicitement « Cloud/PWA uniquement ».
+    // Une erreur de lecture ne doit jamais transformer un établissement normal
+    // en établissement relais par défaut.
+    if (error || !data) return RELAY_DISABLED;
+
+    const enabled = data.enabled === true && data.allow_local_relay === true;
+    const localUrl = enabled
+      ? String(data.relay_local_url || "").trim() || null
+      : null;
+
+    return {
+      configured: true,
+      enabled,
+      local_url: localUrl,
+    };
+  } catch {
+    return RELAY_DISABLED;
+  }
+}
+
 export async function GET(request: NextRequest) {
   const supabase = await getSupabaseServerClient();
 
@@ -78,6 +124,8 @@ export async function GET(request: NextRequest) {
     institutionId = classScope?.institutionId || "";
     classId = classScope?.classId || null;
   }
+
+  const relay = await resolveInstitutionRelayState(institutionId);
   const deviceId = String(
     request.headers.get("x-mon-cahier-device-id") || "",
   ).trim();
@@ -127,6 +175,7 @@ export async function GET(request: NextRequest) {
     user_id: user.id,
     role: primary,
     institution_id: institutionId || null,
+    relay,
     offline_access: offlineAccess,
   });
 }
