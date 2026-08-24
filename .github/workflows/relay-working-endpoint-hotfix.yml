@@ -6,6 +6,7 @@ on:
       - fix/relay-working-endpoint-20260824
     paths:
       - .github/workflows/relay-working-endpoint-hotfix.yml
+      - .github/relay-working-endpoint-trigger.txt
 
 permissions:
   contents: write
@@ -75,5 +76,3 @@ jobs:
           git diff --cached --check
           git commit -m "fix(relay): reuse the reachable teacher endpoint"
           git push origin HEAD:fix/relay-working-endpoint-20260824
-
-# retrigger existing workflow after creation
