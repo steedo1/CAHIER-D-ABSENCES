@@ -83,6 +83,34 @@ test("le relais annonce et vérifie explicitement l'accusé de révision", async
   assert.match(bridge, /Mise à jour du programme relais requise/);
 });
 
+test("un établissement sans relais ne déclenche jamais la synchro admin du relais", async () => {
+  const bridge = await read("src/components/admin/OfflineScheduleSyncBridge.tsx");
+
+  assert.match(
+    bridge,
+    /function hasConfiguredAdminRelay\(\) \{\s*return Boolean\(getRelayConfig\(\)\.token\);\s*\}/s,
+  );
+  assert.match(
+    bridge,
+    /const persisted = relayConfigured \? getAdminScheduleSyncState\(\) : null/,
+  );
+  assert.match(
+    bridge,
+    /setState\(hasConfiguredAdminRelay\(\) \? nextState : null\)/,
+  );
+  assert.match(
+    bridge,
+    /response\.ok &&\s*hasConfiguredAdminRelay\(\) &&\s*isOfflineScheduleMutation/s,
+  );
+
+  const mutationGuardIndex = bridge.indexOf("hasConfiguredAdminRelay() &&");
+  const markPendingIndex = bridge.indexOf("markRelayScheduleSyncPending();", mutationGuardIndex);
+  const syncIndex = bridge.indexOf("void syncRelayScheduleAfterMutation();", markPendingIndex);
+  assert.ok(mutationGuardIndex >= 0, "garde relais absente des mutations Cloud");
+  assert.ok(markPendingIndex > mutationGuardIndex, "le pending relais doit rester derrière la garde");
+  assert.ok(syncIndex > markPendingIndex, "la synchro relais doit rester derrière la garde");
+});
+
 test("le service worker couvre les trois navigations professeur", async () => {
   const [worker, offline, readiness, release] = await Promise.all([
     read("public/moncahier-sw.js"),
