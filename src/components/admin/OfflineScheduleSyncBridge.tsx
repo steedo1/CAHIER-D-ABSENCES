@@ -28,14 +28,21 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return "GET";
 }
 
+function hasConfiguredAdminRelay() {
+  return Boolean(getRelayConfig().token);
+}
+
 export default function OfflineScheduleSyncBridge() {
   const [state, setState] = useState<AdminScheduleSyncState | null>(null);
 
   useEffect(() => {
-    const persisted = getAdminScheduleSyncState();
+    const relayConfigured = hasConfiguredAdminRelay();
+    const persisted = relayConfigured ? getAdminScheduleSyncState() : null;
     setState(persisted);
-    const unsubscribe = subscribeAdminScheduleSync(setState);
-    if (persisted && persisted.status !== "synced" && getRelayConfig().token) {
+    const unsubscribe = subscribeAdminScheduleSync((nextState) => {
+      setState(hasConfiguredAdminRelay() ? nextState : null);
+    });
+    if (relayConfigured && persisted && persisted.status !== "synced") {
       void syncRelayScheduleAfterMutation();
     }
     return unsubscribe;
@@ -47,6 +54,7 @@ export default function OfflineScheduleSyncBridge() {
       const response = await previousFetch(input, init);
       if (
         response.ok &&
+        hasConfiguredAdminRelay() &&
         isOfflineScheduleMutation(
           requestPath(input),
           requestMethod(input, init),
