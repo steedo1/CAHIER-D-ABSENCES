@@ -2,17 +2,22 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   CalendarDays,
   Download,
   FileSpreadsheet,
   Printer,
   RefreshCw,
-  School,
   Search,
 } from "lucide-react";
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name?: string;
   label?: string | null;
@@ -518,7 +523,9 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 export default function AnnualMatrixPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedClassId = educationScope.classId;
 
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -550,18 +557,6 @@ export default function AnnualMatrixPage() {
     if (!selectedAcademicYear) return classes;
     return classes.filter((c) => c.academic_year === selectedAcademicYear);
   }, [classes, selectedAcademicYear]);
-
-  useEffect(() => {
-    if (!selectedAcademicYear) return;
-    if (!selectedClassId) return;
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (cls && cls.academic_year !== selectedAcademicYear) {
-      setSelectedClassId("");
-      setMatrixRows([]);
-      setLoadedPeriods([]);
-      setErrorMsg(null);
-    }
-  }, [classes, selectedAcademicYear, selectedClassId]);
 
   const matrixPeriods = useMemo(() => {
     return periods
@@ -616,7 +611,10 @@ export default function AnnualMatrixPage() {
       setErrorMsg(null);
 
       try {
-        const res = await fetch("/api/admin/classes", { cache: "no-store" });
+        const res = await fetch(
+          "/api/admin/classes?academic_year=all&education_type=all&limit=5000",
+          { cache: "no-store" },
+        );
         if (!res.ok) throw new Error(`Erreur classes : ${res.status}`);
 
         const json = await res.json().catch(() => null);
@@ -630,11 +628,14 @@ export default function AnnualMatrixPage() {
 
         setClasses(items);
 
-        if (!selectedClassId && items.length) {
-          setSelectedClassId(items[0].id);
-          if (items[0].academic_year)
-            setSelectedAcademicYear(items[0].academic_year);
-        }
+        const years = Array.from(
+          new Set(
+            items
+              .map((row) => row.academic_year)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ).sort().reverse();
+        setSelectedAcademicYear((current) => current || years[0] || "");
       } catch (e: any) {
         if (!cancelled)
           setErrorMsg(e?.message || "Impossible de charger les classes.");
@@ -648,7 +649,6 @@ export default function AnnualMatrixPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -678,11 +678,6 @@ export default function AnnualMatrixPage() {
   }, []);
 
   useEffect(() => {
-    const cls = classes.find((c) => c.id === selectedClassId);
-    if (cls?.academic_year) setSelectedAcademicYear(cls.academic_year);
-  }, [selectedClassId, classes]);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function loadPeriods() {
@@ -693,6 +688,7 @@ export default function AnnualMatrixPage() {
         const params = new URLSearchParams();
         if (selectedAcademicYear)
           params.set("academic_year", selectedAcademicYear);
+        if (selectedClassId) params.set("class_id", selectedClassId);
 
         const url = `/api/admin/institution/grading-periods${
           params.toString() ? `?${params.toString()}` : ""
@@ -730,7 +726,26 @@ export default function AnnualMatrixPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
+
+  function changeAcademicYear(value: string) {
+    setSelectedAcademicYear(value);
+    setEducationScope((current) => ({
+      ...current,
+      levelCode: "",
+      classId: "",
+    }));
+    setMatrixRows([]);
+    setLoadedPeriods([]);
+    setErrorMsg(null);
+  }
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setMatrixRows([]);
+    setLoadedPeriods([]);
+    setErrorMsg(null);
+  }
 
   async function fetchBulletinForPeriod(period: GradePeriod) {
     const params = new URLSearchParams();
@@ -1648,42 +1663,23 @@ export default function AnnualMatrixPage() {
       </header>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-          <div className="lg:col-span-5">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <School className="h-4 w-4" /> Classe
-            </label>
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={changeEducationScope}
+          classes={filteredClasses}
+          disabled={classesLoading}
+          title="Contexte de la matrice annuelle"
+        />
 
-            <Select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              disabled={classesLoading}
-            >
-              <option value="">— Sélectionner une classe —</option>
-              {filteredClasses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {clsLabel(c)}
-                  {c.level ? ` • ${c.level}` : ""}
-                  {c.academic_year ? ` • ${c.academic_year}` : ""}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="lg:col-span-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+          <div className="lg:col-span-4">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <CalendarDays className="h-4 w-4" /> Année scolaire
             </label>
 
             <Select
               value={selectedAcademicYear}
-              onChange={(e) => {
-                setSelectedAcademicYear(e.target.value);
-                setSelectedClassId("");
-                setMatrixRows([]);
-                setLoadedPeriods([]);
-                setErrorMsg(null);
-              }}
+              onChange={(e) => changeAcademicYear(e.target.value)}
               disabled={periodsLoading}
             >
               <option value="">Année courante</option>
@@ -1695,7 +1691,7 @@ export default function AnnualMatrixPage() {
             </Select>
           </div>
 
-          <div className="flex flex-wrap gap-2 lg:col-span-4 lg:justify-end">
+          <div className="flex flex-wrap gap-2 lg:col-span-8 lg:justify-end">
             <Button
               onClick={loadMatrix}
               disabled={!selectedClassId || loadingMatrix}
