@@ -2,6 +2,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -11,7 +17,6 @@ import {
   Save,
   Search,
   ShieldCheck,
-  Users,
   XCircle,
 } from "lucide-react";
 
@@ -25,7 +30,7 @@ import {
      naturellement de l’API bulletin.
 ────────────────────────────────────────────────────────────── */
 
-type ClassRow = {
+type ClassRow = EducationScopedClass & {
   id: string;
   name?: string | null;
   label?: string | null;
@@ -333,7 +338,9 @@ function parseApiArray<T>(json: any): T[] {
 export default function NonClassesPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [classesLoading, setClassesLoading] = useState(false);
-  const [selectedClassId, setSelectedClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
+  const selectedClassId = educationScope.classId;
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
@@ -369,18 +376,6 @@ export default function NonClassesPage() {
     if (!selectedAcademicYear) return classes;
     return classes.filter((c) => c.academic_year === selectedAcademicYear);
   }, [classes, selectedAcademicYear]);
-
-  useEffect(() => {
-    if (!selectedAcademicYear) return;
-    if (!selectedClassId) return;
-    const cls = classes.find((c) => String(c.id) === String(selectedClassId));
-    if (cls && cls.academic_year !== selectedAcademicYear) {
-      setSelectedClassId("");
-      setRows([]);
-      setMsg(null);
-      setErrorMsg(null);
-    }
-  }, [classes, selectedAcademicYear, selectedClassId]);
 
   const filteredPeriods = useMemo(() => {
     return periods
@@ -445,7 +440,10 @@ export default function NonClassesPage() {
       setErrorMsg(null);
 
       try {
-        const res = await fetch("/api/admin/classes", { cache: "no-store" });
+        const res = await fetch(
+          "/api/admin/classes?academic_year=all&education_type=all&limit=5000",
+          { cache: "no-store" },
+        );
         if (!res.ok) throw new Error(`Erreur classes : ${res.status}`);
 
         const json = await res.json().catch(() => null);
@@ -455,11 +453,14 @@ export default function NonClassesPage() {
 
         setClasses(items);
 
-        if (!selectedClassId && items.length) {
-          const first = items[0];
-          setSelectedClassId(first.id);
-          if (first.academic_year) setSelectedAcademicYear(first.academic_year);
-        }
+        const years = Array.from(
+          new Set(
+            items
+              .map((row) => row.academic_year)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ).sort().reverse();
+        setSelectedAcademicYear((current) => current || years[0] || "");
       } catch (e: any) {
         if (!cancelled) {
           setClasses([]);
@@ -475,7 +476,6 @@ export default function NonClassesPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -495,6 +495,7 @@ export default function NonClassesPage() {
       try {
         const params = new URLSearchParams();
         if (selectedAcademicYear) params.set("academic_year", selectedAcademicYear);
+        if (selectedClassId) params.set("class_id", selectedClassId);
 
         const url = `/api/admin/institution/grading-periods${
           params.toString() ? `?${params.toString()}` : ""
@@ -528,7 +529,17 @@ export default function NonClassesPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAcademicYear]);
+  }, [selectedAcademicYear, selectedClassId]);
+
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
+    setSelectedPeriodId("");
+    setDateFrom("");
+    setDateTo("");
+    setRows([]);
+    setMsg(null);
+    setErrorMsg(null);
+  }
 
   useEffect(() => {
     if (!selectedPeriod) return;
@@ -871,35 +882,16 @@ export default function NonClassesPage() {
       </header>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
+        <EducationScopeFilter
+          value={educationScope}
+          onChange={changeEducationScope}
+          classes={filteredClasses}
+          disabled={classesLoading}
+          title="Contexte des élèves non classés"
+        />
+
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
           <div className="lg:col-span-4">
-            <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <Users className="h-4 w-4" />
-              Classe
-            </label>
-
-            <Select
-              value={selectedClassId}
-              onChange={(e) => {
-                setSelectedClassId(e.target.value);
-                setRows([]);
-                setMsg(null);
-                setErrorMsg(null);
-              }}
-              disabled={classesLoading}
-            >
-              <option value="">— Sélectionner une classe —</option>
-              {filteredClasses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {classLabel(c)}
-                  {c.level ? ` • ${c.level}` : ""}
-                  {c.academic_year ? ` • ${c.academic_year}` : ""}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="lg:col-span-3">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <FileText className="h-4 w-4" />
               Année scolaire
@@ -909,7 +901,11 @@ export default function NonClassesPage() {
               value={selectedAcademicYear}
               onChange={(e) => {
                 setSelectedAcademicYear(e.target.value);
-                setSelectedClassId("");
+                setEducationScope((current) => ({
+                  ...current,
+                  levelCode: "",
+                  classId: "",
+                }));
                 setSelectedPeriodId("");
                 setRows([]);
                 setMsg(null);
@@ -926,7 +922,7 @@ export default function NonClassesPage() {
             </Select>
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-4">
             <label className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <FileText className="h-4 w-4" />
               Période
@@ -952,7 +948,7 @@ export default function NonClassesPage() {
             </Select>
           </div>
 
-          <div className="flex flex-wrap gap-2 lg:col-span-2 lg:justify-end">
+          <div className="flex flex-wrap gap-2 lg:col-span-4 lg:justify-end">
             <Button
               type="button"
               onClick={loadRows}
