@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
+import {
+  buildEducationScopeSearchParams,
+  classMatchesEducationScope,
+  DEFAULT_EDUCATION_SCOPE,
+  type EducationScopedClass,
+  type EducationScopeValue,
+} from "@/lib/education-scope";
 import {
   BookOpenCheck,
   Loader2,
@@ -31,6 +39,9 @@ type MonitorItem = Metric & {
   class_id: string;
   class_label: string;
   level?: string | null;
+  education_type?: EducationScopedClass["education_type"];
+  formation_code?: string | null;
+  formation_level_code?: string | null;
   subject_id?: string | null;
   subject_name: string;
   teacher_id?: string | null;
@@ -63,10 +74,6 @@ const EMPTY_METRIC: Metric = {
   realized_minutes: 0,
   realized_hours: 0,
 };
-
-function unique<T>(values: T[]) {
-  return Array.from(new Set(values));
-}
 
 function pct(done: number, total: number) {
   if (!total) return 0;
@@ -200,21 +207,26 @@ export default function AdminTextbookPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<MonitorItem[]>([]);
+  const [classes, setClasses] = useState<EducationScopedClass[]>([]);
   const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [academicYear, setAcademicYear] = useState("");
   const [period, setPeriod] = useState<PeriodFilter>("T1");
-  const [level, setLevel] = useState("");
-  const [classId, setClassId] = useState("");
+  const [educationScope, setEducationScope] =
+    useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
   const [subjectId, setSubjectId] = useState("");
   const [view, setView] = useState<MonitorView>("class");
 
-  async function load(year?: string, silent = false) {
+  async function load(
+    year?: string,
+    silent = false,
+    scope: EducationScopeValue = educationScope,
+  ) {
     if (silent) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
-      const params = new URLSearchParams();
+      const params = buildEducationScopeSearchParams(scope);
       if (year) params.set("academic_year", year);
       const query = params.toString();
       const response = await fetch(
@@ -244,64 +256,61 @@ export default function AdminTextbookPage() {
 
   useEffect(() => {
     void load();
+    void loadClasses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const levels = useMemo(
-    () =>
-      unique(
-        items
-          .map((item) => String(item.level || "").trim())
-          .filter(Boolean),
-      ).sort((a, b) => a.localeCompare(b, "fr", { numeric: true })),
-    [items],
-  );
-
-  useEffect(() => {
-    if (!levels.length) {
-      if (level) setLevel("");
-      return;
-    }
-    if (!level || !levels.includes(level)) setLevel(levels[0]);
-  }, [level, levels]);
-
-  const levelItems = useMemo(
-    () => items.filter((item) => !level || String(item.level || "") === level),
-    [items, level],
-  );
-
-  const classes = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of levelItems) {
-      if (item.class_id) map.set(item.class_id, item.class_label);
-    }
-    return Array.from(map.entries())
-      .map(([id, label]) => ({ id, label }))
-      .sort((a, b) =>
-        a.label.localeCompare(b.label, "fr", { numeric: true }),
+  async function loadClasses(year?: string) {
+    try {
+      const params = new URLSearchParams({
+        education_type: "all",
+        limit: "5000",
+      });
+      if (year) params.set("academic_year", year);
+      const response = await fetch(`/api/admin/classes?${params.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => null);
+      setClasses(
+        response.ok && Array.isArray(json?.items)
+          ? (json.items as EducationScopedClass[])
+          : [],
       );
-  }, [levelItems]);
+    } catch {
+      setClasses([]);
+    }
+  }
+
+  const scopedItems = useMemo(
+    () =>
+      items.filter((item) =>
+        classMatchesEducationScope(
+          {
+            id: item.class_id,
+            label: item.class_label,
+            level: item.level,
+            education_type: item.education_type,
+            formation_code: item.formation_code,
+            formation_level_code: item.formation_level_code,
+          },
+          educationScope,
+        ),
+      ),
+    [educationScope, items],
+  );
 
   const subjects = useMemo(() => {
     const map = new Map<string, string>();
-    for (const item of levelItems) {
+    if (!educationScope.levelCode) return [];
+    for (const item of scopedItems) {
       const id = subjectKey(item);
       if (id) map.set(id, item.subject_name);
     }
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label, "fr"));
-  }, [levelItems]);
-
-  useEffect(() => {
-    if (view !== "class") return;
-    if (!classes.length) {
-      if (classId) setClassId("");
-      return;
-    }
-    if (!classId || !classes.some((item) => item.id === classId)) {
-      setClassId(classes[0].id);
-    }
-  }, [classId, classes, view]);
+  }, [educationScope.levelCode, scopedItems]);
 
   useEffect(() => {
     if (view !== "subject") return;
@@ -316,10 +325,13 @@ export default function AdminTextbookPage() {
 
   const selectedRows = useMemo(() => {
     if (view === "class") {
-      return levelItems.filter((item) => item.class_id === classId);
+      return scopedItems.filter(
+        (item) => item.class_id === educationScope.classId,
+      );
     }
-    return levelItems.filter((item) => subjectKey(item) === subjectId);
-  }, [classId, levelItems, subjectId, view]);
+    if (!educationScope.levelCode) return [];
+    return scopedItems.filter((item) => subjectKey(item) === subjectId);
+  }, [educationScope.classId, educationScope.levelCode, scopedItems, subjectId, view]);
 
   const tableRows = useMemo(
     () => groupRows(selectedRows, period, view),
@@ -331,22 +343,38 @@ export default function AdminTextbookPage() {
     [period, selectedRows],
   );
 
-  const selectedClass = classes.find((item) => item.id === classId) || null;
+  const selectedClass =
+    classes.find((item) => item.id === educationScope.classId) || null;
   const selectedSubject = subjects.find((item) => item.id === subjectId) || null;
 
   function changeAcademicYear(value: string) {
     setAcademicYear(value);
-    setLevel("");
-    setClassId("");
+    setEducationScope((current) => ({
+      ...current,
+      levelCode: "",
+      classId: "",
+    }));
     setSubjectId("");
     setPeriod("T1");
-    void load(value);
+    const nextScope = { ...educationScope, levelCode: "", classId: "" };
+    void load(value, false, nextScope);
+    void loadClasses(value);
   }
 
-  function changeLevel(value: string) {
-    setLevel(value);
-    setClassId("");
+  function changeEducationScope(value: EducationScopeValue) {
+    setEducationScope(value);
     setSubjectId("");
+    void load(academicYear, false, value);
+  }
+
+  function changeView(value: MonitorView) {
+    setView(value);
+    setSubjectId("");
+    if (value === "subject" && educationScope.classId) {
+      const nextScope = { ...educationScope, classId: "" };
+      setEducationScope(nextScope);
+      void load(academicYear, false, nextScope);
+    }
   }
 
   if (loading) {
@@ -366,7 +394,7 @@ export default function AdminTextbookPage() {
         ? `Exécution moyenne de ${selectedClass.label}`
         : "Exécution moyenne de la classe"
       : selectedSubject
-        ? `Exécution moyenne de ${selectedSubject.label} en ${level || "ce niveau"}`
+        ? `Exécution moyenne de ${selectedSubject.label} en ${educationScope.levelCode || "ce niveau"}`
         : "Exécution moyenne de la discipline";
 
   return (
@@ -403,7 +431,7 @@ export default function AdminTextbookPage() {
           <div className="grid gap-2 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => setView("class")}
+              onClick={() => changeView("class")}
               className={`flex min-h-[66px] items-center gap-3 rounded-2xl px-4 text-left transition ${
                 view === "class"
                   ? "bg-emerald-600 text-white shadow-sm"
@@ -427,7 +455,7 @@ export default function AdminTextbookPage() {
 
             <button
               type="button"
-              onClick={() => setView("subject")}
+              onClick={() => changeView("subject")}
               className={`flex min-h-[66px] items-center gap-3 rounded-2xl px-4 text-left transition ${
                 view === "subject"
                   ? "bg-emerald-600 text-white shadow-sm"
@@ -452,7 +480,16 @@ export default function AdminTextbookPage() {
         </section>
 
         <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <EducationScopeFilter
+            value={educationScope}
+            onChange={changeEducationScope}
+            classes={classes}
+            showLevel
+            showClass={view === "class"}
+            title="Contexte du suivi"
+          />
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <SelectField
               label="Année scolaire"
               value={academicYear}
@@ -476,23 +513,7 @@ export default function AdminTextbookPage() {
               <option value="ALL">Toute l’année</option>
             </SelectField>
 
-            <SelectField label="Niveau" value={level} onChange={changeLevel}>
-              {levels.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </SelectField>
-
-            {view === "class" ? (
-              <SelectField label="Classe" value={classId} onChange={setClassId}>
-                {classes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </SelectField>
-            ) : (
+            {view === "subject" ? (
               <SelectField
                 label="Discipline"
                 value={subjectId}
@@ -504,7 +525,7 @@ export default function AdminTextbookPage() {
                   </option>
                 ))}
               </SelectField>
-            )}
+            ) : null}
           </div>
         </section>
 
