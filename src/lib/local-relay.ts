@@ -320,11 +320,19 @@ async function relayJson<T>(
     baseUrl?: string;
     includeConfiguredToken?: boolean;
     timeoutMs?: number;
+    preferRemembered?: boolean;
   } = {},
 ): Promise<T> {
   if (!browser()) throw new Error("relay_browser_only");
   const config = getRelayConfig();
-  const baseUrl = normalizeBaseUrl(options.baseUrl || config.baseUrl);
+  const requestedBaseUrl = normalizeBaseUrl(options.baseUrl || config.baseUrl);
+  const rememberedInstitutionId = getRememberedRelayInstitution();
+  const rememberedBaseUrl = rememberedInstitutionId
+    ? rememberedRelayBaseUrl(rememberedInstitutionId)
+    : null;
+  const baseUrl = options.preferRemembered === false
+    ? requestedBaseUrl
+    : normalizeBaseUrl(rememberedBaseUrl || requestedBaseUrl);
   const merged = mergeSignals(init.signal || undefined, options.timeoutMs);
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
@@ -1234,6 +1242,7 @@ async function checkRelayTeacherConnectivityAtUrl(input: {
       baseUrl,
       includeConfiguredToken: false,
       timeoutMs: input.timeoutMs || RELAY_PERMISSION_TIMEOUT_MS,
+      preferRemembered: false,
     });
     if (response.ok !== true || String(response.institution_id || "").trim() !== institutionId) {
       return { status: "unreachable", checked_at: checkedAt };
@@ -1302,7 +1311,9 @@ export async function checkRelayTeacherConnectivity(input: {
       timeoutMs: candidates.length > 1 ? 7_000 : RELAY_PERMISSION_TIMEOUT_MS,
     });
     if (result.status === "reachable") {
-      rememberRelayBaseUrl(String(input.institutionId || "").trim(), baseUrl);
+      const institutionId = String(input.institutionId || "").trim();
+      rememberRelayInstitution(institutionId);
+      rememberRelayBaseUrl(institutionId, baseUrl);
       return result;
     }
     last = result;
