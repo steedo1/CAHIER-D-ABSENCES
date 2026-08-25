@@ -23,15 +23,12 @@ function toDayRange(from: string, to: string) {
 
 function niceName(p: any) {
   const dn = String(p?.display_name ?? "").trim();
-  const ln = String(p?.last_name ?? "").trim();
-  const fn = String(p?.first_name ?? "").trim();
   const em = String(p?.email ?? "").trim();
   const ph = String(p?.phone ?? "").trim();
   const emLocal = em.includes("@") ? em.split("@")[0] : em;
   const id = String(p?.id ?? "");
   return (
     dn ||
-    `${ln} ${fn}`.trim() ||
     emLocal ||
     ph ||
     `(enseignant ${id.slice(0, 6)})`
@@ -513,7 +510,7 @@ export async function GET(req: NextRequest) {
         if (!teacherName) {
           const { data: p } = await srv
             .from("profiles")
-            .select("id, display_name, first_name, last_name, email, phone")
+            .select("id, display_name, email, phone")
             .eq("id", teacher_id)
             .maybeSingle();
           if (p) teacherName = niceName(p);
@@ -869,7 +866,7 @@ export async function GET(req: NextRequest) {
     if (missingNames.length) {
       const { data: profiles, error: profileError } = await srv
         .from("profiles")
-        .select("id, display_name, first_name, last_name, email, phone")
+        .select("id, display_name, email, phone")
         .eq("institution_id", inst)
         .in("id", missingNames);
       if (profileError) throw new Error(profileError.message);
