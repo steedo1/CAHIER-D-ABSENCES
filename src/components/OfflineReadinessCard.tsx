@@ -319,7 +319,7 @@ export default function OfflineReadinessCard({
             {isAutomaticAttendance
               ? readiness
                 ? automaticOperational
-                  ? "Appels disponibles hors connexion"
+                  ? "Appels hors ligne prêts"
                   : "Synchronisation automatique des appels"
                 : "Initialisation automatique des appels"
               : readiness
