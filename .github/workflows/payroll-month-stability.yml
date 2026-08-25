@@ -1,0 +1,32 @@
+name: Apply payroll month stability patch
+
+on:
+  push:
+    branches:
+      - fix/payroll-month-stability-final-20260825
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix(payroll): stabiliser le changement de mois') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/payroll-month-stability-final-20260825
+          fetch-depth: 0
+      - name: Apply targeted source patch
+        run: node scripts/patch-payroll-month-stability.cjs
+      - name: Remove one-shot patch helpers
+        run: |
+          rm -f scripts/patch-payroll-month-stability.cjs
+          rm -f .github/workflows/payroll-month-stability.yml
+      - name: Commit corrected payroll page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(payroll): stabiliser le changement de mois"
+          git push origin HEAD:fix/payroll-month-stability-final-20260825
