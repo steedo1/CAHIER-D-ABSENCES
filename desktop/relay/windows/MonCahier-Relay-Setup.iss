@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "2026.08.22.1"
+  #define MyAppVersion "2026.08.25.1"
 #endif
 #ifndef SourceDir
   #define SourceDir ".\\stage"
@@ -31,10 +31,13 @@ WizardStyle=modern
 SetupLogging=yes
 CloseApplications=no
 RestartApplications=no
+SetupIconFile={#SourceDir}\moncahier-relay.ico
 UninstallDisplayName=Mon Cahier Relay
+UninstallDisplayIcon={app}\moncahier-relay.ico
 
 [Files]
 Source: "{#SourceDir}\App\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\moncahier-relay.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\windows\uninstall-packaged-relay.ps1"""; Flags: runhidden waituntilterminated

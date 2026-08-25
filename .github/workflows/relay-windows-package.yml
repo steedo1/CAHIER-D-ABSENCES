@@ -8,12 +8,14 @@ on:
       - reprise-propre-5418ce7-20260729
     paths:
       - "desktop/relay/**"
+      - "public/icons/icon-512.png"
       - ".github/workflows/relay-windows-package.yml"
   pull_request:
     branches:
       - reprise-propre-5418ce7-20260729
     paths:
       - "desktop/relay/**"
+      - "public/icons/icon-512.png"
       - ".github/workflows/relay-windows-package.yml"
   workflow_dispatch:
 
@@ -86,7 +88,7 @@ jobs:
           $Manifest = [ordered]@{
             product = "Mon Cahier Relay"
             release = "Rentree-2026-2027"
-            installer_version = "2026.08.24.1"
+            installer_version = "2026.08.25.1"
             relay_version = [string]$Package.version
             schema_version = 9
             git_commit = "${{ github.sha }}"
@@ -95,6 +97,93 @@ jobs:
             built_at_utc = [DateTime]::UtcNow.ToString("o")
           }
           $Manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Stage "release-manifest.json") -Encoding UTF8
+
+      - name: Build branded Windows icon
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Add-Type -AssemblyName System.Drawing
+
+          $Source = Join-Path $PWD "public\icons\icon-512.png"
+          $Stage = Join-Path $PWD "desktop\relay\stage"
+          $Target = Join-Path $Stage "moncahier-relay.ico"
+          if (-not (Test-Path -LiteralPath $Source)) {
+            throw "Icône officielle Mon Cahier introuvable : $Source"
+          }
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+
+          $SourceImage = [System.Drawing.Image]::FromFile($Source)
+          try {
+            $Entries = @()
+            foreach ($Size in @(16, 24, 32, 48, 64, 128, 256)) {
+              $Bitmap = [System.Drawing.Bitmap]::new(
+                $Size,
+                $Size,
+                [System.Drawing.Imaging.PixelFormat]::Format32bppArgb
+              )
+              $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+              try {
+                $Graphics.Clear([System.Drawing.Color]::Transparent)
+                $Graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                $Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $Graphics.DrawImage($SourceImage, 0, 0, $Size, $Size)
+
+                $PngStream = [System.IO.MemoryStream]::new()
+                try {
+                  $Bitmap.Save($PngStream, [System.Drawing.Imaging.ImageFormat]::Png)
+                  $Entries += [pscustomobject]@{
+                    Size = $Size
+                    Bytes = $PngStream.ToArray()
+                  }
+                } finally {
+                  $PngStream.Dispose()
+                }
+              } finally {
+                $Graphics.Dispose()
+                $Bitmap.Dispose()
+              }
+            }
+          } finally {
+            $SourceImage.Dispose()
+          }
+
+          $FileStream = [System.IO.File]::Open($Target, [System.IO.FileMode]::Create)
+          $Writer = [System.IO.BinaryWriter]::new($FileStream)
+          try {
+            $Writer.Write([UInt16]0) # réservé
+            $Writer.Write([UInt16]1) # type icône
+            $Writer.Write([UInt16]$Entries.Count)
+
+            $Offset = 6 + (16 * $Entries.Count)
+            foreach ($Entry in $Entries) {
+              $Dimension = if ($Entry.Size -ge 256) { [Byte]0 } else { [Byte]$Entry.Size }
+              $Writer.Write($Dimension)
+              $Writer.Write($Dimension)
+              $Writer.Write([Byte]0)
+              $Writer.Write([Byte]0)
+              $Writer.Write([UInt16]1)
+              $Writer.Write([UInt16]32)
+              $Writer.Write([UInt32]$Entry.Bytes.Length)
+              $Writer.Write([UInt32]$Offset)
+              $Offset += $Entry.Bytes.Length
+            }
+
+            foreach ($Entry in $Entries) {
+              $Writer.Write([Byte[]]$Entry.Bytes)
+            }
+          } finally {
+            $Writer.Dispose()
+          }
+
+          if (-not (Test-Path -LiteralPath $Target)) {
+            throw "Génération de l'icône Windows échouée."
+          }
+          if ((Get-Item -LiteralPath $Target).Length -lt 1024) {
+            throw "Icône Windows générée anormalement petite."
+          }
+          Write-Host "MON_CAHIER_RELAY_ICON_OK : $Target"
 
       - name: Smoke-test portable runtime
         shell: pwsh
@@ -173,8 +262,10 @@ jobs:
           $Iss = Join-Path $PWD "desktop\relay\windows\MonCahier-Relay-Setup.iss"
           $Stage = Join-Path $PWD "desktop\relay\stage"
           $Release = Join-Path $PWD "desktop\relay\release"
+          $Icon = Join-Path $Stage "moncahier-relay.ico"
+          if (-not (Test-Path -LiteralPath $Icon)) { throw "Icône Windows introuvable avant compilation." }
           New-Item -ItemType Directory -Force -Path $Release | Out-Null
-          & $Iscc "/DMyAppVersion=2026.08.24.1" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
+          & $Iscc "/DMyAppVersion=2026.08.25.1" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
           if ($LASTEXITCODE -ne 0) { throw "Compilation Inno Setup échouée." }
 
       - name: Create checksum and release notes
@@ -193,7 +284,7 @@ jobs:
           Build Git : ${{ github.sha }}
           Branche   : ${{ github.ref_name }}
           Schema DB : 9
-          Setup     : 2026.08.24.1
+          Setup     : 2026.08.25.1
 
           Installation :
           1. Dans Mon Cahier, créer l'identité du PC relais et télécharger MonCahier-Relay-Enrollment.json.
@@ -205,6 +296,7 @@ jobs:
           Le runtime Node est inclus. Aucun Node.js ni dépôt Git n'est requis sur le PC de l'établissement.
           Aucun nom .local, aucune adresse IP et aucun jeton ne doivent être saisis manuellement.
           Les scripts PowerShell embarqués sont validés avec Windows PowerShell 5.1 avant publication.
+          L'installateur et l'entrée Windows de Mon Cahier Relay utilisent l'icône officielle Mon Cahier.
           "@ | Set-Content -LiteralPath (Join-Path $Release "LISEZ-MOI.txt") -Encoding UTF8
 
       - name: Upload Windows installer
