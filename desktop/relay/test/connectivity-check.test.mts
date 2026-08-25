@@ -6,8 +6,8 @@ import { openRelayDatabase, type RelayDatabase } from "../src/db.mjs";
 import { createRelayServer } from "../src/server.mjs";
 import { RelayStore } from "../src/store.mjs";
 
-const SCHOOL_ONE_SECRET = "1111111111111111111111111111111111111111111111111111111111111111";
-const SCHOOL_TWO_SECRET = "2222222222222222222222222222222222222222222222222222222222222222";
+const SCHOOL_ONE_SECRET = "1".repeat(64);
+const SCHOOL_TWO_SECRET = "2".repeat(64);
 
 function relayTeacherToken(input: {
   secret: string;
@@ -162,7 +162,7 @@ test("le contrôle de connectivité accepte seulement le professeur signé de l'
     assert.equal(validBody.ok, true);
     assert.equal(validBody.institution_id, "inst-1");
     assert.ok(Number.isFinite(Date.parse(String(validBody.relay_time))));
-    assert.equal(validBody.relay_version, "0.2.2");
+    assert.equal(validBody.relay_version, "0.2.3");
     assert.equal(validBody.schema_version, 9);
     assert.equal(validBody.protocol_version, 1);
     assert.equal(validBody.teacher_attendance_writes_enabled, false);

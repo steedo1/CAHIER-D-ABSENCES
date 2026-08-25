@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { RelayDatabase } from "./db.mjs";
 import { parseStoredJson } from "./json.mjs";
+import { wakeRelayCloudSync } from "./sync-wakeup.mjs";
 
 export type RelayActorKind = "teacher" | "class_device";
 
@@ -195,6 +196,11 @@ export function authenticateRelayTeacherAccess(
     `).get(institutionId, classId) as { id: string } | undefined;
     if (!boundClass) throw new Error("class_device_not_paired_with_relay");
   }
+
+  // Toute utilisation réelle du relais réveille immédiatement un cycle Cloud.
+  // Le réveil est throttlé et single-flight : il complète le polling 15 s sans
+  // transformer le relais en boucle de requêtes agressive.
+  void wakeRelayCloudSync();
 
   return {
     institution_id: institutionId,
