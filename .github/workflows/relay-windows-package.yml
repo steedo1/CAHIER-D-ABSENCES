@@ -88,7 +88,7 @@ jobs:
           $Manifest = [ordered]@{
             product = "Mon Cahier Relay"
             release = "Rentree-2026-2027"
-            installer_version = "2026.08.25.2"
+            installer_version = "2026.08.25.3"
             relay_version = [string]$Package.version
             schema_version = 9
             git_commit = "${{ github.sha }}"
@@ -265,7 +265,7 @@ jobs:
           $Icon = Join-Path $Stage "moncahier-relay.ico"
           if (-not (Test-Path -LiteralPath $Icon)) { throw "Icône Windows introuvable avant compilation." }
           New-Item -ItemType Directory -Force -Path $Release | Out-Null
-          & $Iscc "/DMyAppVersion=2026.08.25.2" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
+          & $Iscc "/DMyAppVersion=2026.08.25.3" "/DSourceDir=$Stage" "/DOutputDir=$Release" $Iss
           if ($LASTEXITCODE -ne 0) { throw "Compilation Inno Setup échouée." }
 
       - name: Create checksum and release notes
@@ -284,7 +284,7 @@ jobs:
           Build Git : ${{ github.sha }}
           Branche   : ${{ github.ref_name }}
           Schema DB : 9
-          Setup     : 2026.08.25.2
+          Setup     : 2026.08.25.3
 
           Installation :
           1. Dans Mon Cahier, créer l'identité du PC relais et télécharger MonCahier-Relay-Enrollment.json.
@@ -297,7 +297,7 @@ jobs:
           Aucun nom .local, aucune adresse IP et aucun jeton ne doivent être saisis manuellement.
           Les scripts PowerShell embarqués sont validés avec Windows PowerShell 5.1 avant publication.
           L'installateur et l'entrée Windows de Mon Cahier Relay utilisent l'icône officielle Mon Cahier.
-          Lors d'une mise à jour, le Setup arrête et désactive temporairement l'ancien relais avant de remplacer les modules natifs, puis réactive automatiquement la tâche Windows.
+          Lors d'une mise à jour, un helper pré-installation arrête l'ancien relais et son arbre de processus, puis le Setup ne bloque que si le module natif SQLite reste réellement verrouillé.
           "@ | Set-Content -LiteralPath (Join-Path $Release "LISEZ-MOI.txt") -Encoding UTF8
 
       - name: Upload Windows installer
