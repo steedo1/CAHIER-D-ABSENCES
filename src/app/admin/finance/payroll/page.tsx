@@ -190,7 +190,10 @@ function parsePositiveInt(
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-function parseAmount(value: FormDataEntryValue | string | null | undefined, fallback: number) {
+function parseAmount(
+  value: FormDataEntryValue | string | number | null | undefined,
+  fallback: number,
+) {
   const n = Number(String(value ?? "").replace(",", "."));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
