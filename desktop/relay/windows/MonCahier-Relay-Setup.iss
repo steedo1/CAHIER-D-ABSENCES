@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "2026.08.25.2"
+  #define MyAppVersion "2026.08.25.3"
 #endif
 #ifndef SourceDir
   #define SourceDir ".\\stage"
@@ -38,59 +38,24 @@ UninstallDisplayIcon={app}\moncahier-relay.ico
 [Files]
 Source: "{#SourceDir}\App\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\moncahier-relay.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\App\windows\stop-relay-for-upgrade.ps1"; Flags: dontcopy
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\windows\uninstall-packaged-relay.ps1"""; Flags: runhidden waituntilterminated
 
 [Code]
-function RunHiddenPowerShell(Command: String; var ResultCode: Integer): Boolean;
+function StopExistingRelayAndWait(AppDir: String): Boolean;
 var
+  ResultCode: Integer;
   PowerShellExe: String;
+  HelperPath: String;
   Args: String;
 begin
+  ExtractTemporaryFile('stop-relay-for-upgrade.ps1');
   PowerShellExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-  Args := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Command + '"';
-  Result := Exec(PowerShellExe, Args, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-end;
-
-function StopExistingRelay(AppDir: String): Boolean;
-var
-  ResultCode: Integer;
-  Command: String;
-begin
-  Command :=
-    '$ErrorActionPreference=''SilentlyContinue''; ' +
-    '$task=''Mon Cahier Relay''; ' +
-    'Disable-ScheduledTask -TaskName $task | Out-Null; ' +
-    'Stop-ScheduledTask -TaskName $task; ' +
-    'Start-Sleep -Milliseconds 400; ' +
-    '$app=''' + AppDir + '''; ' +
-    '$node=Join-Path $app ''runtime\node.exe''; ' +
-    'Get-CimInstance Win32_Process | Where-Object { ' +
-    '($_.ExecutablePath -and $_.ExecutablePath -ieq $node) -or ' +
-    '($_.CommandLine -and $_.CommandLine -like (''*''+$app+''*dist\src\cli.mjs*'')) ' +
-    '} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; ' +
-    'Start-Sleep -Milliseconds 700; exit 0';
-
-  Result := RunHiddenPowerShell(Command, ResultCode) and (ResultCode = 0);
-end;
-
-function WaitForRelayFilesToUnlock(AppDir: String): Boolean;
-var
-  ResultCode: Integer;
-  Command: String;
-begin
-  Command :=
-    '$path=Join-Path ''' + AppDir + ''' ''node_modules\better-sqlite3\build\Release\better_sqlite3.node''; ' +
-    'if(-not (Test-Path -LiteralPath $path)){exit 0}; ' +
-    'for($i=0;$i -lt 30;$i++){' +
-    'try{' +
-    '$stream=[System.IO.File]::Open($path,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None); ' +
-    '$stream.Dispose(); exit 0' +
-    '}catch{Start-Sleep -Milliseconds 200}' +
-    '}; exit 5';
-
-  Result := RunHiddenPowerShell(Command, ResultCode) and (ResultCode = 0);
+  HelperPath := ExpandConstant('{tmp}\stop-relay-for-upgrade.ps1');
+  Args := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + HelperPath + '" -AppDir "' + AppDir + '"';
+  Result := Exec(PowerShellExe, Args, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -111,16 +76,12 @@ begin
     Exec(ExpandConstant('{sys}\schtasks.exe'), '/Change /TN "Mon Cahier Relay" /Disable', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "Mon Cahier Relay"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-    { La tâche PowerShell peut laisser son enfant node.exe vivant. On l'arrête donc explicitement. }
-    if not StopExistingRelay(AppDir) then
+    { Le helper extrait dans %TEMP% arrête la tâche, son lanceur PowerShell et le Node enfant,
+      puis vérifie le verrou réel de better_sqlite3.node. Les erreurs intermédiaires d'arrêt
+      ne bloquent pas l'installation : seul un fichier encore réellement verrouillé l'arrête. }
+    if not StopExistingRelayAndWait(AppDir) then
     begin
-      RaiseException('Impossible d''arrêter proprement l''ancien Mon Cahier Relay. Réessayez l''installation.');
-    end;
-
-    { better_sqlite3.node est un module natif : Windows refuse de le remplacer tant qu'un processus le charge. }
-    if not WaitForRelayFilesToUnlock(AppDir) then
-    begin
-      RaiseException('L''ancien relais utilise encore un fichier nécessaire à la mise à jour. Le Setup a été arrêté pour éviter une installation incomplète.');
+      RaiseException('L''ancien Mon Cahier Relay utilise encore un fichier nécessaire à la mise à jour. Fermez cette installation, redémarrez Windows puis relancez le Setup.');
     end;
   end;
 
