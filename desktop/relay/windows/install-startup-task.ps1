@@ -58,6 +58,11 @@ Register-ScheduledTask `
     -Settings $Settings `
     -Force | Out-Null
 
+# Une mise à jour du Setup désactive temporairement la tâche afin que l'ancien
+# node.exe ne verrouille pas better_sqlite3.node pendant le remplacement.
+# La nouvelle définition doit toujours être réactivée avant de rendre la main.
+Enable-ScheduledTask -TaskName "Mon Cahier Relay" | Out-Null
+
 # Supprime l'ancien mécanisme limité à l'ouverture de session, qui créerait un second processus.
 $StartupShortcut = Join-Path ([Environment]::GetFolderPath("Startup")) "Mon Cahier Relay.lnk"
 if (Test-Path -LiteralPath $StartupShortcut) {
