@@ -6,11 +6,8 @@ import { redirect } from "next/navigation";
 import { cookies, headers } from "next/headers";
 import {
   BadgeCheck,
-  BadgeDollarSign,
   CalendarClock,
-  FileSpreadsheet,
   Printer,
-  Receipt,
   RefreshCcw,
   Users,
   Wallet,
@@ -26,7 +23,6 @@ import {
 export const dynamic = "force-dynamic";
 
 type EmploymentType = "vacataire" | "permanent";
-type PayrollScope = "vacataires_only" | "all_teachers";
 type PayrollStatus = "draft" | "validated" | "cancelled";
 type SchoolCycle = "first_cycle" | "second_cycle";
 
@@ -53,7 +49,7 @@ type TeacherPayrollRunRow = {
   period_month: string;
   period_start: string;
   period_end: string;
-  scope: PayrollScope;
+  scope: "vacataires_only" | "all_teachers";
   default_rate_first_cycle: number | string;
   default_rate_second_cycle: number | string;
   status: PayrollStatus;
@@ -70,11 +66,9 @@ type TeacherPayrollRunRow = {
 type TeacherPayrollLineRow = {
   id: string;
   run_id: string;
-  institution_id: string;
   teacher_id: string;
   teacher_name_snapshot: string | null;
   employment_type: EmploymentType;
-  payroll_enabled: boolean;
   expected_sessions: number;
   actual_sessions: number;
   expected_minutes: number;
@@ -84,54 +78,32 @@ type TeacherPayrollLineRow = {
   rate_first_cycle: number | string;
   rate_second_cycle: number | string;
   gross_amount: number | string;
-  expected_amount?: number | string | null;
   lost_minutes_after_tolerance?: number | string | null;
-  lost_sessions_equivalent?: number | string | null;
   lost_amount?: number | string | null;
   adjusted_amount?: number | string | null;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
 };
 
 type StatisticsDetailRow = {
   id: string;
   dateISO: string;
-  subject_name: string | null;
   expected_minutes: number;
   real_minutes: number;
+  observed_minutes?: number | null;
   actual_call_iso?: string | null;
+  ended_at?: string | null;
+  late_minutes?: number | null;
   class_id?: string | null;
-  class_label?: string | null;
   subject_id?: string | null;
   period_id?: string | null;
 };
 
 type StatisticsDetailPayload = {
   rows: StatisticsDetailRow[];
-  total_minutes: number;
-  count: number;
-};
-
-type InstitutionSettings = {
-  institution_name?: string | null;
-  institution_label?: string | null;
-  name?: string | null;
-  institution_logo_url?: string | null;
-  institution_phone?: string | null;
-  institution_email?: string | null;
-  institution_region?: string | null;
-  institution_postal_address?: string | null;
-  institution_status?: string | null;
-  institution_head_name?: string | null;
-  institution_head_title?: string | null;
-  institution_code?: string | null;
 };
 
 type PeriodScheduleRow = {
   id: string;
   weekday: number;
-  period_no: number | null;
   start_time?: string | null;
   end_time?: string | null;
   duration_min?: number | null;
@@ -160,18 +132,40 @@ type ExpectedSlot = {
   weekday: number;
   cycle: SchoolCycle;
   expected_minutes: number;
-  start_time?: string | null;
-  end_time?: string | null;
 };
 
-function formatMoney(value: number | string) {
-  return `${Number(value || 0).toLocaleString("fr-FR")} F`;
+type InstitutionSettings = {
+  institution_name?: string | null;
+  institution_label?: string | null;
+  name?: string | null;
+  institution_logo_url?: string | null;
+  institution_head_name?: string | null;
+  institution_head_title?: string | null;
+};
+
+function numberValue(value: number | string | null | undefined) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round(Number(value || 0));
+}
+
+function formatMoney(value: number | string | null | undefined) {
+  return `${numberValue(value).toLocaleString("fr-FR")} F`;
+}
+
+function formatMinutes(value: number | string | null | undefined) {
+  return `${Math.max(0, Math.round(numberValue(value))).toLocaleString("fr-FR")} min`;
 }
 
 function formatMonthLabel(month: string) {
   const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, (m || 1) - 1, 1);
-  return d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return new Date(y, (m || 1) - 1, 1).toLocaleDateString("fr-FR", {
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function formatDate(value: string | null | undefined) {
@@ -181,85 +175,6 @@ function formatDate(value: string | null | undefined) {
   return d.toLocaleDateString("fr-FR", { dateStyle: "medium" });
 }
 
-function formatLongDate(value: string | Date | null | undefined) {
-  const d = value instanceof Date ? value : new Date(String(value || ""));
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function formatMinutes(value: number | string | null | undefined) {
-  const minutes = Math.max(0, Math.round(Number(value || 0)));
-  return `${minutes.toLocaleString("fr-FR")} min`;
-}
-
-function formatSessions(value: number) {
-  const n = Number(value || 0);
-  return n.toLocaleString("fr-FR", {
-    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function payableLine(row: {
-  employment_type?: EmploymentType | string | null;
-}) {
-  return row.employment_type === "vacataire";
-}
-
-function numberValue(value: number | string | null | undefined) {
-  const n = Number(value || 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function lostSessionsForLine(
-  row: Pick<
-    TeacherPayrollLineRow,
-    | "expected_sessions"
-    | "lost_minutes_after_tolerance"
-    | "lost_sessions_equivalent"
-  >,
-  sessionReferenceMinutes: number,
-) {
-  const lostMinutes = numberValue(row.lost_minutes_after_tolerance);
-  const storedEquivalent = numberValue(row.lost_sessions_equivalent);
-  const referenceMinutes = Math.max(1, Number(sessionReferenceMinutes || 60));
-  const expectedSessions = Math.max(0, Number(row.expected_sessions || 0));
-
-  if (lostMinutes <= 0) return 0;
-
-  // Sécurité pour les anciens brouillons : certaines lignes ont pu recevoir
-  // les minutes brutes dans la colonne d’équivalent séances.
-  if (
-    storedEquivalent <= 0 ||
-    storedEquivalent > Math.max(expectedSessions, 1) * 1.25
-  ) {
-    return lostMinutes / referenceMinutes;
-  }
-
-  return storedEquivalent;
-}
-
-function teacherLabel(t: {
-  display_name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-}) {
-  return (
-    t.display_name?.trim() ||
-    t.email?.trim() ||
-    t.phone?.trim() ||
-    "(enseignant)"
-  );
-}
-
-function normalizeScope(value: string | null | undefined): PayrollScope {
-  return value === "vacataires_only" ? "vacataires_only" : "all_teachers";
-}
-
 function normalizeMonth(value: string | null | undefined) {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}$/.test(raw)) return raw;
@@ -267,34 +182,28 @@ function normalizeMonth(value: string | null | undefined) {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function parseAmount(value: FormDataEntryValue | null, fallback = 0) {
-  const n = Number(String(value || "").replace(",", "."));
-  return Number.isFinite(n) ? n : fallback;
-}
-
 function parsePositiveInt(
   value: FormDataEntryValue | string | number | null | undefined,
-  fallback = 0,
+  fallback: number,
 ) {
   const n = Math.round(Number(String(value ?? "").replace(",", ".")));
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-function roundMoney(value: number) {
-  return Math.round(Number(value || 0));
+function parseAmount(value: FormDataEntryValue | string | null | undefined, fallback: number) {
+  const n = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 function monthRange(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
-  const start = new Date(year, (monthNumber || 1) - 1, 1);
   const end = new Date(year, monthNumber || 1, 0);
-  const periodMonth = `${year}-${String(monthNumber).padStart(2, "0")}-01`;
-  const periodStart = `${year}-${String(monthNumber).padStart(2, "0")}-01`;
-  const periodEnd = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(
-    end.getDate(),
-  ).padStart(2, "0")}`;
-
-  return { start, end, periodMonth, periodStart, periodEnd };
+  const mm = String(monthNumber).padStart(2, "0");
+  return {
+    periodMonth: `${year}-${mm}-01`,
+    periodStart: `${year}-${mm}-01`,
+    periodEnd: `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`,
+  };
 }
 
 function periodIsInsideAcademicYear(
@@ -306,25 +215,6 @@ function periodIsInsideAcademicYear(
   if (academicYearStart && periodStart < academicYearStart) return false;
   if (academicYearEnd && periodEnd > academicYearEnd) return false;
   return true;
-}
-
-function payrollMessageLabel(code: string | null | undefined) {
-  switch (String(code || "")) {
-    case "draft_saved":
-      return {
-        tone: "success" as const,
-        title: "Brouillon de paie enregistré",
-        body: "Les paramètres saisis ont été enregistrés dans le run de paie et les lignes ont été recalculées.",
-      };
-    case "month_outside_academic_year":
-      return {
-        tone: "warning" as const,
-        title: "Mois incompatible avec l’année scolaire sélectionnée",
-        body: "Le mois choisi ne se trouve pas dans la période de l’année scolaire consultée. Sélectionne l’année scolaire correspondante ou change le mois avant de générer la paie.",
-      };
-    default:
-      return null;
-  }
 }
 
 function cycleFromLevel(level: string | null | undefined): SchoolCycle {
@@ -351,67 +241,56 @@ function cycleFromLevel(level: string | null | undefined): SchoolCycle {
   return "second_cycle";
 }
 
-function dayOfWeekFromIso(iso: string) {
-  const d = new Date(iso);
-  const wd = d.getDay();
-  return wd === 0 ? 7 : wd;
-}
-
-function buildOriginFromHeaders(h: Headers) {
-  const proto =
-    h.get("x-forwarded-proto") ||
-    (process.env.NODE_ENV === "development" ? "http" : "https");
-  const host = h.get("x-forwarded-host") || h.get("host");
-
-  if (!host) {
-    throw new Error("Impossible de déterminer l’hôte courant.");
-  }
-
-  return `${proto}://${host}`;
-}
-
-function institutionDisplayName(cfg: InstitutionSettings) {
-  return (
-    (cfg.institution_name || "").trim() ||
-    (cfg.institution_label || "").trim() ||
-    (cfg.name || "").trim() ||
-    "Etablissement scolaire"
-  );
-}
-
 function overlapDateRange(
   startDate: string | null | undefined,
   endDate: string | null | undefined,
   from: string,
   to: string,
 ) {
-  const s = (startDate || "0001-01-01").slice(0, 10);
-  const e = (endDate || "9999-12-31").slice(0, 10);
-  return s <= to && e >= from;
+  const start = (startDate || "0001-01-01").slice(0, 10);
+  const end = (endDate || "9999-12-31").slice(0, 10);
+  return start <= to && end >= from;
 }
 
 function ymd(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function dbWeekdayToJs(dbWeekday: number) {
-  if (dbWeekday === 7) return 0;
-  return dbWeekday;
+  return dbWeekday === 7 ? 0 : dbWeekday;
+}
+
+function clockDurationMinutes(start: string | null | undefined, end: string | null | undefined) {
+  const parse = (value: string | null | undefined) => {
+    const match = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return null;
+    return Number(match[1]) * 60 + Number(match[2]);
+  };
+  const a = parse(start);
+  const b = parse(end);
+  if (a === null || b === null || b <= a) return 0;
+  return b - a;
+}
+
+function teacherLabel(t: {
+  display_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}) {
+  return t.display_name?.trim() || t.email?.trim() || t.phone?.trim() || "Enseignant";
+}
+
+function buildOriginFromHeaders(h: Headers) {
+  const proto = h.get("x-forwarded-proto") || (process.env.NODE_ENV === "development" ? "http" : "https");
+  const host = h.get("x-forwarded-host") || h.get("host");
+  if (!host) throw new Error("Impossible de déterminer l’hôte courant.");
+  return `${proto}://${host}`;
 }
 
 async function getCurrentContextOrThrow() {
   const supabase = await getSupabaseServerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error("Utilisateur non authentifié.");
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Utilisateur non authentifié.");
 
   const { data: profile, error } = await supabase
     .from("profiles")
@@ -420,15 +299,9 @@ async function getCurrentContextOrThrow() {
     .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!profile?.institution_id) throw new Error("Aucun établissement associé à cet utilisateur.");
 
-  if (!profile?.institution_id) {
-    throw new Error("Aucun établissement associé à cet utilisateur.");
-  }
-
-  return {
-    userId: user.id as string,
-    institutionId: profile.institution_id as string,
-  };
+  return { userId: user.id, institutionId: String(profile.institution_id) };
 }
 
 async function fetchStatisticsDetailServer(
@@ -439,101 +312,53 @@ async function fetchStatisticsDetailServer(
   const h = await headers();
   const c = await cookies();
   const origin = buildOriginFromHeaders(h);
-
-  const qs = new URLSearchParams({
-    mode: "detail",
-    teacher_id: teacherId,
-    from,
-    to,
-  });
+  const qs = new URLSearchParams({ mode: "detail", teacher_id: teacherId, from, to });
 
   const res = await fetch(`${origin}/api/admin/statistics?${qs.toString()}`, {
     method: "GET",
-    headers: {
-      cookie: c.toString(),
-      accept: "application/json",
-    },
+    headers: { cookie: c.toString(), accept: "application/json" },
     cache: "no-store",
   });
-
   const json = await res.json().catch(() => ({}));
-
-  if (res.status === 401) {
-    throw new Error("unauthorized");
-  }
-
-  if (!res.ok) {
-    throw new Error(json?.error || `HTTP ${res.status}`);
-  }
-
-  return {
-    rows: Array.isArray(json?.rows) ? json.rows : [],
-    total_minutes: Number(json?.total_minutes || 0),
-    count: Number(json?.count || 0),
-  };
+  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  return { rows: Array.isArray(json?.rows) ? json.rows : [] };
 }
 
 async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
   const h = await headers();
   const c = await cookies();
   const origin = buildOriginFromHeaders(h);
-
   const res = await fetch(`${origin}/api/admin/institution/settings`, {
     method: "GET",
-    headers: {
-      cookie: c.toString(),
-      accept: "application/json",
-    },
+    headers: { cookie: c.toString(), accept: "application/json" },
     cache: "no-store",
   });
-
   const json = await res.json().catch(() => ({}));
   if (!res.ok) return {};
-
   return {
     institution_name: json?.institution_name ?? "",
     institution_label: json?.institution_label ?? "",
     name: json?.name ?? "",
     institution_logo_url: json?.institution_logo_url ?? "",
-    institution_phone: json?.institution_phone ?? "",
-    institution_email: json?.institution_email ?? "",
-    institution_region: json?.institution_region ?? "",
-    institution_postal_address: json?.institution_postal_address ?? "",
-    institution_status: json?.institution_status ?? "",
     institution_head_name: json?.institution_head_name ?? "",
     institution_head_title: json?.institution_head_title ?? "",
-    institution_code: json?.institution_code ?? "",
   };
 }
 
-async function getPayrollTeachers(
-  institutionId: string,
-): Promise<PayrollTeacherRow[]> {
+async function getPayrollTeachers(institutionId: string): Promise<PayrollTeacherRow[]> {
   const admin = getSupabaseServiceClient();
-
   const { data: roles, error: roleErr } = await admin
     .from("user_roles")
     .select("profile_id")
     .eq("institution_id", institutionId)
     .eq("role", "teacher");
-
   if (roleErr) throw new Error(roleErr.message);
 
-  const teacherIds = Array.from(
-    new Set((roles ?? []).map((r: any) => String(r.profile_id))),
-  );
+  const teacherIds = Array.from(new Set((roles ?? []).map((r: any) => String(r.profile_id))));
+  if (!teacherIds.length) return [];
 
-  if (teacherIds.length === 0) return [];
-
-  const [
-    { data: profiles, error: profErr },
-    { data: payProfiles, error: payErr },
-  ] = await Promise.all([
-    admin
-      .from("profiles")
-      .select("id,display_name,email,phone")
-      .in("id", teacherIds),
-
+  const [{ data: profiles, error: profErr }, { data: payProfiles, error: payErr }] = await Promise.all([
+    admin.from("profiles").select("id,display_name,email,phone").in("id", teacherIds),
     admin
       .schema("finance")
       .from("teacher_pay_profiles")
@@ -541,30 +366,21 @@ async function getPayrollTeachers(
       .eq("institution_id", institutionId)
       .in("profile_id", teacherIds),
   ]);
-
   if (profErr) throw new Error(profErr.message);
   if (payErr) throw new Error(payErr.message);
 
-  const payMap = new Map(
-    (payProfiles ?? []).map((r: any) => [String(r.profile_id), r]),
-  );
-
+  const payMap = new Map((payProfiles ?? []).map((r: any) => [String(r.profile_id), r]));
   return (profiles ?? [])
     .map((p: any) => {
       const pay = payMap.get(String(p.id));
       return {
         profile_id: String(p.id),
-        display_name: (p.display_name ?? null) as string | null,
-        email: (p.email ?? null) as string | null,
-        phone: (p.phone ?? null) as string | null,
-        employment_type: ((pay?.employment_type as
-          | EmploymentType
-          | undefined) ?? "permanent") as EmploymentType,
-        payroll_enabled:
-          typeof pay?.payroll_enabled === "boolean"
-            ? pay.payroll_enabled
-            : true,
-        notes: (pay?.notes ?? null) as string | null,
+        display_name: p.display_name ?? null,
+        email: p.email ?? null,
+        phone: p.phone ?? null,
+        employment_type: ((pay?.employment_type as EmploymentType | undefined) ?? "permanent") as EmploymentType,
+        payroll_enabled: typeof pay?.payroll_enabled === "boolean" ? pay.payroll_enabled : true,
+        notes: pay?.notes ?? null,
       };
     })
     .sort((a, b) => teacherLabel(a).localeCompare(teacherLabel(b), "fr"));
@@ -577,134 +393,138 @@ async function buildExpectedSlotsForTeacher(params: {
   periodStart: string;
   periodEnd: string;
   classMap: Map<string, ClassRow>;
+  referenceMinutes: number;
 }) {
-  const { admin, institutionId, teacherId, periodStart, periodEnd, classMap } =
-    params;
-
-  const [
-    { data: ttRows, error: ttErr },
-    { data: periodRows, error: pErr },
-    { data: ctRows, error: ctErr },
-  ] = await Promise.all([
+  const { admin, institutionId, teacherId, periodStart, periodEnd, classMap, referenceMinutes } = params;
+  const [{ data: ttRows, error: ttErr }, { data: periodRows, error: pErr }, { data: ctRows, error: ctErr }] = await Promise.all([
     admin
       .from("teacher_timetables")
       .select("class_id,subject_id,period_id,weekday")
       .eq("institution_id", institutionId)
       .eq("teacher_id", teacherId),
-
     admin
       .from("institution_periods")
-      .select("id,weekday,period_no,start_time,end_time,duration_min")
+      .select("id,weekday,start_time,end_time,duration_min")
       .eq("institution_id", institutionId),
-
     admin
       .from("class_teachers")
       .select("class_id,subject_id,teacher_id,start_date,end_date")
       .eq("institution_id", institutionId)
       .eq("teacher_id", teacherId),
   ]);
-
   if (ttErr) throw new Error(ttErr.message);
   if (pErr) throw new Error(pErr.message);
   if (ctErr) throw new Error(ctErr.message);
 
   const activeAssignments = new Set(
     ((ctRows ?? []) as ClassTeacherAssignmentRow[])
-      .filter((r) =>
-        overlapDateRange(r.start_date, r.end_date, periodStart, periodEnd),
-      )
+      .filter((r) => overlapDateRange(r.start_date, r.end_date, periodStart, periodEnd))
       .map((r) => `${r.class_id}::${r.subject_id}`),
   );
-
   const periodById = new Map<string, PeriodScheduleRow>(
     ((periodRows ?? []) as PeriodScheduleRow[]).map((p) => [String(p.id), p]),
   );
-
   const from = new Date(`${periodStart}T00:00:00`);
   const to = new Date(`${periodEnd}T00:00:00`);
   const out: ExpectedSlot[] = [];
 
   for (const row of (ttRows ?? []) as TeacherTimetableRow[]) {
-    const class_id = String(row.class_id || "");
-    const subject_id = String(row.subject_id || "");
-    const period_id = String(row.period_id || "");
+    const classId = String(row.class_id || "");
+    const subjectId = String(row.subject_id || "");
+    const periodId = String(row.period_id || "");
     const weekday = Number(row.weekday ?? -1);
+    if (!classId || !subjectId || !periodId || weekday < 0) continue;
+    if (!classMap.has(classId)) continue;
+    if (!activeAssignments.has(`${classId}::${subjectId}`)) continue;
 
-    if (!class_id || !subject_id || !period_id || weekday < 0) continue;
-    if (!activeAssignments.has(`${class_id}::${subject_id}`)) continue;
-
-    const period = periodById.get(period_id);
+    const period = periodById.get(periodId);
     if (!period) continue;
-
-    const expected_minutes = Number(period.duration_min || 0);
-    if (expected_minutes <= 0) continue;
-
-    const cls = classMap.get(class_id) || null;
-    const cycle = cycleFromLevel(cls?.level);
+    const configuredDuration = numberValue(period.duration_min);
+    const clockDuration = clockDurationMinutes(period.start_time, period.end_time);
+    const expectedMinutes = configuredDuration || clockDuration || referenceMinutes;
+    const cycle = cycleFromLevel(classMap.get(classId)?.level);
 
     for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
       if (d.getDay() !== dbWeekdayToJs(weekday)) continue;
-
       out.push({
-        class_id,
-        subject_id,
-        period_id,
+        class_id: classId,
+        subject_id: subjectId,
+        period_id: periodId,
         session_date: ymd(d),
         weekday,
         cycle,
-        expected_minutes,
-        start_time: period.start_time || null,
-        end_time: period.end_time || null,
+        expected_minutes: expectedMinutes,
       });
     }
   }
 
-  out.sort((a, b) =>
-    `${a.session_date}|${a.class_id}|${a.subject_id}|${a.period_id}`.localeCompare(
-      `${b.session_date}|${b.class_id}|${b.subject_id}|${b.period_id}`,
-    ),
+  return out.sort((a, b) =>
+    `${a.session_date}|${a.class_id}|${a.period_id}`.localeCompare(`${b.session_date}|${b.class_id}|${b.period_id}`),
   );
-
-  return out;
 }
 
-async function generatePayrollDraftAction(formData: FormData) {
+function findMatchingSession(
+  rows: StatisticsDetailRow[],
+  used: Set<number>,
+  slot: ExpectedSlot,
+) {
+  const date = slot.session_date;
+  const exact = rows.findIndex((r, index) =>
+    !used.has(index) &&
+    String(r.dateISO || "").slice(0, 10) === date &&
+    String(r.class_id || "") === slot.class_id &&
+    String(r.period_id || "") === slot.period_id &&
+    (!r.subject_id || String(r.subject_id) === slot.subject_id),
+  );
+  if (exact >= 0) {
+    used.add(exact);
+    return rows[exact];
+  }
+
+  const fallback = rows.findIndex((r, index) =>
+    !used.has(index) &&
+    String(r.dateISO || "").slice(0, 10) === date &&
+    String(r.class_id || "") === slot.class_id &&
+    (!r.subject_id || String(r.subject_id) === slot.subject_id),
+  );
+  if (fallback >= 0) {
+    used.add(fallback);
+    return rows[fallback];
+  }
+  return null;
+}
+
+function payrollMessage(code: string | null | undefined) {
+  switch (String(code || "")) {
+    case "payroll_calculated":
+      return { tone: "emerald", title: "Paie calculée", body: "Les séances clôturées ont été recalculées avec les tolérances de retard et de sortie anticipée séparées." };
+    case "payroll_validated":
+      return { tone: "emerald", title: "Paie validée", body: "Cet état de paie est maintenant validé et conservé dans l’historique." };
+    case "month_outside_academic_year":
+      return { tone: "amber", title: "Mois hors année scolaire", body: "Choisis un mois compris dans l’année scolaire sélectionnée." };
+    default:
+      return null;
+  }
+}
+
+async function calculatePayrollAction(formData: FormData) {
   "use server";
 
   const access = await getFinanceAccessForCurrentUser("payroll");
-  if (!access.ok) {
-    redirect("/admin/finance/locked");
-  }
+  if (!access.ok) redirect("/admin/finance/locked");
 
   const { institutionId, userId } = await getCurrentContextOrThrow();
   const admin = getSupabaseServiceClient();
-
   const month = normalizeMonth(String(formData.get("month") || ""));
-  const scope = normalizeScope(String(formData.get("scope") || ""));
-  const rateFirst = parseAmount(formData.get("rate_first"), 0);
-  const rateSecond = parseAmount(formData.get("rate_second"), 0);
-  const notes = String(formData.get("notes") || "").trim() || null;
-  const requestedAcademicYear = String(
-    formData.get("academic_year") || "",
-  ).trim();
-  const lateToleranceMin = parsePositiveInt(
-    formData.get("late_tolerance_min"),
-    10,
-  );
-  const earlyDepartureToleranceMin = parsePositiveInt(
-    formData.get("early_departure_tolerance_min"),
-    0,
-  );
-  const sessionReferenceMinutes = Math.max(
-    1,
-    parsePositiveInt(formData.get("session_reference_minutes"), 60),
-  );
-
+  const rateFirst = parseAmount(formData.get("rate_first"), 1500);
+  const rateSecond = parseAmount(formData.get("rate_second"), 2000);
+  const lateToleranceMin = parsePositiveInt(formData.get("late_tolerance_min"), 15);
+  const earlyDepartureToleranceMin = parsePositiveInt(formData.get("early_departure_tolerance_min"), 5);
+  const sessionReferenceMinutes = Math.max(1, parsePositiveInt(formData.get("session_reference_minutes"), 55));
+  const requestedAcademicYear = String(formData.get("academic_year") || "").trim();
   const { periodMonth, periodStart, periodEnd } = monthRange(month);
-  const academicYearCtx = await getFinanceAcademicYearContext(
-    institutionId,
-    requestedAcademicYear,
-  );
+
+  const academicYearCtx = await getFinanceAcademicYearContext(institutionId, requestedAcademicYear);
   const {
     selectedAcademicYearId,
     selectedAcademicYearCode,
@@ -712,31 +532,10 @@ async function generatePayrollDraftAction(formData: FormData) {
     selectedAcademicYearEnd,
   } = academicYearCtx;
 
-  const baseReturnParams = `month=${encodeURIComponent(month)}&scope=${encodeURIComponent(
-    scope,
-  )}&rate_first=${encodeURIComponent(String(rateFirst))}&rate_second=${encodeURIComponent(
-    String(rateSecond),
-  )}&academic_year=${encodeURIComponent(
-    selectedAcademicYearCode,
-  )}&late_tolerance_min=${encodeURIComponent(
-    String(lateToleranceMin),
-  )}&early_departure_tolerance_min=${encodeURIComponent(
-    String(earlyDepartureToleranceMin),
-  )}&session_reference_minutes=${encodeURIComponent(
-    String(sessionReferenceMinutes),
-  )}`;
+  const returnParams = `month=${encodeURIComponent(month)}&academic_year=${encodeURIComponent(selectedAcademicYearCode)}&late_tolerance_min=${lateToleranceMin}&early_departure_tolerance_min=${earlyDepartureToleranceMin}&session_reference_minutes=${sessionReferenceMinutes}&rate_first=${rateFirst}&rate_second=${rateSecond}`;
 
-  if (
-    !periodIsInsideAcademicYear(
-      periodStart,
-      periodEnd,
-      selectedAcademicYearStart,
-      selectedAcademicYearEnd,
-    )
-  ) {
-    redirect(
-      `/admin/finance/payroll?${baseReturnParams}&message=month_outside_academic_year`,
-    );
+  if (!periodIsInsideAcademicYear(periodStart, periodEnd, selectedAcademicYearStart, selectedAcademicYearEnd)) {
+    redirect(`/admin/finance/payroll?${returnParams}&message=month_outside_academic_year`);
   }
 
   const [{ data: classRows, error: clsErr }, teachers] = await Promise.all([
@@ -745,103 +544,67 @@ async function generatePayrollDraftAction(formData: FormData) {
         .from("classes")
         .select("id,label,level,academic_year")
         .eq("institution_id", institutionId);
-
-      if (selectedAcademicYearCode) {
-        query = query.eq("academic_year", selectedAcademicYearCode);
-      }
-
+      if (selectedAcademicYearCode) query = query.eq("academic_year", selectedAcademicYearCode);
       return query;
     })(),
     getPayrollTeachers(institutionId),
   ]);
-
   if (clsErr) throw new Error(clsErr.message);
 
   const classes = (classRows ?? []) as ClassRow[];
-  const classMap = new Map(classes.map((c) => [c.id, c]));
-
-  const eligibleTeachers = teachers.filter((t) => {
-    if (!t.payroll_enabled) return false;
-    if (scope === "vacataires_only") return t.employment_type === "vacataire";
-    return true;
-  });
+  const classMap = new Map(classes.map((c) => [String(c.id), c]));
+  const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
 
   const { data: existingDraft, error: draftErr } = await admin
     .schema("finance")
     .from("teacher_payroll_runs")
-    .select(
-      "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
-    )
+    .select("id")
     .eq("institution_id", institutionId)
     .eq("academic_year", selectedAcademicYearCode || null)
     .eq("period_month", periodMonth)
+    .eq("scope", "vacataires_only")
     .eq("status", "draft")
     .order("generated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-
   if (draftErr) throw new Error(draftErr.message);
 
-  let runId = existingDraft?.id as string | undefined;
+  let runId = existingDraft?.id ? String(existingDraft.id) : "";
+  const runPayload = {
+    scope: "vacataires_only",
+    period_start: periodStart,
+    period_end: periodEnd,
+    default_rate_first_cycle: rateFirst,
+    default_rate_second_cycle: rateSecond,
+    notes: null,
+    academic_year_id: selectedAcademicYearId,
+    academic_year: selectedAcademicYearCode || null,
+    late_tolerance_min: lateToleranceMin,
+    early_departure_tolerance_min: earlyDepartureToleranceMin,
+    session_reference_minutes: sessionReferenceMinutes,
+    generated_by: userId,
+    generated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  } as any;
 
   if (runId) {
-    const { error: runUpdErr } = await admin
-      .schema("finance")
-      .from("teacher_payroll_runs")
-      .update({
-        scope,
-        period_start: periodStart,
-        period_end: periodEnd,
-        default_rate_first_cycle: rateFirst,
-        default_rate_second_cycle: rateSecond,
-        notes,
-        academic_year_id: selectedAcademicYearId,
-        academic_year: selectedAcademicYearCode || null,
-        late_tolerance_min: lateToleranceMin,
-        early_departure_tolerance_min: earlyDepartureToleranceMin,
-        session_reference_minutes: sessionReferenceMinutes,
-        generated_by: userId,
-        generated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as any)
-      .eq("id", runId);
-
-    if (runUpdErr) throw new Error(runUpdErr.message);
+    const { error } = await admin.schema("finance").from("teacher_payroll_runs").update(runPayload).eq("id", runId);
+    if (error) throw new Error(error.message);
   } else {
-    const { data: newRun, error: runInsErr } = await admin
+    const { data, error } = await admin
       .schema("finance")
       .from("teacher_payroll_runs")
       .insert({
+        ...runPayload,
         institution_id: institutionId,
         period_month: periodMonth,
-        period_start: periodStart,
-        period_end: periodEnd,
-        scope,
-        default_rate_first_cycle: rateFirst,
-        default_rate_second_cycle: rateSecond,
         status: "draft",
-        generated_by: userId,
-        generated_at: new Date().toISOString(),
-        notes,
-        academic_year_id: selectedAcademicYearId,
-        academic_year: selectedAcademicYearCode || null,
-        late_tolerance_min: lateToleranceMin,
-        early_departure_tolerance_min: earlyDepartureToleranceMin,
-        session_reference_minutes: sessionReferenceMinutes,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as any)
-      .select(
-        "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
-      )
+      })
+      .select("id")
       .single();
-
-    if (runInsErr) throw new Error(runInsErr.message);
-    runId = String(newRun.id);
-  }
-
-  if (!runId) {
-    throw new Error("Impossible de créer le brouillon de paie.");
+    if (error) throw new Error(error.message);
+    runId = String(data.id);
   }
 
   const { data: oldLines, error: oldLinesErr } = await admin
@@ -849,30 +612,21 @@ async function generatePayrollDraftAction(formData: FormData) {
     .from("teacher_payroll_lines")
     .select("id")
     .eq("run_id", runId);
-
   if (oldLinesErr) throw new Error(oldLinesErr.message);
 
-  const oldLineIds = (oldLines ?? []).map((x: any) => String(x.id));
-
+  const oldLineIds = (oldLines ?? []).map((r: any) => String(r.id));
   if (oldLineIds.length) {
-    const { error: delSessErr } = await admin
+    const { error } = await admin
       .schema("finance")
       .from("teacher_payroll_line_sessions")
       .delete()
       .in("line_id", oldLineIds);
-
-    if (delSessErr) throw new Error(delSessErr.message);
+    if (error) throw new Error(error.message);
   }
-
-  const { error: delLinesErr } = await admin
-    .schema("finance")
-    .from("teacher_payroll_lines")
-    .delete()
-    .eq("run_id", runId);
-
+  const { error: delLinesErr } = await admin.schema("finance").from("teacher_payroll_lines").delete().eq("run_id", runId);
   if (delLinesErr) throw new Error(delLinesErr.message);
 
-  for (const teacher of eligibleTeachers) {
+  for (const teacher of vacataires) {
     const [stats, expectedSlots] = await Promise.all([
       fetchStatisticsDetailServer(teacher.profile_id, periodStart, periodEnd),
       buildExpectedSlotsForTeacher({
@@ -882,147 +636,72 @@ async function generatePayrollDraftAction(formData: FormData) {
         periodStart,
         periodEnd,
         classMap,
+        referenceMinutes: sessionReferenceMinutes,
       }),
     ]);
 
-    const expectedSessions = expectedSlots.length;
-    const expectedMinutes = expectedSlots.reduce(
-      (acc, slot) => acc + Number(slot.expected_minutes || 0),
-      0,
-    );
-
-    const actualRows = (stats.rows || []).filter(
-      (r) => !!r.actual_call_iso || Number(r.real_minutes || 0) > 0,
-    );
-
-    const actualBuckets = new Map<string, StatisticsDetailRow[]>();
-    const monetizeTeacher = teacher.employment_type === "vacataire";
-
-    for (const row of actualRows) {
-      const sessionDate = String(row.dateISO || "").slice(0, 10);
-      const classId = String(row.class_id || "");
-      const weekday = dayOfWeekFromIso(row.dateISO);
-
-      if (!sessionDate || !classId) continue;
-
-      const key = `${sessionDate}::${weekday}::${classId}`;
-      const arr = actualBuckets.get(key) || [];
-      arr.push(row);
-      actualBuckets.set(key, arr);
-    }
+    const actualRows = (stats.rows || []).filter((r) => !!r.actual_call_iso || numberValue(r.real_minutes) > 0);
+    const usedRows = new Set<number>();
 
     const sessionItems = expectedSlots.map((slot) => {
-      const key = `${slot.session_date}::${slot.weekday}::${slot.class_id}`;
-      const bucket = actualBuckets.get(key) || [];
-      const matched = bucket.length ? bucket.shift()! : null;
-      const expectedMinutes = Number(slot.expected_minutes || 0);
-
-      const effActual =
-        matched &&
-        (!!matched.actual_call_iso || Number(matched.real_minutes || 0) > 0)
-          ? Math.min(
-              expectedMinutes,
-              Number(
-                matched.real_minutes ||
-                  matched.expected_minutes ||
-                  expectedMinutes ||
-                  0,
-              ),
-            )
-          : 0;
-
-      const isActuallyHeld = effActual > 0;
-      const toleranceMinutes = isActuallyHeld
-        ? lateToleranceMin + earlyDepartureToleranceMin
+      const matched = findMatchingSession(actualRows, usedRows, slot);
+      const expectedMinutes = Math.max(1, numberValue(slot.expected_minutes) || sessionReferenceMinutes);
+      const started = Boolean(matched?.actual_call_iso);
+      const closed = Boolean(matched?.ended_at);
+      const rawLate = matched
+        ? Math.max(0, numberValue(matched.late_minutes) || (expectedMinutes - numberValue(matched.real_minutes)))
+        : expectedMinutes;
+      const lateMinutes = Math.min(expectedMinutes, rawLate);
+      const observedMinutes = matched && closed ? Math.max(0, numberValue(matched.observed_minutes)) : 0;
+      const creditedMinutes = closed
+        ? Math.min(Math.max(0, expectedMinutes - lateMinutes), observedMinutes)
         : 0;
-      const lostMinutes = Math.max(
-        0,
-        expectedMinutes - effActual - toleranceMinutes,
-      );
-      const lostSessionsEquivalent = Math.min(
-        1,
-        lostMinutes / sessionReferenceMinutes,
-      );
-      const rate = monetizeTeacher
-        ? slot.cycle === "first_cycle"
-          ? rateFirst
-          : rateSecond
-        : 0;
+      const earlyDepartureMinutes = closed
+        ? Math.max(0, expectedMinutes - lateMinutes - creditedMinutes)
+        : expectedMinutes;
+      const isActuallyHeld = started && closed && creditedMinutes > 0;
 
-      // Important métier : le salaire « sans pertes » d’un vacataire ne doit
-      // pas être calculé sur toutes les séances prévues, mais uniquement sur
-      // les séances réellement accomplies. Les séances non tenues restent
-      // comptabilisées dans les minutes perdues et le rapport, mais elles ne
-      // gonflent pas le salaire de base.
-      const theoreticalAmount = monetizeTeacher && isActuallyHeld ? rate : 0;
-      const lostAmount =
-        monetizeTeacher && isActuallyHeld
-          ? roundMoney(rate * lostSessionsEquivalent)
-          : 0;
-      const adjustedAmount =
-        monetizeTeacher && isActuallyHeld
-          ? Math.max(0, roundMoney(theoreticalAmount - lostAmount))
-          : 0;
+      const sanctionableLate = isActuallyHeld ? Math.max(0, lateMinutes - lateToleranceMin) : 0;
+      const sanctionableEarly = isActuallyHeld ? Math.max(0, earlyDepartureMinutes - earlyDepartureToleranceMin) : 0;
+      const lostMinutes = isActuallyHeld
+        ? Math.min(sessionReferenceMinutes, sanctionableLate + sanctionableEarly)
+        : expectedMinutes;
+      const lostEquivalent = isActuallyHeld ? Math.min(1, lostMinutes / sessionReferenceMinutes) : 0;
+      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
+      const gross = isActuallyHeld ? rate : 0;
+      const retained = isActuallyHeld ? roundMoney(rate * lostEquivalent) : 0;
+      const payable = isActuallyHeld ? Math.max(0, roundMoney(gross - retained)) : 0;
 
       return {
-        class_id: slot.class_id,
-        subject_id: slot.subject_id,
-        period_id: slot.period_id,
-        session_date: slot.session_date,
-        weekday: slot.weekday,
-        cycle: slot.cycle,
-        expected_minutes: expectedMinutes,
-        actual_minutes: effActual,
-        tolerance_minutes: toleranceMinutes,
+        ...slot,
+        actual_minutes: creditedMinutes,
+        tolerance_minutes: isActuallyHeld ? lateToleranceMin + earlyDepartureToleranceMin : 0,
         lost_minutes_after_tolerance: lostMinutes,
-        lost_sessions_equivalent: lostSessionsEquivalent,
-        theoretical_amount: theoreticalAmount,
-        lost_amount: lostAmount,
-        adjusted_amount: adjustedAmount,
+        lost_sessions_equivalent: lostEquivalent,
+        theoretical_amount: gross,
+        lost_amount: retained,
+        adjusted_amount: payable,
         source_origin: isActuallyHeld ? "class_device" : "timetable_expected",
-        counted_for_pay: theoreticalAmount > 0,
+        counted_for_pay: isActuallyHeld,
       };
     });
 
-    const actualSessions = sessionItems.filter(
-      (item) => item.actual_minutes > 0,
-    ).length;
-    const actualMinutes = sessionItems.reduce(
-      (acc, item) => acc + item.actual_minutes,
-      0,
-    );
-    const sessionsFirstCycle = sessionItems.filter(
-      (item) => item.actual_minutes > 0 && item.cycle === "first_cycle",
-    ).length;
-    const sessionsSecondCycle = sessionItems.filter(
-      (item) => item.actual_minutes > 0 && item.cycle === "second_cycle",
-    ).length;
-    const expectedAmount = monetizeTeacher
-      ? expectedSlots.reduce((acc, slot) => {
-          const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
-          return acc + rate;
-        }, 0)
-      : 0;
-    const lostMinutesAfterTolerance = sessionItems.reduce(
-      (acc, item) => acc + item.lost_minutes_after_tolerance,
-      0,
-    );
-    const lostSessionsEquivalent =
-      lostMinutesAfterTolerance / sessionReferenceMinutes;
-    const lostAmount = sessionItems.reduce(
-      (acc, item) => acc + item.lost_amount,
-      0,
-    );
-    const adjustedAmount = sessionItems.reduce(
-      (acc, item) => acc + item.adjusted_amount,
-      0,
-    );
-    const grossAmount = sessionItems.reduce(
-      (acc, item) => acc + item.theoretical_amount,
+    const expectedSessions = sessionItems.length;
+    const actualSessions = sessionItems.filter((item) => item.counted_for_pay).length;
+    const expectedMinutes = sessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
+    const actualMinutes = sessionItems.reduce((acc, item) => acc + item.actual_minutes, 0);
+    const sessionsFirstCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "first_cycle").length;
+    const sessionsSecondCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "second_cycle").length;
+    const grossAmount = sessionItems.reduce((acc, item) => acc + item.theoretical_amount, 0);
+    const lostMinutesAfterTolerance = sessionItems.reduce((acc, item) => acc + item.lost_minutes_after_tolerance, 0);
+    const lostAmount = sessionItems.reduce((acc, item) => acc + item.lost_amount, 0);
+    const adjustedAmount = sessionItems.reduce((acc, item) => acc + item.adjusted_amount, 0);
+    const expectedAmount = expectedSlots.reduce(
+      (acc, slot) => acc + (slot.cycle === "first_cycle" ? rateFirst : rateSecond),
       0,
     );
 
-    const { data: insertedLine, error: insLineErr } = await admin
+    const { data: line, error: lineErr } = await admin
       .schema("finance")
       .from("teacher_payroll_lines")
       .insert({
@@ -1030,8 +709,8 @@ async function generatePayrollDraftAction(formData: FormData) {
         institution_id: institutionId,
         teacher_id: teacher.profile_id,
         teacher_name_snapshot: teacherLabel(teacher),
-        employment_type: teacher.employment_type,
-        payroll_enabled: teacher.payroll_enabled,
+        employment_type: "vacataire",
+        payroll_enabled: true,
         expected_sessions: expectedSessions,
         actual_sessions: actualSessions,
         expected_minutes: expectedMinutes,
@@ -1043,23 +722,20 @@ async function generatePayrollDraftAction(formData: FormData) {
         gross_amount: grossAmount,
         expected_amount: expectedAmount,
         lost_minutes_after_tolerance: lostMinutesAfterTolerance,
-        lost_sessions_equivalent: lostSessionsEquivalent,
+        lost_sessions_equivalent: lostMinutesAfterTolerance / sessionReferenceMinutes,
         lost_amount: lostAmount,
         adjusted_amount: adjustedAmount,
         notes: teacher.notes || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any)
-      .select(
-        "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,expected_amount,lost_minutes_after_tolerance,lost_sessions_equivalent,lost_amount,adjusted_amount,notes,created_at,updated_at",
-      )
+      .select("id")
       .single();
+    if (lineErr) throw new Error(lineErr.message);
 
-    if (insLineErr) throw new Error(insLineErr.message);
-
-    if (sessionItems.length > 0) {
+    if (sessionItems.length) {
       const payload = sessionItems.map((item) => ({
-        line_id: insertedLine.id,
+        line_id: line.id,
         run_id: runId,
         institution_id: institutionId,
         teacher_id: teacher.profile_id,
@@ -1081,38 +757,25 @@ async function generatePayrollDraftAction(formData: FormData) {
         counted_for_pay: item.counted_for_pay,
         created_at: new Date().toISOString(),
       }));
-
-      const { error: insSessErr } = await admin
-        .schema("finance")
-        .from("teacher_payroll_line_sessions")
-        .insert(payload as any);
-
-      if (insSessErr) throw new Error(insSessErr.message);
+      const { error } = await admin.schema("finance").from("teacher_payroll_line_sessions").insert(payload as any);
+      if (error) throw new Error(error.message);
     }
   }
 
   revalidatePath("/admin/finance/payroll");
-  redirect(
-    `/admin/finance/payroll?${baseReturnParams}&run_id=${encodeURIComponent(
-      runId,
-    )}&message=draft_saved`,
-  );
+  redirect(`/admin/finance/payroll?${returnParams}&run_id=${encodeURIComponent(runId)}&message=payroll_calculated`);
 }
 
-async function validatePayrollRunAction(formData: FormData) {
+async function validatePayrollAction(formData: FormData) {
   "use server";
-
   const access = await getFinanceAccessForCurrentUser("payroll");
-  if (!access.ok) {
-    redirect("/admin/finance/locked");
-  }
+  if (!access.ok) redirect("/admin/finance/locked");
 
   const { institutionId, userId } = await getCurrentContextOrThrow();
   const admin = getSupabaseServiceClient();
-
   const runId = String(formData.get("run_id") || "").trim();
   const academicYear = String(formData.get("academic_year") || "").trim();
-  if (!runId) throw new Error("run_id manquant.");
+  if (!runId) throw new Error("Paie introuvable.");
 
   const { error } = await admin
     .schema("finance")
@@ -1126,104 +789,34 @@ async function validatePayrollRunAction(formData: FormData) {
     .eq("id", runId)
     .eq("institution_id", institutionId)
     .eq("status", "draft");
-
   if (error) throw new Error(error.message);
 
   revalidatePath("/admin/finance/payroll");
-  redirect(
-    `/admin/finance/payroll?academic_year=${encodeURIComponent(
-      academicYear,
-    )}&run_id=${encodeURIComponent(runId)}`,
-  );
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  hint,
-  tone = "slate",
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string | number;
-  hint: string;
-  tone?: "slate" | "emerald" | "amber" | "violet";
-}) {
-  const tones: Record<
-    NonNullable<typeof tone>,
-    {
-      wrap: string;
-      iconWrap: string;
-      value: string;
-    }
-  > = {
-    slate: {
-      wrap: "border-slate-200 bg-white",
-      iconWrap: "bg-slate-100 text-slate-700",
-      value: "text-slate-900",
-    },
-    emerald: {
-      wrap: "border-emerald-200 bg-emerald-50/60",
-      iconWrap: "bg-emerald-100 text-emerald-700",
-      value: "text-emerald-800",
-    },
-    amber: {
-      wrap: "border-amber-200 bg-amber-50/70",
-      iconWrap: "bg-amber-100 text-amber-700",
-      value: "text-amber-800",
-    },
-    violet: {
-      wrap: "border-violet-200 bg-violet-50/70",
-      iconWrap: "bg-violet-100 text-violet-700",
-      value: "text-violet-800",
-    },
-  };
-
-  const t = tones[tone];
-
-  return (
-    <div className={`rounded-3xl border p-4 shadow-sm ${t.wrap}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-            {label}
-          </div>
-          <div className={`mt-2 text-3xl font-black ${t.value}`}>{value}</div>
-          <div className="mt-1 text-sm text-slate-600">{hint}</div>
-        </div>
-        <div
-          className={`grid h-12 w-12 place-items-center rounded-2xl ${t.iconWrap}`}
-        >
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
+  redirect(`/admin/finance/payroll?academic_year=${encodeURIComponent(academicYear)}&run_id=${encodeURIComponent(runId)}&message=payroll_validated`);
 }
 
 function StatusPill({ status }: { status: PayrollStatus }) {
-  const tone =
-    status === "validated"
-      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-      : status === "draft"
-        ? "bg-amber-50 text-amber-700 ring-amber-200"
-        : "bg-slate-100 text-slate-700 ring-slate-200";
+  const label = status === "validated" ? "Validée" : status === "cancelled" ? "Annulée" : "En préparation";
+  const style = status === "validated"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : status === "cancelled"
+      ? "border-rose-200 bg-rose-50 text-rose-700"
+      : "border-amber-200 bg-amber-50 text-amber-700";
+  return <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-wide ${style}`}>{label}</span>;
+}
 
-  const label =
-    status === "validated"
-      ? "Validé"
-      : status === "draft"
-        ? "Brouillon"
-        : "Annulé";
-
+function StatCard({ icon, label, value, hint }: { icon: ReactNode; label: string; value: string | number; hint: string }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${tone}`}
-    >
-      <BadgeCheck className="h-3.5 w-3.5" />
-      {label}
-    </span>
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</div>
+          <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
+          <div className="mt-1 text-sm text-slate-600">{hint}</div>
+        </div>
+        <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">{icon}</div>
+      </div>
+    </div>
   );
 }
 
@@ -1232,7 +825,6 @@ export default async function FinancePayrollPage({
 }: {
   searchParams?: Promise<{
     month?: string;
-    scope?: string;
     rate_first?: string;
     rate_second?: string;
     run_id?: string;
@@ -1246,1183 +838,341 @@ export default async function FinancePayrollPage({
   }>;
 }) {
   const access = await getFinanceAccessForCurrentUser("payroll");
+  if (!access.ok) redirect("/admin/finance/locked");
 
-  if (!access.ok) {
-    redirect("/admin/finance/locked");
-  }
-
-  const isPayrollOnlyAccess = access.scope === "payroll";
   const params = searchParams ? await searchParams : undefined;
-
   const month = normalizeMonth(params?.month);
-  const scope = normalizeScope(params?.scope);
-  const rateFirst = Number(params?.rate_first || 1500) || 1500;
-  const rateSecond = Number(params?.rate_second || 2000) || 2000;
   const requestedAcademicYear = String(params?.academic_year || "").trim();
-  const lateToleranceMin = parsePositiveInt(params?.late_tolerance_min, 10);
-  const earlyDepartureToleranceMin = parsePositiveInt(
-    params?.early_departure_tolerance_min,
-    0,
-  );
-  const sessionReferenceMinutes = Math.max(
-    1,
-    parsePositiveInt(params?.session_reference_minutes, 60),
-  );
+  const baseLateTolerance = parsePositiveInt(params?.late_tolerance_min, 15);
+  const baseEarlyTolerance = parsePositiveInt(params?.early_departure_tolerance_min, 5);
+  const baseReferenceMinutes = Math.max(1, parsePositiveInt(params?.session_reference_minutes, 55));
+  const baseRateFirst = parseAmount(params?.rate_first, 1500);
+  const baseRateSecond = parseAmount(params?.rate_second, 2000);
+  const requestedRunId = String(params?.run_id || "").trim();
   const printMode = String(params?.print || "") === "1";
   const autoPrint = printMode && String(params?.autoprint || "") === "1";
-  const requestedRunId = String(params?.run_id || "").trim();
 
   const { institutionId } = await getCurrentContextOrThrow();
   const supabase = await getSupabaseServerClient();
-  const academicYearCtx = await getFinanceAcademicYearContext(
-    institutionId,
-    requestedAcademicYear,
-  );
+  const academicYearCtx = await getFinanceAcademicYearContext(institutionId, requestedAcademicYear);
   const {
     academicYears,
     selectedAcademicYearCode,
     selectedAcademicYearStart,
     selectedAcademicYearEnd,
   } = academicYearCtx;
-  const currentMonthRange = monthRange(month);
-  const message = payrollMessageLabel(params?.message);
-  const monthInsideSelectedAcademicYear = periodIsInsideAcademicYear(
-    currentMonthRange.periodStart,
-    currentMonthRange.periodEnd,
-    selectedAcademicYearStart,
-    selectedAcademicYearEnd,
-  );
+  const currentRange = monthRange(month);
 
-  const [
-    { data: runs, error: runsErr },
-    { data: teachersPay, error: teachersErr },
-    institutionCfg,
-  ] = await Promise.all([
+  const [runsResult, teachers, institutionCfg] = await Promise.all([
     (() => {
       let query = supabase
         .schema("finance")
         .from("teacher_payroll_runs")
-        .select(
-          "id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes",
-        )
-        .eq("institution_id", institutionId);
-
-      if (selectedAcademicYearCode) {
-        query = query.eq("academic_year", selectedAcademicYearCode);
-      }
-
+        .select("id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes")
+        .eq("institution_id", institutionId)
+        .eq("scope", "vacataires_only");
+      if (selectedAcademicYearCode) query = query.eq("academic_year", selectedAcademicYearCode);
       return query.order("generated_at", { ascending: false }).limit(24);
     })(),
-
-    supabase
-      .schema("finance")
-      .from("teacher_pay_profiles")
-      .select("id,profile_id,employment_type,payroll_enabled")
-      .eq("institution_id", institutionId),
-
-    fetchInstitutionSettingsServer(),
+    getPayrollTeachers(institutionId),
+    printMode ? fetchInstitutionSettingsServer() : Promise.resolve({} as InstitutionSettings),
   ]);
+  if (runsResult.error) throw new Error(runsResult.error.message);
 
-  if (runsErr) throw new Error(runsErr.message);
-  if (teachersErr) throw new Error(teachersErr.message);
-
-  const runRows = (runs ?? []) as TeacherPayrollRunRow[];
-  const teacherPayRows = (teachersPay ?? []) as {
-    id: string;
-    profile_id: string;
-    employment_type: EmploymentType;
-    payroll_enabled: boolean;
-  }[];
-
+  const runRows = (runsResult.data ?? []) as TeacherPayrollRunRow[];
   const selectedRun =
     (requestedRunId ? runRows.find((r) => r.id === requestedRunId) : null) ||
-    runRows.find(
-      (r) =>
-        r.period_month === `${month}-01` &&
-        r.status === "draft" &&
-        r.scope === scope,
-    ) ||
-    runRows.find(
-      (r) => r.period_month === `${month}-01` && r.scope === scope,
-    ) ||
-    runRows.find(
-      (r) => r.period_month === `${month}-01` && r.status === "draft",
-    ) ||
+    runRows.find((r) => r.period_month === `${month}-01` && r.status === "draft") ||
     runRows.find((r) => r.period_month === `${month}-01`) ||
-    runRows[0] ||
     null;
 
-  const selectedRunId = selectedRun?.id || null;
-  const effectiveLateToleranceMin = selectedRun
-    ? parsePositiveInt(selectedRun.late_tolerance_min, lateToleranceMin)
-    : lateToleranceMin;
-  const effectiveEarlyDepartureToleranceMin = selectedRun
-    ? parsePositiveInt(
-        selectedRun.early_departure_tolerance_min,
-        earlyDepartureToleranceMin,
-      )
-    : earlyDepartureToleranceMin;
-  const effectiveSessionReferenceMinutes = selectedRun
-    ? Math.max(
-        1,
-        parsePositiveInt(
-          selectedRun.session_reference_minutes,
-          sessionReferenceMinutes,
-        ),
-      )
-    : sessionReferenceMinutes;
+  const effectiveLateTolerance = selectedRun ? parsePositiveInt(selectedRun.late_tolerance_min, baseLateTolerance) : baseLateTolerance;
+  const effectiveEarlyTolerance = selectedRun ? parsePositiveInt(selectedRun.early_departure_tolerance_min, baseEarlyTolerance) : baseEarlyTolerance;
+  const effectiveReferenceMinutes = selectedRun ? Math.max(1, parsePositiveInt(selectedRun.session_reference_minutes, baseReferenceMinutes)) : baseReferenceMinutes;
+  const effectiveRateFirst = selectedRun ? parseAmount(selectedRun.default_rate_first_cycle, baseRateFirst) : baseRateFirst;
+  const effectiveRateSecond = selectedRun ? parseAmount(selectedRun.default_rate_second_cycle, baseRateSecond) : baseRateSecond;
 
-  const { data: lineRows, error: lineErr } = selectedRunId
+  const linesResult = selectedRun
     ? await supabase
         .schema("finance")
         .from("teacher_payroll_lines")
-        .select(
-          "id,run_id,institution_id,teacher_id,teacher_name_snapshot,employment_type,payroll_enabled,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,expected_amount,lost_minutes_after_tolerance,lost_sessions_equivalent,lost_amount,adjusted_amount,notes,created_at,updated_at",
-        )
-        .eq("run_id", selectedRunId)
+        .select("id,run_id,teacher_id,teacher_name_snapshot,employment_type,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,lost_minutes_after_tolerance,lost_amount,adjusted_amount")
+        .eq("run_id", selectedRun.id)
         .order("teacher_name_snapshot", { ascending: true })
     : { data: [], error: null as any };
+  if (linesResult.error) throw new Error(linesResult.error.message);
 
-  if (lineErr) throw new Error(lineErr.message);
-
-  const selectedRunLines = (lineRows ?? []) as TeacherPayrollLineRow[];
-
-  const totals = selectedRunLines.reduce(
+  const lines = (linesResult.data ?? []) as TeacherPayrollLineRow[];
+  const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
+  const totals = lines.reduce(
     (acc, row) => {
-      acc.expectedSessions += Number(row.expected_sessions || 0);
-      acc.actualSessions += Number(row.actual_sessions || 0);
-      acc.expectedMinutes += Number(row.expected_minutes || 0);
-      acc.actualMinutes += Number(row.actual_minutes || 0);
-      acc.firstCycle += Number(row.sessions_first_cycle || 0);
-      acc.secondCycle += Number(row.sessions_second_cycle || 0);
-      const isPayable = payableLine(row);
-      acc.gross += isPayable ? Number(row.gross_amount || 0) : 0;
+      acc.expectedSessions += numberValue(row.expected_sessions);
+      acc.actualSessions += numberValue(row.actual_sessions);
+      acc.actualMinutes += numberValue(row.actual_minutes);
       acc.lostMinutes += numberValue(row.lost_minutes_after_tolerance);
-      acc.lostSessions += lostSessionsForLine(
-        row,
-        effectiveSessionReferenceMinutes,
-      );
-      acc.lostAmount += isPayable ? numberValue(row.lost_amount) : 0;
-      acc.adjusted += isPayable
-        ? numberValue(row.adjusted_amount ?? row.gross_amount)
-        : 0;
+      acc.gross += numberValue(row.gross_amount);
+      acc.retained += numberValue(row.lost_amount);
+      acc.payable += numberValue(row.adjusted_amount ?? row.gross_amount);
       return acc;
     },
-    {
-      expectedSessions: 0,
-      actualSessions: 0,
-      expectedMinutes: 0,
-      actualMinutes: 0,
-      firstCycle: 0,
-      secondCycle: 0,
-      gross: 0,
-      lostMinutes: 0,
-      lostSessions: 0,
-      lostAmount: 0,
-      adjusted: 0,
-    },
+    { expectedSessions: 0, actualSessions: 0, actualMinutes: 0, lostMinutes: 0, gross: 0, retained: 0, payable: 0 },
   );
 
-  const activePayrollTeachers = teacherPayRows.filter((r) => r.payroll_enabled);
-  const vacataires = teacherPayRows.filter(
-    (r) => r.payroll_enabled && r.employment_type === "vacataire",
-  );
-
-  const institutionName = institutionDisplayName(institutionCfg);
-  const headName =
-    (institutionCfg.institution_head_name || "").trim() ||
-    "Le premier responsable";
-  const headTitle =
-    (institutionCfg.institution_head_title || "").trim() ||
-    "Chef d’établissement";
-  const place =
-    (institutionCfg.institution_region || "").trim() ||
-    (institutionCfg.institution_postal_address || "").trim() ||
-    "................";
-  const logoUrl = (institutionCfg.institution_logo_url || "").trim();
-  const printDateLabel = formatLongDate(new Date());
-
-  return (
-    <div className={printMode ? "payroll-print-root" : "space-y-6"}>
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-            @page {
-              size: A4 portrait;
-              margin: 10mm;
-            }
-
-            @media print {
-              html,
-              body {
-                margin: 0 !important;
-                padding: 0 !important;
-                background: white !important;
-              }
-
-              body * {
-                visibility: hidden;
-              }
-
-              .payroll-print-root,
-              .payroll-print-root * {
-                visibility: visible !important;
-              }
-
-              .payroll-print-root {
-                position: absolute;
-                inset: 0;
-                width: 100%;
-                background: white !important;
-              }
-
-              .no-print {
-                display: none !important;
-              }
-
-              .print-sheet {
-                box-shadow: none !important;
-                border: none !important;
-                border-radius: 0 !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                background: white !important;
-              }
-
-              .print-sheet > div {
-                max-width: none !important;
-              }
-
-              .print-table-wrap {
-                overflow: visible !important;
-              }
-
-              a[href]::after {
-                content: none !important;
-              }
-            }
-          `,
-        }}
-      />
-
-      {autoPrint ? (
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              window.addEventListener("load", function () {
-                setTimeout(function () {
-                  try { window.print(); } catch (e) {}
-                }, 250);
-              });
-            `,
-          }}
-        />
-      ) : null}
-
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            document.addEventListener("submit", function (event) {
-              var form = event.target;
-              if (!(form instanceof HTMLFormElement)) return;
-              if (!form.hasAttribute("data-loading-form")) return;
-              if (form.getAttribute("data-submitting") === "true") return;
-
-              form.setAttribute("data-submitting", "true");
-
-              form.querySelectorAll("[data-idle-label]").forEach(function (el) {
-                el.classList.add("hidden");
-              });
-
-              form.querySelectorAll("[data-loading-label]").forEach(function (el) {
-                el.classList.remove("hidden");
-                el.classList.add("inline-flex");
-              });
-
-              window.setTimeout(function () {
-                form.querySelectorAll("button").forEach(function (node) {
-                  if (node instanceof HTMLButtonElement) {
-                    node.setAttribute("aria-busy", "true");
-                    node.disabled = true;
-                  }
-                });
-              }, 0);
-            }, false);
-          `,
-        }}
-      />
-
-      {!printMode ? (
-        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white shadow-xl">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-100 ring-1 ring-white/15">
-                <BadgeDollarSign className="h-3.5 w-3.5" />
-                Paie enseignants
-              </div>
-
-              <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">
-                Fiche globale de paie
-              </h1>
-
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-200 sm:text-[15px]">
-                Calcule la paie du mois à partir des séances attendues de
-                l’emploi du temps, tout en conservant les heures accomplies
-                issues des statistiques réelles.
-              </p>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-200">
-                <span className="rounded-full bg-emerald-500/15 px-3 py-1 ring-1 ring-emerald-400/25">
-                  Finance Premium actif
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Expiration : {access.expiresAt || "—"}
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1 ring-1 ring-white/15">
-                  Mois : {formatMonthLabel(month)}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-                  Profils paie actifs
-                </div>
-                <div className="mt-2 text-3xl font-black text-white">
-                  {activePayrollTeachers.length}
-                </div>
-                <div className="mt-1 text-sm text-slate-200">
-                  {vacataires.length} vacataire(s)
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-100">
-                  Runs enregistrés
-                </div>
-                <div className="mt-2 text-3xl font-black text-white">
-                  {runRows.length}
-                </div>
-                <div className="mt-1 text-sm text-slate-200">
-                  Brouillons et états validés
-                </div>
-              </div>
+  if (printMode && selectedRun) {
+    const institutionName = (institutionCfg.institution_name || institutionCfg.institution_label || institutionCfg.name || "Etablissement scolaire").trim();
+    const headName = String(institutionCfg.institution_head_name || "").trim() || "Le responsable";
+    const headTitle = String(institutionCfg.institution_head_title || "").trim() || "Chef d’établissement";
+    return (
+      <div className="payroll-print-root bg-white p-6 text-slate-900">
+        <style dangerouslySetInnerHTML={{ __html: `@page{size:A4 portrait;margin:10mm}@media print{body *{visibility:hidden}.payroll-print-root,.payroll-print-root *{visibility:visible!important}.payroll-print-root{position:absolute;inset:0;width:100%;padding:0!important}.no-print{display:none!important}}` }} />
+        {autoPrint ? <script dangerouslySetInnerHTML={{ __html: "setTimeout(function(){window.print()},250);" }} /> : null}
+        <div className="mx-auto max-w-5xl">
+          <div className="border-b-2 border-slate-900 pb-4 text-center">
+            <div className="text-xl font-black uppercase">{institutionName}</div>
+            <div className="mt-2 text-2xl font-black">État de paie des vacataires — {formatMonthLabel(selectedRun.period_month.slice(0, 7))}</div>
+            <div className="mt-2 text-sm">Séance de référence : {effectiveReferenceMinutes} min · Retard toléré : {effectiveLateTolerance} min · Sortie anticipée tolérée : {effectiveEarlyTolerance} min</div>
+          </div>
+          <table className="mt-6 w-full border-collapse text-xs">
+            <thead>
+              <tr className="bg-slate-100">
+                <th className="border border-slate-300 p-2 text-left">Enseignant</th>
+                <th className="border border-slate-300 p-2 text-right">Séances</th>
+                <th className="border border-slate-300 p-2 text-right">Brut</th>
+                <th className="border border-slate-300 p-2 text-right">Retenue</th>
+                <th className="border border-slate-300 p-2 text-right">À payer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((row) => (
+                <tr key={row.id}>
+                  <td className="border border-slate-300 p-2 font-semibold">{row.teacher_name_snapshot || "Enseignant"}</td>
+                  <td className="border border-slate-300 p-2 text-right">{row.actual_sessions} / {row.expected_sessions}</td>
+                  <td className="border border-slate-300 p-2 text-right">{formatMoney(row.gross_amount)}</td>
+                  <td className="border border-slate-300 p-2 text-right">{formatMoney(row.lost_amount)}</td>
+                  <td className="border border-slate-300 p-2 text-right font-black">{formatMoney(row.adjusted_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-100 font-black">
+                <td className="border border-slate-300 p-2">TOTAL</td>
+                <td className="border border-slate-300 p-2 text-right">{totals.actualSessions}</td>
+                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.gross)}</td>
+                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.retained)}</td>
+                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.payable)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <div className="mt-12 flex justify-end">
+            <div className="min-w-64 text-center">
+              <div className="font-bold">{headTitle}</div>
+              <div className="mt-16 font-semibold">{headName}</div>
             </div>
           </div>
-        </section>
-      ) : selectedRun ? (
-        <section className="print-sheet rounded-[28px] border border-slate-200 bg-white px-8 py-8 shadow-sm">
-          <div className="mx-auto max-w-[1200px]">
-            <div className="mb-6 flex items-start justify-between gap-6 border-b border-slate-200 pb-5">
-              <div className="flex min-w-0 items-start gap-4">
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white">
-                  {logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={logoUrl}
-                      alt="Logo établissement"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <div className="text-xs font-bold text-slate-400">LOGO</div>
-                  )}
-                </div>
+        </div>
+      </div>
+    );
+  }
 
-                <div className="min-w-0">
-                  <div className="text-xl font-black uppercase text-slate-900">
-                    {institutionName}
-                  </div>
+  const message = payrollMessage(params?.message);
+  const monthInsideYear = periodIsInsideAcademicYear(
+    currentRange.periodStart,
+    currentRange.periodEnd,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  );
 
-                  {institutionCfg.institution_status ? (
-                    <div className="mt-1 text-sm font-semibold text-slate-700">
-                      {institutionCfg.institution_status}
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">Paie des enseignants</h1>
+          <p className="mt-1 text-sm text-slate-600">Calcul simple des vacataires à partir des séances réellement démarrées et clôturées.</p>
+        </div>
+        {access.scope !== "payroll" ? (
+          <Link href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`} className="text-sm font-bold text-slate-600 hover:text-slate-900">Retour Finance</Link>
+        ) : null}
+      </div>
+
+      <AcademicYearSelector
+        academicYears={academicYears}
+        selectedAcademicYearCode={selectedAcademicYearCode}
+        currentPath="/admin/finance/payroll"
+        hiddenParams={{
+          month,
+          rate_first: effectiveRateFirst,
+          rate_second: effectiveRateSecond,
+          late_tolerance_min: effectiveLateTolerance,
+          early_departure_tolerance_min: effectiveEarlyTolerance,
+          session_reference_minutes: effectiveReferenceMinutes,
+        }}
+      />
+
+      {message ? (
+        <div className={`rounded-2xl border p-4 ${message.tone === "amber" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+          <div className="font-black">{message.title}</div>
+          <div className="mt-1 text-sm">{message.body}</div>
+        </div>
+      ) : null}
+
+      {!monthInsideYear ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">Le mois choisi n’appartient pas à l’année scolaire sélectionnée.</div>
+      ) : null}
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard icon={<Users className="h-6 w-6" />} label="Vacataires à payer" value={vacataires.length} hint="Profils paie actifs" />
+        <StatCard icon={<CalendarClock className="h-6 w-6" />} label="Séances payées" value={totals.actualSessions} hint={`${formatMinutes(totals.actualMinutes)} observées`} />
+        <StatCard icon={<Wallet className="h-6 w-6" />} label="Retenues" value={formatMoney(totals.retained)} hint={`${formatMinutes(totals.lostMinutes)} non rémunérées`} />
+        <StatCard icon={<Wallet className="h-6 w-6" />} label="Montant à payer" value={formatMoney(totals.payable)} hint={`Brut : ${formatMoney(totals.gross)}`} />
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-black text-slate-900">Calculer la paie</h2>
+          <p className="mt-1 text-sm text-slate-600">Les 15 min de retard et les 5 min de sortie anticipée sont traitées séparément. Seul le dépassement est retenu.</p>
+
+          <form action={calculatePayrollAction} className="mt-5 grid gap-4 md:grid-cols-2">
+            <input type="hidden" name="academic_year" value={selectedAcademicYearCode} />
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Mois</label>
+              <input type="month" name="month" defaultValue={month} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Durée normale d’une séance</label>
+              <div className="relative">
+                <input type="number" min="1" name="session_reference_minutes" defaultValue={effectiveReferenceMinutes} className="w-full rounded-2xl border border-slate-200 px-3 py-3 pr-14 font-semibold text-slate-900" />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">min</span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Retard toléré</label>
+              <input type="number" min="0" name="late_tolerance_min" defaultValue={effectiveLateTolerance} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Sortie anticipée tolérée</label>
+              <input type="number" min="0" name="early_departure_tolerance_min" defaultValue={effectiveEarlyTolerance} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Tarif par séance — 1er cycle</label>
+              <input type="number" min="0" name="rate_first" defaultValue={effectiveRateFirst} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Tarif par séance — 2nd cycle</label>
+              <input type="number" min="0" name="rate_second" defaultValue={effectiveRateSecond} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
+            </div>
+
+            <div className="md:col-span-2 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              <strong className="text-slate-900">Règle appliquée :</strong> une séance doit être démarrée et clôturée. Les minutes dépassant la tolérance de retard et celles dépassant la tolérance de sortie anticipée sont additionnées, puis déduites proportionnellement au tarif d’une séance de {effectiveReferenceMinutes} minutes.
+            </div>
+
+            <div className="md:col-span-2">
+              <button type="submit" disabled={!monthInsideYear} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <RefreshCcw className="h-4 w-4" />
+                Calculer / actualiser la paie
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-black text-slate-900">Historique</h2>
+          <p className="mt-1 text-sm text-slate-600">Les calculs précédents restent conservés automatiquement.</p>
+          <div className="mt-4 space-y-3">
+            {runRows.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600">Aucune paie calculée pour le moment.</div>
+            ) : runRows.map((run) => {
+              const href = `/admin/finance/payroll?academic_year=${encodeURIComponent(run.academic_year || selectedAcademicYearCode)}&month=${encodeURIComponent(run.period_month.slice(0, 7))}&run_id=${encodeURIComponent(run.id)}&rate_first=${encodeURIComponent(String(run.default_rate_first_cycle))}&rate_second=${encodeURIComponent(String(run.default_rate_second_cycle))}&late_tolerance_min=${encodeURIComponent(String(run.late_tolerance_min ?? 15))}&early_departure_tolerance_min=${encodeURIComponent(String(run.early_departure_tolerance_min ?? 5))}&session_reference_minutes=${encodeURIComponent(String(run.session_reference_minutes ?? 55))}`;
+              return (
+                <Link key={run.id} href={href} className={`block rounded-2xl border p-4 ${selectedRun?.id === run.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-black text-slate-900">{formatMonthLabel(run.period_month.slice(0, 7))}</div>
+                      <div className="mt-1 text-xs text-slate-500">Calculée le {formatDate(run.generated_at)}</div>
                     </div>
-                  ) : null}
-
-                  <div className="mt-1 space-y-1 text-sm text-slate-600">
-                    {institutionCfg.institution_region ? (
-                      <div>{institutionCfg.institution_region}</div>
-                    ) : null}
-                    {institutionCfg.institution_postal_address ? (
-                      <div>{institutionCfg.institution_postal_address}</div>
-                    ) : null}
-                    {institutionCfg.institution_phone ||
-                    institutionCfg.institution_email ? (
-                      <div>
-                        {[
-                          institutionCfg.institution_phone,
-                          institutionCfg.institution_email,
-                        ]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </div>
-                    ) : null}
-                    {institutionCfg.institution_code ? (
-                      <div>
-                        Code établissement : {institutionCfg.institution_code}
-                      </div>
-                    ) : null}
+                    <StatusPill status={run.status} />
                   </div>
-                </div>
-              </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
-              <div className="shrink-0 text-right">
-                <div className="text-2xl font-black text-slate-900">
-                  FICHE DE PAIE
-                </div>
-                <div className="mt-2 text-sm text-slate-600">
-                  {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
-                </div>
-                <div className="mt-1 text-sm text-slate-600">
-                  Période du {formatDate(selectedRun.period_start)} au{" "}
-                  {formatDate(selectedRun.period_end)}
-                </div>
-                <div className="no-print mt-3 text-xs font-semibold text-slate-500">
-                  Impression directe. Si besoin : Ctrl+P puis “Enregistrer au
-                  format PDF”.
-                </div>
+      {selectedRun ? (
+        <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-2xl font-black text-slate-900">{formatMonthLabel(selectedRun.period_month.slice(0, 7))}</h2>
+                <StatusPill status={selectedRun.status} />
               </div>
+              <p className="mt-2 text-sm text-slate-600">{lines.length} vacataire(s) · {totals.actualSessions} séance(s) payée(s) · Total {formatMoney(totals.payable)}</p>
             </div>
+            <div className="flex flex-wrap gap-3">
+              {selectedRun.status === "draft" ? (
+                <form action={validatePayrollAction}>
+                  <input type="hidden" name="run_id" value={selectedRun.id} />
+                  <input type="hidden" name="academic_year" value={selectedAcademicYearCode} />
+                  <button className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-700">
+                    <BadgeCheck className="h-4 w-4" />
+                    Valider la paie
+                  </button>
+                </form>
+              ) : null}
+              <Link href={`/admin/finance/payroll?academic_year=${encodeURIComponent(selectedAcademicYearCode)}&month=${encodeURIComponent(selectedRun.period_month.slice(0, 7))}&run_id=${encodeURIComponent(selectedRun.id)}&print=1&autoprint=1`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
+                <Printer className="h-4 w-4" />
+                Imprimer l’état de paie
+              </Link>
+            </div>
+          </div>
 
-            {selectedRun.notes ? (
-              <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                <span className="font-bold text-slate-900">Note :</span>{" "}
-                {selectedRun.notes}
-              </div>
-            ) : null}
-
-            {selectedRunLines.length === 0 ? (
-              <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                Ce run ne contient encore aucune ligne.
-              </div>
+          <div className="mt-5 overflow-x-auto">
+            {lines.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-600">Aucun vacataire calculé pour ce mois.</div>
             ) : (
-              <div className="print-table-wrap overflow-x-auto">
-                <table className="min-w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="bg-slate-100">
-                      <th className="border border-slate-300 px-3 py-3 text-left font-black text-slate-700">
-                        Enseignant
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-left font-black text-slate-700">
-                        Statut
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Séances prév./faites
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Temps prévu (min)
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Temps fait (min)
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Temps perdu net (min)
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Cycles 1er/2nd
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-right font-black text-slate-700">
-                        Montant net
-                      </th>
-                      <th className="border border-slate-300 px-3 py-3 text-center font-black text-slate-700">
-                        Emargement
-                      </th>
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-3 text-left font-bold text-slate-600">Enseignant</th>
+                    <th className="px-3 py-3 text-right font-bold text-slate-600">Séances payées</th>
+                    <th className="px-3 py-3 text-right font-bold text-slate-600">Temps observé</th>
+                    <th className="px-3 py-3 text-right font-bold text-slate-600">Brut</th>
+                    <th className="px-3 py-3 text-right font-bold text-slate-600">Retenue</th>
+                    <th className="px-3 py-3 text-right font-bold text-slate-600">Montant à payer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-3 py-3">
+                        <div className="font-black text-slate-900">{row.teacher_name_snapshot || "Enseignant"}</div>
+                        <div className="mt-1 text-xs text-slate-500">1er cycle : {row.sessions_first_cycle} · 2nd cycle : {row.sessions_second_cycle}</div>
+                      </td>
+                      <td className="px-3 py-3 text-right font-semibold text-slate-800">{row.actual_sessions} <span className="font-normal text-slate-400">/ {row.expected_sessions}</span></td>
+                      <td className="px-3 py-3 text-right text-slate-700">{formatMinutes(row.actual_minutes)}</td>
+                      <td className="px-3 py-3 text-right text-slate-700">{formatMoney(row.gross_amount)}</td>
+                      <td className="px-3 py-3 text-right font-semibold text-amber-700">{formatMoney(row.lost_amount)}</td>
+                      <td className="px-3 py-3 text-right text-base font-black text-emerald-700">{formatMoney(row.adjusted_amount)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRunLines.map((row) => (
-                      <tr key={row.id}>
-                        <td className="border border-slate-300 px-3 py-4 align-top">
-                          <div className="font-bold text-slate-900">
-                            {row.teacher_name_snapshot || "Enseignant"}
-                          </div>
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-slate-700">
-                          {row.employment_type === "vacataire"
-                            ? "Vacataire"
-                            : "Permanent"}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {row.expected_sessions} /{" "}
-                          <span className="font-semibold text-slate-900">
-                            {row.actual_sessions}
-                          </span>
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {formatMinutes(row.expected_minutes)}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-slate-900">
-                          {formatMinutes(row.actual_minutes)}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right font-semibold text-amber-700">
-                          {formatMinutes(
-                            numberValue(row.lost_minutes_after_tolerance),
-                          )}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right text-slate-700">
-                          {row.sessions_first_cycle} / {row.sessions_second_cycle}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4 text-right font-black text-emerald-700">
-                          {payableLine(row) ? (
-                            <>
-                              {formatMoney(
-                                numberValue(row.adjusted_amount ?? row.gross_amount),
-                              )}
-                              <div className="mt-1 text-xs font-bold text-slate-500">
-                                Brut : {formatMoney(row.gross_amount)}
-                                {numberValue(row.lost_amount) > 0 ? (
-                                  <>
-                                    <br />
-                                    Retenue :{" "}
-                                    {formatMoney(numberValue(row.lost_amount))}
-                                  </>
-                                ) : null}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                              Rapport présence
-                            </div>
-                          )}
-                        </td>
-                        <td className="border border-slate-300 px-3 py-4">
-                          <div className="h-10 w-full rounded-md border border-dashed border-slate-300" />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-slate-50">
-                      <td
-                        className="border border-slate-300 px-3 py-3 font-black text-slate-900"
-                        colSpan={2}
-                      >
-                        Total
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.expectedSessions} / {totals.actualSessions}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {formatMinutes(totals.expectedMinutes)}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {formatMinutes(totals.actualMinutes)}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-amber-700">
-                        {formatMinutes(totals.lostMinutes)}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-bold text-slate-900">
-                        {totals.firstCycle} / {totals.secondCycle}
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3 text-right font-black text-emerald-700">
-                        {formatMoney(totals.adjusted)}
-                        <div className="mt-1 text-xs font-bold text-slate-500">
-                          Brut : {formatMoney(totals.gross)}
-                        </div>
-                      </td>
-                      <td className="border border-slate-300 px-3 py-3" />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50 font-black">
+                    <td className="px-3 py-3">Total</td>
+                    <td className="px-3 py-3 text-right">{totals.actualSessions}</td>
+                    <td className="px-3 py-3 text-right">{formatMinutes(totals.actualMinutes)}</td>
+                    <td className="px-3 py-3 text-right">{formatMoney(totals.gross)}</td>
+                    <td className="px-3 py-3 text-right text-amber-700">{formatMoney(totals.retained)}</td>
+                    <td className="px-3 py-3 text-right text-emerald-700">{formatMoney(totals.payable)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             )}
-
-            <div className="mt-12 flex justify-end">
-              <div className="w-[360px] text-center text-sm text-slate-800">
-                <div>
-                  Fait à {place}, le {printDateLabel}
-                </div>
-                <div className="mt-3 font-bold">{headTitle}</div>
-                <div className="h-24" />
-                <div className="font-bold underline underline-offset-2">
-                  {headName}
-                </div>
-              </div>
-            </div>
           </div>
         </section>
       ) : (
-        <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-600 shadow-sm">
-          Aucun run de paie chargé pour le moment. Génère un brouillon pour ce
-          mois.
-        </section>
+        <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-600">Choisis le mois et clique sur <strong>Calculer la paie</strong>. Mon Cahier fera le reste.</section>
       )}
-
-      {!printMode ? (
-        <>
-          <AcademicYearSelector
-            academicYears={academicYears}
-            selectedAcademicYearCode={selectedAcademicYearCode}
-            currentPath="/admin/finance/payroll"
-            hiddenParams={{
-              month,
-              scope,
-              rate_first: rateFirst,
-              rate_second: rateSecond,
-              run_id: selectedRunId || undefined,
-              late_tolerance_min: effectiveLateToleranceMin,
-              early_departure_tolerance_min:
-                effectiveEarlyDepartureToleranceMin,
-              session_reference_minutes: effectiveSessionReferenceMinutes,
-            }}
-          />
-
-          {message ? (
-            <section
-              className={`rounded-[24px] border px-5 py-4 text-sm font-semibold shadow-sm ${
-                message.tone === "success"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                  : "border-amber-200 bg-amber-50 text-amber-900"
-              }`}
-            >
-              <div className="font-black uppercase tracking-[0.12em]">
-                {message.title}
-              </div>
-              <div className="mt-1 leading-6">{message.body}</div>
-            </section>
-          ) : null}
-
-          {!monthInsideSelectedAcademicYear ? (
-            <section className="rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-900 shadow-sm">
-              Le mois {formatMonthLabel(month)} ne correspond pas à l’année
-              scolaire consultée. Pour générer la paie, choisis le mois de cette
-              année scolaire ou sélectionne l’année scolaire correspondante.
-            </section>
-          ) : null}
-
-          <section className="no-print grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              icon={<Users className="h-6 w-6" />}
-              label="Profils paie"
-              value={activePayrollTeachers.length}
-              hint={`${vacataires.length} vacataire(s)`}
-              tone="slate"
-            />
-            <StatCard
-              icon={<Receipt className="h-6 w-6" />}
-              label="Lignes calculées"
-              value={selectedRunLines.length}
-              hint={selectedRun ? "Run chargé" : "Aucun run chargé"}
-              tone="emerald"
-            />
-            <StatCard
-              icon={<CalendarClock className="h-6 w-6" />}
-              label="Séances"
-              value={totals.actualSessions}
-              hint={`${formatMinutes(totals.actualMinutes)} réalisées`}
-              tone="amber"
-            />
-            <StatCard
-              icon={<Wallet className="h-6 w-6" />}
-              label="Salaire net proposé"
-              value={formatMoney(totals.adjusted)}
-              hint={
-                selectedRun
-                  ? `Brut avant retenues : ${formatMoney(totals.gross)}`
-                  : "Aucun brouillon"
-              }
-              tone="violet"
-            />
-          </section>
-
-          <section className="no-print grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                Générer ou actualiser le brouillon
-              </div>
-
-              <form
-                action={generatePayrollDraftAction}
-                className="grid gap-4 md:grid-cols-2"
-                data-loading-form
-              >
-                <input
-                  type="hidden"
-                  name="academic_year"
-                  value={selectedAcademicYearCode}
-                />
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Mois
-                  </div>
-                  <input
-                    type="month"
-                    name="month"
-                    defaultValue={month}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Périmètre
-                  </div>
-                  <select
-                    name="scope"
-                    defaultValue={scope}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  >
-                    <option value="all_teachers">Tous les enseignants</option>
-                    <option value="vacataires_only">
-                      Vacataires seulement
-                    </option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Marge retard autorisée (min)
-                  </div>
-                  <input
-                    type="number"
-                    min="0"
-                    name="late_tolerance_min"
-                    defaultValue={effectiveLateToleranceMin}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Marge sortie anticipée (min)
-                  </div>
-                  <input
-                    type="number"
-                    min="0"
-                    name="early_departure_tolerance_min"
-                    defaultValue={effectiveEarlyDepartureToleranceMin}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Durée de référence séance (min)
-                  </div>
-                  <input
-                    type="number"
-                    min="1"
-                    name="session_reference_minutes"
-                    defaultValue={effectiveSessionReferenceMinutes}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Tarif 1er cycle
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    name="rate_first"
-                    defaultValue={rateFirst}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Tarif 2nd cycle
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    name="rate_second"
-                    defaultValue={rateSecond}
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">
-                    Notes
-                  </div>
-                  <textarea
-                    name="notes"
-                    rows={3}
-                    placeholder="Ex. Paie mars 2026 calculée sur les séances attendues de l’emploi du temps"
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800 outline-none"
-                  />
-                </div>
-
-                <div className="md:col-span-2 flex flex-wrap gap-3">
-                  <button
-                    type="submit"
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80"
-                  >
-                    <span
-                      data-idle-label
-                      className="inline-flex items-center justify-center gap-2"
-                    >
-                      <RefreshCcw className="h-4 w-4" />
-                      Générer / actualiser le brouillon
-                    </span>
-                    <span
-                      data-loading-label
-                      className="hidden items-center justify-center gap-2"
-                    >
-                      <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                      Chargement...
-                    </span>
-                  </button>
-
-                  {!isPayrollOnlyAccess ? (
-                    <Link
-                      href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`}
-                      className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                    >
-                      Retour Finance
-                    </Link>
-                  ) : null}
-                </div>
-              </form>
-            </div>
-
-            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                Runs enregistrés
-              </div>
-
-              {runRows.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                  Aucun brouillon de paie enregistré.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {runRows.map((run) => {
-                    const href = `/admin/finance/payroll?month=${encodeURIComponent(
-                      run.period_month.slice(0, 7),
-                    )}&scope=${encodeURIComponent(run.scope)}&rate_first=${encodeURIComponent(
-                      String(run.default_rate_first_cycle),
-                    )}&rate_second=${encodeURIComponent(
-                      String(run.default_rate_second_cycle),
-                    )}&academic_year=${encodeURIComponent(
-                      run.academic_year || selectedAcademicYearCode,
-                    )}&late_tolerance_min=${encodeURIComponent(
-                      String(
-                        run.late_tolerance_min || effectiveLateToleranceMin,
-                      ),
-                    )}&early_departure_tolerance_min=${encodeURIComponent(
-                      String(
-                        run.early_departure_tolerance_min ||
-                          effectiveEarlyDepartureToleranceMin,
-                      ),
-                    )}&session_reference_minutes=${encodeURIComponent(
-                      String(
-                        run.session_reference_minutes ||
-                          effectiveSessionReferenceMinutes,
-                      ),
-                    )}&run_id=${encodeURIComponent(run.id)}`;
-
-                    return (
-                      <Link
-                        key={run.id}
-                        href={href}
-                        className={`block rounded-2xl border p-4 transition hover:bg-slate-50 ${
-                          selectedRun?.id === run.id
-                            ? "border-emerald-300 bg-emerald-50/40"
-                            : "border-slate-200 bg-white"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-base font-black text-slate-900">
-                              {formatMonthLabel(run.period_month.slice(0, 7))}
-                            </div>
-                            <div className="mt-1 text-sm text-slate-600">
-                              {run.scope === "vacataires_only"
-                                ? "Vacataires seulement"
-                                : "Tous les enseignants"}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              Généré le {formatDate(run.generated_at)}
-                            </div>
-                          </div>
-
-                          <StatusPill status={run.status} />
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {selectedRun ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-2xl font-black text-slate-900">
-                      {formatMonthLabel(selectedRun.period_month.slice(0, 7))}
-                    </h2>
-                    <StatusPill status={selectedRun.status} />
-                  </div>
-                  <div className="mt-2 text-sm text-slate-600">
-                    <span className="font-semibold text-slate-800">
-                      Période :
-                    </span>{" "}
-                    {formatDate(selectedRun.period_start)} →{" "}
-                    {formatDate(selectedRun.period_end)}
-                  </div>
-
-                  {selectedRun.notes ? (
-                    <p className="mt-3 text-sm leading-6 text-slate-600">
-                      {selectedRun.notes}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-wrap gap-3">
-                  {selectedRun.status === "draft" ? (
-                    <form action={validatePayrollRunAction} data-loading-form>
-                      <input
-                        type="hidden"
-                        name="run_id"
-                        value={selectedRun.id}
-                      />
-                      <button className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-80">
-                        <span
-                          data-idle-label
-                          className="inline-flex items-center justify-center gap-2"
-                        >
-                          <BadgeCheck className="h-4 w-4" />
-                          Valider ce brouillon
-                        </span>
-                        <span
-                          data-loading-label
-                          className="hidden items-center justify-center gap-2"
-                        >
-                          <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                          Chargement...
-                        </span>
-                      </button>
-                    </form>
-                  ) : null}
-
-                  <Link
-                    href={`/admin/finance/payroll?month=${encodeURIComponent(
-                      selectedRun.period_month.slice(0, 7),
-                    )}&scope=${encodeURIComponent(selectedRun.scope)}&rate_first=${encodeURIComponent(
-                      String(selectedRun.default_rate_first_cycle),
-                    )}&rate_second=${encodeURIComponent(
-                      String(selectedRun.default_rate_second_cycle),
-                    )}&academic_year=${encodeURIComponent(
-                      selectedRun.academic_year || selectedAcademicYearCode,
-                    )}&late_tolerance_min=${encodeURIComponent(
-                      String(effectiveLateToleranceMin),
-                    )}&early_departure_tolerance_min=${encodeURIComponent(
-                      String(effectiveEarlyDepartureToleranceMin),
-                    )}&session_reference_minutes=${encodeURIComponent(
-                      String(effectiveSessionReferenceMinutes),
-                    )}&run_id=${encodeURIComponent(selectedRun.id)}&print=1&autoprint=1`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                  >
-                    <Printer className="h-4 w-4" />
-                    Ouvrir et imprimer
-                  </Link>
-                </div>
-              </div>
-            </section>
-          ) : (
-            <section className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center text-sm text-slate-600 shadow-sm">
-              Aucun run de paie chargé pour le moment. Génère un brouillon pour
-              ce mois.
-            </section>
-          )}
-
-          {selectedRun ? (
-            <>
-              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <StatCard
-                  icon={<FileSpreadsheet className="h-6 w-6" />}
-                  label="Lignes"
-                  value={selectedRunLines.length}
-                  hint="Enseignants dans la fiche"
-                  tone="slate"
-                />
-                <StatCard
-                  icon={<CalendarClock className="h-6 w-6" />}
-                  label="Séances attendues"
-                  value={totals.expectedSessions}
-                  hint={formatMinutes(totals.expectedMinutes)}
-                  tone="emerald"
-                />
-                <StatCard
-                  icon={<CalendarClock className="h-6 w-6" />}
-                  label="Temps perdu net"
-                  value={formatMinutes(totals.lostMinutes)}
-                  hint={`${formatSessions(totals.lostSessions)} séance(s) équivalente(s)`}
-                  tone="amber"
-                />
-                <StatCard
-                  icon={<Wallet className="h-6 w-6" />}
-                  label="Paie vacataires"
-                  value={formatMoney(totals.adjusted)}
-                  hint={`Brut avant retenues : ${formatMoney(totals.gross)}`}
-                  tone="violet"
-                />
-              </section>
-
-              <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em] text-slate-700">
-                  <BadgeDollarSign className="h-4 w-4 text-emerald-600" />
-                  Fiche globale de paie
-                </div>
-
-                {selectedRunLines.length === 0 ? (
-                  <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
-                    Ce run ne contient encore aucune ligne.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50">
-                        <tr>
-                          <th className="px-3 py-3 text-left font-bold text-slate-600">
-                            Enseignant
-                          </th>
-                          <th className="px-3 py-3 text-left font-bold text-slate-600">
-                            Statut
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Séances prév./faites
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Temps prévu (min)
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Temps fait (min)
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Temps perdu net (min)
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Cycles 1er/2nd
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Tarifs 1er/2nd
-                          </th>
-                          <th className="px-3 py-3 text-right font-bold text-slate-600">
-                            Montant net / Rapport
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedRunLines.map((row) => (
-                          <tr
-                            key={row.id}
-                            className="border-t border-slate-100"
-                          >
-                            <td className="px-3 py-3">
-                              <div className="font-bold text-slate-900">
-                                {row.teacher_name_snapshot || "Enseignant"}
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-slate-700">
-                              {row.employment_type === "vacataire"
-                                ? "Vacataire"
-                                : "Permanent"}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {row.expected_sessions} /{" "}
-                              <span className="font-semibold text-slate-900">
-                                {row.actual_sessions}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMinutes(row.expected_minutes)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                              {formatMinutes(row.actual_minutes)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold text-amber-700">
-                              {formatMinutes(
-                                numberValue(row.lost_minutes_after_tolerance),
-                              )}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {row.sessions_first_cycle} / {row.sessions_second_cycle}
-                            </td>
-                            <td className="px-3 py-3 text-right text-slate-700">
-                              {formatMoney(row.rate_first_cycle)} /{" "}
-                              {formatMoney(row.rate_second_cycle)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-black text-emerald-700">
-                              {payableLine(row) ? (
-                                <>
-                                  {formatMoney(
-                                    numberValue(
-                                      row.adjusted_amount ?? row.gross_amount,
-                                    ),
-                                  )}
-                                  <div className="mt-1 text-xs font-bold text-slate-500">
-                                    Brut : {formatMoney(row.gross_amount)}
-                                    {numberValue(row.lost_amount) > 0 ? (
-                                      <>
-                                        <br />
-                                        Retenue :{" "}
-                                        {formatMoney(numberValue(row.lost_amount))}
-                                      </>
-                                    ) : null}
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                                  Rapport présence
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-slate-200 bg-slate-50">
-                          <td
-                            className="px-3 py-3 font-black text-slate-900"
-                            colSpan={2}
-                          >
-                            Total
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.expectedSessions} / {totals.actualSessions}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {formatMinutes(totals.expectedMinutes)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {formatMinutes(totals.actualMinutes)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-amber-700">
-                            {formatMinutes(totals.lostMinutes)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-slate-900">
-                            {totals.firstCycle} / {totals.secondCycle}
-                          </td>
-                          <td className="px-3 py-3"></td>
-                          <td className="px-3 py-3 text-right font-black text-emerald-700">
-                            {formatMoney(totals.adjusted)}
-                            <div className="mt-1 text-xs font-bold text-slate-500">
-                              Brut : {formatMoney(totals.gross)}
-                            </div>
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
-              </section>
-            </>
-          ) : null}
-        </>
-      ) : null}
     </div>
   );
 }
