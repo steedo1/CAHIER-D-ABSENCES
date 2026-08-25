@@ -44,36 +44,11 @@ export default function PayrollInteractiveBehavior({ children }: { children: Rea
       if (rateSecondInput) setHiddenValue("rate_second", rateSecondInput.value);
     };
 
-    const normalizeCopy = () => {
-      const heading = findByText<HTMLHeadingElement>("h2", "Calculer la paie");
-      const intro = heading?.nextElementSibling;
-      if (intro instanceof HTMLElement && intro.tagName === "P") {
-        intro.textContent =
-          "Les tolérances de retard et de sortie anticipée sont traitées séparément. Seul le dépassement est retenu.";
-      }
-
-      const ruleBox = Array.from(payrollForm.querySelectorAll<HTMLElement>("div")).find((node) =>
-        String(node.textContent || "").includes("Règle appliquée :"),
-      );
-      if (ruleBox) {
-        const strong = ruleBox.querySelector("strong");
-        if (strong) {
-          while (strong.nextSibling) strong.nextSibling.remove();
-          strong.after(
-            document.createTextNode(
-              " une séance doit être démarrée et clôturée. Seules les minutes dépassant chaque tolérance sont déduites proportionnellement au tarif de la séance.",
-            ),
-          );
-        }
-      }
-    };
-
     const enableCalculation = () => {
-      // La validation définitive du mois reste côté serveur dans calculatePayrollAction.
-      // Le bouton ne doit pas rester bloqué sur la valeur du mois rendue avant modification du champ.
+      // La validité finale du mois est contrôlée par calculatePayrollAction côté serveur.
+      // Ici, on évite uniquement que le bouton reste figé sur l'état du premier rendu.
       if (submitButton) submitButton.disabled = false;
       syncYearSelector();
-      normalizeCopy();
     };
 
     const hideStaleOutsideWarning = () => {
@@ -90,10 +65,28 @@ export default function PayrollInteractiveBehavior({ children }: { children: Rea
       (input): input is HTMLInputElement => Boolean(input),
     );
 
+    const onInputKeyDown = (event: KeyboardEvent) => {
+      // Un champ de formulaire peut soumettre implicitement le formulaire avec Entrée.
+      // Sur la paie, seul un clic explicite sur le bouton doit lancer le calcul.
+      if (event.key === "Enter") {
+        event.preventDefault();
+      }
+    };
+
+    const onFormSubmit = (event: SubmitEvent) => {
+      // Bloque toute soumission implicite (validation du sélecteur de mois, touche Entrée,
+      // comportement navigateur) afin qu'un simple changement de mois ne quitte jamais la page.
+      if (!submitButton || event.submitter !== submitButton) {
+        event.preventDefault();
+      }
+    };
+
     for (const input of trackedInputs) {
       input.addEventListener("input", input === monthInput ? onMonthChange : enableCalculation);
       input.addEventListener("change", input === monthInput ? onMonthChange : enableCalculation);
+      input.addEventListener("keydown", onInputKeyDown);
     }
+    payrollForm.addEventListener("submit", onFormSubmit);
 
     enableCalculation();
 
@@ -101,7 +94,9 @@ export default function PayrollInteractiveBehavior({ children }: { children: Rea
       for (const input of trackedInputs) {
         input.removeEventListener("input", input === monthInput ? onMonthChange : enableCalculation);
         input.removeEventListener("change", input === monthInput ? onMonthChange : enableCalculation);
+        input.removeEventListener("keydown", onInputKeyDown);
       }
+      payrollForm.removeEventListener("submit", onFormSubmit);
     };
   }, []);
 
