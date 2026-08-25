@@ -215,9 +215,21 @@ function periodIsInsideAcademicYear(
   academicYearStart?: string | null,
   academicYearEnd?: string | null,
 ) {
-  if (academicYearStart && periodStart < academicYearStart) return false;
-  if (academicYearEnd && periodEnd > academicYearEnd) return false;
+  if (academicYearStart && periodEnd < academicYearStart) return false;
+  if (academicYearEnd && periodStart > academicYearEnd) return false;
   return true;
+}
+
+function clampPeriodToAcademicYear(
+  periodStart: string,
+  periodEnd: string,
+  academicYearStart?: string | null,
+  academicYearEnd?: string | null,
+) {
+  return {
+    periodStart: academicYearStart && academicYearStart > periodStart ? academicYearStart : periodStart,
+    periodEnd: academicYearEnd && academicYearEnd < periodEnd ? academicYearEnd : periodEnd,
+  };
 }
 
 function cycleFromLevel(level: string | null | undefined): SchoolCycle {
@@ -541,6 +553,13 @@ async function calculatePayrollAction(formData: FormData) {
     redirect(`/admin/finance/payroll?${returnParams}&message=month_outside_academic_year`);
   }
 
+  const effectiveRange = clampPeriodToAcademicYear(
+    periodStart,
+    periodEnd,
+    selectedAcademicYearStart,
+    selectedAcademicYearEnd,
+  );
+
   const [{ data: classRows, error: clsErr }, teachers] = await Promise.all([
     (() => {
       let query = admin
@@ -575,8 +594,8 @@ async function calculatePayrollAction(formData: FormData) {
   let runId = existingDraft?.id ? String(existingDraft.id) : "";
   const runPayload = {
     scope: "vacataires_only",
-    period_start: periodStart,
-    period_end: periodEnd,
+    period_start: effectiveRange.periodStart,
+    period_end: effectiveRange.periodEnd,
     default_rate_first_cycle: rateFirst,
     default_rate_second_cycle: rateSecond,
     notes: null,
@@ -631,13 +650,13 @@ async function calculatePayrollAction(formData: FormData) {
 
   for (const teacher of vacataires) {
     const [stats, expectedSlots] = await Promise.all([
-      fetchStatisticsDetailServer(teacher.profile_id, periodStart, periodEnd),
+      fetchStatisticsDetailServer(teacher.profile_id, effectiveRange.periodStart, effectiveRange.periodEnd),
       buildExpectedSlotsForTeacher({
         admin,
         institutionId,
         teacherId: teacher.profile_id,
-        periodStart,
-        periodEnd,
+        periodStart: effectiveRange.periodStart,
+        periodEnd: effectiveRange.periodEnd,
         classMap,
         referenceMinutes: sessionReferenceMinutes,
       }),
@@ -864,8 +883,6 @@ export default async function FinancePayrollPage({
     selectedAcademicYearStart,
     selectedAcademicYearEnd,
   } = academicYearCtx;
-  const currentRange = monthRange(month);
-
   const [runsResult, teachers, institutionCfg] = await Promise.all([
     (() => {
       let query = supabase
@@ -978,12 +995,6 @@ export default async function FinancePayrollPage({
   }
 
   const message = payrollMessage(params?.message);
-  const monthInsideYear = periodIsInsideAcademicYear(
-    currentRange.periodStart,
-    currentRange.periodEnd,
-    selectedAcademicYearStart,
-    selectedAcademicYearEnd,
-  );
 
   return (
     <div className="space-y-6">
@@ -1016,10 +1027,6 @@ export default async function FinancePayrollPage({
           <div className="font-black">{message.title}</div>
           <div className="mt-1 text-sm">{message.body}</div>
         </div>
-      ) : null}
-
-      {!monthInsideYear ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">Le mois choisi n’appartient pas à l’année scolaire sélectionnée.</div>
       ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1069,7 +1076,7 @@ export default async function FinancePayrollPage({
             </div>
 
             <div className="md:col-span-2">
-              <button type="submit" disabled={!monthInsideYear} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="submit" className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700">
                 <RefreshCcw className="h-4 w-4" />
                 Calculer / actualiser la paie
               </button>
