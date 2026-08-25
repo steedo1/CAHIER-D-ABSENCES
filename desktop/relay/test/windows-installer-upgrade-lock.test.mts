@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const setupPath = `${repoRoot}desktop/relay/windows/MonCahier-Relay-Setup.iss`;
-const startupTaskPath = `${repoRoot}desktop/relay/windows/install-startup-task.ps1`;
+const relayRoot = fileURLToPath(new URL("../../", import.meta.url));
+const setupPath = `${relayRoot}windows/MonCahier-Relay-Setup.iss`;
+const startupTaskPath = `${relayRoot}windows/install-startup-task.ps1`;
 
 const setup = readFileSync(setupPath, "utf8");
 const startupTask = readFileSync(startupTaskPath, "utf8");
