@@ -3,6 +3,10 @@ import type { RelayStore } from "./store.mjs";
 import type { RelayCloudSyncRunResult } from "./cloud-sync.mjs";
 import { syncRelayOnce as syncRelayOnceV4 } from "./cloud-sync-grade-v4.mjs";
 import { rekeyResolvedKeepLocalGradeOperations } from "./grade-conflict-rebase.mjs";
+import {
+  clearRelayCloudSyncWake,
+  registerRelayCloudSyncWake,
+} from "./sync-wakeup.mjs";
 
 type SyncOptions = {
   fetchImpl?: typeof fetch;
@@ -90,12 +94,14 @@ export function createRelayCloudSyncAgent(
 
   return {
     start() {
+      registerRelayCloudSyncWake(tick);
       if (timer) return;
       void tick();
       timer = setInterval(() => void tick(), config.cloudSyncIntervalMs || 15_000);
       timer.unref();
     },
     async stop() {
+      clearRelayCloudSyncWake(tick);
       if (timer) clearInterval(timer);
       timer = null;
       await currentRun;
