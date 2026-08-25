@@ -55,7 +55,7 @@ test("un relais indisponible devient un avertissement et non un blocage local", 
   assert.match(readiness, /:\s*"ready_local"/);
   assert.match(device, /status === "ready" \|\| status === "ready_local"/);
   assert.match(card, /Appels hors ligne prêts/);
-  assert.match(card, /Cloud indisponible : la dernière préparation valide reste utilisable/);
+  assert.match(card, /Cloud indisponible : les dernières données validées restent utilisables/);
   assert.doesNotMatch(classDevicePreparation(readiness), /throw new Error\(classDeviceReadinessMessage\("relay_unreachable"\)\)/);
 });
 
