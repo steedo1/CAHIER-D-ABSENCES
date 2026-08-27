@@ -603,18 +603,25 @@ export async function POST(req: NextRequest) {
   // historique sans matricule sans confondre deux identités différentes.
   const existingByLooseNameKey = new Map<string, ExistingStudent[]>();
   const existingByNormalizedMatricule = new Map<string, ExistingStudent>();
-  const { data: looseExisting, error: looseExistingErr } = await srv
-    .from("students")
-    .select(
-      "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
-    )
-    .eq("institution_id", inst);
+  const looseExisting: any[] = [];
+  const loosePageSize = 1000;
+  for (let from = 0; ; from += loosePageSize) {
+    const { data: loosePage, error: loosePageErr } = await srv
+      .from("students")
+      .select(
+        "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
+      )
+      .eq("institution_id", inst)
+      .range(from, from + loosePageSize - 1);
 
-  if (looseExistingErr) {
-    return NextResponse.json({ error: looseExistingErr.message }, { status: 400 });
+    if (loosePageErr) {
+      return NextResponse.json({ error: loosePageErr.message }, { status: 400 });
+    }
+    looseExisting.push(...(loosePage ?? []));
+    if ((loosePage?.length ?? 0) < loosePageSize) break;
   }
 
-  for (const s of looseExisting ?? []) {
+  for (const s of looseExisting) {
     const row = s as any;
     const st: ExistingStudent = {
       id: String(row.id),

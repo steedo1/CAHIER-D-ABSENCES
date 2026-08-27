@@ -103,6 +103,8 @@ test("l'import bloque un matricule déjà attribué à une autre identité", asy
   const code = await source("src/app/api/admin/students/import/route.ts");
   assert.match(code, /function makeLooseIdentityKey\(fullName: string\)/);
   assert.match(code, /const existingByLooseNameKey/);
+  assert.match(code, /const loosePageSize = 1000/);
+  assert.match(code, /\.range\(from, from \+ loosePageSize - 1\)/);
   assert.match(code, /const currentIdentity = makeLooseIdentityKey/);
   assert.match(code, /incomingIdentity !== currentIdentity/);
   assert.match(code, /const conflictingMatricule = byName\.some/);
