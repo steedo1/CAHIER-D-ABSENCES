@@ -15,6 +15,25 @@ function compact(value: unknown) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+function premiereTail(value: unknown) {
+  const key = compact(value);
+  const match = key.match(/^(?:PREMIERE|1ERE|1RE|1E|1)([ACD][0-9]*)$/);
+  return match?.[1] || null;
+}
+
+/**
+ * Cle de niveau conservative : 1D / 1eD / 1reD / 1ereD / PremiereD
+ * designent le meme niveau. Les autres niveaux restent strictement compares.
+ */
+export function generalSecondaryLevelSemanticKey(value: unknown): string {
+  const tail = premiereTail(value);
+  if (tail) {
+    const series = tail.match(/^[ACD]/)?.[0] || tail;
+    return `GENERAL:PREMIERE:${series}`;
+  }
+  return `GENERAL:EXACT:${compact(value)}`;
+}
+
 /**
  * Cle semantique volontairement conservative pour les classes du secondaire
  * general. Elle corrige notamment les variantes historiques de Premiere :
@@ -29,8 +48,8 @@ export function generalSecondaryClassSemanticKey(
   const candidates = [row.label, row.code].map(compact).filter(Boolean);
 
   for (const key of candidates) {
-    const match = key.match(/^(?:PREMIERE|1ERE|1RE|1E|1)([ACD][0-9]*)$/);
-    if (match) return `GENERAL:PREMIERE:${match[1]}`;
+    const tail = premiereTail(key);
+    if (tail) return `GENERAL:PREMIERE:${tail}`;
   }
 
   const fallback = candidates[0] || compact(row.level) || compact(row.id);
