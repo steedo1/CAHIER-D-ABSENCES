@@ -1166,10 +1166,18 @@ export async function POST(req: NextRequest) {
     const groupedByCloseDate = new Map<string, string[]>();
 
     for (const row of activeSources) {
-      const closeDate =
+      const preferredCloseDate =
         row.academic_year && row.academic_year !== targetAcademicYear
           ? academicYearEndByCode.get(row.academic_year) || today
           : today;
+      // Une inscription déjà planifiée peut commencer après la date du jour
+      // (par exemple à la rentrée). La clôturer avant son début violerait
+      // chk_dates_coherent. On la conserve dans l'historique en la clôturant
+      // à sa propre date de début, sans supprimer la fiche ni ses finances.
+      const closeDate =
+        row.start_date > preferredCloseDate
+          ? row.start_date
+          : preferredCloseDate;
       groupedByCloseDate.set(closeDate, [
         ...(groupedByCloseDate.get(closeDate) ?? []),
         row.id,
