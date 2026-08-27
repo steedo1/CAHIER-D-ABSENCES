@@ -35,6 +35,28 @@ test("l'import reconnaît DEC, Aff/NAff et les marqueurs d'internat sans bloquer
   assert.match(code, /finance_profile_incomplete_rows/);
 });
 
+test("l'import enrichit la fiche existante sans matricule et ne supprime aucun élève existant", async () => {
+  const code = await source("src/app/api/admin/students/import/route.ts");
+  const page = await source("src/app/admin/import/page.tsx");
+
+  assert.match(code, /full_name_key \(distincts\) pour toutes les lignes/);
+  assert.match(code, /const withoutMatricule = byName\.filter/);
+  assert.match(code, /return \{ kind: "name", student: withoutMatricule\[0\] \}/);
+  assert.match(code, /if \(incomingMatricule && !currentMatricule\)/);
+  assert.match(code, /patch\.matricule = incomingMatricule/);
+  assert.match(code, /completed_matricules_by_name/);
+  assert.match(code, /identity_conflict_rows/);
+  assert.match(code, /students_deleted: 0/);
+  assert.match(page, /Import sans suppression/);
+  assert.match(page, /Un élève absent du fichier n’est jamais/);
+  assert.match(page, /identity_conflict_rows/);
+
+  const studentDeletes = code.match(/\.from\("students"\)[\s\S]{0,120}?\.delete\(\)/g) || [];
+  assert.equal(studentDeletes.length, 1);
+  assert.match(code, /if \(createdStudentIds\.size > 0\)[\s\S]{0,220}?\.delete\(\)/);
+  assert.doesNotMatch(code, /\.from\("students"\)\s*\.delete\(\)\s*\.eq\("institution_id", inst\)\s*\.not\(/);
+});
+
 test("l'import clôture aussi l'inscription d'une année précédente sans transférer sa finance", async () => {
   const code = await source("src/app/api/admin/students/import/route.ts");
   assert.match(code, /row\.academic_year === targetAcademicYear/);

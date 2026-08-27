@@ -620,7 +620,14 @@ export default function ImportPage() {
         return;
       }
       if (!r.ok) {
-        setMsg(j?.error || `HTTP ${r.status}`);
+        const conflictRows = Array.isArray(j?.identity_conflict_rows)
+          ? j.identity_conflict_rows.join(", ")
+          : "";
+        setMsg(
+          `${j?.error || `HTTP ${r.status}`}${
+            conflictRows ? ` Lignes à vérifier : ${conflictRows}.` : ""
+          }`,
+        );
         setLoading(false);
         return;
       }
@@ -666,7 +673,14 @@ export default function ImportPage() {
         return;
       }
       if (!r.ok) {
-        setMsg(j?.error || `HTTP ${r.status}`);
+        const conflictRows = Array.isArray(j?.identity_conflict_rows)
+          ? j.identity_conflict_rows.join(", ")
+          : "";
+        setMsg(
+          `${j?.error || `HTTP ${r.status}`}${
+            conflictRows ? ` Lignes à vérifier : ${conflictRows}.` : ""
+          }`,
+        );
         setLoading(false);
         return;
       }
@@ -675,13 +689,17 @@ export default function ImportPage() {
         const inserted = j?.inserted ?? 0;
         const updated = j?.updated ?? 0;
         const updatedByName = j?.updated_by_name ?? 0;
+        const completedMatricules = j?.completed_matricules_by_name ?? 0;
+        const deletedStudents = j?.students_deleted ?? 0;
         const ambiguous = j?.ambiguous_name ?? 0;
         const closedOld = j?.closed_old_enrollments ?? 0;
         const reactivated = j?.reactivated_in_target ?? 0;
         const insertedInTarget = j?.inserted_in_target ?? 0;
 
         setMsg(
-          `Import OK : ${inserted} élève(s) créé(s), ${updated} mise(s) à jour par matricule, ${updatedByName} mise(s) à jour par nom, ${insertedInTarget} inscription(s) ajoutée(s), ${reactivated} réactivée(s), ${closedOld} ancienne(s) clôturée(s)${
+          `Import OK : ${inserted} élève(s) créé(s), ${updated} mise(s) à jour par matricule, ${updatedByName} mise(s) à jour par nom, ${completedMatricules} matricule(s) ajouté(s) à une fiche existante, ${insertedInTarget} inscription(s) ajoutée(s), ${reactivated} réactivée(s), ${closedOld} ancienne(s) clôturée(s), ${deletedStudents} élève supprimé${
+            deletedStudents === 1 ? "" : "s"
+          }${
             ambiguous ? `, ${ambiguous} nom(s) ambigu(s)` : ""
           }.`,
         );
@@ -1174,6 +1192,16 @@ Mme KONE,kone@ecole.ci,+22505060708,Français,permanent,Oui`;
                 {educationContext.error}
               </div>
             ) : null}
+
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[13px] text-emerald-900">
+              <div className="font-semibold">Import sans suppression</div>
+              <div>
+                Les fiches existantes sont complétées et conservées avec leur
+                historique financier. Un élève absent du fichier n’est jamais
+                supprimé de la base. Si une identité est ambiguë, l’import est
+                annulé avant toute écriture.
+              </div>
+            </div>
           </div>
         )}
 

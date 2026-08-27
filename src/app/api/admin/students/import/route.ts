@@ -476,11 +476,13 @@ export async function POST(req: NextRequest) {
     new Set(parsed.map((r) => (r.matricule ?? "").trim()).filter(Boolean)),
   );
 
-  // 1bis) full_name_key (distincts) pour rows SANS matricule (photo import ou correction)
+  // 1bis) full_name_key (distincts) pour toutes les lignes.
+  // Important : une fiche historique peut exister avec le nom uniquement. Quand
+  // le fichier officiel apporte enfin son matricule, on doit enrichir cette même
+  // fiche (et conserver son id/sa finance), pas créer un second élève.
   const wantedNameKeys = Array.from(
     new Set(
       parsed
-        .filter((r) => !(r.matricule ?? "").trim())
         .map((r) => r.full_name_key)
         .filter(Boolean),
     ),
@@ -591,14 +593,111 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  type StudentResolution =
+    | {
+        kind: "matricule" | "name";
+        student: ExistingStudent;
+      }
+    | { kind: "none" | "ambiguous" | "conflict"; student: null };
+
+  const normalizeMatricule = (value: string | null | undefined) =>
+    String(value || "").trim().toUpperCase();
+
+  function resolveExistingStudent(row: ParsedStudentRow): StudentResolution {
+    const matricule = String(row.matricule || "").trim();
+    const byMatricule = matricule ? existingByMat[matricule] : null;
+    if (byMatricule) return { kind: "matricule", student: byMatricule };
+
+    const key = String(row.full_name_key || "").trim();
+    const byName = key ? existingByNameKey.get(key) || [] : [];
+
+    if (!matricule) {
+      if (byName.length === 1) return { kind: "name", student: byName[0] };
+      return {
+        kind: byName.length > 1 ? "ambiguous" : "none",
+        student: null,
+      };
+    }
+
+    // Le matricule entrant est nouveau. On ne réutilise une fiche trouvée par
+    // nom que si son matricule est réellement manquant. Un nom ambigu ou une
+    // fiche portant déjà un autre matricule doit être traité manuellement.
+    const withoutMatricule = byName.filter(
+      (student) => !normalizeMatricule(student.matricule),
+    );
+    if (withoutMatricule.length === 1) {
+      return { kind: "name", student: withoutMatricule[0] };
+    }
+    if (byName.length > 0) {
+      const exactNormalized = byName.find(
+        (student) =>
+          normalizeMatricule(student.matricule) ===
+          normalizeMatricule(matricule),
+      );
+      if (exactNormalized) return { kind: "name", student: exactNormalized };
+      return {
+        kind: withoutMatricule.length > 1 ? "ambiguous" : "conflict",
+        student: null,
+      };
+    }
+
+    return { kind: "none", student: null };
+  }
+
+  const inputMatriculesByName = new Map<string, Set<string>>();
+  const inputNamesByMatricule = new Map<string, Set<string>>();
+  for (const row of parsed) {
+    const nameKey = String(row.full_name_key || "").trim();
+    const matriculeKey = normalizeMatricule(row.matricule);
+    if (nameKey && matriculeKey) {
+      inputMatriculesByName.set(
+        nameKey,
+        new Set([...(inputMatriculesByName.get(nameKey) ?? []), matriculeKey]),
+      );
+      inputNamesByMatricule.set(
+        matriculeKey,
+        new Set([...(inputNamesByMatricule.get(matriculeKey) ?? []), nameKey]),
+      );
+    }
+  }
+
+  const identityConflictRows = Array.from(
+    new Set(
+      parsed
+        .filter((row) => {
+          const nameKey = String(row.full_name_key || "").trim();
+          const matriculeKey = normalizeMatricule(row.matricule);
+          const inconsistentInput =
+            (nameKey && (inputMatriculesByName.get(nameKey)?.size ?? 0) > 1) ||
+            (matriculeKey &&
+              (inputNamesByMatricule.get(matriculeKey)?.size ?? 0) > 1);
+          if (inconsistentInput) return true;
+
+          const resolution = resolveExistingStudent(row);
+          return (
+            resolution.kind === "conflict" ||
+            resolution.kind === "ambiguous"
+          );
+        })
+        .map((row) => row._row + 2),
+    ),
+  ).sort((a, b) => a - b);
+
+  if (identityConflictRows.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Import annulé : certaines identités sont ambiguës ou portent déjà un autre matricule.",
+        identity_conflict_rows: identityConflictRows.slice(0, 100),
+      },
+      { status: 409 },
+    );
+  }
+
   const incompleteFinanceRows = parsed
     .filter((row) => {
-      const matricule = String(row.matricule || "").trim();
-      const byMatricule = matricule ? existingByMat[matricule] : null;
-      const byName = !matricule
-        ? (existingByNameKey.get(String(row.full_name_key || "").trim()) || [])
-        : [];
-      const existing = byMatricule || (byName.length === 1 ? byName[0] : null);
+      const resolution = resolveExistingStudent(row);
+      const existing = resolution.student;
       const finalAffecte =
         typeof row.is_affecte === "boolean"
           ? row.is_affecte
@@ -615,7 +714,9 @@ export async function POST(req: NextRequest) {
   // 3) Créer les élèves manquants (UNIQUEMENT si matricule présent)
   const toInsert = parsed
     .filter(
-      (r) => (r.matricule ?? "").trim() && !existingByMat[r.matricule!.trim()],
+      (r) =>
+        (r.matricule ?? "").trim() &&
+        resolveExistingStudent(r).kind === "none",
     )
     .map((r) => ({
       institution_id: inst,
@@ -679,6 +780,12 @@ export async function POST(req: NextRequest) {
   function buildPatch(r: ParsedStudentRow, cur: ExistingStudent) {
     const patch: any = {};
 
+    const incomingMatricule = String(r.matricule || "").trim();
+    const currentMatricule = String(cur.matricule || "").trim();
+    if (incomingMatricule && !currentMatricule) {
+      patch.matricule = incomingMatricule;
+    }
+
     if (r.first_name && r.first_name !== (cur.first_name ?? ""))
       patch.first_name = r.first_name;
     if (r.last_name && r.last_name !== (cur.last_name ?? ""))
@@ -715,6 +822,7 @@ export async function POST(req: NextRequest) {
 
   let updatedCount = 0;
   let updatedByName = 0;
+  let completedMatriculesByName = 0;
   let ambiguousName = 0;
   const studentUpdateSnapshots = new Map<string, Record<string, unknown>>();
 
@@ -757,11 +865,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4a) updates par matricule
+  // 4a) updates des lignes portant un matricule. Si ce matricule était absent
+  // de la base, resolveExistingStudent peut avoir retrouvé la fiche unique par
+  // son nom et buildPatch complète alors la fiche existante.
   for (const r of parsed) {
     const m = String(r.matricule || "").trim();
     if (!m) continue;
-    const cur = existingByMat[m];
+    const resolution = resolveExistingStudent(r);
+    const cur = resolution.student;
     if (!cur) continue;
 
     const patch = buildPatch(r, cur);
@@ -775,6 +886,11 @@ export async function POST(req: NextRequest) {
     }
 
     updatedCount++;
+    if (resolution.kind === "name" && patch.matricule) {
+      completedMatriculesByName++;
+      cur.matricule = String(patch.matricule);
+      existingByMat[m] = cur;
+    }
   }
 
   // 4b) updates par nom complet (full_name_key) si pas de matricule
@@ -806,21 +922,14 @@ export async function POST(req: NextRequest) {
     updatedByName++;
   }
 
-  // 5) IDs de tous les élèves importés (matricule + nom)
+  // 5) IDs de tous les élèves importés (matricule + nom). On réutilise
+  // exclusivement les fiches résolues ci-dessus : aucun élève existant n'est
+  // supprimé parce qu'il est absent du fichier.
   const allStudentIds = new Set<string>();
 
   for (const r of parsed) {
-    const m = String(r.matricule || "").trim();
-    if (m && existingByMat[m]?.id) allStudentIds.add(existingByMat[m].id);
-  }
-
-  for (const r of parsed) {
-    const m = String(r.matricule || "").trim();
-    if (m) continue;
-    const key = String(r.full_name_key || "").trim();
-    if (!key) continue;
-    const matches = existingByNameKey.get(key) || [];
-    if (matches.length === 1) allStudentIds.add(matches[0].id);
+    const resolution = resolveExistingStudent(r);
+    if (resolution.student?.id) allStudentIds.add(resolution.student.id);
   }
 
   if (!allStudentIds.size) {
@@ -828,6 +937,8 @@ export async function POST(req: NextRequest) {
       inserted: createdCount,
       updated: updatedCount,
       updated_by_name: updatedByName,
+      completed_matricules_by_name: completedMatriculesByName,
+      students_deleted: 0,
       ambiguous_name: ambiguousName,
       closed_old_enrollments: 0,
       reactivated_in_target: 0,
@@ -1199,6 +1310,8 @@ export async function POST(req: NextRequest) {
     inserted: createdCount,
     updated: updatedCount,
     updated_by_name: updatedByName,
+    completed_matricules_by_name: completedMatriculesByName,
+    students_deleted: 0,
     ambiguous_name: ambiguousName,
     closed_old_enrollments: closedOld,
     reactivated_in_target: reactivated,
