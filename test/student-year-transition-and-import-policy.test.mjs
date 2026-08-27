@@ -66,6 +66,12 @@ test("l'import clôture aussi l'inscription d'une année précédente sans trans
   assert.match(code, /\.from\("student_year_profiles"\)/);
 });
 
+test("l'import ne clôture jamais une inscription avant sa date de début", async () => {
+  const code = await source("src/app/api/admin/students/import/route.ts");
+  assert.match(code, /row\.start_date > preferredCloseDate/);
+  assert.match(code, /\? row\.start_date\s*:\s*preferredCloseDate/);
+});
+
 test("la finance ne bloque plus toute inscription si un seul statut est inconnu", async () => {
   const code = await source("src/lib/finance/student-finance-sync.ts");
   assert.doesNotMatch(code, /Profil financier incomplet[\s\S]*Aucune dette n'a été modifiée/);
