@@ -97,3 +97,15 @@ test("la réconciliation garde la fiche courante et ne déplace pas la finance",
   assert.doesNotMatch(route, /merge_student_duplicate_into_canonical/);
   assert.match(sql, /grant execute[\s\S]*to service_role/i);
 });
+
+
+test("l'import bloque un matricule déjà attribué à une autre identité", async () => {
+  const code = await source("src/app/api/admin/students/import/route.ts");
+  assert.match(code, /function makeLooseIdentityKey\(fullName: string\)/);
+  assert.match(code, /const existingByLooseNameKey/);
+  assert.match(code, /const currentIdentity = makeLooseIdentityKey/);
+  assert.match(code, /incomingIdentity !== currentIdentity/);
+  assert.match(code, /const conflictingMatricule = byName\.some/);
+  assert.match(code, /const nameKey = makeLooseIdentityKey\(row\.full_name\)/);
+  assert.match(code, /identity_conflict_rows/);
+});
