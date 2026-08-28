@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
+import {
+  choosePreferredEquivalentClass,
+  generalSecondaryClassSemanticKey,
+} from "@/lib/general-secondary-class-equivalence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +54,50 @@ function roleMatchesInstitution(role: string, roleInstitutionId: unknown, instit
   if (!roleInst) return Boolean(institutionId);
 
   return roleInst === institutionId;
+}
+
+function isGeneralSecondaryClassRow(row: any) {
+  const educationType = String(row?.education_type || "").trim();
+  const formationCode = String(row?.formation_code || "").trim();
+  return (
+    (!educationType || educationType === "general_secondary") &&
+    !formationCode
+  );
+}
+
+function buildCanonicalGeneralSecondaryClassMaps(rows: any[]) {
+  const classById = new Map<string, any>();
+  const canonicalIdById = new Map<string, string>();
+  const groups = new Map<string, any[]>();
+
+  for (const row of rows) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    classById.set(id, row);
+    canonicalIdById.set(id, id);
+
+    if (!isGeneralSecondaryClassRow(row)) continue;
+
+    // Ne jamais rapprocher deux années scolaires différentes quand academic_year=all.
+    const academicYear = String(row?.academic_year || "").trim();
+    const key = `${academicYear}::${generalSecondaryClassSemanticKey(row)}`;
+    const group = groups.get(key) || [];
+    group.push(row);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    const preferred = choosePreferredEquivalentClass(group);
+    const preferredId = String(preferred?.id || "").trim();
+    if (!preferredId) continue;
+
+    for (const row of group) {
+      const id = String(row?.id || "").trim();
+      if (id) canonicalIdById.set(id, preferredId);
+    }
+  }
+
+  return { classById, canonicalIdById };
 }
 
 async function requireReadableInstitution() {
@@ -158,10 +206,36 @@ export async function GET(req: NextRequest) {
   if (classId) query = query.eq("class_id", classId);
   if (shouldFilterYear) query = query.eq("classes.academic_year", academicYear);
 
-  const { data, error } = await query.limit(50000);
+  let classesQuery = srv
+    .from("classes")
+    .select(
+      "id,label,level,code,academic_year,official_track_code,education_type,formation_code",
+    )
+    .eq("institution_id", inst);
 
-  if (error)
+  if (shouldFilterYear) {
+    classesQuery = classesQuery.eq("academic_year", academicYear);
+  }
+
+  const [enrollmentsResult, classesResult] = await Promise.all([
+    query.limit(50000),
+    classesQuery.limit(5000),
+  ]);
+
+  const { data, error } = enrollmentsResult;
+  if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  if (classesResult.error) {
+    return NextResponse.json(
+      { error: classesResult.error.message },
+      { status: 400 },
+    );
+  }
+
+  const { classById, canonicalIdById } =
+    buildCanonicalGeneralSecondaryClassMaps(classesResult.data ?? []);
 
   const seen = new Set<string>();
   const items: Array<{
@@ -193,6 +267,10 @@ export async function GET(req: NextRequest) {
     if (!sid || seen.has(sid)) continue;
     seen.add(sid);
 
+    const rawClassId = String((row as any).class_id || "").trim();
+    const canonicalClassId = canonicalIdById.get(rawClassId) || rawClassId;
+    const canonicalClass = classById.get(canonicalClassId) || c;
+
     const full =
       `${s.last_name ?? ""} ${s.first_name ?? ""}`.trim() ||
       String(s.full_name || "").trim() ||
@@ -210,10 +288,10 @@ export async function GET(req: NextRequest) {
       last_name: (s.last_name ?? null) as string | null,
       full_name: full,
       matricule: (s.matricule ?? null) as string | null,
-      class_id: (row as any).class_id as string,
-      class_label: (c.label ?? null) as string | null,
-      class_level: (c.level ?? null) as string | null,
-      academic_year: (c.academic_year ?? null) as string | null,
+      class_id: canonicalClassId,
+      class_label: (canonicalClass?.label ?? c.label ?? null) as string | null,
+      class_level: (canonicalClass?.level ?? c.level ?? null) as string | null,
+      academic_year: (canonicalClass?.academic_year ?? c.academic_year ?? null) as string | null,
       // L'attestation est ouverte dans un document blob:. Une URL relative /api/...
       // y est mal résolue par certains navigateurs. On renvoie donc l'URL protégée
       // complète, basée sur l'origine réelle de la requête (prod, preview ou local).

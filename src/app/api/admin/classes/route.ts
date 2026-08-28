@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType } from "@/lib/education-organization";
+import { dedupeEquivalentGeneralSecondaryClasses } from "@/lib/general-secondary-class-equivalence";
 
 const READ_ALLOWED_ROLES = new Set([
   "admin",
@@ -49,6 +50,39 @@ function roleMatchesInstitution(role: string, roleInstitutionId: unknown, instit
   if (!roleInst) return Boolean(institutionId);
 
   return roleInst === institutionId;
+}
+
+function isGeneralSecondaryClassRow(row: any) {
+  const educationType = String(row?.education_type || "").trim();
+  const formationCode = String(row?.formation_code || "").trim();
+  return (
+    (!educationType || educationType === "general_secondary") &&
+    !formationCode
+  );
+}
+
+function dedupeGeneralSecondaryAliasesByAcademicYear(rows: any[]) {
+  const preferredIds = new Set<string>();
+  const byAcademicYear = new Map<string, any[]>();
+
+  for (const row of rows) {
+    if (!isGeneralSecondaryClassRow(row)) continue;
+    const academicYear = String(row?.academic_year || "").trim();
+    const group = byAcademicYear.get(academicYear) || [];
+    group.push(row);
+    byAcademicYear.set(academicYear, group);
+  }
+
+  for (const group of byAcademicYear.values()) {
+    for (const row of dedupeEquivalentGeneralSecondaryClasses(group)) {
+      if (row?.id) preferredIds.add(String(row.id));
+    }
+  }
+
+  // La requête est déjà triée : filtrer conserve donc l'ordre stable de l'API.
+  return rows.filter(
+    (row) => !isGeneralSecondaryClassRow(row) || preferredIds.has(String(row.id)),
+  );
 }
 
 async function requireReadableInstitution() {
@@ -222,7 +256,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  const items = (data ?? []).map((c: any) => ({
+  const sourceRows = (data ?? []) as any[];
+  const visibleRows = classIdParam
+    ? sourceRows
+    : dedupeGeneralSecondaryAliasesByAcademicYear(sourceRows);
+
+  const items = visibleRows.map((c: any) => ({
     id: c.id,
     name: c.label,
     label: c.label,
