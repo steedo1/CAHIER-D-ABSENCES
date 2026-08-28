@@ -22,6 +22,46 @@ function toClass(row: any): EducationScopedClass & { label: string } {
   };
 }
 
+async function resolveAcademicYear(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  requested: string,
+): Promise<string | null> {
+  const explicit = String(requested || "").trim();
+  if (explicit && explicit !== "current" && explicit !== "all") {
+    const { data } = await srv
+      .from("academic_years")
+      .select("code")
+      .eq("institution_id", institutionId)
+      .eq("code", explicit)
+      .maybeSingle();
+    return data?.code ? String(data.code) : null;
+  }
+
+  if (explicit === "all") return "all";
+
+  const { data: current } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (current?.code) return String(current.code);
+
+  const { data: latest } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return latest?.code ? String(latest.code) : null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const supa = await getSupabaseServerClient();
@@ -84,15 +124,38 @@ export async function GET(req: NextRequest) {
       "classId",
     ].some((key) => url.searchParams.has(key));
 
+    const academicYear = await resolveAcademicYear(
+      srv,
+      institution_id,
+      url.searchParams.get("academic_year") || "",
+    );
+
+    if (!academicYear) {
+      return NextResponse.json(
+        {
+          error: "academic_year_not_found",
+          message: "Année scolaire introuvable pour cet établissement.",
+        },
+        { status: 400 },
+      );
+    }
+
+    let classQuery = srv
+      .from("classes")
+      .select(
+        "id,label,level,education_type,formation_code,formation_level_code",
+      )
+      .eq("institution_id", institution_id);
+
+    // Par défaut, les écrans EDT ne voient que les classes de l'année active.
+    // Les anciennes classes ne sont exposées que sur demande explicite academic_year=all.
+    if (academicYear !== "all") {
+      classQuery = classQuery.eq("academic_year", academicYear);
+    }
+
     const [{ data: classRows, error: classErr }, { data: periods, error: periodErr }] =
       await Promise.all([
-        srv
-          .from("classes")
-          .select(
-            "id,label,level,education_type,formation_code,formation_level_code",
-          )
-          .eq("institution_id", institution_id)
-          .order("label", { ascending: true }),
+        classQuery.order("label", { ascending: true }),
         srv
           .from("institution_periods")
           .select("id,weekday,period_no,start_time,end_time")
@@ -291,6 +354,7 @@ export async function GET(req: NextRequest) {
       periods: outPeriods,
       occupancy,
       scope,
+      academic_year: academicYear === "all" ? null : academicYear,
     });
   } catch (e: any) {
     return NextResponse.json(
