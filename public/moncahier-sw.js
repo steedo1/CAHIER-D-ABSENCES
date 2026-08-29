@@ -1,11 +1,13 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-08-10-pwa-login-repeat-v5-7";
+const VERSION = "2026-08-29-attendance-slot-cache-v5-8";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${CACHE_VERSION}`;
 const ASSET_CACHE = `${CACHE_PREFIX}assets-${CACHE_VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
+const OFFLINE_DB_NAME = "moncahier_offline_v1";
+const OFFLINE_KV_STORE = "kv";
 const PRECACHE_URLS = [
   OFFLINE_URL,
   "/manifest.webmanifest",
@@ -133,6 +135,129 @@ async function fetchWithTimeout(request, timeoutMs = 5000) {
   }
 }
 
+async function readOfflineKv(key) {
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value ?? null);
+    };
+
+    let request;
+    try {
+      request = indexedDB.open(OFFLINE_DB_NAME);
+    } catch {
+      finish(null);
+      return;
+    }
+
+    request.onerror = () => finish(null);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(OFFLINE_KV_STORE)) {
+        db.close();
+        finish(null);
+        return;
+      }
+
+      let transaction;
+      try {
+        transaction = db.transaction([OFFLINE_KV_STORE], "readonly");
+      } catch {
+        db.close();
+        finish(null);
+        return;
+      }
+
+      const storeRequest = transaction.objectStore(OFFLINE_KV_STORE).get(key);
+      storeRequest.onsuccess = () => finish(storeRequest.result?.value ?? null);
+      storeRequest.onerror = () => finish(null);
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => {
+        db.close();
+        finish(null);
+      };
+      transaction.onabort = () => {
+        db.close();
+        finish(null);
+      };
+    };
+  });
+}
+
+function jsonResponse(payload, status = 200, source = null) {
+  const headers = {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "private, no-store, max-age=0",
+  };
+  if (source) headers["X-Mon-Cahier-Offline-Source"] = source;
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+function requestPathFromReferrer(request) {
+  try {
+    return request.referrer ? new URL(request.referrer).pathname : "";
+  } catch {
+    return "";
+  }
+}
+
+async function classDeviceSubjectsResponse(request, url) {
+  const classId = String(url.searchParams.get("class_id") || "").trim();
+  const slot = String(url.searchParams.get("slot") || "").trim();
+  const fromClassDevice = requestPathFromReferrer(request) === "/class";
+
+  if (!classId) return await fetch(request);
+
+  // Le téléphone de classe ne doit jamais retomber sur la liste générale de
+  // toutes les matières : sans créneau précis, aucune discipline n'est sûre.
+  if (!slot && fromClassDevice) {
+    return jsonResponse(
+      { items: [], diagnostic: "class_device_subject_slot_required" },
+      200,
+      "class-device-fail-closed",
+    );
+  }
+
+  if (!slot) return await fetch(request);
+
+  let networkResponse = null;
+  try {
+    networkResponse = await fetchWithTimeout(request, 2500);
+    // Les erreurs métier explicites restent l'autorité du Cloud. Seules les
+    // pannes temporaires (5xx) basculent vers la préparation PWA du créneau.
+    if (networkResponse.status < 500) return networkResponse;
+  } catch {
+    networkResponse = null;
+  }
+
+  const canonicalKey = `classDevice:subjects:${classId}:${slot}`;
+  const prepared = await readOfflineKv(canonicalKey);
+  if (prepared && Array.isArray(prepared.items)) {
+    return jsonResponse(prepared, 200, "class-device-slot-cache");
+  }
+
+  // Fail-closed : un créneau non préparé ne doit surtout pas déclencher le
+  // fallback historique qui affichait toutes les matières de la classe.
+  if (fromClassDevice) {
+    return jsonResponse(
+      { items: [], diagnostic: "class_device_subject_slot_not_prepared" },
+      200,
+      "class-device-slot-missing",
+    );
+  }
+
+  return (
+    networkResponse ||
+    jsonResponse(
+      { error: "class_device_subject_slot_unavailable" },
+      503,
+      "class-device-slot-unavailable",
+    )
+  );
+}
+
 async function navigationResponse(request) {
   const cache = await caches.open(SHELL_CACHE);
   try {
@@ -181,8 +306,16 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Les réponses API et toutes les mutations restent gérées par IndexedDB et
-  // leurs contrats métier. Le service worker ne les met jamais en cache.
+  // Exception bornée : le téléphone de classe peut relire dans IndexedDB la
+  // matière déjà préparée pour LE créneau demandé. Aucune autre API n'est mise
+  // en cache par le service worker.
+  if (url.pathname === "/api/class/subjects") {
+    event.respondWith(classDeviceSubjectsResponse(request, url));
+    return;
+  }
+
+  // Les autres réponses API et toutes les mutations restent gérées par
+  // IndexedDB et leurs contrats métier. Le service worker ne les met pas en cache.
   if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
