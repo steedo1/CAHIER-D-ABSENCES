@@ -59,6 +59,16 @@ function compactPrintedStudentName(value: string | null | undefined) {
     .join(" ");
 }
 
+function normalizeNoteHeaders(headerRow: HTMLTableRowElement) {
+  Array.from(headerRow.cells).forEach((cell) => {
+    const match = cleanText(cell.textContent).match(/^Note\s*(\d+)$/i);
+    if (!match) return;
+
+    cell.textContent = `Note ${match[1]}`;
+    cell.classList.add("class-list-note-header");
+  });
+}
+
 function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
   const table = sheet.querySelector<HTMLTableElement>(".roster-table");
   if (!table) return;
@@ -69,12 +79,14 @@ function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
   if (!headerRow.querySelector('[data-class-list-note="5"]')) {
     for (const note of [5, 6]) {
       const th = document.createElement("th");
-      th.className = "class-list-note-extra";
+      th.className = "class-list-note-extra class-list-note-header";
       th.dataset.classListNote = String(note);
-      th.textContent = `Note${note}`;
+      th.textContent = `Note ${note}`;
       headerRow.appendChild(th);
     }
   }
+
+  normalizeNoteHeaders(headerRow);
 
   const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"));
   rows.forEach((row) => {
@@ -115,8 +127,9 @@ function applyResponsivePrintSizing(sheet: HTMLElement) {
   ).filter((row) => !row.querySelector("td[colspan]"));
   const count = rows.length;
 
-  // Objectif : une liste courte occupe vraiment la feuille A4 ; une grande
-  // liste garde une police lisible et passe naturellement sur une 2e page.
+  // Objectif : une liste courte occupe réellement la feuille A4. Une liste
+  // plus longue reste lisible et peut se fragmenter uniquement si des élèves
+  // doivent réellement passer sur la page suivante.
   const rowHeightMm =
     count <= 0 ? 8 : Math.max(5.8, Math.min(12.8, 190 / count));
   const fontSizePx =
@@ -127,6 +140,7 @@ function applyResponsivePrintSizing(sheet: HTMLElement) {
   sheet.style.setProperty("--class-list-font-size", `${fontSizePx}px`);
   sheet.style.setProperty("--class-list-header-font-size", `${headerFontSizePx}px`);
   sheet.dataset.rosterCount = String(count);
+  sheet.dataset.rosterPagination = count <= 30 ? "single" : "multi";
 }
 
 export default function ClassListPrintEnhancer() {
@@ -203,8 +217,6 @@ export default function ClassListPrintEnhancer() {
       modeToUse === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
     if (title) title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
 
-    // Laisser le navigateur appliquer le nouveau titre et les variables de
-    // densité avant d'ouvrir la boîte d'impression.
     requestAnimationFrame(() => {
       setTimeout(() => window.print(), 40);
     });
@@ -258,6 +270,7 @@ export default function ClassListPrintEnhancer() {
           }
 
           .class-list-sheet {
+            position: relative !important;
             box-sizing: border-box !important;
             width: 198mm !important;
             max-width: 198mm !important;
@@ -266,6 +279,7 @@ export default function ClassListPrintEnhancer() {
             display: flex !important;
             flex-direction: column !important;
             overflow: visible !important;
+            padding-bottom: 13mm !important;
           }
 
           .official-header {
@@ -316,6 +330,7 @@ export default function ClassListPrintEnhancer() {
 
           .roster-table {
             width: 100% !important;
+            table-layout: fixed !important;
             font-size: var(--class-list-font-size, 11px) !important;
             line-height: 1.18 !important;
             margin-bottom: 2mm !important;
@@ -327,8 +342,28 @@ export default function ClassListPrintEnhancer() {
 
           .roster-table thead th {
             font-size: var(--class-list-header-font-size, 11.4px) !important;
-            line-height: 1.15 !important;
-            padding: 1.5mm 0.8mm !important;
+            line-height: 1.08 !important;
+            padding: 1.35mm 0.45mm !important;
+            vertical-align: middle !important;
+          }
+
+          .roster-table thead th:nth-child(4),
+          .roster-table thead th:nth-child(5),
+          .roster-table thead th:nth-child(6),
+          .roster-table thead th:nth-child(7) {
+            white-space: nowrap !important;
+            font-size: 9px !important;
+          }
+
+          .roster-table .class-list-note-header,
+          .roster-table thead th:nth-child(n + 8) {
+            white-space: nowrap !important;
+            word-break: normal !important;
+            overflow-wrap: normal !important;
+            font-size: 8.6px !important;
+            letter-spacing: -0.15px !important;
+            padding-left: 0.2mm !important;
+            padding-right: 0.2mm !important;
           }
 
           .roster-table tbody tr {
@@ -341,33 +376,64 @@ export default function ClassListPrintEnhancer() {
           .roster-table tbody td {
             font-size: var(--class-list-font-size, 11px) !important;
             line-height: 1.18 !important;
-            padding: 1.05mm 0.8mm !important;
+            padding: 1.05mm 0.55mm !important;
             vertical-align: middle !important;
             overflow-wrap: anywhere;
+          }
+
+          .roster-table th:nth-child(1),
+          .roster-table td:nth-child(1) {
+            width: 7mm !important;
+          }
+
+          .roster-table th:nth-child(2),
+          .roster-table td:nth-child(2) {
+            width: 18.5mm !important;
+          }
+
+          .roster-table th:nth-child(3),
+          .roster-table td:nth-child(3) {
+            width: 72mm !important;
+          }
+
+          .roster-table th:nth-child(4),
+          .roster-table td:nth-child(4) {
+            width: 9.5mm !important;
+          }
+
+          .roster-table th:nth-child(5),
+          .roster-table td:nth-child(5) {
+            width: 16.5mm !important;
+          }
+
+          .roster-table th:nth-child(6),
+          .roster-table td:nth-child(6) {
+            width: 9.5mm !important;
+          }
+
+          .roster-table th:nth-child(7),
+          .roster-table td:nth-child(7) {
+            width: 8.5mm !important;
+          }
+
+          .roster-table th:nth-child(n + 8),
+          .roster-table td:nth-child(n + 8),
+          .roster-table .class-list-note-extra {
+            width: 9.3mm !important;
+            min-width: 9.3mm !important;
+            max-width: 9.3mm !important;
+            text-align: center !important;
           }
 
           .roster-table .col-name {
             font-weight: 800 !important;
             white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: clip !important;
             font-size: calc(var(--class-list-font-size, 11px) * 0.96) !important;
           }
 
-          .roster-table .col-series,
-          .roster-table .col-board,
-          .roster-table .col-lv2,
-          .roster-table .col-nat,
-          .roster-table .class-list-note-extra {
-            width: 29px !important;
-            min-width: 29px !important;
-            text-align: center !important;
-          }
-
           .sheet-footer {
-            position: fixed !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: -13mm !important;
-            width: 198mm !important;
             box-sizing: border-box !important;
             grid-template-columns: 1fr 1.45fr 1fr !important;
             gap: 8px !important;
@@ -379,6 +445,22 @@ export default function ClassListPrintEnhancer() {
             line-height: 1.25 !important;
             color: #1f2937 !important;
             z-index: 1000 !important;
+          }
+
+          .class-list-sheet[data-roster-pagination="single"] .sheet-footer {
+            position: absolute !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 100% !important;
+          }
+
+          .class-list-sheet[data-roster-pagination="multi"] .sheet-footer {
+            position: fixed !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 198mm !important;
           }
 
           .export-brand-site {
