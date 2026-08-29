@@ -64,20 +64,23 @@ test("le voyant global reste léger et le relais demeure strictement optionnel",
   const badge = await read(badgePath);
   const layout = await read(layoutPath);
 
+  assert.match(badge, /useRelayCapability\(\)/);
   assert.match(badge, /getRelayConfig\(\)\.token/);
-  assert.match(badge, /if \(!getRelayConfig\(\)\.token\) return/);
+  assert.match(badge, /if \(!relayEnabled \|\| !getRelayConfig\(\)\.token\)/);
   assert.match(badge, /probeRelayHealth/);
   assert.doesNotMatch(badge, /readRelaySupervision/);
-  assert.match(badge, /if \(!enabled\) return null/);
+  assert.match(badge, /if \(!relayEnabled \|\| !getRelayConfig\(\)\.token\) return null/);
   assert.match(badge, /href="\/admin\/relais"/);
   assert.match(layout, /RelaySupervisionBadge/);
   assert.match(layout, /<RelaySupervisionBadge \/>/);
 });
 
-test("la sidebar expose explicitement Mon Cahier Relais dans Paramètres", async () => {
+test("la sidebar expose Mon Cahier Relais uniquement si la capacité est active", async () => {
   const sidebar = await read(sidebarPath);
 
   assert.match(sidebar, /href: "\/admin\/relais"/);
   assert.match(sidebar, /label: "Mon Cahier Relais"/);
   assert.match(sidebar, /const SETTINGS_ITEMS: NavItem\[\] = \[/);
+  assert.match(sidebar, /useRelayCapability\(\)/);
+  assert.match(sidebar, /relayEnabled \|\| item\.href !== "\/admin\/relais"/);
 });

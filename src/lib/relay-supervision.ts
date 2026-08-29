@@ -4,6 +4,7 @@ import {
   getRelayConfig,
   resolveRelayInstitutionId,
 } from "@/lib/local-relay";
+import { relayEnabledForInstitution } from "@/lib/relay-capability";
 
 export type RelaySupervisionState =
   | "operational"
@@ -180,6 +181,18 @@ function hasSyncIncident(dashboard: RelayDashboardPayload | null) {
 export async function probeRelayHealth(signal?: AbortSignal): Promise<RelayHealthProbe> {
   const config = getRelayConfig();
   const checkedAt = new Date().toISOString();
+  const institutionId = await resolveRelayInstitutionId(signal).catch(() => null);
+  if (!institutionId || !relayEnabledForInstitution(institutionId)) {
+    return {
+      checked_at: checkedAt,
+      configured: false,
+      base_url: config.baseUrl,
+      reachable: false,
+      data_ready: false,
+      health: null,
+      error: "relay_disabled_for_institution",
+    };
+  }
   try {
     // /health est volontairement public sur le LAN : aucun secret n'est envoyé
     // pour le simple voyant de disponibilité affiché dans le shell Admin.
@@ -216,6 +229,17 @@ export async function readRelaySupervision(
 ): Promise<RelaySupervisionSnapshot> {
   const config = getRelayConfig();
   const probe = await probeRelayHealth(signal);
+
+  if (probe.error === "relay_disabled_for_institution") {
+    return {
+      ...probe,
+      state: "not_configured",
+      message: "Cette fonction n'est pas activée pour cet établissement.",
+      institution_id: null,
+      dashboard: null,
+      dashboard_error: probe.error,
+    };
+  }
 
   if (!probe.reachable) {
     return {

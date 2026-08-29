@@ -57,6 +57,7 @@ import {
 } from "@/lib/local-relay";
 import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
+import { relayEnabledForInstitution } from "@/lib/relay-capability";
 import {
   canUseTeacherCloudFallback,
   decideOfflineSchedulePolicy,
@@ -667,8 +668,11 @@ export async function assessTeacherOfflineReadiness(
     };
   }
 
+  const relayEnabled = relayEnabledForInstitution(institutionId);
   const relayConfigured = Boolean(
-    relayPolicy?.relay_local_url && relayPolicy?.relay_access_token,
+    relayEnabled &&
+      relayPolicy?.relay_local_url &&
+      relayPolicy?.relay_access_token,
   );
 
   const [cloud, relay, workerInfo] = await Promise.all([
@@ -705,6 +709,29 @@ export async function assessTeacherOfflineReadiness(
       status: "not_prepared",
       message:
         "Le format du service hors ligne est incompatible. Une actualisation complète est requise.",
+    };
+  }
+  if (!relayEnabled) {
+    if (base.phone_revision === null) {
+      return {
+        ...state,
+        status: "not_prepared",
+        message: "La préparation PWA ne contient pas de révision complète.",
+      };
+    }
+    if (cloudRevision !== null && cloudRevision !== base.phone_revision) {
+      return {
+        ...state,
+        status: "phone_stale",
+        message: "Les données PWA de ce téléphone doivent être actualisées depuis le Cloud.",
+      };
+    }
+    return {
+      ...state,
+      status: "ready",
+      message: cloud
+        ? "Le Cloud et les données PWA de ce téléphone utilisent la même révision."
+        : "Connexion Cloud indisponible : les données PWA préparées restent utilisables.",
     };
   }
   const initialPolicy = decideOfflineSchedulePolicy({
@@ -896,6 +923,10 @@ export function classDeviceAccessDiagnosticMessage(value: unknown) {
       "L’accès au relais est désactivé pour cet établissement.",
     relay_local_access_disabled:
       "L’accès local au relais n’est pas autorisé pour cet établissement.",
+    relay_not_provisioned:
+      "Le fonctionnement local n’est pas activé pour cet établissement.",
+    relay_provisioning_unavailable:
+      "La configuration locale de cet établissement n’est pas disponible.",
     relay_url_missing:
       "L’adresse locale du relais est absente de la politique.",
     relay_secret_missing:

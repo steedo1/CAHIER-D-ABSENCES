@@ -17,6 +17,7 @@ import {
   ATTENDANCE_PREPARATION_CHECK_INTERVAL_MS,
   shouldRunAttendancePreparation,
 } from "@/lib/background-attendance-preparation-policy";
+import { rememberRelayCapability } from "@/lib/relay-capability";
 
 const ROLE_TIMEOUT_MS = 5_000;
 const ADMIN_PREPARATION_TIMEOUT_MS = 12_000;
@@ -25,6 +26,7 @@ type RolePayload = {
   user_id?: string;
   role?: string;
   institution_id?: string | null;
+  relay_enabled?: boolean;
   offline_access?: unknown;
 };
 
@@ -170,6 +172,12 @@ export default function BackgroundAttendancePreparation() {
               role = isOfflineAccessRole(payload.role) ? payload.role : null;
               userId = String(payload.user_id || userId).trim();
               institutionId = String(payload.institution_id || "").trim();
+              if (institutionId) {
+                rememberRelayCapability({
+                  institutionId,
+                  relayEnabled: payload.relay_enabled === true,
+                });
+              }
               cloudRoleVerified = Boolean(role && userId && institutionId);
             } catch (error) {
               // Une session Supabase peut encore être présente localement alors que
@@ -225,8 +233,8 @@ export default function BackgroundAttendancePreparation() {
             let prepared = false;
 
             if (role === "admin") {
-              // Appels garde sa lecture Cloud -> relais -> cache, y compris lorsque
-              // le Cloud est déjà coupé.
+              // Appels garde sa lecture Cloud -> cache, avec étape Relais seulement
+              // lorsque la capacité établissement a été confirmée explicitement.
               if (isAdminAttendancePath(pathnameRef.current)) {
                 await prepareAdminAttendanceView();
                 prepared = true;

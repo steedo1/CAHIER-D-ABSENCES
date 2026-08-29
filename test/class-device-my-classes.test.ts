@@ -34,7 +34,13 @@ function fakeService(options: FakeOptions): ClassDeviceMetadataReader {
             async in() {
               if (table === "relay_sync_devices") {
                 return {
-                  data: options.relayDevices || [],
+                  data: options.relayDevices ?? (options.policies || []).map((entry) => ({
+                    institution_id: entry.institution_id,
+                    observed_lan_urls: [],
+                    is_active: true,
+                    revoked_at: null,
+                    last_seen_at: "2026-08-01T00:00:00.000Z",
+                  })),
                   error: null,
                 };
               }
@@ -161,6 +167,9 @@ test("les endpoints observés remplacent automatiquement l'ancienne IPv4", async
       })],
       relayDevices: [{
         institution_id: "school-a",
+        is_active: true,
+        revoked_at: null,
+        last_seen_at: "2026-08-01T00:00:00.000Z",
         observed_lan_urls: [
           "http://192.168.209.246:4317",
           "http://laptop-2srli1bs.local:4317",
@@ -175,6 +184,22 @@ test("les endpoints observés remplacent automatiquement l'ancienne IPv4", async
     "http://192.168.209.246:4317",
     "http://192.168.206.246:4317",
   ]);
+});
+
+test("une politique seule n'active jamais un relais non provisionné", async () => {
+  const result = await enrichClassDeviceAccess({
+    items: [classRow("class-a", "school-a")],
+    actorProfileId: "device-profile-a",
+    service: fakeService({
+      policies: [policy("school-a")],
+      relayDevices: [],
+    }),
+  });
+  const presence: any = (result.items[0] as any).attendance_presence;
+  assert.equal(presence.enabled, false);
+  assert.equal(presence.allow_local_relay, false);
+  assert.equal(presence.relay_access_token, null);
+  assert.equal(presence.diagnostic, "relay_not_provisioned");
 });
 
 test("deux écoles et deux classes ne mélangent jamais leurs jetons", async () => {
@@ -473,7 +498,7 @@ test("la préparation actualise selectedClass avec la réponse fraîche", async 
       "utf8",
     ),
   ]);
-  assert.match(card, /await onPrepared\?\./);
+  assert.match(card, /await onPreparedRef\.current\?\./);
   assert.match(page, /onPrepared=\{refreshClassContextAfterPreparation\}/);
   assert.match(
     page,

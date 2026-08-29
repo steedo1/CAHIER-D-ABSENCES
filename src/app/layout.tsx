@@ -5,6 +5,7 @@ import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 import OfflineAccessGuard from "@/components/OfflineAccessGuard";
 import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePreparation";
+import RelayCapabilityProvider from "@/components/RelayCapabilityProvider";
 
 export const metadata: Metadata = {
   applicationName: "Mon Cahier",
@@ -36,8 +37,10 @@ export default function RootLayout({
     <html lang="fr">
       <body>
         <Providers>
-          <OfflineAccessGuard>{children}</OfflineAccessGuard>
-          <BackgroundAttendancePreparation />
+          <RelayCapabilityProvider>
+            <OfflineAccessGuard>{children}</OfflineAccessGuard>
+            <BackgroundAttendancePreparation />
+          </RelayCapabilityProvider>
         </Providers>
         <ServiceWorkerRegistrar />
       </body>

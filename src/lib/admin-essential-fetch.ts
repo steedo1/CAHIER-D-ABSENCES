@@ -3,6 +3,7 @@
 import { cacheGet, cacheSet } from "@/lib/offline";
 import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import { getRelayConfig } from "@/lib/local-relay";
+import { relayEnabledForInstitution } from "@/lib/relay-capability";
 
 const CACHE_PREFIX = "admin:essential:http:v1";
 const CACHE_SOURCE_HEADER = "X-Mon-Cahier-Data-Source";
@@ -545,6 +546,7 @@ async function readRelay(
   if (!isRelayBackedAdminReadPath(url.pathname)) return null;
   const scope = await adminScope();
   if (!scope) return null;
+  if (!relayEnabledForInstitution(scope.institution_id)) return null;
   const dashboard = await relayDashboard(originalFetch, scope, init?.signal);
   if (!dashboard) return null;
   return relayRosterResponse(url, dashboard);

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type NavItem = {
   href: string;
@@ -765,6 +766,7 @@ function GroupSection({
 }
 
 export default function SidebarNav() {
+  const { relayEnabled } = useRelayCapability();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentTab = searchParams.get("tab");
@@ -1103,8 +1105,13 @@ export default function SidebarNav() {
   );
 
   const settingsItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : SETTINGS_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    () =>
+      isInfirmier || isFinanceManager || isFinanceOnlyShell
+        ? []
+        : SETTINGS_ITEMS.filter(
+            (item) => relayEnabled || item.href !== "/admin/relais",
+          ),
+    [isInfirmier, isFinanceManager, isFinanceOnlyShell, relayEnabled],
   );
 
   const infirmaryActive = groupHasActiveItem(

@@ -8,6 +8,7 @@ import {
   probeRelayHealth,
   type RelayHealthProbe,
 } from "@/lib/relay-supervision";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 function labelFor(probe: RelayHealthProbe | null) {
   if (!probe) return "Relais : vérification…";
@@ -24,22 +25,24 @@ function classesFor(probe: RelayHealthProbe | null) {
 }
 
 export default function RelaySupervisionBadge() {
-  const [enabled, setEnabled] = useState(false);
+  const { relayEnabled } = useRelayCapability();
   const [probe, setProbe] = useState<RelayHealthProbe | null>(null);
 
   useEffect(() => {
     // Le relais reste strictement optionnel : aucun voyant ni aucune sonde LAN
     // pour les établissements/navigateurs qui ne l'ont jamais configuré.
-    if (!getRelayConfig().token) return;
-    setEnabled(true);
+    if (!relayEnabled || !getRelayConfig().token) {
+      setProbe(null);
+      return;
+    }
     const controller = new AbortController();
     void probeRelayHealth(controller.signal).then((result) => {
       if (!controller.signal.aborted) setProbe(result);
     });
     return () => controller.abort();
-  }, []);
+  }, [relayEnabled]);
 
-  if (!enabled) return null;
+  if (!relayEnabled || !getRelayConfig().token) return null;
 
   return (
     <Link

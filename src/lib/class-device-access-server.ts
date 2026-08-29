@@ -55,6 +55,8 @@ export type ClassDeviceAccessDiagnostic =
   | "relay_policy_missing"
   | "relay_disabled"
   | "relay_local_access_disabled"
+  | "relay_not_provisioned"
+  | "relay_provisioning_unavailable"
   | "relay_url_missing"
   | "relay_secret_missing"
   | "relay_secret_too_short";
@@ -83,6 +85,7 @@ function relayDiagnostic(
   row: ClassDeviceSourceRow,
   policy: AttendancePolicyRow | null,
   relayLocalUrls: string[],
+  relayProvisioned: boolean | null,
 ): ClassDeviceAccessDiagnostic | null {
   if (!text(row.institution_id)) return "institution_id_missing";
   if (!text(row.id)) return "class_id_missing";
@@ -91,6 +94,8 @@ function relayDiagnostic(
   if (policy.allow_local_relay !== true) {
     return "relay_local_access_disabled";
   }
+  if (relayProvisioned === null) return "relay_provisioning_unavailable";
+  if (!relayProvisioned) return "relay_not_provisioned";
   if (relayLocalUrls.length === 0) return "relay_url_missing";
   const secret = secretValue(policy.relay_presence_secret);
   if (!secret) return "relay_secret_missing";
@@ -233,11 +238,18 @@ export async function enrichClassDeviceAccess(input: {
     ]),
   );
   const observedUrlsByInstitution = new Map<string, string[]>();
+  const provisionedRelayInstitutions = new Set<string>();
   if (!relayDevicesResult.error) {
     for (const row of relayDevicesResult.data || []) {
-      if (row.is_active === false || text(row.revoked_at)) continue;
+      if (
+        row.is_active !== true ||
+        text(row.revoked_at) ||
+        !text(row.last_seen_at)
+      ) continue;
       const institutionId = text(row.institution_id);
-      if (!institutionId || !Array.isArray(row.observed_lan_urls)) continue;
+      if (!institutionId) continue;
+      provisionedRelayInstitutions.add(institutionId);
+      if (!Array.isArray(row.observed_lan_urls)) continue;
       observedUrlsByInstitution.set(institutionId, [
         ...(observedUrlsByInstitution.get(institutionId) || []),
         ...row.observed_lan_urls,
@@ -264,7 +276,14 @@ export async function enrichClassDeviceAccess(input: {
       configuredUrl: policy?.relay_local_url,
       observedUrls: observedUrlsByInstitution.get(institutionId),
     });
-    const accessDiagnostic = relayDiagnostic(row, policy, relayLocalUrls);
+    const accessDiagnostic = relayDiagnostic(
+      row,
+      policy,
+      relayLocalUrls,
+      relayDevicesResult.error
+        ? null
+        : provisionedRelayInstitutions.has(institutionId),
+    );
     const metadataDiagnostics = new Set<string>();
     if (institutionsResult.error) {
       metadataDiagnostics.add("institution_metadata_unavailable");

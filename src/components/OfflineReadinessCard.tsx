@@ -17,6 +17,7 @@ import {
   isClassDeviceOperationalReadiness,
   type ClassDeviceReadinessStatus,
 } from "@/lib/offlineClassDevice";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type Props = {
   role: OfflineRole;
@@ -56,9 +57,20 @@ function formatCheckedAt(value: string | undefined) {
 function automaticAttendanceMessage(
   assessment: TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null,
   role: OfflineRole,
+  relayEnabled: boolean,
 ) {
   if (!assessment) return null;
   const status = String(assessment.status || "");
+
+  if (!relayEnabled) {
+    if (status === "ready") return assessment.message;
+    if (status === "not_prepared" || status === "schedule_not_prepared") {
+      return "Les données PWA nécessaires sont en cours de préparation.";
+    }
+    return assessment.cloud_reachable
+      ? "Actualisation des données PWA depuis le Cloud en cours…"
+      : "Connexion Cloud indisponible. Les données PWA déjà préparées restent affichées.";
+  }
 
   if (status === "ready") {
     return assessment.cloud_reachable
@@ -93,6 +105,7 @@ export default function OfflineReadinessCard({
   classDeviceContext,
   onPrepared,
 }: Props) {
+  const { relayEnabled } = useRelayCapability();
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
@@ -272,7 +285,7 @@ export default function OfflineReadinessCard({
       : undefined;
   const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
   const relayConnectivityMessage = isAutomaticAttendance
-    ? automaticAttendanceMessage(assessment, role)
+    ? automaticAttendanceMessage(assessment, role, relayEnabled)
     : assessment
       ? assessment.message
       : relayConnectivity?.status === "reachable"

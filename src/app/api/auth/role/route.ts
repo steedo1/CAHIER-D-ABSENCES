@@ -8,6 +8,7 @@ import {
   isOfflineAccessRole,
   issueOfflineAccessGrant,
 } from "@/lib/offline-auth-contract";
+import { relayEnabledForInstitutionServer } from "@/lib/relay-capability-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -123,10 +124,18 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  const relayEnabled = institutionId
+    ? await relayEnabledForInstitutionServer(
+        getSupabaseServiceClient(),
+        institutionId,
+      )
+    : false;
+
   return noStore({
     user_id: user.id,
     role: primary,
     institution_id: institutionId || null,
+    relay_enabled: relayEnabled,
     offline_access: offlineAccess,
   });
 }

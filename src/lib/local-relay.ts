@@ -21,6 +21,10 @@ import {
   type AdminAttendanceDataSource,
 } from "@/lib/admin-attendance-monitor";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
+import {
+  relayEnabledForInstitution,
+  rememberRelayCapability,
+} from "@/lib/relay-capability";
 
 export type LocalDataSource = AdminAttendanceDataSource;
 
@@ -109,6 +113,29 @@ export class LocalRelayHttpError extends Error {
   ) {
     super(code);
     this.name = "LocalRelayHttpError";
+  }
+}
+
+function relayInstitutionFromAccessToken(token: string) {
+  if (!browser()) return null;
+  try {
+    const encoded = String(token || "").split(".")[0] || "";
+    const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const payload = JSON.parse(window.atob(padded));
+    return String(payload?.institution_id || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function assertRelayCapability(institutionId: string | null | undefined) {
+  const normalizedInstitutionId = String(institutionId || "").trim();
+  if (
+    !normalizedInstitutionId ||
+    !relayEnabledForInstitution(normalizedInstitutionId)
+  ) {
+    throw new LocalRelayHttpError(403, "relay_disabled_for_institution");
   }
 }
 
@@ -426,9 +453,18 @@ export async function resolveRelayInstitutionId(signal?: AbortSignal) {
   if (!browser()) return null;
 
   try {
-    const role = await cloudJson<{ institution_id?: string | null }>("/api/auth/role", signal);
+    const role = await cloudJson<{
+      institution_id?: string | null;
+      relay_enabled?: boolean;
+    }>("/api/auth/role", signal);
     const institutionId = String(role?.institution_id || "").trim();
-    if (institutionId) rememberRelayInstitution(institutionId);
+    if (institutionId) {
+      rememberRelayInstitution(institutionId);
+      rememberRelayCapability({
+        institutionId,
+        relayEnabled: role?.relay_enabled === true,
+      });
+    }
     if (institutionId) return institutionId;
   } catch {
     // Le Wi-Fi local peut rester actif sans accès Cloud.
@@ -533,7 +569,7 @@ export async function fetchAdminAttendanceMonitor<T>(
         saved_at: new Date().toISOString(),
       };
     },
-    relay: institutionId
+    relay: institutionId && relayEnabledForInstitution(institutionId)
       ? async () => {
           const relayInstitutionId = institutionId as string;
           const relayQuery = new URLSearchParams(query);
@@ -596,7 +632,7 @@ export async function fetchDashboardMetrics<T extends Record<string, any>>(
     if (signal?.aborted) throw cloudError;
     const cached = await readEnvelope<T>(key);
     const institutionId = await resolveRelayInstitutionId(signal);
-    if (institutionId) {
+    if (institutionId && relayEnabledForInstitution(institutionId)) {
       try {
         const today = new Intl.DateTimeFormat("en-CA", {
           timeZone: "Africa/Abidjan",
@@ -662,7 +698,7 @@ export async function fetchInstitutionSettings<T extends Record<string, any>>(
     if (signal?.aborted) throw cloudError;
     const cached = await readEnvelope<T>(key);
     const institutionId = await resolveRelayInstitutionId(signal);
-    if (institutionId) {
+    if (institutionId && relayEnabledForInstitution(institutionId)) {
       try {
         const today = new Intl.DateTimeFormat("en-CA", {
           timeZone: "Africa/Abidjan",
@@ -707,7 +743,7 @@ export async function fetchFounderAttendanceSlots<T>(
   } catch (cloudError) {
     if (signal?.aborted) throw cloudError;
     const institutionId = await resolveRelayInstitutionId(signal);
-    if (institutionId) {
+    if (institutionId && relayEnabledForInstitution(institutionId)) {
       try {
         const relay = await relayJson<T>(
           `/v1/founder/attendance-slots?${new URLSearchParams({
@@ -857,6 +893,10 @@ export function relayBootstrapErrorMessage(
 
 export async function syncRelayBootstrap(options: { force?: boolean } = {}) {
   if (!browser()) return { ok: false, skipped: "server" as const };
+  const institutionId = await resolveRelayInstitutionId().catch(() => null);
+  if (!institutionId || !relayEnabledForInstitution(institutionId)) {
+    return { ok: true, skipped: "relay_disabled" as const };
+  }
   const last = Number(window.localStorage.getItem(LAST_BOOTSTRAP_KEY) || 0);
   if (!options.force && Date.now() - last < BOOTSTRAP_THROTTLE_MS) {
     return { ok: true, skipped: "throttled" as const };
@@ -1011,6 +1051,7 @@ export async function requestRelayAttendancePresenceProof(input: {
   baseUrl: string;
   accessToken: string;
 }) {
+  assertRelayCapability(input.institutionId);
   return await relayJson<{
     ok: true;
     proof: string;
@@ -1037,6 +1078,7 @@ export async function postRelayTeacherAttendanceOperation(input: {
   accessToken: string;
   payload: TeacherAttendanceRelayPayload;
 }) {
+  assertRelayCapability(relayInstitutionFromAccessToken(input.accessToken));
   return await relayJson<{
     ok: true;
     operation_id: string;
@@ -1059,6 +1101,7 @@ export async function postRelayTeacherAttendanceSessionOpen(input: {
   accessToken: string;
   payload: TeacherSessionOpenRelayPayload;
 }) {
+  assertRelayCapability(relayInstitutionFromAccessToken(input.accessToken));
   return await relayJson<{
     ok: true;
     operation_id: string;
@@ -1095,6 +1138,7 @@ export async function postRelayTeacherAttendanceSessionClose(input: {
   accessToken: string;
   payload: TeacherSessionCloseRelayPayload;
 }) {
+  assertRelayCapability(relayInstitutionFromAccessToken(input.accessToken));
   return await relayJson<{
     ok: true;
     operation_id: string;
@@ -1127,6 +1171,7 @@ export async function postRelayTeacherAttendanceSessionTransition(input: {
   accessToken: string;
   payload: TeacherSessionTransitionRelayPayload;
 }) {
+  assertRelayCapability(relayInstitutionFromAccessToken(input.accessToken));
   return await relayJson<{
     ok: true;
     operation_id: string;
@@ -1201,7 +1246,12 @@ async function checkRelayTeacherConnectivityAtUrl(input: {
   const institutionId = String(input.institutionId || "").trim();
   const accessToken = String(input.accessToken || "").trim();
   const baseUrl = normalizeBaseUrl(input.baseUrl);
-  if (!browser() || !institutionId || !accessToken) {
+  if (
+    !browser() ||
+    !institutionId ||
+    !accessToken ||
+    !relayEnabledForInstitution(institutionId)
+  ) {
     return { status: "unreachable", checked_at: checkedAt };
   }
 
@@ -1374,6 +1424,7 @@ export async function fetchRelayTeacherOfflineSchedule(input: {
   baseUrl: string;
   accessToken: string;
 }) {
+  assertRelayCapability(input.institutionId);
   const schedule = await relayJson<RelayTeacherOfflineSchedule>(
     "/v1/teacher/offline-schedule",
     {

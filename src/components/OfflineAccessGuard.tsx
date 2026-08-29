@@ -15,6 +15,7 @@ import {
   isOfflineAccessPath,
   isOfflinePathAllowedForRole,
 } from "@/lib/offline-auth-contract";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/recover", "/redirect"]);
 const CLIENT_PROTECTED_PREFIXES = [
@@ -50,6 +51,10 @@ type GuardState =
 export default function OfflineAccessGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { session, loading } = useAuth();
+  const {
+    relayEnabled,
+    resolved: relayCapabilityResolved,
+  } = useRelayCapability();
   const [state, setState] = useState<GuardState>({ status: "checking" });
   const [authRevision, setAuthRevision] = useState(0);
 
@@ -94,18 +99,11 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
         return;
       }
 
+      if (pathname.startsWith("/admin") && !relayCapabilityResolved) return;
+
       const intent = await getOfflineAccessIntent();
       if (cancelled) return;
       if (intent) {
-        if (!isOfflinePathAllowedForRole(intent.payload.role, pathname)) {
-          setState({
-            status: "blocked",
-            destination: intent.payload.destination,
-            reason:
-              "Cette page n’est pas disponible dans le périmètre hors ligne préparé pour ce rôle.",
-          });
-          return;
-        }
         const active = await getActiveOfflineAccess();
         if (cancelled) return;
         if (!active) {
@@ -113,6 +111,25 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
             status: "blocked",
             destination: null,
             reason: "La preuve locale de cette session n’est plus valide.",
+          });
+          return;
+        }
+        // Sans Relais, une coupure réseau conserve la page Cloud/PWA courante :
+        // elle ne transforme jamais le grant Admin en navigation réduite Relais.
+        if (
+          intent.payload.role === "admin" &&
+          pathname.startsWith("/admin") &&
+          !relayEnabled
+        ) {
+          setState({ status: "allowed" });
+          return;
+        }
+        if (!isOfflinePathAllowedForRole(intent.payload.role, pathname)) {
+          setState({
+            status: "blocked",
+            destination: intent.payload.destination,
+            reason:
+              "Cette page n’est pas disponible dans le périmètre hors ligne préparé pour ce rôle.",
           });
           return;
         }
@@ -139,7 +156,14 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
     return () => {
       cancelled = true;
     };
-  }, [authRevision, loading, pathname, session]);
+  }, [
+    authRevision,
+    loading,
+    pathname,
+    relayCapabilityResolved,
+    relayEnabled,
+    session,
+  ]);
 
   if (loading || state.status === "checking") {
     if (!pathname || !isClientProtectedPath(pathname)) return children;

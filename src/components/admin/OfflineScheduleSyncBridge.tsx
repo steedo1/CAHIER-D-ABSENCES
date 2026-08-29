@@ -12,6 +12,7 @@ import {
   type AdminScheduleSyncState,
 } from "@/lib/local-relay";
 import { isOfflineScheduleMutation } from "@/lib/admin-offline-schedule";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 function requestPath(input: RequestInfo | URL) {
   try {
@@ -28,33 +29,31 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return "GET";
 }
 
-function hasConfiguredAdminRelay() {
-  return Boolean(getRelayConfig().token);
-}
-
 export default function OfflineScheduleSyncBridge() {
+  const { relayEnabled } = useRelayCapability();
   const [state, setState] = useState<AdminScheduleSyncState | null>(null);
 
   useEffect(() => {
-    const relayConfigured = hasConfiguredAdminRelay();
+    const relayConfigured = relayEnabled && Boolean(getRelayConfig().token);
     const persisted = relayConfigured ? getAdminScheduleSyncState() : null;
     setState(persisted);
     const unsubscribe = subscribeAdminScheduleSync((nextState) => {
-      setState(hasConfiguredAdminRelay() ? nextState : null);
+      setState(relayConfigured ? nextState : null);
     });
     if (relayConfigured && persisted && persisted.status !== "synced") {
       void syncRelayScheduleAfterMutation();
     }
     return unsubscribe;
-  }, []);
+  }, [relayEnabled]);
 
   useEffect(() => {
+    if (!relayEnabled) return;
     const previousFetch = window.fetch;
     const interceptedFetch: typeof window.fetch = async (input, init) => {
       const response = await previousFetch(input, init);
       if (
         response.ok &&
-        hasConfiguredAdminRelay() &&
+        Boolean(getRelayConfig().token) &&
         isOfflineScheduleMutation(
           requestPath(input),
           requestMethod(input, init),
@@ -69,7 +68,7 @@ export default function OfflineScheduleSyncBridge() {
     return () => {
       if (window.fetch === interceptedFetch) window.fetch = previousFetch;
     };
-  }, []);
+  }, [relayEnabled]);
 
   if (!state || state.status === "synced") return null;
 

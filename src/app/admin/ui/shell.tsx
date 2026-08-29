@@ -34,10 +34,10 @@ import {
   isOfflinePathAllowedForRole,
 } from "@/lib/offline-auth-contract";
 import { warmOfflineShell } from "@/lib/offline";
-import { probeCloudSchedule } from "@/lib/cloud-availability";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 const OFFLINE_ADMIN_NAV_ITEMS = [
   {
@@ -144,14 +144,13 @@ function LoadingOverlay({ label }: { label: string }) {
 
 export default function AdminShell({ children }: { children: ReactNode }) {
   const { session } = useAuth();
+  const { relayEnabled } = useRelayCapability();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const pathname = usePathname();
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeLabel, setRouteLabel] = useState("Chargement…");
   const [offlineAdminMode, setOfflineAdminMode] = useState(false);
-  const [adminOfflineGrantReady, setAdminOfflineGrantReady] = useState(false);
-  const [cloudReachable, setCloudReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,8 +159,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       const intent = await getOfflineAccessIntent().catch(() => null);
       if (cancelled) return;
       const adminGrantReady = intent?.payload.role === "admin";
-      setAdminOfflineGrantReady(adminGrantReady);
-      setOfflineAdminMode(!session && adminGrantReady);
+      setOfflineAdminMode(!session && adminGrantReady && relayEnabled);
     };
 
     const handleAuthState = () => void refresh();
@@ -171,59 +169,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       cancelled = true;
       window.removeEventListener(OFFLINE_AUTH_STATE_EVENT, handleAuthState);
     };
-  }, [session]);
-
-  useEffect(() => {
-    if (!session || (role !== "admin" && !adminOfflineGrantReady)) {
-      setCloudReachable(session ? true : null);
-      return;
-    }
-
-    let cancelled = false;
-    let timer: number | null = null;
-    let checking = false;
-
-    const scheduleNextCheck = (reachable: boolean) => {
-      if (cancelled) return;
-      if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(
-        () => void checkCloud(),
-        reachable ? 10_000 : 3_000,
-      );
-    };
-
-    const checkCloud = async () => {
-      if (cancelled || checking) return;
-      checking = true;
-      try {
-        const cloud = await probeCloudSchedule(2_500);
-        if (cancelled) return;
-        const reachable = Boolean(cloud);
-        setCloudReachable(reachable);
-        scheduleNextCheck(reachable);
-      } finally {
-        checking = false;
-      }
-    };
-
-    const refreshCloud = () => void checkCloud();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") refreshCloud();
-    };
-
-    void checkCloud();
-    window.addEventListener("focus", refreshCloud);
-    window.addEventListener("online", refreshCloud);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-      window.removeEventListener("focus", refreshCloud);
-      window.removeEventListener("online", refreshCloud);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [adminOfflineGrantReady, role, session]);
+  }, [relayEnabled, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -342,11 +288,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     startLoading("Traitement en cours…");
   }
 
-  const cloudFallbackAdminMode =
-    Boolean(session) &&
-    (role === "admin" || adminOfflineGrantReady) &&
-    cloudReachable === false;
-  const essentialAdminMode = offlineAdminMode || cloudFallbackAdminMode;
+  // Une panne réseau ne change jamais de shell. Le menu essentiel n'est activé
+  // qu'après une authentification locale explicite dans une école avec Relais.
+  const essentialAdminMode = offlineAdminMode;
 
   const isFinanceManager = role === "finance_manager";
   const isInfirmier = role === "infirmier";

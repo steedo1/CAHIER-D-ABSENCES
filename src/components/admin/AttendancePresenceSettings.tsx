@@ -8,6 +8,7 @@ import {
   syncRelayScheduleAfterMutation,
 } from "@/lib/local-relay";
 import RelayCloudSyncDevices from "@/components/admin/RelayCloudSyncDevices";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type Zone = {
   id: string;
@@ -30,6 +31,7 @@ const DEFAULT_POLICY = {
 };
 
 export default function AttendancePresenceSettings() {
+  const { relayEnabled } = useRelayCapability();
   const [policy, setPolicy] = useState(DEFAULT_POLICY);
   const [zones, setZones] = useState<Zone[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,11 +61,13 @@ export default function AttendancePresenceSettings() {
   }
 
   useEffect(() => {
-    const relay = getRelayConfig();
-    setRelayAdminUrl(relay.baseUrl);
-    setRelayAdminToken(relay.token || "");
+    if (relayEnabled) {
+      const relay = getRelayConfig();
+      setRelayAdminUrl(relay.baseUrl);
+      setRelayAdminToken(relay.token || "");
+    }
     void load();
-  }, []);
+  }, [relayEnabled]);
 
   function addZone() {
     setZones((current) => [
@@ -106,22 +110,31 @@ export default function AttendancePresenceSettings() {
     setSaving(true);
     setMessage(null);
     try {
+      const savedPolicy = {
+        ...policy,
+        allow_local_relay: relayEnabled && policy.allow_local_relay,
+      };
       const response = await fetch("/api/admin/attendance/presence-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ policy, zones }),
+        body: JSON.stringify({ policy: savedPolicy, zones }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || "Enregistrement impossible.");
-      saveRelayConfig({ baseUrl: relayAdminUrl, token: relayAdminToken });
-      const relay = await syncRelayScheduleAfterMutation().catch((error: any) => ({
-        ok: false,
-        error: String(error?.message || error),
-        details: null,
-      }));
+      let relay: Awaited<ReturnType<typeof syncRelayScheduleAfterMutation>> | null = null;
+      if (relayEnabled) {
+        saveRelayConfig({ baseUrl: relayAdminUrl, token: relayAdminToken });
+        relay = await syncRelayScheduleAfterMutation().catch((error: any) => ({
+          ok: false as const,
+          error: String(error?.message || error),
+          details: null,
+        }));
+      }
       await load();
       setMessage(
-        relay.ok
+        !relay
+          ? "Verrouillage enregistré dans le Cloud ✅"
+          : relay.ok
           ? "Verrouillage enregistré et relais synchronisé ✅"
           : `Verrouillage enregistré dans le Cloud. ${relayBootstrapErrorMessage(relay)}`,
       );
@@ -158,8 +171,9 @@ export default function AttendancePresenceSettings() {
             Périmètre des appels enseignants
           </div>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">
-            Le réseau local confirme la présence sans GPS. Hors de ce réseau, l'enseignant doit
-            autoriser une vérification GPS ponctuelle. Aucun suivi permanent n'est effectué.
+            {relayEnabled
+              ? "Le réseau local confirme la présence sans GPS. Hors de ce réseau, l’enseignant doit autoriser une vérification GPS ponctuelle. Aucun suivi permanent n’est effectué."
+              : "La présence peut être confirmée par une vérification GPS ponctuelle. Aucun suivi permanent n’est effectué."}
           </p>
         </div>
         <label className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-semibold">
@@ -174,18 +188,20 @@ export default function AttendancePresenceSettings() {
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="rounded-2xl border bg-white p-3 text-sm">
-          <span className="flex items-center gap-2 font-semibold">
-            <input
-              type="checkbox"
-              checked={policy.allow_local_relay}
-              onChange={(event) => setPolicy((current) => ({ ...current, allow_local_relay: event.target.checked }))}
-              disabled={loading || saving}
-            />
-            Autoriser par le relais local
-          </span>
-          <span className="mt-1 block text-xs text-slate-500">Aucune activation GPS si le relais de l'école répond.</span>
-        </label>
+        {relayEnabled ? (
+          <label className="rounded-2xl border bg-white p-3 text-sm">
+            <span className="flex items-center gap-2 font-semibold">
+              <input
+                type="checkbox"
+                checked={policy.allow_local_relay}
+                onChange={(event) => setPolicy((current) => ({ ...current, allow_local_relay: event.target.checked }))}
+                disabled={loading || saving}
+              />
+              Autoriser par le relais local
+            </span>
+            <span className="mt-1 block text-xs text-slate-500">Aucune activation GPS si le relais de l’école répond.</span>
+          </label>
+        ) : null}
         <label className="rounded-2xl border bg-white p-3 text-sm">
           <span className="flex items-center gap-2 font-semibold">
             <input
@@ -200,7 +216,7 @@ export default function AttendancePresenceSettings() {
         </label>
       </div>
 
-      <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+      {relayEnabled ? <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
         <div className="text-xs font-black uppercase tracking-wide text-slate-700">
           Connexion du poste d'administration au relais
         </div>
@@ -234,12 +250,12 @@ export default function AttendancePresenceSettings() {
             Tester et synchroniser
           </button>
         </div>
-      </div>
+      </div> : null}
 
-      <RelayCloudSyncDevices />
+      {relayEnabled ? <RelayCloudSyncDevices /> : null}
 
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <div className="rounded-xl border bg-white p-3 text-xs text-slate-600 md:col-span-2">
+        {relayEnabled ? <div className="rounded-xl border bg-white p-3 text-xs text-slate-600 md:col-span-2">
           <div className="font-bold text-slate-800">Adresses du relais détectées automatiquement</div>
           {detectedRelayUrls.length ? (
             <div className="mt-2 space-y-1 font-mono text-[11px]">
@@ -250,7 +266,7 @@ export default function AttendancePresenceSettings() {
               En attente de la première connexion Cloud du PC relais. Aucune adresse IP ne doit être saisie manuellement.
             </p>
           )}
-        </div>
+        </div> : null}
         <label className="text-xs font-semibold text-slate-600">
           Précision GPS maximale acceptée (m)
           <input

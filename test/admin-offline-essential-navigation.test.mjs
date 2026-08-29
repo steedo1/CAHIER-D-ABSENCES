@@ -106,13 +106,15 @@ test("le service worker sait servir les écrans Admin essentiels et les listes d
 });
 
 
-test("le shell Admin bascule sur le périmètre essentiel quand le Cloud devient indisponible", async () => {
+test("le shell Admin ne confond jamais indisponibilité Cloud et mode Relais", async () => {
   const shell = await read("src/app/admin/ui/shell.tsx");
 
-  assert.match(shell, /probeCloudSchedule\(2_500\)/);
-  assert.match(shell, /cloudReachable === false/);
-  assert.match(shell, /const essentialAdminMode = offlineAdminMode \|\| cloudFallbackAdminMode/);
-  assert.match(shell, /reachable \? 10_000 : 3_000/);
+  assert.match(shell, /useRelayCapability\(\)/);
+  assert.match(shell, /!session && adminGrantReady && relayEnabled/);
+  assert.match(shell, /const essentialAdminMode = offlineAdminMode/);
+  assert.doesNotMatch(shell, /probeCloudSchedule/);
+  assert.doesNotMatch(shell, /cloudReachable/);
+  assert.doesNotMatch(shell, /cloudFallbackAdminMode/);
 });
 
 test("la navigation essentielle force une vraie navigation document hors ligne", async () => {

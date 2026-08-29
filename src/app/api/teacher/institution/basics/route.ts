@@ -125,8 +125,14 @@ export async function GET() {
       (row: any) => Array.isArray(row.observed_lan_urls) ? row.observed_lan_urls : [],
     ),
   });
+  const relayProvisioned =
+    !relayDevicesResult.error &&
+    (relayDevicesResult.data || []).some((row: any) =>
+      Boolean(String(row.last_seen_at || "").trim()),
+    );
   const relayEnabled =
     !migrationMissing &&
+    relayProvisioned &&
     isTeacher &&
     presencePolicy.enabled === true &&
     presencePolicy.allow_local_relay !== false &&
@@ -150,7 +156,7 @@ export async function GET() {
     attendance_presence: {
       enabled: migrationMissing ? false : isTeacher && presencePolicy.enabled === true,
       teacher_accounts_only: true,
-      allow_local_relay: presencePolicy.allow_local_relay !== false,
+      allow_local_relay: relayEnabled,
       allow_gps_fallback: presencePolicy.allow_gps_fallback !== false,
       relay_local_url: relayEnabled ? relayLocalUrls[0] : null,
       relay_local_urls: relayEnabled ? relayLocalUrls : [],

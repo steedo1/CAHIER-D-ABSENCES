@@ -20,6 +20,7 @@ import {
   sanitizedRelayDiagnostic,
   type RelaySupervisionSnapshot,
 } from "@/lib/relay-supervision";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -74,6 +75,7 @@ function MiniCard(props: {
 }
 
 export default function RelaySupervisionPage() {
+  const { relayEnabled, resolved } = useRelayCapability();
   const [snapshot, setSnapshot] = useState<RelaySupervisionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -81,6 +83,11 @@ export default function RelaySupervisionPage() {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (!relayEnabled) {
+      setSnapshot(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const result = await readRelaySupervision();
@@ -88,11 +95,11 @@ export default function RelaySupervisionPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [relayEnabled]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (resolved) void refresh();
+  }, [refresh, resolved]);
 
   const syncNow = useCallback(async () => {
     setSyncing(true);
@@ -125,6 +132,27 @@ export default function RelaySupervisionPage() {
     () => (snapshot ? JSON.stringify(sanitizedRelayDiagnostic(snapshot), null, 2) : ""),
     [snapshot],
   );
+
+  if (!resolved) {
+    return (
+      <main className="mx-auto w-full max-w-4xl px-4 py-10 text-sm text-slate-500">
+        Vérification des fonctions disponibles…
+      </main>
+    );
+  }
+
+  if (!relayEnabled) {
+    return (
+      <main className="mx-auto w-full max-w-4xl px-4 py-10">
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-bold text-slate-950">Fonction indisponible</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Cette fonction n’est pas activée pour cet établissement.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">

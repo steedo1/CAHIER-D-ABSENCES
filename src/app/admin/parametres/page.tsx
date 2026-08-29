@@ -10,6 +10,7 @@ import {
 } from "@/lib/default-general-secondary-coefficients-ci";
 import AttendancePresenceSettings from "@/components/admin/AttendancePresenceSettings";
 import { getRelayConfig, syncRelayBootstrap } from "@/lib/local-relay";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -726,6 +727,7 @@ function computeAcademicYearFromDate(d: Date = new Date()): string {
    Page
 ========================= */
 export default function AdminSettingsPage() {
+  const { relayEnabled } = useRelayCapability();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1854,11 +1856,11 @@ export default function AdminSettingsPage() {
           .join(" / ") || `${all.length}`;
 
       const savedMessage = `Créneaux enregistrés ✅ (${changes})`;
-      const relayConfig = getRelayConfig();
+      const relayConfig = relayEnabled ? getRelayConfig() : null;
       let finalMessage = savedMessage;
       let toastLevel: "success" | "info" | "error" = "success";
 
-      if (relayConfig.token) {
+      if (relayConfig?.token) {
         setMsgSched(`${savedMessage} • Synchronisation du relais local…`);
         const relay = await syncRelayBootstrap({ force: true }).catch((error: any) => ({
           ok: false,

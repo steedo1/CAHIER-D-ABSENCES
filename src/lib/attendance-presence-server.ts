@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { distanceMeters, type AttendancePresenceEvidence } from "./attendance-presence";
+import { relayEnabledForInstitutionServer } from "./relay-capability-server";
 
 const OFFLINE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -162,6 +163,18 @@ export async function verifyAttendancePresence(input: {
   if (input.evidence.method === "local_relay") {
     if (!policy.allow_local_relay) {
       throw new PresenceVerificationError(403, "relay_presence_disabled", "La preuve par relais est désactivée.");
+    }
+    if (
+      !(await relayEnabledForInstitutionServer(
+        input.service,
+        input.institutionId,
+      ))
+    ) {
+      throw new PresenceVerificationError(
+        403,
+        "relay_not_enabled_for_institution",
+        "La preuve locale n’est pas activée pour cet établissement.",
+      );
     }
     const payload = decodeRelayProof(input.evidence.proof, String(policy.relay_presence_secret || ""));
     if (
