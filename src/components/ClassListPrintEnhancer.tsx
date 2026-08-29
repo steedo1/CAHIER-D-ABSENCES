@@ -20,7 +20,96 @@ function classLabelFromTitle(title: HTMLElement | null) {
     .trim();
 }
 
+function isUppercaseNameToken(value: string) {
+  const letters = value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, "");
+  return Boolean(letters) && letters === letters.toUpperCase();
+}
+
+function compactPrintedStudentName(value: string | null | undefined) {
+  const full = cleanText(value);
+  if (!full) return "";
+
+  const tokens = full.split(" ").filter(Boolean);
+  if (tokens.length <= 4) return full;
+
+  // Le nom de famille est déjà rendu en majuscules dans la liste. On conserve
+  // tous les tokens initiaux en majuscules quand ils sont identifiables.
+  let surnameTokenCount = 0;
+  for (const token of tokens) {
+    if (!isUppercaseNameToken(token)) break;
+    surnameTokenCount += 1;
+  }
+
+  // Si toute la chaîne est en majuscules, on garde le premier token comme nom
+  // afin de ne pas empêcher l'abréviation des prénoms importés en capitales.
+  if (surnameTokenCount === 0 || surnameTokenCount === tokens.length) {
+    surnameTokenCount = 1;
+  }
+
+  const surname = tokens.slice(0, surnameTokenCount);
+  const givenNames = tokens.slice(surnameTokenCount);
+  const keptGivenNames = givenNames.slice(0, 2);
+  const abbreviatedGivenNames = givenNames.slice(2).map((name) => {
+    const initial = name.replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+/, "").charAt(0);
+    return initial ? `${initial.toUpperCase()}.` : "";
+  });
+
+  return [...surname, ...keptGivenNames, ...abbreviatedGivenNames]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
+  const table = sheet.querySelector<HTMLTableElement>(".roster-table");
+  if (!table) return;
+
+  const headerRow = table.querySelector<HTMLTableRowElement>("thead tr");
+  if (!headerRow) return;
+
+  if (!headerRow.querySelector('[data-class-list-note="5"]')) {
+    for (const note of [5, 6]) {
+      const th = document.createElement("th");
+      th.className = "class-list-note-extra";
+      th.dataset.classListNote = String(note);
+      th.textContent = `Note${note}`;
+      headerRow.appendChild(th);
+    }
+  }
+
+  const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"));
+  rows.forEach((row) => {
+    const emptyCell = row.querySelector<HTMLTableCellElement>("td[colspan]");
+    if (emptyCell) {
+      emptyCell.colSpan = headerRow.cells.length;
+      return;
+    }
+
+    const nameCell = row.querySelector<HTMLTableCellElement>("td.col-name");
+    if (nameCell) {
+      if (!nameCell.dataset.classListFullName) {
+        nameCell.dataset.classListFullName = cleanText(nameCell.textContent);
+      }
+      const compact = compactPrintedStudentName(nameCell.dataset.classListFullName);
+      if (cleanText(nameCell.textContent) !== compact) {
+        nameCell.textContent = compact;
+      }
+      nameCell.title = nameCell.dataset.classListFullName;
+    }
+
+    if (!row.querySelector('[data-class-list-note="5"]')) {
+      for (const note of [5, 6]) {
+        const td = document.createElement("td");
+        td.className = "class-list-note-extra";
+        td.dataset.classListNote = String(note);
+        row.appendChild(td);
+      }
+    }
+  });
+}
+
 function applyResponsivePrintSizing(sheet: HTMLElement) {
+  enhanceRosterColumnsAndNames(sheet);
+
   const rows = Array.from(
     sheet.querySelectorAll<HTMLTableRowElement>(".roster-table tbody tr"),
   ).filter((row) => !row.querySelector("td[colspan]"));
@@ -72,7 +161,8 @@ export default function ClassListPrintEnhancer() {
 
       if (exportButton) {
         if (!exportButton.dataset.classListOriginalDisplay) {
-          exportButton.dataset.classListOriginalDisplay = exportButton.style.display || "__empty__";
+          exportButton.dataset.classListOriginalDisplay =
+            exportButton.style.display || "__empty__";
         }
         exportButton.style.display = "none";
         if (exportButton.parentElement) setPortalTarget(exportButton.parentElement);
@@ -152,6 +242,11 @@ export default function ClassListPrintEnhancer() {
     <>
       {buttons}
       <style jsx global>{`
+        .class-list-sheet .class-list-note-extra {
+          width: 42px;
+          text-align: center;
+        }
+
         @media print {
           @page {
             size: A4 portrait;
@@ -233,7 +328,7 @@ export default function ClassListPrintEnhancer() {
           .roster-table thead th {
             font-size: var(--class-list-header-font-size, 11.4px) !important;
             line-height: 1.15 !important;
-            padding: 1.5mm 1mm !important;
+            padding: 1.5mm 0.8mm !important;
           }
 
           .roster-table tbody tr {
@@ -246,13 +341,25 @@ export default function ClassListPrintEnhancer() {
           .roster-table tbody td {
             font-size: var(--class-list-font-size, 11px) !important;
             line-height: 1.18 !important;
-            padding: 1.05mm 1mm !important;
+            padding: 1.05mm 0.8mm !important;
             vertical-align: middle !important;
             overflow-wrap: anywhere;
           }
 
           .roster-table .col-name {
             font-weight: 800 !important;
+            white-space: nowrap !important;
+            font-size: calc(var(--class-list-font-size, 11px) * 0.96) !important;
+          }
+
+          .roster-table .col-series,
+          .roster-table .col-board,
+          .roster-table .col-lv2,
+          .roster-table .col-nat,
+          .roster-table .class-list-note-extra {
+            width: 29px !important;
+            min-width: 29px !important;
+            text-align: center !important;
           }
 
           .sheet-footer {
