@@ -48,6 +48,42 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
+  // Garde serveur obligatoire : un snapshot relais ne peut être construit que
+  // pour un établissement qui a explicitement activé le relais ET possède au
+  // moins un PC relais actif enregistré. NULL/false/aucun appareil = interdit.
+  const [policyResult, deviceResult] = await Promise.all([
+    srv
+      .from("institution_attendance_policies")
+      .select("allow_local_relay")
+      .eq("institution_id", institutionId)
+      .maybeSingle(),
+    srv
+      .from("relay_sync_devices")
+      .select("id", { count: "exact", head: true })
+      .eq("institution_id", institutionId)
+      .eq("is_active", true),
+  ]);
+
+  const allowLocalRelay = policyResult.data?.allow_local_relay === true;
+  const activeRelayDevices = deviceResult.error
+    ? 0
+    : Math.max(0, Number(deviceResult.count || 0));
+  const relayCapable = allowLocalRelay && activeRelayDevices > 0;
+
+  if (!relayCapable) {
+    return NextResponse.json(
+      {
+        error: "relay_not_enabled",
+        message: "Mon Cahier Relais n'est pas activé pour cet établissement.",
+        relay_capable: false,
+      },
+      {
+        status: 403,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
+  }
+
   try {
     const snapshot = await buildRelayBootstrapSnapshot(srv, institutionId);
     return NextResponse.json(snapshot, {
