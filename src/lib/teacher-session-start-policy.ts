@@ -3,6 +3,7 @@ export type TeacherSessionStartMode =
   | "cloud_relay_presence"
   | "cloud_gps_presence"
   | "relay_only"
+  | "device_only"
   | "blocked";
 
 export type TeacherSessionStartDecision = {
@@ -25,15 +26,20 @@ export function decideTeacherSessionStart(input: {
     input.relay_schedule_matches;
 
   if (!input.cloud_available) {
-    return usableRelay
-      ? { mode: "relay_only", force_gps: false, reason: null }
-      : {
-          mode: "blocked",
-          force_gps: false,
-          reason: input.relay_reachable
-            ? "relay_schedule_mismatch"
-            : "cloud_and_relay_unavailable",
-        };
+    if (usableRelay) {
+      return { mode: "relay_only", force_gps: false, reason: null };
+    }
+
+    // L'absence simultanée du Cloud et du relais ne doit jamais empêcher
+    // l'appel. Le téléphone conserve la séance et les marques localement,
+    // puis les rejoue automatiquement dès qu'un chemin réseau revient.
+    return {
+      mode: "device_only",
+      force_gps: false,
+      reason: input.relay_reachable
+        ? "relay_schedule_mismatch"
+        : "cloud_and_relay_unavailable",
+    };
   }
 
   if (!input.presence_enabled) {

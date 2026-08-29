@@ -1629,6 +1629,44 @@ export default function TeacherDashboard() {
           relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
+        if (startDecision.mode === "device_only" && local.state === "device_pending") {
+          const localOpen: OpenSession = {
+            id: `client:${clientSessionId}`,
+            class_id: sel.class_id,
+            class_label: sel.class_label,
+            subject_id: sel.subject_id,
+            subject_name: sel.subject_name,
+            started_at: started.toISOString(),
+            actual_call_at: observedNowIso(),
+            expected_minutes: effectiveDuration,
+            period_id: activeConfiguredSlot.id,
+            presence_method: "not_required",
+            local_relay: false,
+            education_type: sel.education_type || "general_secondary",
+            education_label: sel.education_label || "Secondaire général",
+            education_short_label: sel.education_short_label || "Général",
+            formation_code: sel.formation_code || null,
+            formation_label: sel.formation_label || null,
+            formation_level_code: sel.formation_level_code || null,
+            formation_level_label: sel.formation_level_label || null,
+            education_context_key:
+              sel.education_context_key ||
+              sel.education_type ||
+              "general_secondary",
+            education_context_label:
+              sel.education_context_label ||
+              sel.education_label ||
+              "Secondaire général",
+          };
+          setAttendanceDelivery(null);
+          setTransitionPrompt(null);
+          setOpen(localOpen);
+          await cacheSet("teacher:local-open", localOpen);
+          setMsg(
+            "Hors connexion : séance ouverte sur cet appareil et conservée en attente de synchronisation.",
+          );
+          return;
+        }
         if (local.state === "relay_opened" && local.session_id) {
           const localOpen: OpenSession = {
             id: local.session_id,
