@@ -13,6 +13,59 @@ type ConnectionLike = {
   saveData?: boolean;
 };
 
+type AttendanceWindow = typeof window & {
+  __MON_CAHIER_ATTENDANCE_FETCH_V1__?: boolean;
+};
+
+type FetchLike = typeof fetch;
+
+let originalBrowserFetch: FetchLike | null = null;
+
+const ATTENDANCE_INTERACTIVE_READ_PATHS = [
+  /^\/api\/teacher\/classes$/,
+  /^\/api\/teacher\/roster$/,
+  /^\/api\/teacher\/sessions\/open$/,
+  /^\/api\/teacher\/institution\/(?:basics|settings|periods)$/,
+  /^\/api\/class\/(?:my-classes|roster|subjects)$/,
+  /^\/api\/institution\/(?:settings|periods)$/,
+] as const;
+
+function requestUrl(input: RequestInfo | URL) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
+  const explicit = String(init?.method || "").trim();
+  if (explicit) return explicit.toUpperCase();
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return String(input.method || "GET").toUpperCase();
+  }
+  return "GET";
+}
+
+function requestPath(input: RequestInfo | URL) {
+  try {
+    const base =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "https://mon-cahier.invalid";
+    return new URL(requestUrl(input), base).pathname;
+  } catch {
+    return "";
+  }
+}
+
+export function attendanceInteractiveReadRequest(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) {
+  if (requestMethod(input, init) !== "GET") return false;
+  const path = requestPath(input);
+  return ATTENDANCE_INTERACTIVE_READ_PATHS.some((pattern) => pattern.test(path));
+}
+
 export function attendanceConnectionConstrained() {
   if (typeof navigator === "undefined") return false;
   const connection = (navigator as Navigator & {
@@ -34,10 +87,11 @@ export function attendanceConnectionConstrained() {
     (Number.isFinite(downlink) && downlink > 0 && downlink <= 0.5);
 }
 
-export async function fetchAttendanceInteractive(
+async function fetchWithAttendanceTimeout(
+  baseFetch: FetchLike,
   input: RequestInfo | URL,
-  init: RequestInit = {},
-  timeoutMs = ATTENDANCE_INTERACTIVE_NETWORK_TIMEOUT_MS,
+  init: RequestInit,
+  timeoutMs: number,
 ) {
   const controller = new AbortController();
   const external = init.signal;
@@ -51,9 +105,69 @@ export async function fetchAttendanceInteractive(
     Math.max(500, timeoutMs),
   );
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await baseFetch(input, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
     external?.removeEventListener("abort", abortFromExternal);
   }
 }
+
+function nativeFetch(): FetchLike {
+  if (originalBrowserFetch) return originalBrowserFetch;
+  return globalThis.fetch.bind(globalThis);
+}
+
+export async function fetchAttendanceInteractive(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = ATTENDANCE_INTERACTIVE_NETWORK_TIMEOUT_MS,
+) {
+  return await fetchWithAttendanceTimeout(
+    nativeFetch(),
+    input,
+    init,
+    timeoutMs,
+  );
+}
+
+/**
+ * Les écrans d'appel utilisent déjà offlineGetJson(), qui sait retomber sur
+ * IndexedDB en cas d'erreur réseau. Ce garde borne uniquement les GET qui sont
+ * sur le chemin critique de l'appel : une connexion "vivante mais morte" ne
+ * peut donc plus retenir une liste/EDT pendant le timeout général de 6 s.
+ *
+ * Les mutations et les synchronisations de fond ne sont jamais interceptées.
+ */
+function installAttendanceInteractiveReadGuard() {
+  if (typeof window === "undefined" || typeof window.fetch !== "function") return;
+  const scopedWindow = window as AttendanceWindow;
+  if (scopedWindow.__MON_CAHIER_ATTENDANCE_FETCH_V1__) return;
+
+  const baseFetch = window.fetch.bind(window) as FetchLike;
+  originalBrowserFetch = baseFetch;
+  scopedWindow.__MON_CAHIER_ATTENDANCE_FETCH_V1__ = true;
+
+  window.fetch = (async (
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+  ) => {
+    if (!attendanceInteractiveReadRequest(input, init)) {
+      return await baseFetch(input, init);
+    }
+
+    // Hors ligne explicite : ne lançons même pas une requête vouée à échouer.
+    // offlineGetJson() récupérera immédiatement le cache préparé.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new DOMException("attendance_offline_fast_path", "NetworkError");
+    }
+
+    return await fetchWithAttendanceTimeout(
+      baseFetch,
+      input,
+      init,
+      ATTENDANCE_INTERACTIVE_NETWORK_TIMEOUT_MS,
+    );
+  }) as typeof window.fetch;
+}
+
+installAttendanceInteractiveReadGuard();
