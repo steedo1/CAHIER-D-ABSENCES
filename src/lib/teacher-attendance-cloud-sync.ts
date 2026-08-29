@@ -1,6 +1,6 @@
 "use client";
 
-import { resolveOfflineSessionReference } from "@/lib/offline";
+import { cacheGet, resolveOfflineSessionReference } from "@/lib/offline";
 import {
   createIndexedDbTeacherAttendanceStore,
   type TeacherAttendanceDeliveryRecord,
@@ -12,6 +12,8 @@ export type TeacherAttendanceCloudSyncResult = {
   blocked: number;
   authRequired: boolean;
 };
+
+const STORE_INSTITUTIONS_KEY = "teacher:attendance-delivery:v1:institutions";
 
 function text(value: unknown) {
   return String(value || "").trim();
@@ -50,38 +52,28 @@ async function cloudAvailable() {
   }
 }
 
-/**
- * Rejoue vers le Cloud les appels durablement conservés dans IndexedDB.
- *
- * L'ouverture/fermeture de séance de l'ancienne outbox doit être rejouée avant
- * cette fonction afin que les identifiants `client:*` aient déjà leur mapping
- * serveur. Chaque appel conserve son operation_id original : le POST Cloud est
- * donc idempotent même après plusieurs retours réseau ou redémarrages du PWA.
- */
-export async function syncTeacherAttendanceOperationsToCloud(
-  institutionId: string | null | undefined,
-): Promise<TeacherAttendanceCloudSyncResult> {
-  const normalizedInstitutionId = text(institutionId);
-  if (!normalizedInstitutionId) {
-    return { flushed: 0, remaining: 0, blocked: 0, authRequired: false };
-  }
+async function knownInstitutionIds(preferred?: string | null) {
+  const indexed = await cacheGet<string[]>(STORE_INSTITUTIONS_KEY).catch(() => []);
+  const teacherInstitution = text(
+    await cacheGet<any>("teacher:inst:basics")
+      .then((value) => value?.institution_id)
+      .catch(() => ""),
+  );
+  return Array.from(new Set(
+    [preferred, teacherInstitution, ...(indexed || [])]
+      .map(text)
+      .filter(Boolean),
+  ));
+}
 
+async function syncOneInstitution(
+  normalizedInstitutionId: string,
+): Promise<TeacherAttendanceCloudSyncResult> {
   const store = createIndexedDbTeacherAttendanceStore();
   const before = await store.list(normalizedInstitutionId);
   const unresolvedBefore = before.filter(
     (record) => record.state !== "cloud_synced" && record.state !== "superseded",
   );
-
-  if (!(await cloudAvailable())) {
-    return {
-      flushed: 0,
-      remaining: unresolvedBefore.length,
-      blocked: unresolvedBefore.filter(
-        (record) => record.state === "blocked" || record.state === "conflict",
-      ).length,
-      authRequired: unresolvedBefore.some((record) => record.requires_authentication),
-    };
-  }
 
   let flushed = 0;
   let blocked = 0;
@@ -96,8 +88,8 @@ export async function syncTeacherAttendanceOperationsToCloud(
 
     const resolved = await resolveOfflineSessionReference(original.session_reference);
     if (!resolved.serverSessionId) {
-      // La création de séance est encore dans l'outbox. On ne perd rien : le
-      // prochain réveil online retentera après le rejeu de cette outbox.
+      // La création de séance est encore dans l'outbox. Le prochain réveil
+      // online retentera après son rejeu, sans supprimer les marques locales.
       continue;
     }
 
@@ -239,4 +231,53 @@ export async function syncTeacherAttendanceOperationsToCloud(
     ),
     authRequired: authRequired || unresolvedAfter.some((record) => record.requires_authentication),
   };
+}
+
+/**
+ * Rejoue vers le Cloud les appels durablement conservés dans IndexedDB.
+ *
+ * L'ancienne outbox est rejouée par OfflineSyncBar. Les appels utilisent ensuite
+ * le mapping de séance créé par cette outbox et conservent leur operation_id
+ * original : les répétitions sont idempotentes après retour réseau, changement
+ * de page ou redémarrage du PWA.
+ */
+export async function syncTeacherAttendanceOperationsToCloud(
+  institutionId?: string | null,
+): Promise<TeacherAttendanceCloudSyncResult> {
+  const institutionIds = await knownInstitutionIds(institutionId);
+  if (institutionIds.length === 0) {
+    return { flushed: 0, remaining: 0, blocked: 0, authRequired: false };
+  }
+
+  if (!(await cloudAvailable())) {
+    const store = createIndexedDbTeacherAttendanceStore();
+    const records = (await Promise.all(
+      institutionIds.map((id) => store.list(id)),
+    )).flat().filter(
+      (record) => record.state !== "cloud_synced" && record.state !== "superseded",
+    );
+    return {
+      flushed: 0,
+      remaining: records.length,
+      blocked: records.filter(
+        (record) => record.state === "blocked" || record.state === "conflict",
+      ).length,
+      authRequired: records.some((record) => record.requires_authentication),
+    };
+  }
+
+  const results = [] as TeacherAttendanceCloudSyncResult[];
+  for (const id of institutionIds) {
+    results.push(await syncOneInstitution(id));
+  }
+
+  return results.reduce<TeacherAttendanceCloudSyncResult>(
+    (total, item) => ({
+      flushed: total.flushed + item.flushed,
+      remaining: total.remaining + item.remaining,
+      blocked: total.blocked + item.blocked,
+      authRequired: total.authRequired || item.authRequired,
+    }),
+    { flushed: 0, remaining: 0, blocked: 0, authRequired: false },
+  );
 }

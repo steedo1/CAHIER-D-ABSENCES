@@ -5,6 +5,7 @@ import "./globals.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 import OfflineAccessGuard from "@/components/OfflineAccessGuard";
 import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePreparation";
+import BackgroundAttendanceDeliverySync from "@/components/BackgroundAttendanceDeliverySync";
 import RelayCapabilityProvider from "@/components/RelayCapabilityProvider";
 
 export const metadata: Metadata = {
@@ -40,6 +41,7 @@ export default function RootLayout({
           <RelayCapabilityProvider>
             <OfflineAccessGuard>{children}</OfflineAccessGuard>
             <BackgroundAttendancePreparation />
+            <BackgroundAttendanceDeliverySync />
           </RelayCapabilityProvider>
         </Providers>
         <ServiceWorkerRegistrar />
