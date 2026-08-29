@@ -48,7 +48,7 @@ const AUTOMATIC_PREPARE_STATUSES = new Set([
   "offline_schema_stale",
 ]);
 
-const AUTOMATIC_REFRESH_MS = 15_000;
+const AUTOMATIC_REFRESH_MS = 5_000;
 const AUTOMATIC_PREPARE_COOLDOWN_MS = 10_000;
 const MAX_AUTOMATIC_PREPARATION_AGE_MS = 24 * 60 * 60 * 1000;
 const CLASS_DEVICE_APPLIED_REVISION_KEY =
@@ -112,65 +112,37 @@ function automaticAttendanceMessage(
   relayEnabled: boolean,
   preparing: boolean,
 ) {
-  if (!assessment) {
-    return preparing ? "Synchronisation réelle des données d’appel en cours…" : null;
-  }
+  if (preparing) return "Mise à jour des données d’appel…";
+  if (!assessment) return "Préparation des données d’appel…";
 
   const status = String(assessment.status || "");
+  if (status === "ready" || status === "ready_local") return null;
 
-  if (!relayEnabled) {
-    if (preparing) {
-      return "Actualisation réelle des données PWA depuis le Cloud en cours…";
-    }
-    if (status === "ready" || status === "ready_local") {
-      return assessment.cloud_reachable
-        ? "Données PWA d’appel à jour avec le Cloud."
-        : "Connexion Cloud indisponible. Les dernières données PWA validées restent utilisables.";
-    }
-    if (!assessment.cloud_reachable) {
-      return "Connexion Cloud indisponible. Les dernières données PWA validées restent utilisables.";
-    }
-    if (status === "not_prepared" || status === "schedule_not_prepared") {
-      return "Les données PWA nécessaires vont être préparées automatiquement.";
-    }
-    return assessment.message;
-  }
-
-  if (status === "ready") {
-    return assessment.cloud_reachable
-      ? "Données d’appel à jour avec le Cloud et le relais local."
-      : "Relais local prêt avec les dernières données validées.";
-  }
-  if (status === "ready_local") {
-    return "Les dernières données locales validées restent utilisables.";
-  }
-  if (preparing || AUTOMATIC_ATTENDANCE_RETRY_STATUSES.has(status)) {
-    return "Mise à jour automatique des données d’appel en cours…";
-  }
-  if (status === "relay_unreachable") {
-    return "Le relais local est momentanément inaccessible.";
-  }
-  if (status === "relay_access_denied") {
-    return "Le relais local refuse l’accès de ce téléphone.";
-  }
-  if (status === "relay_permission_denied") {
-    return "L’accès au réseau local n’est pas autorisé sur ce téléphone.";
-  }
-  if (status === "browser_incompatible") {
-    return "Ce navigateur ne peut pas accéder au relais local.";
-  }
-  if (status === "relay_incompatible") {
-    return "Le relais local doit être mis à jour avant les prochains appels hors connexion.";
-  }
   if (status === "not_prepared" || status === "schedule_not_prepared") {
-    return role === "class-device"
-      ? "Les données d’appel de cette classe sont en cours de synchronisation automatique."
-      : "Les données d’appel de ce téléphone sont en cours de synchronisation automatique.";
+    return "Préparation automatique des données d’appel…";
+  }
+  if (AUTOMATIC_ATTENDANCE_RETRY_STATUSES.has(status)) {
+    return "Actualisation du planning d’appel…";
   }
   if (status === "offline_schema_stale") {
-    return "Mon Cahier met à jour automatiquement le mode hors connexion.";
+    return "Mise à jour du mode hors connexion…";
   }
-  return assessment.message;
+
+  if (!relayEnabled) {
+    return assessment.cloud_reachable
+      ? assessment.message
+      : "Connexion indisponible. Les dernières données validées restent utilisées.";
+  }
+
+  if (status === "relay_unreachable") return "Relais local momentanément inaccessible.";
+  if (status === "relay_access_denied") return "Accès au relais local refusé.";
+  if (status === "relay_permission_denied") return "Accès au réseau local non autorisé.";
+  if (status === "browser_incompatible") return "Accès local indisponible sur ce navigateur.";
+  if (status === "relay_incompatible") return "Le relais local doit être mis à jour.";
+
+  return role === "class-device"
+    ? "Actualisation des données de cette classe…"
+    : assessment.message;
 }
 
 export default function OfflineReadinessCard({
@@ -319,11 +291,6 @@ export default function OfflineReadinessCard({
               setProgress("Données d’appel actualisées et vérifiées.");
             }
 
-            // /class calcule ses créneaux en mémoire. Quand la révision EDT
-            // vient réellement de changer, on applique la nouvelle préparation
-            // sans demander à l’utilisateur de faire F5. Le marqueur empêche
-            // toute boucle de rechargement. Une séance ouverte n’est jamais
-            // interrompue : elle sera appliquée à sa fermeture.
             if (role === "class-device" && typeof window !== "undefined") {
               const nextRevision = next.schedule_revision ?? null;
               const scheduleChanged = previousRevision !== nextRevision;
@@ -459,25 +426,6 @@ export default function OfflineReadinessCard({
         ? isClassDeviceOperationalReadiness(classDeviceStatus)
         : false;
 
-  const preparedSummary = readiness
-    ? role === "admin"
-      ? `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.bulletin_count} bulletin(s) et historique des communications`
-      : role === "parent"
-        ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
-        : role === "class-device"
-          ? `${readiness.class_count} classe, ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
-          : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
-    : "";
-
-  const preparationDescription =
-    role === "admin"
-      ? "Télécharge les bulletins officiels, leurs images et l’historique des communications sur cet appareil."
-      : role === "parent"
-        ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
-        : role === "class-device"
-          ? "Mon Cahier synchronise automatiquement la classe, les élèves, les créneaux et les matières nécessaires à l’appel."
-          : "Mon Cahier synchronise automatiquement l’emploi du temps, les classes et les listes d’élèves nécessaires à l’appel.";
-
   const relayConnectivity =
     role === "teacher" || role === "class-device"
       ? readiness?.relay_connectivity
@@ -506,9 +454,49 @@ export default function OfflineReadinessCard({
                 ? "Relais inaccessible depuis l’application."
                 : null;
 
-  const visualReady = isAutomaticAttendance
-    ? Boolean(readiness && automaticOperational)
-    : Boolean(readiness && !stale);
+  if (isAutomaticAttendance) {
+    const compactMessage = error || (preparing ? progress : relayConnectivityMessage);
+    if (automaticOperational && !preparing && !error) return null;
+
+    return (
+      <section
+        className={[
+          "rounded-xl border px-3 py-2 shadow-sm",
+          error
+            ? "border-rose-200 bg-rose-50 text-rose-900"
+            : "border-amber-200 bg-amber-50 text-amber-900",
+          className,
+        ].join(" ")}
+        aria-live="polite"
+      >
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {error ? (
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+          ) : (
+            <RefreshCcw className={preparing ? "h-4 w-4 shrink-0 animate-spin" : "h-4 w-4 shrink-0"} />
+          )}
+          <span>{compactMessage || "Préparation des données d’appel…"}</span>
+        </div>
+      </section>
+    );
+  }
+
+  const preparedSummary = readiness
+    ? role === "admin"
+      ? `${readiness.class_count} classe(s), ${readiness.student_count} élève(s), ${readiness.bulletin_count} bulletin(s) et historique des communications`
+      : role === "parent"
+        ? `${readiness.parent_child_count} enfant(s), ${readiness.bulletin_count} bulletin(s), notes, absences et cahier de texte`
+        : `${readiness.class_count} classe(s), ${readiness.student_count} élève(s) et ${readiness.slot_count} créneau(x) d’appel`
+    : "";
+
+  const preparationDescription =
+    role === "admin"
+      ? "Télécharge les bulletins officiels, leurs images et l’historique des communications sur cet appareil."
+      : role === "parent"
+        ? "Télécharge les notes, absences, conduites, cahiers de texte, notifications et bulletins de tes enfants."
+        : "Mon Cahier synchronise automatiquement l’emploi du temps, les classes et les listes d’élèves nécessaires à l’appel.";
+
+  const visualReady = Boolean(readiness && !stale);
 
   return (
     <section
@@ -535,25 +523,16 @@ export default function OfflineReadinessCard({
             ) : (
               <CloudDownload className="h-5 w-5 text-slate-600" />
             )}
-            {isAutomaticAttendance
-              ? readiness
-                ? automaticOperational
-                  ? "Appels hors ligne prêts"
-                  : "Synchronisation automatique des appels"
-                : "Initialisation automatique des appels"
-              : readiness
-                ? stale
-                  ? "Mode hors ligne prêt — actualisation conseillée"
-                  : "Mode hors ligne prêt"
-                : "Préparer le mode hors ligne"}
+            {readiness
+              ? stale
+                ? "Mode hors ligne prêt — actualisation conseillée"
+                : "Mode hors ligne prêt"
+              : "Préparer le mode hors ligne"}
           </div>
 
           {readiness ? (
             <p className="mt-1 text-sm text-slate-700">
-              {preparedSummary} — {isAutomaticAttendance
-                ? "données locales mises à jour"
-                : "mis à jour"}{" "}
-              le {formatPreparedAt(readiness.prepared_at)}.
+              {preparedSummary} — mis à jour le {formatPreparedAt(readiness.prepared_at)}.
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-600">
@@ -562,56 +541,37 @@ export default function OfflineReadinessCard({
           )}
 
           {preparing && progress && (
-            <p className="mt-2 text-xs font-medium text-sky-800">
-              {progress}
-            </p>
+            <p className="mt-2 text-xs font-medium text-sky-800">{progress}</p>
           )}
-          {error && (
-            <p className="mt-2 text-xs font-medium text-rose-700">{error}</p>
-          )}
+          {error && <p className="mt-2 text-xs font-medium text-rose-700">{error}</p>}
           {relayConnectivityMessage && (
-            <p
-              className={[
-                "mt-2 text-xs font-semibold",
-                automaticOperational || assessment?.status === "ready"
-                  ? "text-emerald-800"
-                  : "text-amber-800",
-              ].join(" ")}
-            >
+            <p className="mt-2 text-xs font-semibold text-amber-800">
               {relayConnectivityMessage}
             </p>
           )}
           {assessment && !assessment.cloud_reachable && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
-              {isAutomaticAttendance
-                ? "Cloud indisponible : les dernières données validées restent utilisables sur ce téléphone."
-                : "Cloud indisponible : la cohérence est décidée avec le relais local."}
+              Cloud indisponible : la cohérence est décidée avec le relais local.
             </p>
           )}
         </div>
 
-        {!isAutomaticAttendance && (
-          <button
-            type="button"
-            onClick={() => void runPreparation(false)}
-            disabled={preparing}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-55"
-          >
-            {preparing ? (
-              <RefreshCcw className="h-4 w-4 animate-spin" />
-            ) : readiness ? (
-              <RefreshCcw className="h-4 w-4" />
-            ) : (
-              <CloudDownload className="h-4 w-4" />
-            )}
-            {preparing
-              ? "Préparation…"
-              : readiness
-                ? "Actualiser"
-                : "Préparer"}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => void runPreparation(false)}
+          disabled={preparing}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          {preparing ? (
+            <RefreshCcw className="h-4 w-4 animate-spin" />
+          ) : readiness ? (
+            <RefreshCcw className="h-4 w-4" />
+          ) : (
+            <CloudDownload className="h-4 w-4" />
+          )}
+          {preparing ? "Préparation…" : readiness ? "Actualiser" : "Préparer"}
+        </button>
       </div>
     </section>
   );
