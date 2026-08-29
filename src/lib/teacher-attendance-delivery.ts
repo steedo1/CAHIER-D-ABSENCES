@@ -9,6 +9,10 @@ import {
   type LegacyTeacherAttendanceMutation,
 } from "@/lib/offline";
 import {
+  attendanceConnectionConstrained,
+  fetchAttendanceInteractive,
+} from "@/lib/attendance-network";
+import {
   LocalRelayHttpError,
   postRelayTeacherAttendanceOperation,
   requestRelayAttendancePresenceProof,
@@ -676,8 +680,9 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
     createOperationId: uuid,
     async cloudManifestAvailable() {
       if (typeof navigator === "undefined" || navigator.onLine === false) return false;
+      if (attendanceConnectionConstrained()) return false;
       try {
-        const response = await fetch("/api/auth/role", {
+        const response = await fetchAttendanceInteractive("/api/auth/role", {
           method: "GET",
           credentials: "include",
           cache: "no-store",
@@ -689,7 +694,7 @@ function productionDependencies(): TeacherAttendanceDeliveryDependencies {
       }
     },
     async postCloud({ operationId, sessionId, marks, capturedAtDevice }) {
-      const response = await fetch("/api/teacher/attendance/bulk", {
+      const response = await fetchAttendanceInteractive("/api/teacher/attendance/bulk", {
         method: "POST",
         credentials: "include",
         cache: "no-store",

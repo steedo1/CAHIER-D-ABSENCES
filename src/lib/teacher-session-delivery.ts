@@ -2,6 +2,10 @@
 
 import { cacheGet, cacheSet } from "@/lib/offline";
 import {
+  attendanceConnectionConstrained,
+  fetchAttendanceInteractive,
+} from "@/lib/attendance-network";
+import {
   LocalRelayHttpError,
   postRelayTeacherAttendanceSessionOpen,
 } from "@/lib/local-relay";
@@ -382,8 +386,11 @@ function productionDependencies(): TeacherSessionDeliveryDependencies {
 
 export async function teacherSessionCloudAvailable() {
   if (typeof navigator === "undefined" || navigator.onLine === false) return false;
+  // Sur 2G/slow-2G ou économie de données, l'appel doit prendre le chemin local
+  // immédiatement. Le rejeu de fond dispose d'un budget réseau plus long.
+  if (attendanceConnectionConstrained()) return false;
   try {
-    const response = await fetch("/api/auth/role", {
+    const response = await fetchAttendanceInteractive("/api/auth/role", {
       method: "GET",
       credentials: "include",
       cache: "no-store",
