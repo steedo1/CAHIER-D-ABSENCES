@@ -113,11 +113,12 @@ async function resolveAutoPeriodIds(
 ): Promise<string[]> {
   const parsed = parseSlot(slotRaw);
   const requestedPeriodId = String(periodIdRaw || "").trim();
+  let requestedPeriodMatchesSlot = false;
 
-  // L'identifiant transmis par le téléphone valide le créneau affiché.
-  // On ne s'arrête toutefois pas à cet UUID : après une modification d'emploi
-  // du temps, un ancien et un nouveau créneau peuvent encore partager les mêmes
-  // heures. Les lignes correspondantes seront ensuite départagées par fraîcheur.
+  // L'UUID transmis par le téléphone est une aide, pas une source de vérité.
+  // Après une modification d'EDT, le PWA peut encore avoir l'ancien UUID alors
+  // que le jour et les heures du créneau sont toujours valides. Dans ce cas on
+  // doit résoudre le créneau courant dans le Cloud au lieu de répondre vide.
   if (requestedPeriodId) {
     const { data: requested, error: requestedError } = await srv
       .from("institution_periods")
@@ -127,18 +128,22 @@ async function resolveAutoPeriodIds(
       .maybeSingle();
 
     if (requestedError) throw requestedError;
-    if (!requested) return [];
 
-    if (!parsed) return [requestedPeriodId];
+    if (!requested) {
+      // Sans slot vérifiable on ne peut pas remplacer un UUID devenu inconnu.
+      if (!parsed) return [];
+    } else {
+      if (!parsed) return [requestedPeriodId];
 
-    const requestedWeekday = Number((requested as any).weekday);
-    const weekdayMatches =
-      requestedWeekday === parsed.weekday ||
-      (parsed.weekday === 7 && requestedWeekday === 0);
-    const timeMatches =
-      hmsToMin((requested as any).start_time) === hmsToMin(`${parsed.startHM}:00`) &&
-      hmsToMin((requested as any).end_time) === hmsToMin(`${parsed.endHM}:00`);
-    if (!weekdayMatches || !timeMatches) return [];
+      const requestedWeekday = Number((requested as any).weekday);
+      const weekdayMatches =
+        requestedWeekday === parsed.weekday ||
+        (parsed.weekday === 7 && requestedWeekday === 0);
+      const timeMatches =
+        hmsToMin((requested as any).start_time) === hmsToMin(`${parsed.startHM}:00`) &&
+        hmsToMin((requested as any).end_time) === hmsToMin(`${parsed.endHM}:00`);
+      requestedPeriodMatchesSlot = weekdayMatches && timeMatches;
+    }
   }
 
   let weekdayValues: number[] = [];
@@ -187,7 +192,7 @@ async function resolveAutoPeriodIds(
 
     if (exact.length > 0) {
       return uniq([
-        requestedPeriodId,
+        requestedPeriodMatchesSlot ? requestedPeriodId : "",
         ...exact.map((p) => String(p.id || "")),
       ].filter(Boolean));
     }
