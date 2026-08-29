@@ -4,13 +4,13 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, RefreshCcw } from "lucide-react";
 import {
   getAdminScheduleSyncState,
-  getRelayConfig,
   markRelayScheduleSyncPending,
   relayBootstrapErrorMessage,
   subscribeAdminScheduleSync,
   syncRelayScheduleAfterMutation,
   type AdminScheduleSyncState,
 } from "@/lib/local-relay";
+import { readAdminRelayCapability } from "@/lib/admin-relay-capability";
 import { isOfflineScheduleMutation } from "@/lib/admin-offline-schedule";
 
 function requestPath(input: RequestInfo | URL) {
@@ -28,33 +28,47 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return "GET";
 }
 
-function hasConfiguredAdminRelay() {
-  return Boolean(getRelayConfig().token);
-}
-
 export default function OfflineScheduleSyncBridge() {
+  const [relayEnabled, setRelayEnabled] = useState(false);
   const [state, setState] = useState<AdminScheduleSyncState | null>(null);
 
   useEffect(() => {
-    const relayConfigured = hasConfiguredAdminRelay();
-    const persisted = relayConfigured ? getAdminScheduleSyncState() : null;
-    setState(persisted);
-    const unsubscribe = subscribeAdminScheduleSync((nextState) => {
-      setState(hasConfiguredAdminRelay() ? nextState : null);
+    let cancelled = false;
+    void readAdminRelayCapability().then((enabled) => {
+      if (cancelled) return;
+      setRelayEnabled(enabled);
+      if (!enabled) setState(null);
     });
-    if (relayConfigured && persisted && persisted.status !== "synced") {
-      void syncRelayScheduleAfterMutation();
-    }
-    return unsubscribe;
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    if (!relayEnabled) {
+      setState(null);
+      return;
+    }
+
+    const persisted = getAdminScheduleSyncState();
+    setState(persisted);
+    const unsubscribe = subscribeAdminScheduleSync((nextState) => {
+      setState(nextState);
+    });
+    if (persisted && persisted.status !== "synced") {
+      void syncRelayScheduleAfterMutation();
+    }
+    return unsubscribe;
+  }, [relayEnabled]);
+
+  useEffect(() => {
+    if (!relayEnabled) return;
+
     const previousFetch = window.fetch;
     const interceptedFetch: typeof window.fetch = async (input, init) => {
       const response = await previousFetch(input, init);
       if (
         response.ok &&
-        hasConfiguredAdminRelay() &&
         isOfflineScheduleMutation(
           requestPath(input),
           requestMethod(input, init),
@@ -69,9 +83,9 @@ export default function OfflineScheduleSyncBridge() {
     return () => {
       if (window.fetch === interceptedFetch) window.fetch = previousFetch;
     };
-  }, []);
+  }, [relayEnabled]);
 
-  if (!state || state.status === "synced") return null;
+  if (!relayEnabled || !state || state.status === "synced") return null;
 
   const updateRequired = state.error === "relay_update_required";
   const pendingMessage = relayBootstrapErrorMessage(

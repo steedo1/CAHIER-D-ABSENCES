@@ -35,6 +35,7 @@ import {
 } from "@/lib/offline-auth-contract";
 import { warmOfflineShell } from "@/lib/offline";
 import { probeCloudSchedule } from "@/lib/cloud-availability";
+import { readAdminRelayCapability } from "@/lib/admin-relay-capability";
 import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
@@ -151,6 +152,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const [routeLabel, setRouteLabel] = useState("Chargement…");
   const [offlineAdminMode, setOfflineAdminMode] = useState(false);
   const [adminOfflineGrantReady, setAdminOfflineGrantReady] = useState(false);
+  const [relayEnabled, setRelayEnabled] = useState(false);
   const [cloudReachable, setCloudReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -174,7 +176,32 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }, [session]);
 
   useEffect(() => {
-    if (!session || (role !== "admin" && !adminOfflineGrantReady)) {
+    let cancelled = false;
+    if ((!session && !adminOfflineGrantReady) || (role !== "admin" && !adminOfflineGrantReady)) {
+      setRelayEnabled(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void readAdminRelayCapability().then((enabled) => {
+      if (!cancelled) setRelayEnabled(enabled);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [adminOfflineGrantReady, role, session]);
+
+  useEffect(() => {
+    // Aucun établissement non équipé ne doit sonder le Cloud pour basculer
+    // l'interface Admin en « mode relais ». Sans capacité relais vérifiée,
+    // le shell reste stable et suit simplement la session Cloud/PWA normale.
+    if (
+      !relayEnabled ||
+      !session ||
+      (role !== "admin" && !adminOfflineGrantReady)
+    ) {
       setCloudReachable(session ? true : null);
       return;
     }
@@ -182,6 +209,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     let timer: number | null = null;
     let checking = false;
+    let consecutiveFailures = 0;
+    let consecutiveSuccesses = 0;
+    let degraded = false;
 
     const scheduleNextCheck = (reachable: boolean) => {
       if (cancelled) return;
@@ -199,7 +229,24 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         const cloud = await probeCloudSchedule(2_500);
         if (cancelled) return;
         const reachable = Boolean(cloud);
-        setCloudReachable(reachable);
+
+        if (reachable) {
+          consecutiveFailures = 0;
+          consecutiveSuccesses += 1;
+          if (!degraded || consecutiveSuccesses >= 2) {
+            degraded = false;
+            setCloudReachable(true);
+          }
+        } else {
+          consecutiveSuccesses = 0;
+          consecutiveFailures += 1;
+          // Une panne/latence ponctuelle de 2,5 s ne doit jamais changer le shell.
+          if (consecutiveFailures >= 3) {
+            degraded = true;
+            setCloudReachable(false);
+          }
+        }
+
         scheduleNextCheck(reachable);
       } finally {
         checking = false;
@@ -223,7 +270,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       window.removeEventListener("online", refreshCloud);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [adminOfflineGrantReady, role, session]);
+  }, [adminOfflineGrantReady, relayEnabled, role, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -343,10 +390,12 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }
 
   const cloudFallbackAdminMode =
+    relayEnabled &&
     Boolean(session) &&
     (role === "admin" || adminOfflineGrantReady) &&
     cloudReachable === false;
-  const essentialAdminMode = offlineAdminMode || cloudFallbackAdminMode;
+  const essentialAdminMode =
+    relayEnabled && (offlineAdminMode || cloudFallbackAdminMode);
 
   const isFinanceManager = role === "finance_manager";
   const isInfirmier = role === "infirmier";

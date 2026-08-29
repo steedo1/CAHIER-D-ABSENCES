@@ -50,7 +50,9 @@ function defaults() {
   return {
     enabled: false,
     teacher_accounts_only: true,
-    allow_local_relay: true,
+    // Le relais est strictement opt-in : l'absence de politique ne doit jamais
+    // faire croire qu'un établissement possède Mon Cahier Relais.
+    allow_local_relay: false,
     allow_gps_fallback: true,
     relay_local_url: null as string | null,
     max_gps_accuracy_m: 60,
@@ -110,13 +112,25 @@ export async function GET() {
   if (zonesResult.error) {
     return NextResponse.json({ error: zonesResult.error.message }, { status: 400 });
   }
+  if (relayDevicesResult.error) {
+    return NextResponse.json({ error: relayDevicesResult.error.message }, { status: 400 });
+  }
+
+  const policy = { ...defaults(), ...(policyResult.data || {}) };
+  const activeRelayDevices = relayDevicesResult.data || [];
+  const relayInstalled = activeRelayDevices.length > 0;
+  const relayEnabled = relayInstalled && policy.allow_local_relay === true;
+
   return NextResponse.json({
     ok: true,
-    policy: { ...defaults(), ...(policyResult.data || {}) },
+    institution_id: access.institutionId,
+    policy,
     zones: zonesResult.data || [],
+    relay_installed: relayInstalled,
+    relay_enabled: relayEnabled,
     relay_local_urls: relayEndpointCandidates({
       configuredUrl: (policyResult.data as any)?.relay_local_url,
-      observedUrls: (relayDevicesResult.data || []).flatMap(
+      observedUrls: activeRelayDevices.flatMap(
         (row: any) => Array.isArray(row.observed_lan_urls) ? row.observed_lan_urls : [],
       ),
     }),
@@ -148,7 +162,8 @@ export async function PUT(request: NextRequest) {
     institution_id: access.institutionId,
     enabled: rawPolicy.enabled === true,
     teacher_accounts_only: true,
-    allow_local_relay: rawPolicy.allow_local_relay !== false,
+    // Opt-in explicite : une propriété absente ne peut plus activer le relais.
+    allow_local_relay: rawPolicy.allow_local_relay === true,
     allow_gps_fallback: rawPolicy.allow_gps_fallback !== false,
     relay_local_url: normalizedRelayUrl,
     max_gps_accuracy_m: integer(rawPolicy.max_gps_accuracy_m, 60, 10, 500),

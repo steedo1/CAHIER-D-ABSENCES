@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ServerCog } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getRelayConfig } from "@/lib/local-relay";
+import { readAdminRelayCapability } from "@/lib/admin-relay-capability";
 import {
   probeRelayHealth,
   type RelayHealthProbe,
@@ -28,15 +28,22 @@ export default function RelaySupervisionBadge() {
   const [probe, setProbe] = useState<RelayHealthProbe | null>(null);
 
   useEffect(() => {
-    // Le relais reste strictement optionnel : aucun voyant ni aucune sonde LAN
-    // pour les établissements/navigateurs qui ne l'ont jamais configuré.
-    if (!getRelayConfig().token) return;
-    setEnabled(true);
-    const controller = new AbortController();
-    void probeRelayHealth(controller.signal).then((result) => {
-      if (!controller.signal.aborted) setProbe(result);
+    let cancelled = false;
+    let controller: AbortController | null = null;
+
+    void readAdminRelayCapability().then((relayEnabled) => {
+      if (cancelled || !relayEnabled) return;
+      setEnabled(true);
+      controller = new AbortController();
+      void probeRelayHealth(controller.signal).then((result) => {
+        if (!cancelled && !controller?.signal.aborted) setProbe(result);
+      });
     });
-    return () => controller.abort();
+
+    return () => {
+      cancelled = true;
+      controller?.abort();
+    };
   }, []);
 
   if (!enabled) return null;

@@ -21,7 +21,7 @@ type Zone = {
 const DEFAULT_POLICY = {
   enabled: false,
   teacher_accounts_only: true,
-  allow_local_relay: true,
+  allow_local_relay: false,
   allow_gps_fallback: true,
   relay_local_url: null as string | null,
   max_gps_accuracy_m: 60,
@@ -113,7 +113,18 @@ export default function AttendancePresenceSettings() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || "Enregistrement impossible.");
-      saveRelayConfig({ baseUrl: relayAdminUrl, token: relayAdminToken });
+
+      saveRelayConfig({
+        baseUrl: relayAdminUrl,
+        token: policy.allow_local_relay ? relayAdminToken : null,
+      });
+
+      if (!policy.allow_local_relay) {
+        await load();
+        setMessage("Verrouillage enregistré dans le Cloud ✅");
+        return;
+      }
+
       const relay = await syncRelayScheduleAfterMutation().catch((error: any) => ({
         ok: false,
         error: String(error?.message || error),
