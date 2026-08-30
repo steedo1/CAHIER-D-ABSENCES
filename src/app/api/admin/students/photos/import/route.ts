@@ -23,23 +23,23 @@ async function guard(
   // profiles
   const { data: me } = await supa
     .from("profiles")
-    .select("id, role, institution_id")
+    .select("id, institution_id")
     .eq("id", user.id)
     .maybeSingle();
 
   let instId: string | null = (me?.institution_id as string) || null;
-  const roleProfile = String(me?.role || "");
+  const roleProfile = "";
 
   // user_roles fallback (admin / super_admin)
   let roleFromUR: string | null = null;
-  if (!instId || !["admin", "super_admin"].includes(roleProfile)) {
+  if (!instId || !["admin", "super_admin", "file_correspondent"].includes(roleProfile)) {
     const { data: urRows } = await srv
       .from("user_roles")
       .select("role, institution_id")
       .eq("profile_id", user.id);
 
     const adminRow = (urRows || []).find((r: any) =>
-      ["admin", "super_admin"].includes(String(r.role || ""))
+      ["admin", "super_admin", "file_correspondent"].includes(String(r.role || ""))
     );
     if (adminRow) {
       roleFromUR = String(adminRow.role);
@@ -48,8 +48,8 @@ async function guard(
   }
 
   const isAdmin =
-    ["admin", "super_admin"].includes(roleProfile) ||
-    ["admin", "super_admin"].includes(String(roleFromUR || ""));
+    ["admin", "super_admin", "file_correspondent"].includes(roleProfile) ||
+    ["admin", "super_admin", "file_correspondent"].includes(String(roleFromUR || ""));
 
   if (!instId) return { error: "no_institution" };
   if (!isAdmin) return { error: "forbidden" };

@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
-const STUDENT_EDIT_ROLES = ["admin", "super_admin", "founder"] as const;
+const STUDENT_EDIT_ROLES = ["admin", "super_admin", "founder", "file_correspondent"] as const;
 
 export async function PATCH(
   req: NextRequest,

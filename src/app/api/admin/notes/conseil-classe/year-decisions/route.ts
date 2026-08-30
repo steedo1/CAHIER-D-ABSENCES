@@ -68,7 +68,7 @@ async function getAdminContext(): Promise<AdminContext> {
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .in("role", ["admin", "super_admin"])
+    .in("role", ["admin", "super_admin", "file_correspondent"])
     .limit(1)
     .maybeSingle();
 

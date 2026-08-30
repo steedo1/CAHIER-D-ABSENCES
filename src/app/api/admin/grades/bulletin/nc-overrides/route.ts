@@ -104,7 +104,7 @@ async function getAdminAndInstitution(): Promise<AdminContext> {
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .in("role", ["admin", "super_admin"])
+    .in("role", ["admin", "super_admin", "file_correspondent"])
     .limit(1)
     .maybeSingle();
 
@@ -114,7 +114,7 @@ async function getAdminAndInstitution(): Promise<AdminContext> {
 
   const role = String((roleRow as any).role || "") as Role;
 
-  if (!["admin", "super_admin"].includes(role)) {
+  if (!["admin", "super_admin", "file_correspondent"].includes(role)) {
     return { ok: false, error: "FORBIDDEN", status: 403 };
   }
 

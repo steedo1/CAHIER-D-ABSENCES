@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
       .eq("institution_id", institution_id)
       .maybeSingle();
     const role = (roleRow?.role as string | undefined) || "";
-    if (!["admin", "super_admin"].includes(role)) {
+    if (!["admin", "super_admin", "file_correspondent"].includes(role)) {
       return NextResponse.json(
         {
           error: "forbidden",
