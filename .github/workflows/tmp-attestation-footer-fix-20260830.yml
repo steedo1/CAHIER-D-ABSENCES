@@ -1,0 +1,87 @@
+name: Temporary attestation footer fix
+
+on:
+  push:
+    branches:
+      - reprise-propre-5418ce7-20260729
+    paths:
+      - .github/workflows/tmp-attestation-footer-fix-20260830.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-attestation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+        with:
+          ref: reprise-propre-5418ce7-20260729
+          fetch-depth: 0
+
+      - name: Apply guarded attestation-only patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/app/admin/parents/page.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  '''          </main>\n        </div>\n      </section>''',
+                  '''          </main>\n\n          <div class="document-branding">Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com</div>\n        </div>\n      </section>''',
+              ),
+              (
+                  '''      padding: 13mm 13mm 13mm 13mm;''',
+                  '''      padding: 13mm 13mm 18mm 13mm;''',
+              ),
+              (
+                  '''      padding-top: 5mm;''',
+                  '''      padding-top: 4mm;''',
+              ),
+              (
+                  '''      width: 76mm;\n      text-align: center;''',
+                  '''      width: 82mm;\n      text-align: center;''',
+              ),
+              (
+                  '''    .signature-space {\n      height: 18mm;\n    }''',
+                  '''    .signature-space {\n      height: 24mm;\n    }''',
+              ),
+              (
+                  '''    @media print {''',
+                  '''    .document-branding {\n      position: absolute;\n      left: 13mm;\n      right: 13mm;\n      bottom: 5mm;\n      z-index: 2;\n      text-align: center;\n      font-family: Arial, Helvetica, sans-serif;\n      font-size: 8px;\n      line-height: 1.2;\n      font-weight: 700;\n      color: #475569;\n      letter-spacing: 0.1px;\n      white-space: nowrap;\n    }\n\n    @media print {''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Guard failed for replacement: expected 1 occurrence, got {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          if "Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com" not in text:
+              raise SystemExit("Footer verification failed")
+          if "Document généré par Mon Cahier — Nexa Digital SARL" in text:
+              raise SystemExit("Old incorrect footer unexpectedly present")
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Verify only the attestation page changed
+        shell: bash
+        run: |
+          git diff -- src/app/admin/parents/page.tsx
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = "src/app/admin/parents/page.tsx"
+
+      - name: Commit patch to reprise-propre
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/admin/parents/page.tsx
+          git commit -m "fix(attestation): enlarge signature area and add branded footer"
+          git push origin HEAD:reprise-propre-5418ce7-20260729
