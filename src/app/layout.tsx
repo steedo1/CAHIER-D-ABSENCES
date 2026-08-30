@@ -7,7 +7,6 @@ import OfflineAccessGuard from "@/components/OfflineAccessGuard";
 import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePreparation";
 import BackgroundAttendanceDeliverySync from "@/components/BackgroundAttendanceDeliverySync";
 import RelayCapabilityProvider from "@/components/RelayCapabilityProvider";
-import ClassListPrintEnhancer from "@/components/ClassListPrintEnhancer";
 import ClassListLoadingGuard from "@/components/ClassListLoadingGuard";
 
 export const metadata: Metadata = {
@@ -47,7 +46,6 @@ export default function RootLayout({
           </RelayCapabilityProvider>
         </Providers>
         <ServiceWorkerRegistrar />
-        <ClassListPrintEnhancer />
         <ClassListLoadingGuard />
       </body>
     </html>
