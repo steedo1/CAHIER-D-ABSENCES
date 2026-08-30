@@ -198,6 +198,11 @@ const FILE_CORRESPONDENCE_ITEMS: NavItem[] = [
     Icon: FileSpreadsheet,
   },
   {
+    href: "/admin/finance/statistiques-generales",
+    label: "Statistiques générales",
+    Icon: BarChart3,
+  },
+  {
     href: "/admin/notes/conseil-classe",
     label: "Conseil de classe",
     Icon: FileText,
@@ -347,6 +352,11 @@ const ADMIN_DUPLICATA_CORRESPONDENCE_ITEM: NavItem = {
 
 const FINANCE_FULL_ITEMS: NavItem[] = [
   { href: "/admin/finance", label: "Tableau financier", Icon: LayoutDashboard },
+  {
+    href: "/admin/finance/statistiques-generales",
+    label: "Statistiques générales",
+    Icon: BarChart3,
+  },
   {
     href: "/admin/finance/payments",
     label: "Encaissements",

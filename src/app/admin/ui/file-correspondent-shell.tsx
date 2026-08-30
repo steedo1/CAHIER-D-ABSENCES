@@ -40,6 +40,7 @@ const GROUPS: NavGroup[] = [
     Icon: FileSpreadsheet,
     items: [
       { href: "/admin/export-moyennes", label: "Export DESPS", Icon: FileSpreadsheet },
+      { href: "/admin/finance/statistiques-generales", label: "Statistiques générales", Icon: FileSpreadsheet, allowSubpaths: true },
       { href: "/admin/notes/conseil-classe", label: "Conseil de classe", Icon: FileText },
       { href: "/admin/bulletins", label: "Bulletins", Icon: FileSpreadsheet, allowSubpaths: true },
       { href: "/admin/notes/bilan", label: "Bilan trimestriel / annuel", Icon: FileText },
