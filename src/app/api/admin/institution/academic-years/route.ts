@@ -10,11 +10,16 @@ const ACADEMIC_YEAR_READ_ROLES = [
   "admin",
   "super_admin",
   "founder",
+  "file_correspondent",
   "finance_manager",
   "educator",
   "infirmier",
 ] as const;
-const ACADEMIC_YEAR_WRITE_ROLES = ["admin", "super_admin"] as const;
+const ACADEMIC_YEAR_WRITE_ROLES = [
+  "admin",
+  "super_admin",
+  "file_correspondent",
+] as const;
 
 async function getMyInstitutionId(options: { write?: boolean } = {}) {
   const access = await requireInstitutionAccess({

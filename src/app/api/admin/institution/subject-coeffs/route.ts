@@ -20,8 +20,9 @@ const SUBJECT_COEFF_READ_ROLES = [
   "super_admin",
   "founder",
   "finance_manager",
+  "file_correspondent",
 ] as const;
-const SUBJECT_COEFF_WRITE_ROLES = ["admin", "super_admin"] as const;
+const SUBJECT_COEFF_WRITE_ROLES = ["admin", "super_admin", "file_correspondent"] as const;
 
 type IncomingCoeff = {
   level: string;

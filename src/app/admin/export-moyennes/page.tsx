@@ -7,12 +7,20 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import OfficialExportForm from "./OfficialExportForm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
+type Role =
+  | "super_admin"
+  | "admin"
+  | "file_correspondent"
+  | "educator"
+  | "teacher"
+  | "parent"
+  | string;
 
 type ClassRow = {
   id: string;
@@ -80,14 +88,14 @@ async function getAdminContext() {
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .in("role", ["admin", "super_admin"])
+    .in("role", ["admin", "super_admin", "file_correspondent"])
     .limit(1)
     .maybeSingle();
 
   if (!roleRow?.institution_id) redirect("/admin/dashboard");
 
   return {
-    supabase,
+    supabase: getSupabaseServiceClient(),
     role: roleRow.role as Role,
     institutionId: String(roleRow.institution_id),
   };

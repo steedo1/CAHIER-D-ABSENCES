@@ -83,7 +83,7 @@ async function guard(
   let instId: string | null = profile?.institution_id ?? null;
   let roleProfile = String(profile?.role || "");
 
-  if (!instId || !["admin", "super_admin"].includes(roleProfile)) {
+  if (!instId || !["admin", "super_admin", "file_correspondent"].includes(roleProfile)) {
     const { data: urRows } = await srv
       .from("user_roles")
       .select("role, institution_id")
@@ -92,7 +92,7 @@ async function guard(
     const roles = (urRows ?? []) as UserRoleRow[];
 
     const adminRow = roles.find((r: UserRoleRow) =>
-      ["admin", "super_admin"].includes(String(r.role || ""))
+      ["admin", "super_admin", "file_correspondent"].includes(String(r.role || ""))
     );
 
     if (adminRow) {
@@ -103,7 +103,7 @@ async function guard(
     }
   }
 
-  const isAdmin = ["admin", "super_admin"].includes(roleProfile);
+  const isAdmin = ["admin", "super_admin", "file_correspondent"].includes(roleProfile);
 
   if (!instId) return { error: "no_institution" };
   if (!isAdmin) return { error: "forbidden" };
