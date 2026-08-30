@@ -6,148 +6,151 @@ import { createPortal } from "react-dom";
 
 type PrintMode = "provisional" | "class-list";
 
+type PrintMutationState = {
+  title: HTMLElement | null;
+  originalTitle: string;
+  changedNames: Array<{ cell: HTMLElement; original: string }>;
+  changedHeaders: Array<{ cell: HTMLElement; original: string }>;
+  addedCells: HTMLElement[];
+};
+
 function cleanText(value: string | null | undefined) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function classLabelFromTitle(title: HTMLElement | null) {
-  const current = cleanText(title?.textContent);
-  return current
+  return cleanText(title?.textContent)
     .replace(/^LISTE\s+PROVISOIRE\s*/i, "")
     .replace(/^LISTE\s+DE\s+CLASSE\s*/i, "")
     .trim();
 }
 
-function isUppercaseNameToken(value: string) {
+function isUppercaseToken(value: string) {
   const letters = value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, "");
   return Boolean(letters) && letters === letters.toUpperCase();
 }
 
-function compactPrintedStudentName(value: string | null | undefined) {
+function compactPrintedName(value: string) {
   const full = cleanText(value);
-  if (!full) return "";
-
   const tokens = full.split(" ").filter(Boolean);
   if (tokens.length <= 4) return full;
 
-  // Le nom de famille est déjà rendu en majuscules dans la liste. On conserve
-  // tous les tokens initiaux en majuscules quand ils sont identifiables.
   let surnameTokenCount = 0;
   for (const token of tokens) {
-    if (!isUppercaseNameToken(token)) break;
+    if (!isUppercaseToken(token)) break;
     surnameTokenCount += 1;
   }
-
-  // Si toute la chaîne est en majuscules, on garde le premier token comme nom
-  // afin de ne pas empêcher l'abréviation des prénoms importés en capitales.
   if (surnameTokenCount === 0 || surnameTokenCount === tokens.length) {
     surnameTokenCount = 1;
   }
 
   const surname = tokens.slice(0, surnameTokenCount);
   const givenNames = tokens.slice(surnameTokenCount);
-  const keptGivenNames = givenNames.slice(0, 2);
-  const abbreviatedGivenNames = givenNames.slice(2).map((name) => {
+  const kept = givenNames.slice(0, 2);
+  const initials = givenNames.slice(2).map((name) => {
     const initial = name.replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+/, "").charAt(0);
     return initial ? `${initial.toUpperCase()}.` : "";
   });
 
-  return [...surname, ...keptGivenNames, ...abbreviatedGivenNames]
-    .filter(Boolean)
-    .join(" ");
+  return [...surname, ...kept, ...initials].filter(Boolean).join(" ");
 }
 
-function normalizeNoteHeaders(headerRow: HTMLTableRowElement) {
-  Array.from(headerRow.cells).forEach((cell) => {
-    const match = cleanText(cell.textContent).match(/^Note\s*(\d+)$/i);
-    if (!match) return;
+function applyPrintMutations(sheet: HTMLElement, mode: PrintMode): PrintMutationState {
+  const state: PrintMutationState = {
+    title: sheet.querySelector<HTMLElement>(".list-title"),
+    originalTitle: "",
+    changedNames: [],
+    changedHeaders: [],
+    addedCells: [],
+  };
 
+  if (state.title) {
+    state.originalTitle = cleanText(state.title.textContent);
+    const classLabel = classLabelFromTitle(state.title);
+    const prefix = mode === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
+    state.title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
+  }
+
+  const table = sheet.querySelector<HTMLTableElement>(".roster-table");
+  const headerRow = table?.querySelector<HTMLTableRowElement>("thead tr") || null;
+  if (!table || !headerRow) return state;
+
+  Array.from(headerRow.cells).forEach((cell) => {
+    const original = cleanText(cell.textContent);
+    const match = original.match(/^Note\s*(\d+)$/i);
+    if (!match) return;
+    state.changedHeaders.push({ cell, original });
     cell.textContent = `Note ${match[1]}`;
     cell.classList.add("class-list-note-header");
   });
-}
 
-function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
-  const table = sheet.querySelector<HTMLTableElement>(".roster-table");
-  if (!table) return;
-
-  const headerRow = table.querySelector<HTMLTableRowElement>("thead tr");
-  if (!headerRow) return;
-
-  if (!headerRow.querySelector('[data-class-list-note="5"]')) {
-    for (const note of [5, 6]) {
-      const th = document.createElement("th");
-      th.className = "class-list-note-extra class-list-note-header";
-      th.dataset.classListNote = String(note);
-      th.textContent = `Note ${note}`;
-      headerRow.appendChild(th);
-    }
+  for (const note of [5, 6]) {
+    const th = document.createElement("th");
+    th.className = "class-list-note-extra class-list-note-header";
+    th.dataset.classListPrintExtra = "true";
+    th.textContent = `Note ${note}`;
+    headerRow.appendChild(th);
+    state.addedCells.push(th);
   }
 
-  normalizeNoteHeaders(headerRow);
-
-  const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"));
-  rows.forEach((row) => {
+  const bodyRows = Array.from(table.querySelectorAll<HTMLTableRowElement>("tbody tr"));
+  bodyRows.forEach((row) => {
     const emptyCell = row.querySelector<HTMLTableCellElement>("td[colspan]");
     if (emptyCell) {
       emptyCell.colSpan = headerRow.cells.length;
       return;
     }
 
-    const nameCell = row.querySelector<HTMLTableCellElement>("td.col-name");
+    const nameCell = row.querySelector<HTMLElement>("td.col-name");
     if (nameCell) {
-      if (!nameCell.dataset.classListFullName) {
-        nameCell.dataset.classListFullName = cleanText(nameCell.textContent);
-      }
-      const compact = compactPrintedStudentName(nameCell.dataset.classListFullName);
-      if (cleanText(nameCell.textContent) !== compact) {
+      const original = cleanText(nameCell.textContent);
+      const compact = compactPrintedName(original);
+      if (compact && compact !== original) {
+        state.changedNames.push({ cell: nameCell, original });
         nameCell.textContent = compact;
       }
-      nameCell.title = nameCell.dataset.classListFullName;
     }
 
-    if (!row.querySelector('[data-class-list-note="5"]')) {
-      for (const note of [5, 6]) {
-        const td = document.createElement("td");
-        td.className = "class-list-note-extra";
-        td.dataset.classListNote = String(note);
-        row.appendChild(td);
-      }
+    for (const note of [5, 6]) {
+      const td = document.createElement("td");
+      td.className = "class-list-note-extra";
+      td.dataset.classListPrintExtra = "true";
+      td.dataset.note = String(note);
+      row.appendChild(td);
+      state.addedCells.push(td);
     }
   });
-}
 
-function applyResponsivePrintSizing(sheet: HTMLElement) {
-  enhanceRosterColumnsAndNames(sheet);
-
-  const rows = Array.from(
-    sheet.querySelectorAll<HTMLTableRowElement>(".roster-table tbody tr"),
-  ).filter((row) => !row.querySelector("td[colspan]"));
-  const count = rows.length;
-
-  // Objectif : une liste courte occupe réellement la feuille A4. Une liste
-  // plus longue reste lisible et peut se fragmenter uniquement si des élèves
-  // doivent réellement passer sur la page suivante.
-  const rowHeightMm =
-    count <= 0 ? 8 : Math.max(5.8, Math.min(12.8, 190 / count));
-  const fontSizePx =
-    count <= 18 ? 12.4 : count <= 25 ? 11.7 : count <= 35 ? 11 : 10.4;
-  const headerFontSizePx = Math.min(12.5, fontSizePx + 0.4);
-
+  const count = bodyRows.filter((row) => !row.querySelector("td[colspan]")).length;
+  const rowHeightMm = count <= 0 ? 8 : Math.max(5.8, Math.min(12.8, 190 / count));
+  const fontSizePx = count <= 18 ? 12.4 : count <= 25 ? 11.7 : count <= 35 ? 11 : 10.4;
   sheet.style.setProperty("--class-list-row-height", `${rowHeightMm.toFixed(2)}mm`);
   sheet.style.setProperty("--class-list-font-size", `${fontSizePx}px`);
-  sheet.style.setProperty("--class-list-header-font-size", `${headerFontSizePx}px`);
-  sheet.dataset.rosterCount = String(count);
-  sheet.dataset.rosterPagination = count <= 30 ? "single" : "multi";
+  sheet.style.setProperty(
+    "--class-list-header-font-size",
+    `${Math.min(12.5, fontSizePx + 0.4)}px`,
+  );
+
+  return state;
+}
+
+function restorePrintMutations(state: PrintMutationState | null) {
+  if (!state) return;
+  if (state.title && state.originalTitle) state.title.textContent = state.originalTitle;
+  state.changedNames.forEach(({ cell, original }) => {
+    cell.textContent = original;
+  });
+  state.changedHeaders.forEach(({ cell, original }) => {
+    cell.textContent = original;
+    cell.classList.remove("class-list-note-header");
+  });
+  state.addedCells.forEach((cell) => cell.remove());
 }
 
 export default function ClassListPrintEnhancer() {
   const pathname = usePathname();
   const isClassListPage = Boolean(pathname?.startsWith("/admin/classes/liste/"));
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
-  const [mode, setMode] = useState<PrintMode>("class-list");
 
   useEffect(() => {
     if (!isClassListPage) {
@@ -155,131 +158,135 @@ export default function ClassListPrintEnhancer() {
       return;
     }
 
-    let observer: MutationObserver | null = null;
+    let attempts = 0;
+    let interval: number | null = null;
+    let exportButton: HTMLButtonElement | null = null;
+    let helperText: HTMLElement | null = null;
+    let originalExportDisplay = "";
+    let originalHelperDisplay = "";
 
-    const enhance = () => {
+    const attachAfterReactLoaded = () => {
+      attempts += 1;
+      // IMPORTANT: aucune manipulation du DOM tant que React affiche le chargement.
       const sheet = document.querySelector<HTMLElement>(".class-list-sheet");
-      if (sheet) applyResponsivePrintSizing(sheet);
-
-      const toolbars = Array.from(
-        document.querySelectorAll<HTMLElement>(".screen-toolbar"),
-      );
-      const mainToolbar = toolbars.find((toolbar) =>
-        cleanText(toolbar.textContent).includes("Liste de classe imprimable"),
-      );
-      if (!mainToolbar) return;
-
-      const exportButton = Array.from(mainToolbar.querySelectorAll("button")).find(
-        (button) => cleanText(button.textContent) === "Exporter PDF",
-      ) as HTMLButtonElement | undefined;
-
-      if (exportButton) {
-        if (!exportButton.dataset.classListOriginalDisplay) {
-          exportButton.dataset.classListOriginalDisplay =
-            exportButton.style.display || "__empty__";
+      if (!sheet) {
+        if (attempts >= 80 && interval !== null) {
+          window.clearInterval(interval);
+          interval = null;
         }
-        exportButton.style.display = "none";
-        if (exportButton.parentElement) setPortalTarget(exportButton.parentElement);
+        return;
+      }
+
+      const toolbars = Array.from(document.querySelectorAll<HTMLElement>(".screen-toolbar"));
+      const toolbar = toolbars.find((item) =>
+        cleanText(item.textContent).includes("Liste de classe imprimable"),
+      );
+      if (!toolbar) return;
+
+      exportButton =
+        (Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button")).find(
+          (button) => cleanText(button.textContent) === "Exporter PDF",
+        ) as HTMLButtonElement | undefined) || null;
+      if (!exportButton) return;
+
+      originalExportDisplay = exportButton.style.display;
+      exportButton.style.display = "none";
+
+      helperText =
+        (Array.from(toolbar.querySelectorAll<HTMLElement>("div")).find((element) =>
+          cleanText(element.textContent).startsWith("Vérifiez l’éducateur"),
+        ) as HTMLElement | undefined) || null;
+      if (helperText) {
+        originalHelperDisplay = helperText.style.display;
+        helperText.style.display = "none";
+      }
+
+      setPortalTarget(exportButton.parentElement);
+      if (interval !== null) {
+        window.clearInterval(interval);
+        interval = null;
       }
     };
 
-    enhance();
-    observer = new MutationObserver(enhance);
-    observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeprint", enhance);
+    attachAfterReactLoaded();
+    if (!portalTarget) {
+      interval = window.setInterval(attachAfterReactLoaded, 250);
+    }
 
     return () => {
-      observer?.disconnect();
-      window.removeEventListener("beforeprint", enhance);
-      const hiddenButtons = document.querySelectorAll<HTMLButtonElement>(
-        "button[data-class-list-original-display]",
-      );
-      hiddenButtons.forEach((button) => {
-        const original = button.dataset.classListOriginalDisplay;
-        button.style.display = original === "__empty__" ? "" : original || "";
-        delete button.dataset.classListOriginalDisplay;
-      });
+      if (interval !== null) window.clearInterval(interval);
+      if (exportButton) exportButton.style.display = originalExportDisplay;
+      if (helperText) helperText.style.display = originalHelperDisplay;
       setPortalTarget(null);
     };
-  }, [isClassListPage]);
+    // portalTarget volontairement exclu: le polling doit rester one-shot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClassListPage, pathname]);
 
-  function print(modeToUse: PrintMode) {
+  function print(mode: PrintMode) {
     const sheet = document.querySelector<HTMLElement>(".class-list-sheet");
     if (!sheet) return;
 
-    applyResponsivePrintSizing(sheet);
-    setMode(modeToUse);
-    sheet.dataset.printMode = modeToUse;
+    const mutationState = applyPrintMutations(sheet, mode);
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      restorePrintMutations(mutationState);
+      window.removeEventListener("afterprint", restore);
+    };
 
-    const title = sheet.querySelector<HTMLElement>(".list-title");
-    const classLabel = classLabelFromTitle(title);
-    const prefix =
-      modeToUse === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
-    if (title) title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
-
-    requestAnimationFrame(() => {
-      setTimeout(() => window.print(), 40);
+    window.addEventListener("afterprint", restore, { once: true });
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        window.print();
+        // Secours pour navigateurs qui n’émettent pas afterprint correctement.
+        window.setTimeout(restore, 1500);
+      }, 60);
     });
   }
 
-  if (!isClassListPage) return null;
+  if (!isClassListPage || !portalTarget) return null;
 
-  const buttons = portalTarget
-    ? createPortal(
+  return (
+    <>
+      {createPortal(
         <>
           <button
             type="button"
             onClick={() => print("provisional")}
-            aria-pressed={mode === "provisional"}
             className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm hover:bg-amber-100"
-            title="Imprimer avec le titre LISTE PROVISOIRE"
           >
             Liste provisoire
           </button>
           <button
             type="button"
             onClick={() => print("class-list")}
-            aria-pressed={mode === "class-list"}
             className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
-            title="Imprimer avec le titre LISTE DE CLASSE"
           >
             Liste de classe
           </button>
         </>,
         portalTarget,
-      )
-    : null;
+      )}
 
-  return (
-    <>
-      {buttons}
       <style jsx global>{`
-        .class-list-sheet .class-list-note-extra {
-          width: 42px;
-          text-align: center;
-        }
-
         @media print {
           @page {
             size: A4 portrait;
-            margin: 6mm 6mm 18mm;
-          }
-
-          .class-list-print-root {
-            width: 100% !important;
+            margin: 6mm 6mm 8mm;
           }
 
           .class-list-sheet {
-            position: relative !important;
             box-sizing: border-box !important;
             width: 198mm !important;
             max-width: 198mm !important;
-            min-height: 273mm !important;
+            min-height: 283mm !important;
             height: auto !important;
             display: flex !important;
             flex-direction: column !important;
             overflow: visible !important;
-            padding-bottom: 13mm !important;
+            padding: 0 !important;
           }
 
           .official-header {
@@ -347,23 +354,15 @@ export default function ClassListPrintEnhancer() {
             vertical-align: middle !important;
           }
 
-          .roster-table thead th:nth-child(4),
-          .roster-table thead th:nth-child(5),
-          .roster-table thead th:nth-child(6),
-          .roster-table thead th:nth-child(7) {
-            white-space: nowrap !important;
-            font-size: 9px !important;
-          }
-
           .roster-table .class-list-note-header,
           .roster-table thead th:nth-child(n + 8) {
             white-space: nowrap !important;
             word-break: normal !important;
             overflow-wrap: normal !important;
-            font-size: 8.6px !important;
+            font-size: 8.4px !important;
             letter-spacing: -0.15px !important;
-            padding-left: 0.2mm !important;
-            padding-right: 0.2mm !important;
+            padding-left: 0.15mm !important;
+            padding-right: 0.15mm !important;
           }
 
           .roster-table tbody tr {
@@ -375,108 +374,56 @@ export default function ClassListPrintEnhancer() {
 
           .roster-table tbody td {
             font-size: var(--class-list-font-size, 11px) !important;
-            line-height: 1.18 !important;
-            padding: 1.05mm 0.55mm !important;
+            line-height: 1.16 !important;
+            padding: 1.05mm 0.5mm !important;
             vertical-align: middle !important;
-            overflow-wrap: anywhere;
           }
 
           .roster-table th:nth-child(1),
-          .roster-table td:nth-child(1) {
-            width: 7mm !important;
-          }
-
+          .roster-table td:nth-child(1) { width: 7mm !important; }
           .roster-table th:nth-child(2),
-          .roster-table td:nth-child(2) {
-            width: 18.5mm !important;
-          }
-
+          .roster-table td:nth-child(2) { width: 18.5mm !important; }
           .roster-table th:nth-child(3),
-          .roster-table td:nth-child(3) {
-            width: 72mm !important;
-          }
-
+          .roster-table td:nth-child(3) { width: 69mm !important; }
           .roster-table th:nth-child(4),
-          .roster-table td:nth-child(4) {
-            width: 9.5mm !important;
-          }
-
+          .roster-table td:nth-child(4) { width: 9.5mm !important; }
           .roster-table th:nth-child(5),
-          .roster-table td:nth-child(5) {
-            width: 16.5mm !important;
-          }
-
+          .roster-table td:nth-child(5) { width: 16.5mm !important; }
           .roster-table th:nth-child(6),
-          .roster-table td:nth-child(6) {
-            width: 9.5mm !important;
-          }
-
+          .roster-table td:nth-child(6) { width: 9.5mm !important; }
           .roster-table th:nth-child(7),
-          .roster-table td:nth-child(7) {
-            width: 8.5mm !important;
-          }
-
+          .roster-table td:nth-child(7) { width: 8.5mm !important; }
           .roster-table th:nth-child(n + 8),
-          .roster-table td:nth-child(n + 8),
-          .roster-table .class-list-note-extra {
-            width: 9.3mm !important;
-            min-width: 9.3mm !important;
-            max-width: 9.3mm !important;
-            text-align: center !important;
-          }
+          .roster-table td:nth-child(n + 8) { width: 9.9mm !important; text-align: center !important; }
 
           .roster-table .col-name {
-            font-weight: 800 !important;
             white-space: nowrap !important;
             overflow: hidden !important;
             text-overflow: clip !important;
             font-size: calc(var(--class-list-font-size, 11px) * 0.96) !important;
+            font-weight: 800 !important;
           }
 
           .sheet-footer {
-            box-sizing: border-box !important;
-            grid-template-columns: 1fr 1.45fr 1fr !important;
-            gap: 8px !important;
-            margin: 0 !important;
-            padding-top: 2.5mm !important;
+            position: static !important;
+            flex: 0 0 auto !important;
+            margin-top: auto !important;
+            padding-top: 2mm !important;
             border-top: 1.2px solid #475569 !important;
-            background: #ffffff !important;
-            font-size: 9.7px !important;
-            line-height: 1.25 !important;
-            color: #1f2937 !important;
-            z-index: 1000 !important;
+            background: white !important;
+            font-size: 9px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
           }
 
-          .class-list-sheet[data-roster-pagination="single"] .sheet-footer {
-            position: absolute !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
-            width: 100% !important;
-          }
-
-          .class-list-sheet[data-roster-pagination="multi"] .sheet-footer {
-            position: fixed !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
-            width: 198mm !important;
-          }
-
-          .export-brand-site {
-            font-size: 10.2px !important;
-          }
-
-          .export-brand-slogan {
-            font-size: 9.1px !important;
-          }
+          .export-brand-site { font-size: 9.4px !important; }
+          .export-brand-slogan { font-size: 8.4px !important; }
 
           .class-list-watermark {
             position: fixed !important;
-            top: 50% !important;
             left: 50% !important;
+            top: 52% !important;
             width: 82mm !important;
-            max-height: 120mm !important;
             transform: translate(-50%, -50%) !important;
             opacity: 0.1 !important;
           }
