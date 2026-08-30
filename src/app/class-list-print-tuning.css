@@ -17,6 +17,17 @@
     page-break-after: avoid !important;
   }
 
+  /* "Sexe" reste sur une seule ligne malgré la colonne étroite. */
+  body .class-list-print-root .roster-table thead th:nth-child(6) {
+    white-space: nowrap !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    font-size: 9px !important;
+    letter-spacing: -0.1px !important;
+    padding-left: 0.2mm !important;
+    padding-right: 0.2mm !important;
+  }
+
   /* Filigrane un peu plus présent sans gêner la lecture. */
   body .class-list-print-root .class-list-watermark {
     opacity: 0.17 !important;
