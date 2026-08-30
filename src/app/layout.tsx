@@ -2,6 +2,7 @@
 import type { Metadata, Viewport } from "next";
 import Providers from "./providers";
 import "./globals.css";
+import "./class-list-print-tuning.css";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 import OfflineAccessGuard from "@/components/OfflineAccessGuard";
 import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePreparation";
