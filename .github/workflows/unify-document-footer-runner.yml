@@ -67,3 +67,5 @@ jobs:
           git add -- 'src/app/admin/parents/page.tsx' 'src/app/admin/classes/liste/[id]/page.tsx'
           git commit -m "fix(print): uniformiser la signature Mon Cahier"
           git push origin HEAD:work/unify-document-footer-20260830
+
+# one-shot trigger
