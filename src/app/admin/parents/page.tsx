@@ -422,6 +422,8 @@ function buildAttestationHtml(args: {
               </div>
             </div>
           </main>
+
+          <div class="document-branding">Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com</div>
         </div>
       </section>
     `;
@@ -476,7 +478,7 @@ function buildAttestationHtml(args: {
       width: 100%;
       height: 297mm;
       background: white;
-      padding: 13mm 13mm 13mm 13mm;
+      padding: 13mm 13mm 18mm 13mm;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -682,11 +684,11 @@ function buildAttestationHtml(args: {
       margin-top: auto;
       display: flex;
       justify-content: flex-end;
-      padding-top: 5mm;
+      padding-top: 4mm;
     }
 
     .signature-box {
-      width: 76mm;
+      width: 82mm;
       text-align: center;
       font-size: 13px;
       line-height: 1.45;
@@ -698,13 +700,29 @@ function buildAttestationHtml(args: {
     }
 
     .signature-space {
-      height: 18mm;
+      height: 24mm;
     }
 
     .signature-name {
       font-weight: 700;
       text-decoration: underline;
       text-underline-offset: 2px;
+    }
+
+    .document-branding {
+      position: absolute;
+      left: 13mm;
+      right: 13mm;
+      bottom: 5mm;
+      z-index: 2;
+      text-align: center;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 8px;
+      line-height: 1.2;
+      font-weight: 700;
+      color: #475569;
+      letter-spacing: 0.1px;
+      white-space: nowrap;
     }
 
     @media print {
