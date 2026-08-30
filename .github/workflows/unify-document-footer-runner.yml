@@ -1,0 +1,69 @@
+name: Unify document footer runner
+
+on:
+  push:
+    branches:
+      - ops/unify-document-footer-runner-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: work/unify-document-footer-20260830
+          fetch-depth: 0
+
+      - name: Apply exact footer wording
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          signature = "Mon Cahier — La plateforme complète de gestion scolaire | www.mon-cahier.com"
+
+          attestation = Path("src/app/admin/parents/page.tsx")
+          text = attestation.read_text(encoding="utf-8")
+          old = '<div class="document-branding">Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com</div>'
+          new = f'<div class="document-branding">{signature}</div>'
+          if text.count(old) != 1:
+              raise SystemExit(f"Attestation footer mismatch: expected 1 occurrence, got {text.count(old)}")
+          attestation.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          class_list = Path("src/app/admin/classes/liste/[id]/page.tsx")
+          text = class_list.read_text(encoding="utf-8")
+          old_constants = '''const MON_CAHIER_EXPORT_SITE = "www.mon-cahier.com";\nconst MON_CAHIER_EXPORT_SLOGAN =\n  "La plateforme idéale pour une école connectée, l’école du futur.";'''
+          new_constants = f'''const MON_CAHIER_EXPORT_SIGNATURE =\n  "{signature}";'''
+          if text.count(old_constants) != 1:
+              raise SystemExit(f"Class-list constants mismatch: expected 1 occurrence, got {text.count(old_constants)}")
+          text = text.replace(old_constants, new_constants, 1)
+
+          old_footer = '''              <div className="export-brand-footer">\n                <div className="export-brand-site">\n                  {{MON_CAHIER_EXPORT_SITE}}\n                </div>\n                <div className="export-brand-slogan">\n                  {{MON_CAHIER_EXPORT_SLOGAN}}\n                </div>\n              </div>\n              <div className="footer-right">\n                Document généré le {{todayLabel()}} via Mon Cahier\n              </div>'''.replace('{{', '{').replace('}}', '}')
+          new_footer = '''              <div className="export-brand-footer">\n                {MON_CAHIER_EXPORT_SIGNATURE}\n              </div>\n              <div className="footer-right" aria-hidden="true" />'''
+          if text.count(old_footer) != 1:
+              raise SystemExit(f"Class-list footer mismatch: expected 1 occurrence, got {text.count(old_footer)}")
+          class_list.write_text(text.replace(old_footer, new_footer, 1), encoding="utf-8")
+
+          for path in (attestation, class_list):
+              final = path.read_text(encoding="utf-8")
+              if signature not in final:
+                  raise SystemExit(f"Signature missing from {path}")
+          PY
+
+          git diff --check
+          test "$(git diff --name-only | wc -l)" -eq 2
+          git diff --name-only | grep -Fx 'src/app/admin/parents/page.tsx'
+          git diff --name-only | grep -Fx 'src/app/admin/classes/liste/[id]/page.tsx'
+
+      - name: Commit exact two-file change
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- 'src/app/admin/parents/page.tsx' 'src/app/admin/classes/liste/[id]/page.tsx'
+          git commit -m "fix(print): uniformiser la signature Mon Cahier"
+          git push origin HEAD:work/unify-document-footer-20260830
