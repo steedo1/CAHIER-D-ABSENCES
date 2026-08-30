@@ -115,7 +115,7 @@ type Leader = {
   meta?: string | null;
 };
 
-const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator"]);
+const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator", "file_correspondent"]);
 
 function cleanText(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();

@@ -977,7 +977,7 @@ async function getAdminAndInstitution(
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .in("role", ["admin", "super_admin"])
+    .in("role", ["admin", "super_admin", "file_correspondent"])
     .limit(1)
     .maybeSingle();
 
@@ -986,7 +986,7 @@ async function getAdminAndInstitution(
   }
 
   const role = roleRow.role as Role;
-  if (!["super_admin", "admin"].includes(role)) {
+  if (!["super_admin", "admin", "file_correspondent"].includes(role)) {
     return { error: "FORBIDDEN" as const };
   }
 
