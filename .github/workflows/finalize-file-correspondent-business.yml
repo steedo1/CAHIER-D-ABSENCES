@@ -1,0 +1,175 @@
+name: Finalize file correspondent business access
+
+on:
+  push:
+    branches:
+      - work/correspondant-fichier-finalize-20260830
+    paths:
+      - .github/workflows/finalize-file-correspondent-business.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/correspondant-fichier-finalize-20260830
+          fetch-depth: 0
+
+      - name: Patch remaining scoped APIs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new, expected=None):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if expected is not None and count != expected:
+                  raise SystemExit(f"{path}: expected {expected} occurrence(s), found {count}: {old!r}")
+              if count == 0:
+                  raise SystemExit(f"{path}: pattern not found: {old!r}")
+              p.write_text(text.replace(old, new), encoding="utf-8")
+
+          # Conseil de classe / listes / élèves non classés.
+          replace(
+              "src/app/api/admin/students/route.ts",
+              '  "founder",\n',
+              '  "founder",\n  "file_correspondent",\n',
+              1,
+          )
+          replace(
+              "src/app/api/admin/notes/conseil-classe/year-decisions/route.ts",
+              '["admin", "super_admin"]',
+              '["admin", "super_admin", "file_correspondent"]',
+              1,
+          )
+          replace(
+              "src/app/api/admin/affectations/current/route.ts",
+              '      (role === "admin" && String(row.institution_id || "") === institution_id)\n',
+              '      ((role === "admin" || role === "file_correspondent") &&\n        String(row.institution_id || "") === institution_id)\n',
+              1,
+          )
+          replace(
+              "src/app/api/admin/grades/bulletin/nc-overrides/route.ts",
+              '["admin", "super_admin"]',
+              '["admin", "super_admin", "file_correspondent"]',
+              2,
+          )
+
+          # Bulletins officiels / signatures / duplicata bulletin seulement.
+          replace(
+              "src/app/api/admin/institution/bulletin-signatures/route.ts",
+              '["admin", "super_admin"]',
+              '["admin", "super_admin", "file_correspondent"]',
+              2,
+          )
+          replace(
+              "src/lib/official-documents.ts",
+              'const BULLETIN_ROLES = new Set(["super_admin", "founder", "admin"]);',
+              'const BULLETIN_ROLES = new Set(["super_admin", "founder", "admin", "file_correspondent"]);',
+              1,
+          )
+
+          # Disciplines : auth + établissement puis service client, sans élargir la RLS globale.
+          replace(
+              "src/app/api/admin/subjects/route.ts",
+              'import { getSupabaseServerClient } from "@/lib/supabase-server";',
+              'import { getSupabaseServerClient } from "@/lib/supabase-server";\nimport { getSupabaseServiceClient } from "@/lib/supabaseAdmin";',
+              1,
+          )
+          replace(
+              "src/app/api/admin/subjects/route.ts",
+              '  // 3) On ne prend que les matières de CET établissement\n',
+              '  const srv = getSupabaseServiceClient();\n\n  // 3) On ne prend que les matières de CET établissement\n',
+              1,
+          )
+          replace(
+              "src/app/api/admin/subjects/route.ts",
+              '  const { data, error } = await supa\n    .from("institution_subjects")',
+              '  const { data, error } = await srv\n    .from("institution_subjects")',
+              1,
+          )
+
+          # Emplois du temps.
+          for path in [
+              "src/app/api/admin/timetables/meta/route.ts",
+              "src/app/api/admin/timetables/manual/route.ts",
+              "src/app/api/admin/timetables/import/route.ts",
+          ]:
+              replace(
+                  path,
+                  '["admin", "super_admin"]',
+                  '["admin", "super_admin", "file_correspondent"]',
+                  1,
+              )
+
+          # Prédiction de réussite.
+          for path in [
+              "src/app/api/admin/notes/core-subjects/route.ts",
+              "src/app/api/admin/notes/predictions/route.ts",
+          ]:
+              replace(
+                  path,
+                  '["admin", "super_admin"]',
+                  '["admin", "super_admin", "file_correspondent"]',
+                  1,
+              )
+
+          # Liste des classes / dossier élève.
+          replace(
+              "src/app/api/admin/students/search/route.ts",
+              '  "founder",\n',
+              '  "founder",\n  "file_correspondent",\n',
+              1,
+          )
+          replace(
+              "src/app/api/admin/students/[id]/route.ts",
+              'const STUDENT_EDIT_ROLES = ["admin", "super_admin", "founder"] as const;',
+              'const STUDENT_EDIT_ROLES = ["admin", "super_admin", "founder", "file_correspondent"] as const;',
+              1,
+          )
+          replace(
+              "src/app/api/admin/enrollments/assign/route.ts",
+              '  "founder",\n',
+              '  "founder",\n  "file_correspondent",\n',
+              2,
+          )
+          replace(
+              "src/app/api/admin/enrollments/remove/route.ts",
+              '  "founder",\n',
+              '  "founder",\n  "file_correspondent",\n',
+              1,
+          )
+
+          # Import photos : la base réelle n'a pas profiles.role ; rôle lu dans user_roles.
+          replace(
+              "src/app/api/admin/students/photos/import/route.ts",
+              '.select("id, role, institution_id")',
+              '.select("id, institution_id")',
+              1,
+          )
+          replace(
+              "src/app/api/admin/students/photos/import/route.ts",
+              '  const roleProfile = String(me?.role || "");',
+              '  const roleProfile = "";',
+              1,
+          )
+          replace(
+              "src/app/api/admin/students/photos/import/route.ts",
+              '["admin", "super_admin"]',
+              '["admin", "super_admin", "file_correspondent"]',
+              4,
+          )
+
+      - name: Commit business permissions and remove helper workflow
+        run: |
+          rm .github/workflows/finalize-file-correspondent-business.yml
+          git config user.name "steedo1"
+          git config user.email "ariskouadio22@gmail.com"
+          git add -A
+          git commit -m "feat(correspondent): complete scoped business access"
+          git push origin HEAD:work/correspondant-fichier-finalize-20260830
