@@ -9,6 +9,7 @@ import BackgroundAttendancePreparation from "@/components/BackgroundAttendancePr
 import BackgroundAttendanceDeliverySync from "@/components/BackgroundAttendanceDeliverySync";
 import RelayCapabilityProvider from "@/components/RelayCapabilityProvider";
 import ClassListPrintEnhancer from "@/components/ClassListPrintEnhancer";
+import ClassListCorrectionsPanel from "@/components/ClassListCorrectionsPanel";
 
 export const metadata: Metadata = {
   applicationName: "Mon Cahier",
@@ -48,6 +49,7 @@ export default function RootLayout({
         </Providers>
         <ServiceWorkerRegistrar />
         <ClassListPrintEnhancer />
+        <ClassListCorrectionsPanel />
       </body>
     </html>
   );
