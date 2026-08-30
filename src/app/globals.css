@@ -167,3 +167,37 @@ button { cursor: pointer }
 
 /* 9) Bonus : si tu utilises .card pour des surfaces */
 .card { @apply bg-card text-card-foreground }
+
+/* Signature produit — listes de classes */
+.class-list-sheet .sheet-footer {
+  grid-template-columns: 1fr 1fr;
+}
+
+.class-list-sheet .export-brand-footer {
+  display: none;
+}
+
+.class-list-sheet .sheet-footer::after {
+  content: "Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com";
+  grid-column: 1 / -1;
+  display: block;
+  margin-top: 4px;
+  padding-top: 3px;
+  text-align: center;
+  font-size: 8.6px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #334155;
+}
+
+@media print {
+  .class-list-sheet .sheet-footer {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .class-list-sheet .sheet-footer::after {
+    font-size: 7.8px !important;
+    margin-top: 3px !important;
+    padding-top: 2px !important;
+  }
+}
