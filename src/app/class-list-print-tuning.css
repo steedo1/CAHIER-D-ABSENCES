@@ -1,0 +1,24 @@
+@media print {
+  /* Evite le dépassement de quelques pixels qui créait une 2e page vide. */
+  body .class-list-print-root {
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    break-after: avoid-page !important;
+    page-break-after: avoid !important;
+  }
+
+  body .class-list-print-root .class-list-sheet {
+    min-height: 280mm !important;
+    height: auto !important;
+    margin-bottom: 0 !important;
+    break-after: avoid-page !important;
+    page-break-after: avoid !important;
+  }
+
+  /* Filigrane un peu plus présent sans gêner la lecture. */
+  body .class-list-print-root .class-list-watermark {
+    opacity: 0.17 !important;
+  }
+}
