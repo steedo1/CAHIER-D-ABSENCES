@@ -19,12 +19,13 @@ export const dynamic = "force-dynamic";
 type GuardOk = { user: { id: string }; instId: string };
 type GuardErr = { error: "unauthorized" | "no_institution" | "forbidden" };
 
-const WRITABLE_ROLES = new Set(["admin", "super_admin"]);
+const WRITABLE_ROLES = new Set(["admin", "super_admin", "file_correspondent"]);
 const READABLE_ROLES = new Set([
   "admin",
   "super_admin",
   "founder",
   "finance_manager",
+  "file_correspondent",
 ]);
 const MAX_CUSTOM_FORMATIONS = 100;
 const MAX_LEVELS_PER_FORMATION = 12;

@@ -15,7 +15,6 @@ import {
   Settings,
   ShieldCheck,
   UserRoundCheck,
-  Users,
   X,
 } from "lucide-react";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -60,7 +59,6 @@ const GROUPS: NavGroup[] = [
         allowSubpaths: true,
       },
       { href: "/admin/classes", label: "Créer vos classes", Icon: School, allowSubpaths: true },
-      { href: "/admin/users", label: "Utilisateurs & rôles", Icon: Users },
       { href: "/admin/affectations", label: "Attribution des classes", Icon: Puzzle, allowSubpaths: true },
       { href: "/admin/parents", label: "Liste des classes", Icon: UserRoundCheck, allowSubpaths: true },
       { href: "/admin/import", label: "Import classes-enseignants", Icon: Inbox, allowSubpaths: true },
@@ -72,7 +70,6 @@ const GROUPS: NavGroup[] = [
     title: "Paramètres",
     Icon: Settings,
     items: [
-      { href: "/admin/relais", label: "Mon Cahier Relais", Icon: Settings, allowSubpaths: true },
       { href: "/admin/parametres?tab=security", label: "Accès & sécurité", Icon: ShieldCheck },
       { href: "/admin/parametres?tab=school", label: "Établissement & horaires", Icon: School },
       { href: "/admin/parametres?tab=academic-years", label: "Années scolaires", Icon: NotebookPen },
