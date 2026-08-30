@@ -18,7 +18,7 @@ function normalizeStatus(value: unknown): ScholarshipStatus {
   return "unknown";
 }
 
-async function requireContext(classId: string, write = false) {
+async function requireContext(classId: string) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
   const {
@@ -26,7 +26,9 @@ async function requireContext(classId: string, write = false) {
   } = await supa.auth.getUser();
 
   if (!user) {
-    return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+    return {
+      error: NextResponse.json({ error: "unauthorized" }, { status: 401 }),
+    };
   }
 
   const { data: profile } = await supa
@@ -41,7 +43,9 @@ async function requireContext(classId: string, write = false) {
     .eq("profile_id", user.id);
 
   if (roleError) {
-    return { error: NextResponse.json({ error: roleError.message }, { status: 400 }) };
+    return {
+      error: NextResponse.json({ error: roleError.message }, { status: 400 }),
+    };
   }
 
   const allowed = new Set([
@@ -51,13 +55,20 @@ async function requireContext(classId: string, write = false) {
     "finance_manager",
     "finance",
   ]);
-  const roleRows = (roles || []).filter((row: any) => allowed.has(String(row.role || "")));
+  const roleRows = (roles || []).filter((row: any) =>
+    allowed.has(String(row.role || "")),
+  );
+
   let institutionId = clean((profile as any)?.institution_id);
   if (!institutionId) {
-    institutionId = clean(roleRows.find((row: any) => row.institution_id)?.institution_id);
+    institutionId = clean(
+      roleRows.find((row: any) => row.institution_id)?.institution_id,
+    );
   }
   if (!institutionId) {
-    return { error: NextResponse.json({ error: "no_institution" }, { status: 400 }) };
+    return {
+      error: NextResponse.json({ error: "no_institution" }, { status: 400 }),
+    };
   }
 
   const roleApplies = (row: any) => {
@@ -66,12 +77,11 @@ async function requireContext(classId: string, write = false) {
     const rowInstitution = clean(row.institution_id);
     return !rowInstitution || rowInstitution === institutionId;
   };
-  if (!roleRows.some(roleApplies)) {
-    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
 
-  if (write && !roleRows.some(roleApplies)) {
-    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  if (!roleRows.some(roleApplies)) {
+    return {
+      error: NextResponse.json({ error: "forbidden" }, { status: 403 }),
+    };
   }
 
   const { data: cls, error: classError } = await srv
@@ -82,13 +92,17 @@ async function requireContext(classId: string, write = false) {
     .maybeSingle();
 
   if (classError) {
-    return { error: NextResponse.json({ error: classError.message }, { status: 400 }) };
+    return {
+      error: NextResponse.json({ error: classError.message }, { status: 400 }),
+    };
   }
   if (!cls?.id) {
-    return { error: NextResponse.json({ error: "class_not_found" }, { status: 404 }) };
+    return {
+      error: NextResponse.json({ error: "class_not_found" }, { status: 404 }),
+    };
   }
 
-  return { srv, institutionId, cls, user };
+  return { srv, institutionId, cls };
 }
 
 async function resolveAcademicYear(
@@ -119,9 +133,11 @@ export async function GET(
 ) {
   const { id } = await context.params;
   const classId = clean(id);
-  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  if (!classId) {
+    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  }
 
-  const ctx = await requireContext(classId, false);
+  const ctx = await requireContext(classId);
   if ("error" in ctx) return ctx.error;
   const { srv, institutionId, cls } = ctx;
 
@@ -133,8 +149,13 @@ export async function GET(
       (cls as any).academic_year,
       requested,
     );
+
     if (!academicYear) {
-      return NextResponse.json({ ok: true, academic_year: requested || null, scholarships: {} });
+      return NextResponse.json({
+        ok: true,
+        academic_year: requested || null,
+        scholarships: {},
+      });
     }
 
     const { data: enrollments, error: enrollmentError } = await srv
@@ -148,8 +169,13 @@ export async function GET(
     const studentIds = (enrollments || [])
       .map((row: any) => clean(row.student_id))
       .filter(Boolean);
+
     if (!studentIds.length) {
-      return NextResponse.json({ ok: true, academic_year: academicYear.code, scholarships: {} });
+      return NextResponse.json({
+        ok: true,
+        academic_year: academicYear.code,
+        scholarships: {},
+      });
     }
 
     const { data: profiles, error: profileError } = await srv
@@ -164,13 +190,24 @@ export async function GET(
     for (const studentId of studentIds) scholarships[studentId] = "unknown";
     for (const row of profiles || []) {
       const studentId = clean((row as any).student_id);
-      if (studentId) scholarships[studentId] = normalizeStatus((row as any).scholarship_status);
+      if (studentId) {
+        scholarships[studentId] = normalizeStatus(
+          (row as any).scholarship_status,
+        );
+      }
     }
 
-    return NextResponse.json({ ok: true, academic_year: academicYear.code, scholarships });
+    return NextResponse.json({
+      ok: true,
+      academic_year: academicYear.code,
+      scholarships,
+    });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "scholarship_load_failed" },
+      {
+        error:
+          error instanceof Error ? error.message : "scholarship_load_failed",
+      },
       { status: 400 },
     );
   }
@@ -182,9 +219,11 @@ export async function PATCH(
 ) {
   const { id } = await context.params;
   const classId = clean(id);
-  if (!classId) return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  if (!classId) {
+    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+  }
 
-  const ctx = await requireContext(classId, true);
+  const ctx = await requireContext(classId);
   if ("error" in ctx) return ctx.error;
   const { srv, institutionId, cls } = ctx;
 
@@ -194,7 +233,9 @@ export async function PATCH(
     if (updates.length > 200) {
       return NextResponse.json({ error: "too_many_updates" }, { status: 400 });
     }
-    if (!updates.length) return NextResponse.json({ ok: true, updated: 0 });
+    if (!updates.length) {
+      return NextResponse.json({ ok: true, updated: 0 });
+    }
 
     const requestedAcademicYear = clean(body?.academic_year);
     const academicYear = await resolveAcademicYear(
@@ -205,54 +246,133 @@ export async function PATCH(
     );
     if (!academicYear) {
       return NextResponse.json(
-        { error: "Année scolaire introuvable pour enregistrer le statut boursier." },
+        {
+          error:
+            "Année scolaire introuvable pour enregistrer le statut boursier.",
+        },
         { status: 409 },
       );
     }
 
-    const studentIds = Array.from(
+    const requestedIds = Array.from(
       new Set(updates.map((row: any) => clean(row?.student_id)).filter(Boolean)),
     );
+
     const { data: enrollments, error: enrollmentError } = await srv
       .from("class_enrollments")
       .select("student_id")
       .eq("institution_id", institutionId)
       .eq("class_id", classId)
       .is("end_date", null)
-      .in("student_id", studentIds);
+      .in("student_id", requestedIds);
     if (enrollmentError) throw new Error(enrollmentError.message);
 
-    const allowed = new Set((enrollments || []).map((row: any) => clean(row.student_id)));
-    const rows = updates
+    const allowed = new Set(
+      (enrollments || []).map((row: any) => clean(row.student_id)),
+    );
+    const safeUpdates = updates
       .map((row: any) => {
         const studentId = clean(row?.student_id);
         if (!studentId || !allowed.has(studentId)) return null;
         return {
-          institution_id: institutionId,
-          academic_year_id: academicYear.id,
-          academic_year: academicYear.code,
-          student_id: studentId,
-          class_id: classId,
-          level: clean((cls as any).level) || null,
-          scholarship_status: normalizeStatus(row?.scholarship_status),
-          updated_at: new Date().toISOString(),
+          studentId,
+          scholarshipStatus: normalizeStatus(row?.scholarship_status),
         };
       })
-      .filter(Boolean);
+      .filter(Boolean) as Array<{
+      studentId: string;
+      scholarshipStatus: ScholarshipStatus;
+    }>;
 
-    if (!rows.length) return NextResponse.json({ ok: true, updated: 0 });
+    if (!safeUpdates.length) {
+      return NextResponse.json({ ok: true, updated: 0 });
+    }
 
-    const { error: upsertError } = await srv
-      .from("student_year_profiles")
-      .upsert(rows as any[], {
-        onConflict: "institution_id,academic_year_id,student_id",
-      });
-    if (upsertError) throw new Error(upsertError.message);
+    const safeIds = safeUpdates.map((row) => row.studentId);
+    const [{ data: existing, error: existingError }, { data: students, error: studentsError }] =
+      await Promise.all([
+        srv
+          .from("student_year_profiles")
+          .select("id,student_id")
+          .eq("institution_id", institutionId)
+          .eq("academic_year_id", academicYear.id)
+          .in("student_id", safeIds),
+        srv
+          .from("students")
+          .select("id,is_boarder,is_affecte")
+          .eq("institution_id", institutionId)
+          .in("id", safeIds),
+      ]);
 
-    return NextResponse.json({ ok: true, updated: rows.length });
+    if (existingError) throw new Error(existingError.message);
+    if (studentsError) throw new Error(studentsError.message);
+
+    const existingByStudent = new Map(
+      (existing || []).map((row: any) => [clean(row.student_id), clean(row.id)]),
+    );
+    const studentById = new Map(
+      (students || []).map((row: any) => [clean(row.id), row]),
+    );
+
+    let updated = 0;
+    const now = new Date().toISOString();
+
+    for (const row of safeUpdates) {
+      const existingId = existingByStudent.get(row.studentId);
+      if (existingId) {
+        const { error } = await srv
+          .from("student_year_profiles")
+          .update({
+            scholarship_status: row.scholarshipStatus,
+            class_id: classId,
+            level: clean((cls as any).level) || "unknown",
+            updated_at: now,
+          })
+          .eq("id", existingId)
+          .eq("institution_id", institutionId);
+        if (error) throw new Error(error.message);
+        updated++;
+        continue;
+      }
+
+      const student = studentById.get(row.studentId) as any;
+      const isBoarder =
+        typeof student?.is_boarder === "boolean" ? student.is_boarder : false;
+      const isAffecte =
+        typeof student?.is_affecte === "boolean" ? student.is_affecte : null;
+      const affectationStatus =
+        isAffecte === true
+          ? "affecte"
+          : isAffecte === false
+            ? "non_affecte"
+            : "unknown";
+
+      const { error } = await srv.from("student_year_profiles").insert({
+        institution_id: institutionId,
+        academic_year_id: academicYear.id,
+        academic_year: academicYear.code,
+        student_id: row.studentId,
+        class_id: classId,
+        level: clean((cls as any).level) || "unknown",
+        is_boarder: isBoarder,
+        affectation_status: affectationStatus,
+        billing_affectation_group: affectationStatus,
+        scholarship_status: row.scholarshipStatus,
+        source: "manual",
+        source_payload: {},
+        updated_at: now,
+      } as any);
+      if (error) throw new Error(error.message);
+      updated++;
+    }
+
+    return NextResponse.json({ ok: true, updated });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "scholarship_update_failed" },
+      {
+        error:
+          error instanceof Error ? error.message : "scholarship_update_failed",
+      },
       { status: 400 },
     );
   }
