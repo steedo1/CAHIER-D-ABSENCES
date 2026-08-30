@@ -423,7 +423,7 @@ function buildAttestationHtml(args: {
             </div>
           </main>
 
-          <div class="document-branding">Document généré par Mon Cahier | Une solution éditée par Nexa Digital SARL | www.mon-cahier.com</div>
+          <div class="document-branding">Mon Cahier — La plateforme complète de gestion scolaire | www.mon-cahier.com</div>
         </div>
       </section>
     `;

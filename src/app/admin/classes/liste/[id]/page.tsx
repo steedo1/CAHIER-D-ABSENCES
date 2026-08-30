@@ -211,9 +211,8 @@ function todayLabel() {
   });
 }
 
-const MON_CAHIER_EXPORT_SITE = "www.mon-cahier.com";
-const MON_CAHIER_EXPORT_SLOGAN =
-  "La plateforme idéale pour une école connectée, l’école du futur.";
+const MON_CAHIER_EXPORT_SIGNATURE =
+  "Mon Cahier — La plateforme complète de gestion scolaire | www.mon-cahier.com";
 
 function normalizeLv2(value: string | null | undefined) {
   const v = String(value || "").trim();
@@ -1623,16 +1622,9 @@ export default function ClassListPrintPage() {
                 {data.totals.boys}
               </div>
               <div className="export-brand-footer">
-                <div className="export-brand-site">
-                  {MON_CAHIER_EXPORT_SITE}
-                </div>
-                <div className="export-brand-slogan">
-                  {MON_CAHIER_EXPORT_SLOGAN}
-                </div>
+                {MON_CAHIER_EXPORT_SIGNATURE}
               </div>
-              <div className="footer-right">
-                Document généré le {todayLabel()} via Mon Cahier
-              </div>
+              <div className="footer-right" aria-hidden="true" />
             </footer>
           </article>
         </section>
