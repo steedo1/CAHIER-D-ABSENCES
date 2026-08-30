@@ -65,7 +65,13 @@ jobs:
               "src/app/api/admin/institution/bulletin-signatures/route.ts",
               '["admin", "super_admin"]',
               '["admin", "super_admin", "file_correspondent"]',
-              2,
+              1,
+          )
+          replace(
+              "src/app/api/admin/institution/bulletin-signatures/route.ts",
+              '["super_admin", "admin"]',
+              '["super_admin", "admin", "file_correspondent"]',
+              1,
           )
           replace(
               "src/lib/official-documents.ts",
