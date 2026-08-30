@@ -15,6 +15,7 @@ const ENROLLMENT_MANAGE_ROLES = [
   "admin",
   "super_admin",
   "founder",
+  "file_correspondent",
   "finance_manager",
   "finance",
 ] as const;
@@ -22,6 +23,7 @@ const STUDENT_CREATE_ROLES = new Set([
   "admin",
   "super_admin",
   "founder",
+  "file_correspondent",
   "finance_manager",
   "finance",
 ]);

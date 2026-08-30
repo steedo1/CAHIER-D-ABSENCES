@@ -1,6 +1,7 @@
 // src/app/api/admin/subjects/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /**
  * Renvoie UNIQUEMENT les disciplines ACTIVÉES dans l’établissement courant,
@@ -36,9 +37,11 @@ export async function GET() {
     return NextResponse.json({ items: [] });
   }
 
+  const srv = getSupabaseServiceClient();
+
   // 3) On ne prend que les matières de CET établissement
   //    institution_subjects (1 par matière activée) -> subjects
-  const { data, error } = await supa
+  const { data, error } = await srv
     .from("institution_subjects")
     .select(
       `

@@ -84,7 +84,8 @@ export async function GET(req: NextRequest) {
     const role = String(row.role || "");
     return (
       role === "super_admin" ||
-      (role === "admin" && String(row.institution_id || "") === institution_id)
+      ((role === "admin" || role === "file_correspondent") &&
+        String(row.institution_id || "") === institution_id)
     );
   });
 

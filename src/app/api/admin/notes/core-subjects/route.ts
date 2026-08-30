@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
 
     const role = (roleRow?.role as string | undefined) || "";
-    if (!["admin", "super_admin"].includes(role)) {
+    if (!["admin", "super_admin", "file_correspondent"].includes(role)) {
       return NextResponse.json(
         { ok: false, error: "forbidden", message: "Droits insuffisants." },
         { status: 403 }

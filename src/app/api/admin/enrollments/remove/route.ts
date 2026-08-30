@@ -9,6 +9,7 @@ const ENROLLMENT_REMOVE_ROLES = [
   "admin",
   "super_admin",
   "founder",
+  "file_correspondent",
   "finance_manager",
   "finance",
 ] as const;

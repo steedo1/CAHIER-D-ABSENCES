@@ -13,7 +13,7 @@ export type OfficialDocumentAccess = {
 };
 
 const RECEIPT_ROLES = new Set(["super_admin", "founder", "finance_manager"]);
-const BULLETIN_ROLES = new Set(["super_admin", "founder", "admin"]);
+const BULLETIN_ROLES = new Set(["super_admin", "founder", "admin", "file_correspondent"]);
 
 export function cleanOfficialText(value: unknown) {
   return String(value ?? "")

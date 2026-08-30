@@ -15,6 +15,7 @@ const READ_ALLOWED_ROLES = new Set([
   "admin",
   "super_admin",
   "founder",
+  "file_correspondent",
   "finance_manager",
   "educator",
   "infirmier",
