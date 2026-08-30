@@ -1,0 +1,99 @@
+name: Patch file correspondent access
+
+on:
+  push:
+    branches:
+      - work/correspondant-fichier-role-20260830
+    paths:
+      - .github/workflows/patch-file-correspondent-access.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/correspondant-fichier-role-20260830
+          fetch-depth: 0
+
+      - name: Patch restricted-role access
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def patch(path, replacements):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              original = text
+              for old, new, expected in replacements:
+                  count = text.count(old)
+                  if count != expected:
+                      raise SystemExit(f"{path}: expected {expected} occurrence(s) of {old!r}, found {count}")
+                  text = text.replace(old, new)
+              if text == original:
+                  raise SystemExit(f"{path}: no change produced")
+              p.write_text(text, encoding="utf-8")
+
+          patch(
+              "src/app/api/admin/exports/averages/route.ts",
+              [
+                  (
+                      'import { getSupabaseServerClient } from "@/lib/supabase-server";',
+                      'import { getSupabaseServerClient } from "@/lib/supabase-server";\nimport { getSupabaseServiceClient } from "@/lib/supabaseAdmin";',
+                      1,
+                  ),
+                  (
+                      '.in("role", ["admin", "super_admin"])',
+                      '.in("role", ["admin", "super_admin", "file_correspondent"])',
+                      1,
+                  ),
+                  (
+                      'if (!["super_admin", "admin"].includes(role)) {',
+                      'if (!["super_admin", "admin", "file_correspondent"].includes(role)) {',
+                      1,
+                  ),
+                  (
+                      'return {\n    supabase,\n    institutionId: String(roleRow.institution_id),',
+                      'return {\n    supabase: getSupabaseServiceClient(),\n    institutionId: String(roleRow.institution_id),',
+                      1,
+                  ),
+              ],
+          )
+
+          patch(
+              "src/app/api/admin/grades/bulletin/route.ts",
+              [
+                  (
+                      '.in("role", ["admin", "super_admin"])',
+                      '.in("role", ["admin", "super_admin", "file_correspondent"])',
+                      1,
+                  ),
+                  (
+                      'if (!["super_admin", "admin"].includes(role)) {',
+                      'if (!["super_admin", "admin", "file_correspondent"].includes(role)) {',
+                      1,
+                  ),
+              ],
+          )
+
+          patch(
+              "src/app/api/admin/notes/bilan/route.ts",
+              [
+                  (
+                      'const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator"]);',
+                      'const ALLOWED_ROLES = new Set(["admin", "super_admin", "founder", "educator", "file_correspondent"]);',
+                      1,
+                  ),
+              ],
+          )
+
+      - name: Commit patched routes
+        run: |
+          git config user.name "steedo1"
+          git config user.email "ariskouadio22@gmail.com"
+          git add src/app/api/admin/exports/averages/route.ts src/app/api/admin/grades/bulletin/route.ts src/app/api/admin/notes/bilan/route.ts
+          git commit -m "feat(correspondent): allow file operations APIs"
+          git push origin HEAD:work/correspondant-fichier-role-20260830
