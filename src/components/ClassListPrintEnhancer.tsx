@@ -7,14 +7,11 @@ import { createPortal } from "react-dom";
 type PrintMode = "provisional" | "class-list";
 
 function cleanText(value: string | null | undefined) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function classLabelFromTitle(title: HTMLElement | null) {
-  const current = cleanText(title?.textContent);
-  return current
+  return cleanText(title?.textContent)
     .replace(/^LISTE\s+PROVISOIRE\s*/i, "")
     .replace(/^LISTE\s+DE\s+CLASSE\s*/i, "")
     .trim();
@@ -32,16 +29,12 @@ function compactPrintedStudentName(value: string | null | undefined) {
   const tokens = full.split(" ").filter(Boolean);
   if (tokens.length <= 4) return full;
 
-  // Le nom de famille est déjà rendu en majuscules dans la liste. On conserve
-  // tous les tokens initiaux en majuscules quand ils sont identifiables.
   let surnameTokenCount = 0;
   for (const token of tokens) {
     if (!isUppercaseNameToken(token)) break;
     surnameTokenCount += 1;
   }
 
-  // Si toute la chaîne est en majuscules, on garde le premier token comme nom
-  // afin de ne pas empêcher l'abréviation des prénoms importés en capitales.
   if (surnameTokenCount === 0 || surnameTokenCount === tokens.length) {
     surnameTokenCount = 1;
   }
@@ -64,7 +57,13 @@ function normalizeNoteHeaders(headerRow: HTMLTableRowElement) {
     const match = cleanText(cell.textContent).match(/^Note\s*(\d+)$/i);
     if (!match) return;
 
-    cell.textContent = `Note ${match[1]}`;
+    const next = `Note ${match[1]}`;
+    // IMPORTANT : ne jamais réécrire textContent s'il est déjà correct.
+    // Une réécriture inconditionnelle déclenche MutationObserver en boucle et
+    // peut empêcher React de terminer le chargement de la liste.
+    if (cleanText(cell.textContent) !== next) {
+      cell.textContent = next;
+    }
     cell.classList.add("class-list-note-header");
   });
 }
@@ -92,7 +91,8 @@ function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
   rows.forEach((row) => {
     const emptyCell = row.querySelector<HTMLTableCellElement>("td[colspan]");
     if (emptyCell) {
-      emptyCell.colSpan = headerRow.cells.length;
+      const expected = headerRow.cells.length;
+      if (emptyCell.colSpan !== expected) emptyCell.colSpan = expected;
       return;
     }
 
@@ -101,11 +101,12 @@ function enhanceRosterColumnsAndNames(sheet: HTMLElement) {
       if (!nameCell.dataset.classListFullName) {
         nameCell.dataset.classListFullName = cleanText(nameCell.textContent);
       }
-      const compact = compactPrintedStudentName(nameCell.dataset.classListFullName);
-      if (cleanText(nameCell.textContent) !== compact) {
-        nameCell.textContent = compact;
+      const fullName = nameCell.dataset.classListFullName;
+      const compactName = compactPrintedStudentName(fullName);
+      if (cleanText(nameCell.textContent) !== compactName) {
+        nameCell.textContent = compactName;
       }
-      nameCell.title = nameCell.dataset.classListFullName;
+      if (nameCell.title !== fullName) nameCell.title = fullName;
     }
 
     if (!row.querySelector('[data-class-list-note="5"]')) {
@@ -125,20 +126,23 @@ function applyResponsivePrintSizing(sheet: HTMLElement) {
   const rows = Array.from(
     sheet.querySelectorAll<HTMLTableRowElement>(".roster-table tbody tr"),
   ).filter((row) => !row.querySelector("td[colspan]"));
-  const count = rows.length;
 
-  // Objectif : une liste courte occupe réellement la feuille A4. Une liste
-  // plus longue reste lisible et peut se fragmenter uniquement si des élèves
-  // doivent réellement passer sur la page suivante.
+  const count = rows.length;
   const rowHeightMm =
     count <= 0 ? 8 : Math.max(5.8, Math.min(12.8, 190 / count));
   const fontSizePx =
     count <= 18 ? 12.4 : count <= 25 ? 11.7 : count <= 35 ? 11 : 10.4;
   const headerFontSizePx = Math.min(12.5, fontSizePx + 0.4);
 
-  sheet.style.setProperty("--class-list-row-height", `${rowHeightMm.toFixed(2)}mm`);
+  sheet.style.setProperty(
+    "--class-list-row-height",
+    `${rowHeightMm.toFixed(2)}mm`,
+  );
   sheet.style.setProperty("--class-list-font-size", `${fontSizePx}px`);
-  sheet.style.setProperty("--class-list-header-font-size", `${headerFontSizePx}px`);
+  sheet.style.setProperty(
+    "--class-list-header-font-size",
+    `${headerFontSizePx}px`,
+  );
   sheet.dataset.rosterCount = String(count);
   sheet.dataset.rosterPagination = count <= 30 ? "single" : "multi";
 }
@@ -156,8 +160,12 @@ export default function ClassListPrintEnhancer() {
     }
 
     let observer: MutationObserver | null = null;
+    let raf = 0;
+    let stopped = false;
 
-    const enhance = () => {
+    const sync = () => {
+      if (stopped) return;
+
       const sheet = document.querySelector<HTMLElement>(".class-list-sheet");
       if (sheet) applyResponsivePrintSizing(sheet);
 
@@ -173,32 +181,56 @@ export default function ClassListPrintEnhancer() {
         (button) => cleanText(button.textContent) === "Exporter PDF",
       ) as HTMLButtonElement | undefined;
 
-      if (exportButton) {
-        if (!exportButton.dataset.classListOriginalDisplay) {
-          exportButton.dataset.classListOriginalDisplay =
-            exportButton.style.display || "__empty__";
-        }
+      if (!exportButton) return;
+
+      if (!exportButton.dataset.classListOriginalDisplay) {
+        exportButton.dataset.classListOriginalDisplay =
+          exportButton.style.display || "__empty__";
+      }
+      if (exportButton.style.display !== "none") {
         exportButton.style.display = "none";
-        if (exportButton.parentElement) setPortalTarget(exportButton.parentElement);
+      }
+
+      const target = exportButton.parentElement;
+      if (target) {
+        setPortalTarget((current) => (current === target ? current : target));
       }
     };
 
-    enhance();
-    observer = new MutationObserver(enhance);
+    const scheduleSync = () => {
+      if (stopped || raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        sync();
+      });
+    };
+
+    sync();
+    observer = new MutationObserver((mutations) => {
+      // Le composant ne réagit qu'aux insertions/suppressions de nœuds et
+      // regroupe toutes les mutations d'une frame en une seule synchronisation.
+      if (mutations.some((mutation) => mutation.type === "childList")) {
+        scheduleSync();
+      }
+    });
     observer.observe(document.body, { childList: true, subtree: true });
-    window.addEventListener("beforeprint", enhance);
+    window.addEventListener("beforeprint", sync);
 
     return () => {
+      stopped = true;
       observer?.disconnect();
-      window.removeEventListener("beforeprint", enhance);
-      const hiddenButtons = document.querySelectorAll<HTMLButtonElement>(
-        "button[data-class-list-original-display]",
-      );
-      hiddenButtons.forEach((button) => {
-        const original = button.dataset.classListOriginalDisplay;
-        button.style.display = original === "__empty__" ? "" : original || "";
-        delete button.dataset.classListOriginalDisplay;
-      });
+      window.removeEventListener("beforeprint", sync);
+      if (raf) window.cancelAnimationFrame(raf);
+
+      document
+        .querySelectorAll<HTMLButtonElement>(
+          "button[data-class-list-original-display]",
+        )
+        .forEach((button) => {
+          const original = button.dataset.classListOriginalDisplay;
+          button.style.display = original === "__empty__" ? "" : original || "";
+          delete button.dataset.classListOriginalDisplay;
+        });
       setPortalTarget(null);
     };
   }, [isClassListPage]);
@@ -215,44 +247,46 @@ export default function ClassListPrintEnhancer() {
     const classLabel = classLabelFromTitle(title);
     const prefix =
       modeToUse === "provisional" ? "LISTE PROVISOIRE" : "LISTE DE CLASSE";
-    if (title) title.textContent = classLabel ? `${prefix} ${classLabel}` : prefix;
+    if (title) {
+      const nextTitle = classLabel ? `${prefix} ${classLabel}` : prefix;
+      if (cleanText(title.textContent) !== nextTitle) title.textContent = nextTitle;
+    }
 
-    requestAnimationFrame(() => {
-      setTimeout(() => window.print(), 40);
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => window.print(), 40);
     });
   }
 
   if (!isClassListPage) return null;
 
-  const buttons = portalTarget
-    ? createPortal(
-        <>
-          <button
-            type="button"
-            onClick={() => print("provisional")}
-            aria-pressed={mode === "provisional"}
-            className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm hover:bg-amber-100"
-            title="Imprimer avec le titre LISTE PROVISOIRE"
-          >
-            Liste provisoire
-          </button>
-          <button
-            type="button"
-            onClick={() => print("class-list")}
-            aria-pressed={mode === "class-list"}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
-            title="Imprimer avec le titre LISTE DE CLASSE"
-          >
-            Liste de classe
-          </button>
-        </>,
-        portalTarget,
-      )
-    : null;
-
   return (
     <>
-      {buttons}
+      {portalTarget
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                onClick={() => print("provisional")}
+                aria-pressed={mode === "provisional"}
+                className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm hover:bg-amber-100"
+                title="Imprimer avec le titre LISTE PROVISOIRE"
+              >
+                Liste provisoire
+              </button>
+              <button
+                type="button"
+                onClick={() => print("class-list")}
+                aria-pressed={mode === "class-list"}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
+                title="Imprimer avec le titre LISTE DE CLASSE"
+              >
+                Liste de classe
+              </button>
+            </>,
+            portalTarget,
+          )
+        : null}
+
       <style jsx global>{`
         .class-list-sheet .class-list-note-extra {
           width: 42px;
@@ -347,14 +381,6 @@ export default function ClassListPrintEnhancer() {
             vertical-align: middle !important;
           }
 
-          .roster-table thead th:nth-child(4),
-          .roster-table thead th:nth-child(5),
-          .roster-table thead th:nth-child(6),
-          .roster-table thead th:nth-child(7) {
-            white-space: nowrap !important;
-            font-size: 9px !important;
-          }
-
           .roster-table .class-list-note-header,
           .roster-table thead th:nth-child(n + 8) {
             white-space: nowrap !important;
@@ -385,32 +411,26 @@ export default function ClassListPrintEnhancer() {
           .roster-table td:nth-child(1) {
             width: 7mm !important;
           }
-
           .roster-table th:nth-child(2),
           .roster-table td:nth-child(2) {
             width: 18.5mm !important;
           }
-
           .roster-table th:nth-child(3),
           .roster-table td:nth-child(3) {
             width: 72mm !important;
           }
-
           .roster-table th:nth-child(4),
           .roster-table td:nth-child(4) {
             width: 9.5mm !important;
           }
-
           .roster-table th:nth-child(5),
           .roster-table td:nth-child(5) {
             width: 16.5mm !important;
           }
-
           .roster-table th:nth-child(6),
           .roster-table td:nth-child(6) {
             width: 9.5mm !important;
           }
-
           .roster-table th:nth-child(7),
           .roster-table td:nth-child(7) {
             width: 8.5mm !important;
@@ -437,13 +457,10 @@ export default function ClassListPrintEnhancer() {
             box-sizing: border-box !important;
             grid-template-columns: 1fr 1.45fr 1fr !important;
             gap: 8px !important;
-            margin: 0 !important;
             padding-top: 2.5mm !important;
             border-top: 1.2px solid #475569 !important;
-            background: #ffffff !important;
+            background: white !important;
             font-size: 9.7px !important;
-            line-height: 1.25 !important;
-            color: #1f2937 !important;
             z-index: 1000 !important;
           }
 
@@ -467,16 +484,11 @@ export default function ClassListPrintEnhancer() {
             font-size: 10.2px !important;
           }
 
-          .export-brand-slogan {
-            font-size: 9.1px !important;
-          }
-
           .class-list-watermark {
             position: fixed !important;
-            top: 50% !important;
             left: 50% !important;
+            top: 50% !important;
             width: 82mm !important;
-            max-height: 120mm !important;
             transform: translate(-50%, -50%) !important;
             opacity: 0.1 !important;
           }
