@@ -209,8 +209,8 @@ export async function GET(req: NextRequest) {
 
   const classIds = uniqStrings((classRows ?? []).map((row: any) => row.id));
 
-  // Élèves de l'année courante : inscrits dans les classes de l'année active.
-  const studentIdsAll = new Set<string>();
+  // Source unique de vérité du tableau de bord : les élèves ayant une
+  // inscription de classe encore ouverte dans l'année active.
   const studentIdsActive = new Set<string>();
 
   if (classIds.length > 0) {
@@ -231,7 +231,6 @@ export async function GET(req: NextRequest) {
       for (const row of enrollRows ?? []) {
         const studentId = String((row as any).student_id || "").trim();
         if (!studentId) continue;
-        studentIdsAll.add(studentId);
         if (!(row as any).end_date) studentIdsActive.add(studentId);
       }
     }
@@ -293,11 +292,10 @@ export async function GET(req: NextRequest) {
     uniqStrings((teacherRoleRows ?? []).map((row: any) => row.profile_id)),
   );
 
-  // Parents de l'année courante : parents liés aux élèves inscrits dans les classes de l'année active.
+  // Parents de l'année courante : uniquement ceux liés à un élève encore actif.
   const parentIds = new Set<string>();
-  const studentIdsForParents = Array.from(studentIdsAll);
-  if (studentIdsForParents.length > 0) {
-    for (const part of chunks(studentIdsForParents)) {
+  if (activeStudentIds.length > 0) {
+    for (const part of chunks(activeStudentIds)) {
       const { data: guardianRows, error: guardianErr } = await srv
         .from("student_guardians")
         .select("parent_id")
@@ -347,7 +345,9 @@ export async function GET(req: NextRequest) {
         teachers: teacherIds.size,
         parents: parentIds.size,
         students: studentIdsActive.size,
-        students_total: studentIdsAll.size,
+        // Compatibilité avec les clients/cache existants : le « total » du
+        // dashboard est lui aussi le total ACTIF, jamais l'historique retiré.
+        students_total: studentIdsActive.size,
         ...studentBreakdown,
       },
       kpis: {
