@@ -25,6 +25,7 @@ import {
   validateClassDeviceScheduleScope,
 } from "@/lib/offlineClassDevice";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   deliverTeacherAttendance,
   markTeacherAttendanceSyncedInCloud,
@@ -604,6 +605,12 @@ function formatReminderCountdown(ms: number): string | null {
 }
 
 export default function ClassDevicePage() {
+  const {
+    institutionId: relayCapabilityInstitutionId,
+    relayEnabled,
+    resolved: relayCapabilityResolved,
+  } = useRelayCapability();
+
   /* état de base */
   const [classes, setClasses] = useState<MyClass[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -615,6 +622,12 @@ export default function ClassDevicePage() {
     () => classes.find((item) => item.id === classId) || null,
     [classes, classId],
   );
+  const relayUiEnabled =
+    relayCapabilityResolved &&
+    relayEnabled &&
+    Boolean(selectedClass?.institution_id) &&
+    (!relayCapabilityInstitutionId ||
+      relayCapabilityInstitutionId === selectedClass?.institution_id);
   const hasNonGeneralClasses = useMemo(
     () =>
       classes.some(
@@ -781,6 +794,11 @@ export default function ClassDevicePage() {
     };
 
     const relay = target?.attendance_presence;
+    if (!relayUiEnabled) {
+      setRelayStatus("unavailable");
+      setRelayScheduleIssue(null);
+      return await loadPreparedSchedule();
+    }
     if (
       !target?.institution_id ||
       !relay?.enabled ||
@@ -1930,6 +1948,7 @@ export default function ClassDevicePage() {
     selectedClass?.attendance_presence?.relay_local_url,
     selectedClass?.attendance_presence?.relay_local_urls,
     selectedClass?.attendance_presence?.relay_access_token,
+    relayUiEnabled,
   ]);
 
   /* 1bis) charger paramètres + périodes + réglages de conduite */
@@ -2366,7 +2385,9 @@ export default function ClassDevicePage() {
       setSubjectLoadMode(automaticConflict ? "empty" : mode);
       setSubjectScheduleIssue(
         automaticConflict
-          ? "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez le relais avant de démarrer le nouvel appel."
+          ? relayUiEnabled
+            ? "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez le relais avant de démarrer le nouvel appel."
+            : "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez les données d’appel avant de démarrer le nouvel appel."
           : null,
       );
 
@@ -2731,7 +2752,11 @@ export default function ClassDevicePage() {
 
     setBusy(true);
     setSessionRuntimeState("opening");
-    setMsg("Sécurisation du démarrage sur ce téléphone, puis réplication vers le relais et le Cloud…");
+    setMsg(
+      relayUiEnabled
+        ? "Sécurisation du démarrage sur ce téléphone, puis réplication vers le relais et le Cloud…"
+        : "Sécurisation du démarrage sur ce téléphone, puis synchronisation avec le Cloud…",
+    );
 
     try {
       const relayPolicy = selectedClass?.attendance_presence;
@@ -2860,7 +2885,9 @@ export default function ClassDevicePage() {
       setOpen(pendingOpen);
       setSessionRuntimeState("open_local_pending");
       setMsg(
-        "Appel ouvert et sécurisé sur ce téléphone. Vérification du relais et du Cloud en cours…",
+        relayUiEnabled
+          ? "Appel ouvert et sécurisé sur ce téléphone. Vérification du relais et du Cloud en cours…"
+          : "Appel ouvert et sécurisé sur ce téléphone. Vérification du Cloud en cours…",
       );
       await refreshPending();
 
@@ -3045,9 +3072,11 @@ export default function ClassDevicePage() {
         setMsg(
           cloudCorrectedPeriod
             ? "Le Cloud a recalé le créneau avec son heure serveur. L'appel continue normalement."
-            : relayIssue
-              ? "Le relais n'a pas confirmé l'ouverture, mais le Cloud l'a sécurisée."
-              : "Relais local indisponible. L'appel continue via le Cloud.",
+            : relayUiEnabled
+              ? relayIssue
+                ? "Le relais n'a pas confirmé l'ouverture, mais le Cloud l'a sécurisée."
+                : "Relais local indisponible. L'appel continue via le Cloud."
+              : "L'appel continue via le Cloud.",
         );
         if (cloudCorrectedPeriod) setNowTick(Date.now());
         await refreshPending();
@@ -3064,11 +3093,13 @@ export default function ClassDevicePage() {
         );
         setSessionRuntimeState("open_local_pending");
         setMsg(
-          relayIssue
+          relayUiEnabled && relayIssue
             ? `${relayIssue} L'appel reste sécurisé sur ce téléphone et le Cloud sera réessayé automatiquement.`
             : cloudResult.status === 401
               ? "La session Cloud doit être renouvelée. L'appel reste sécurisé sur ce téléphone et sera synchronisé automatiquement."
-              : "Relais et Internet indisponibles. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement.",
+              : relayUiEnabled
+                ? "Relais et Internet indisponibles. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement."
+                : "Internet indisponible. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement.",
         );
         await refreshPending();
         return;
@@ -3633,7 +3664,9 @@ export default function ClassDevicePage() {
       );
       if (!discard) {
         setMsg(
-          `${remaining} action(s) conservées sur cet appareil. Rejoignez le réseau local du relais puis appuyez sur Sync.`
+          relayUiEnabled
+            ? `${remaining} action(s) conservées sur cet appareil. Rejoignez le réseau local du relais puis appuyez sur Sync.`
+            : `${remaining} action(s) conservées sur cet appareil. Rétablissez la connexion Internet puis appuyez sur Sync.`,
         );
         return;
       }
@@ -3759,15 +3792,17 @@ export default function ClassDevicePage() {
             >
               Cloud : {connectivityLabel(cloudStatus)}
             </span>
-            <span
-              className={[
-                "rounded-full px-3 py-1 text-xs font-semibold",
-                connectivityTone(relayStatus),
-              ].join(" ")}
-              title="Disponibilité réelle du relais local"
-            >
-              Relais local : {connectivityLabel(relayStatus)}
-            </span>
+            {relayUiEnabled && (
+              <span
+                className={[
+                  "rounded-full px-3 py-1 text-xs font-semibold",
+                  connectivityTone(relayStatus),
+                ].join(" ")}
+                title="Disponibilité réelle du relais local"
+              >
+                Relais local : {connectivityLabel(relayStatus)}
+              </span>
+            )}
             <span
               className={[
                 "rounded-full px-3 py-1 text-xs font-semibold",
@@ -3782,7 +3817,11 @@ export default function ClassDevicePage() {
               onClick={() => void syncNow()}
               disabled={syncing || pendingSync === 0}
               className="rounded-full border border-white/20 px-3 py-1 text-xs text-white/90 hover:bg-white/10 disabled:opacity-50"
-              title="Réessayer le relais local et, si Internet est disponible, le Cloud"
+              title={
+                relayUiEnabled
+                  ? "Réessayer le relais local et, si Internet est disponible, le Cloud"
+                  : "Réessayer la synchronisation avec le Cloud"
+              }
             >
               {syncing ? "Sync..." : `Sync (${pendingSync})`}
             </button>
@@ -3821,9 +3860,9 @@ export default function ClassDevicePage() {
         }}
         onPrepared={refreshClassContextAfterPreparation}
       />
-      {(subjectScheduleIssue || relayScheduleIssue) && (
+      {(subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-          {subjectScheduleIssue || relayScheduleIssue}
+          {subjectScheduleIssue || (relayUiEnabled ? relayScheduleIssue : null)}
         </div>
       )}
       {!open &&
@@ -3857,7 +3896,9 @@ export default function ClassDevicePage() {
                 ? "Le relais local a confirmé la fermeture."
                 : lastCompletion.relay_state === "cloud_confirmed"
                   ? "Le Cloud a confirmé l’appel et la fermeture sans modifier leurs heures originales."
-                  : "L’appareil conserve l’appel et réessaiera le relais ou le Cloud automatiquement."}
+                  : relayUiEnabled
+                    ? "L’appareil conserve l’appel et réessaiera le relais ou le Cloud automatiquement."
+                    : "L’appareil conserve l’appel et réessaiera le Cloud automatiquement."}
             </div>
           </div>
         )}
