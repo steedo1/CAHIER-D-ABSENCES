@@ -32,6 +32,12 @@ type Props = {
   onPrepared?: (readiness: OfflineReadiness) => void | Promise<void>;
 };
 
+const AUTOMATIC_ATTENDANCE_RETRY_STATUSES = new Set([
+  "relay_stale",
+  "sources_diverged",
+  "phone_stale",
+]);
+
 const AUTOMATIC_PREPARE_STATUSES = new Set([
   "not_prepared",
   "schedule_not_prepared",
