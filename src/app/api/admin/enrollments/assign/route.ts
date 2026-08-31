@@ -70,7 +70,6 @@ export async function POST(req: NextRequest) {
   if (!class_id)
     return NextResponse.json({ error: "class_id_required" }, { status: 400 });
 
-  // Classe valide ?
   const { data: cls, error: clsErr } = await srv
     .from("classes")
     .select("id,institution_id,academic_year,label,code,level,official_track_code")
@@ -121,10 +120,6 @@ export async function POST(req: NextRequest) {
         studentLast = (exist as any).last_name ?? null;
         studentMatricule = (exist as any).matricule ?? null;
 
-        // Cas transition d'année déjà partiellement saisie :
-        // la classe cible peut contenir une fiche 2026-2027 sans matricule
-        // pour le même enfant. Cette fiche courante reste la référence :
-        // on lui transfère uniquement le matricule de la fiche historique.
         const historicalNameKey = normalizeStudentIdentityName(
           studentLast,
           studentFirst,
@@ -207,27 +202,29 @@ export async function POST(req: NextRequest) {
             );
           }
 
-          const patch: any = {};
+          const patch: any = {
+            lifecycle_status: "active",
+            exit_date: null,
+            exit_reason: null,
+          };
           if (typeof isAffecte === "boolean") patch.is_affecte = isAffecte;
           if (typeof isBoarder === "boolean") patch.is_boarder = isBoarder;
           if (first_name) patch.first_name = first_name;
           if (last_name) patch.last_name = last_name;
 
-          if (Object.keys(patch).length > 0) {
-            const { error: currentUpdateError } = await srv
-              .from("students")
-              .update(patch)
-              .eq("id", currentStudentId)
-              .eq("institution_id", inst);
-            if (currentUpdateError) {
-              return NextResponse.json(
-                {
-                  error: currentUpdateError.message,
-                  code: "reconciled_student_update_failed",
-                },
-                { status: 409 },
-              );
-            }
+          const { error: currentUpdateError } = await srv
+            .from("students")
+            .update(patch)
+            .eq("id", currentStudentId)
+            .eq("institution_id", inst);
+          if (currentUpdateError) {
+            return NextResponse.json(
+              {
+                error: currentUpdateError.message,
+                code: "reconciled_student_update_failed",
+              },
+              { status: 409 },
+            );
           }
 
           const targetAcademicYear = String(
@@ -407,7 +404,6 @@ export async function POST(req: NextRequest) {
       createdStudent = true;
     }
   } else {
-    // assign (par matricule OU par student_id)
     const matricule: string = String(body?.matricule || "").trim();
     const byId: string = String(body?.student_id || "").trim();
 
@@ -488,12 +484,38 @@ export async function POST(req: NextRequest) {
     }
   };
 
-  const today = isoToday();
+  const { data: studentLifecycleBefore, error: studentLifecycleError } = await srv
+    .from("students")
+    .select("lifecycle_status,exit_date,exit_reason")
+    .eq("institution_id", inst)
+    .eq("id", studentId)
+    .maybeSingle();
 
-  // Le transfert de classe et le transfert financier doivent être préparés
-  // avant de fermer l'ancienne inscription. En cas d'anomalie (barème cible
-  // manquant, doublons déjà encaissés, profil financier incomplet), aucune
-  // inscription n'est modifiée.
+  if (studentLifecycleError || !studentLifecycleBefore) {
+    await rollbackPreparedStudent();
+    return NextResponse.json(
+      {
+        error: studentLifecycleError?.message || "student_not_found",
+        code: "student_lifecycle_prepare_failed",
+      },
+      { status: 409 },
+    );
+  }
+
+  const rollbackLifecycle = async () => {
+    if (createdStudent || !studentId) return;
+    await srv
+      .from("students")
+      .update({
+        lifecycle_status: (studentLifecycleBefore as any).lifecycle_status,
+        exit_date: (studentLifecycleBefore as any).exit_date,
+        exit_reason: (studentLifecycleBefore as any).exit_reason,
+      })
+      .eq("institution_id", inst)
+      .eq("id", studentId);
+  };
+
+  const today = isoToday();
   let sameYearClassIds: string[] = [];
   let targetAcademicYearId: string | null = null;
   let targetAcademicYearStartDate: string | null = null;
@@ -544,10 +566,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Une fiche élève est stable entre les années scolaires. Pour l'inscription,
-  // il faut donc clôturer TOUTE ancienne inscription encore active, y compris
-  // celle de l'année précédente. En revanche, la finance ne se transfère que
-  // lors d'un changement de classe dans la même année scolaire.
   const { data: sourceEnrollments, error: sourceEnrollmentErr } = await srv
     .from("class_enrollments")
     .select("id,class_id,start_date,end_date,classes:class_id(academic_year)")
@@ -763,6 +781,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const { error: lifecycleReactivateError } = await srv
+    .from("students")
+    .update({
+      lifecycle_status: "active",
+      exit_date: null,
+      exit_reason: null,
+    })
+    .eq("institution_id", inst)
+    .eq("id", studentId);
+
+  if (lifecycleReactivateError) {
+    await Promise.allSettled([
+      rollbackEnrollment(),
+      financeTransfer.rollback(),
+      rollbackPreparedStudent(),
+      rollbackLifecycle(),
+    ]);
+    return NextResponse.json(
+      {
+        error: lifecycleReactivateError.message,
+        code: "student_lifecycle_reactivation_failed",
+      },
+      { status: 409 },
+    );
+  }
 
   if (targetAcademicYearId) {
     const { data: finalStudent, error: finalStudentError } = await srv
@@ -777,6 +820,7 @@ export async function POST(req: NextRequest) {
         rollbackEnrollment(),
         financeTransfer.rollback(),
         rollbackPreparedStudent(),
+        rollbackLifecycle(),
       ]);
       return NextResponse.json(
         {
@@ -829,6 +873,7 @@ export async function POST(req: NextRequest) {
           rollbackEnrollment(),
           financeTransfer.rollback(),
           rollbackPreparedStudent(),
+          rollbackLifecycle(),
         ]);
         return NextResponse.json(
           {
