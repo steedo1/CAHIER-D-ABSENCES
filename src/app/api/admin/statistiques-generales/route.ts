@@ -241,17 +241,17 @@ export async function GET() {
   }
 
   items.sort((a, b) => {
-    const level = clean(a.level).localeCompare(clean(b.level), "fr", {
+    const name = clean(a.full_name).localeCompare(clean(b.full_name), "fr", {
       sensitivity: "base",
       numeric: true,
     });
-    if (level) return level;
+    if (name) return name;
     const cls = clean(a.class_label).localeCompare(clean(b.class_label), "fr", {
       sensitivity: "base",
       numeric: true,
     });
     if (cls) return cls;
-    return clean(a.full_name).localeCompare(clean(b.full_name), "fr", {
+    return clean(a.matricule).localeCompare(clean(b.matricule), "fr", {
       sensitivity: "base",
       numeric: true,
     });
