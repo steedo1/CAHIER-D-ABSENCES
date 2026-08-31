@@ -7,6 +7,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
@@ -403,6 +404,8 @@ function clientSessionIdFromOpen(open: OpenSession | null) {
    Component (teacher only)
 ────────────────────────────────────────── */
 export default function TeacherDashboard() {
+  const { relayEnabled: institutionHasRelay } = useRelayCapability();
+
   // offline / sync
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pending, setPending] = useState<number>(0);
@@ -1482,11 +1485,17 @@ export default function TeacherDashboard() {
 
     if (!policy.allow_gps_fallback) {
       throw new Error(
-        "Le relais local est requis pour cet appel. Connectez ce téléphone au réseau local autorisé.",
+        institutionHasRelay && policy.allow_local_relay
+          ? "Le relais local est requis pour cet appel. Connectez ce téléphone au réseau local autorisé."
+          : "La vérification de présence n’est pas disponible pour cet appel.",
       );
     }
 
-    setMsg("Réseau local non détecté : vérification ponctuelle de votre position GPS…");
+    setMsg(
+      institutionHasRelay
+        ? "Réseau local non détecté : vérification ponctuelle de votre position GPS…"
+        : "Vérification ponctuelle de votre position GPS…",
+    );
     const evidence = await getFreshGpsEvidence(policy.max_gps_accuracy_m);
     const localCheck = checkGpsInsideZones(evidence.position, policy);
     if (!localCheck.ok) throw new Error(localCheck.message);
@@ -1611,7 +1620,9 @@ export default function TeacherDashboard() {
             ? relayConnectivityFailureMessage(liveRelayCheck.status)
             : startDecision.reason === "presence_unavailable"
               ? "La preuve de présence locale est indisponible et le GPS de secours n’est pas autorisé."
-              : "Le Cloud et le relais local sont indisponibles pour ouvrir cette séance."),
+              : institutionHasRelay
+                ? "Le Cloud et le relais local sont indisponibles pour ouvrir cette séance."
+                : "Le Cloud est indisponible pour ouvrir cette séance."),
         );
         return;
       }
@@ -1829,7 +1840,9 @@ export default function TeacherDashboard() {
     const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
     const confirmed = typeof window === "undefined" || window.confirm(
       `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
-      "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur.",
+      (institutionHasRelay
+        ? "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur."
+        : "L’appel sera enregistré avant la fermeture. L’heure de fin enregistrée sera utilisée pour le suivi de la séance et la paie du professeur."),
     );
     if (!confirmed) return;
 
