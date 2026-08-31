@@ -15,7 +15,7 @@ test("le téléphone de classe masque toute information Relais sans capacité ac
   );
   assert.match(
     page,
-    /\{relayUiEnabled && \([\s\S]*?Relais local : \{connectivityLabel\(relayStatus\)\}/,
+    /\{relayUiEnabled \? \([\s\S]*?Relais local : \{connectivityLabel\(relayStatus\)\}[\s\S]*?: null\}/,
   );
   assert.match(page, /: "L'appel continue via le Cloud\."/);
   assert.match(
