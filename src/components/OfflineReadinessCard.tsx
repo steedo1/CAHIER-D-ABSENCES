@@ -24,7 +24,6 @@ import {
   type ClassDeviceReadinessStatus,
 } from "@/lib/offlineClassDevice";
 import { cacheGet } from "@/lib/offline";
-import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type Props = {
   role: OfflineRole;
@@ -32,12 +31,6 @@ type Props = {
   classDeviceContext?: ClassDeviceAssessmentContext;
   onPrepared?: (readiness: OfflineReadiness) => void | Promise<void>;
 };
-
-const AUTOMATIC_ATTENDANCE_RETRY_STATUSES = new Set([
-  "relay_stale",
-  "sources_diverged",
-  "phone_stale",
-]);
 
 const AUTOMATIC_PREPARE_STATUSES = new Set([
   "not_prepared",
@@ -106,52 +99,12 @@ function shouldPrepareAutomatically(
   return readinessTooOld(readiness);
 }
 
-function automaticAttendanceMessage(
-  assessment: TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null,
-  role: OfflineRole,
-  relayEnabled: boolean,
-  preparing: boolean,
-) {
-  if (preparing) return "Mise à jour des données d’appel…";
-  if (!assessment) return "Préparation des données d’appel…";
-
-  const status = String(assessment.status || "");
-  if (status === "ready" || status === "ready_local") return null;
-
-  if (status === "not_prepared" || status === "schedule_not_prepared") {
-    return "Préparation automatique des données d’appel…";
-  }
-  if (AUTOMATIC_ATTENDANCE_RETRY_STATUSES.has(status)) {
-    return "Actualisation du planning d’appel…";
-  }
-  if (status === "offline_schema_stale") {
-    return "Mise à jour du mode hors connexion…";
-  }
-
-  if (!relayEnabled) {
-    return assessment.cloud_reachable
-      ? assessment.message
-      : "Connexion indisponible. Les dernières données validées restent utilisées.";
-  }
-
-  if (status === "relay_unreachable") return "Relais local momentanément inaccessible.";
-  if (status === "relay_access_denied") return "Accès au relais local refusé.";
-  if (status === "relay_permission_denied") return "Accès au réseau local non autorisé.";
-  if (status === "browser_incompatible") return "Accès local indisponible sur ce navigateur.";
-  if (status === "relay_incompatible") return "Le relais local doit être mis à jour.";
-
-  return role === "class-device"
-    ? "Actualisation des données de cette classe…"
-    : assessment.message;
-}
-
 export default function OfflineReadinessCard({
   role,
   className = "",
   classDeviceContext,
   onPrepared,
 }: Props) {
-  const { relayEnabled } = useRelayCapability();
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
@@ -252,7 +205,9 @@ export default function OfflineReadinessCard({
 
         try {
           const next = await prepareOffline(role, (message) => {
-            if (mountedRef.current) setProgress(message);
+            if (mountedRef.current && !automaticAttendanceRole(role)) {
+              setProgress(message);
+            }
           });
 
           if (role === "teacher" || role === "class-device") {
@@ -432,12 +387,7 @@ export default function OfflineReadinessCard({
       : undefined;
   const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
   const relayConnectivityMessage = isAutomaticAttendance
-    ? automaticAttendanceMessage(
-        assessment,
-        role,
-        relayEnabled,
-        preparing,
-      )
+    ? null
     : assessment
       ? assessment.message
       : relayConnectivity?.status === "reachable"
@@ -455,27 +405,124 @@ export default function OfflineReadinessCard({
                 : null;
 
   if (isAutomaticAttendance) {
-    const compactMessage = error || (preparing ? progress : relayConnectivityMessage);
-    if (automaticOperational && !preparing && !error) return null;
+    const isClassDevice = role === "class-device";
+    const phoneLabel = isClassDevice
+      ? "téléphone de classe"
+      : "téléphone professeur";
+    const readyTitle = isClassDevice
+      ? "Téléphone de classe prêt"
+      : "Téléphone professeur prêt";
+    const waitingForPreparation =
+      preparing ||
+      (!assessment && !error) ||
+      Boolean(
+        assessment &&
+          !error &&
+          shouldPrepareAutomatically(assessment, readiness),
+      );
+
+    if (automaticOperational && !preparing && !error) {
+      return (
+        <section
+          className={[
+            "overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50/80 to-teal-50 p-4 shadow-sm",
+            className,
+          ].join(" ")}
+          aria-live="polite"
+          role="status"
+        >
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-sm shadow-emerald-200">
+              <ShieldCheck className="h-7 w-7" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="font-semibold text-emerald-950">{readyTitle}</p>
+              <p className="mt-0.5 text-sm leading-5 text-emerald-800">
+                La préparation est terminée. Les appels peuvent fonctionner même
+                sans Internet.
+              </p>
+              <p className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                <span
+                  className="h-2 w-2 rounded-full bg-emerald-500"
+                  aria-hidden="true"
+                />
+                Préparation réussie
+              </p>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    if (waitingForPreparation) {
+      return (
+        <section
+          className={[
+            "overflow-hidden rounded-2xl border border-sky-200 bg-gradient-to-br from-white via-sky-50/90 to-emerald-50/60 p-4 shadow-sm",
+            className,
+          ].join(" ")}
+          aria-busy="true"
+          aria-live="polite"
+          role="status"
+        >
+          <div className="flex items-center gap-4">
+            <span
+              className="relative h-12 w-12 shrink-0"
+              aria-hidden="true"
+            >
+              <span className="absolute inset-0 rounded-full border-4 border-sky-100" />
+              <span className="absolute inset-0 animate-spin rounded-full border-4 border-transparent border-r-emerald-500 border-t-sky-600" />
+              <span className="absolute inset-[9px] rounded-full bg-white shadow-inner" />
+            </span>
+            <div className="min-w-0">
+              <p className="font-semibold text-slate-950">
+                Préparation du {phoneLabel}
+              </p>
+              <p className="mt-0.5 text-sm leading-5 text-slate-700">
+                Mon Cahier prépare les données nécessaires aux appels.
+              </p>
+              <p className="mt-1 text-xs font-medium text-sky-700">
+                Ne fermez pas cette page.
+              </p>
+            </div>
+          </div>
+        </section>
+      );
+    }
 
     return (
       <section
         className={[
-          "rounded-xl border px-3 py-2 shadow-sm",
-          error
-            ? "border-rose-200 bg-rose-50 text-rose-900"
-            : "border-amber-200 bg-amber-50 text-amber-900",
+          "overflow-hidden rounded-2xl border border-amber-200 bg-gradient-to-br from-white via-amber-50/90 to-orange-50 p-4 shadow-sm",
           className,
         ].join(" ")}
         aria-live="polite"
+        role="status"
       >
-        <div className="flex items-center gap-2 text-sm font-medium">
-          {error ? (
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-          ) : (
-            <RefreshCcw className={preparing ? "h-4 w-4 shrink-0 animate-spin" : "h-4 w-4 shrink-0"} />
-          )}
-          <span>{compactMessage || "Préparation des données d’appel…"}</span>
+        <div className="flex items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-100 text-amber-700">
+            <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-amber-950">
+              {isClassDevice
+                ? "Téléphone de classe pas encore prêt"
+                : "Téléphone professeur pas encore prêt"}
+            </p>
+            <p className="mt-0.5 text-sm leading-5 text-amber-900">
+              {error
+                ? "La préparation n’a pas pu être terminée. Vérifiez la connexion, puis réessayez."
+                : "Une connexion est nécessaire pour terminer la préparation hors connexion."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void runPreparation(false)}
+              className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800 focus:outline-none focus:ring-4 focus:ring-amber-500/25"
+            >
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+              Réessayer
+            </button>
+          </div>
         </div>
       </section>
     );
