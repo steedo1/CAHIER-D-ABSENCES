@@ -3792,7 +3792,7 @@ export default function ClassDevicePage() {
             >
               Cloud : {connectivityLabel(cloudStatus)}
             </span>
-            {relayUiEnabled && (
+            {relayUiEnabled ? (
               <span
                 className={[
                   "rounded-full px-3 py-1 text-xs font-semibold",
@@ -3802,7 +3802,7 @@ export default function ClassDevicePage() {
               >
                 Relais local : {connectivityLabel(relayStatus)}
               </span>
-            )}
+            ) : null}
             <span
               className={[
                 "rounded-full px-3 py-1 text-xs font-semibold",
