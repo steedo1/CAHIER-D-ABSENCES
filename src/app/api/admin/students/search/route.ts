@@ -1,5 +1,9 @@
 // src/app/api/admin/students/search/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import {
+  studentIdentityWords,
+  studentMatchesIdentity,
+} from "@/lib/student-class-membership";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
 export const runtime = "nodejs";
@@ -25,31 +29,78 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const qRaw = (url.searchParams.get("q") || "").trim();
+  const lastNameRaw = (url.searchParams.get("last_name") || "").trim();
+  const firstNameRaw = (url.searchParams.get("first_name") || "").trim();
+  const identitySearch = Boolean(lastNameRaw || firstNameRaw);
   const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") || 20)));
 
-  if (qRaw.length < 2) return NextResponse.json({ items: [] }); // on évite les requêtes trop vagues
+  if (identitySearch) {
+    if (
+      studentIdentityWords(lastNameRaw).join("").length < 2 ||
+      studentIdentityWords(firstNameRaw).length === 0
+    ) {
+      return NextResponse.json({
+        items: [],
+        identity_search: true,
+        identity_ready: false,
+      });
+    }
+  } else if (qRaw.length < 2) {
+    return NextResponse.json({ items: [] }); // on évite les requêtes trop vagues
+  }
 
   // Échappe % et _ pour ILIKE
-  const q = qRaw.replace(/[%_]/g, (m) => `\\${m}`);
-  const like = `%${q}%`;
+  const escapeLike = (value: string) => value.replace(/[\\%_]/g, (m) => `\\${m}`);
 
   // 1) On cherche dans students (nom, prénom, matricule)
-  const { data: studs, error: sErr } = await srv
+  let studentsQuery = srv
     .from("students")
     .select("id, first_name, last_name, matricule")
     .eq("institution_id", inst)
-    .or(
-      [
-        `first_name.ilike.${like}`,
-        `last_name.ilike.${like}`,
-        `matricule.ilike.${like}`,
-      ].join(",")
-    )
     .order("last_name", { ascending: true, nullsFirst: true })
-    .order("first_name", { ascending: true, nullsFirst: true })
-    .limit(limit);
+    .order("first_name", { ascending: true, nullsFirst: true });
+
+  if (identitySearch) {
+    // Le filtre final est strict et insensible aux accents. Ces deux fragments
+    // bornent seulement le volume lu sans confondre NOM et prénom(s).
+    const longestLastNameWord = studentIdentityWords(lastNameRaw).sort(
+      (a, b) => b.length - a.length,
+    )[0];
+    const longestFirstNameWord = studentIdentityWords(firstNameRaw).sort(
+      (a, b) => b.length - a.length,
+    )[0];
+
+    studentsQuery = studentsQuery
+      .ilike("last_name", `%${escapeLike(longestLastNameWord)}%`)
+      .ilike("first_name", `%${escapeLike(longestFirstNameWord)}%`)
+      .limit(Math.min(200, Math.max(50, limit * 4)));
+  } else {
+    const like = `%${escapeLike(qRaw)}%`;
+    studentsQuery = studentsQuery
+      .or(
+        [
+          `first_name.ilike.${like}`,
+          `last_name.ilike.${like}`,
+          `matricule.ilike.${like}`,
+        ].join(",")
+      )
+      .limit(limit);
+  }
+
+  const { data: candidates, error: sErr } = await studentsQuery;
 
   if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
+
+  const studs = identitySearch
+    ? (candidates ?? [])
+        .filter((student) =>
+          studentMatchesIdentity(student, {
+            lastName: lastNameRaw,
+            firstName: firstNameRaw,
+          }),
+        )
+        .slice(0, limit)
+    : candidates ?? [];
 
   const ids = (studs ?? []).map((s) => s.id);
   let mapClass = new Map<string, { class_id: string | null; class_label: string | null }>();
@@ -86,5 +137,10 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ items });
+  return NextResponse.json({
+    items,
+    identity_search: identitySearch,
+    identity_ready: identitySearch ? true : undefined,
+    ambiguous: identitySearch ? items.length > 1 : undefined,
+  });
 }

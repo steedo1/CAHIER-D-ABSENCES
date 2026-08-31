@@ -840,15 +840,13 @@ export default function AdminStudentsByClassPage() {
     transfer_matricule: "",
   });
 
-  const [searchQ, setSearchQ] = useState("");
+  const [identitySearch, setIdentitySearch] = useState({
+    last_name: "",
+    first_name: "",
+  });
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchItems, setSearchItems] = useState<SearchStudentRow[]>([]);
-  const [selectedStu, setSelectedStu] = useState<null | {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    matricule: string | null;
-  }>(null);
+  const [selectedStu, setSelectedStu] = useState<SearchStudentRow | null>(null);
 
   const searchAbort = useRef<AbortController | null>(null);
 
@@ -887,7 +885,7 @@ export default function AdminStudentsByClassPage() {
       new_is_boarder: "",
       transfer_matricule: "",
     });
-    setSearchQ("");
+    setIdentitySearch({ last_name: "", first_name: "" });
     setSearchItems([]);
     setSelectedStu(null);
   }
@@ -1086,10 +1084,11 @@ export default function AdminStudentsByClassPage() {
   useEffect(() => {
     if (assignMode !== "transfer") return;
 
-    const k = searchQ.trim();
-    if (k.length < 2) {
+    const lastName = identitySearch.last_name.trim();
+    const firstName = identitySearch.first_name.trim();
+    if (lastName.length < 2 || firstName.length < 2) {
       setSearchItems([]);
-      setSelectedStu(null);
+      setSearchBusy(false);
       return;
     }
 
@@ -1102,7 +1101,9 @@ export default function AdminStudentsByClassPage() {
     const tid = setTimeout(async () => {
       try {
         const res = await fetch(
-          `/api/admin/students/search?q=${encodeURIComponent(k)}`,
+          `/api/admin/students/search?last_name=${encodeURIComponent(
+            lastName,
+          )}&first_name=${encodeURIComponent(firstName)}&limit=50`,
           { signal: ctrl.signal }
         );
         const json = await res.json().catch(() => ({}));
@@ -1125,7 +1126,7 @@ export default function AdminStudentsByClassPage() {
       clearTimeout(tid);
       ctrl.abort();
     };
-  }, [assignMode, searchQ]);
+  }, [assignMode, identitySearch]);
 
   function toggleStudentSelection(studentId: string, checked: boolean) {
     setSelectedIds((prev) => {
@@ -1325,14 +1326,9 @@ export default function AdminStudentsByClassPage() {
     }
   }
 
-  function chooseStudent(it: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    matricule: string | null;
-  }) {
+  function chooseStudent(it: SearchStudentRow) {
     setSelectedStu(it);
-    setForm((f) => ({ ...f, transfer_matricule: it.matricule || "" }));
+    setForm((f) => ({ ...f, transfer_matricule: "" }));
   }
 
   async function submitAssign() {
@@ -1377,7 +1373,7 @@ export default function AdminStudentsByClassPage() {
           is_boarder: form.new_is_boarder === "true",
         };
       } else {
-        if (selectedStu?.id && !form.transfer_matricule.trim()) {
+        if (selectedStu?.id) {
           body = {
             action: "assign",
             class_id: classId,
@@ -2013,62 +2009,120 @@ export default function AdminStudentsByClassPage() {
                     </div>
                     <Input
                       value={form.transfer_matricule}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setForm((f) => ({
                           ...f,
                           transfer_matricule: e.target.value.toUpperCase(),
-                        }))
-                      }
+                        }));
+                        setSelectedStu(null);
+                        setIdentitySearch({ last_name: "", first_name: "" });
+                        setSearchItems([]);
+                      }}
                       placeholder="Ex : 20166309J"
                     />
                   </div>
 
                   <div>
                     <div className="mb-1 text-xs text-slate-600">
-                      Ou rechercher par nom (autocomplete global)
+                      Ou rechercher par identité
                     </div>
-                    <Input
-                      value={searchQ}
-                      onChange={(e) => setSearchQ(e.target.value)}
-                      placeholder="Ex : KOUASSI, TRAORE, NGUESSAN... (min. 2 caracteres)"
-                    />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <Input
+                        value={identitySearch.last_name}
+                        onChange={(e) => {
+                          setIdentitySearch((current) => ({
+                            ...current,
+                            last_name: e.target.value.toUpperCase(),
+                          }));
+                          setSelectedStu(null);
+                          setForm((current) => ({
+                            ...current,
+                            transfer_matricule: "",
+                          }));
+                        }}
+                        placeholder="Nom (ex : KOUASSI)"
+                        aria-label="Nom de l'élève à transférer"
+                      />
+                      <Input
+                        value={identitySearch.first_name}
+                        onChange={(e) => {
+                          setIdentitySearch((current) => ({
+                            ...current,
+                            first_name: e.target.value,
+                          }));
+                          setSelectedStu(null);
+                          setForm((current) => ({
+                            ...current,
+                            transfer_matricule: "",
+                          }));
+                        }}
+                        placeholder="Au moins un prénom"
+                        aria-label="Prénom de l'élève à transférer"
+                      />
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Renseignez le nom exact et au moins un prénom, puis choisissez
+                      l'élève correspondant.
+                    </div>
 
                     <div className="mt-2 max-h-56 overflow-auto rounded-xl border">
                       {searchBusy ? (
                         <div className="p-3 text-sm text-slate-600">Recherche...</div>
+                      ) : identitySearch.last_name.trim().length < 2 ||
+                        identitySearch.first_name.trim().length < 2 ? (
+                        <div className="p-3 text-sm text-slate-500">
+                          Saisissez le nom et au moins un prénom.
+                        </div>
                       ) : searchItems.length === 0 ? (
-                        <div className="p-3 text-sm text-slate-500">Aucun resultat</div>
+                        <div className="p-3 text-sm text-slate-500">
+                          Aucun élève ne correspond à cette identité.
+                        </div>
                       ) : (
-                        <ul className="divide-y">
-                          {searchItems.map((it) => {
-                            const ln = (it.last_name || "").toUpperCase();
-                            const fn = (it.first_name || "").trim();
-                            const nm = [ln, fn].filter(Boolean).join(" ");
+                        <>
+                          {searchItems.length > 1 && (
+                            <div className="border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                              Plusieurs élèves portent cette identité. Vérifiez le
+                              matricule et la classe avant de choisir.
+                            </div>
+                          )}
+                          <ul className="divide-y">
+                            {searchItems.map((it) => {
+                              const ln = (it.last_name || "").toUpperCase();
+                              const fn = (it.first_name || "").trim();
+                              const nm = [ln, fn].filter(Boolean).join(" ");
+                              const isSelected = selectedStu?.id === it.id;
 
-                            return (
-                              <li
-                                key={it.id}
-                                className="flex items-center justify-between gap-2 p-2 hover:bg-slate-50"
-                              >
-                                <div className="min-w-0">
-                                  <div className="truncate font-medium">
-                                    {nm || "-"}
+                              return (
+                                <li
+                                  key={it.id}
+                                  className="flex items-center justify-between gap-2 p-2 hover:bg-slate-50"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium">
+                                      {nm || "-"}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {it.matricule
+                                        ? `Matricule : ${it.matricule}`
+                                        : "Sans matricule"}
+                                      {it.class_label
+                                        ? ` - Classe : ${it.class_label}`
+                                        : " - Sans classe"}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-slate-500">
-                                    {it.matricule
-                                      ? `Matricule : ${it.matricule}`
-                                      : "Sans matricule"}
-                                    {it.class_label ? ` - Classe : ${it.class_label}` : ""}
-                                  </div>
-                                </div>
 
-                                <Button tone="white" onClick={() => chooseStudent(it)}>
-                                  Choisir
-                                </Button>
-                              </li>
-                            );
-                          })}
-                        </ul>
+                                  <Button
+                                    tone={isSelected ? "emerald" : "white"}
+                                    onClick={() => chooseStudent(it)}
+                                    disabled={isSelected}
+                                  >
+                                    {isSelected ? "Sélectionné" : "Choisir"}
+                                  </Button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </>
                       )}
                     </div>
 
@@ -2086,7 +2140,16 @@ export default function AdminStudentsByClassPage() {
               )}
 
               <div className="mt-5 flex items-center gap-2">
-                <Button onClick={submitAssign} disabled={assigning || !classId}>
+                <Button
+                  onClick={submitAssign}
+                  disabled={
+                    assigning ||
+                    !classId ||
+                    (assignMode === "transfer" &&
+                      !selectedStu &&
+                      !form.transfer_matricule.trim())
+                  }
+                >
                   {assigning
                     ? "Traitement..."
                     : assignMode === "new"

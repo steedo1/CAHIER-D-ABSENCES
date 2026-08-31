@@ -1,5 +1,6 @@
 // src/app/api/admin/enrollments/remove/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
 export const runtime = "nodejs";
@@ -42,22 +43,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
   }
 
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  // Fermer l'inscription active (si elle existe)
-  const { data, error } = await srv
+  const { data: activeEnrollment, error: activeEnrollmentError } = await srv
     .from("class_enrollments")
-    .update({ end_date: today })
+    .select("id,start_date")
     .eq("institution_id", inst)
     .eq("class_id", class_id)
     .eq("student_id", student_id)
     .is("end_date", null)
-    .select("id");
+    .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (activeEnrollmentError) {
+    return NextResponse.json(
+      { error: activeEnrollmentError.message },
+      { status: 400 },
+    );
+  }
 
-  const closed = (data ?? []).length;
-
-  if (closed === 0) {
+  if (!activeEnrollment) {
     // Diagnostique utile si rien n'a été fermé
     const { data: checkPair, error: checkErr } = await srv
       .from("class_enrollments")
@@ -81,9 +83,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "already_closed" }, { status: 409 });
     }
 
-    // Cas improbable : rien fermé mais une ligne existe et est active.
     return NextResponse.json({ error: "no_active_row_closed" }, { status: 409 });
   }
 
-  return NextResponse.json({ closed });
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // Une inscription de la prochaine rentrée ne peut pas être fermée avant son
+  // début. On conserve l'élève et toute sa finance : seule l'inscription est close.
+  const endDate = safeEnrollmentEndDate(activeEnrollment.start_date, today);
+
+  const { data: closedEnrollment, error: closeError } = await srv
+    .from("class_enrollments")
+    .update({ end_date: endDate })
+    .eq("institution_id", inst)
+    .eq("id", activeEnrollment.id)
+    .is("end_date", null)
+    .select("id")
+    .maybeSingle();
+
+  if (closeError) {
+    return NextResponse.json({ error: closeError.message }, { status: 400 });
+  }
+
+  if (!closedEnrollment) {
+    // La ligne a pu être fermée en parallèle entre la lecture et l'update.
+    return NextResponse.json({ error: "no_active_row_closed" }, { status: 409 });
+  }
+
+  return NextResponse.json({ closed: 1, end_date: endDate });
 }
