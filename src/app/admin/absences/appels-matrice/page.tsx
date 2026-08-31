@@ -13,6 +13,7 @@ import {
   CircleDashed,
 } from "lucide-react";
 import { fetchAdminAttendanceMonitor, type LocalDataSource } from "@/lib/local-relay";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   adminAttendancePollDelay,
   adminAttendanceViewReducer,
@@ -190,6 +191,7 @@ function cellColorClasses(s: MonitorStatus): string {
 }
 
 export default function AppelsMatricePage() {
+  const { relayEnabled } = useRelayCapability();
   const [rowsState, dispatchRows] = useReducer(
     adminAttendanceViewReducer<MonitorRow>,
     initialAdminAttendanceViewState<MonitorRow>(),
@@ -696,7 +698,9 @@ export default function AppelsMatricePage() {
 
           {dataSource === "cache" && filteredRows.length > 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              Cloud et relais indisponibles : la dernière vue locale valide reste affichée
+              {relayEnabled
+                ? "Cloud et relais indisponibles : la dernière vue locale valide reste affichée"
+                : "Cloud indisponible : la dernière vue locale valide reste affichée"}
               {savedAtLabel ? ` (enregistrée le ${savedAtLabel})` : ""}.
             </div>
           )}
