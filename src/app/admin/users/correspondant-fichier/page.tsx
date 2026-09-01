@@ -78,10 +78,6 @@ export default function CreateFileCorrespondentPage() {
           </span>
           <div>
             <h2 className="text-base font-black text-slate-950">Accès strictement dédié</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              Ce profil possède sa propre navigation. Il ne voit pas le tableau de bord
-              Admin ni les autres modules de l’établissement.
-            </p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
               <span className="rounded-full bg-violet-100 px-3 py-1 text-violet-800">Correspondant fichier</span>
               <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">Organisation scolaire</span>

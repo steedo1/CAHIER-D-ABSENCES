@@ -37,10 +37,6 @@ export default async function UsersLayout({ children }: { children: React.ReactN
               </span>
               <div>
                 <div className="text-sm font-black text-slate-950">Profil Correspondant fichier</div>
-                <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
-                  Crée un compte dédié qui n’affiche que Correspondant fichier,
-                  Organisation scolaire et Paramètres. Le profil Admin reste inchangé.
-                </p>
               </div>
             </div>
 
