@@ -85,7 +85,7 @@ test("le shell Admin hors ligne expose seulement les quatre entrées essentielle
   assert.match(shell, /"\/admin\/notes\/conseil-classe"/);
   assert.match(shell, /essentialAdminMode \? \(/);
   assert.match(shell, /<OfflineAdminEssentialNav pathname=\{pathname\} \/>/);
-  assert.match(shell, /: \(\s*<SidebarNav \/>/);
+  assert.match(shell, /: \(\s*<SidebarNav role=\{role\} \/>/);
 });
 
 test("la préparation du shell Admin est Cloud/PWA et ne dépend pas du relais", async () => {

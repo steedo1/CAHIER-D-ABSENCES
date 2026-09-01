@@ -22,6 +22,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { isFileCorrespondentPathAllowed } from "@/lib/auth/file-correspondent";
+import { useAdminRole } from "../ui/admin-role-context";
 import {
   fetchDashboardMetrics,
   fetchInstitutionSettings,
@@ -231,6 +233,10 @@ function QuickLink({
   icon: any;
   children: React.ReactNode;
 }) {
+  const role = useAdminRole();
+  if (role === "file_correspondent" && !isFileCorrespondentPathAllowed(href)) {
+    return null;
+  }
   return (
     <Link href={href} className="group">
       <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100">
@@ -281,7 +287,7 @@ export default function AdminDashboardClient() {
 
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
-  const [role, setRole] = useState<string | null>(null);
+  const role = useAdminRole();
   const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
@@ -294,7 +300,7 @@ export default function AdminDashboardClient() {
       setData(result.data);
       setDataSource(result.source);
       setUpdatedAt(new Date(result.saved_at));
-      if (result.source === "cloud") void syncRelayBootstrap();
+      if (result.source === "cloud" && role !== "file_correspondent") void syncRelayBootstrap();
     } catch (e: any) {
       setData({ ok: false, error: e?.message ?? "NETWORK_ERROR" });
     } finally {
@@ -302,24 +308,6 @@ export default function AdminDashboardClient() {
       setRefreshing(false);
     }
   }
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        const res = await fetch("/api/auth/role", { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (alive && res.ok) setRole(json?.role ? String(json.role) : null);
-      } catch {
-        if (alive) setRole(null);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -350,7 +338,7 @@ export default function AdminDashboardClient() {
           logo_url: logo || null,
         });
 
-        if (metricsResult.source === "cloud") void syncRelayBootstrap();
+        if (metricsResult.source === "cloud" && role !== "file_correspondent") void syncRelayBootstrap();
       } catch (e: any) {
         if (!alive) return;
         setData({ ok: false, error: e?.message ?? "NETWORK_ERROR" });

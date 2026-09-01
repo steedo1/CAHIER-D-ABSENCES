@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Menu,
   X,
@@ -38,6 +38,8 @@ import SidebarNav from "./sidebar-nav";
 import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
+import type { AppRole } from "@/lib/auth/role";
+import { AdminRoleContext } from "./admin-role-context";
 
 const OFFLINE_ADMIN_NAV_ITEMS = [
   {
@@ -142,12 +144,20 @@ function LoadingOverlay({ label }: { label: string }) {
   );
 }
 
-export default function AdminShell({ children }: { children: ReactNode }) {
+export default function AdminShell({
+  children,
+  initialRole,
+}: {
+  children: ReactNode;
+  initialRole?: AppRole | null;
+}) {
   const { session } = useAuth();
   const { relayEnabled } = useRelayCapability();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [role, setRole] = useState<string | null>(null);
+  const [fallbackRole, setRole] = useState<AppRole | null>(null);
+  const role = initialRole ?? fallbackRole;
   const pathname = usePathname();
+  const searchKey = useSearchParams().toString();
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeLabel, setRouteLabel] = useState("Chargement…");
   const [offlineAdminMode, setOfflineAdminMode] = useState(false);
@@ -172,6 +182,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }, [relayEnabled, session]);
 
   useEffect(() => {
+    // Le layout serveur a déjà vérifié ce rôle. Aucun menu admin transitoire
+    // ni nouvelle requête de rôle n'est nécessaire pour le Correspondant.
+    if (initialRole) return;
     let cancelled = false;
 
     (async () => {
@@ -180,7 +193,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         if (!r.ok) return;
 
         const j = await r.json().catch(() => ({}));
-        if (!cancelled) setRole(j?.role ? String(j.role) : null);
+        if (!cancelled) setRole(j?.role ? (String(j.role) as AppRole) : null);
       } catch {
         if (!cancelled) setRole(null);
       }
@@ -189,7 +202,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialRole]);
 
   useEffect(() => {
     if (role !== "admin" || !session?.user?.id) return;
@@ -209,7 +222,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setRouteLoading(false);
-  }, [pathname]);
+    setMobileOpen(false);
+  }, [pathname, searchKey]);
 
   useEffect(() => {
     if (!routeLoading) return;
@@ -293,6 +307,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const essentialAdminMode = offlineAdminMode;
 
   const isFinanceManager = role === "finance_manager";
+  const isFileCorrespondent = role === "file_correspondent";
   const isInfirmier = role === "infirmier";
   const isAdmin = role === "admin" || essentialAdminMode;
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
@@ -303,6 +318,15 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
   const mobileItems = useMemo(() => {
     if (essentialAdminMode) return [...OFFLINE_ADMIN_NAV_ITEMS];
+
+    if (isFileCorrespondent) {
+      return [
+        { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
+        { href: "/admin/export-moyennes", label: "Correspondant", Icon: FileSpreadsheet },
+        { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
+        { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
+      ];
+    }
 
     if (isInfirmier) {
       return [
@@ -353,6 +377,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   }, [
     isAdmin,
     isFinanceManager,
+    isFileCorrespondent,
     isFinancePath,
     isFounderFinance,
     isInfirmier,
@@ -374,6 +399,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           Drawer mobile (sidebar complète)
       ───────────────────────────── */}
       <div
+        aria-hidden={!mobileOpen}
+        inert={!mobileOpen}
         className={[
           "fixed inset-0 z-50 bg-black/40 transition-opacity md:hidden",
           mobileOpen
@@ -405,7 +432,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             {essentialAdminMode ? (
               <OfflineAdminEssentialNav pathname={pathname} />
             ) : (
-              <SidebarNav />
+              <SidebarNav role={role} />
             )}
           </div>
         </div>
@@ -429,7 +456,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             {essentialAdminMode ? (
               <OfflineAdminEssentialNav pathname={pathname} />
             ) : (
-              <SidebarNav />
+              <SidebarNav role={role} />
             )}
           </div>
         </aside>
@@ -455,15 +482,17 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
                 {/* Tagline masquée sur très petit écran pour un rendu plus "app" */}
                 <span className="hidden rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold ring-1 ring-white/20 sm:inline-flex">
-                  {isFounderFinance
-                    ? "Gestion financière · Fondateur"
-                    : isFinanceManager
-                      ? "Gestion financière · Établissement"
-                      : isAdmin && isFinancePath
-                        ? "Paie des enseignants"
-                        : essentialAdminMode
-                          ? "Mode hors ligne · Admin établissement"
-                          : "Absences & notes · Admin établissement"}
+                  {isFileCorrespondent
+                    ? "Correspondant fichier · Établissement"
+                    : isFounderFinance
+                      ? "Gestion financière · Fondateur"
+                      : isFinanceManager
+                        ? "Gestion financière · Établissement"
+                        : isAdmin && isFinancePath
+                          ? "Paie des enseignants"
+                          : essentialAdminMode
+                            ? "Mode hors ligne · Admin établissement"
+                            : "Absences & notes · Admin établissement"}
                 </span>
               </div>
 
@@ -495,7 +524,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
 
           {/* Contenu principal */}
           <main className="mx-auto max-w-7xl px-4 py-6 pb-20 md:pb-8">
-            {children}
+            <AdminRoleContext.Provider value={role}>
+              {children}
+            </AdminRoleContext.Provider>
           </main>
 
           {/* ─────────────────────────────

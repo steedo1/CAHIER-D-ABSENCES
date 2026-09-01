@@ -29,6 +29,7 @@ import {
 import React from "react";
 import type { AppRole } from "@/lib/auth/role";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
+import { isFileCorrespondentPathAllowed } from "@/lib/auth/file-correspondent";
 
 type NavItem = {
   href: string;
@@ -775,7 +776,7 @@ function GroupSection({
   );
 }
 
-export default function SidebarNav() {
+export default function SidebarNav({ role }: { role: AppRole | null }) {
   const { relayEnabled } = useRelayCapability();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -784,7 +785,6 @@ export default function SidebarNav() {
   const wrapperRef = React.useRef<HTMLDivElement | null>(null);
   const isResizingRef = React.useRef(false);
 
-  const [role, setRole] = React.useState<AppRole | null>(null);
   const [pendingAbsenceCount, setPendingAbsenceCount] =
     React.useState<number>(0);
   const [pendingGradePublicationCount, setPendingGradePublicationCount] =
@@ -863,29 +863,7 @@ export default function SidebarNav() {
   }, []);
 
   React.useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const r = await fetch("/api/auth/role", { cache: "no-store" });
-        if (!r.ok) return;
-
-        const j = await r.json().catch(() => ({}));
-
-        if (!cancelled) {
-          setRole((j.role ?? null) as AppRole | null);
-        }
-      } catch {
-        if (!cancelled) setRole(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  React.useEffect(() => {
+    if (role === "file_correspondent") return;
     let cancelled = false;
 
     async function loadPendingAbsenceCount() {
@@ -928,9 +906,10 @@ export default function SidebarNav() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [role]);
 
   React.useEffect(() => {
+    if (role === "file_correspondent") return;
     let cancelled = false;
 
     async function loadPendingGradePublicationCount() {
@@ -979,11 +958,12 @@ export default function SidebarNav() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [role]);
 
   const isEducator = role === "educator";
   const isInfirmier = role === "infirmier";
   const isAdmin = role === "admin";
+  const isFileCorrespondent = role === "file_correspondent";
   const isFinanceManager = role === "finance_manager";
   const isFinancePath = pathname?.startsWith("/admin/finance") ?? false;
   const isFounderFinance = role === "founder" && isFinancePath;
@@ -998,15 +978,15 @@ export default function SidebarNav() {
   const infirmaryItems = React.useMemo(
     () =>
       INFIRMARY_ITEMS.filter((item) => {
-        if (isFinanceManager || isFinanceOnlyShell) return false;
+        if (isFileCorrespondent || isFinanceManager || isFinanceOnlyShell) return false;
         if (isInfirmier) return item.href === "/admin/infirmerie";
         return true;
       }),
-    [isFinanceManager, isFinanceOnlyShell, isInfirmier],
+    [isFileCorrespondent, isFinanceManager, isFinanceOnlyShell, isInfirmier],
   );
 
   const duplicataItems = React.useMemo(() => {
-    if (isEducator || isInfirmier) return [];
+    if (isFileCorrespondent || isEducator || isInfirmier) return [];
     if (isFinanceManager || isFinanceOnlyShell) {
       return [DUPLICATA_RECEIPT_ITEM];
     }
@@ -1023,6 +1003,7 @@ export default function SidebarNav() {
     return [DUPLICATA_RECEIPT_ITEM, DUPLICATA_BULLETIN_ITEM];
   }, [
     isAdmin,
+    isFileCorrespondent,
     isEducator,
     isFinanceManager,
     isFinanceOnlyShell,
@@ -1053,19 +1034,22 @@ export default function SidebarNav() {
 
   const conductManagementItems = React.useMemo(
     () =>
-      isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+      isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const distinctionItems = React.useMemo(
     () =>
-      isEducator || isInfirmier || isFinanceManager || isFinanceOnlyShell
+      isFileCorrespondent || isEducator || isInfirmier || isFinanceManager || isFinanceOnlyShell
         ? []
         : DISTINCTION_ITEMS,
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    [isFileCorrespondent, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const organisationItems = React.useMemo(() => {
+    if (isFileCorrespondent) {
+      return ORGANISATION_ITEMS.filter((item) => isFileCorrespondentPathAllowed(item.href));
+    }
     if (isInfirmier || isFinanceOnlyShell) return [];
     if (isFinanceManager) {
       return ORGANISATION_ITEMS.filter((item) => item.href === "/admin/parents");
@@ -1074,9 +1058,10 @@ export default function SidebarNav() {
       return ORGANISATION_ITEMS.filter((item) => item.href !== "/admin/notes/predictions");
     }
     return ORGANISATION_ITEMS;
-  }, [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
+  }, [isFileCorrespondent, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
 
   const adminItems = React.useMemo(() => {
+    if (isFileCorrespondent) return [];
     if (isFinanceOnlyShell || isFinanceManager) return FINANCE_FULL_ITEMS;
 
     return ADMIN_ITEMS.flatMap((item) => {
@@ -1088,30 +1073,30 @@ export default function SidebarNav() {
       if (isEducator && item.href.startsWith("/admin/communication")) return [];
       return [item];
     });
-  }, [isAdmin, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell]);
+  }, [isFileCorrespondent, isAdmin, isEducator, isFinanceManager, isFinanceOnlyShell]);
 
   const callsControlItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    () => (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CALLS_CONTROL_ITEMS),
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
   const absItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    () => (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : ABS_ITEMS),
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const textbookItems = React.useMemo(
-    () => (isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : TEXTBOOK_ITEMS),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    () => (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : TEXTBOOK_ITEMS),
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const notesItems = React.useMemo(
     () =>
       NOTES_ITEMS.filter((item) => {
-        if (isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
+        if (isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell) return false;
         if (isEducator && item.href.startsWith("/admin/notes")) return false;
         return true;
       }),
-    [isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+    [isFileCorrespondent, isEducator, isInfirmier, isFinanceManager, isFinanceOnlyShell],
   );
 
   const settingsItems = React.useMemo(
@@ -1119,9 +1104,11 @@ export default function SidebarNav() {
       isInfirmier || isFinanceManager || isFinanceOnlyShell
         ? []
         : SETTINGS_ITEMS.filter(
-            (item) => relayEnabled || item.href !== "/admin/relais",
+            (item) => isFileCorrespondent
+              ? isFileCorrespondentPathAllowed(item.href)
+              : relayEnabled || item.href !== "/admin/relais",
           ),
-    [isInfirmier, isFinanceManager, isFinanceOnlyShell, relayEnabled],
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell, relayEnabled],
   );
 
   const infirmaryActive = groupHasActiveItem(

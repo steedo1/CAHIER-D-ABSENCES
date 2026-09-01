@@ -52,9 +52,8 @@ export function routeForRole(role: AppRole): string {
     case "drenaet_admin":
       return "/drenaet/dashboard";
     case "admin":
-      return "/admin/dashboard";
     case "file_correspondent":
-      return "/admin/export-moyennes";
+      return "/admin/dashboard";
     case "finance_manager":
       return "/admin/finance";
     case "infirmier":
@@ -90,7 +89,7 @@ export function routeForRoleWithBook(role: AppRole, book?: Book): string {
       case "admin":
         return "/admin/notes"; // Cahier de notes — admin établissement
       case "file_correspondent":
-        return "/admin/export-moyennes";
+        return "/admin/dashboard";
       case "drenaet_admin":
         return "/drenaet/dashboard"; // Supervision régionale, lecture seule
       case "super_admin":

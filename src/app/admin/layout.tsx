@@ -36,13 +36,16 @@ async function getPrimaryRole(): Promise<AppRole | null> {
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const primaryRole = await getPrimaryRole();
-  const Shell = primaryRole === "file_correspondent" ? FileCorrespondentShell : AdminShell;
 
   return (
     <>
       <OfflineScheduleSyncBridge />
       <RelaySupervisionBadge />
-      <Shell>{children}</Shell>
+      {primaryRole === "file_correspondent" ? (
+        <FileCorrespondentShell>{children}</FileCorrespondentShell>
+      ) : (
+        <AdminShell initialRole={primaryRole}>{children}</AdminShell>
+      )}
     </>
   );
 }
