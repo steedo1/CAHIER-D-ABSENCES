@@ -1,6 +1,7 @@
 // src/app/api/admin/classes/[id]/roster/route.ts
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
+import { hasStudentIdentityConflict, STUDENT_IDENTITY_CONFLICT_MESSAGE } from "@/lib/student-identity-conflicts";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
@@ -268,11 +269,12 @@ async function getEducators(
 ): Promise<ProfileMini[]> {
   const srv = getSupabaseServiceClient();
 
-  const { data: roles } = await srv
-    .from("user_roles")
-    .select("profile_id,role")
-    .eq("institution_id", institutionId)
-    .eq("role", "educator");
+  const [{ data: roles }, { data: assignments, error: assignErr }] = await Promise.all([
+    srv.from("user_roles").select("profile_id,role")
+      .eq("institution_id", institutionId).eq("role", "educator"),
+    srv.from("educator_class_assignments").select("profile_id,level,class_id")
+      .eq("institution_id", institutionId),
+  ]);
 
   const allEducatorIds = Array.from(
     new Set<string>(
@@ -284,16 +286,13 @@ async function getEducators(
 
   if (!allEducatorIds.length) return [];
 
-  const { data: assignments, error: assignErr } = await srv
-    .from("educator_class_assignments")
-    .select("profile_id,level,class_id")
-    .eq("institution_id", institutionId)
-    .in("profile_id", allEducatorIds);
-
   // Compatibilité : si la table n’existe pas encore, on affiche tous les éducateurs.
   if (assignErr) return loadEducatorProfiles(allEducatorIds);
 
-  const rows = Array.isArray(assignments) ? assignments : [];
+  const educatorIds = new Set(allEducatorIds);
+  const rows = Array.isArray(assignments)
+    ? assignments.filter((row: any) => educatorIds.has(String(row.profile_id)))
+    : [];
   if (rows.length === 0) return loadEducatorProfiles(allEducatorIds);
 
   const level = String(classLevel || "").trim();
@@ -333,21 +332,15 @@ async function requireAdminContext(
 
   // Important : dans cette base, le rôle n’est pas dans profiles.
   // La source fiable des rôles est public.user_roles.
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("id,institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [{ data: me, error: meErr }, { data: roleRows, error: roleErr }] = await Promise.all([
+    supa.from("profiles").select("id,institution_id").eq("id", user.id).maybeSingle(),
+    srv.from("user_roles").select("role,institution_id").eq("profile_id", user.id),
+  ]);
 
   if (meErr)
     return {
       error: NextResponse.json({ error: meErr.message }, { status: 400 }),
     };
-
-  const { data: roleRows, error: roleErr } = await srv
-    .from("user_roles")
-    .select("role,institution_id")
-    .eq("profile_id", user.id);
 
   if (roleErr)
     return {
@@ -436,13 +429,25 @@ export async function GET(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const startedAt = performance.now();
+  let accessMs = 0;
+  const respond = (body: unknown, options?: { status: number }) => {
+    const totalMs = performance.now() - startedAt;
+    const timings = { access_ms: Math.round(accessMs), data_ms: Math.round(totalMs - accessMs), total_ms: Math.round(totalMs) };
+    if (totalMs >= 2000) console.warn("[class-roster] slow_request", { ...timings, status: options?.status || 200 });
+    return NextResponse.json(body, { ...options, headers: {
+      "Cache-Control": "private, no-store",
+      "Server-Timing": `access;dur=${accessMs.toFixed(1)}, data;dur=${(totalMs - accessMs).toFixed(1)}, total;dur=${totalMs.toFixed(1)}`,
+    } });
+  };
   const { id } = await context.params;
   const classId = String(id || "").trim();
 
   if (!classId)
-    return NextResponse.json({ error: "missing_class_id" }, { status: 400 });
+    return respond({ error: "missing_class_id" }, { status: 400 });
 
   const ctx = await requireAdminContext(classId);
+  accessMs = performance.now() - startedAt;
   if ("error" in ctx) return ctx.error;
 
   const { srv, institutionId, cls, canWrite } = ctx;
@@ -459,13 +464,44 @@ export async function GET(
     academicYear !== "all" &&
     String((cls as any).academic_year || "") !== academicYear
   ) {
-    return NextResponse.json(
+    return respond(
       { error: "class_not_in_academic_year" },
       { status: 404 },
     );
   }
 
-  const [institutionRes, academicYearRes, headTeacher, educators] =
+  async function loadEnrollments(includeStudentSeries: boolean) {
+    return srv
+      .from("class_enrollments")
+      .select(
+        `
+        id,
+        student_id,
+        start_date,
+        end_date${includeStudentSeries ? ",\n        official_track_code" : ""},
+        students:student_id(
+          id,
+          first_name,
+          last_name,
+          full_name,
+          matricule,
+          gender,
+          birthdate,
+          birth_place,
+          nationality,
+          is_repeater,
+          lv2,
+          is_affecte,
+          is_boarder
+        )
+      `,
+      )
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId)
+      .is("end_date", null);
+  }
+
+  const [institutionRes, academicYearRes, headTeacher, educators, enrollmentRes] =
     await Promise.all([
       srv
         .from("institutions")
@@ -504,47 +540,17 @@ export async function GET(
           : null,
       ),
       getEducators(institutionId, classId, (cls as any).level),
+      loadEnrollments(true),
     ]);
 
   if (institutionRes.error) {
-    return NextResponse.json(
+    return respond(
       { error: institutionRes.error.message },
       { status: 400 },
     );
   }
 
-  async function loadEnrollments(includeStudentSeries: boolean) {
-    return srv
-      .from("class_enrollments")
-      .select(
-        `
-        id,
-        student_id,
-        start_date,
-        end_date${includeStudentSeries ? ",\n        official_track_code" : ""},
-        students:student_id(
-          id,
-          first_name,
-          last_name,
-          full_name,
-          matricule,
-          gender,
-          birthdate,
-          birth_place,
-          nationality,
-          is_repeater,
-          lv2,
-          is_affecte,
-          is_boarder
-        )
-      `,
-      )
-      .eq("institution_id", institutionId)
-      .eq("class_id", classId)
-      .is("end_date", null);
-  }
-
-  let { data: enrollments, error: enrollErr } = await loadEnrollments(true);
+  let { data: enrollments, error: enrollErr } = enrollmentRes;
 
   if (enrollErr && isMissingOfficialTrackColumn(enrollErr)) {
     const fallback = await loadEnrollments(false);
@@ -553,7 +559,7 @@ export async function GET(
   }
 
   if (enrollErr) {
-    return NextResponse.json(
+    return respond(
       {
         error: enrollErr.message.includes("lv2")
           ? "La colonne students.lv2 est absente. Exécute la migration 20260521_students_lv2.sql dans Supabase, puis réessaie."
@@ -612,7 +618,7 @@ export async function GET(
       settings.institution_name || settings.school_name || settings.name,
     );
 
-  return NextResponse.json({
+  return respond({
     ok: true,
     can_edit: canWrite,
     class: {
@@ -789,6 +795,14 @@ export async function POST(
         { status: 400 },
       );
     }
+  }
+
+  try {
+    if (await hasStudentIdentityConflict(srv, institutionId, lastName, firstName, matricule)) {
+      return NextResponse.json({ error: STUDENT_IDENTITY_CONFLICT_MESSAGE, code: "student_identity_exists" }, { status: 409 });
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Impossible de vérifier l’identité." }, { status: 400 });
   }
 
   const { data: created, error: createErr } = await srv

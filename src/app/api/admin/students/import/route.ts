@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { findStudentIdentityCandidates } from "@/lib/student-identity-conflicts";
+import { studentFullIdentityKey } from "@/lib/student-class-membership";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -517,6 +519,7 @@ export async function POST(req: NextRequest) {
         "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
+      .or("lifecycle_status.is.null,lifecycle_status.neq.duplicate_merged")
       .in("matricule", wantedMatr);
 
     if (exErr)
@@ -557,6 +560,7 @@ export async function POST(req: NextRequest) {
         "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
       )
       .eq("institution_id", inst)
+      .or("lifecycle_status.is.null,lifecycle_status.neq.duplicate_merged")
       .in("full_name_key", wantedNameKeys);
 
     if (exErr2)
@@ -661,6 +665,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Une variation JEAN-MARC / JEAN MARC ne doit pas créer une nouvelle fiche.
+  // Signaler les correspondances normalisées sans les fusionner automatiquement.
+  const unresolvedNames = parsed.filter((row) => resolveExistingStudent(row).kind === "none")
+    .map((row) => row.full_name || `${row.last_name} ${row.first_name}`);
+  let normalizedExistingNames: Set<string>;
+  try {
+    const candidates = await findStudentIdentityCandidates(srv, inst, unresolvedNames);
+    normalizedExistingNames = new Set(candidates.map((row) => studentFullIdentityKey(
+      [row.last_name, row.first_name].filter(Boolean).join(" ") || row.full_name,
+    )));
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Impossible de vérifier les identités." }, { status: 400 });
+  }
+
   const identityConflictRows = Array.from(
     new Set(
       parsed
@@ -676,7 +694,10 @@ export async function POST(req: NextRequest) {
           const resolution = resolveExistingStudent(row);
           return (
             resolution.kind === "conflict" ||
-            resolution.kind === "ambiguous"
+            resolution.kind === "ambiguous" ||
+            (resolution.kind === "none" && normalizedExistingNames.has(studentFullIdentityKey(
+              row.full_name || `${row.last_name} ${row.first_name}`,
+            )))
           );
         })
         .map((row) => row._row + 2),

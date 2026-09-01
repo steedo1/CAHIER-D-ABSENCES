@@ -61,6 +61,7 @@ export async function GET(req: NextRequest) {
     .from("students")
     .select("id, first_name, last_name, matricule")
     .eq("institution_id", inst)
+    .or("lifecycle_status.is.null,lifecycle_status.neq.duplicate_merged")
     .order("last_name", { ascending: true, nullsFirst: true })
     .order("first_name", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true });

@@ -1,7 +1,7 @@
 // src/app/admin/classes/liste/[id]/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   EDUCATION_TYPE_OPTIONS,
@@ -346,6 +346,7 @@ export default function ClassListPrintPage() {
   const [educationOrganization, setEducationOrganization] =
     useState<EducationOrganizationSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadController = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [educatorName, setEducatorName] = useState("");
   const [customEducatorName, setCustomEducatorName] = useState("");
@@ -366,6 +367,10 @@ export default function ClassListPrintPage() {
 
   async function load() {
     if (!classId) return;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     setLoading(true);
     setError(null);
 
@@ -375,16 +380,13 @@ export default function ClassListPrintPage() {
       const qs = academicYear
         ? `?academic_year=${encodeURIComponent(academicYear)}`
         : "";
-      const [res, organizationRes] = await Promise.all([
-        fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`, {
-          cache: "no-store",
-        }),
-        fetch("/api/admin/institution/education-organization", {
-          cache: "no-store",
-        }),
-      ]);
+      const res = await fetch(`/api/admin/classes/${encodeURIComponent(classId)}/roster${qs}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const json = await res.json().catch(() => ({}));
-      const organizationJson = await organizationRes.json().catch(() => ({}));
+      if (controller.signal.aborted) throw new Error("request_aborted");
+      if (loadController.current !== controller) return;
 
       if (res.status === 401)
         throw new Error("Session expirée. Reconnectez-vous puis réessayez.");
@@ -394,11 +396,6 @@ export default function ClassListPrintPage() {
         );
 
       setData(json as ClassListPayload);
-      setEducationOrganization(
-        organizationRes.ok && organizationJson?.organization
-          ? (organizationJson.organization as EducationOrganizationSettings)
-          : null,
-      );
       setEditable(
         cloneEditable(Array.isArray(json?.students) ? json.students : []),
       );
@@ -407,17 +404,49 @@ export default function ClassListPrintPage() {
         : [];
       if (educators.length === 1) setEducatorName(personLabel(educators[0]));
     } catch (e: any) {
-      setError(e?.message || "Erreur de chargement.");
+      if (loadController.current !== controller) return;
+      setError(controller.signal.aborted
+        ? "Le chargement prend trop de temps. Réessayez."
+        : e?.message || "Erreur de chargement.");
       setData(null);
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeout);
+      if (loadController.current === controller) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    return () => {
+      loadController.current?.abort();
+      loadController.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
+
+  // Les libellés de formation concernent uniquement l'enseignement technique.
+  // Leur disponibilité ne doit jamais retarder l'affichage des élèves.
+  useEffect(() => {
+    setEducationOrganization(null);
+    if (!data?.class?.formation_code ||
+      !data.class.education_type || data.class.education_type === "general_secondary") return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    void fetch("/api/admin/institution/education-organization", {
+      cache: "no-store",
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) return;
+      const result = await response.json();
+      if (!controller.signal.aborted) setEducationOrganization(result.organization || null);
+    }).catch(() => {
+      // La liste conserve les codes de formation si les libellés sont indisponibles.
+    }).finally(() => window.clearTimeout(timeout));
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [classId, data?.class?.education_type, data?.class?.formation_code]);
 
   const selectedEducator = useMemo(() => {
     const custom = customEducatorName.trim();
@@ -1470,6 +1499,9 @@ export default function ClassListPrintPage() {
       ) : error ? (
         <div className="mx-auto max-w-6xl rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700 shadow-sm">
           {error}
+          <button type="button" onClick={() => void load()} className="ml-4 rounded-lg border border-red-300 px-3 py-2 font-semibold">
+            Réessayer
+          </button>
         </div>
       ) : data ? (
         <section className="class-list-print-root">

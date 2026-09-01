@@ -36,19 +36,32 @@ const enrollment = (id, classId, studentId, start = "2026-09-09", extra = {}) =>
   start_date: start, end_date: null, official_track_code: "2ndeA", ...extra,
 });
 
-function database(seed, fail = () => false) {
+function database(seed, fail = () => false, before = async () => {}) {
   const tables = structuredClone({ students: [], classes: [], class_enrollments: [],
-    academic_years: [], student_year_profiles: [], ...seed });
+    academic_years: [], student_year_profiles: [],
+    profiles: [{ id: "admin", institution_id: inst }],
+    user_roles: [{ profile_id: "admin", role: "admin", institution_id: inst }],
+    institutions: [{ id: inst, name: "Test school" }], educator_class_assignments: [], ...seed });
   const calls = [];
   const value = (row, key) => key === "classes.academic_year"
     ? tables.classes.find((c) => c.id === row.class_id)?.academic_year : row[key];
-  const srv = { from(table) {
+  const srv = { auth: { getUser: async () => ({ data: { user: { id: "admin" } } }) }, from(table) {
     const q = { table, action: "read", filters: [], orders: [], offset: 0, count: Infinity,
       select(columns) { this.columns = columns; return this; },
       eq(key, expected) { this.filters.push((r) => value(r, key) === expected); return this; },
       neq(key, expected) { this.filters.push((r) => value(r, key) !== expected); return this; },
       is(key, expected) { return this.eq(key, expected); },
       in(key, expected) { this.filters.push((r) => expected.includes(value(r, key))); return this; },
+      or(expression) {
+        const clauses = expression.split(",").map((clause) => {
+          const [key, op, ...rest] = clause.split("."); const expected = rest.join(".");
+          return (row) => op === "is" ? value(row, key) == null
+            : op === "neq" ? value(row, key) != null && value(row, key) !== expected
+            : op === "ilike" ? String(value(row, key) || "").toUpperCase().includes(expected.replaceAll("%", "").toUpperCase())
+            : (() => { throw new Error(`Unsupported filter: ${clause}`); })();
+        });
+        this.filters.push((row) => clauses.some((matches) => matches(row))); return this;
+      },
       ilike(key, pattern) {
         this.filters.push((r) => String(r[key]).toUpperCase().includes(pattern.replaceAll("%", "").toUpperCase()));
         return this;
@@ -62,8 +75,9 @@ function database(seed, fail = () => false) {
       upsert(row) { this.action = "upsert"; this.patch = row; return this; },
       delete() { this.action = "delete"; return this; },
       then(resolve, reject) {
-        return Promise.resolve().then(() => {
+        return Promise.resolve().then(async () => {
           calls.push({ table, action: this.action, offset: this.offset, patch: structuredClone(this.patch) });
+          await before(this);
           if (/classes[^()]*\([^)]*\bname\b/.test(this.columns || "")) {
             return { data: null, error: { code: "42703", message: "column classes_1.name does not exist" } };
           }
@@ -95,6 +109,9 @@ function database(seed, fail = () => false) {
             if (table === "class_enrollments" && this.columns?.includes("classes")) {
               result.classes = tables.classes.find((c) => c.id === r.class_id) ?? null;
             }
+            if (table === "class_enrollments" && this.columns?.includes("students")) {
+              result.students = tables.students.find((s) => s.id === r.student_id) ?? null;
+            }
             return result;
           });
           return { data: this.single ? rows[0] ?? null : rows, error: null };
@@ -112,7 +129,10 @@ function handlers(db, accessError) {
   const mocks = {
     "next/server": { NextResponse: { json: (body, options) => Response.json(body, options) } },
     "@/lib/student-class-membership": membership,
+    "@/lib/student-identity-conflicts": load("src/lib/student-identity-conflicts.ts", { "./student-class-membership": membership }),
+    "@/lib/supabase-server": { getSupabaseServerClient: async () => db.srv },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => db.srv },
+    "next/cache": { revalidatePath() {} },
     "../../_helpers/institutionAccess": { requireInstitutionAccess: async () => accessError
       ? { error: Response.json({ error: "forbidden" }, { status: 403 }) }
       : { srv: db.srv, institutionId: inst, user: { id: "admin" }, roles: new Set(["admin"]) } },
@@ -121,10 +141,14 @@ function handlers(db, accessError) {
       return { transfer: {}, reconciliation: {}, rollback: async () => { rollbacks++; } };
     } },
   };
+  const series = load("src/lib/student-series-class-transfer.ts", mocks);
+  mocks["@/lib/student-series-class-transfer"] = series;
   return {
     search: load("src/app/api/admin/students/search/route.ts", mocks).GET,
     assign: load("src/app/api/admin/enrollments/assign/route.ts", mocks).POST,
-    series: load("src/lib/student-series-class-transfer.ts", mocks).transferStudentToSeriesClass,
+    series: series.transferStudentToSeriesClass,
+    roster: load("src/app/api/admin/classes/[id]/roster/route.ts", mocks),
+    importStudents: load("src/app/api/admin/students/import/route.ts", mocks).POST,
     financeCalls, get rollbacks() { return rollbacks; },
   };
 }
@@ -257,4 +281,137 @@ test("reactivating a former target enrollment does not duplicate it", async (t) 
   assert.equal((await assign(handlers(db))).status, 200);
   assert.equal(db.tables.class_enrollments.length, 2);
   assert.equal(db.tables.class_enrollments.find((e) => e.class_id === "target").end_date, null);
+});
+
+test("identity and generic searches omit merged records while preserving legacy null statuses", async () => {
+  const db = database({ students: [student("current"), student("legacy", { lifecycle_status: null }),
+    student("merged", { lifecycle_status: "duplicate_merged" })] });
+  const h = handlers(db);
+  for (const params of [{}, { last_name: "", first_name: "", q: "GUESSAN" }]) {
+    const body = await (await search(h, params)).json();
+    assert.deepEqual(body.items.map((s) => s.id).sort(), ["current", "legacy"]);
+  }
+});
+
+test("an old selected ID cannot reactivate a merged record or modify its finances", async () => {
+  const seed = transferFixture(); seed.students[0].lifecycle_status = "duplicate_merged";
+  const db = database(seed); const h = handlers(db);
+  const response = await assign(h);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "student_already_merged");
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+  assert.equal(h.financeCalls.length, 0);
+});
+
+test("create-and-assign also refuses a merged record found by matricule before updating it", async () => {
+  const seed = transferFixture(); Object.assign(seed.students[0], { lifecycle_status: "duplicate_merged", matricule: "TEST123" });
+  const db = database(seed);
+  const response = await assign(handlers(db), { action: "create_and_assign", last_name: "Nom", first_name: "Prénom", matricule: "TEST123" });
+  assert.equal(response.status, 409);
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+});
+
+test("creation without matricule catches punctuation/accent variants before any write", async () => {
+  const db = database(transferFixture()); const h = handlers(db);
+  const response = await assign(h, { action: "create_and_assign", last_name: "N GUESSAN", first_name: "ELODIE ANGE MARIE", matricule: null });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "student_identity_exists");
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+  assert.equal(h.financeCalls.length, 0);
+});
+
+test("adding a new matricule cannot create a second identity beside a matricule-free record", async () => {
+  const db = database(transferFixture());
+  const response = await assign(handlers(db), { action: "create_and_assign", last_name: "N'GUESSAN", first_name: "Élodie Ange-Marie", matricule: "NEW123" });
+  assert.equal(response.status, 409);
+  assert.equal(db.tables.students.length, 1);
+});
+
+test("transferring the historical spelling cannot duplicate a current-year enrollment", async () => {
+  const seed = transferFixture();
+  seed.students.push(student("historical", { first_name: "ELODIE ANGE MARIE", matricule: "OLD123" }));
+  const db = database(seed); const h = handlers(db);
+  const response = await assign(h, { student_id: "historical" });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "student_identity_already_enrolled");
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+  assert.equal(h.financeCalls.length, 0);
+  // The current record remains transferable; the historical one has no active enrollment.
+  assert.equal((await assign(h)).status, 200);
+});
+
+test("distinct matricules allow real homonyms and missing given names cannot create a record", async () => {
+  const seed = transferFixture(); seed.students[0].matricule = "OLD123";
+  const db = database(seed); const h = handlers(db);
+  assert.equal((await assign(h, { action: "create_and_assign", last_name: "N'GUESSAN", first_name: "Élodie Ange-Marie", matricule: "NEW123" })).status, 200);
+  assert.equal(db.tables.students.length, 2);
+  assert.equal((await assign(h, { action: "create_and_assign", last_name: "Nom", first_name: "" })).status, 400);
+  assert.equal(db.tables.students.length, 2);
+});
+
+test("a failed identity lookup blocks creation rather than risking a duplicate", async () => {
+  const db = database(transferFixture(), (q) => q.table === "students" && q.action === "read");
+  const response = await assign(handlers(db), { action: "create_and_assign", last_name: "Nom", first_name: "Prénom" });
+  assert.equal(response.status, 400);
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+});
+
+test("the roster creation endpoint has the same identity guard", async () => {
+  const db = database(transferFixture());
+  const response = await handlers(db).roster.POST(new Request("https://example.test/roster", { method: "POST", body: JSON.stringify({
+    first_name: "ELODIE ANGE MARIE", last_name: "N GUESSAN", is_affecte: true, is_boarder: false,
+  }) }), { params: Promise.resolve({ id: "target" }) });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "student_identity_exists");
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+});
+
+test("CSV import reports spelling variants before creating a second record", async () => {
+  const seed = transferFixture();
+  Object.assign(seed.students[0], { full_name: "N'GUESSAN Élodie Ange-Marie", full_name_key: "n'guessan elodie ange-marie" });
+  const db = database(seed);
+  const response = await handlers(db).importStudents(new Request("https://example.test/import", { method: "POST", body: JSON.stringify({
+    action: "commit", class_id: "target", csv: "NOM;PRENOM;MATRICULE\nN GUESSAN;ELODIE ANGE MARIE;NEW123",
+  }) }));
+  assert.equal(response.status, 409);
+  assert.deepEqual((await response.json()).identity_conflict_rows, [2]);
+  assert.equal(db.calls.some((call) => call.action !== "read"), false);
+});
+
+test("roster overlaps independent queries and preserves authorization and class output", async () => {
+  let releaseProfile, releaseInstitution;
+  const profileGate = new Promise((resolve) => { releaseProfile = resolve; });
+  const institutionGate = new Promise((resolve) => { releaseInstitution = resolve; });
+  const seed = transferFixture();
+  seed.profiles = [{ id: "admin", institution_id: inst }, { id: "educator", display_name: "Educator" }];
+  seed.user_roles = [{ profile_id: "admin", role: "admin", institution_id: inst }, { profile_id: "educator", role: "educator", institution_id: inst }];
+  seed.educator_class_assignments = [{ institution_id: inst, profile_id: "educator", class_id: "source" },
+    { institution_id: inst, profile_id: "not-an-educator", class_id: "source" }];
+  const db = database(seed, () => false, async (q) => {
+    if (q.table === "profiles" && q.columns === "id,institution_id") await profileGate;
+    if (q.table === "institutions") await institutionGate;
+  });
+  const pending = handlers(db).roster.GET(new Request(`https://example.test/roster?academic_year=${year}`), { params: Promise.resolve({ id: "source" }) });
+  await new Promise(setImmediate);
+  assert.ok(db.calls.some((q) => q.table === "user_roles"), "roles must not wait on the profile");
+  assert.equal(db.calls.some((q) => q.table === "class_enrollments"), false, "authorization must finish first");
+  releaseProfile();
+  await new Promise(setImmediate);
+  assert.ok(db.calls.some((q) => q.table === "class_enrollments"), "roster must not wait on institution metadata");
+  assert.ok(db.calls.some((q) => q.table === "educator_class_assignments"));
+  releaseInstitution();
+  const response = await pending; const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.students.map((s) => s.id), ["one"]);
+  assert.deepEqual(body.staff.educators.map((s) => s.id), ["educator"]);
+  assert.equal(body.totals.students, 1);
+  assert.match(response.headers.get("Server-Timing"), /access;dur=.*data;dur=.*total;dur=/);
+  assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+});
+
+test("forbidden roster requests read no class data", async () => {
+  const db = database({ ...transferFixture(), user_roles: [] });
+  const response = await handlers(db).roster.GET(new Request(`https://example.test/roster?academic_year=${year}`), { params: Promise.resolve({ id: "source" }) });
+  assert.equal(response.status, 403);
+  assert.equal(db.calls.some((q) => ["classes", "class_enrollments", "institutions"].includes(q.table)), false);
 });

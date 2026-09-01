@@ -31,6 +31,12 @@ export function studentMatchesIdentity(
   );
 }
 
+// Une clé complète pour détecter un doublon potentiel, distincte de la
+// recherche partielle qui accepte un seul prénom.
+export function studentFullIdentityKey(value: string | null | undefined): string {
+  return studentIdentityWords(value).join(" ");
+}
+
 export function safeEnrollmentEndDate(
   startDate: string | null | undefined,
   today: string,

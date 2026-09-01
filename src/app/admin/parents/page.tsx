@@ -2102,8 +2102,8 @@ export default function AdminStudentsByClassPage() {
                         <>
                           {searchItems.length > 1 && (
                             <div className="border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                              Plusieurs élèves portent cette identité. Vérifiez le
-                              matricule et la classe avant de choisir.
+                              Plusieurs résultats correspondent au nom et au prénom saisis.
+                              Vérifiez les prénoms complets, le matricule et la classe avant de choisir.
                             </div>
                           )}
                           {searchHasMore && (
@@ -2133,7 +2133,7 @@ export default function AdminStudentsByClassPage() {
                                         : "Sans matricule"}
                                       {it.class_label
                                         ? ` - Classe : ${it.class_label}`
-                                        : " - Sans classe"}
+                                        : ` - Non inscrit${academicYear ? ` en ${academicYear}` : " dans une classe active"}`}
                                     </div>
                                   </div>
 

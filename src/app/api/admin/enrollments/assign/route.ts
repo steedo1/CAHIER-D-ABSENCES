@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
+import { findStudentIdentityCandidates, hasStudentIdentityConflict, STUDENT_IDENTITY_CONFLICT_MESSAGE } from "@/lib/student-identity-conflicts";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -99,10 +100,23 @@ export async function POST(req: NextRequest) {
     const isAffecte = requiredBoolean(body?.is_affecte);
     const isBoarder = requiredBoolean(body?.is_boarder);
 
+    if (!first_name || !last_name) {
+      return NextResponse.json({ error: "Le nom et les prénoms sont obligatoires." }, { status: 400 });
+    }
+    const checkNewIdentity = async () => {
+      try {
+        return await hasStudentIdentityConflict(srv, inst, last_name, first_name, matricule)
+          ? NextResponse.json({ error: STUDENT_IDENTITY_CONFLICT_MESSAGE, code: "student_identity_exists" }, { status: 409 })
+          : null;
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Impossible de vérifier l’identité." }, { status: 400 });
+      }
+    };
+
     if (matricule) {
       const { data: exist, error: exErr } = await srv
         .from("students")
-        .select("id,first_name,last_name,matricule,is_affecte,is_boarder")
+        .select("id,first_name,last_name,matricule,is_affecte,is_boarder,lifecycle_status")
         .eq("institution_id", inst)
         .eq("matricule", matricule)
         .maybeSingle();
@@ -110,6 +124,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: exErr.message }, { status: 400 });
 
       if (exist) {
+        if (exist.lifecycle_status === "duplicate_merged") {
+          return NextResponse.json({ error: "Cette ancienne fiche a déjà été fusionnée. Recherchez la fiche actuelle de l’élève.", code: "student_already_merged" }, { status: 409 });
+        }
         studentPreparationSnapshot = {
           first_name: (exist as any).first_name ?? null,
           last_name: (exist as any).last_name ?? null,
@@ -357,6 +374,8 @@ export async function POST(req: NextRequest) {
           studentLast = patch.last_name ?? studentLast;
         }
       } else {
+        const identityError = await checkNewIdentity();
+        if (identityError) return identityError;
         const { data: created, error: cErr } = await srv
           .from("students")
           .insert([
@@ -381,6 +400,8 @@ export async function POST(req: NextRequest) {
         createdStudent = true;
       }
     } else {
+      const identityError = await checkNewIdentity();
+      if (identityError) return identityError;
       const { data: created, error: cErr } = await srv
         .from("students")
         .insert([
@@ -503,6 +524,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (studentLifecycleBefore.lifecycle_status === "duplicate_merged") {
+    await rollbackPreparedStudent();
+    return NextResponse.json({ error: "Cette ancienne fiche a déjà été fusionnée. Recherchez la fiche actuelle de l’élève.", code: "student_already_merged" }, { status: 409 });
+  }
+
   const rollbackLifecycle = async () => {
     if (createdStudent || !studentId) return;
     await srv
@@ -564,6 +590,35 @@ export async function POST(req: NextRequest) {
         targetAcademicYearStartDate =
           String((row as any).start_date || "").trim() || null;
       }
+    }
+  }
+
+  // Une ancienne fiche sélectionnée par nom ne doit pas créer une deuxième
+  // inscription annuelle si sa fiche actuelle est déjà utilisée ailleurs.
+  if (!createdStudent && sameYearClassIds.length) {
+    try {
+      const candidates = await findStudentIdentityCandidates(srv, inst, [`${studentLast || ""} ${studentFirst || ""}`]);
+      const otherIds = candidates.filter((candidate) => candidate.id !== studentId && (
+        !studentMatricule || !candidate.matricule ||
+        candidate.matricule.trim().toUpperCase() === studentMatricule.trim().toUpperCase()
+      )).map((candidate) => candidate.id);
+      if (otherIds.length) {
+        const { data: existingEnrollment, error } = await srv.from("class_enrollments")
+          .select("student_id").eq("institution_id", inst)
+          .in("student_id", otherIds).in("class_id", sameYearClassIds)
+          .is("end_date", null).limit(1);
+        if (error) throw new Error(error.message);
+        if (existingEnrollment?.length) {
+          await rollbackPreparedStudent();
+          return NextResponse.json({
+            error: "Une autre fiche avec ces nom et prénoms est déjà inscrite cette année. Sélectionnez sa fiche actuelle ou faites rapprocher les deux fiches avant le transfert.",
+            code: "student_identity_already_enrolled",
+          }, { status: 409 });
+        }
+      }
+    } catch (error) {
+      await rollbackPreparedStudent();
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Impossible de vérifier les inscriptions." }, { status: 400 });
     }
   }
 
