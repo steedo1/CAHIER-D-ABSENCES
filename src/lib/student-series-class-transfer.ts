@@ -41,6 +41,17 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function coherentEnrollmentDate(
+  startDate: string | null | undefined,
+  requestedDate: string,
+) {
+  const start = String(startDate || "").slice(0, 10);
+  const requested = String(requestedDate || "").slice(0, 10);
+  if (!start) return requested;
+  if (!requested || requested < start) return start;
+  return requested;
+}
+
 export async function transferStudentToSeriesClass({
   srv = getSupabaseServiceClient(),
   institutionId,
@@ -101,6 +112,10 @@ export async function transferStudentToSeriesClass({
   const targetSnapshot =
     (targetResult.data as EnrollmentSnapshot | null) ?? null;
   const today = isoToday();
+  const effectiveTransferDate = coherentEnrollmentDate(
+    sourceSnapshot.start_date,
+    today,
+  );
   let targetInserted = false;
   let finance: AppliedStudentFinanceSynchronization | null = null;
   let rolledBack = false;
@@ -160,7 +175,7 @@ export async function transferStudentToSeriesClass({
 
     const { data: closedSource, error: closeError } = await srv
       .from("class_enrollments")
-      .update({ end_date: today } as any)
+      .update({ end_date: effectiveTransferDate } as any)
       .eq("id", sourceSnapshot.id)
       .eq("institution_id", institutionId)
       .is("end_date", null)
@@ -195,7 +210,7 @@ export async function transferStudentToSeriesClass({
           institution_id: institutionId,
           class_id: targetId,
           student_id: studentId,
-          start_date: today,
+          start_date: effectiveTransferDate,
           end_date: null,
           official_track_code: officialTrackCode,
         } as any)
