@@ -1,6 +1,7 @@
 // src/app/api/admin/enrollments/assign/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
+import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -30,18 +31,6 @@ const STUDENT_CREATE_ROLES = new Set([
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function coherentEnrollmentEndDate(
-  requestedEndDate: string | null | undefined,
-  startDate: unknown,
-  fallbackDate: string,
-) {
-  const requested = String(requestedEndDate || fallbackDate || "").slice(0, 10);
-  const start = String(startDate || "").slice(0, 10);
-  if (!start) return requested || fallbackDate;
-  if (!requested || requested < start) return start;
-  return requested;
 }
 
 function requiredBoolean(value: unknown): boolean | null {
@@ -674,14 +663,24 @@ export async function POST(req: NextRequest) {
         id: String(row.id),
         start_date: row.start_date ?? null,
         end_date: row.end_date ?? null,
-        close_end_date: coherentEnrollmentEndDate(
-          priorYearEndDate,
+        close_end_date: safeEnrollmentEndDate(
           row.start_date,
-          today,
+          priorYearEndDate || today,
         ),
       };
     },
   );
+
+  // Un transfert pendant l'année commence à sa date effective, sans remonter
+  // avant l'inscription source ni avant la rentrée préparée.
+  const targetStartDate = sourceClassIds.length > 0
+    ? (sourceEnrollments ?? [])
+        .filter((row: any) => sourceClassIds.includes(String(row.class_id)))
+        .reduce(
+          (date: string, row: any) => safeEnrollmentEndDate(row.start_date, date),
+          safeEnrollmentEndDate(targetAcademicYearStartDate, today),
+        )
+    : targetAcademicYearStartDate || today;
 
   let targetEnrollmentInserted = false;
 
@@ -762,7 +761,7 @@ export async function POST(req: NextRequest) {
             class_id,
             student_id: studentId,
             institution_id: inst,
-            start_date: targetAcademicYearStartDate || today,
+            start_date: targetStartDate,
             end_date: null,
           },
         ])

@@ -32,7 +32,11 @@ export async function GET(req: NextRequest) {
   const lastNameRaw = (url.searchParams.get("last_name") || "").trim();
   const firstNameRaw = (url.searchParams.get("first_name") || "").trim();
   const identitySearch = Boolean(lastNameRaw || firstNameRaw);
-  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") || 20)));
+  const requestedLimit = Number(url.searchParams.get("limit") || 20);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(50, Math.max(1, Math.floor(requestedLimit)))
+    : 20;
+  const academicYear = (url.searchParams.get("academic_year") || "").trim();
 
   if (identitySearch) {
     if (
@@ -53,30 +57,43 @@ export async function GET(req: NextRequest) {
   const escapeLike = (value: string) => value.replace(/[\\%_]/g, (m) => `\\${m}`);
 
   // 1) On cherche dans students (nom, prénom, matricule)
-  let studentsQuery = srv
+  const studentsQuery = () => srv
     .from("students")
     .select("id, first_name, last_name, matricule")
     .eq("institution_id", inst)
     .order("last_name", { ascending: true, nullsFirst: true })
-    .order("first_name", { ascending: true, nullsFirst: true });
+    .order("first_name", { ascending: true, nullsFirst: true })
+    .order("id", { ascending: true });
+
+  type StudentRow = {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    matricule: string | null;
+  };
+  let studs: StudentRow[] = [];
+  let hasMore = false;
 
   if (identitySearch) {
-    // Le filtre final est strict et insensible aux accents. Ces deux fragments
-    // bornent seulement le volume lu sans confondre NOM et prénom(s).
-    const longestLastNameWord = studentIdentityWords(lastNameRaw).sort(
-      (a, b) => b.length - a.length,
-    )[0];
-    const longestFirstNameWord = studentIdentityWords(firstNameRaw).sort(
-      (a, b) => b.length - a.length,
-    )[0];
-
-    studentsQuery = studentsQuery
-      .ilike("last_name", `%${escapeLike(longestLastNameWord)}%`)
-      .ilike("first_name", `%${escapeLike(longestFirstNameWord)}%`)
-      .limit(Math.min(200, Math.max(50, limit * 4)));
+    // ILIKE ne retire pas les accents en base. Normaliser uniquement la saisie
+    // excluait ÉLODIE avant même le contrôle d'identité. Parcourir les identités
+    // de l'établissement par pages, puis limiter les correspondances exactes.
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await studentsQuery().range(offset, offset + pageSize - 1);
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      const candidates = (data ?? []) as StudentRow[];
+      studs.push(...candidates.filter((student) => studentMatchesIdentity(student, {
+        lastName: lastNameRaw,
+        firstName: firstNameRaw,
+      })));
+      if (studs.length > limit || candidates.length < pageSize) break;
+    }
+    hasMore = studs.length > limit;
+    studs = studs.slice(0, limit);
   } else {
     const like = `%${escapeLike(qRaw)}%`;
-    studentsQuery = studentsQuery
+    const { data, error } = await studentsQuery()
       .or(
         [
           `first_name.ilike.${like}`,
@@ -85,39 +102,32 @@ export async function GET(req: NextRequest) {
         ].join(",")
       )
       .limit(limit);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    studs = (data ?? []) as StudentRow[];
   }
 
-  const { data: candidates, error: sErr } = await studentsQuery;
-
-  if (sErr) return NextResponse.json({ error: sErr.message }, { status: 400 });
-
-  const studs = identitySearch
-    ? (candidates ?? [])
-        .filter((student) =>
-          studentMatchesIdentity(student, {
-            lastName: lastNameRaw,
-            firstName: firstNameRaw,
-          }),
-        )
-        .slice(0, limit)
-    : candidates ?? [];
-
   const ids = (studs ?? []).map((s) => s.id);
-  let mapClass = new Map<string, { class_id: string | null; class_label: string | null }>();
+  const mapClass = new Map<string, { class_id: string | null; class_label: string | null }>();
 
   if (ids.length) {
     // 2) Classe active (end_date IS NULL) pour afficher le contexte
-    const { data: enr, error: eErr } = await srv
+    let enrollmentQuery = srv
       .from("class_enrollments")
-      .select("student_id, class_id, classes(name,label)")
+      .select("student_id,class_id,start_date,classes:class_id!inner(label,code,academic_year)")
       .in("student_id", ids)
       .eq("institution_id", inst)
-      .is("end_date", null);
+      .is("end_date", null)
+      .order("start_date", { ascending: false });
+    if (academicYear) enrollmentQuery = enrollmentQuery.eq("classes.academic_year", academicYear);
+    const { data: enr, error: eErr } = await enrollmentQuery;
 
     if (eErr) return NextResponse.json({ error: eErr.message }, { status: 400 });
 
     for (const r of enr ?? []) {
-      const label = (r as any)?.classes?.name || (r as any)?.classes?.label || null;
+      if (mapClass.has((r as any).student_id)) continue;
+      const relation = (r as any).classes;
+      const cls = Array.isArray(relation) ? relation[0] : relation;
+      const label = cls?.label || cls?.code || null;
       mapClass.set((r as any).student_id, {
         class_id: (r as any).class_id ?? null,
         class_label: label,
@@ -141,6 +151,7 @@ export async function GET(req: NextRequest) {
     items,
     identity_search: identitySearch,
     identity_ready: identitySearch ? true : undefined,
-    ambiguous: identitySearch ? items.length > 1 : undefined,
+    ambiguous: identitySearch ? items.length > 1 || hasMore : undefined,
+    has_more: hasMore,
   });
 }

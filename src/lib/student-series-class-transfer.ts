@@ -1,4 +1,5 @@
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
 import {
   synchronizeStudentFinance,
   type AppliedStudentFinanceSynchronization,
@@ -39,17 +40,6 @@ function cleanId(value: unknown) {
 
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function coherentEnrollmentDate(
-  startDate: string | null | undefined,
-  requestedDate: string,
-) {
-  const start = String(startDate || "").slice(0, 10);
-  const requested = String(requestedDate || "").slice(0, 10);
-  if (!start) return requested;
-  if (!requested || requested < start) return start;
-  return requested;
 }
 
 export async function transferStudentToSeriesClass({
@@ -112,7 +102,7 @@ export async function transferStudentToSeriesClass({
   const targetSnapshot =
     (targetResult.data as EnrollmentSnapshot | null) ?? null;
   const today = isoToday();
-  const effectiveTransferDate = coherentEnrollmentDate(
+  const effectiveTransferDate = safeEnrollmentEndDate(
     sourceSnapshot.start_date,
     today,
   );

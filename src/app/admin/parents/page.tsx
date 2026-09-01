@@ -845,6 +845,9 @@ export default function AdminStudentsByClassPage() {
     first_name: "",
   });
   const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const [searchHasMore, setSearchHasMore] = useState(false);
   const [searchItems, setSearchItems] = useState<SearchStudentRow[]>([]);
   const [selectedStu, setSelectedStu] = useState<SearchStudentRow | null>(null);
 
@@ -887,6 +890,8 @@ export default function AdminStudentsByClassPage() {
     });
     setIdentitySearch({ last_name: "", first_name: "" });
     setSearchItems([]);
+    setSearchError(null);
+    setSearchHasMore(false);
     setSelectedStu(null);
   }
 
@@ -1082,19 +1087,23 @@ export default function AdminStudentsByClassPage() {
   }, [studentsFiltered]);
 
   useEffect(() => {
-    if (assignMode !== "transfer") return;
+    searchAbort.current?.abort();
+    setSearchError(null);
+    setSearchItems([]);
+    setSearchHasMore(false);
+    if (!assignOpen || assignMode !== "transfer") {
+      setSearchBusy(false);
+      return;
+    }
 
     const lastName = identitySearch.last_name.trim();
     const firstName = identitySearch.first_name.trim();
-    if (lastName.length < 2 || firstName.length < 2) {
-      setSearchItems([]);
+    if (lastName.length < 2 || !firstName) {
       setSearchBusy(false);
       return;
     }
 
     setSearchBusy(true);
-    searchAbort.current?.abort();
-
     const ctrl = new AbortController();
     searchAbort.current = ctrl;
 
@@ -1103,22 +1112,26 @@ export default function AdminStudentsByClassPage() {
         const res = await fetch(
           `/api/admin/students/search?last_name=${encodeURIComponent(
             lastName,
-          )}&first_name=${encodeURIComponent(firstName)}&limit=50`,
-          { signal: ctrl.signal }
+          )}&first_name=${encodeURIComponent(firstName)}&academic_year=${encodeURIComponent(academicYear)}&limit=50`,
+          { signal: ctrl.signal, cache: "no-store" }
         );
         const json = await res.json().catch(() => ({}));
+        if (ctrl.signal.aborted) return;
 
         if (res.ok) {
           setSearchItems(Array.isArray(json?.items) ? json.items : []);
+          setSearchHasMore(json?.has_more === true);
         } else {
-          setSearchItems([]);
+          setSearchError(res.status === 401
+            ? "Votre session a expiré. Reconnectez-vous pour rechercher un élève."
+            : "La recherche des élèves a échoué. Réessayez.");
         }
       } catch (e: any) {
-        if (e?.name !== "AbortError") {
-          setSearchItems([]);
+        if (!ctrl.signal.aborted && e?.name !== "AbortError") {
+          setSearchError("Impossible de rechercher les élèves. Vérifiez votre connexion puis réessayez.");
         }
       } finally {
-        setSearchBusy(false);
+        if (!ctrl.signal.aborted) setSearchBusy(false);
       }
     }, 250);
 
@@ -1126,7 +1139,7 @@ export default function AdminStudentsByClassPage() {
       clearTimeout(tid);
       ctrl.abort();
     };
-  }, [assignMode, identitySearch]);
+  }, [assignOpen, assignMode, identitySearch, academicYear, searchAttempt]);
 
   function toggleStudentSelection(studentId: string, checked: boolean) {
     setSelectedIds((prev) => {
@@ -2068,8 +2081,16 @@ export default function AdminStudentsByClassPage() {
                     <div className="mt-2 max-h-56 overflow-auto rounded-xl border">
                       {searchBusy ? (
                         <div className="p-3 text-sm text-slate-600">Recherche...</div>
+                      ) : searchError ? (
+                        <div role="alert" className="p-3 text-sm text-red-700">
+                          <p>{searchError}</p>
+                          <button type="button" className="mt-2 font-semibold underline"
+                            onClick={() => setSearchAttempt((attempt) => attempt + 1)}>
+                            Réessayer
+                          </button>
+                        </div>
                       ) : identitySearch.last_name.trim().length < 2 ||
-                        identitySearch.first_name.trim().length < 2 ? (
+                        !identitySearch.first_name.trim() ? (
                         <div className="p-3 text-sm text-slate-500">
                           Saisissez le nom et au moins un prénom.
                         </div>
@@ -2083,6 +2104,11 @@ export default function AdminStudentsByClassPage() {
                             <div className="border-b border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                               Plusieurs élèves portent cette identité. Vérifiez le
                               matricule et la classe avant de choisir.
+                            </div>
+                          )}
+                          {searchHasMore && (
+                            <div className="border-b p-3 text-xs text-slate-600">
+                              D’autres élèves correspondent. Ajoutez un prénom pour préciser la recherche.
                             </div>
                           )}
                           <ul className="divide-y">
