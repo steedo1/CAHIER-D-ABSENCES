@@ -32,6 +32,18 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function coherentEnrollmentEndDate(
+  requestedEndDate: string | null | undefined,
+  startDate: unknown,
+  fallbackDate: string,
+) {
+  const requested = String(requestedEndDate || fallbackDate || "").slice(0, 10);
+  const start = String(startDate || "").slice(0, 10);
+  if (!start) return requested || fallbackDate;
+  if (!requested || requested < start) return start;
+  return requested;
+}
+
 function requiredBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
@@ -660,8 +672,13 @@ export async function POST(req: NextRequest) {
 
       return {
         id: String(row.id),
+        start_date: row.start_date ?? null,
         end_date: row.end_date ?? null,
-        close_end_date: priorYearEndDate || today,
+        close_end_date: coherentEnrollmentEndDate(
+          priorYearEndDate,
+          row.start_date,
+          today,
+        ),
       };
     },
   );
