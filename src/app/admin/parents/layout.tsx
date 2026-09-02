@@ -62,6 +62,30 @@ export default function StudentsByClassLayout({ children }: { children: ReactNod
     };
   }, []);
 
+  useEffect(() => {
+    const onClickCapture = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest("button");
+      if (!button) return;
+
+      const label = String(button.textContent || "").trim();
+      if (label !== "Retirer") return;
+
+      const ok = window.confirm(
+        "SUPPRESSION DÉFINITIVE : Retirer supprimera complètement la fiche de l'élève et ses données associées. Pour un changement de classe, utilisez TRANSFÉRER. Continuer ?",
+      );
+
+      if (!ok) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    document.addEventListener("click", onClickCapture, true);
+    return () => document.removeEventListener("click", onClickCapture, true);
+  }, []);
+
   const results = useMemo(() => {
     const q = norm(query);
     if (q.length < 2) return [];
