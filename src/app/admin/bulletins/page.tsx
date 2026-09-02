@@ -1424,12 +1424,17 @@ function StudentBulletinCard({
     const contentEl = contentRef.current;
     if (!pageEl || !contentEl || typeof window === "undefined") return;
 
-    const zoom = Math.max(0.1, Number(previewZoomForMeasure || 1));
+    // Mesurer à taille naturelle, même après une précédente impression.
+    pageEl.style.setProperty("--print-fit-scale", "1");
 
-    // Hauteur réelle du CONTENU, corrigée du zoom d’aperçu.
+    // Hauteur réelle du CONTENU, corrigée du zoom réellement appliqué.
+    // À l'impression, le zoom d'aperçu disparaît : sa valeur React ne doit
+    // pas réduire une seconde fois les textes que l'on vient d'agrandir.
     // Important : on ignore la hauteur minimale artificielle de la page A4,
     // sinon l’impression réduit toujours le bulletin même quand le contenu tient déjà.
     const rect = contentEl.getBoundingClientRect();
+    const renderedScale = rect.width / contentEl.offsetWidth;
+    if (!Number.isFinite(renderedScale) || renderedScale <= 0) return;
     const contentTop = rect.top;
     const realBottom = Array.from(contentEl.children).reduce((bottom, child) => {
       const el = child as HTMLElement;
@@ -1444,8 +1449,10 @@ function StudentBulletinCard({
     }, 0);
     const contentStyles = window.getComputedStyle(contentEl);
     const paddingBottom = Number.parseFloat(contentStyles.paddingBottom || "0") || 0;
-    const measuredH = realBottom > 0 ? realBottom + paddingBottom : rect.height;
-    const naturalH = measuredH / zoom;
+    const naturalH =
+      realBottom > 0
+        ? realBottom / renderedScale + paddingBottom
+        : rect.height / renderedScale;
 
     if (!Number.isFinite(naturalH) || naturalH <= 0) return;
 
@@ -1459,9 +1466,8 @@ function StudentBulletinCard({
 
     const raw = Math.min(1, targetPx / naturalH);
     const safe = Math.min(1, raw * 0.998);
-    const clamped = Math.max(0.88, safe);
-
-    setScale(clamped);
+    // Un plancher arbitraire peut couper les visas des bulletins les plus longs.
+    setScale(safe);
   };
 
   useLayoutEffect(() => {
@@ -3752,6 +3758,58 @@ function BulletinsPageContent() {
           padding: 2mm 6mm 4mm;
         }
 
+        /* Même typographie dans l'aperçu mesuré et sur le papier : les tailles
+           des listes de classe servent de repère sans déplacer les blocs. */
+        .bulletin-print-portal .discipline-table,
+        .bulletin-print-portal .discipline-table tr,
+        .bulletin-print-portal .discipline-table th,
+        .bulletin-print-portal .discipline-table td {
+          font-size: 11.7px !important;
+          line-height: 1.12 !important;
+        }
+
+        .bulletin-print-portal .student-identity,
+        .bulletin-print-portal .student-identity > .grid,
+        .bulletin-print-portal .bottom-card,
+        .bulletin-print-portal .council-card,
+        .bulletin-print-portal .visa-card {
+          font-size: 11.2px !important;
+          line-height: 1.12 !important;
+        }
+
+        /* Les tailles explicites des sous-blocs ne doivent pas annuler
+           l'agrandissement porté par leur carte parente. */
+        .bulletin-print-portal :is(.bottom-card, .council-card, .visa-card)
+          :is(.text-\\[8px\\], .text-\\[8\\.5px\\], .text-\\[9px\\]) {
+          font-size: 10.2px !important;
+        }
+
+        .bulletin-print-portal :is(.average-card, .council-appreciation)
+          .text-\\[11px\\] {
+          font-size: 12px !important;
+        }
+
+        .bulletin-print-portal .official-block {
+          font-size: 10.8px !important;
+        }
+
+        .bulletin-print-portal .official-title {
+          font-size: 14px !important;
+        }
+
+        .bulletin-print-portal .official-subtitle {
+          font-size: 12px !important;
+        }
+
+        .bulletin-print-portal .institution-title {
+          font-size: 16px !important;
+        }
+
+        .bulletin-print-portal .institution-info,
+        .bulletin-print-portal .bulletin-footer {
+          font-size: 10.2px !important;
+        }
+
         @supports (zoom: 1) {
           .preview-overlay .print-page {
             zoom: var(--preview-zoom, 1);
@@ -3849,44 +3907,6 @@ function BulletinsPageContent() {
             box-sizing: border-box !important;
             transform: scale(var(--print-fit-scale, 1)) !important;
             transform-origin: top left !important;
-          }
-
-          /* ✅ Lisibilité papier : règles limitées à l’impression du bulletin. */
-          .bulletin-print-portal .discipline-table,
-          .bulletin-print-portal .discipline-table tr,
-          .bulletin-print-portal .discipline-table th,
-          .bulletin-print-portal .discipline-table td {
-            font-size: 10.4px !important;
-            line-height: 1.12 !important;
-          }
-
-          .bulletin-print-portal .student-identity,
-          .bulletin-print-portal .bottom-card,
-          .bulletin-print-portal .council-card,
-          .bulletin-print-portal .visa-card {
-            font-size: 10.2px !important;
-            line-height: 1.12 !important;
-          }
-
-          .bulletin-print-portal .official-block {
-            font-size: 10.2px !important;
-          }
-
-          .bulletin-print-portal .official-title {
-            font-size: 13.6px !important;
-          }
-
-          .bulletin-print-portal .official-subtitle {
-            font-size: 11.4px !important;
-          }
-
-          .bulletin-print-portal .institution-title {
-            font-size: 15.6px !important;
-          }
-
-          .bulletin-print-portal .institution-info,
-          .bulletin-print-portal .bulletin-footer {
-            font-size: 9.8px !important;
           }
 
           .print-break:last-of-type,
