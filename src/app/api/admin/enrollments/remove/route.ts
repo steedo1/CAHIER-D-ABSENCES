@@ -1,6 +1,5 @@
 // src/app/api/admin/enrollments/remove/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { safeEnrollmentEndDate } from "@/lib/student-class-membership";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 
 export const runtime = "nodejs";
@@ -13,6 +12,17 @@ const ENROLLMENT_REMOVE_ROLES = [
   "file_correspondent",
   "finance_manager",
   "finance",
+] as const;
+
+const PUBLIC_STUDENT_RESIDUAL_TABLES = [
+  "ai_training_samples",
+  "class_student_general_avgs",
+  "class_student_subject_avgs",
+  "conduct_student_periods",
+  "grade_flat_marks",
+  "ml_student_features_history",
+  "ml_training_labels",
+  "whatsapp_outbox",
 ] as const;
 
 export async function POST(req: NextRequest) {
@@ -32,269 +42,221 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Vérifier que la classe appartient bien à l'établissement et récupérer
-  // l'année : le retrait ne doit agir que sur l'année de cette classe.
   const { data: cls, error: clsErr } = await srv
     .from("classes")
     .select("id,institution_id,academic_year")
     .eq("id", class_id)
     .maybeSingle();
-  if (clsErr)
+
+  if (clsErr) {
     return NextResponse.json({ error: clsErr.message }, { status: 400 });
+  }
+
   if (!cls || (cls as any).institution_id !== inst) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
   }
 
-  const academicYear = String((cls as any).academic_year || "").trim();
+  const { data: student, error: studentErr } = await srv
+    .from("students")
+    .select("id,institution_id,first_name,last_name,matricule")
+    .eq("institution_id", inst)
+    .eq("id", student_id)
+    .maybeSingle();
 
-  const { data: activeEnrollment, error: activeEnrollmentError } = await srv
+  if (studentErr) {
+    return NextResponse.json({ error: studentErr.message }, { status: 400 });
+  }
+
+  if (!student) {
+    return NextResponse.json({ error: "student_not_found" }, { status: 404 });
+  }
+
+  // Securite : le bouton Retirer est affiche sur une ligne de classe.
+  // On confirme donc que l'eleve appartient encore activement a cette classe
+  // avant de supprimer definitivement sa fiche.
+  const { data: activeEnrollment, error: enrollmentErr } = await srv
     .from("class_enrollments")
-    .select("id,start_date")
+    .select("id")
     .eq("institution_id", inst)
     .eq("class_id", class_id)
     .eq("student_id", student_id)
     .is("end_date", null)
     .maybeSingle();
 
-  if (activeEnrollmentError) {
-    return NextResponse.json(
-      { error: activeEnrollmentError.message },
-      { status: 400 },
-    );
+  if (enrollmentErr) {
+    return NextResponse.json({ error: enrollmentErr.message }, { status: 400 });
   }
 
   if (!activeEnrollment) {
-    const { data: checkPair, error: checkErr } = await srv
-      .from("class_enrollments")
-      .select("id,end_date")
-      .eq("institution_id", inst)
-      .eq("class_id", class_id)
-      .eq("student_id", student_id)
-      .limit(1);
-
-    if (checkErr) {
-      return NextResponse.json({ error: checkErr.message }, { status: 400 });
-    }
-
-    if (!checkPair?.length) {
-      return NextResponse.json({ error: "not_found_in_class" }, { status: 404 });
-    }
-
-    if (checkPair[0].end_date !== null) {
-      return NextResponse.json({ error: "already_closed" }, { status: 409 });
-    }
-
-    return NextResponse.json({ error: "no_active_row_closed" }, { status: 409 });
+    return NextResponse.json({ error: "not_found_in_class" }, { status: 404 });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const endDate = safeEnrollmentEndDate(activeEnrollment.start_date, today);
+  // "Retirer" signifie desormais SUPPRIMER DEFINITIVEMENT la fiche eleve.
+  // Les tables liees a students avec ON DELETE CASCADE sont nettoyees par
+  // PostgreSQL. On traite explicitement ci-dessous les donnees finance et les
+  // anciennes tables techniques qui ne disposent pas toutes d'une FK cascade.
 
-  const { data: closedEnrollment, error: closeError } = await srv
-    .from("class_enrollments")
-    .update({ end_date: endDate })
-    .eq("institution_id", inst)
-    .eq("id", activeEnrollment.id)
-    .is("end_date", null)
+  const { data: receipts, error: receiptsReadErr } = await srv
+    .schema("finance")
+    .from("receipts")
     .select("id")
-    .maybeSingle();
+    .eq("school_id", inst)
+    .eq("student_id", student_id);
 
-  if (closeError) {
-    return NextResponse.json({ error: closeError.message }, { status: 400 });
-  }
-
-  if (!closedEnrollment) {
-    return NextResponse.json({ error: "no_active_row_closed" }, { status: 409 });
-  }
-
-  const rollbackEnrollment = async () => {
-    await srv
-      .from("class_enrollments")
-      .update({ end_date: null })
-      .eq("institution_id", inst)
-      .eq("id", activeEnrollment.id);
-  };
-
-  // S'il existe encore une inscription ouverte dans une autre classe de la
-  // même année, on vient seulement de fermer une ligne concurrente/transférée :
-  // l'élève reste actif et sa finance ne doit pas être annulée.
-  const { data: remainingEnrollments, error: remainingError } = await srv
-    .from("class_enrollments")
-    .select("class_id")
-    .eq("institution_id", inst)
-    .eq("student_id", student_id)
-    .is("end_date", null);
-
-  if (remainingError) {
-    await rollbackEnrollment();
+  if (receiptsReadErr) {
     return NextResponse.json(
-      { error: remainingError.message, code: "remove_verification_failed" },
+      { error: receiptsReadErr.message, code: "student_delete_prepare_failed" },
       { status: 409 },
     );
   }
 
-  const remainingClassIds = Array.from(
-    new Set(
-      (remainingEnrollments ?? [])
-        .map((row: any) => String(row.class_id || "").trim())
-        .filter(Boolean),
-    ),
-  );
+  const receiptIds = (receipts ?? [])
+    .map((row: any) => String(row.id || "").trim())
+    .filter(Boolean);
 
-  let stillActiveInSameYear = false;
-  if (academicYear && remainingClassIds.length > 0) {
-    const { data: sameYearRows, error: sameYearError } = await srv
-      .from("classes")
-      .select("id")
-      .eq("institution_id", inst)
-      .eq("academic_year", academicYear)
-      .in("id", remainingClassIds)
-      .limit(1);
+  const { data: charges, error: chargesReadErr } = await srv
+    .schema("finance")
+    .from("student_charges")
+    .select("id")
+    .eq("school_id", inst)
+    .eq("student_id", student_id);
 
-    if (sameYearError) {
-      await rollbackEnrollment();
+  if (chargesReadErr) {
+    return NextResponse.json(
+      { error: chargesReadErr.message, code: "student_delete_prepare_failed" },
+      { status: 409 },
+    );
+  }
+
+  const chargeIds = (charges ?? [])
+    .map((row: any) => String(row.id || "").trim())
+    .filter(Boolean);
+
+  const { error: intentsDeleteErr } = await srv
+    .schema("finance")
+    .from("online_payment_intents")
+    .delete()
+    .eq("student_id", student_id);
+
+  if (intentsDeleteErr) {
+    return NextResponse.json(
+      { error: intentsDeleteErr.message, code: "student_finance_delete_failed" },
+      { status: 409 },
+    );
+  }
+
+  if (receiptIds.length > 0) {
+    const { error } = await srv
+      .schema("finance")
+      .from("receipt_allocations")
+      .delete()
+      .in("receipt_id", receiptIds);
+
+    if (error) {
       return NextResponse.json(
-        { error: sameYearError.message, code: "remove_verification_failed" },
+        { error: error.message, code: "student_finance_delete_failed" },
         { status: 409 },
       );
     }
-    stillActiveInSameYear = (sameYearRows ?? []).length > 0;
   }
 
-  if (stillActiveInSameYear) {
-    return NextResponse.json({
-      closed: 1,
-      end_date: endDate,
-      withdrawn_from_year: false,
-      finance_cancelled: 0,
-    });
+  if (chargeIds.length > 0) {
+    const { error } = await srv
+      .schema("finance")
+      .from("receipt_allocations")
+      .delete()
+      .in("student_charge_id", chargeIds);
+
+    if (error) {
+      return NextResponse.json(
+        { error: error.message, code: "student_finance_delete_failed" },
+        { status: 409 },
+      );
+    }
   }
 
-  // À partir d'ici, « Retirer » signifie réellement sortir l'élève du périmètre
-  // actif de l'année. On conserve toutefois les reçus et les dettes déjà soldées.
-  const { data: studentBefore, error: studentReadError } = await srv
-    .from("students")
-    .select("lifecycle_status,exit_date,exit_reason")
-    .eq("institution_id", inst)
-    .eq("id", student_id)
-    .maybeSingle();
+  const { error: remindersDeleteErr } = await srv
+    .schema("finance")
+    .from("reminder_logs")
+    .delete()
+    .eq("student_id", student_id);
 
-  if (studentReadError || !studentBefore) {
-    await rollbackEnrollment();
+  if (remindersDeleteErr) {
     return NextResponse.json(
-      {
-        error: studentReadError?.message || "student_not_found",
-        code: "student_withdrawal_prepare_failed",
-      },
+      { error: remindersDeleteErr.message, code: "student_finance_delete_failed" },
       { status: 409 },
     );
   }
 
-  const rollbackStudent = async () => {
-    await srv
-      .from("students")
-      .update({
-        lifecycle_status: (studentBefore as any).lifecycle_status,
-        exit_date: (studentBefore as any).exit_date,
-        exit_reason: (studentBefore as any).exit_reason,
-      })
-      .eq("institution_id", inst)
-      .eq("id", student_id);
-  };
+  const { error: receiptsDeleteErr } = await srv
+    .schema("finance")
+    .from("receipts")
+    .delete()
+    .eq("school_id", inst)
+    .eq("student_id", student_id);
 
-  const { error: studentUpdateError } = await srv
-    .from("students")
-    .update({
-      lifecycle_status: "exited",
-      exit_date: (studentBefore as any).exit_date || today,
-      exit_reason:
-        String((studentBefore as any).exit_reason || "").trim() ||
-        `Retiré de l’année ${academicYear || "courante"}`,
-    })
-    .eq("institution_id", inst)
-    .eq("id", student_id);
-
-  if (studentUpdateError) {
-    await rollbackEnrollment();
+  if (receiptsDeleteErr) {
     return NextResponse.json(
-      { error: studentUpdateError.message, code: "student_withdrawal_failed" },
+      { error: receiptsDeleteErr.message, code: "student_finance_delete_failed" },
       { status: 409 },
     );
   }
 
-  let financeCancelled = 0;
+  const { error: chargesDeleteErr } = await srv
+    .schema("finance")
+    .from("student_charges")
+    .delete()
+    .eq("school_id", inst)
+    .eq("student_id", student_id);
 
-  if (academicYear) {
-    const { data: yearRow, error: yearError } = await srv
-      .from("academic_years")
-      .select("id")
-      .eq("institution_id", inst)
-      .eq("code", academicYear)
-      .maybeSingle();
+  if (chargesDeleteErr) {
+    return NextResponse.json(
+      { error: chargesDeleteErr.message, code: "student_finance_delete_failed" },
+      { status: 409 },
+    );
+  }
 
-    if (yearError || !yearRow?.id) {
-      await Promise.allSettled([rollbackStudent(), rollbackEnrollment()]);
+  for (const table of PUBLIC_STUDENT_RESIDUAL_TABLES) {
+    const { error } = await srv
+      .from(table)
+      .delete()
+      .eq("student_id", student_id);
+
+    if (error && error.code !== "42P01") {
       return NextResponse.json(
         {
-          error: yearError?.message || "academic_year_not_found",
-          code: "finance_withdrawal_prepare_failed",
+          error: error.message,
+          code: "student_technical_delete_failed",
+          table,
         },
         { status: 409 },
       );
     }
+  }
 
-    const { data: balances, error: balanceError } = await srv
-      .schema("finance")
-      .from("v_charge_balances")
-      .select("id")
-      .eq("school_id", inst)
-      .eq("academic_year_id", String(yearRow.id))
-      .eq("student_id", student_id)
-      .in("computed_status", ["pending", "partial"]);
+  const { data: deleted, error: deleteErr } = await srv
+    .from("students")
+    .delete()
+    .eq("institution_id", inst)
+    .eq("id", student_id)
+    .select("id")
+    .maybeSingle();
 
-    if (balanceError) {
-      await Promise.allSettled([rollbackStudent(), rollbackEnrollment()]);
-      return NextResponse.json(
-        { error: balanceError.message, code: "finance_withdrawal_prepare_failed" },
-        { status: 409 },
-      );
-    }
-
-    const chargeIds = Array.from(
-      new Set(
-        (balances ?? [])
-          .map((row: any) => String(row.id || "").trim())
-          .filter(Boolean),
-      ),
+  if (deleteErr) {
+    return NextResponse.json(
+      { error: deleteErr.message, code: "student_delete_failed" },
+      { status: 409 },
     );
+  }
 
-    if (chargeIds.length > 0) {
-      const { data: cancelledRows, error: cancelError } = await srv
-        .schema("finance")
-        .from("student_charges")
-        .update({ status: "cancelled", updated_at: new Date().toISOString() })
-        .eq("school_id", inst)
-        .eq("student_id", student_id)
-        .in("id", chargeIds)
-        .select("id");
-
-      if (cancelError) {
-        await Promise.allSettled([rollbackStudent(), rollbackEnrollment()]);
-        return NextResponse.json(
-          { error: cancelError.message, code: "finance_withdrawal_failed" },
-          { status: 409 },
-        );
-      }
-      financeCancelled = (cancelledRows ?? []).length;
-    }
+  if (!deleted) {
+    return NextResponse.json({ error: "student_delete_not_applied" }, { status: 409 });
   }
 
   return NextResponse.json({
-    closed: 1,
-    end_date: endDate,
-    withdrawn_from_year: true,
-    lifecycle_status: "exited",
-    finance_cancelled: financeCancelled,
-    receipts_preserved: true,
+    deleted: true,
+    student_id,
+    receipts_deleted: receiptIds.length,
+    charges_deleted: chargeIds.length,
   });
 }
