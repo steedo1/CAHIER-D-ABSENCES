@@ -1,0 +1,102 @@
+name: Temporary permanent student removal fix
+
+on:
+  push:
+    branches:
+      - reprise-propre-5418ce7-20260729
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: reprise-propre-5418ce7-20260729
+          fetch-depth: 0
+
+      - name: Patch permanent removal and correspondent rights
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          ui_path = Path('src/app/admin/parents/page.tsx')
+          ui = ui_path.read_text(encoding='utf-8')
+          changed = False
+
+          replacements = [
+              (
+                  '''  const canCreateOrEditStudents =\n    role === "admin" || role === "super_admin" || role === "founder";''',
+                  '''  const canCreateOrEditStudents =\n    role === "admin" ||\n    role === "super_admin" ||\n    role === "founder" ||\n    role === "file_correspondent";''',
+              ),
+              (
+                  '''    const ok = window.confirm(\n      `Retirer ${nomAvantPrenoms(student.full_name)} de la classe ${\n        student.class_label ?? ""\n      } ?`\n    );''',
+                  '''    const ok = window.confirm(\n      `RETIRER = SUPPRIMER DÉFINITIVEMENT. Supprimer ${nomAvantPrenoms(\n        student.full_name\n      )} de la base de données ? Cette action effacera sa fiche élève et les données liées et est irréversible.`\n    );''',
+              ),
+              (
+                  '''      setStudents((prev) =>\n        prev.map((x) =>\n          x.id === student.id ? { ...x, class_id: null, class_label: null } : x\n        )\n      );''',
+                  '''      setStudents((prev) => prev.filter((x) => x.id !== student.id));''',
+              ),
+              (
+                  '''      setMsg("Eleve retire de la classe");''',
+                  '''      setMsg("Élève supprimé définitivement de la base de données");''',
+              ),
+          ]
+
+          for old, new in replacements:
+              if new in ui:
+                  continue
+              count = ui.count(old)
+              if count != 1:
+                  raise SystemExit(f'UI replacement expected once, found {count}: {old[:100]!r}')
+              ui = ui.replace(old, new, 1)
+              changed = True
+
+          if changed:
+              ui_path.write_text(ui, encoding='utf-8')
+
+          api_path = Path('src/app/api/admin/enrollments/remove/route.ts')
+          api = api_path.read_text(encoding='utf-8')
+          api_changed = False
+
+          old_select = '''    .select("id,institution_id,first_name,last_name,matricule")'''
+          new_select = '''    .select("id,institution_id,first_name,last_name,matricule,student_person_id")'''
+          if new_select not in api:
+              count = api.count(old_select)
+              if count != 1:
+                  raise SystemExit(f'API student select expected once, found {count}')
+              api = api.replace(old_select, new_select, 1)
+              api_changed = True
+
+          anchor = '''  if (!deleted) {\n    return NextResponse.json({ error: "student_delete_not_applied" }, { status: 409 });\n  }\n\n  return NextResponse.json({\n    deleted: true,\n    student_id,\n    receipts_deleted: receiptIds.length,\n    charges_deleted: chargeIds.length,\n  });'''
+          replacement = '''  if (!deleted) {\n    return NextResponse.json({ error: "student_delete_not_applied" }, { status: 409 });\n  }\n\n  // La fiche longitudinale student_persons ne doit pas rester comme donnée\n  // fantôme lorsque la dernière fiche student qui l'utilise vient d'être supprimée.\n  // On ne la supprime jamais si une autre fiche student y est encore rattachée.\n  const studentPersonId = String((student as any)?.student_person_id || "").trim();\n  let studentPersonDeleted = false;\n  let studentPersonCleanupWarning: string | null = null;\n\n  if (studentPersonId) {\n    const { count: remainingStudentLinks, error: remainingLinksErr } = await srv\n      .from("students")\n      .select("id", { count: "exact", head: true })\n      .eq("student_person_id", studentPersonId);\n\n    if (remainingLinksErr) {\n      studentPersonCleanupWarning = remainingLinksErr.message;\n    } else if ((remainingStudentLinks ?? 0) === 0) {\n      const { error: personDeleteErr } = await srv\n        .from("student_persons")\n        .delete()\n        .eq("id", studentPersonId);\n\n      if (personDeleteErr) {\n        studentPersonCleanupWarning = personDeleteErr.message;\n      } else {\n        studentPersonDeleted = true;\n      }\n    }\n  }\n\n  return NextResponse.json({\n    deleted: true,\n    student_id,\n    student_person_deleted: studentPersonDeleted,\n    student_person_cleanup_warning: studentPersonCleanupWarning,\n    receipts_deleted: receiptIds.length,\n    charges_deleted: chargeIds.length,\n  });'''
+          if replacement not in api:
+              count = api.count(anchor)
+              if count != 1:
+                  raise SystemExit(f'API return anchor expected once, found {count}')
+              api = api.replace(anchor, replacement, 1)
+              api_changed = True
+
+          if api_changed:
+              api_path.write_text(api, encoding='utf-8')
+
+          PY
+
+          git diff --check
+          git diff -- 'src/app/admin/parents/page.tsx' 'src/app/api/admin/enrollments/remove/route.ts'
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No change required.'
+            exit 0
+          fi
+          git config user.name 'steedo1'
+          git config user.email 'ariskouadio22@gmail.com'
+          git add 'src/app/admin/parents/page.tsx' 'src/app/api/admin/enrollments/remove/route.ts'
+          git commit -m 'fix(students): make Retirer a permanent database delete'
+          git push origin HEAD:reprise-propre-5418ce7-20260729
