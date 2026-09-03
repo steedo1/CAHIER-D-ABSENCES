@@ -14,6 +14,8 @@ export const STUDENT_IDENTITY_CONFLICT_MESSAGE =
 
 // Ne pas filtrer par ILIKE ou full_name_key en base : ces filtres perdent les
 // variantes avec accents, apostrophes ou traits d'union avant la comparaison.
+// Une fiche retirée (exited) ou déjà fusionnée n'est plus une identité scolaire
+// active et ne doit donc ni bloquer une création ni détourner un transfert.
 export async function findStudentIdentityCandidates(
   srv: SupabaseClient,
   institutionId: string,
@@ -27,7 +29,7 @@ export async function findStudentIdentityCandidates(
     const { data, error } = await srv.from("students")
       .select("id,first_name,last_name,full_name,matricule")
       .eq("institution_id", institutionId)
-      .or("lifecycle_status.is.null,lifecycle_status.neq.duplicate_merged")
+      .or("lifecycle_status.is.null,lifecycle_status.eq.active")
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (error) throw new Error(error.message);
