@@ -348,11 +348,12 @@ async function requireAdminContext(
     };
 
   const allowedRoles = options.write
-    ? new Set(["admin", "super_admin", "founder", "finance_manager", "finance"])
+    ? new Set(["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"])
     : new Set([
         "admin",
         "super_admin",
         "founder",
+        "file_correspondent",
         "finance_manager",
         "finance",
       ]);
@@ -390,6 +391,7 @@ async function requireAdminContext(
     "admin",
     "super_admin",
     "founder",
+    "file_correspondent",
     "finance_manager",
     "finance",
   ]);
