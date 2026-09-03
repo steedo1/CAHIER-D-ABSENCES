@@ -56,12 +56,14 @@ export async function GET(req: NextRequest) {
   // Échappe % et _ pour ILIKE
   const escapeLike = (value: string) => value.replace(/[\\%_]/g, (m) => `\\${m}`);
 
-  // 1) On cherche dans students (nom, prénom, matricule)
+  // On ne propose jamais au transfert une fiche déjà retirée ou fusionnée.
+  // Les anciens enregistrements sans lifecycle_status restent acceptés pour
+  // compatibilité ; toutes les fiches courantes doivent être "active".
   const studentsQuery = () => srv
     .from("students")
     .select("id, first_name, last_name, matricule")
     .eq("institution_id", inst)
-    .or("lifecycle_status.is.null,lifecycle_status.neq.duplicate_merged")
+    .or("lifecycle_status.is.null,lifecycle_status.eq.active")
     .order("last_name", { ascending: true, nullsFirst: true })
     .order("first_name", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true });
@@ -111,7 +113,7 @@ export async function GET(req: NextRequest) {
   const mapClass = new Map<string, { class_id: string | null; class_label: string | null }>();
 
   if (ids.length) {
-    // 2) Classe active (end_date IS NULL) pour afficher le contexte
+    // Classe active (end_date IS NULL) pour afficher le contexte
     let enrollmentQuery = srv
       .from("class_enrollments")
       .select("student_id,class_id,start_date,classes:class_id!inner(label,code,academic_year)")
