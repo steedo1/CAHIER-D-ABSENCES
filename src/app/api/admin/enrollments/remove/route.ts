@@ -14,12 +14,12 @@ const ENROLLMENT_REMOVE_ROLES = [
   "finance",
 ] as const;
 
+// Uniquement de vraies tables physiques. Les vues de calcul
+// (class_student_general_avgs, class_student_subject_avgs,
+// conduct_student_periods, grade_flat_marks) ne doivent jamais recevoir
+// de DELETE : elles se recalculent automatiquement depuis leurs tables sources.
 const PUBLIC_STUDENT_RESIDUAL_TABLES = [
   "ai_training_samples",
-  "class_student_general_avgs",
-  "class_student_subject_avgs",
-  "conduct_student_periods",
-  "grade_flat_marks",
   "ml_student_features_history",
   "ml_training_labels",
   "whatsapp_outbox",
@@ -91,10 +91,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not_found_in_class" }, { status: 404 });
   }
 
-  // "Retirer" signifie desormais SUPPRIMER DEFINITIVEMENT la fiche eleve.
+  // "Retirer" signifie SUPPRIMER DEFINITIVEMENT la fiche eleve.
   // Les tables liees a students avec ON DELETE CASCADE sont nettoyees par
   // PostgreSQL. On traite explicitement ci-dessous les donnees finance et les
-  // anciennes tables techniques qui ne disposent pas toutes d'une FK cascade.
+  // anciennes tables physiques qui ne disposent pas toutes d'une FK cascade.
 
   const { data: receipts, error: receiptsReadErr } = await srv
     .schema("finance")
@@ -253,9 +253,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "student_delete_not_applied" }, { status: 409 });
   }
 
-  // La fiche longitudinale student_persons ne doit pas rester comme donnée
-  // fantôme lorsque la dernière fiche student qui l'utilise vient d'être supprimée.
-  // On ne la supprime jamais si une autre fiche student y est encore rattachée.
+  // La fiche longitudinale student_persons ne doit pas rester comme donnee
+  // fantome lorsque la derniere fiche student qui l'utilise vient d'etre supprimee.
+  // On ne la supprime jamais si une autre fiche student y est encore rattachee.
   const studentPersonId = String((student as any)?.student_person_id || "").trim();
   let studentPersonDeleted = false;
   let studentPersonCleanupWarning: string | null = null;
