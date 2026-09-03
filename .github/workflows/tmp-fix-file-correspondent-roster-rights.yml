@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix(auth): restore file correspondent roster rights'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,32 +26,31 @@ jobs:
           path = Path('src/app/api/admin/classes/[id]/roster/route.ts')
           text = path.read_text(encoding='utf-8')
 
-          replacements = [
-              (
-                  'new Set(["admin", "super_admin", "founder", "finance_manager", "finance"])',
-                  'new Set(["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"])',
-              ),
-              (
-                  '''    : new Set([\n        "admin",\n        "super_admin",\n        "founder",\n        "finance_manager",\n        "finance",\n      ]);''',
-                  '''    : new Set([\n        "admin",\n        "super_admin",\n        "founder",\n        "file_correspondent",\n        "finance_manager",\n        "finance",\n      ]);''',
-              ),
-              (
-                  '''  const writeRoles = new Set([\n    "admin",\n    "super_admin",\n    "founder",\n    "finance_manager",\n    "finance",\n  ]);''',
-                  '''  const writeRoles = new Set([\n    "admin",\n    "super_admin",\n    "founder",\n    "file_correspondent",\n    "finance_manager",\n    "finance",\n  ]);''',
-              ),
-          ]
+          old_write = 'new Set(["admin", "super_admin", "founder", "finance_manager", "finance"])'
+          new_write = 'new Set(["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "finance"])'
 
-          for old, new in replacements:
+          old_read = '''    : new Set([\n        "admin",\n        "super_admin",\n        "founder",\n        "finance_manager",\n        "finance",\n      ]);'''
+          new_read = '''    : new Set([\n        "admin",\n        "super_admin",\n        "founder",\n        "file_correspondent",\n        "finance_manager",\n        "finance",\n      ]);'''
+
+          old_can_write = '''  const writeRoles = new Set([\n    "admin",\n    "super_admin",\n    "founder",\n    "finance_manager",\n    "finance",\n  ]);'''
+          new_can_write = '''  const writeRoles = new Set([\n    "admin",\n    "super_admin",\n    "founder",\n    "file_correspondent",\n    "finance_manager",\n    "finance",\n  ]);'''
+
+          changed = False
+          for old, new in ((old_write, new_write), (old_read, new_read), (old_can_write, new_can_write)):
+              if new in text:
+                  continue
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f'Expected exactly one permission block, found {count}: {old[:80]!r}')
               text = text.replace(old, new, 1)
+              changed = True
 
-          path.write_text(text, encoding='utf-8')
+          if changed:
+              path.write_text(text, encoding='utf-8')
           PY
 
           git diff --check
-          git diff -- src/app/api/admin/classes/'[id]'/roster/route.ts
+          git diff -- 'src/app/api/admin/classes/[id]/roster/route.ts'
 
       - name: Commit fix
         shell: bash
