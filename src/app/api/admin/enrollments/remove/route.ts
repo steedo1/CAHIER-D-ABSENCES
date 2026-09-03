@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
 
   const { data: student, error: studentErr } = await srv
     .from("students")
-    .select("id,institution_id,first_name,last_name,matricule")
+    .select("id,institution_id,first_name,last_name,matricule,student_person_id")
     .eq("institution_id", inst)
     .eq("id", student_id)
     .maybeSingle();
@@ -253,9 +253,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "student_delete_not_applied" }, { status: 409 });
   }
 
+  // La fiche longitudinale student_persons ne doit pas rester comme donnée
+  // fantôme lorsque la dernière fiche student qui l'utilise vient d'être supprimée.
+  // On ne la supprime jamais si une autre fiche student y est encore rattachée.
+  const studentPersonId = String((student as any)?.student_person_id || "").trim();
+  let studentPersonDeleted = false;
+  let studentPersonCleanupWarning: string | null = null;
+
+  if (studentPersonId) {
+    const { count: remainingStudentLinks, error: remainingLinksErr } = await srv
+      .from("students")
+      .select("id", { count: "exact", head: true })
+      .eq("student_person_id", studentPersonId);
+
+    if (remainingLinksErr) {
+      studentPersonCleanupWarning = remainingLinksErr.message;
+    } else if ((remainingStudentLinks ?? 0) === 0) {
+      const { error: personDeleteErr } = await srv
+        .from("student_persons")
+        .delete()
+        .eq("id", studentPersonId);
+
+      if (personDeleteErr) {
+        studentPersonCleanupWarning = personDeleteErr.message;
+      } else {
+        studentPersonDeleted = true;
+      }
+    }
+  }
+
   return NextResponse.json({
     deleted: true,
     student_id,
+    student_person_deleted: studentPersonDeleted,
+    student_person_cleanup_warning: studentPersonCleanupWarning,
     receipts_deleted: receiptIds.length,
     charges_deleted: chargeIds.length,
   });

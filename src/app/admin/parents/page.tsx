@@ -854,7 +854,10 @@ export default function AdminStudentsByClassPage() {
   const searchAbort = useRef<AbortController | null>(null);
 
   const canCreateOrEditStudents =
-    role === "admin" || role === "super_admin" || role === "founder";
+    role === "admin" ||
+    role === "super_admin" ||
+    role === "founder" ||
+    role === "file_correspondent";
   const isFinanceRole = role === "finance_manager" || role === "finance";
   const canTransferOrRemoveStudents =
     canCreateOrEditStudents || isFinanceRole;
@@ -1237,9 +1240,9 @@ export default function AdminStudentsByClassPage() {
     if (!student.class_id) return;
 
     const ok = window.confirm(
-      `Retirer ${nomAvantPrenoms(student.full_name)} de la classe ${
-        student.class_label ?? ""
-      } ?`
+      `RETIRER = SUPPRIMER DÉFINITIVEMENT. Supprimer ${nomAvantPrenoms(
+        student.full_name
+      )} de la base de données ? Cette action effacera sa fiche élève et les données liées et est irréversible.`
     );
 
     if (!ok) return;
@@ -1263,11 +1266,7 @@ export default function AdminStudentsByClassPage() {
 
       if (!res.ok) throw new Error(json?.error || "REMOVE_FAILED");
 
-      setStudents((prev) =>
-        prev.map((x) =>
-          x.id === student.id ? { ...x, class_id: null, class_label: null } : x
-        )
-      );
+      setStudents((prev) => prev.filter((x) => x.id !== student.id));
 
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -1275,7 +1274,7 @@ export default function AdminStudentsByClassPage() {
         return next;
       });
 
-      setMsg("Eleve retire de la classe");
+      setMsg("Élève supprimé définitivement de la base de données");
     } catch (e: any) {
       setMsg(e?.message || "Erreur lors du retrait");
     } finally {
