@@ -201,3 +201,12 @@ button { cursor: pointer }
     padding-top: 2px !important;
   }
 }
+
+/* Téléphone de classe — masquer uniquement le récapitulatif visuel de la séance précédente.
+   Les données lastCompletion restent conservées pour la reprise, le relais et la synchronisation Cloud. */
+.mx-auto.max-w-5xl.px-4.py-6.space-y-6
+  > div[aria-live="polite"].rounded-2xl.border.px-4.py-3.text-sm:has(
+    + .rounded-2xl.border.border-emerald-200.bg-gradient-to-b
+  ) {
+  display: none !important;
+}
