@@ -1,0 +1,420 @@
+name: Harden active academic year attendance
+
+on:
+  push:
+    branches:
+      - fix/edt-active-year-preview-20260905
+    paths:
+      - .github/workflows/fix-active-year-operational-reads.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/edt-active-year-preview-20260905
+          fetch-depth: 0
+
+      - name: Restrict operational attendance to current academic year
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one occurrence, found {count}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          # 1) Téléphones de classe : la résolution d'identité ne voit que les classes
+          # de l'année déclarée courante. Les anciennes classes de test ne peuvent
+          # plus provoquer d'ambiguïté ni être résolues par téléphone/identifiant.
+          path = "src/lib/class-device-identity.ts"
+          replace_once(
+              path,
+              '''function uniq(values: unknown[]) {
+            return Array.from(
+              new Set(
+                values
+                  .map((value) => String(value || "").trim())
+                  .filter(Boolean),
+              ),
+            );
+          }
+          ''',
+              '''function uniq(values: unknown[]) {
+            return Array.from(
+              new Set(
+                values
+                  .map((value) => String(value || "").trim())
+                  .filter(Boolean),
+              ),
+            );
+          }
+
+          async function currentAcademicYearsByInstitution(
+            service: ServiceClient,
+            institutionIds: string[],
+          ) {
+            const ids = uniq(institutionIds);
+            const byInstitution = new Map<string, string>();
+            if (!ids.length) return byInstitution;
+
+            const { data, error } = await service
+              .from("academic_years")
+              .select("institution_id,code")
+              .in("institution_id", ids)
+              .eq("is_current", true);
+            if (error) throw new Error("current_academic_year_lookup_failed");
+
+            for (const row of data || []) {
+              const institutionId = String(row?.institution_id || "").trim();
+              const code = String(row?.code || "").trim();
+              if (institutionId && code) byInstitution.set(institutionId, code);
+            }
+            return byInstitution;
+          }
+
+          function classBelongsToCurrentAcademicYear(
+            row: any,
+            currentYears: Map<string, string>,
+          ) {
+            const institutionId = String(row?.institution_id || "").trim();
+            const academicYear = String(row?.academic_year || "").trim();
+            return Boolean(
+              institutionId &&
+                academicYear &&
+                currentYears.get(institutionId) === academicYear,
+            );
+          }
+          ''',
+          )
+          replace_once(
+              path,
+              '''  if (!institutionIds.length) return [];
+
+            const ids = new Set<string>();
+            const { data: linked, error: linkedError } = await input.service
+              .from("classes")
+              .select("id,institution_id")
+          ''',
+              '''  if (!institutionIds.length) return [];
+
+            const currentYears = await currentAcademicYearsByInstitution(
+              input.service,
+              institutionIds,
+            );
+            if (!currentYears.size) return [];
+
+            const ids = new Set<string>();
+            const { data: linked, error: linkedError } = await input.service
+              .from("classes")
+              .select("id,institution_id,academic_year")
+          ''',
+          )
+          replace_once(
+              path,
+              '''  for (const row of linked || []) {
+              if (row?.id) ids.add(String(row.id));
+            }
+          ''',
+              '''  for (const row of linked || []) {
+              if (row?.id && classBelongsToCurrentAcademicYear(row, currentYears)) {
+                ids.add(String(row.id));
+              }
+            }
+          ''',
+          )
+          replace_once(
+              path,
+              '''    const { data: legacy, error: legacyError } = await input.service
+                .from("classes")
+                .select("id,institution_id")
+                .in("institution_id", institutionIds)
+                .in("class_phone_e164", candidates);
+          ''',
+              '''    const { data: legacy, error: legacyError } = await input.service
+                .from("classes")
+                .select("id,institution_id,academic_year")
+                .in("institution_id", institutionIds)
+                .in("class_phone_e164", candidates);
+          ''',
+          )
+          replace_once(
+              path,
+              '''    for (const row of legacy || []) {
+                if (row?.id) ids.add(String(row.id));
+              }
+          ''',
+              '''    for (const row of legacy || []) {
+                if (row?.id && classBelongsToCurrentAcademicYear(row, currentYears)) {
+                  ids.add(String(row.id));
+                }
+              }
+          ''',
+          )
+          replace_once(
+              path,
+              '''  let query = input.service
+              .from("classes")
+              .select("id,institution_id,class_device_auth_user_id")
+              .eq("class_login_identifier_key", key)
+              .limit(2);
+          ''',
+              '''  let query = input.service
+              .from("classes")
+              .select("id,institution_id,academic_year,class_device_auth_user_id")
+              .eq("class_login_identifier_key", key)
+              .limit(20);
+          ''',
+          )
+          replace_once(
+              path,
+              '''  const { data: rows, error } = await query;
+            if (error) throw new Error("class_identifier_lookup_failed");
+            if (!Array.isArray(rows) || rows.length === 0) return { status: "not_found" };
+            if (rows.length !== 1) return { status: "ambiguous" };
+
+            const row = rows[0];
+          ''',
+              '''  const { data: rows, error } = await query;
+            if (error) throw new Error("class_identifier_lookup_failed");
+
+            const candidates = Array.isArray(rows) ? rows : [];
+            const candidateInstitutionIds = uniq(
+              candidates.map((row: any) => row?.institution_id),
+            );
+            const currentYears = await currentAcademicYearsByInstitution(
+              input.service,
+              candidateInstitutionIds,
+            );
+            const activeRows = candidates.filter((row: any) =>
+              classBelongsToCurrentAcademicYear(row, currentYears),
+            );
+
+            if (activeRows.length === 0) return { status: "not_found" };
+            if (activeRows.length !== 1) return { status: "ambiguous" };
+
+            const row = activeRows[0];
+          ''',
+          )
+
+          # 2) Téléphone professeur en ligne : un EDT d'une ancienne classe ne peut
+          # plus être proposé comme cours courant.
+          path = "src/app/api/teacher/classes/route.ts"
+          replace_once(
+              path,
+              '''    if (!institutionId) {
+              return noStoreJson({ items: [], source: "teacher_timetables" });
+            }
+
+            const { data: institution, error: institutionError } = await srv
+          ''',
+              '''    if (!institutionId) {
+              return noStoreJson({ items: [], source: "teacher_timetables" });
+            }
+
+            const { data: currentYearRow, error: currentYearError } = await srv
+              .from("academic_years")
+              .select("code")
+              .eq("institution_id", institutionId)
+              .eq("is_current", true)
+              .limit(1)
+              .maybeSingle();
+            if (currentYearError) {
+              return noStoreJson({ error: currentYearError.message }, 400);
+            }
+            const activeAcademicYear = String(currentYearRow?.code || "").trim();
+            if (!activeAcademicYear) {
+              return noStoreJson({ items: [], source: "teacher_timetables" });
+            }
+
+            const { data: institution, error: institutionError } = await srv
+          ''',
+          )
+          replace_once(
+              path,
+              '''      .select("id,label,level,institution_id,education_type,formation_code,formation_level_code")
+                .eq("institution_id", institutionId)
+                .in("id", classIds);
+          ''',
+              '''      .select("id,label,level,institution_id,education_type,formation_code,formation_level_code")
+                .eq("institution_id", institutionId)
+                .eq("academic_year", activeAcademicYear)
+                .in("id", classIds);
+          ''',
+          )
+          replace_once(
+              path,
+              '''    const classById = new Map(
+              ((classes || []) as any[]).map((row) => [String(row.id), row]),
+            );
+            const subjectLookup = await buildSubjectLookup(
+              srv,
+              timetables.map((row) => row.subject_id),
+            );
+
+            const items = timetables
+          ''',
+              '''    const classById = new Map(
+              ((classes || []) as any[]).map((row) => [String(row.id), row]),
+            );
+            const activeTimetables = timetables.filter((row) =>
+              classById.has(String(row.class_id || "").trim()),
+            );
+            const subjectLookup = await buildSubjectLookup(
+              srv,
+              activeTimetables.map((row) => row.subject_id),
+            );
+
+            const items = activeTimetables
+          ''',
+          )
+
+          # 3) Bootstrap hors ligne professeur : le snapshot local ne contient que
+          # les classes et affectations de l'année active.
+          path = "src/app/api/teacher/offline/bootstrap/route.ts"
+          replace_once(
+              path,
+              '''    const revisionBefore = await scheduleRevision(srv, institutionId);
+            const [periodResult, timetableResult, classResult, assignmentResult] =
+          ''',
+              '''    const { data: currentYearRow, error: currentYearError } = await srv
+              .from("academic_years")
+              .select("code")
+              .eq("institution_id", institutionId)
+              .eq("is_current", true)
+              .limit(1)
+              .maybeSingle();
+            if (currentYearError) {
+              return noStoreJson({ error: currentYearError.message }, 400);
+            }
+            const activeAcademicYear = String(currentYearRow?.code || "").trim();
+            if (!activeAcademicYear) {
+              return noStoreJson({ error: "active_academic_year_not_found" }, 409);
+            }
+
+            const revisionBefore = await scheduleRevision(srv, institutionId);
+            const [periodResult, timetableResult, classResult, assignmentResult] =
+          ''',
+          )
+          replace_once(
+              path,
+              '''      srv
+                .from("classes")
+                .select("id,institution_id,label,level")
+                .eq("institution_id", institutionId),
+          ''',
+              '''      srv
+                .from("classes")
+                .select("id,institution_id,label,level")
+                .eq("institution_id", institutionId)
+                .eq("academic_year", activeAcademicYear),
+          ''',
+          )
+          replace_once(
+              path,
+              '''    const periods = ((periodResult.data || []) as any[]).filter(Boolean) as PeriodRow[];
+            const timetables = ((timetableResult.data || []) as any[]).filter(
+              (row) => row?.class_id && row?.period_id,
+            ) as TimetableRow[];
+            const classes = ((classResult.data || []) as any[]).filter(Boolean) as ClassRow[];
+
+            const subjectLookup = await buildSubjectLookup(
+          ''',
+              '''    const periods = ((periodResult.data || []) as any[]).filter(Boolean) as PeriodRow[];
+            const classes = ((classResult.data || []) as any[]).filter(Boolean) as ClassRow[];
+            const activeClassIds = new Set(
+              classes
+                .map((row) => String(row.id || "").trim())
+                .filter(Boolean),
+            );
+            const timetables = ((timetableResult.data || []) as any[]).filter(
+              (row) =>
+                row?.class_id &&
+                row?.period_id &&
+                activeClassIds.has(String(row.class_id || "").trim()),
+            ) as TimetableRow[];
+            const assignments = ((assignmentResult.data || []) as any[]).filter(
+              (row) => activeClassIds.has(String(row?.class_id || "").trim()),
+            );
+
+            const subjectLookup = await buildSubjectLookup(
+          ''',
+          )
+          replace_once(
+              path,
+              '''      assignments: assignmentResult.data || [],
+          ''',
+              '''      assignments,
+          ''',
+          )
+
+          # 4) L'éditeur manuel ne doit jamais retomber sur "la dernière année"
+          # si aucune année n'est marquée courante : mieux vaut bloquer que lire 2025-2026.
+          path = "src/app/api/admin/timetables/manual/route.ts"
+          replace_once(
+              path,
+              '''  let academicYear = currentYear?.code ? String(currentYear.code) : "";
+            if (!academicYear) {
+              const { data: latestYear, error: latestYearError } = await srv
+                .from("academic_years")
+                .select("code")
+                .eq("institution_id", institutionId)
+                .order("start_date", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (latestYearError) {
+                return { rows: [], activeRows: [], academicYear: null, error: latestYearError };
+              }
+              academicYear = latestYear?.code ? String(latestYear.code) : "";
+            }
+
+            if (!academicYear) {
+          ''',
+              '''  const academicYear = currentYear?.code ? String(currentYear.code) : "";
+
+            if (!academicYear) {
+          ''',
+          )
+
+          # Assertions simples de non-régression.
+          assertions = {
+              "src/lib/class-device-identity.ts": [
+                  "currentAcademicYearsByInstitution",
+                  "classBelongsToCurrentAcademicYear",
+                  "academic_year,class_device_auth_user_id",
+              ],
+              "src/app/api/teacher/classes/route.ts": [
+                  '.eq("academic_year", activeAcademicYear)',
+                  "activeTimetables",
+              ],
+              "src/app/api/teacher/offline/bootstrap/route.ts": [
+                  '.eq("academic_year", activeAcademicYear)',
+                  "activeClassIds",
+                  "assignments,",
+              ],
+              "src/app/api/admin/timetables/manual/route.ts": [
+                  "const academicYear = currentYear?.code",
+              ],
+          }
+          for filename, needles in assertions.items():
+              text = Path(filename).read_text(encoding="utf-8")
+              for needle in needles:
+                  if needle not in text:
+                      raise SystemExit(f"assertion failed: {filename}: {needle}")
+
+      - name: Commit active-year operational guard
+        run: |
+          rm .github/workflows/fix-active-year-operational-reads.yml
+          git config user.name "steedo1"
+          git config user.email "ariskouadio22@gmail.com"
+          git add -A
+          git commit -m "fix(attendance): ignore non-current academic years operationally"
+          git push origin HEAD:fix/edt-active-year-preview-20260905
