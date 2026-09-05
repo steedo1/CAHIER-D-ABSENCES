@@ -141,20 +141,54 @@ async function loadScopedClasses(
   institutionId: string,
   scope: EducationScopeValue,
 ) {
+  const { data: currentYear, error: currentYearError } = await srv
+    .from("academic_years")
+    .select("code")
+    .eq("institution_id", institutionId)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (currentYearError) {
+    return { rows: [], activeRows: [], academicYear: null, error: currentYearError };
+  }
+
+  let academicYear = currentYear?.code ? String(currentYear.code) : "";
+  if (!academicYear) {
+    const { data: latestYear, error: latestYearError } = await srv
+      .from("academic_years")
+      .select("code")
+      .eq("institution_id", institutionId)
+      .order("start_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestYearError) {
+      return { rows: [], activeRows: [], academicYear: null, error: latestYearError };
+    }
+    academicYear = latestYear?.code ? String(latestYear.code) : "";
+  }
+
+  if (!academicYear) {
+    throw new Error("Année scolaire active introuvable pour cet établissement.");
+  }
+
   const { data, error } = await srv
     .from("classes")
     .select(
       "id,label,level,education_type,formation_code,formation_level_code",
     )
-    .eq("institution_id", institutionId);
+    .eq("institution_id", institutionId)
+    .eq("academic_year", academicYear);
 
-  if (error) return { rows: [], error };
+  if (error) return { rows: [], activeRows: [], academicYear, error };
 
-  const rows = (data || [])
-    .map(toScopedClass)
-    .filter((row) => classMatchesEducationScope(row, scope));
+  const activeRows = (data || []).map(toScopedClass);
+  const rows = activeRows.filter((row) =>
+    classMatchesEducationScope(row, scope),
+  );
 
-  return { rows, error: null };
+  return { rows, activeRows, academicYear, error: null };
 }
 
 /**
@@ -318,7 +352,11 @@ export async function GET(req: NextRequest) {
           .from("teacher_timetables")
           .select("weekday,period_id,class_id,teacher_id,subject_id")
           .eq("institution_id", institution_id)
-          .eq("teacher_id", teacher_id);
+          .eq("teacher_id", teacher_id)
+          .in(
+            "class_id",
+            scoped.activeRows.map((row) => row.id),
+          );
 
       if (teacherTimetableErr) {
         return NextResponse.json(
