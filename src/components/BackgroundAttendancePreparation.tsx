@@ -3,7 +3,11 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
-import { prepareOffline } from "@/lib/offline-readiness";
+import {
+  getOfflineReadiness,
+  prepareOffline,
+} from "@/lib/offline-readiness";
+import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { prepareAdminEssentialOffline } from "@/lib/admin-essential-preparation";
 import { setAdminEssentialSessionUser } from "@/lib/admin-essential-fetch";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
@@ -99,6 +103,29 @@ function writeStorage(key: string, value: number) {
   } catch {
     // La préparation reste fonctionnelle dans l'onglet courant sans throttle persistant.
   }
+}
+
+function safeScheduleRevision(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+async function attendanceScheduleRevisionChanged(role: OfflineAccessRole) {
+  if (role !== "teacher" && role !== "class_device") return false;
+
+  const offlineRole = role === "teacher" ? "teacher" : "class-device";
+  const [localReadiness, cloudSchedule] = await Promise.all([
+    getOfflineReadiness(offlineRole).catch(() => null),
+    probeCloudSchedule().catch(() => null),
+  ]);
+  const localRevision = safeScheduleRevision(localReadiness?.schedule_revision);
+  const cloudRevision = safeScheduleRevision(cloudSchedule?.schedule_revision);
+
+  // Une révision Cloud différente signifie qu'un EDT, un créneau ou une
+  // affectation prof/classe a changé. Le paquet d'appel doit alors être
+  // reconstruit immédiatement au lieu d'attendre le TTL historique de 6 h.
+  return cloudRevision !== null && cloudRevision !== localRevision;
 }
 
 async function withCrossTabLock(task: () => Promise<void>) {
@@ -198,6 +225,13 @@ export default function BackgroundAttendancePreparation() {
 
           if (!role || !userId) return;
 
+          const revisionChanged =
+            cloudRoleVerified &&
+            (role === "teacher" || role === "class_device")
+              ? await attendanceScheduleRevisionChanged(role)
+              : false;
+          const forcePreparation = force || revisionChanged;
+
           const scope = `${userId}:${role}`;
           // Le paquet Admin essentiel est plus riche que l'ancienne préparation
           // des appels : une nouvelle clé force donc sa première exécution sur les
@@ -213,7 +247,7 @@ export default function BackgroundAttendancePreparation() {
           const now = Date.now();
           const lastSuccess = numberFromStorage(successKey);
           const lastAttempt = numberFromStorage(attemptKey);
-          if (!force && !shouldRunAttendancePreparation({
+          if (!forcePreparation && !shouldRunAttendancePreparation({
             now,
             lastSuccess,
             lastAttempt: 0,
@@ -225,7 +259,7 @@ export default function BackgroundAttendancePreparation() {
             now,
             lastSuccess,
             lastAttempt,
-            force,
+            force: forcePreparation,
           })) return;
           writeStorage(attemptKey, now);
 
@@ -276,7 +310,13 @@ export default function BackgroundAttendancePreparation() {
 
     runRef.current = run;
     const onOnline = () => run(true);
+    const onFocus = () => run(false);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") run(false);
+    };
     window.addEventListener("online", onOnline);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
     const interval = window.setInterval(
       () => run(false),
       ATTENDANCE_PREPARATION_CHECK_INTERVAL_MS,
@@ -286,6 +326,8 @@ export default function BackgroundAttendancePreparation() {
       disposed = true;
       window.clearInterval(interval);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
