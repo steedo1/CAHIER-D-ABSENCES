@@ -68,6 +68,42 @@ function uniq(values: unknown[]) {
   );
 }
 
+async function currentAcademicYearsByInstitution(
+  service: ServiceClient,
+  institutionIds: string[],
+) {
+  const ids = uniq(institutionIds);
+  const byInstitution = new Map<string, string>();
+  if (!ids.length) return byInstitution;
+
+  const { data, error } = await service
+    .from("academic_years")
+    .select("institution_id,code")
+    .in("institution_id", ids)
+    .eq("is_current", true);
+  if (error) throw new Error("current_academic_year_lookup_failed");
+
+  for (const row of data || []) {
+    const institutionId = String(row?.institution_id || "").trim();
+    const code = String(row?.code || "").trim();
+    if (institutionId && code) byInstitution.set(institutionId, code);
+  }
+  return byInstitution;
+}
+
+function classBelongsToCurrentAcademicYear(
+  row: any,
+  currentYears: Map<string, string>,
+) {
+  const institutionId = String(row?.institution_id || "").trim();
+  const academicYear = String(row?.academic_year || "").trim();
+  return Boolean(
+    institutionId &&
+      academicYear &&
+      currentYears.get(institutionId) === academicYear,
+  );
+}
+
 export function legacyClassPhoneCandidates(raw: unknown) {
   const text = String(raw || "").trim();
   const digits = text.replace(/\D/g, "");
@@ -142,15 +178,23 @@ export async function resolveClassDeviceClassIds(input: {
   );
   if (!institutionIds.length) return [];
 
+  const currentYears = await currentAcademicYearsByInstitution(
+    input.service,
+    institutionIds,
+  );
+  if (!currentYears.size) return [];
+
   const ids = new Set<string>();
   const { data: linked, error: linkedError } = await input.service
     .from("classes")
-    .select("id,institution_id")
+    .select("id,institution_id,academic_year")
     .eq("class_device_auth_user_id", input.userId)
     .in("institution_id", institutionIds);
   if (linkedError) throw new Error("class_device_identity_lookup_failed");
   for (const row of linked || []) {
-    if (row?.id) ids.add(String(row.id));
+    if (row?.id && classBelongsToCurrentAcademicYear(row, currentYears)) {
+      ids.add(String(row.id));
+    }
   }
 
   // Une liaison canonique est autoritaire. Le téléphone du profil peut être
@@ -166,12 +210,14 @@ export async function resolveClassDeviceClassIds(input: {
   if (candidates.length) {
     const { data: legacy, error: legacyError } = await input.service
       .from("classes")
-      .select("id,institution_id")
+      .select("id,institution_id,academic_year")
       .in("institution_id", institutionIds)
       .in("class_phone_e164", candidates);
     if (legacyError) throw new Error("class_device_legacy_lookup_failed");
     for (const row of legacy || []) {
-      if (row?.id) ids.add(String(row.id));
+      if (row?.id && classBelongsToCurrentAcademicYear(row, currentYears)) {
+        ids.add(String(row.id));
+      }
     }
   }
   return Array.from(ids);
@@ -229,16 +275,29 @@ export async function resolveClassDeviceLogin(input: {
 
   let query = input.service
     .from("classes")
-    .select("id,institution_id,class_device_auth_user_id")
+    .select("id,institution_id,academic_year,class_device_auth_user_id")
     .eq("class_login_identifier_key", key)
-    .limit(2);
+    .limit(20);
   if (institutionId) query = query.eq("institution_id", institutionId);
   const { data: rows, error } = await query;
   if (error) throw new Error("class_identifier_lookup_failed");
-  if (!Array.isArray(rows) || rows.length === 0) return { status: "not_found" };
-  if (rows.length !== 1) return { status: "ambiguous" };
 
-  const row = rows[0];
+  const candidates = Array.isArray(rows) ? rows : [];
+  const candidateInstitutionIds = uniq(
+    candidates.map((row: any) => row?.institution_id),
+  );
+  const currentYears = await currentAcademicYearsByInstitution(
+    input.service,
+    candidateInstitutionIds,
+  );
+  const activeRows = candidates.filter((row: any) =>
+    classBelongsToCurrentAcademicYear(row, currentYears),
+  );
+
+  if (activeRows.length === 0) return { status: "not_found" };
+  if (activeRows.length !== 1) return { status: "ambiguous" };
+
+  const row = activeRows[0];
   const authUserId = String(row?.class_device_auth_user_id || "").trim();
   if (!authUserId) return { status: "unprovisioned" };
 

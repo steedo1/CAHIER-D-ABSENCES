@@ -154,20 +154,7 @@ async function loadScopedClasses(
     return { rows: [], activeRows: [], academicYear: null, error: currentYearError };
   }
 
-  let academicYear = currentYear?.code ? String(currentYear.code) : "";
-  if (!academicYear) {
-    const { data: latestYear, error: latestYearError } = await srv
-      .from("academic_years")
-      .select("code")
-      .eq("institution_id", institutionId)
-      .order("start_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latestYearError) {
-      return { rows: [], activeRows: [], academicYear: null, error: latestYearError };
-    }
-    academicYear = latestYear?.code ? String(latestYear.code) : "";
-  }
+  const academicYear = currentYear?.code ? String(currentYear.code) : "";
 
   if (!academicYear) {
     throw new Error("Année scolaire active introuvable pour cet établissement.");
