@@ -1,0 +1,193 @@
+name: Fix active-year timetable writes
+
+on:
+  push:
+    branches:
+      - fix/edt-active-year-preview-20260905
+    paths:
+      - .github/workflows/fix-edt-active-year-preview.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/edt-active-year-preview-20260905
+          fetch-depth: 0
+
+      - name: Patch timetable writers to active academic year
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} occurrence(s), found {count}")
+              p.write_text(text.replace(old, new), encoding="utf-8")
+
+          manual = "src/app/api/admin/timetables/manual/route.ts"
+          old_loader = '''async function loadScopedClasses(
+            srv: ReturnType<typeof getSupabaseServiceClient>,
+            institutionId: string,
+            scope: EducationScopeValue,
+          ) {
+            const { data, error } = await srv
+              .from("classes")
+              .select(
+                "id,label,level,education_type,formation_code,formation_level_code",
+              )
+              .eq("institution_id", institutionId);
+
+            if (error) return { rows: [], error };
+
+            const rows = (data || [])
+              .map(toScopedClass)
+              .filter((row) => classMatchesEducationScope(row, scope));
+
+            return { rows, error: null };
+          }'''
+          new_loader = '''async function loadScopedClasses(
+            srv: ReturnType<typeof getSupabaseServiceClient>,
+            institutionId: string,
+            scope: EducationScopeValue,
+          ) {
+            const { data: currentYear, error: currentYearError } = await srv
+              .from("academic_years")
+              .select("code")
+              .eq("institution_id", institutionId)
+              .eq("is_current", true)
+              .order("start_date", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (currentYearError) {
+              return { rows: [], activeRows: [], academicYear: null, error: currentYearError };
+            }
+
+            let academicYear = currentYear?.code ? String(currentYear.code) : "";
+            if (!academicYear) {
+              const { data: latestYear, error: latestYearError } = await srv
+                .from("academic_years")
+                .select("code")
+                .eq("institution_id", institutionId)
+                .order("start_date", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (latestYearError) {
+                return { rows: [], activeRows: [], academicYear: null, error: latestYearError };
+              }
+              academicYear = latestYear?.code ? String(latestYear.code) : "";
+            }
+
+            if (!academicYear) {
+              throw new Error("Année scolaire active introuvable pour cet établissement.");
+            }
+
+            const { data, error } = await srv
+              .from("classes")
+              .select(
+                "id,label,level,education_type,formation_code,formation_level_code",
+              )
+              .eq("institution_id", institutionId)
+              .eq("academic_year", academicYear);
+
+            if (error) return { rows: [], activeRows: [], academicYear, error };
+
+            const activeRows = (data || []).map(toScopedClass);
+            const rows = activeRows.filter((row) =>
+              classMatchesEducationScope(row, scope),
+            );
+
+            return { rows, activeRows, academicYear, error: null };
+          }'''
+          replace(manual, old_loader, new_loader)
+
+          old_teacher_query = '''          .eq("institution_id", institution_id)
+                    .eq("teacher_id", teacher_id);'''
+          new_teacher_query = '''          .eq("institution_id", institution_id)
+                    .eq("teacher_id", teacher_id)
+                    .in(
+                      "class_id",
+                      scoped.activeRows.map((row) => row.id),
+                    );'''
+          replace(manual, old_teacher_query, new_teacher_query)
+
+          imp = "src/app/api/admin/timetables/import/route.ts"
+          marker = '''    // Précharger les données de l'établissement. Les classes sont ensuite
+              // réduites au périmètre pédagogique choisi avant toute correspondance CSV.
+              const [{ data: classes }, { data: subjects }, { data: profiles }, { data: periods }] =
+                await Promise.all(['''
+          insertion = '''    // L'import ne doit jamais résoudre une classe portant le même nom
+              // dans une ancienne année scolaire.
+              const { data: currentAcademicYear, error: academicYearErr } = await srv
+                .from("academic_years")
+                .select("code")
+                .eq("institution_id", institution_id)
+                .eq("is_current", true)
+                .order("start_date", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (academicYearErr) {
+                return NextResponse.json(
+                  { error: "academic_year_failed", message: academicYearErr.message },
+                  { status: 400 },
+                );
+              }
+
+              const activeAcademicYear = currentAcademicYear?.code
+                ? String(currentAcademicYear.code)
+                : "";
+              if (!activeAcademicYear) {
+                return NextResponse.json(
+                  {
+                    error: "academic_year_not_found",
+                    message: "Aucune année scolaire active n'est configurée pour cet établissement.",
+                  },
+                  { status: 400 },
+                );
+              }
+
+              // Précharger les données de l'établissement. Les classes sont ensuite
+              // réduites au périmètre pédagogique choisi avant toute correspondance CSV.
+              const [{ data: classes }, { data: subjects }, { data: profiles }, { data: periods }] =
+                await Promise.all(['''
+          replace(imp, marker, insertion)
+
+          old_import_class = '''        srv
+                    .from("classes")
+                    .select(
+                      "id,label,level,education_type,formation_code,formation_level_code",
+                    )
+                    .eq("institution_id", institution_id),'''
+          new_import_class = '''        srv
+                    .from("classes")
+                    .select(
+                      "id,label,level,education_type,formation_code,formation_level_code",
+                    )
+                    .eq("institution_id", institution_id)
+                    .eq("academic_year", activeAcademicYear),'''
+          replace(imp, old_import_class, new_import_class)
+
+          # Static regression guards.
+          manual_text = Path(manual).read_text(encoding="utf-8")
+          import_text = Path(imp).read_text(encoding="utf-8")
+          assert '.eq("academic_year", academicYear)' in manual_text
+          assert 'scoped.activeRows.map((row) => row.id)' in manual_text
+          assert '.eq("academic_year", activeAcademicYear)' in import_text
+
+      - name: Commit hotfix and remove one-shot workflow
+        run: |
+          rm .github/workflows/fix-edt-active-year-preview.yml
+          git config user.name "steedo1"
+          git config user.email "ariskouadio22@gmail.com"
+          git add -A
+          git commit -m "fix(timetables): restrict writes to active academic year"
+          git push origin HEAD:fix/edt-active-year-preview-20260905
