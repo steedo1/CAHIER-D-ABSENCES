@@ -186,6 +186,21 @@ export async function GET() {
       });
     }
 
+    const { data: currentYearRow, error: currentYearError } = await srv
+      .from("academic_years")
+      .select("code")
+      .eq("institution_id", institutionId)
+      .eq("is_current", true)
+      .limit(1)
+      .maybeSingle();
+    if (currentYearError) {
+      return noStoreJson({ error: currentYearError.message }, 400);
+    }
+    const activeAcademicYear = String(currentYearRow?.code || "").trim();
+    if (!activeAcademicYear) {
+      return noStoreJson({ error: "active_academic_year_not_found" }, 409);
+    }
+
     const revisionBefore = await scheduleRevision(srv, institutionId);
     const [periodResult, timetableResult, classResult, assignmentResult] =
       await Promise.all([
@@ -203,7 +218,8 @@ export async function GET() {
       srv
         .from("classes")
         .select("id,institution_id,label,level")
-        .eq("institution_id", institutionId),
+        .eq("institution_id", institutionId)
+        .eq("academic_year", activeAcademicYear),
       srv
         .from("class_teachers")
         .select("institution_id,class_id,teacher_id,subject_id,start_date,end_date")
@@ -226,10 +242,19 @@ export async function GET() {
     }
 
     const periods = ((periodResult.data || []) as any[]).filter(Boolean) as PeriodRow[];
-    const timetables = ((timetableResult.data || []) as any[]).filter(
-      (row) => row?.class_id && row?.period_id,
-    ) as TimetableRow[];
     const classes = ((classResult.data || []) as any[]).filter(Boolean) as ClassRow[];
+    const activeClassIds = new Set(
+      classes.map((row) => String(row.id || "").trim()).filter(Boolean),
+    );
+    const timetables = ((timetableResult.data || []) as any[]).filter(
+      (row) =>
+        row?.class_id &&
+        row?.period_id &&
+        activeClassIds.has(String(row.class_id || "").trim()),
+    ) as TimetableRow[];
+    const assignments = ((assignmentResult.data || []) as any[]).filter(
+      (row) => activeClassIds.has(String(row?.class_id || "").trim()),
+    );
 
     const subjectLookup = await buildSubjectLookup(
       srv,
@@ -321,7 +346,7 @@ export async function GET() {
       snapshot_completeness: "complete",
       generated_at: revisionAfter.generated_at,
       source: "teacher_timetables",
-      assignments: assignmentResult.data || [],
+      assignments,
       slots,
       class_count: classIds.size,
       slot_count: slots.length,

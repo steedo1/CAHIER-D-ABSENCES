@@ -256,6 +256,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // L'import ne doit jamais résoudre une classe portant le même nom
+    // dans une ancienne année scolaire.
+    const { data: currentAcademicYear, error: academicYearErr } = await srv
+      .from("academic_years")
+      .select("code")
+      .eq("institution_id", institution_id)
+      .eq("is_current", true)
+      .order("start_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (academicYearErr) {
+      return NextResponse.json(
+        { error: "academic_year_failed", message: academicYearErr.message },
+        { status: 400 },
+      );
+    }
+
+    const activeAcademicYear = currentAcademicYear?.code
+      ? String(currentAcademicYear.code)
+      : "";
+    if (!activeAcademicYear) {
+      return NextResponse.json(
+        {
+          error: "academic_year_not_found",
+          message: "Aucune année scolaire active n'est configurée pour cet établissement.",
+        },
+        { status: 400 },
+      );
+    }
+
     // Précharger les données de l'établissement. Les classes sont ensuite
     // réduites au périmètre pédagogique choisi avant toute correspondance CSV.
     const [{ data: classes }, { data: subjects }, { data: profiles }, { data: periods }] =
@@ -265,7 +296,8 @@ export async function POST(req: NextRequest) {
           .select(
             "id,label,level,education_type,formation_code,formation_level_code",
           )
-          .eq("institution_id", institution_id),
+          .eq("institution_id", institution_id)
+          .eq("academic_year", activeAcademicYear),
         srv
           .from("institution_subjects")
           .select("id,custom_name,subjects:subject_id(name)")

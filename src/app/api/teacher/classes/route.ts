@@ -200,6 +200,21 @@ export async function GET() {
       return noStoreJson({ items: [], source: "teacher_timetables" });
     }
 
+    const { data: currentYearRow, error: currentYearError } = await srv
+      .from("academic_years")
+      .select("code")
+      .eq("institution_id", institutionId)
+      .eq("is_current", true)
+      .limit(1)
+      .maybeSingle();
+    if (currentYearError) {
+      return noStoreJson({ error: currentYearError.message }, 400);
+    }
+    const activeAcademicYear = String(currentYearRow?.code || "").trim();
+    if (!activeAcademicYear) {
+      return noStoreJson({ items: [], source: "teacher_timetables" });
+    }
+
     const { data: institution, error: institutionError } = await srv
       .from("institutions")
       .select("id,tz,settings_json")
@@ -264,6 +279,7 @@ export async function GET() {
       .from("classes")
       .select("id,label,level,institution_id,education_type,formation_code,formation_level_code")
       .eq("institution_id", institutionId)
+      .eq("academic_year", activeAcademicYear)
       .in("id", classIds);
 
     if (classesError) {
@@ -273,12 +289,15 @@ export async function GET() {
     const classById = new Map(
       ((classes || []) as any[]).map((row) => [String(row.id), row]),
     );
+    const activeTimetables = timetables.filter((row) =>
+      classById.has(String(row.class_id || "").trim()),
+    );
     const subjectLookup = await buildSubjectLookup(
       srv,
-      timetables.map((row) => row.subject_id),
+      activeTimetables.map((row) => row.subject_id),
     );
 
-    const items = timetables
+    const items = activeTimetables
       .map((row): ItemOut | null => {
         const classId = String(row.class_id || "").trim();
         const classRow = classById.get(classId);
