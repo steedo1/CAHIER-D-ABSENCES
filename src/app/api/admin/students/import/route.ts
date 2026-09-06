@@ -29,6 +29,11 @@ function normSpaces(s: string) {
 function makeFullNameKey(fullName: string) {
   return stripAccents(normSpaces(fullName)).toLowerCase();
 }
+function makeLooseIdentityKey(fullName: string) {
+  return stripAccents(normSpaces(fullName))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
 
 /** Détection du séparateur + guillemets */
 function parseCSV(raw: string) {
@@ -597,6 +602,67 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Index d'identité tolérant uniquement les différences de forme
+  // (accents, espaces, apostrophes, tirets). Il sert à retrouver une fiche
+  // historique sans matricule sans confondre deux identités différentes.
+  const existingByLooseNameKey = new Map<string, ExistingStudent[]>();
+  const existingByNormalizedMatricule = new Map<string, ExistingStudent>();
+  const looseExisting: any[] = [];
+  const loosePageSize = 1000;
+  for (let from = 0; ; from += loosePageSize) {
+    const { data: loosePage, error: loosePageErr } = await srv
+      .from("students")
+      .select(
+        "id, matricule, full_name, full_name_key, first_name, last_name, gender, birthdate, birth_place, nationality, lv2, regime, is_repeater, is_boarder, is_affecte, photo_url",
+      )
+      .eq("institution_id", inst)
+      .range(from, from + loosePageSize - 1);
+
+    if (loosePageErr) {
+      return NextResponse.json({ error: loosePageErr.message }, { status: 400 });
+    }
+    looseExisting.push(...(loosePage ?? []));
+    if ((loosePage?.length ?? 0) < loosePageSize) break;
+  }
+
+  for (const s of looseExisting) {
+    const row = s as any;
+    const st: ExistingStudent = {
+      id: String(row.id),
+      matricule: row.matricule ?? null,
+      full_name: row.full_name ?? null,
+      full_name_key: row.full_name_key ?? null,
+      first_name: row.first_name ?? null,
+      last_name: row.last_name ?? null,
+      gender: row.gender ?? null,
+      birthdate: row.birthdate ?? null,
+      birth_place: row.birth_place ?? null,
+      nationality: row.nationality ?? null,
+      lv2: row.lv2 ?? null,
+      regime: row.regime ?? null,
+      is_repeater:
+        typeof row.is_repeater === "boolean" ? row.is_repeater : null,
+      is_boarder:
+        typeof row.is_boarder === "boolean" ? row.is_boarder : null,
+      is_affecte:
+        typeof row.is_affecte === "boolean" ? row.is_affecte : null,
+      photo_url: row.photo_url ?? null,
+    };
+
+    const normalizedMatricule = String(st.matricule || "").trim().toUpperCase();
+    if (normalizedMatricule) {
+      existingByNormalizedMatricule.set(normalizedMatricule, st);
+    }
+
+    const identityKey = makeLooseIdentityKey(
+      st.full_name || [st.last_name, st.first_name].filter(Boolean).join(" "),
+    );
+    if (!identityKey) continue;
+    const arr = existingByLooseNameKey.get(identityKey) || [];
+    if (!arr.some((candidate) => candidate.id === st.id)) arr.push(st);
+    existingByLooseNameKey.set(identityKey, arr);
+  }
+
   type StudentResolution =
     | {
         kind: "matricule" | "name";
@@ -608,12 +674,43 @@ export async function POST(req: NextRequest) {
     String(value || "").trim().toUpperCase();
 
   function resolveExistingStudent(row: ParsedStudentRow): StudentResolution {
-    const matricule = String(row.matricule || "").trim();
-    const byMatricule = matricule ? existingByMat[matricule] : null;
-    if (byMatricule) return { kind: "matricule", student: byMatricule };
+    const matricule = normalizeMatricule(row.matricule);
+    const byMatricule = matricule
+      ? existingByNormalizedMatricule.get(matricule) || existingByMat[matricule]
+      : null;
+
+    // Un matricule déjà attribué ne doit jamais servir à renommer silencieusement
+    // un autre élève. Les seules différences tolérées ici sont typographiques
+    // (accents, espaces, apostrophes et tirets).
+    if (byMatricule) {
+      const incomingIdentity = makeLooseIdentityKey(row.full_name);
+      const currentIdentity = makeLooseIdentityKey(
+        byMatricule.full_name ||
+          [byMatricule.last_name, byMatricule.first_name]
+            .filter(Boolean)
+            .join(" "),
+      );
+      if (
+        incomingIdentity &&
+        currentIdentity &&
+        incomingIdentity !== currentIdentity
+      ) {
+        return { kind: "conflict", student: null };
+      }
+      return { kind: "matricule", student: byMatricule };
+    }
 
     const key = String(row.full_name_key || "").trim();
-    const byName = key ? existingByNameKey.get(key) || [] : [];
+    const looseKey = makeLooseIdentityKey(row.full_name);
+    const exactByName = key ? existingByNameKey.get(key) || [] : [];
+    const looseByName = looseKey
+      ? existingByLooseNameKey.get(looseKey) || []
+      : [];
+    const byName = Array.from(
+      new Map(
+        [...exactByName, ...looseByName].map((student) => [student.id, student]),
+      ).values(),
+    );
 
     if (!matricule) {
       if (byName.length === 1) return { kind: "name", student: byName[0] };
@@ -623,26 +720,24 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // Le matricule entrant est nouveau. On ne réutilise une fiche trouvée par
-    // nom que si son matricule est réellement manquant. Un nom ambigu ou une
-    // fiche portant déjà un autre matricule doit être traité manuellement.
+    // Si le même nom officiel existe déjà avec un autre matricule, on bloque :
+    // il faut une décision humaine plutôt que créer/écraser une seconde identité.
+    const conflictingMatricule = byName.some((student) => {
+      const current = normalizeMatricule(student.matricule);
+      return current && current !== matricule;
+    });
+    if (conflictingMatricule) {
+      return { kind: "conflict", student: null };
+    }
+
     const withoutMatricule = byName.filter(
       (student) => !normalizeMatricule(student.matricule),
     );
     if (withoutMatricule.length === 1) {
       return { kind: "name", student: withoutMatricule[0] };
     }
-    if (byName.length > 0) {
-      const exactNormalized = byName.find(
-        (student) =>
-          normalizeMatricule(student.matricule) ===
-          normalizeMatricule(matricule),
-      );
-      if (exactNormalized) return { kind: "name", student: exactNormalized };
-      return {
-        kind: withoutMatricule.length > 1 ? "ambiguous" : "conflict",
-        student: null,
-      };
+    if (withoutMatricule.length > 1) {
+      return { kind: "ambiguous", student: null };
     }
 
     return { kind: "none", student: null };
@@ -651,7 +746,7 @@ export async function POST(req: NextRequest) {
   const inputMatriculesByName = new Map<string, Set<string>>();
   const inputNamesByMatricule = new Map<string, Set<string>>();
   for (const row of parsed) {
-    const nameKey = String(row.full_name_key || "").trim();
+    const nameKey = makeLooseIdentityKey(row.full_name);
     const matriculeKey = normalizeMatricule(row.matricule);
     if (nameKey && matriculeKey) {
       inputMatriculesByName.set(
@@ -683,7 +778,7 @@ export async function POST(req: NextRequest) {
     new Set(
       parsed
         .filter((row) => {
-          const nameKey = String(row.full_name_key || "").trim();
+          const nameKey = makeLooseIdentityKey(row.full_name);
           const matriculeKey = normalizeMatricule(row.matricule);
           const inconsistentInput =
             (nameKey && (inputMatriculesByName.get(nameKey)?.size ?? 0) > 1) ||
