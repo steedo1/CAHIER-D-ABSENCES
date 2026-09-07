@@ -226,17 +226,17 @@ export default function SurveillanceAppelsPage() {
       const startedMin = hmToMinutes(actualStart);
       const plannedEnd = hmToMinutes(row.planned_end);
       const endedMin = hmToMinutes(actualEnd);
+      const backendLate = Math.max(0, Number(row.late_minutes || 0));
       const measuredLate =
         plannedStart !== null && startedMin !== null
           ? Math.max(0, startedMin - plannedStart)
-          : Math.max(0, Number(row.late_minutes || 0));
-      const effectiveStatus: MonitorStatus = isAbsenceStatus(row.status)
-        ? row.status
-        : actualStart
+          : backendLate;
+      const effectiveLateMinutes =
+        row.status === "late"
           ? measuredLate > 0
-            ? "late"
-            : "ok"
-          : row.status;
+            ? measuredLate
+            : backendLate
+          : 0;
       const earlyDeparture =
         plannedEnd !== null && endedMin !== null && endedMin < plannedEnd
           ? plannedEnd - endedMin
@@ -244,8 +244,8 @@ export default function SurveillanceAppelsPage() {
 
       return {
         ...row,
-        status: effectiveStatus,
-        late_minutes: effectiveStatus === "late" ? measuredLate : 0,
+        status: row.status,
+        late_minutes: effectiveLateMinutes,
         actual_start: actualStart,
         actual_end: actualEnd,
         early_departure_minutes: earlyDeparture,
