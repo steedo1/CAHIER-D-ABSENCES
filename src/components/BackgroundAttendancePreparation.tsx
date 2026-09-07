@@ -309,7 +309,10 @@ export default function BackgroundAttendancePreparation() {
     };
 
     runRef.current = run;
-    const onOnline = () => run(true);
+    // Le retour d'Internet ne force jamais une reconstruction. Il relance seulement
+    // la vérification légère ; une vraie préparation ne repart que si la révision
+    // Cloud diffère du paquet local ou si le TTL normal l'exige.
+    const onOnline = () => run(false);
     const onFocus = () => run(false);
     const onVisible = () => {
       if (document.visibilityState === "visible") run(false);
