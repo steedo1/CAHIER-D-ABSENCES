@@ -76,9 +76,11 @@ function daysAgoYmd(days: number) {
 function formatDateFr(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return value;
-  return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(
-    new Date(year, month - 1, day),
-  );
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(year, month - 1, day));
 }
 
 function normalizeText(value?: string | null) {
@@ -125,33 +127,48 @@ function plural(count: number, singular: string, pluralForm?: string) {
   return `${count} ${count > 1 ? pluralForm || `${singular}s` : singular}`;
 }
 
-function findSession(row: MonitorRow, sessions: DailySession[]) {
-  const teacher = normalizeText(row.teacher_name);
-  const classId = String(row.class_id || "");
-  const subject = normalizeText(row.subject_name);
-  const plannedStart = hmToMinutes(row.planned_start);
+function sameSessionScope(row: MonitorRow, session: DailySession) {
+  if (session.session_date && session.session_date !== row.date) return false;
+  if (normalizeText(session.teacher_name) !== normalizeText(row.teacher_name)) return false;
+  if (row.class_id && String(session.class_id || "") !== String(row.class_id)) return false;
+  const rowSubject = normalizeText(row.subject_name);
+  const sessionSubject = normalizeText(session.subject_name);
+  if (rowSubject && sessionSubject && rowSubject !== sessionSubject) return false;
+  return true;
+}
 
-  const candidates = sessions.filter((session) => {
-    if (session.session_date && session.session_date !== row.date) return false;
-    if (normalizeText(session.teacher_name) !== teacher) return false;
-    if (classId && String(session.class_id || "") !== classId) return false;
-    return true;
-  });
+function matchSessions(rows: MonitorRow[], sessions: DailySession[]) {
+  const matches = new Map<string, DailySession>();
+  const used = new Set<string>();
 
-  if (!candidates.length) return null;
-  const sameSubject = candidates.filter(
-    (session) => subject && normalizeText(session.subject_name) === subject,
+  const orderedRows = [...rows].sort((a, b) =>
+    `${a.date} ${a.planned_start || ""}`.localeCompare(`${b.date} ${b.planned_start || ""}`),
   );
-  const pool = sameSubject.length ? sameSubject : candidates;
-  if (plannedStart === null) return pool[0] || null;
 
-  return (
-    [...pool].sort((a, b) => {
-      const aStart = hmToMinutes(isoToHm(a.started_at)) ?? Number.MAX_SAFE_INTEGER;
-      const bStart = hmToMinutes(isoToHm(b.started_at)) ?? Number.MAX_SAFE_INTEGER;
-      return Math.abs(aStart - plannedStart) - Math.abs(bStart - plannedStart);
-    })[0] || null
-  );
+  for (const row of orderedRows) {
+    if (isAbsenceStatus(row.status)) continue;
+    const plannedStart = hmToMinutes(row.planned_start);
+    if (plannedStart === null) continue;
+
+    const candidates = sessions
+      .filter((session) => !used.has(session.id) && sameSessionScope(row, session))
+      .map((session) => {
+        const actualStart = hmToMinutes(isoToHm(session.started_at));
+        return {
+          session,
+          distance: actualStart === null ? Number.MAX_SAFE_INTEGER : Math.abs(actualStart - plannedStart),
+        };
+      })
+      .filter((candidate) => candidate.distance <= 90)
+      .sort((a, b) => a.distance - b.distance);
+
+    const selected = candidates[0]?.session;
+    if (!selected) continue;
+    matches.set(`${row.date}:${row.id}`, selected);
+    used.add(selected.id);
+  }
+
+  return matches;
 }
 
 function detailLabel(row: DetailedRow) {
@@ -207,6 +224,7 @@ export default function SurveillanceAppelsPage() {
       setError("La période sélectionnée est invalide.");
       return;
     }
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -251,34 +269,43 @@ export default function SurveillanceAppelsPage() {
     return () => abortRef.current?.abort();
   }, [load]);
 
-  const detailedRows = useMemo<DetailedRow[]>(() => rows.map((row) => {
-    const session = findSession(row, sessions);
-    const actualStart = isoToHm(session?.started_at);
-    const actualEnd = isoToHm(session?.ended_at);
-    const plannedStart = hmToMinutes(row.planned_start);
-    const startedMin = hmToMinutes(actualStart);
-    const plannedEnd = hmToMinutes(row.planned_end);
-    const endedMin = hmToMinutes(actualEnd);
-    const backendLate = Math.max(0, Number(row.late_minutes || 0));
-    const measuredLate = plannedStart !== null && startedMin !== null
-      ? Math.max(0, startedMin - plannedStart)
-      : backendLate;
-    const effectiveLateMinutes = row.status === "late"
-      ? measuredLate > 0 ? measuredLate : backendLate
-      : 0;
-    const earlyDeparture = plannedEnd !== null && endedMin !== null && endedMin < plannedEnd
-      ? plannedEnd - endedMin
-      : 0;
+  const detailedRows = useMemo<DetailedRow[]>(() => {
+    const matches = matchSessions(rows, sessions);
 
-    return {
-      ...row,
-      status: row.status,
-      late_minutes: effectiveLateMinutes,
-      actual_start: actualStart,
-      actual_end: actualEnd,
-      early_departure_minutes: earlyDeparture,
-    };
-  }), [rows, sessions]);
+    return rows.map((row) => {
+      const session = matches.get(`${row.date}:${row.id}`) || null;
+      const actualStart = isoToHm(session?.started_at);
+      const actualEnd = isoToHm(session?.ended_at);
+      const plannedStart = hmToMinutes(row.planned_start);
+      const startedMin = hmToMinutes(actualStart);
+      const plannedEnd = hmToMinutes(row.planned_end);
+      const endedMin = hmToMinutes(actualEnd);
+      const backendLate = Math.max(0, Number(row.late_minutes || 0));
+      const hasTrustedRealStart = session !== null && plannedStart !== null && startedMin !== null;
+      const measuredLate = hasTrustedRealStart ? Math.max(0, startedMin - plannedStart) : backendLate;
+
+      let effectiveStatus = row.status;
+      let effectiveLateMinutes = row.status === "late" ? backendLate : 0;
+
+      if (!isAbsenceStatus(row.status) && hasTrustedRealStart) {
+        effectiveStatus = measuredLate > 0 ? "late" : "ok";
+        effectiveLateMinutes = measuredLate;
+      }
+
+      const earlyDeparture = session !== null && plannedEnd !== null && endedMin !== null && endedMin < plannedEnd
+        ? plannedEnd - endedMin
+        : 0;
+
+      return {
+        ...row,
+        status: effectiveStatus,
+        late_minutes: effectiveLateMinutes,
+        actual_start: actualStart,
+        actual_end: actualEnd,
+        early_departure_minutes: earlyDeparture,
+      };
+    });
+  }, [rows, sessions]);
 
   const teacherCount = useMemo(
     () => new Set(rows.map((row) => normalizeText(row.teacher_name)).filter(Boolean)).size,
@@ -356,8 +383,13 @@ export default function SurveillanceAppelsPage() {
               <span className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-700">{plural(totalEarly, "départ anticipé", "départs anticipés")}</span>
             </div>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60" aria-label="Actualiser">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+            aria-label="Actualiser"
+          >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="hidden sm:inline">Actualiser</span>
           </button>
@@ -368,8 +400,12 @@ export default function SurveillanceAppelsPage() {
             {([[
               "today", "Aujourd’hui"
             ], ["week", "7 jours"], ["month", "30 jours"], ["custom", "Période"]] as [PeriodPreset, string][]).map(([value, label]) => (
-              <button key={value} type="button" onClick={() => choosePreset(value)}
-                className={`rounded-lg px-3 py-2 text-sm font-semibold ${preset === value ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>
+              <button
+                key={value}
+                type="button"
+                onClick={() => choosePreset(value)}
+                className={`rounded-lg px-3 py-2 text-sm font-semibold ${preset === value ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              >
                 {label}
               </button>
             ))}
@@ -377,14 +413,23 @@ export default function SurveillanceAppelsPage() {
           {preset === "custom" ? (
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <label className="text-xs font-semibold text-slate-600">Du
-                <input type="date" value={startDate} max={endDate || today}
+                <input
+                  type="date"
+                  value={startDate}
+                  max={endDate || today}
                   onChange={(event) => setStartDate(event.target.value)}
-                  className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900" />
+                  className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
               </label>
               <label className="text-xs font-semibold text-slate-600">Au
-                <input type="date" value={endDate} min={startDate} max={today}
+                <input
+                  type="date"
+                  value={endDate}
+                  min={startDate}
+                  max={today}
                   onChange={(event) => setEndDate(event.target.value)}
-                  className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900" />
+                  className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
               </label>
             </div>
           ) : null}
@@ -393,7 +438,9 @@ export default function SurveillanceAppelsPage() {
         {error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
         ) : loading && rows.length === 0 ? (
-          <div className="flex min-h-40 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement…</div>
+          <div className="flex min-h-40 items-center justify-center text-sm text-slate-500">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement…
+          </div>
         ) : (
           <section>
             <div className="mb-2 flex items-center gap-2">
@@ -416,8 +463,14 @@ export default function SurveillanceAppelsPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {teachers.map((teacher) => (
-                        <FragmentRow key={teacher.key} teacher={teacher} expanded={expandedTeacher === teacher.key}
-                          onToggle={() => toggleTeacher(teacher.key)} situation={situation(teacher)} showDate={!isToday} />
+                        <FragmentRow
+                          key={teacher.key}
+                          teacher={teacher}
+                          expanded={expandedTeacher === teacher.key}
+                          onToggle={() => toggleTeacher(teacher.key)}
+                          situation={situation(teacher)}
+                          showDate={!isToday}
+                        />
                       ))}
                     </tbody>
                   </table>
@@ -463,19 +516,34 @@ function FragmentRow({ teacher, expanded, onToggle, situation, showDate }: {
 }) {
   return (
     <>
-      <tr onClick={onToggle} className="cursor-pointer transition hover:bg-slate-50" tabIndex={0}
+      <tr
+        onClick={onToggle}
+        className="cursor-pointer transition hover:bg-slate-50"
+        tabIndex={0}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             onToggle();
           }
-        }}>
-        <td className="px-4 py-3 font-bold text-slate-950"><span className="inline-flex items-center gap-2">{teacher.teacher_name}{expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}</span></td>
+        }}
+      >
+        <td className="px-4 py-3 font-bold text-slate-950">
+          <span className="inline-flex items-center gap-2">
+            {teacher.teacher_name}
+            {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+          </span>
+        </td>
         <td className="px-4 py-3 text-slate-700">{teacher.disciplines.join(" · ") || "—"}</td>
         <td className="px-4 py-3 text-slate-700">{situation}</td>
         <td className="px-4 py-3 text-right font-bold text-slate-950">{formatMinutes(teacher.lost_minutes)}</td>
       </tr>
-      {expanded ? <tr><td colSpan={4} className="bg-slate-50/80 px-4 py-0"><TeacherDetails rows={teacher.rows} showDate={showDate} /></td></tr> : null}
+      {expanded ? (
+        <tr>
+          <td colSpan={4} className="bg-slate-50/80 px-4 py-0">
+            <TeacherDetails rows={teacher.rows} showDate={showDate} />
+          </td>
+        </tr>
+      ) : null}
     </>
   );
 }
@@ -488,11 +556,27 @@ function TeacherDetails({ rows, showDate }: { rows: DetailedRow[]; showDate: boo
           const detail = detailLabel(row);
           return (
             <div key={`${row.date}-${row.id}`} className="text-sm leading-6 text-slate-700">
-              {showDate ? <><span className="font-semibold text-slate-500">{formatDateFr(row.date)}</span><span className="text-slate-400"> · </span></> : null}
+              {showDate ? (
+                <>
+                  <span className="font-semibold text-slate-500">{formatDateFr(row.date)}</span>
+                  <span className="text-slate-400"> · </span>
+                </>
+              ) : null}
               <span className="font-semibold text-slate-950">{row.class_label || "Classe"}</span>
-              <span className="text-slate-400"> · </span>prévu {detail.planned}
-              {detail.actual ? <><span className="text-slate-400"> · </span>réel {detail.actual}</> : null}
-              {detail.suffix ? <><span className="text-slate-400"> · </span><strong className={isAbsenceStatus(row.status) ? "text-red-700" : "text-slate-950"}>{detail.suffix}</strong></> : null}
+              <span className="text-slate-400"> · </span>
+              prévu {detail.planned}
+              {detail.actual ? (
+                <>
+                  <span className="text-slate-400"> · </span>
+                  réel {detail.actual}
+                </>
+              ) : null}
+              {detail.suffix ? (
+                <>
+                  <span className="text-slate-400"> · </span>
+                  <strong className={isAbsenceStatus(row.status) ? "text-red-700" : "text-slate-950"}>{detail.suffix}</strong>
+                </>
+              ) : null}
             </div>
           );
         })}
