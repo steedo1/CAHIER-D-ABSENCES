@@ -1,6 +1,9 @@
 import type { RelayConfig } from "./config.mjs";
 import type { RelayStore } from "./store.mjs";
 import type { RelayCloudSyncRunResult } from "./cloud-sync.mjs";
+import {
+  requeueTimetableReplacementChain,
+} from "./cloud-sync.mjs";
 import { syncRelayOnce as syncRelayOnceV4 } from "./cloud-sync-grade-v4.mjs";
 import { rekeyResolvedKeepLocalGradeOperations } from "./grade-conflict-rebase.mjs";
 import {
@@ -55,20 +58,113 @@ function withGradeV4Capability(
   }) as typeof fetch;
 }
 
+export function requeueRecoverableAttendanceChains(
+  config: RelayConfig,
+  store: RelayStore,
+  now = new Date(),
+) {
+  let requeued = 0;
+  for (const institution of config.institutions || []) {
+    const code = String(institution.code || "").trim().toUpperCase();
+    if (!code) continue;
+    const localInstitution = store.db.prepare(`
+      SELECT id FROM institutions
+      WHERE UPPER(COALESCE(code, '')) = ? AND deleted_at IS NULL
+      LIMIT 1
+    `).get(code) as { id: string } | undefined;
+    if (!localInstitution) continue;
+
+    const roots = store.db.prepare(`
+      SELECT operation_id
+      FROM sync_outbox
+      WHERE institution_id = ?
+        AND entity_type = 'teacher_session'
+        AND state = 'blocked'
+        AND last_status = 422
+        AND last_error = 'timetable_not_found'
+      ORDER BY occurred_at, operation_id
+    `).all(localInstitution.id) as Array<{ operation_id: string }>;
+
+    for (const root of roots) {
+      try {
+        const result = requeueTimetableReplacementChain(store.db, {
+          institutionCode: code,
+          rootOperationId: root.operation_id,
+          expectedError: "timetable_not_found",
+          now,
+        });
+        requeued += result.requeued_operation_ids.length;
+      } catch {
+        // Aucun remplacement unique et sûr : conserver la chaîne bloquée telle quelle.
+      }
+    }
+  }
+  return requeued;
+}
+
+export function releaseNetworkRetryBackoffAfterConnectivity(
+  store: RelayStore,
+  now = new Date(),
+) {
+  const nowIso = now.toISOString();
+  const changed = store.db.prepare(`
+    UPDATE sync_outbox
+    SET next_attempt_at = ?
+    WHERE state = 'pending'
+      AND last_status IS NULL
+      AND next_attempt_at IS NOT NULL
+      AND next_attempt_at > ?
+      AND last_error IS NOT NULL
+  `).run(nowIso, nowIso);
+  return changed.changes;
+}
+
+function provesCloudConnectivity(result: RelayCloudSyncRunResult) {
+  return result.acknowledged_operations > 0 ||
+    result.pull_not_modified > 0 ||
+    result.pull_snapshots_applied > 0;
+}
+
+async function runProtectedSync(
+  config: RelayConfig,
+  store: RelayStore,
+  options: SyncOptions,
+) {
+  const now = options.now || (() => new Date());
+  requeueRecoverableAttendanceChains(config, store, now());
+  const forceAcademicBootstrap = needsGradeVersionBootstrap(store);
+  const fetchImpl = withGradeV4Capability(
+    options.fetchImpl || fetch,
+    forceAcademicBootstrap,
+  );
+  const result = await syncRelayOnceV4(config, store, {
+    ...options,
+    fetchImpl,
+  });
+
+  // Une réponse Cloud valide prouve que la connexion est revenue. Les opérations
+  // qui attendaient uniquement à cause d'une panne réseau ne doivent alors pas
+  // rester prisonnières d'un ancien backoff exponentiel.
+  if (provesCloudConnectivity(result)) {
+    const released = releaseNetworkRetryBackoffAfterConnectivity(store, now());
+    requeueRecoverableAttendanceChains(config, store, now());
+    if (released > 0) {
+      await syncRelayOnceV4(config, store, {
+        ...options,
+        fetchImpl,
+      });
+    }
+  }
+  return result;
+}
+
 export async function syncRelayOnce(
   config: RelayConfig,
   store: RelayStore,
   options: SyncOptions = {},
 ): Promise<RelayCloudSyncRunResult> {
   rekeyResolvedKeepLocalGradeOperations(store.db, (options.now || (() => new Date()))());
-  const forceAcademicBootstrap = needsGradeVersionBootstrap(store);
-  return syncRelayOnceV4(config, store, {
-    ...options,
-    fetchImpl: withGradeV4Capability(
-      options.fetchImpl || fetch,
-      forceAcademicBootstrap,
-    ),
-  });
+  return runProtectedSync(config, store, options);
 }
 
 export function createRelayCloudSyncAgent(
