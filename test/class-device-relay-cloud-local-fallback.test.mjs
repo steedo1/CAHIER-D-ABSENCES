@@ -162,7 +162,8 @@ test("le retour Cloud respecte ouverture, appel puis fermeture sans dépasser un
   assert.match(page, /markTeacherAttendanceSyncedInCloud/);
   assert.match(page, /markTeacherSessionClosedInCloud/);
   assert.match(offline, /const blockedSessions = new Set<string>\(\)/);
-  assert.match(offline, /blockedSessions\.has\(dependencyKey\)/);
+  assert.match(offline, /blockedSessions\.has\(normalizedDependencyKey\)/);
+  assert.match(offline, /sessionsWaitingForStart\.has\(normalizedDependencyKey\)/);
   assert.match(offline, /operationType === "session-end"/);
   assert.match(attendanceRoute, /atomicStatus === "session_closed"/);
   assert.match(attendanceRoute, /atomicStatus !== "applied" && atomicStatus !== "already_applied"/);

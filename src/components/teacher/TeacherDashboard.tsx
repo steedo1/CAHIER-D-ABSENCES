@@ -16,8 +16,6 @@ import {
   registerServiceWorker,
   offlineGetJson,
   offlineMutateJson,
-  outboxCount,
-  flushOutbox,
   cacheGet,
   cacheSet,
 } from "@/lib/offline";
@@ -35,7 +33,6 @@ import {
   type RelayTeacherConnectivityResult,
 } from "@/lib/local-relay";
 import {
-  countUnresolvedTeacherAttendanceOperations,
   deliverTeacherAttendance,
   getLatestTeacherAttendanceOperation,
   stageTeacherAttendanceDraft,
@@ -52,6 +49,11 @@ import {
   teacherSessionLifecycleDeliveryMessage,
   transitionTeacherAttendanceSessionOnRelay,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import {
+  getTeacherAttendanceSyncStatus,
+  syncTeacherAttendanceOperationsToCloud,
+  type TeacherAttendanceSyncStatus,
+} from "@/lib/teacher-attendance-cloud-sync";
 import { decideTeacherSessionStart } from "@/lib/teacher-session-start-policy";
 
 /* ─────────────────────────────────────────
@@ -408,7 +410,17 @@ export default function TeacherDashboard() {
 
   // offline / sync
   const [isOnline, setIsOnline] = useState<boolean>(true);
-  const [pending, setPending] = useState<number>(0);
+  const [syncStatus, setSyncStatus] = useState<TeacherAttendanceSyncStatus>({
+    total: 0,
+    pending: 0,
+    blocked: 0,
+    conflicts: 0,
+    authRequired: false,
+    securedOnRelay: 0,
+    lastError: null,
+    lastStatus: null,
+  });
+  const pending = syncStatus.total;
   const [syncing, setSyncing] = useState<boolean>(false);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const syncingRef = useRef(false);
@@ -543,10 +555,9 @@ export default function TeacherDashboard() {
 
   async function refreshPending() {
     try {
-      const n = await outboxCount();
-      setPending(Number.isFinite(n) ? n : 0);
+      setSyncStatus(await getTeacherAttendanceSyncStatus(inst.institution_id));
     } catch {
-      setPending(0);
+      // Une erreur de lecture ne doit jamais transformer un compteur connu en 0.
     }
   }
 
@@ -560,7 +571,9 @@ export default function TeacherDashboard() {
     setSyncing(true);
     setMsg(null);
     try {
-      const result = await flushOutbox();
+      const result = await syncTeacherAttendanceOperationsToCloud(
+        inst.institution_id,
+      );
       await refreshPending();
 
       // refresh open session depuis le serveur (si dispo)
@@ -587,6 +600,10 @@ export default function TeacherDashboard() {
       if (result.authRequired) {
         setMsg(
           "Synchronisation suspendue : votre session doit être renouvelée. Les données restent conservées sur cet appareil."
+        );
+      } else if (result.conflicts > 0) {
+        setMsg(
+          `${result.conflicts} conflit(s) de synchronisation exigent une vérification. Les données locales sont conservées.`
         );
       } else if (result.blocked > 0) {
         setMsg(
@@ -1040,7 +1057,6 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     void loadInstitutionBasics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ✅ Nom établissement + année : dataset/global puis fallback API (OFFLINE OK) */
@@ -1164,7 +1180,6 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     void ensureAlarmReady();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const activeConfiguredSlot = useMemo(() => {
@@ -1405,9 +1420,11 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!open || Object.keys(rows).length === 0) return;
     const timer = window.setTimeout(() => {
-      void persistAttendanceDraft(rows).catch(() => {
-        setMsg("Impossible de conserver les changements sur cet appareil. Ne fermez pas la séance.");
-      });
+      void persistAttendanceDraft(rows)
+        .then(() => refreshPending())
+        .catch(() => {
+          setMsg("Impossible de conserver les changements sur cet appareil. Ne fermez pas la séance.");
+        });
     }, 0);
     return () => window.clearTimeout(timer);
     // La persistance locale suit chaque nouvelle version des marques.
@@ -1641,6 +1658,24 @@ export default function TeacherDashboard() {
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
         if (startDecision.mode === "device_only" && local.state === "device_pending") {
+          let devicePresence: Awaited<ReturnType<typeof preparePresenceEvidence>> = {
+            evidence: null,
+            actualCallAt: observedNowIso(),
+            label: "non requis",
+          };
+          let presenceWarning: string | null = null;
+          if (relayPolicy?.enabled && relayPolicy.allow_gps_fallback) {
+            try {
+              // La géolocalisation et le contrôle des zones sont locaux : la
+              // preuve peut donc être figée au moment de l'appel sans Internet.
+              devicePresence = await preparePresenceEvidence(clientSessionId, true);
+            } catch (error: any) {
+              presenceWarning = String(
+                error?.message || "preuve GPS indisponible",
+              );
+            }
+          }
+          const actualCallAt = devicePresence.actualCallAt;
           const localOpen: OpenSession = {
             id: `client:${clientSessionId}`,
             class_id: sel.class_id,
@@ -1648,10 +1683,10 @@ export default function TeacherDashboard() {
             subject_id: sel.subject_id,
             subject_name: sel.subject_name,
             started_at: started.toISOString(),
-            actual_call_at: observedNowIso(),
+            actual_call_at: actualCallAt,
             expected_minutes: effectiveDuration,
             period_id: activeConfiguredSlot.id,
-            presence_method: "not_required",
+            presence_method: devicePresence.evidence?.method || "not_required",
             local_relay: false,
             education_type: sel.education_type || "general_secondary",
             education_label: sel.education_label || "Secondaire général",
@@ -1673,8 +1708,38 @@ export default function TeacherDashboard() {
           setTransitionPrompt(null);
           setOpen(localOpen);
           await cacheSet("teacher:local-open", localOpen);
+          await offlineMutateJson(
+            "/api/teacher/sessions/start",
+            {
+              method: "POST",
+              body: {
+                class_id: sel.class_id,
+                subject_id: sel.subject_id,
+                started_at: started.toISOString(),
+                actual_call_at: actualCallAt,
+                expected_minutes: effectiveDuration,
+                client_session_id: clientSessionId,
+                presence: devicePresence.evidence,
+              },
+            },
+            {
+              queueOnly: true,
+              operationId: local.operation_id,
+              createdAt: Date.parse(local.created_at),
+              mergeKey: `teacher:start:${clientSessionId}`,
+              meta: {
+                clientSessionId,
+                operationType: "session-start",
+                institutionId: inst.institution_id,
+                classId: sel.class_id,
+              },
+            },
+          );
+          await refreshPending();
           setMsg(
-            "Hors connexion : séance ouverte sur cet appareil et conservée en attente de synchronisation.",
+            presenceWarning
+              ? `Hors connexion : séance et appel conservés. Preuve GPS non disponible (${presenceWarning}) ; la synchronisation pourra demander une vérification.`
+              : `Hors connexion : séance ouverte sur cet appareil, preuve ${devicePresence.label} conservée et synchronisation en attente.`,
           );
           return;
         }
@@ -1770,7 +1835,12 @@ export default function TeacherDashboard() {
         { method: "POST", body },
         {
           mergeKey: `teacher:start:${clientSessionId}`,
-          meta: { clientSessionId, operationType: "session-start" },
+          meta: {
+            clientSessionId,
+            operationType: "session-start",
+            institutionId: inst.institution_id,
+            classId: sel.class_id,
+          },
         }
       );
 
@@ -1930,12 +2000,48 @@ export default function TeacherDashboard() {
           capturedAtDevice: attendanceCapturedAt,
         });
         setAttendanceDelivery(attendance);
-        if (!["cloud_synced", "device_pending", "relay_secured"].includes(attendance.state)) {
+        if (
+          !["cloud_synced", "device_pending", "delivery_unknown", "relay_secured"].includes(
+            attendance.state,
+          )
+        ) {
           setMsg(
             `${teacherAttendanceDeliveryMessage(attendance)} ` +
             "La séance reste affichée pour éviter toute perte.",
           );
           return;
+        }
+        if (attendance.state !== "cloud_synced") {
+          await offlineMutateJson(
+            "/api/teacher/attendance/bulk",
+            {
+              method: "POST",
+              body: {
+                session_id: attendance.session_reference,
+                captured_at_device:
+                  attendance.captured_at_device || attendance.created_at,
+                marks: attendance.marks.map((mark) => ({
+                  student_id: mark.student_id,
+                  status: mark.status,
+                  reason: mark.comment,
+                  observed_at: mark.observed_at,
+                })),
+              },
+            },
+            {
+              queueOnly: true,
+              operationId: attendance.operation_id,
+              createdAt: Date.parse(attendance.created_at),
+              mergeKey: `teacher:attendance:${attendance.session_reference}`,
+              meta: {
+                operationType: "attendance",
+                clientSessionId: attendance.session_reference,
+                institutionId: attendance.institution_id,
+                classId: attendance.class_id,
+                periodId: attendance.period_id,
+              },
+            },
+          );
         }
       }
 
@@ -1953,7 +2059,15 @@ export default function TeacherDashboard() {
       const r: any = await offlineMutateJson(
         "/api/teacher/sessions/end",
         { method: "PATCH", body },
-        { mergeKey: `teacher:end:${open.id}` }
+        {
+          mergeKey: `teacher:end:${open.id}`,
+          meta: {
+            operationType: "session-end",
+            clientSessionId: clientId || open.id,
+            institutionId: inst.institution_id,
+            classId: open.class_id,
+          },
+        }
       );
 
       if (r?.ok) {
@@ -2215,22 +2329,22 @@ export default function TeacherDashboard() {
 
   /* Déconnexion (avec nettoyage offline) */
   async function logout() {
-    const unresolvedAttendance = await countUnresolvedTeacherAttendanceOperations(
+    let remaining = (await getTeacherAttendanceSyncStatus(
       inst.institution_id,
-    ).catch(() => 0);
-    let remaining = (await outboxCount().catch(() => 0)) + unresolvedAttendance;
+    ).catch(() => syncStatus)).total;
 
     if (remaining > 0 && await teacherSessionCloudAvailable()) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
-        const result = await flushOutbox();
-        remaining = result.remaining + unresolvedAttendance;
+        const result = await syncTeacherAttendanceOperationsToCloud(
+          inst.institution_id,
+        );
+        remaining = result.remaining;
         await refreshPending();
       } catch {
-        const historicalRemaining = await outboxCount().catch(() =>
-          Math.max(0, remaining - unresolvedAttendance)
-        );
-        remaining = historicalRemaining + unresolvedAttendance;
+        remaining = (await getTeacherAttendanceSyncStatus(
+          inst.institution_id,
+        ).catch(() => syncStatus)).total;
       }
     }
 
@@ -2419,11 +2533,17 @@ export default function TeacherDashboard() {
               {inst.attendance_presence?.enabled && (
                 <Chip tone="emerald">Appel protégé par périmètre</Chip>
               )}
-              {pending > 0 && <Chip tone="amber">{pending} en attente</Chip>}
+              {pending > 0 && <Chip tone="amber">{pending} à synchroniser</Chip>}
+              {syncStatus.blocked > 0 && (
+                <Chip tone="amber">{syncStatus.blocked} bloquée(s)</Chip>
+              )}
+              {syncStatus.conflicts > 0 && (
+                <Chip tone="amber">{syncStatus.conflicts} conflit(s)</Chip>
+              )}
               <GhostButton
                 tone="emerald"
                 onClick={syncNow}
-                disabled={!isOnline || syncing || pending === 0}
+                disabled={!isOnline || syncing}
                 className="bg-white/90"
                 aria-label="Synchroniser"
                 title={!isOnline ? "Revenez en ligne pour synchroniser" : undefined}

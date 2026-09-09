@@ -249,6 +249,22 @@ test("8c - un accusé Cloud portant un autre operation_id est un conflit", async
   assert.equal(result.last_error, "cloud_operation_id_mismatch");
 });
 
+test("8d - un HTTP 200 relais sans operation_id reste en conflit local", async () => {
+  const result = await deliverTeacherAttendanceWithDependencies(
+    input(),
+    scenario(new TestIndexedDbStore(), {
+      relay: async () => ({
+        ok: true,
+        status: 200,
+        body: { state: "secured_on_relay" },
+      }),
+    }),
+  );
+
+  assert.equal(result.state, "conflict");
+  assert.equal(result.last_error, "relay_operation_id_missing");
+});
+
 test("9 - retry relais réutilise operation_id et payload canonique", async () => {
   const store = new TestIndexedDbStore();
   const payloads: unknown[] = [];
@@ -435,9 +451,13 @@ test("20 - ancienne outbox migrée reprend avec le même operation_id", async ()
       cloudPosts += 1;
       return { ok: true, status: 200 };
     },
-    relay: async () => {
+    relay: async ({ payload }) => {
       relayPosts += 1;
-      return { ok: true, status: 202 };
+      return {
+        ok: true,
+        status: 202,
+        body: { operation_id: payload.operation_id },
+      };
     },
   }));
   assert.equal(result.operation_id, "legacy-operation");

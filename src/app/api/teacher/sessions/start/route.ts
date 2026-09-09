@@ -16,6 +16,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
+  operation_id?: string | null;
   class_id?: string;
   subject_id?: string | null; // côté front = subjects.id (canonique) ou anciennement institution_subjects.id
   started_at?: string;
@@ -215,6 +216,20 @@ export async function POST(req: NextRequest) {
     }
 
     const body = (await req.json().catch(() => ({}))) as Body;
+    const operationId = String(
+      req.headers.get("x-mon-cahier-operation-id") ||
+        body.operation_id ||
+        "",
+    ).trim();
+    if (!operationId) {
+      return NextResponse.json({ error: "operation_id_required" }, { status: 400 });
+    }
+    if (
+      !/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+      operationId.startsWith("client:")
+    ) {
+      return NextResponse.json({ error: "invalid_operation_id" }, { status: 400 });
+    }
 
     const class_id = body.class_id ?? null;
     const raw_subject_id = body.subject_id ?? null;
@@ -618,7 +633,7 @@ export async function POST(req: NextRequest) {
         ...educationPayload,
       };
 
-      return NextResponse.json({ item }, { status: 200 });
+      return NextResponse.json({ item, operation_id: operationId }, { status: 200 });
     }
 
     /* 4) Sinon: on crée la séance (started_at CANONIQUE, actual_call_at EFFECTIF) */
@@ -706,7 +721,7 @@ export async function POST(req: NextRequest) {
               expected_minutes: s2.expected_minutes as number | null,
               ...educationPayload,
             };
-            return NextResponse.json({ item }, { status: 200 });
+            return NextResponse.json({ item, operation_id: operationId }, { status: 200 });
           }
         }
       }
@@ -733,7 +748,7 @@ export async function POST(req: NextRequest) {
       ...educationPayload,
     };
 
-    return NextResponse.json({ item }, { status: 200 });
+    return NextResponse.json({ item, operation_id: operationId }, { status: 200 });
   } catch (e: any) {
     console.error("[teacher/sessions/start] fatal error", e);
     return NextResponse.json(
