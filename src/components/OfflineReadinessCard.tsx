@@ -49,12 +49,37 @@ const AUTOMATIC_PREPARE_STATUSES = new Set([
 
 const AUTOMATIC_REFRESH_MS = 5_000;
 const AUTOMATIC_PREPARE_COOLDOWN_MS = 10_000;
+const AUTOMATIC_PREPARATION_ATTEMPTS = 3;
+const MANUAL_PREPARATION_ATTEMPTS = 2;
+const PREPARATION_RETRY_BASE_MS = 700;
 const MAX_AUTOMATIC_PREPARATION_AGE_MS = 24 * 60 * 60 * 1000;
 const CLASS_DEVICE_APPLIED_REVISION_KEY =
   "moncahier:class-device:applied-schedule-revision";
 
 function automaticAttendanceRole(role: OfflineRole) {
   return role === "teacher" || role === "class-device";
+}
+
+function preparationFailureMessage(cause: unknown) {
+  return String(
+    (cause as { message?: unknown } | null)?.message || cause || "",
+  ).trim();
+}
+
+function retryablePreparationFailure(cause: unknown) {
+  const message = preparationFailureMessage(cause);
+  return /(?:timeout|délai|serveur[^.]*répon|failed to fetch|fetch failed|network|réseau|indisponible|aborted|http 5\d\d)/i.test(
+    message,
+  );
+}
+
+function waitForPreparationRetry(attempt: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(
+      resolve,
+      PREPARATION_RETRY_BASE_MS * Math.max(1, attempt),
+    );
+  });
 }
 
 function formatPreparedAt(value: string) {
@@ -210,11 +235,46 @@ export default function OfflineReadinessCard({
         }
 
         try {
-          const next = await prepareOffline(role, (message) => {
-            if (mountedRef.current && !automaticAttendanceRole(role)) {
-              setProgress(message);
+          const maxAttempts = automaticAttendanceRole(role)
+            ? automatic
+              ? AUTOMATIC_PREPARATION_ATTEMPTS
+              : MANUAL_PREPARATION_ATTEMPTS
+            : 1;
+          let next: OfflineReadiness | null = null;
+          let lastFailure: unknown = null;
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+              next = await prepareOffline(role, (message) => {
+                if (mountedRef.current && !automaticAttendanceRole(role)) {
+                  setProgress(message);
+                }
+              });
+              lastFailure = null;
+              break;
+            } catch (cause) {
+              lastFailure = cause;
+              const mayRetry =
+                attempt < maxAttempts &&
+                typeof navigator !== "undefined" &&
+                navigator.onLine !== false &&
+                retryablePreparationFailure(cause);
+              if (!mayRetry) throw cause;
+
+              if (mountedRef.current) {
+                setProgress(
+                  `Connexion instable : nouvelle tentative ${attempt + 1}/${maxAttempts}…`,
+                );
+              }
+              await waitForPreparationRetry(attempt);
             }
-          });
+          }
+
+          if (!next) {
+            throw lastFailure instanceof Error
+              ? lastFailure
+              : new Error("La préparation hors ligne a échoué.");
+          }
 
           if (role === "teacher" || role === "class-device") {
             const preparedClassDeviceContext =

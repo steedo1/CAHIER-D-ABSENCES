@@ -20,6 +20,7 @@ import {
 import {
   findLegacyTeacherAttendanceMutation,
   findLegacyTeacherSessionEndMutation,
+  listOfflineOutboxEntries,
   registerOfflineSessionReference,
   removeQueuedOfflineMutation,
 } from "@/lib/offline";
@@ -158,27 +159,101 @@ function closeBelongsToClass(
   );
 }
 
+function pendingOperationIds(
+  opens: TeacherSessionDeliveryRecord[],
+  attendance: TeacherAttendanceDeliveryRecord[],
+  lifecycle: TeacherSessionLifecycleDeliveryRecord[],
+  classId: string,
+) {
+  const ids = new Set<string>();
+  for (const record of opens) {
+    if (record.class_id === classId && record.state === "device_pending") {
+      ids.add(record.operation_id);
+    }
+  }
+  const scopedAttendance = classAttendance(attendance, classId);
+  for (const record of scopedAttendance) {
+    if (!attendanceResolved(record)) ids.add(record.operation_id);
+  }
+  for (const record of lifecycle) {
+    if (
+      closeBelongsToClass(record, classId, scopedAttendance) &&
+      record.state !== "relay_confirmed" &&
+      record.state !== "cloud_confirmed"
+    ) {
+      ids.add(record.operation_id);
+    }
+  }
+  return ids;
+}
+
 function pendingCount(
   opens: TeacherSessionDeliveryRecord[],
   attendance: TeacherAttendanceDeliveryRecord[],
   lifecycle: TeacherSessionLifecycleDeliveryRecord[],
   classId: string,
 ) {
-  const openPending = opens.filter(
-    (record) =>
-      record.class_id === classId && record.state === "device_pending",
-  ).length;
+  return pendingOperationIds(opens, attendance, lifecycle, classId).size;
+}
+
+function cloudTerminalOperationIds(
+  opens: TeacherSessionDeliveryRecord[],
+  attendance: TeacherAttendanceDeliveryRecord[],
+  lifecycle: TeacherSessionLifecycleDeliveryRecord[],
+  classId: string,
+) {
+  const ids = new Set<string>();
+  for (const record of opens) {
+    if (record.class_id === classId && record.state === "cloud_opened") {
+      ids.add(record.operation_id);
+    }
+  }
   const scopedAttendance = classAttendance(attendance, classId);
-  const attendancePending = scopedAttendance.filter(
-    (record) => !attendanceResolved(record),
-  ).length;
-  const closePending = lifecycle.filter(
-    (record) =>
+  for (const record of attendance) {
+    if (
+      record.class_id === classId &&
+      (record.state === "cloud_synced" || record.state === "superseded")
+    ) {
+      ids.add(record.operation_id);
+    }
+  }
+  for (const record of lifecycle) {
+    if (
       closeBelongsToClass(record, classId, scopedAttendance) &&
-      record.state !== "relay_confirmed" &&
-      record.state !== "cloud_confirmed",
-  ).length;
-  return openPending + attendancePending + closePending;
+      record.state === "cloud_confirmed"
+    ) {
+      ids.add(record.operation_id);
+    }
+  }
+  return ids;
+}
+
+async function reconcileCloudConfirmedOutbox(
+  context: Pick<ClassDeviceAttendanceRecoveryContext, "institutionId" | "classId">,
+) {
+  const institutionId = normalizedText(context.institutionId);
+  const classId = normalizedText(context.classId);
+  if (!institutionId || !classId) return 0;
+
+  const [opens, attendance, lifecycle, outbox] = await Promise.all([
+    listTeacherSessionOpenOperations(institutionId),
+    listTeacherAttendanceOperations(institutionId),
+    listTeacherSessionLifecycleOperations(institutionId),
+    listOfflineOutboxEntries(),
+  ]);
+  const terminalIds = cloudTerminalOperationIds(
+    opens,
+    attendance,
+    lifecycle,
+    classId,
+  );
+  const staleRows = outbox.filter((entry) => terminalIds.has(entry.operationId));
+  if (!staleRows.length) return 0;
+
+  await Promise.all(
+    staleRows.map((entry) => removeQueuedOfflineMutation(entry.id)),
+  );
+  return staleRows.length;
 }
 
 export async function countClassDeviceAttendanceRecoveryWithDependencies(
@@ -388,8 +463,7 @@ export async function recoverClassDeviceAttendanceWithDependencies(
     if (next.state === "relay_confirmed") summary.closes_confirmed += 1;
     else if (next.state === "blocked") summary.requires_attention += 1;
     else if (
-      next.last_status === 0 ||
-      next.last_error === "relay_unreachable"
+      next.last_status === 0 || next.last_error === "relay_unreachable"
     ) {
       summary.relay_unreachable = true;
     }
@@ -491,17 +565,42 @@ export async function countClassDeviceAttendanceRecovery(
     "institutionId" | "classId"
   >,
 ) {
-  return await countClassDeviceAttendanceRecoveryWithDependencies(
-    context,
-    productionDependencies(),
+  const institutionId = normalizedText(context.institutionId);
+  const classId = normalizedText(context.classId);
+  if (!institutionId || !classId) return 0;
+
+  await reconcileCloudConfirmedOutbox({ institutionId, classId }).catch(
+    () => 0,
   );
+
+  const deps = productionDependencies();
+  const [opens, attendance, lifecycle, outbox] = await Promise.all([
+    deps.listOpen ? deps.listOpen(institutionId) : Promise.resolve([]),
+    deps.listAttendance(institutionId),
+    deps.listLifecycle(institutionId),
+    listOfflineOutboxEntries(),
+  ]);
+  const outboxIds = new Set(outbox.map((entry) => entry.operationId));
+  const durablePendingIds = pendingOperationIds(
+    opens,
+    attendance,
+    lifecycle,
+    classId,
+  );
+  let uniqueDurablePending = 0;
+  for (const operationId of durablePendingIds) {
+    if (!outboxIds.has(operationId)) uniqueDurablePending += 1;
+  }
+  return uniqueDurablePending;
 }
 
 export async function recoverClassDeviceAttendance(
   context: ClassDeviceAttendanceRecoveryContext,
 ) {
-  return await recoverClassDeviceAttendanceWithDependencies(
+  const result = await recoverClassDeviceAttendanceWithDependencies(
     context,
     productionDependencies(),
   );
+  await reconcileCloudConfirmedOutbox(context).catch(() => 0);
+  return result;
 }
