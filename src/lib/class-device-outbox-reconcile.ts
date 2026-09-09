@@ -63,6 +63,14 @@ function transactionDone(transaction: IDBTransaction) {
   });
 }
 
+function latestEntryError(entries: OfflineOutboxEntry[]) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const error = entries[index]?.lastError;
+    if (error) return error;
+  }
+  return null;
+}
+
 async function readRawOutboxRows(ids: string[]) {
   const rows = new Map<string, RawOutboxRow>();
   if (typeof window === "undefined" || !("indexedDB" in window) || !ids.length) {
@@ -78,6 +86,7 @@ async function readRawOutboxRows(ids: string[]) {
   try {
     if (!db.objectStoreNames.contains("outbox")) return rows;
     const transaction = db.transaction(["outbox"], "readonly");
+    const done = transactionDone(transaction);
     const store = transaction.objectStore("outbox");
     const values = await Promise.all(
       ids.map(async (id) => {
@@ -85,7 +94,7 @@ async function readRawOutboxRows(ids: string[]) {
         return [id, row || null] as const;
       }),
     );
-    await transactionDone(transaction);
+    await done;
     for (const [id, row] of values) {
       if (row) rows.set(id, row);
     }
@@ -258,7 +267,7 @@ export async function repairClassDeviceCallOutbox(): Promise<ClassDeviceOutboxRe
       flushed: 0,
       reconciled: 0,
       blocked: initial.filter((entry) => entry.state === "blocked").length,
-      last_error: initial.findLast?.((entry) => entry.lastError)?.lastError || null,
+      last_error: latestEntryError(initial),
     };
   }
 
@@ -302,9 +311,6 @@ export async function repairClassDeviceCallOutbox(): Promise<ClassDeviceOutboxRe
     flushed,
     reconciled,
     blocked: finalEntries.filter((entry) => entry.state === "blocked").length,
-    last_error:
-      finalEntries.findLast?.((entry) => entry.lastError)?.lastError ||
-      lastError ||
-      null,
+    last_error: latestEntryError(finalEntries) || lastError || null,
   };
 }
