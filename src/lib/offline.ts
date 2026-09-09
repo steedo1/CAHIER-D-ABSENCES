@@ -34,6 +34,28 @@ type OutboxRow = {
   lastAttemptAt?: number;
   lastStatus?: number;
   lastError?: string;
+  /**
+   * Version du contrat d'ACK connue au moment de la mise en file.
+   *
+   * Les lignes créées avant ce marqueur peuvent avoir été bloquées par les
+   * anciennes routes teacher qui appliquaient l'écriture sans renvoyer
+   * operation_id. Elles peuvent être rejouées une seule fois après mise à jour.
+   */
+  ackContractVersion?: number;
+};
+
+export type OfflineOutboxEntry = {
+  id: string;
+  operationId: string;
+  operationType: string | null;
+  sessionDependencyKey: string | null;
+  createdAt: number;
+  state: "pending" | "blocked";
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastStatus: number | null;
+  lastError: string | null;
+  meta: Record<string, any>;
 };
 
 export type LegacyTeacherAttendanceMutation = {
@@ -61,6 +83,27 @@ type MutateOpts = {
   operationId?: string;
   timeoutMs?: number;
   queueOnly?: boolean;
+  /** Horodatage d'origine utilisé lors de la migration d'un journal durable. */
+  createdAt?: number;
+};
+
+export type FlushOutboxOptions = {
+  /** Ne rejoue que ces types d'opérations. */
+  includeOperationTypes?: readonly string[];
+  /** Ignore ces types d'opérations pendant cette passe. */
+  excludeOperationTypes?: readonly string[];
+  /**
+   * Séances dont la fermeture doit attendre un ACK d'appel. Les clés avec ou
+   * sans le préfixe client: sont normalisées de la même manière.
+   */
+  deferSessionEndKeys?: readonly string[];
+  /**
+   * Libère uniquement un ancien backoff causé par une panne réseau (status 0).
+   * Les 401, 422, 429 et 5xx conservent leur politique propre.
+   */
+  releaseNetworkBackoff?: boolean;
+  /** Utile aux tests et aux réseaux faibles qui progressent ACK par ACK. */
+  maxAcknowledgements?: number;
 };
 
 export type MutateResult<T = any> =
@@ -105,6 +148,7 @@ export type FlushResult = {
 
 const DB_NAME = "moncahier_offline_v1";
 const DB_VERSION = 2;
+const OUTBOX_ACK_CONTRACT_VERSION = 1;
 export {
   MON_CAHIER_OFFLINE_SCHEMA_VERSION,
   MON_CAHIER_SERVICE_WORKER_RELEASE,
@@ -763,6 +807,35 @@ export async function outboxCount(): Promise<number> {
   return count;
 }
 
+function normalizedSessionDependencyKey(value: unknown) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return normalized.startsWith("client:") ? normalized : `client:${normalized}`;
+}
+
+/**
+ * Vue diagnostique sans payload métier : elle alimente le compteur honnête et
+ * permet au pipeline d'éviter les doubles représentations lors d'une migration.
+ */
+export async function listOfflineOutboxEntries(): Promise<OfflineOutboxEntry[]> {
+  const rows = await outboxAll();
+  return rows.map((row) => ({
+    id: row.id,
+    operationId: row.operationId,
+    operationType: outboxOperationType(row),
+    sessionDependencyKey: normalizedSessionDependencyKey(
+      outboxSessionDependencyKey(row, row.body),
+    ),
+    createdAt: row.createdAt,
+    state: row.state === "blocked" ? "blocked" : "pending",
+    attempts: Number(row.attempts || 0),
+    lastAttemptAt: typeof row.lastAttemptAt === "number" ? row.lastAttemptAt : null,
+    lastStatus: typeof row.lastStatus === "number" ? row.lastStatus : null,
+    lastError: row.lastError || null,
+    meta: row.meta && typeof row.meta === "object" ? { ...row.meta } : {},
+  }));
+}
+
 export async function outboxStats(): Promise<OutboxStats> {
   const rows = await outboxAll();
   const blocked = rows.filter((row) => row.state === "blocked").length;
@@ -830,12 +903,16 @@ export async function offlineMutateJson<T = any>(
       body: bodyObj,
       headers: operationHeaders,
       mergeKey: opts?.mergeKey,
-      createdAt: nextMutationCreatedAt(),
+      createdAt:
+        typeof opts?.createdAt === "number" && Number.isFinite(opts.createdAt)
+          ? opts.createdAt
+          : nextMutationCreatedAt(),
       meta: opts?.meta,
       state: "pending",
       attempts: 0,
       lastStatus: details.status || undefined,
       lastError: details.error,
+      ackContractVersion: OUTBOX_ACK_CONTRACT_VERSION,
     };
     await outboxAdd(row);
     return {
@@ -993,7 +1070,9 @@ function isSessionStartRow(row: OutboxRow) {
  * Rejoue les actions en attente (dans l'ordre).
  * Stoppe au premier échec réseau (pour éviter de vider l'outbox partiellement).
  */
-async function flushOutboxInternal(): Promise<FlushResult> {
+async function flushOutboxInternal(
+  options: FlushOutboxOptions = {},
+): Promise<FlushResult> {
   const empty: FlushResult = {
     flushed: 0,
     remaining: 0,
@@ -1017,12 +1096,65 @@ async function flushOutboxInternal(): Promise<FlushResult> {
   let lastStatus: number | null = null;
   const acknowledged: FlushedMutationAcknowledgement[] = [];
   const blockedSessions = new Set<string>();
+  const includedTypes = options.includeOperationTypes
+    ? new Set(options.includeOperationTypes)
+    : null;
+  const excludedTypes = new Set(options.excludeOperationTypes || []);
+  const deferredSessionEnds = new Set(
+    (options.deferSessionEndKeys || [])
+      .map(normalizedSessionDependencyKey)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const maxAcknowledgements = Number.isFinite(options.maxAcknowledgements)
+    ? Math.max(1, Math.floor(Number(options.maxAcknowledgements)))
+    : Number.POSITIVE_INFINITY;
   const map = await getSessionIdMap();
+  // Un enfant ne devient éligible qu'après disparition durable de son parent.
+  // Ce calcul se fait sur tout le journal, y compris lors d'un flush par phase.
+  const sessionsWaitingForStart = new Set(
+    rows
+      .filter(isSessionStartRow)
+      .map((row) => normalizedSessionDependencyKey(
+        outboxSessionDependencyKey(row, row.body),
+      ))
+      .filter((value): value is string => Boolean(value)),
+  );
 
   for (const row of rows) {
     const body = rewriteBodyWithSessionMap(row.body, map);
     const operationType = outboxOperationType(row);
     const dependencyKey = outboxSessionDependencyKey(row, body);
+    const normalizedDependencyKey = normalizedSessionDependencyKey(dependencyKey);
+
+    if (
+      (includedTypes && (!operationType || !includedTypes.has(operationType))) ||
+      (operationType && excludedTypes.has(operationType))
+    ) {
+      continue;
+    }
+
+    // Migration ciblée des lignes créées avant le contrat d'ACK v1. Elles ont
+    // été bloquées par une ancienne réponse 200 sans operation_id alors que le
+    // Cloud avait pu appliquer la mutation. Le rejeu idempotent avec la route
+    // corrigée est sûr et n'est autorisé qu'une fois pour ces anciennes lignes.
+    if (
+      row.state === "blocked" &&
+      row.lastError === "offline_operation_id_missing" &&
+      !row.ackContractVersion
+    ) {
+      row.state = "pending";
+      row.lastAttemptAt = undefined;
+      row.lastStatus = undefined;
+      row.lastError = undefined;
+      row.ackContractVersion = OUTBOX_ACK_CONTRACT_VERSION;
+      await outboxUpdate(row.id, {
+        state: "pending",
+        lastAttemptAt: undefined,
+        lastStatus: undefined,
+        lastError: undefined,
+        ackContractVersion: OUTBOX_ACK_CONTRACT_VERSION,
+      });
+    }
 
     // Conserve les mutations LOT3/LOT4 historiques sans jamais les rejouer
     // pendant la phase Cloud-only. Une future réactivation explicite reprend
@@ -1062,19 +1194,41 @@ async function flushOutboxInternal(): Promise<FlushResult> {
         dependencyKey &&
         (operationType === "session-start" || operationType === "attendance")
       ) {
-        blockedSessions.add(dependencyKey);
+        blockedSessions.add(normalizedDependencyKey || dependencyKey);
       }
       continue;
     }
     if (
-      dependencyKey &&
-      blockedSessions.has(dependencyKey) &&
+      normalizedDependencyKey &&
+      blockedSessions.has(normalizedDependencyKey) &&
       (operationType === "attendance" || operationType === "session-end")
+    ) {
+      continue;
+    }
+    if (
+      normalizedDependencyKey &&
+      sessionsWaitingForStart.has(normalizedDependencyKey) &&
+      (operationType === "attendance" || operationType === "session-end")
+    ) {
+      continue;
+    }
+    if (
+      operationType === "session-end" &&
+      normalizedDependencyKey &&
+      deferredSessionEnds.has(normalizedDependencyKey)
     ) {
       continue;
     }
 
     const attemptsBeforeRun = Number(row.attempts || 0);
+    if (
+      options.releaseNetworkBackoff &&
+      row.lastStatus === 0 &&
+      row.lastAttemptAt
+    ) {
+      row.lastAttemptAt = undefined;
+      await outboxUpdate(row.id, { lastAttemptAt: undefined });
+    }
     if (
       row.lastAttemptAt &&
       Date.now() - row.lastAttemptAt < outboxRetryDelayMs(attemptsBeforeRun)
@@ -1142,7 +1296,7 @@ async function flushOutboxInternal(): Promise<FlushResult> {
           dependencyKey &&
           (operationType === "session-start" || operationType === "attendance")
         ) {
-          blockedSessions.add(dependencyKey);
+          blockedSessions.add(normalizedDependencyKey || dependencyKey);
         }
         continue;
       }
@@ -1163,7 +1317,9 @@ async function flushOutboxInternal(): Promise<FlushResult> {
           lastStatus: 409,
           lastError: msg,
         });
-        if (dependencyKey) blockedSessions.add(dependencyKey);
+        if (dependencyKey) {
+          blockedSessions.add(normalizedDependencyKey || dependencyKey);
+        }
         lastError = msg;
         lastStatus = 409;
         continue;
@@ -1177,6 +1333,9 @@ async function flushOutboxInternal(): Promise<FlushResult> {
           await maybeUpdateSessionMapFromStart(row, j);
           const next = await getSessionIdMap();
           Object.assign(map, next);
+          if (normalizedDependencyKey) {
+            sessionsWaitingForStart.delete(normalizedDependencyKey);
+          }
         } catch (error: any) {
           const msg = String(error?.message || "offline_session_mapping_conflict");
           await outboxUpdate(row.id, {
@@ -1186,7 +1345,9 @@ async function flushOutboxInternal(): Promise<FlushResult> {
             lastStatus: 409,
             lastError: msg,
           });
-          if (dependencyKey) blockedSessions.add(dependencyKey);
+          if (dependencyKey) {
+            blockedSessions.add(normalizedDependencyKey || dependencyKey);
+          }
           lastError = msg;
           lastStatus = 409;
           continue;
@@ -1212,6 +1373,7 @@ async function flushOutboxInternal(): Promise<FlushResult> {
       });
       await outboxDelete(row.id);
       flushed += 1;
+      if (flushed >= maxAcknowledgements) break;
     } catch (error: any) {
       // réseau encore instable : on stoppe et on garde le reste
       retryableFailure = true;
@@ -1241,36 +1403,44 @@ async function flushOutboxInternal(): Promise<FlushResult> {
   };
 }
 
-let _flushPromise: Promise<FlushResult> | null = null;
+let _flushTail: Promise<void> = Promise.resolve();
 
 /**
  * Un seul rejeu à la fois, même lorsque deux composants (ou deux onglets sur
  * les navigateurs compatibles) détectent simultanément le retour du réseau.
  */
-export async function flushOutbox(): Promise<FlushResult> {
-  if (!isBrowser()) return await flushOutboxInternal();
-  if (_flushPromise) return await _flushPromise;
+export async function flushOutbox(
+  options: FlushOutboxOptions = {},
+): Promise<FlushResult> {
+  if (!isBrowser()) return await flushOutboxInternal(options);
 
-  const locks = (
-    navigator as unknown as {
-      locks?: {
-        request(
-          name: string,
-          callback: () => Promise<FlushResult>,
-        ): Promise<FlushResult>;
-      };
-    }
-  ).locks;
+  const run = async () => {
+    const locks = (
+      navigator as unknown as {
+        locks?: {
+          request(
+            name: string,
+            callback: () => Promise<FlushResult>,
+          ): Promise<FlushResult>;
+        };
+      }
+    ).locks;
+    return locks
+      ? await locks.request(
+          "moncahier-offline-outbox",
+          () => flushOutboxInternal(options),
+        )
+      : await flushOutboxInternal(options);
+  };
 
-  _flushPromise = locks
-    ? locks.request("moncahier-offline-outbox", () => flushOutboxInternal())
-    : flushOutboxInternal();
-
-  try {
-    return await _flushPromise;
-  } finally {
-    _flushPromise = null;
-  }
+  // Chaque appel conserve ses options (phase ouverture/appel/fermeture) tout en
+  // restant strictement sérialisé dans les navigateurs sans Web Locks.
+  const result = _flushTail.then(run, run);
+  _flushTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return await result;
 }
 
 /* ───────────────────────── Clear all offline data ───────────────────────── */

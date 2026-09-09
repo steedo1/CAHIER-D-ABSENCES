@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
+  operation_id?: string | null;
   session_id?: string | null;
   client_session_id?: string | null;
   actual_end_at?: string | null;
@@ -43,6 +44,20 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = (await req.json().catch(() => ({}))) as Body;
+    const operationId = String(
+      req.headers.get("x-mon-cahier-operation-id") ||
+        body.operation_id ||
+        "",
+    ).trim();
+    if (!operationId) {
+      return NextResponse.json({ error: "operation_id_required" }, { status: 400 });
+    }
+    if (
+      !/^[a-zA-Z0-9:_-]{8,160}$/.test(operationId) ||
+      operationId.startsWith("client:")
+    ) {
+      return NextResponse.json({ error: "invalid_operation_id" }, { status: 400 });
+    }
     const session_id = String(body?.session_id || "").trim();
     const client_session_id = String(body?.client_session_id || "").trim();
     const endedAtIso = parseEffectiveEndAt(body?.actual_end_at);
@@ -67,7 +82,7 @@ export async function PATCH(req: NextRequest) {
 
       if (sess.ended_at) {
         return NextResponse.json(
-          { ok: true, item: { id: sess.id, ended_at: sess.ended_at } },
+          { ok: true, item: { id: sess.id, ended_at: sess.ended_at }, operation_id: operationId },
           { status: 200 }
         );
       }
@@ -88,7 +103,11 @@ export async function PATCH(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { ok: true, item: updated ?? { id: session_id, ended_at: endedAtIso } },
+        {
+          ok: true,
+          item: updated ?? { id: session_id, ended_at: endedAtIso },
+          operation_id: operationId,
+        },
         { status: 200 }
       );
     }
@@ -127,7 +146,11 @@ export async function PATCH(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { ok: true, item: updated ?? { id: sess.id, ended_at: endedAtIso } },
+        {
+          ok: true,
+          item: updated ?? { id: sess.id, ended_at: endedAtIso },
+          operation_id: operationId,
+        },
         { status: 200 }
       );
     }
@@ -164,7 +187,11 @@ export async function PATCH(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, item: updated ?? { id: sess.id, ended_at: endedAtIso } },
+      {
+        ok: true,
+        item: updated ?? { id: sess.id, ended_at: endedAtIso },
+        operation_id: operationId,
+      },
       { status: 200 }
     );
   } catch (e: any) {

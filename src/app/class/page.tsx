@@ -1190,7 +1190,7 @@ export default function ClassDevicePage() {
           typeof window === "undefined" ? true : await probeCloudAvailability();
 
         if (cloudReachable) {
-          result = await flushOutbox();
+          result = await flushOutbox({ releaseNetworkBackoff: true });
           await applyCloudOutboxAcknowledgements(result);
 
           const active = openRef.current;
@@ -3633,7 +3633,7 @@ export default function ClassDevicePage() {
           typeof navigator === "undefined" ||
           navigator.onLine !== false
         ) {
-          await flushOutbox();
+          await flushOutbox({ releaseNetworkBackoff: true });
         }
         const relay = selectedClass?.attendance_presence;
         if (

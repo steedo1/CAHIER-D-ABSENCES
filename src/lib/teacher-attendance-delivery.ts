@@ -516,15 +516,17 @@ async function deliverToRelay(
     });
   }
 
-  const responseOperationId = normalizedText(response.body?.operation_id);
-  if (response.ok && responseOperationId && responseOperationId !== current.operation_id) {
-    return await storePatch(deps, current, {
-      state: "conflict",
-      last_status: response.status,
-      last_error: "relay_operation_id_mismatch",
-    });
-  }
   if (response.ok) {
+    const responseOperationId = normalizedText(response.body?.operation_id);
+    if (responseOperationId !== current.operation_id) {
+      return await storePatch(deps, current, {
+        state: "conflict",
+        last_status: response.status,
+        last_error: responseOperationId
+          ? "relay_operation_id_mismatch"
+          : "relay_operation_id_missing",
+      });
+    }
     return await storePatch(deps, current, {
       state: response.body?.state === "synced_with_cloud" ? "cloud_synced" : "relay_secured",
       last_status: response.status,

@@ -26,7 +26,7 @@ export default function OfflineSyncBar({ onMessage, onSynced }: Props) {
     if (syncing || (typeof navigator !== "undefined" && !navigator.onLine)) return;
     setSyncing(true);
     try {
-      const result = await flushOutbox();
+      const result = await flushOutbox({ releaseNetworkBackoff: true });
       await refreshPending();
 
       if (result.authRequired) {
