@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2, RefreshCw } from "lucide-react";
+import { adminAttendancePollDelay, type AdminAttendanceDataSource } from "@/lib/admin-attendance-monitor";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 
 type MonitorStatus =
@@ -55,6 +56,7 @@ type TeacherControlRow = {
 };
 
 type PeriodPreset = "today" | "week" | "month" | "custom";
+type LoadOptions = { background?: boolean };
 
 function ymd(date: Date) {
   const y = date.getFullYear();
@@ -204,6 +206,9 @@ export default function SurveillanceAppelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedTeacher, setExpandedTeacher] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const dataSourceRef = useRef<AdminAttendanceDataSource | null>(null);
+  const refreshErrorRef = useRef(false);
 
   const choosePreset = useCallback((next: PeriodPreset) => {
     setPreset(next);
@@ -219,17 +224,22 @@ export default function SurveillanceAppelsPage() {
     }
   }, [today]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: LoadOptions = {}) => {
+    const background = options.background === true;
     if (!startDate || !endDate || startDate > endDate) {
       setError("La période sélectionnée est invalide.");
       return;
     }
+    if (background && refreshInFlightRef.current) return;
 
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setLoading(true);
-    setError(null);
+    refreshInFlightRef.current = true;
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const monitorResult = await fetchAdminAttendanceMonitor<MonitorRow>(
@@ -253,20 +263,59 @@ export default function SurveillanceAppelsPage() {
           return dayRows.map((session) => ({ ...session, session_date: date }));
         }),
       );
+      dataSourceRef.current = monitorResult.source;
+      refreshErrorRef.current = false;
+      setError(null);
       setRows(monitorRows);
       setSessions(sessionResults.flat());
-      setExpandedTeacher(null);
+      if (!background) setExpandedTeacher(null);
     } catch (cause: any) {
       if (cause?.name === "AbortError") return;
-      setError(cause?.message || "Impossible de charger le contrôle des appels.");
+      refreshErrorRef.current = true;
+      if (!background) {
+        setError(cause?.message || "Impossible de charger le contrôle des appels.");
+      }
     } finally {
-      if (!controller.signal.aborted) setLoading(false);
+      if (abortRef.current === controller) {
+        refreshInFlightRef.current = false;
+        if (!background && !controller.signal.aborted) setLoading(false);
+      }
     }
   }, [startDate, endDate]);
 
   useEffect(() => {
-    void load();
-    return () => abortRef.current?.abort();
+    let stopped = false;
+    let pollTimer: number | null = null;
+
+    const scheduleNext = () => {
+      if (stopped) return;
+      const delay = adminAttendancePollDelay(dataSourceRef.current, refreshErrorRef.current);
+      pollTimer = window.setTimeout(async () => {
+        if (document.visibilityState === "visible" && navigator.onLine) {
+          await load({ background: true });
+        }
+        scheduleNext();
+      }, delay);
+    };
+
+    const refreshNow = () => {
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      void load({ background: true });
+    };
+
+    void load().finally(scheduleNext);
+    window.addEventListener("focus", refreshNow);
+    window.addEventListener("online", refreshNow);
+    document.addEventListener("visibilitychange", refreshNow);
+
+    return () => {
+      stopped = true;
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      window.removeEventListener("focus", refreshNow);
+      window.removeEventListener("online", refreshNow);
+      document.removeEventListener("visibilitychange", refreshNow);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const detailedRows = useMemo<DetailedRow[]>(() => {
