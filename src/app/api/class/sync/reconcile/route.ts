@@ -13,11 +13,21 @@ type OperationInput = {
   operation_id?: unknown;
   operation_type?: unknown;
   session_dependency_key?: unknown;
+  created_at?: unknown;
+  last_status?: unknown;
+  last_error?: unknown;
+  operation_body?: unknown;
 };
 
 type ReconcileBody = {
   class_id?: unknown;
   operations?: unknown;
+};
+
+type LocalAttendanceMark = {
+  studentId: string;
+  status: "present" | "absent" | "late";
+  reason: string | null;
 };
 
 const OPERATION_TYPES = new Set<OperationType>([
@@ -43,6 +53,128 @@ function dependencyStartOperationId(value: string) {
   if (!normalized.startsWith("client:")) return null;
   const operationId = normalized.slice("client:".length).trim();
   return validOperationId(operationId) ? operationId : null;
+}
+
+function parseDateMs(value: unknown) {
+  const normalized = text(value);
+  if (!normalized) return null;
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function operationBody(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {};
+}
+
+function normalizeLocalAttendanceMarks(value: unknown): LocalAttendanceMark[] | null {
+  if (!Array.isArray(value)) return null;
+  const byStudent = new Map<string, LocalAttendanceMark>();
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const studentId = text((raw as any).student_id);
+    const status = text((raw as any).status);
+    if (!studentId || !["present", "absent", "late"].includes(status)) {
+      return null;
+    }
+    byStudent.set(studentId, {
+      studentId,
+      status: status as LocalAttendanceMark["status"],
+      reason:
+        (raw as any).reason == null
+          ? null
+          : text((raw as any).reason) || null,
+    });
+  }
+  return Array.from(byStudent.values()).sort((left, right) =>
+    left.studentId.localeCompare(right.studentId),
+  );
+}
+
+async function attendancePayloadAlreadyPresent(input: {
+  srv: ReturnType<typeof getSupabaseServiceClient>;
+  institutionId: string;
+  sessionId: string;
+  localBody: Record<string, any>;
+  sessionClosed: boolean;
+}) {
+  if (!input.sessionClosed) {
+    return { matched: false, reason: "session_still_open" };
+  }
+
+  const capturedAt =
+    text(input.localBody.captured_at_device) ||
+    text(input.localBody.actual_call_at) ||
+    text(input.localBody.client_call_at) ||
+    text(input.localBody.call_at);
+  const capturedAtMs = parseDateMs(capturedAt);
+  const localMarks = normalizeLocalAttendanceMarks(input.localBody.marks);
+  if (capturedAtMs == null || localMarks == null) {
+    return { matched: false, reason: "attendance_local_payload_unavailable" };
+  }
+
+  const { data: causality, error: causalityError } = await input.srv
+    .from("relay_attendance_session_causality")
+    .select("last_captured_at_device,last_operation_id")
+    .eq("institution_id", input.institutionId)
+    .eq("session_id", input.sessionId)
+    .maybeSingle();
+
+  if (causalityError || !causality?.last_captured_at_device) {
+    return {
+      matched: false,
+      reason: causalityError
+        ? "attendance_receipt_lookup_unavailable"
+        : "attendance_capture_not_confirmed",
+    };
+  }
+
+  const cloudCapturedMs = parseDateMs(causality.last_captured_at_device);
+  if (cloudCapturedMs == null || Math.abs(cloudCapturedMs - capturedAtMs) > 1_500) {
+    return { matched: false, reason: "attendance_capture_mismatch" };
+  }
+
+  const { data: cloudMarks, error: cloudMarksError } = await input.srv
+    .from("attendance_marks")
+    .select("student_id,status,reason")
+    .eq("session_id", input.sessionId);
+
+  if (cloudMarksError) {
+    return { matched: false, reason: "attendance_marks_lookup_unavailable" };
+  }
+
+  // Les présences ne sont pas conservées dans attendance_marks : la table ne
+  // contient que les absences/retards. On exige donc une égalité de l'ensemble
+  // final des statuts non-présents, pas une simple inclusion.
+  const expected = localMarks
+    .filter((mark) => mark.status === "absent" || mark.status === "late")
+    .sort((left, right) => left.studentId.localeCompare(right.studentId));
+  const actual = (cloudMarks || [])
+    .map((mark: any) => ({
+      studentId: text(mark?.student_id),
+      status: text(mark?.status),
+      reason: mark?.reason == null ? null : text(mark.reason) || null,
+    }))
+    .filter((mark) => mark.studentId)
+    .sort((left, right) => left.studentId.localeCompare(right.studentId));
+
+  if (actual.length !== expected.length) {
+    return { matched: false, reason: "attendance_mark_count_mismatch" };
+  }
+
+  for (let index = 0; index < expected.length; index += 1) {
+    const local = expected[index]!;
+    const cloud = actual[index]!;
+    if (local.studentId !== cloud.studentId || local.status !== cloud.status) {
+      return { matched: false, reason: "attendance_mark_status_mismatch" };
+    }
+    if (local.reason != null && local.reason !== cloud.reason) {
+      return { matched: false, reason: "attendance_mark_reason_mismatch" };
+    }
+  }
+
+  return { matched: true, reason: "attendance_payload_already_present_in_cloud" };
 }
 
 export async function POST(req: NextRequest) {
@@ -98,6 +230,7 @@ export async function POST(req: NextRequest) {
         operationId: text(raw.operation_id),
         operationType: text(raw.operation_type) as OperationType,
         dependencyKey: text(raw.session_dependency_key),
+        localBody: operationBody(raw.operation_body),
       }))
       .filter(
         (item) =>
@@ -189,14 +322,18 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      const sessionClosed =
+        Boolean(session.ended_at) || String(session.status || "") === "submitted";
+
       if (operation.operationType === "session-end") {
-        const closed = Boolean(session.ended_at) || String(session.status || "") === "submitted";
         results.push({
           operation_id: operation.operationId,
           operation_type: operation.operationType,
-          acknowledged: closed,
+          acknowledged: sessionClosed,
           session_id: sessionId,
-          reason: closed ? "session_already_closed_in_cloud" : "session_still_open",
+          reason: sessionClosed
+            ? "session_already_closed_in_cloud"
+            : "session_still_open",
         });
         continue;
       }
@@ -208,19 +345,39 @@ export async function POST(req: NextRequest) {
         .eq("session_id", sessionId)
         .maybeSingle();
 
-      const applied =
+      const exactOperationApplied =
         !causalityError &&
         String(causality?.last_operation_id || "") === operation.operationId;
+
+      if (exactOperationApplied) {
+        results.push({
+          operation_id: operation.operationId,
+          operation_type: operation.operationType,
+          acknowledged: true,
+          session_id: sessionId,
+          reason: "attendance_operation_confirmed_in_cloud",
+        });
+        continue;
+      }
+
+      const semantic = await attendancePayloadAlreadyPresent({
+        srv,
+        institutionId,
+        sessionId,
+        localBody: operation.localBody,
+        sessionClosed,
+      });
+
       results.push({
         operation_id: operation.operationId,
         operation_type: operation.operationType,
-        acknowledged: applied,
+        acknowledged: semantic.matched,
         session_id: sessionId,
-        reason: applied
-          ? "attendance_operation_confirmed_in_cloud"
+        reason: semantic.matched
+          ? semantic.reason
           : causalityError
             ? "attendance_receipt_lookup_unavailable"
-            : "attendance_operation_not_confirmed",
+            : semantic.reason || "attendance_operation_not_confirmed",
       });
     }
 
