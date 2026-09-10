@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { repairClassDeviceCallOutbox } from "@/lib/class-device-outbox-reconcile";
+import { repairClassDeviceSyncV2 } from "@/lib/class-device-sync-reconcile-v2";
 
 export default function ClassDeviceSyncGuard() {
   const runningRef = useRef(false);
@@ -21,13 +21,11 @@ export default function ClassDeviceSyncGuard() {
       runningRef.current = true;
 
       try {
-        const result = await repairClassDeviceCallOutbox();
+        const result = await repairClassDeviceSyncV2();
         if (cancelled) return;
-        if (result.flushed > 0 || result.reconciled > 0) {
-          // Le composant historique de la page /class écoute l'événement online.
-          // Un événement synthétique lui demande uniquement de recalculer son compteur
-          // et de poursuivre son propre pipeline. Ce guard ignore les événements
-          // synthétiques pour éviter toute boucle.
+        if (result.flushed > 0 || result.reconciled > 0 || result.after < result.before) {
+          // La page /class recalcule son compteur et poursuit son pipeline historique.
+          // Le guard ignore les événements synthétiques pour ne jamais boucler.
           window.setTimeout(() => {
             if (!cancelled && navigator.onLine) {
               window.dispatchEvent(new Event("online"));
@@ -35,8 +33,7 @@ export default function ClassDeviceSyncGuard() {
           }, 50);
         }
       } catch {
-        // Le guard ne doit jamais bloquer l'écran d'appel. Les opérations restent
-        // dans IndexedDB et seront retentées au prochain retour réseau/intervalle.
+        // Aucune purge de secours : en cas d'échec les journaux IndexedDB restent intacts.
       } finally {
         runningRef.current = false;
       }
