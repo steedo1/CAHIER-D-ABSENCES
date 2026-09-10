@@ -42,9 +42,7 @@ function txDone(transaction: IDBTransaction) {
 
 async function rawBodies(ids: string[]) {
   const result = new Map<string, Record<string, any>>();
-  if (typeof window === "undefined" || !("indexedDB" in window) || !ids.length) {
-    return result;
-  }
+  if (typeof window === "undefined" || !("indexedDB" in window) || !ids.length) return result;
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("moncahier_offline_v1");
     request.onsuccess = () => resolve(request.result);
@@ -67,9 +65,7 @@ async function rawBodies(ids: string[]) {
 }
 
 function localCandidate(entry: OfflineOutboxEntry, body?: Record<string, any>) {
-  if (entry.operationType === "session-start") {
-    return `client:${entry.operationId}`;
-  }
+  if (entry.operationType === "session-start") return `client:${entry.operationId}`;
   return (
     text(body?.session_id) ||
     text(body?.client_session_id) ||
@@ -106,6 +102,7 @@ export default function RecoverSyncTestCleanupPage() {
   const [before, setBefore] = useState<number | null>(null);
   const [removed, setRemoved] = useState(0);
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [remainingIds, setRemainingIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -113,7 +110,7 @@ export default function RecoverSyncTestCleanupPage() {
     void (async () => {
       try {
         const response = await fetch(
-          "/api/class/my-classes?offline_contract=v5&test_cleanup=1",
+          "/api/class/my-classes?offline_contract=v5&test_cleanup=2",
           { credentials: "include", cache: "no-store" },
         );
         if (!response.ok) throw new Error(`Contexte classe indisponible (${response.status}).`);
@@ -134,22 +131,20 @@ export default function RecoverSyncTestCleanupPage() {
         const removable: OfflineOutboxEntry[] = [];
 
         for (const entry of entries) {
-          const metaClass = text(entry.meta?.classId);
-          const metaInstitution = text(entry.meta?.institutionId);
-          if (metaClass && metaClass !== SAFE_CLASS_ID) continue;
-          if (metaInstitution && metaInstitution !== SAFE_INSTITUTION_ID) continue;
-
           const candidate = localCandidate(entry, bodies.get(entry.id));
           const resolved = await resolvedCandidate(candidate).catch(() => null);
           const safeOrphan = candidate === SAFE_ORPHAN_CLIENT;
           const safeCloudDuplicate = Boolean(resolved && SAFE_CLOUD_SESSIONS.has(resolved));
+
+          // Important: pour ces résidus historiques déjà identifiés, les anciennes métadonnées
+          // classId/institutionId peuvent être absentes ou erronées. On ne les utilise donc plus
+          // comme motif de rejet. La sécurité repose ici sur l'authentification du téléphone 6e1
+          // ET sur les identifiants locaux/Cloud explicitement whitelistés ci-dessus.
           if (safeOrphan || safeCloudDuplicate) removable.push(entry);
         }
 
         const operationIds = new Set(removable.map((entry) => entry.operationId));
-        for (const entry of removable) {
-          await removeQueuedOfflineMutation(entry.id);
-        }
+        for (const entry of removable) await removeQueuedOfflineMutation(entry.id);
         await purgeDurableOperationIds(operationIds);
 
         const finalEntries = (await listOfflineOutboxEntries()).filter((entry) =>
@@ -158,6 +153,7 @@ export default function RecoverSyncTestCleanupPage() {
         if (cancelled) return;
         setRemoved(removable.length);
         setRemaining(finalEntries.length);
+        setRemainingIds(finalEntries.map((entry) => `${entry.operationType}: ${entry.operationId}`));
         setStatus(
           finalEntries.length === 0
             ? `${removable.length} résidu(s) de test identifiés ont été retirés de ce téléphone.`
@@ -185,8 +181,14 @@ export default function RecoverSyncTestCleanupPage() {
           <div className="rounded-2xl bg-amber-50 p-3"><div className="text-2xl font-bold text-amber-700">{remaining ?? "…"}</div><div className="text-xs text-amber-700">restants</div></div>
         </div>
         {error ? <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
+        {remainingIds.length > 0 ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-950">
+            <div className="font-semibold">Opérations encore présentes</div>
+            {remainingIds.map((item) => <div key={item} className="mt-1 break-all">{item}</div>)}
+          </div>
+        ) : null}
         <p className="mt-5 text-xs leading-5 text-slate-500">
-          Ce nettoyage est volontairement limité aux trois séances Cloud de test déjà vérifiées et à l’essai local dont la séance Cloud n’a jamais été créée. Il ne vide pas IndexedDB et ne touche pas aux autres opérations.
+          Ce nettoyage reste limité aux trois séances Cloud de test déjà vérifiées et à l’essai local dont la séance Cloud n’a jamais été créée. Il ne vide pas IndexedDB et ne touche pas aux autres opérations.
         </p>
         <a href="/class" className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Retour aux appels</a>
       </section>
