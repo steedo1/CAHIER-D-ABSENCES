@@ -26,6 +26,8 @@ type StudentRow = {
   gender: string | null;
   birthdate: string | null;
   birth_place: string | null;
+  parent_names: string | null;
+  parent_contact: string | null;
   nationality: string | null;
   is_repeater: boolean | null;
   lv2: string | null;
@@ -93,6 +95,8 @@ type EditableStudent = Pick<
   | "gender"
   | "birthdate"
   | "birth_place"
+  | "parent_names"
+  | "parent_contact"
   | "nationality"
   | "is_repeater"
   | "lv2"
@@ -285,6 +289,8 @@ const EDITABLE_STUDENT_FIELDS: Array<keyof EditableStudent> = [
   "gender",
   "birthdate",
   "birth_place",
+  "parent_names",
+  "parent_contact",
   "nationality",
   "is_repeater",
   "lv2",
@@ -326,6 +332,8 @@ function cloneEditable(
       gender: s.gender ?? null,
       birthdate: s.birthdate ? String(s.birthdate).slice(0, 10) : null,
       birth_place: s.birth_place ?? null,
+      parent_names: s.parent_names ?? null,
+      parent_contact: s.parent_contact ?? null,
       nationality: s.nationality ?? null,
       is_repeater: s.is_repeater ?? null,
       lv2: s.lv2 ?? null,
@@ -605,6 +613,8 @@ export default function ClassListPrintPage() {
           gender: row.gender || null,
           birthdate: row.birthdate || null,
           birth_place: row.birth_place || null,
+          parent_names: row.parent_names || null,
+          parent_contact: row.parent_contact || null,
           nationality: row.nationality || null,
           is_repeater: row.is_repeater,
           lv2: row.lv2 || null,
@@ -1277,7 +1287,7 @@ export default function ClassListPrintPage() {
             <div className="mb-3 text-sm text-slate-700">{saveMsg}</div>
           ) : null}
           <div className="max-h-[420px] overflow-auto rounded-xl border">
-            <table className="min-w-[1320px] text-sm">
+            <table className="min-w-[1780px] text-sm">
               <thead className="sticky top-0 bg-slate-50">
                 <tr>
                   <th className="px-3 py-2 text-left">Nom</th>
@@ -1287,6 +1297,8 @@ export default function ClassListPrintPage() {
                   <th className="px-3 py-2 text-left">Affecté</th>
                   <th className="px-3 py-2 text-left">Internat</th>
                   <th className="px-3 py-2 text-left">Né(e) le</th>
+                  <th className="px-3 py-2 text-left">Nom(s) parent(s) / tuteur(s)</th>
+                  <th className="px-3 py-2 text-left">Contact parent / tuteur</th>
                   <th className="px-3 py-2 text-left">Sexe</th>
                   <th className="px-3 py-2 text-left">Red</th>
                   <th className="px-3 py-2 text-left">LV2</th>
@@ -1416,6 +1428,32 @@ export default function ClassListPrintPage() {
                             })
                           }
                           className="w-[145px] rounded-lg border px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.parent_names || ""}
+                          onChange={(e) =>
+                            updateStudent(student.id, {
+                              parent_names: e.target.value || null,
+                            })
+                          }
+                          placeholder="Facultatif"
+                          aria-label="Nom(s) des parents ou tuteurs (facultatif)"
+                          className="w-[220px] rounded-lg border px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          value={row.parent_contact || ""}
+                          onChange={(e) =>
+                            updateStudent(student.id, {
+                              parent_contact: e.target.value || null,
+                            })
+                          }
+                          placeholder="Facultatif"
+                          aria-label="Contact du parent ou tuteur (facultatif)"
+                          className="w-[190px] rounded-lg border px-2 py-1"
                         />
                       </td>
                       <td className="px-3 py-2">

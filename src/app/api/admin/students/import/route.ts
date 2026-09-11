@@ -389,7 +389,9 @@ async function guardAdmin(
     .eq("profile_id", user.id);
 
   const adminRows = (urRows || []).filter((r) =>
-    ["admin", "super_admin"].includes(String(r.role || "")),
+    ["admin", "super_admin", "file_correspondent"].includes(
+      String(r.role || ""),
+    ),
   );
 
   let instId: string | null = (me?.institution_id as string) || null;

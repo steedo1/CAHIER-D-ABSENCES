@@ -191,6 +191,8 @@ export async function GET(req: NextRequest) {
         photo_updated_at,
         birthdate,
         birth_place,
+        parent_names,
+        parent_contact,
         nationality,
         gender,
         regime,
@@ -253,6 +255,8 @@ export async function GET(req: NextRequest) {
     birthdate: string | null;
     birth_date: string | null;
     birth_place: string | null;
+    parent_names: string | null;
+    parent_contact: string | null;
     nationality: string | null;
     gender: string | null;
     is_repeater: boolean | null;
@@ -302,6 +306,8 @@ export async function GET(req: NextRequest) {
       birthdate: (s.birthdate ?? null) as string | null,
       birth_date: (s.birthdate ?? null) as string | null,
       birth_place: (s.birth_place ?? null) as string | null,
+      parent_names: (s.parent_names ?? null) as string | null,
+      parent_contact: (s.parent_contact ?? null) as string | null,
       nationality: (s.nationality ?? null) as string | null,
       gender: (s.gender ?? null) as string | null,
       is_repeater:
