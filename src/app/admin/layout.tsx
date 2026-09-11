@@ -4,6 +4,7 @@ import FileCorrespondentShell from "./ui/file-correspondent-shell";
 import OfflineScheduleSyncBridge from "@/components/admin/OfflineScheduleSyncBridge";
 import RelaySupervisionBadge from "@/components/admin/RelaySupervisionBadge";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { ROLE_PRIORITY, type AppRole } from "@/lib/auth/role";
 
 export const metadata: Metadata = { title: "Espace Etablissement — Admin" };
@@ -19,7 +20,8 @@ async function getPrimaryRole(): Promise<AppRole | null> {
 
     if (!user) return null;
 
-    const { data: rows } = await supabase
+    const service = getSupabaseServiceClient();
+    const { data: rows } = await service
       .from("user_roles")
       .select("role")
       .eq("profile_id", user.id);

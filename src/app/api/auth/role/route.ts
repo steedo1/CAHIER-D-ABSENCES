@@ -54,7 +54,10 @@ export async function GET(request: NextRequest) {
     return noStore({ role: null }, 401);
   }
 
-  const { data: rows, error: rolesErr } = await supabase
+  // L'identité vient toujours de getUser(); le service ne sert qu'à lire les
+  // rôles de cet utilisateur vérifié, sans dépendre des politiques RLS de session.
+  const service = getSupabaseServiceClient();
+  const { data: rows, error: rolesErr } = await service
     .from("user_roles")
     .select("role,institution_id")
     .eq("profile_id", user.id);

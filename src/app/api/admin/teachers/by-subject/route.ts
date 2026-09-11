@@ -182,7 +182,7 @@ export async function GET(req: NextRequest) {
     .select("institution_id, role")
     .eq("profile_id", user.id)
     .eq("institution_id", institutionId)
-    .in("role", ["admin", "super_admin"])
+    .in("role", ["admin", "super_admin", "file_correspondent"])
     .limit(1)
     .maybeSingle();
 

@@ -490,6 +490,8 @@ export async function GET(
           gender,
           birthdate,
           birth_place,
+          parent_names,
+          parent_contact,
           nationality,
           is_repeater,
           lv2,
@@ -587,6 +589,8 @@ export async function GET(
         gender: s.gender ?? null,
         birthdate: s.birthdate ?? null,
         birth_place: s.birth_place ?? null,
+        parent_names: s.parent_names ?? null,
+        parent_contact: s.parent_contact ?? null,
         nationality: s.nationality ?? null,
         is_repeater: typeof s.is_repeater === "boolean" ? s.is_repeater : null,
         lv2: s.lv2 ?? null,
@@ -990,6 +994,8 @@ export async function PATCH(
             gender: normalizeGender(row?.gender),
             birthdate: normalizeDateYmd(row?.birthdate),
             birth_place: normalizeNullableText(row?.birth_place),
+            parent_names: normalizeNullableText(row?.parent_names),
+            parent_contact: normalizeNullableText(row?.parent_contact),
             nationality: normalizeNullableText(row?.nationality),
             is_repeater: normalizeBool(row?.is_repeater),
             lv2: normalizeNullableText(row?.lv2)?.toUpperCase() ?? null,
@@ -1104,7 +1110,7 @@ export async function PATCH(
         ? srv
             .from("students")
             .select(
-              "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,nationality,is_repeater,lv2,is_affecte,is_boarder",
+              "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder",
             )
             .in(
               "id",

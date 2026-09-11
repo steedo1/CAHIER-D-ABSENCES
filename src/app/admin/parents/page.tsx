@@ -117,6 +117,8 @@ type StudentRow = {
   birthdate?: string | null;
   birth_date?: string | null;
   birth_place?: string | null;
+  parent_names?: string | null;
+  parent_contact?: string | null;
   is_scholarship?: boolean | null;
 
   // Photo élève
@@ -277,6 +279,7 @@ function buildAttestationHtml(args: {
     );
 
     const birthPlaceLabel = (student.birth_place || "").trim() || "—";
+    const parentNames = (student.parent_names || "").trim();
 
     const scholarshipLabel =
       student.is_scholarship === true
@@ -389,6 +392,14 @@ function buildAttestationHtml(args: {
                     <span class="label">Lieu de naissance</span>
                     <span class="value">${escapeHtml(birthPlaceLabel)}</span>
                   </div>
+                  ${
+                    parentNames
+                      ? `<div class="row">
+                    <span class="label">Parent(s) / tuteur(s)</span>
+                    <span class="value">${escapeHtml(parentNames)}</span>
+                  </div>`
+                      : ""
+                  }
                 </div>
 
                 <div class="student-photo">
