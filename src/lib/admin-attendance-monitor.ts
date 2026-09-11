@@ -2,10 +2,10 @@ export type AdminAttendanceDataSource = "cloud" | "relay" | "cache";
 
 export const ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS = 4_000;
 export const ADMIN_ATTENDANCE_POLL_MS = {
-  cloud: 5_000,
+  cloud: 20_000,
   relay: 10_000,
-  cache: 30_000,
-  error: 30_000,
+  cache: 60_000,
+  error: 60_000,
   initial: 30_000,
 } as const;
 
