@@ -210,3 +210,91 @@ button { cursor: pointer }
   ) {
   display: none !important;
 }
+
+/* Bulletin A4 — mieux exploiter la surface utile sans toucher à la structure. */
+.preview-overlay .print-page-content {
+  padding: 0.8mm 2mm 1.5mm !important;
+}
+
+.preview-overlay .discipline-table th,
+.preview-overlay .discipline-table td,
+.bulletin-print-portal .discipline-table th,
+.bulletin-print-portal .discipline-table td {
+  font-size: 10.8px !important;
+}
+
+.preview-overlay .discipline-table th,
+.bulletin-print-portal .discipline-table th {
+  padding-top: 3px !important;
+  padding-bottom: 3px !important;
+}
+
+.preview-overlay .discipline-table td,
+.bulletin-print-portal .discipline-table td {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+
+.preview-overlay .student-identity,
+.bulletin-print-portal .student-identity {
+  font-size: 10.8px !important;
+}
+
+.preview-overlay .bulletin-header .official-block,
+.bulletin-print-portal .bulletin-header .official-block {
+  font-size: 10.6px !important;
+}
+
+.preview-overlay .bottom-card,
+.preview-overlay .council-card,
+.preview-overlay .visa-card,
+.bulletin-print-portal .bottom-card,
+.bulletin-print-portal .council-card,
+.bulletin-print-portal .visa-card {
+  font-size: 10.6px !important;
+}
+
+.preview-overlay .bottom-card,
+.bulletin-print-portal .bottom-card {
+  min-height: 70px !important;
+}
+
+.preview-overlay .council-card,
+.bulletin-print-portal .council-card {
+  min-height: 76px;
+}
+
+@media print {
+  .print-page-content {
+    padding: 0.8mm 2mm 1.5mm !important;
+  }
+
+  .discipline-table th,
+  .discipline-table td {
+    font-size: 10.8px !important;
+  }
+
+  .discipline-table th {
+    padding-top: 3px !important;
+    padding-bottom: 3px !important;
+  }
+
+  .discipline-table td {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+  }
+
+  .student-identity {
+    font-size: 10.8px !important;
+  }
+
+  .bulletin-header .official-block {
+    font-size: 10.6px !important;
+  }
+
+  .bottom-card,
+  .council-card,
+  .visa-card {
+    font-size: 10.6px !important;
+  }
+}
