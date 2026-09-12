@@ -44,6 +44,9 @@ type PendingAbsenceCountResponse =
   | {
       ok: true;
       items?: Array<{ id: string }>;
+      meta?: {
+        count?: number;
+      };
     }
   | {
       ok: false;
@@ -863,14 +866,15 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   }, []);
 
   React.useEffect(() => {
-    if (role === "file_correspondent") return;
+    if (role !== "admin" && role !== "super_admin") return;
     let cancelled = false;
 
     async function loadPendingAbsenceCount() {
       try {
-        const res = await fetch("/api/admin/absence-requests?status=pending", {
-          cache: "no-store",
-        });
+        const res = await fetch(
+          "/api/admin/absence-requests?status=pending&count_only=1",
+          { cache: "no-store" },
+        );
 
         if (!res.ok) {
           if (!cancelled) setPendingAbsenceCount(0);
@@ -886,7 +890,12 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
           return;
         }
 
-        const count = Array.isArray(json.items) ? json.items.length : 0;
+        const count =
+          typeof json.meta?.count === "number"
+            ? json.meta.count
+            : Array.isArray(json.items)
+              ? json.items.length
+              : 0;
 
         if (!cancelled) {
           setPendingAbsenceCount(count);
@@ -900,7 +909,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
     const timer = window.setInterval(() => {
       void loadPendingAbsenceCount();
-    }, 60000);
+    }, 120_000);
 
     return () => {
       cancelled = true;
@@ -909,13 +918,13 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
   }, [role]);
 
   React.useEffect(() => {
-    if (role === "file_correspondent") return;
+    if (role !== "admin" && role !== "super_admin" && role !== "educator") return;
     let cancelled = false;
 
     async function loadPendingGradePublicationCount() {
       try {
         const res = await fetch(
-          "/api/admin/grades/publication-requests?status=submitted&limit=300",
+          "/api/admin/grades/publication-requests?status=submitted&count_only=1",
           { cache: "no-store" },
         );
 
@@ -952,7 +961,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
     const timer = window.setInterval(() => {
       void loadPendingGradePublicationCount();
-    }, 60000);
+    }, 120_000);
 
     return () => {
       cancelled = true;

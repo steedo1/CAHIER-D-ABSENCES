@@ -1325,6 +1325,7 @@ export async function GET(req: NextRequest) {
     const classId = cleanText(searchParams.get("class_id"));
     const gradingPeriodId = cleanText(searchParams.get("grading_period_id"));
     const statusRaw = cleanText(searchParams.get("status")) || "submitted";
+    const countOnly = searchParams.get("count_only") === "1";
     const includeScores =
       searchParams.get("include_scores") === "1" || !!evaluationId;
 
@@ -1394,6 +1395,45 @@ export async function GET(req: NextRequest) {
           count: 0,
           status: statusRaw,
           reason: "NO_CLASSES",
+        },
+      });
+    }
+
+    if (countOnly) {
+      if (classId && !scopedClassMap.has(classId)) {
+        return bad("CLASS_NOT_FOUND_OR_FORBIDDEN", 403);
+      }
+
+      let countQuery = srv
+        .from("grade_evaluations")
+        .select("id", { count: "exact", head: true })
+        .in("class_id", classId ? [classId] : allowedClassIds);
+
+      if (statusRaw !== "all") {
+        countQuery = countQuery.eq("publication_status", statusRaw);
+      }
+      if (gradingPeriodId) {
+        countQuery = countQuery.eq("grading_period_id", gradingPeriodId);
+      }
+
+      const { count, error: countError } = await countQuery;
+      if (countError) {
+        console.error(
+          "[admin/grades/publication-requests] GET count error",
+          countError,
+        );
+        return bad("REQUESTS_COUNT_FAILED", 500, { details: countError.message });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        items: [],
+        meta: {
+          count: count ?? 0,
+          status: statusRaw,
+          count_only: true,
+          education_scope: educationScope,
+          grading_period_id: gradingPeriodId || null,
         },
       });
     }

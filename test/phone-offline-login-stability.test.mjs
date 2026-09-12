@@ -48,7 +48,7 @@ test("la connexion hors ligne ne charge aucun chunk de vérification à la soumi
 test("le worker publie /login uniquement après une préparation atomique complète", async () => {
   const worker = await read("public/moncahier-sw.js");
 
-  assert.match(worker, /2026-08-10-pwa-login-repeat-v5-7/);
+  assert.match(worker, /2026-08-29-attendance-slot-cache-v5-8/);
   assert.match(worker, /await warmDocument\("\/login"\);/);
   assert.doesNotMatch(
     worker,
@@ -116,9 +116,9 @@ test("les chunks Next annoncés dans Flight/RSC sont préparés pour les connexi
   );
 });
 
-test("la release diagnostique Web annonce le même worker PWA v5-7", async () => {
+test("la release diagnostique Web annonce le même worker PWA v5-8", async () => {
   const release = await read("src/lib/offline-release.ts");
-  assert.match(release, /2026-08-10-pwa-login-repeat-v5-7/);
+  assert.match(release, /2026-08-29-attendance-slot-cache-v5-8/);
 });
 
 test("un échec réseau retente le Cloud avant le secours hors ligne", async () => {

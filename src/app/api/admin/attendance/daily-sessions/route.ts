@@ -17,6 +17,22 @@ function nextUtcDay(ymd: string) {
   return { start, end };
 }
 
+function readDateRange(url: URL) {
+  const legacyDate = normalizeDate(url.searchParams.get("date"));
+  const startDate = legacyDate || normalizeDate(url.searchParams.get("start_date"));
+  const endDate = legacyDate || normalizeDate(url.searchParams.get("end_date"));
+  if (!startDate || !endDate || startDate > endDate) return null;
+
+  const startMs = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const endMs = new Date(`${endDate}T00:00:00.000Z`).getTime();
+  const days = Math.floor((endMs - startMs) / 86_400_000) + 1;
+  // L'historique reste une action explicite, mais une année complète peut être
+  // consultée en une seule requête au lieu d'un appel HTTP par jour.
+  if (!Number.isFinite(days) || days < 1 || days > 366) return null;
+
+  return { startDate, endDate };
+}
+
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
@@ -47,10 +63,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const date = normalizeDate(new URL(req.url).searchParams.get("date"));
-  if (!date) return NextResponse.json({ error: "bad_date" }, { status: 400 });
+  const range = readDateRange(new URL(req.url));
+  if (!range) return NextResponse.json({ error: "bad_date_range" }, { status: 400 });
 
-  const { start, end } = nextUtcDay(date);
+  const { start } = nextUtcDay(range.startDate);
+  const { end } = nextUtcDay(range.endDate);
   const { data: sessions, error: sessionsError } = await srv
     .from("teacher_sessions")
     .select("id,class_id,subject_id,teacher_id,started_at,ended_at")
@@ -106,9 +123,12 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     institution_id: institutionId,
-    date,
+    date: range.startDate === range.endDate ? range.startDate : null,
+    start_date: range.startDate,
+    end_date: range.endDate,
     rows: (sessions || []).map((row: any) => ({
       id: String(row.id),
+      session_date: String(row.started_at || "").slice(0, 10) || null,
       class_id: String(row.class_id || "") || null,
       subject_id: String(row.subject_id || "") || null,
       teacher_id: String(row.teacher_id || "") || null,

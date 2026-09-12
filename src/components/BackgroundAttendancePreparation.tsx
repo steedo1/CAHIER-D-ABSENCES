@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { usePathname } from "next/navigation";
 import { useAuth } from "@/app/providers";
 import {
   getOfflineReadiness,
@@ -10,8 +9,6 @@ import {
 import { probeCloudSchedule } from "@/lib/cloud-availability";
 import { prepareAdminEssentialOffline } from "@/lib/admin-essential-preparation";
 import { setAdminEssentialSessionUser } from "@/lib/admin-essential-fetch";
-import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
-import { warmOfflineShell } from "@/lib/offline";
 import {
   getOfflineAccessIntent,
   getOrCreateOfflineDeviceId,
@@ -24,7 +21,7 @@ import {
 import { rememberRelayCapability } from "@/lib/relay-capability";
 
 const ROLE_TIMEOUT_MS = 5_000;
-const ADMIN_PREPARATION_TIMEOUT_MS = 12_000;
+const BACKGROUND_CHECK_TTL_MS = 55_000;
 
 type RolePayload = {
   user_id?: string;
@@ -35,24 +32,6 @@ type RolePayload = {
 };
 
 let preparationInFlight: Promise<void> | null = null;
-
-const ADMIN_ATTENDANCE_PATHS = new Set([
-  "/admin/absences/appels",
-  "/admin/absences/appels-matrice",
-]);
-
-function isAdminAttendancePath(pathname: string | null | undefined) {
-  return !!pathname && ADMIN_ATTENDANCE_PATHS.has(pathname);
-}
-
-function localDateInAbidjan() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Africa/Abidjan",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
 
 async function fetchRole() {
   const controller = new AbortController();
@@ -66,23 +45,6 @@ async function fetchRole() {
     });
     if (!response.ok) throw new Error(`role_http_${response.status}`);
     return (await response.json()) as RolePayload;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-async function prepareAdminAttendanceView() {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    ADMIN_PREPARATION_TIMEOUT_MS,
-  );
-  try {
-    const today = localDateInAbidjan();
-    await fetchAdminAttendanceMonitor(today, today, controller.signal);
-    // La préparation du shell est utile pour le secours hors ligne, mais elle ne
-    // doit jamais invalider une lecture Cloud déjà réussie.
-    await warmOfflineShell(["/admin/absences/appels-matrice"]).catch(() => undefined);
   } finally {
     window.clearTimeout(timeout);
   }
@@ -157,10 +119,8 @@ async function withCrossTabLock(task: () => Promise<void>) {
 
 export default function BackgroundAttendancePreparation() {
   const { session, loading } = useAuth();
-  const pathname = usePathname();
   const sessionRef = useRef(session);
   const loadingRef = useRef(loading);
-  const pathnameRef = useRef(pathname);
 
   // Tous les layout effects sont exécutés avant les useEffect des pages. Le pont
   // de lecture ne peut donc jamais reprendre le scope Cloud d'un ancien compte
@@ -172,8 +132,7 @@ export default function BackgroundAttendancePreparation() {
   useEffect(() => {
     sessionRef.current = session;
     loadingRef.current = loading;
-    pathnameRef.current = pathname;
-  }, [loading, pathname, session]);
+  }, [loading, session]);
 
   const runRef = useRef<(force?: boolean) => void>(() => undefined);
 
@@ -187,6 +146,18 @@ export default function BackgroundAttendancePreparation() {
         rerunRequested = true;
         return;
       }
+
+      // IndexedDB et localStorage sont partagés entre les onglets. Une seule
+      // vérification par appareil et par minute suffit donc, même si plusieurs
+      // pages reçoivent simultanément focus/online/visibilitychange.
+      const sessionUserId = sessionRef.current?.user?.id || "";
+      if (!force && sessionUserId) {
+        const checkKey = `mc:attendance-background-check:${sessionUserId}`;
+        const now = Date.now();
+        if (now - numberFromStorage(checkKey) < BACKGROUND_CHECK_TTL_MS) return;
+        writeStorage(checkKey, now);
+      }
+
       preparationInFlight = (async () => {
         let role: OfflineAccessRole | null = null;
         let userId = sessionRef.current?.user?.id || "";
@@ -267,13 +238,6 @@ export default function BackgroundAttendancePreparation() {
             let prepared = false;
 
             if (role === "admin") {
-              // Appels garde sa lecture Cloud -> cache, avec étape Relais seulement
-              // lorsque la capacité établissement a été confirmée explicitement.
-              if (isAdminAttendancePath(pathnameRef.current)) {
-                await prepareAdminAttendanceView();
-                prepared = true;
-              }
-
               // Le vrai hors-ligne Admin est préparé uniquement après confirmation
               // Cloud du compte ET de son établissement. L'utilisateur n'a pas à
               // ouvrir Listes, Bulletins ou Conseil avant la panne.

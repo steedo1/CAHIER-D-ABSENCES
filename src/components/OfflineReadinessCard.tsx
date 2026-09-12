@@ -47,7 +47,10 @@ const AUTOMATIC_PREPARE_STATUSES = new Set([
   "offline_schema_stale",
 ]);
 
-const AUTOMATIC_REFRESH_MS = 5_000;
+// Une vérification par minute suffit pour détecter une révision EDT, tandis que
+// les événements réseau/visibilité conservent une reprise immédiate. L'ancien
+// intervalle de 5 s multipliait les lectures Supabase sur chaque téléphone.
+const AUTOMATIC_REFRESH_MS = 60_000;
 const AUTOMATIC_PREPARE_COOLDOWN_MS = 10_000;
 const AUTOMATIC_PREPARATION_ATTEMPTS = 3;
 const MANUAL_PREPARATION_ATTEMPTS = 2;

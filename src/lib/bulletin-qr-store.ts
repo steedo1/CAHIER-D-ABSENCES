@@ -27,7 +27,7 @@ export async function getOrCreateBulletinShortCode(
   // rattaché à un bulletin officiellement émis. Un QR officiel est immuable.
   const { data: existingRows } = await srv
     .from("bulletin_qr_codes")
-    .select("id, code, payload, expires_at, revoked, payload_hash, official_issue_id")
+    .select("id, code, expires_at, revoked, payload_hash, official_issue_id")
     .eq("bulletin_key", opts.bulletinKey)
     .eq("revoked", false)
     .order("created_at", { ascending: false })
@@ -43,21 +43,46 @@ export async function getOrCreateBulletinShortCode(
   // même si un brouillon plus récent a été généré après une modification.
   const officialMatch = usableRows.find((row: any) => {
     if (!row.official_issue_id) return false;
-    const storedHash =
-      String(row.payload_hash || "") || hashOfficialSnapshot(row.payload ?? null);
-    return storedHash === payloadHash;
+    return String(row.payload_hash || "") === payloadHash;
   });
   if (officialMatch?.code) return officialMatch.code;
+
+  // Les anciennes lignes officielles peuvent ne pas encore avoir de hash. Leur
+  // payload (volumineux) n'est chargé que dans ce cas de compatibilité, au lieu
+  // d'être renvoyé pour les 20 candidats à chaque génération de bulletin.
+  const legacyOfficialIds = usableRows
+    .filter((row: any) => row.official_issue_id && !row.payload_hash)
+    .map((row: any) => String(row.id || ""))
+    .filter(Boolean);
+  if (legacyOfficialIds.length) {
+    const { data: legacyOfficialRows } = await srv
+      .from("bulletin_qr_codes")
+      .select("id,code,payload")
+      .in("id", legacyOfficialIds);
+    const legacyMatch = (legacyOfficialRows || []).find(
+      (row: any) => hashOfficialSnapshot(row.payload ?? null) === payloadHash,
+    );
+    if (legacyMatch?.code) return legacyMatch.code;
+  }
 
   // Un QR non encore émis peut être actualisé. Un QR officiel ne l'est jamais.
   const editableDraft = usableRows.find((row: any) => !row.official_issue_id);
   if (editableDraft?.code) {
+    const requestedExpiresAt = opts.expiresAt ?? null;
+    const existingExpiresAt = editableDraft.expires_at ?? null;
+    if (
+      String(editableDraft.payload_hash || "") === payloadHash &&
+      existingExpiresAt === requestedExpiresAt
+    ) {
+      return editableDraft.code;
+    }
+
     const { error: updateError } = await srv
       .from("bulletin_qr_codes")
       .update({
         payload: opts.payload,
         payload_hash: payloadHash,
-        expires_at: opts.expiresAt ?? null,
+        expires_at: requestedExpiresAt,
       })
       .eq("id", editableDraft.id);
 

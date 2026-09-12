@@ -250,24 +250,24 @@ export default function SurveillanceAppelsPage() {
         { includeExpectedStatuses: true },
       );
       const monitorRows = Array.isArray(monitorResult.data?.rows) ? monitorResult.data.rows : [];
-      const dates = Array.from(new Set(monitorRows.map((row) => row.date).filter(Boolean)));
-      const sessionResults = await Promise.all(
-        dates.map(async (date) => {
-          const response = await fetch(`/api/admin/attendance/daily-sessions?date=${encodeURIComponent(date)}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          if (!response.ok) return [] as DailySession[];
-          const payload = await response.json().catch(() => ({}));
-          const dayRows: DailySession[] = Array.isArray(payload?.rows) ? payload.rows : [];
-          return dayRows.map((session) => ({ ...session, session_date: date }));
-        }),
+      const sessionResponse = await fetch(
+        `/api/admin/attendance/daily-sessions?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+        },
       );
+      const sessionPayload = sessionResponse.ok
+        ? await sessionResponse.json().catch(() => ({}))
+        : {};
+      const sessionRows: DailySession[] = Array.isArray(sessionPayload?.rows)
+        ? sessionPayload.rows
+        : [];
       dataSourceRef.current = monitorResult.source;
       refreshErrorRef.current = false;
       setError(null);
       setRows(monitorRows);
-      setSessions(sessionResults.flat());
+      setSessions(sessionRows);
       if (!background) setExpandedTeacher(null);
     } catch (cause: any) {
       if (cause?.name === "AbortError") return;
@@ -286,9 +286,10 @@ export default function SurveillanceAppelsPage() {
   useEffect(() => {
     let stopped = false;
     let pollTimer: number | null = null;
+    const liveToday = startDate === today && endDate === today;
 
     const scheduleNext = () => {
-      if (stopped) return;
+      if (stopped || !liveToday) return;
       const delay = adminAttendancePollDelay(dataSourceRef.current, refreshErrorRef.current);
       pollTimer = window.setTimeout(async () => {
         if (document.visibilityState === "visible" && navigator.onLine) {
@@ -299,14 +300,19 @@ export default function SurveillanceAppelsPage() {
     };
 
     const refreshNow = () => {
+      if (!liveToday) return;
       if (document.visibilityState !== "visible" || !navigator.onLine) return;
       void load({ background: true });
     };
 
-    void load().finally(scheduleNext);
-    window.addEventListener("focus", refreshNow);
-    window.addEventListener("online", refreshNow);
-    document.addEventListener("visibilitychange", refreshNow);
+    void load().finally(() => {
+      if (liveToday) scheduleNext();
+    });
+    if (liveToday) {
+      window.addEventListener("focus", refreshNow);
+      window.addEventListener("online", refreshNow);
+      document.addEventListener("visibilitychange", refreshNow);
+    }
 
     return () => {
       stopped = true;
@@ -316,7 +322,7 @@ export default function SurveillanceAppelsPage() {
       document.removeEventListener("visibilitychange", refreshNow);
       abortRef.current?.abort();
     };
-  }, [load]);
+  }, [endDate, load, startDate, today]);
 
   const detailedRows = useMemo<DetailedRow[]>(() => {
     const matches = matchSessions(rows, sessions);

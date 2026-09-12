@@ -39,16 +39,12 @@ test("le scope cache est remplacé avant les effets de lecture des pages", async
   );
 });
 
-test("la vue des appels conserve sa préparation relais spécifique", async () => {
+test("la page des appels reste seule propriétaire de son actualisation", async () => {
   const code = await source();
 
-  assert.match(code, /usePathname/);
-  assert.match(code, /"\/admin\/absences\/appels"/);
-  assert.match(code, /"\/admin\/absences\/appels-matrice"/);
-  assert.match(
-    code,
-    /if \(isAdminAttendancePath\(pathnameRef\.current\)\) \{\s*await prepareAdminAttendanceView\(\);\s*prepared = true;\s*\}/s,
-  );
+  assert.doesNotMatch(code, /prepareAdminAttendanceView/);
+  assert.doesNotMatch(code, /fetchAdminAttendanceMonitor/);
+  assert.doesNotMatch(code, /warmOfflineShell/);
 });
 
 test("une session Cloud résiduelle hors réseau ne marque pas une fausse préparation réussie", async () => {
@@ -72,17 +68,11 @@ test("la préparation globale reste silencieuse et ne pollue pas les écrans Adm
   assert.match(code, /return null;/);
 });
 
-test("un échec du shell d'appels ne transforme pas une lecture admin réussie en échec", async () => {
+test("les événements multi-onglets ne répètent pas le contrôle Cloud", async () => {
   const code = await source();
-  const start = code.indexOf("async function prepareAdminAttendanceView()");
-  const end = code.indexOf("function numberFromStorage", start);
-  assert.ok(start >= 0 && end > start, "préparation admin des appels introuvable");
-  const preparation = code.slice(start, end);
 
-  assert.match(preparation, /await fetchAdminAttendanceMonitor\(/);
-  assert.match(
-    preparation,
-    /warmOfflineShell\(\["\/admin\/absences\/appels-matrice"\]\)\.catch\(\(\) => undefined\)/,
-  );
-  assert.doesNotMatch(preparation, /Promise\.all\(/);
+  assert.match(code, /const BACKGROUND_CHECK_TTL_MS = 55_000/);
+  assert.match(code, /mc:attendance-background-check:/);
+  assert.match(code, /now - numberFromStorage\(checkKey\) < BACKGROUND_CHECK_TTL_MS/);
+  assert.match(code, /writeStorage\(checkKey, now\)/);
 });

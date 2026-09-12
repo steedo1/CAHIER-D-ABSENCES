@@ -92,7 +92,7 @@ test("admin 4 - le polling devient moins agressif hors Cloud", () => {
   assert.equal(adminAttendancePollDelay("cache", false), ADMIN_ATTENDANCE_POLL_MS.cache);
   assert.equal(adminAttendancePollDelay(null, true), ADMIN_ATTENDANCE_POLL_MS.error);
   assert.ok(ADMIN_ATTENDANCE_POLL_MS.cache > ADMIN_ATTENDANCE_POLL_MS.relay);
-  assert.ok(ADMIN_ATTENDANCE_POLL_MS.relay > ADMIN_ATTENDANCE_POLL_MS.cloud);
+  assert.ok(ADMIN_ATTENDANCE_POLL_MS.cloud > ADMIN_ATTENDANCE_POLL_MS.relay);
 });
 
 test("admin 5 - le cache est strictement cloisonné par établissement", () => {

@@ -382,6 +382,7 @@ export async function GET(req: NextRequest) {
     .trim()
     .toLowerCase();
   const rawEducationType = url.searchParams.get("education_type");
+  const countOnly = url.searchParams.get("count_only") === "1";
 
   if (!validateRawEducationType(rawEducationType)) {
     return NextResponse.json(
@@ -391,6 +392,37 @@ export async function GET(req: NextRequest) {
   }
 
   const educationScope = getScopeFromSearchParams(url.searchParams);
+
+  const hasEducationScope =
+    url.searchParams.has("education_type") ||
+    url.searchParams.has("formation_code") ||
+    url.searchParams.has("formation_level_code") ||
+    url.searchParams.has("level_code") ||
+    url.searchParams.has("class_id") ||
+    url.searchParams.has("classId");
+
+  if (countOnly && !hasEducationScope && !teacherProfileId && !teacherQuery) {
+    let countQuery = srv
+      .from("teacher_absence_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("institution_id", ctx.institution_id);
+    if (status && status !== "all") countQuery = countQuery.eq("status", status);
+
+    const { count, error: countError } = await countQuery;
+    if (countError) {
+      return NextResponse.json(
+        { ok: false, error: countError.message },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      items: [],
+      teachers: [],
+      meta: { count: count ?? 0, status: status || "all", count_only: true },
+    });
+  }
 
   const { data, error } = await srv
     .from("teacher_absence_requests")
