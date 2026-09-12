@@ -19,6 +19,83 @@ function normalizedParams(value: URLSearchParams | string) {
   return new URLSearchParams(entries).toString();
 }
 
+function normalizeBulletinSubjectName(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, " ")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function bulletinSubjectDisplayName(value: unknown) {
+  const original = String(value || "").trim();
+  const normalized = normalizeBulletinSubjectName(original);
+
+  if (
+    normalized === "sciences de la vie et de la terre" ||
+    normalized === "science de la vie et de la terre" ||
+    normalized === "svt"
+  ) {
+    return "S.V.T.";
+  }
+
+  if (
+    normalized === "education physique et sportive" ||
+    normalized === "education physique et sport" ||
+    normalized === "eps"
+  ) {
+    return "E.P.S.";
+  }
+
+  if (
+    normalized === "education aux droits de l homme et a la citoyennete" ||
+    normalized === "education aux droits de l homme et de la citoyennete" ||
+    normalized === "edhc"
+  ) {
+    return "E.D.H.C.";
+  }
+
+  return original;
+}
+
+function abbreviateBulletinSubjectNames(payload: any) {
+  if (!payload || typeof payload !== "object") return payload;
+
+  const next = { ...payload };
+
+  if (Array.isArray(payload.subjects)) {
+    next.subjects = payload.subjects.map((subject: any) => {
+      if (!subject || typeof subject !== "object") return subject;
+      const subjectName = bulletinSubjectDisplayName(subject.subject_name);
+      return subjectName && subjectName !== subject.subject_name
+        ? { ...subject, subject_name: subjectName }
+        : subject;
+    });
+  }
+
+  if (Array.isArray(payload.subject_groups)) {
+    next.subject_groups = payload.subject_groups.map((group: any) => {
+      if (!group || typeof group !== "object" || !Array.isArray(group.items)) {
+        return group;
+      }
+      return {
+        ...group,
+        items: group.items.map((item: any) => {
+          if (!item || typeof item !== "object") return item;
+          const subjectName = bulletinSubjectDisplayName(item.subject_name);
+          return subjectName && subjectName !== item.subject_name
+            ? { ...item, subject_name: subjectName }
+            : item;
+        }),
+      };
+    });
+  }
+
+  return next;
+}
+
 export function adminBulletinPeriodsKey(
   academicYear?: string | null,
   classId?: string | null,
@@ -90,8 +167,11 @@ async function enrichSettingsForOffline(payload: any) {
 }
 
 async function enrichBulletinForOffline(payload: any) {
-  if (!payload || !Array.isArray(payload.items)) return payload;
-  const items = await mapLimit(payload.items, 4, async (item: any) => {
+  const displayPayload = abbreviateBulletinSubjectNames(payload);
+  if (!displayPayload || !Array.isArray(displayPayload.items)) {
+    return displayPayload;
+  }
+  const items = await mapLimit(displayPayload.items, 4, async (item: any) => {
     const photoSource = item?.student_photo_url || item?.photo_url || "";
     const photo = await inlineImage(photoSource);
     const perSubject = await mapLimit(
@@ -115,7 +195,7 @@ async function enrichBulletinForOffline(payload: any) {
       per_subject: perSubject,
     };
   });
-  return { ...payload, items, offline_images_ready: true };
+  return { ...displayPayload, items, offline_images_ready: true };
 }
 
 export async function getAdminBulletinClasses<T = any>(): Promise<T> {
