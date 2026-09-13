@@ -15,6 +15,8 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
+import PayrollPrintSheet from "./PayrollPrintSheet";
+import { parsePayrollAmount, parsePayrollMinutes, payrollPayable, assignmentCoversDay, findPayrollSession, calculatePayrollSession } from "@/lib/finance/payroll-values";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
@@ -95,6 +97,8 @@ type StatisticsDetailRow = {
   class_id?: string | null;
   subject_id?: string | null;
   period_id?: string | null;
+  class_ids?: string[];
+  subject_ids?: string[];
 };
 
 type StatisticsDetailPayload = {
@@ -129,6 +133,7 @@ type ExpectedSlot = {
   subject_id: string;
   period_id: string;
   session_date: string;
+  start_time?: string | null;
   weekday: number;
   cycle: SchoolCycle;
   expected_minutes: number;
@@ -146,10 +151,6 @@ type InstitutionSettings = {
 function numberValue(value: number | string | null | undefined) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? n : 0;
-}
-
-function roundMoney(value: number) {
-  return Math.round(Number(value || 0));
 }
 
 function formatMoney(value: number | string | null | undefined) {
@@ -186,16 +187,14 @@ function parsePositiveInt(
   value: FormDataEntryValue | string | number | null | undefined,
   fallback: number,
 ) {
-  const n = Math.round(Number(String(value ?? "").replace(",", ".")));
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  return parsePayrollMinutes(value, fallback);
 }
 
 function parseAmount(
   value: FormDataEntryValue | string | number | null | undefined,
   fallback: number,
 ) {
-  const n = Number(String(value ?? "").replace(",", "."));
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
+  return parsePayrollAmount(value, fallback);
 }
 
 function monthRange(month: string) {
@@ -339,24 +338,20 @@ async function fetchStatisticsDetailServer(
   return { rows: Array.isArray(json?.rows) ? json.rows : [] };
 }
 
-async function fetchInstitutionSettingsServer(): Promise<InstitutionSettings> {
-  const h = await headers();
-  const c = await cookies();
-  const origin = buildOriginFromHeaders(h);
-  const res = await fetch(`${origin}/api/admin/institution/settings`, {
-    method: "GET",
-    headers: { cookie: c.toString(), accept: "application/json" },
-    cache: "no-store",
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) return {};
+async function fetchInstitutionSettingsServer(institutionId: string): Promise<InstitutionSettings> {
+  // Payroll access and the user's institution have already been verified.
+  const { data: row, error } = await getSupabaseServiceClient()
+    .from("institutions")
+    .select("name,logo_url,head_name,head_title,settings_json")
+    .eq("id", institutionId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const settings = row?.settings_json as Record<string, string> | null;
   return {
-    institution_name: json?.institution_name ?? "",
-    institution_label: json?.institution_label ?? "",
-    name: json?.name ?? "",
-    institution_logo_url: json?.institution_logo_url ?? "",
-    institution_head_name: json?.institution_head_name ?? "",
-    institution_head_title: json?.institution_head_title ?? "",
+    institution_name: row?.name || settings?.institution_name || settings?.school_name || settings?.header_title || settings?.name || settings?.label || "",
+    institution_logo_url: row?.logo_url ?? "",
+    institution_head_name: row?.head_name ?? "",
+    institution_head_title: row?.head_title ?? "",
   };
 }
 
@@ -442,6 +437,7 @@ async function buildExpectedSlotsForTeacher(params: {
   const from = new Date(`${periodStart}T00:00:00`);
   const to = new Date(`${periodEnd}T00:00:00`);
   const out: ExpectedSlot[] = [];
+  const seenSlots = new Set<string>();
 
   for (const row of (ttRows ?? []) as TeacherTimetableRow[]) {
     const classId = String(row.class_id || "");
@@ -461,11 +457,19 @@ async function buildExpectedSlotsForTeacher(params: {
 
     for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
       if (d.getDay() !== dbWeekdayToJs(weekday)) continue;
+      const day = ymd(d);
+      if (!((ctRows ?? []) as ClassTeacherAssignmentRow[]).some((assignment) =>
+        assignment.class_id === classId && assignment.subject_id === subjectId && assignmentCoversDay(assignment, day),
+      )) continue;
+      const slotKey = `${day}|${classId}|${subjectId}|${periodId}`;
+      if (seenSlots.has(slotKey)) continue;
+      seenSlots.add(slotKey);
       out.push({
         class_id: classId,
         subject_id: subjectId,
         period_id: periodId,
-        session_date: ymd(d),
+        session_date: day,
+        start_time: period.start_time,
         weekday,
         cycle,
         expected_minutes: expectedMinutes,
@@ -476,37 +480,6 @@ async function buildExpectedSlotsForTeacher(params: {
   return out.sort((a, b) =>
     `${a.session_date}|${a.class_id}|${a.period_id}`.localeCompare(`${b.session_date}|${b.class_id}|${b.period_id}`),
   );
-}
-
-function findMatchingSession(
-  rows: StatisticsDetailRow[],
-  used: Set<number>,
-  slot: ExpectedSlot,
-) {
-  const date = slot.session_date;
-  const exact = rows.findIndex((r, index) =>
-    !used.has(index) &&
-    String(r.dateISO || "").slice(0, 10) === date &&
-    String(r.class_id || "") === slot.class_id &&
-    String(r.period_id || "") === slot.period_id &&
-    (!r.subject_id || String(r.subject_id) === slot.subject_id),
-  );
-  if (exact >= 0) {
-    used.add(exact);
-    return rows[exact];
-  }
-
-  const fallback = rows.findIndex((r, index) =>
-    !used.has(index) &&
-    String(r.dateISO || "").slice(0, 10) === date &&
-    String(r.class_id || "") === slot.class_id &&
-    (!r.subject_id || String(r.subject_id) === slot.subject_id),
-  );
-  if (fallback >= 0) {
-    used.add(fallback);
-    return rows[fallback];
-  }
-  return null;
 }
 
 function payrollMessage(code: string | null | undefined) {
@@ -576,6 +549,53 @@ async function calculatePayrollAction(formData: FormData) {
   const classes = (classRows ?? []) as ClassRow[];
   const classMap = new Map(classes.map((c) => [String(c.id), c]));
   const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
+
+  // Read and calculate everything before replacing the existing draft.
+  const preparedLines = [];
+  for (const teacher of vacataires) {
+    const [stats, expectedSlots] = await Promise.all([
+      fetchStatisticsDetailServer(teacher.profile_id, effectiveRange.periodStart, effectiveRange.periodEnd),
+      buildExpectedSlotsForTeacher({
+        admin,
+        institutionId,
+        teacherId: teacher.profile_id,
+        periodStart: effectiveRange.periodStart,
+        periodEnd: effectiveRange.periodEnd,
+        classMap,
+        referenceMinutes: sessionReferenceMinutes,
+      }),
+    ]);
+
+    const actualRows = (stats.rows || []).filter((r) => !!r.actual_call_iso || numberValue(r.real_minutes) > 0);
+    const usedRows = new Set<number>();
+
+    const sessionItems = expectedSlots.map((slot) => {
+      const matched = findPayrollSession(actualRows, usedRows, slot);
+      const expectedMinutes = Math.max(1, numberValue(slot.expected_minutes) || sessionReferenceMinutes);
+      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
+      return {
+        ...slot,
+        ...calculatePayrollSession(matched, expectedMinutes, sessionReferenceMinutes, rate, lateToleranceMin, earlyDepartureToleranceMin),
+      };
+    });
+
+    const expectedSessions = sessionItems.length;
+    const actualSessions = sessionItems.filter((item) => item.counted_for_pay).length;
+    const expectedMinutes = sessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
+    const actualMinutes = sessionItems.reduce((acc, item) => acc + item.actual_minutes, 0);
+    const sessionsFirstCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "first_cycle").length;
+    const sessionsSecondCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "second_cycle").length;
+    const grossAmount = sessionItems.reduce((acc, item) => acc + item.theoretical_amount, 0);
+    const lostMinutesAfterTolerance = sessionItems.reduce((acc, item) => acc + item.lost_minutes_after_tolerance, 0);
+    const lostAmount = sessionItems.reduce((acc, item) => acc + item.lost_amount, 0);
+    const adjustedAmount = sessionItems.reduce((acc, item) => acc + item.adjusted_amount, 0);
+    const expectedAmount = expectedSlots.reduce(
+      (acc, slot) => acc + (slot.cycle === "first_cycle" ? rateFirst : rateSecond),
+      0,
+    );
+
+    preparedLines.push({ teacher, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount });
+  }
 
   const { data: existingDraft, error: draftErr } = await admin
     .schema("finance")
@@ -648,80 +668,8 @@ async function calculatePayrollAction(formData: FormData) {
   const { error: delLinesErr } = await admin.schema("finance").from("teacher_payroll_lines").delete().eq("run_id", runId);
   if (delLinesErr) throw new Error(delLinesErr.message);
 
-  for (const teacher of vacataires) {
-    const [stats, expectedSlots] = await Promise.all([
-      fetchStatisticsDetailServer(teacher.profile_id, effectiveRange.periodStart, effectiveRange.periodEnd),
-      buildExpectedSlotsForTeacher({
-        admin,
-        institutionId,
-        teacherId: teacher.profile_id,
-        periodStart: effectiveRange.periodStart,
-        periodEnd: effectiveRange.periodEnd,
-        classMap,
-        referenceMinutes: sessionReferenceMinutes,
-      }),
-    ]);
-
-    const actualRows = (stats.rows || []).filter((r) => !!r.actual_call_iso || numberValue(r.real_minutes) > 0);
-    const usedRows = new Set<number>();
-
-    const sessionItems = expectedSlots.map((slot) => {
-      const matched = findMatchingSession(actualRows, usedRows, slot);
-      const expectedMinutes = Math.max(1, numberValue(slot.expected_minutes) || sessionReferenceMinutes);
-      const started = Boolean(matched?.actual_call_iso);
-      const closed = Boolean(matched?.ended_at);
-      const rawLate = matched
-        ? Math.max(0, numberValue(matched.late_minutes) || (expectedMinutes - numberValue(matched.real_minutes)))
-        : expectedMinutes;
-      const lateMinutes = Math.min(expectedMinutes, rawLate);
-      const observedMinutes = matched && closed ? Math.max(0, numberValue(matched.observed_minutes)) : 0;
-      const creditedMinutes = closed
-        ? Math.min(Math.max(0, expectedMinutes - lateMinutes), observedMinutes)
-        : 0;
-      const earlyDepartureMinutes = closed
-        ? Math.max(0, expectedMinutes - lateMinutes - creditedMinutes)
-        : expectedMinutes;
-      const isActuallyHeld = started && closed && creditedMinutes > 0;
-
-      const sanctionableLate = isActuallyHeld ? Math.max(0, lateMinutes - lateToleranceMin) : 0;
-      const sanctionableEarly = isActuallyHeld ? Math.max(0, earlyDepartureMinutes - earlyDepartureToleranceMin) : 0;
-      const lostMinutes = isActuallyHeld
-        ? Math.min(sessionReferenceMinutes, sanctionableLate + sanctionableEarly)
-        : expectedMinutes;
-      const lostEquivalent = isActuallyHeld ? Math.min(1, lostMinutes / sessionReferenceMinutes) : 0;
-      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
-      const gross = isActuallyHeld ? rate : 0;
-      const retained = isActuallyHeld ? roundMoney(rate * lostEquivalent) : 0;
-      const payable = isActuallyHeld ? Math.max(0, roundMoney(gross - retained)) : 0;
-
-      return {
-        ...slot,
-        actual_minutes: creditedMinutes,
-        tolerance_minutes: isActuallyHeld ? lateToleranceMin + earlyDepartureToleranceMin : 0,
-        lost_minutes_after_tolerance: lostMinutes,
-        lost_sessions_equivalent: lostEquivalent,
-        theoretical_amount: gross,
-        lost_amount: retained,
-        adjusted_amount: payable,
-        source_origin: isActuallyHeld ? "class_device" : "timetable_expected",
-        counted_for_pay: isActuallyHeld,
-      };
-    });
-
-    const expectedSessions = sessionItems.length;
-    const actualSessions = sessionItems.filter((item) => item.counted_for_pay).length;
-    const expectedMinutes = sessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
-    const actualMinutes = sessionItems.reduce((acc, item) => acc + item.actual_minutes, 0);
-    const sessionsFirstCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "first_cycle").length;
-    const sessionsSecondCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "second_cycle").length;
-    const grossAmount = sessionItems.reduce((acc, item) => acc + item.theoretical_amount, 0);
-    const lostMinutesAfterTolerance = sessionItems.reduce((acc, item) => acc + item.lost_minutes_after_tolerance, 0);
-    const lostAmount = sessionItems.reduce((acc, item) => acc + item.lost_amount, 0);
-    const adjustedAmount = sessionItems.reduce((acc, item) => acc + item.adjusted_amount, 0);
-    const expectedAmount = expectedSlots.reduce(
-      (acc, slot) => acc + (slot.cycle === "first_cycle" ? rateFirst : rateSecond),
-      0,
-    );
+  for (const prepared of preparedLines) {
+    const { teacher, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount } = prepared;
 
     const { data: line, error: lineErr } = await admin
       .schema("finance")
@@ -895,16 +843,27 @@ export default async function FinancePayrollPage({
       return query.order("generated_at", { ascending: false }).limit(24);
     })(),
     getPayrollTeachers(institutionId),
-    printMode ? fetchInstitutionSettingsServer() : Promise.resolve({} as InstitutionSettings),
+    printMode ? fetchInstitutionSettingsServer(institutionId) : Promise.resolve({} as InstitutionSettings),
   ]);
   if (runsResult.error) throw new Error(runsResult.error.message);
 
   const runRows = (runsResult.data ?? []) as TeacherPayrollRunRow[];
-  const selectedRun =
+  let selectedRun =
     (requestedRunId ? runRows.find((r) => r.id === requestedRunId) : null) ||
     runRows.find((r) => r.period_month === `${month}-01` && r.status === "draft") ||
     runRows.find((r) => r.period_month === `${month}-01`) ||
     null;
+
+  // Printing an old run must not silently select a different recent run.
+  if (requestedRunId) {
+    const { data: requestedRun, error } = await supabase.schema("finance")
+      .from("teacher_payroll_runs").select("*")
+      .eq("id", requestedRunId).eq("institution_id", institutionId)
+      .eq("scope", "vacataires_only").maybeSingle();
+    if (error) throw new Error(error.message);
+    selectedRun = requestedRun as TeacherPayrollRunRow | null;
+    if (!selectedRun) return <p role="alert">Cet état de paie est introuvable ou inaccessible.</p>;
+  }
 
   const effectiveLateTolerance = selectedRun ? parsePositiveInt(selectedRun.late_tolerance_min, baseLateTolerance) : baseLateTolerance;
   const effectiveEarlyTolerance = selectedRun ? parsePositiveInt(selectedRun.early_departure_tolerance_min, baseEarlyTolerance) : baseEarlyTolerance;
@@ -932,66 +891,17 @@ export default async function FinancePayrollPage({
       acc.lostMinutes += numberValue(row.lost_minutes_after_tolerance);
       acc.gross += numberValue(row.gross_amount);
       acc.retained += numberValue(row.lost_amount);
-      acc.payable += numberValue(row.adjusted_amount ?? row.gross_amount);
+      acc.payable += payrollPayable(row);
       return acc;
     },
     { expectedSessions: 0, actualSessions: 0, actualMinutes: 0, lostMinutes: 0, gross: 0, retained: 0, payable: 0 },
   );
 
   if (printMode && selectedRun) {
-    const institutionName = (institutionCfg.institution_name || institutionCfg.institution_label || institutionCfg.name || "Etablissement scolaire").trim();
-    const headName = String(institutionCfg.institution_head_name || "").trim() || "Le responsable";
-    const headTitle = String(institutionCfg.institution_head_title || "").trim() || "Chef d’établissement";
-    return (
-      <div className="payroll-print-root bg-white p-6 text-slate-900">
-        <style dangerouslySetInnerHTML={{ __html: `@page{size:A4 portrait;margin:10mm}@media print{body *{visibility:hidden}.payroll-print-root,.payroll-print-root *{visibility:visible!important}.payroll-print-root{position:absolute;inset:0;width:100%;padding:0!important}.no-print{display:none!important}}` }} />
-        {autoPrint ? <script dangerouslySetInnerHTML={{ __html: "setTimeout(function(){window.print()},250);" }} /> : null}
-        <div className="mx-auto max-w-5xl">
-          <div className="border-b-2 border-slate-900 pb-4 text-center">
-            <div className="text-xl font-black uppercase">{institutionName}</div>
-            <div className="mt-2 text-2xl font-black">État de paie des vacataires — {formatMonthLabel(selectedRun.period_month.slice(0, 7))}</div>
-            <div className="mt-2 text-sm">Séance de référence : {effectiveReferenceMinutes} min · Retard toléré : {effectiveLateTolerance} min · Sortie anticipée tolérée : {effectiveEarlyTolerance} min</div>
-          </div>
-          <table className="mt-6 w-full border-collapse text-xs">
-            <thead>
-              <tr className="bg-slate-100">
-                <th className="border border-slate-300 p-2 text-left">Enseignant</th>
-                <th className="border border-slate-300 p-2 text-right">Séances</th>
-                <th className="border border-slate-300 p-2 text-right">Brut</th>
-                <th className="border border-slate-300 p-2 text-right">Retenue</th>
-                <th className="border border-slate-300 p-2 text-right">À payer</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((row) => (
-                <tr key={row.id}>
-                  <td className="border border-slate-300 p-2 font-semibold">{row.teacher_name_snapshot || "Enseignant"}</td>
-                  <td className="border border-slate-300 p-2 text-right">{row.actual_sessions} / {row.expected_sessions}</td>
-                  <td className="border border-slate-300 p-2 text-right">{formatMoney(row.gross_amount)}</td>
-                  <td className="border border-slate-300 p-2 text-right">{formatMoney(row.lost_amount)}</td>
-                  <td className="border border-slate-300 p-2 text-right font-black">{formatMoney(row.adjusted_amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-slate-100 font-black">
-                <td className="border border-slate-300 p-2">TOTAL</td>
-                <td className="border border-slate-300 p-2 text-right">{totals.actualSessions}</td>
-                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.gross)}</td>
-                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.retained)}</td>
-                <td className="border border-slate-300 p-2 text-right">{formatMoney(totals.payable)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <div className="mt-12 flex justify-end">
-            <div className="min-w-64 text-center">
-              <div className="font-bold">{headTitle}</div>
-              <div className="mt-16 font-semibold">{headName}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <PayrollPrintSheet autoPrint={autoPrint} institutionCfg={institutionCfg}
+      selectedRun={selectedRun} lines={lines} totals={totals}
+      effectiveReferenceMinutes={effectiveReferenceMinutes}
+      effectiveLateTolerance={effectiveLateTolerance} effectiveEarlyTolerance={effectiveEarlyTolerance} />;
   }
 
   const message = payrollMessage(params?.message);
@@ -1162,7 +1072,7 @@ export default async function FinancePayrollPage({
                       <td className="px-3 py-3 text-right text-slate-700">{formatMinutes(row.actual_minutes)}</td>
                       <td className="px-3 py-3 text-right text-slate-700">{formatMoney(row.gross_amount)}</td>
                       <td className="px-3 py-3 text-right font-semibold text-amber-700">{formatMoney(row.lost_amount)}</td>
-                      <td className="px-3 py-3 text-right text-base font-black text-emerald-700">{formatMoney(row.adjusted_amount)}</td>
+                      <td className="px-3 py-3 text-right text-base font-black text-emerald-700">{formatMoney(payrollPayable(row))}</td>
                     </tr>
                   ))}
                 </tbody>
