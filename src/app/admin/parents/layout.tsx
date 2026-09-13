@@ -99,7 +99,7 @@ export default function StudentsByClassLayout({ children }: { children: ReactNod
 
       if (!child || !openedUrl.startsWith("blob:")) return child;
 
-      const addIvorianFrame = () => {
+      const enhanceAttestation = () => {
         try {
           const title = String(child.document?.title || "").toLowerCase();
           const border = child.document?.querySelector(".sheet-border");
@@ -115,6 +115,12 @@ export default function StudentsByClassLayout({ children }: { children: ReactNod
                 inset 0 0 0 2px #FFFFFF,
                 inset 0 0 0 4px #009E60 !important;
             }
+
+            /* Espace cachet : on remonte modérément la date et le titre,
+               sans créer un grand vide avant le nom du responsable. */
+            .signature-space {
+              height: 32mm !important;
+            }
           `;
           child.document.head.appendChild(style);
         } catch {
@@ -123,7 +129,7 @@ export default function StudentsByClassLayout({ children }: { children: ReactNod
       };
 
       try {
-        child.addEventListener("load", addIvorianFrame, { once: true });
+        child.addEventListener("load", enhanceAttestation, { once: true });
       } catch {
         // Aucun impact sur l'ouverture normale du document.
       }
