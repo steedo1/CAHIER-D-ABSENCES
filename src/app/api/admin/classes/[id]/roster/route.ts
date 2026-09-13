@@ -775,16 +775,6 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (isAffecte === null || isBoarder === null) {
-    return NextResponse.json(
-      {
-        error:
-          "Affectation et internat sont obligatoires pour générer une dette fiable.",
-      },
-      { status: 400 },
-    );
-  }
-
   if (matricule) {
     const { data: duplicate, error: dupErr } = await srv
       .from("students")
@@ -981,10 +971,6 @@ export async function PATCH(
         const isBoarder = normalizeBool(row?.is_boarder);
 
         if (!normalizedFullName) throw new Error("missing_student_name");
-        if (isAffecte === null || isBoarder === null) {
-          throw new Error("missing_finance_profile");
-        }
-
         return {
           student_id: studentId,
           patch: {
@@ -1024,15 +1010,6 @@ export async function PATCH(
     if ((error as Error)?.message === "missing_student_name") {
       return NextResponse.json(
         { error: "Le nom complet de chaque élève est obligatoire." },
-        { status: 400 },
-      );
-    }
-    if ((error as Error)?.message === "missing_finance_profile") {
-      return NextResponse.json(
-        {
-          error:
-            "Affectation et internat sont obligatoires. Aucune dette n'a été modifiée.",
-        },
         { status: 400 },
       );
     }

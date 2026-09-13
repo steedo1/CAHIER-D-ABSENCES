@@ -1376,12 +1376,6 @@ export default function AdminStudentsByClassPage() {
         const first_name = form.new_first_name.trim();
         const last_name = form.new_last_name.trim();
         const matricule = form.new_matricule.trim();
-        if (!form.new_is_affecte || !form.new_is_boarder) {
-          throw new Error(
-            "Renseignez Affecte/Non affecte et Interne/Externe avant l'inscription.",
-          );
-        }
-
         if (!first_name && !last_name) {
           throw new Error("Renseignez au moins le nom ou les prenoms.");
         }
@@ -1392,8 +1386,14 @@ export default function AdminStudentsByClassPage() {
           first_name: first_name || null,
           last_name: last_name || null,
           matricule: matricule || null,
-          is_affecte: form.new_is_affecte === "true",
-          is_boarder: form.new_is_boarder === "true",
+          is_affecte:
+            form.new_is_affecte === ""
+              ? null
+              : form.new_is_affecte === "true",
+          is_boarder:
+            form.new_is_boarder === ""
+              ? null
+              : form.new_is_boarder === "true",
         };
       } else {
         if (selectedStu?.id) {
@@ -1988,7 +1988,7 @@ export default function AdminStudentsByClassPage() {
 
                   <div>
                     <div className="mb-1 text-xs text-slate-600">
-                      Statut de scolarite
+                      Statut de scolarite (optionnel)
                     </div>
                     <Select
                       value={form.new_is_affecte}
@@ -2007,7 +2007,7 @@ export default function AdminStudentsByClassPage() {
 
                   <div>
                     <div className="mb-1 text-xs text-slate-600">
-                      Statut d'internat
+                      Statut d'internat (optionnel)
                     </div>
                     <Select
                       value={form.new_is_boarder}
