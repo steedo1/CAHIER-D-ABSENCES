@@ -1163,9 +1163,9 @@ export default function ClassListPrintPage() {
               Inscription rapide dans cette classe
             </div>
             <div className="text-sm text-slate-600">
-              Saisissez l’identité et le profil financier. Sans Affecté/Non
-              affecté et Interne/Externe, les dettes ne peuvent pas être
-              générées correctement.
+              Saisissez l’identité de l’élève. Les statuts Affecté/Non affecté
+              et Interne/Externe sont facultatifs et servent uniquement aux
+              établissements qui utilisent les règles financières associées.
             </div>
           </div>
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_0.8fr_0.75fr_0.75fr_auto] md:items-end">
@@ -1214,7 +1214,7 @@ export default function ClassListPrintPage() {
               />
             </label>
             <label className="text-sm font-medium text-slate-700">
-              Affecté
+              Affecté (facultatif)
               <select
                 value={newStudentForm.is_affecte}
                 onChange={(e) =>
@@ -1223,7 +1223,6 @@ export default function ClassListPrintPage() {
                     is_affecte: e.target.value,
                   }))
                 }
-                required
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               >
                 <option value="">Choisir</option>
@@ -1232,7 +1231,7 @@ export default function ClassListPrintPage() {
               </select>
             </label>
             <label className="text-sm font-medium text-slate-700">
-              Internat
+              Internat (facultatif)
               <select
                 value={newStudentForm.is_boarder}
                 onChange={(e) =>
@@ -1241,7 +1240,6 @@ export default function ClassListPrintPage() {
                     is_boarder: e.target.value,
                   }))
                 }
-                required
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               >
                 <option value="">Choisir</option>

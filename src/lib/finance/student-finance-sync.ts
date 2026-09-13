@@ -161,6 +161,42 @@ function emptySyncResult(): FinanceSyncResult {
   };
 }
 
+function emptyTransferResult(
+  sourceClassIds: string[] = [],
+): FinanceClassTransferSummary {
+  return {
+    attempted: false,
+    source_class_ids: Array.from(
+      new Set(sourceClassIds.map(cleanId).filter(Boolean)),
+    ),
+    moved_charges: 0,
+    retargeted_charges: 0,
+    cancelled_duplicates: 0,
+    preserved_paid_amount: 0,
+    component_links_moved: 0,
+    option_links_moved: 0,
+    warnings: [],
+  };
+}
+
+async function institutionFinanceModuleIsEnabled(
+  srv: ServiceClient,
+  institutionId: string,
+) {
+  const { data, error } = await srv
+    .from("institution_finance_module_settings")
+    .select("finance_premium_enabled")
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+
+  // En cas d'indisponibilité ponctuelle du réglage, on conserve le
+  // comportement financier existant. Une ligne absente ou explicitement
+  // désactivée signifie en revanche que la scolarité ne doit pas dépendre du
+  // module Finance.
+  if (error) return true;
+  return data?.finance_premium_enabled === true;
+}
+
 async function academicYearId(
   srv: ServiceClient,
   institutionId: string,
@@ -231,6 +267,7 @@ export async function applyStudentFinanceReconciliation({
   studentId,
   classId,
   studentProfile,
+  financeModuleEnabled,
 }: {
   srv?: ServiceClient;
   institutionId: string;
@@ -238,8 +275,16 @@ export async function applyStudentFinanceReconciliation({
   studentId: string;
   classId: string;
   studentProfile?: FinanceStudentProfileLike | null;
+  financeModuleEnabled?: boolean;
 }): Promise<AppliedFinanceReconciliation> {
   const summary = emptySyncResult();
+
+  const shouldSynchronizeFinance =
+    financeModuleEnabled ??
+    (await institutionFinanceModuleIsEnabled(srv, institutionId));
+  if (!shouldSynchronizeFinance) {
+    return { summary, rollback: async () => undefined };
+  }
 
   const [classResult, studentResult, schedulesResult, classesResult, categoriesResult] =
     await Promise.all([
@@ -899,6 +944,18 @@ export async function synchronizeStudentFinance({
   let transfer: AppliedFinanceClassTransfer | null = null;
   let reconciliation: AppliedFinanceReconciliation | null = null;
 
+  const financeModuleEnabled = await institutionFinanceModuleIsEnabled(
+    srv,
+    institutionId,
+  );
+  if (!financeModuleEnabled) {
+    return {
+      transfer: emptyTransferResult(sourceClassIds),
+      reconciliation: emptySyncResult(),
+      rollback: async () => undefined,
+    };
+  }
+
   try {
     const resolvedSourceClassIds = new Set(
       sourceClassIds.map(cleanId).filter((id) => id && id !== targetClass.id),
@@ -936,6 +993,7 @@ export async function synchronizeStudentFinance({
       studentId,
       classId: targetClass.id,
       studentProfile,
+      financeModuleEnabled: true,
     });
   } catch (error) {
     if (reconciliation) await reconciliation.rollback();

@@ -270,21 +270,6 @@ export default function ClassListCorrectionsPanel() {
         return;
       }
 
-      const incompleteFinance = changedRoster.find(
-        (row) =>
-          typeof row.is_affecte !== "boolean" ||
-          typeof row.is_boarder !== "boolean",
-      );
-      if (incompleteFinance) {
-        throw new Error(
-          `Complétez Affecté/Non affecté et Interne/Externe pour ${
-            clean(
-              `${incompleteFinance.last_name || ""} ${incompleteFinance.first_name || ""}`,
-            ) || "cet élève"
-          } avant d’enregistrer.`,
-        );
-      }
-
       let classMoves = 0;
 
       if (changedRoster.length > 0) {
@@ -437,8 +422,8 @@ export default function ClassListCorrectionsPanel() {
                     "Sexe",
                     "Nationalité",
                     "Série",
-                    "Affecté",
-                    "Internat",
+                    "Affecté (facultatif)",
+                    "Internat (facultatif)",
                     "Boursier",
                     "Redoublant",
                     "LV2",
