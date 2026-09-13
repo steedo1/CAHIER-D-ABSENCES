@@ -15,6 +15,8 @@ type StudentRow = {
   gender: string | null;
   birthdate: string | null;
   birth_place: string | null;
+  parent_names: string | null;
+  parent_contact: string | null;
   nationality: string | null;
   is_repeater: boolean | null;
   lv2: string | null;
@@ -82,6 +84,8 @@ function normalizeRow(
     last_name: lastName || null,
     birthdate: row.birthdate ? String(row.birthdate).slice(0, 10) : null,
     birth_place: row.birth_place ?? null,
+    parent_names: row.parent_names ?? null,
+    parent_contact: row.parent_contact ?? null,
     nationality: row.nationality ?? null,
     scholarship_status: normalizeScholarship(scholarshipStatus),
   };
@@ -101,6 +105,8 @@ const ROSTER_FIELDS: Array<keyof EditableStudent> = [
   "is_boarder",
   "birthdate",
   "birth_place",
+  "parent_names",
+  "parent_contact",
   "gender",
   "is_repeater",
   "lv2",
@@ -298,6 +304,8 @@ export default function ClassListCorrectionsPanel() {
                 is_boarder: row.is_boarder,
                 birthdate: clean(row.birthdate) || null,
                 birth_place: clean(row.birth_place) || null,
+                parent_names: clean(row.parent_names) || null,
+                parent_contact: clean(row.parent_contact) || null,
                 gender: clean(row.gender) || null,
                 is_repeater: row.is_repeater,
                 lv2: clean(row.lv2).toUpperCase() || null,
@@ -415,7 +423,7 @@ export default function ClassListCorrectionsPanel() {
               Chargement des élèves…
             </div>
           ) : (
-            <table className="min-w-[1790px] border-separate border-spacing-0 text-sm">
+            <table className="min-w-[2250px] border-separate border-spacing-0 text-sm">
               <thead className="sticky top-0 z-10 bg-slate-100">
                 <tr>
                   {[
@@ -424,6 +432,8 @@ export default function ClassListCorrectionsPanel() {
                     "Matricule",
                     "Date de naissance",
                     "Lieu de naissance",
+                    "Nom(s) parent(s) / tuteur(s)",
+                    "Contact parent / tuteur",
                     "Sexe",
                     "Nationalité",
                     "Série",
@@ -503,6 +513,32 @@ export default function ClassListCorrectionsPanel() {
                         }
                         placeholder="Ex. Aboisso"
                         className="w-[180px] rounded-lg border px-2 py-1"
+                      />
+                    </td>
+                    <td className="border-b border-r p-2">
+                      <input
+                        value={row.parent_names || ""}
+                        onChange={(e) =>
+                          patch(row.id, {
+                            parent_names: e.target.value || null,
+                          })
+                        }
+                        placeholder="Facultatif"
+                        aria-label="Nom(s) des parents ou tuteurs (facultatif)"
+                        className="w-[220px] rounded-lg border px-2 py-1"
+                      />
+                    </td>
+                    <td className="border-b border-r p-2">
+                      <input
+                        value={row.parent_contact || ""}
+                        onChange={(e) =>
+                          patch(row.id, {
+                            parent_contact: e.target.value || null,
+                          })
+                        }
+                        placeholder="Facultatif"
+                        aria-label="Contact du parent ou tuteur (facultatif)"
+                        className="w-[190px] rounded-lg border px-2 py-1"
                       />
                     </td>
                     <td className="border-b border-r p-2">

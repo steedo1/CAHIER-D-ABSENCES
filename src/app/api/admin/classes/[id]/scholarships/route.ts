@@ -54,6 +54,7 @@ async function requireContext(classId: string) {
     "founder",
     "finance_manager",
     "finance",
+    "file_correspondent",
   ]);
   const roleRows = (roles || []).filter((row: any) =>
     allowed.has(String(row.role || "")),

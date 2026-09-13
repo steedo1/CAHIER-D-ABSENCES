@@ -26,6 +26,10 @@ test("les opérations du périmètre fichier acceptent le correspondant", () => 
     read("src/app/api/admin/teachers/by-subject/route.ts"),
     /"file_correspondent"/,
   );
+  assert.match(
+    read("src/app/api/admin/classes/[id]/scholarships/route.ts"),
+    /const allowed = new Set\([\s\S]*"file_correspondent"/,
+  );
 });
 
 test("la migration ajoute des champs parents facultatifs et des droits cloisonnés", () => {
@@ -44,14 +48,20 @@ test("la migration ajoute des champs parents facultatifs et des droits cloisonn�
 
 test("la correction de liste charge et enregistre les deux champs parents", () => {
   const page = read("src/app/admin/classes/liste/[id]/page.tsx");
+  const panel = read("src/components/ClassListCorrectionsPanel.tsx");
   const roster = read("src/app/api/admin/classes/[id]/roster/route.ts");
 
   for (const field of ["parent_names", "parent_contact"]) {
     assert.ok(page.includes(field), field);
+    assert.ok(panel.includes(field), `panel:${field}`);
     assert.ok(roster.includes(field), field);
   }
   assert.match(page, /Nom\(s\) des parents ou tuteurs \(facultatif\)/);
   assert.match(page, /Contact du parent ou tuteur \(facultatif\)/);
+  assert.match(panel, /Nom\(s\) parent\(s\) \/ tuteur\(s\)/);
+  assert.match(panel, /Contact parent \/ tuteur/);
+  assert.match(panel, /parent_names: clean\(row\.parent_names\) \|\| null/);
+  assert.match(panel, /parent_contact: clean\(row\.parent_contact\) \|\| null/);
   assert.match(roster, /parent_names: normalizeNullableText/);
   assert.match(roster, /parent_contact: normalizeNullableText/);
 });
