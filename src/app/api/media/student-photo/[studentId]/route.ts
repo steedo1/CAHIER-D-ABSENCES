@@ -29,6 +29,7 @@ const INSTITUTION_ROLES = new Set([
   "educator",
   "infirmier",
   "teacher",
+  "file_correspondent",
 ]);
 
 function roleMatchesInstitution(
