@@ -86,6 +86,56 @@ export default function StudentsByClassLayout({ children }: { children: ReactNod
     return () => document.removeEventListener("click", onClickCapture, true);
   }, []);
 
+  useEffect(() => {
+    const nativeOpen = window.open;
+
+    (window as any).open = (
+      url?: string | URL,
+      target?: string,
+      features?: string,
+    ) => {
+      const child = nativeOpen.call(window, url, target, features);
+      const openedUrl = String(url || "");
+
+      if (!child || !openedUrl.startsWith("blob:")) return child;
+
+      const addIvorianFrame = () => {
+        try {
+          const title = String(child.document?.title || "").toLowerCase();
+          const border = child.document?.querySelector(".sheet-border");
+
+          if (!border || !title.includes("attestations de fréquentation")) return;
+
+          const style = child.document.createElement("style");
+          style.setAttribute("data-attestation-ivorian-frame", "true");
+          style.textContent = `
+            .sheet-border {
+              border: 2px solid #F77F00 !important;
+              box-shadow:
+                inset 0 0 0 2px #FFFFFF,
+                inset 0 0 0 4px #009E60 !important;
+            }
+          `;
+          child.document.head.appendChild(style);
+        } catch {
+          // Le document blob reste imprimable même si l'enrichissement visuel échoue.
+        }
+      };
+
+      try {
+        child.addEventListener("load", addIvorianFrame, { once: true });
+      } catch {
+        // Aucun impact sur l'ouverture normale du document.
+      }
+
+      return child;
+    };
+
+    return () => {
+      (window as any).open = nativeOpen;
+    };
+  }, []);
+
   const results = useMemo(() => {
     const q = norm(query);
     if (q.length < 2) return [];
