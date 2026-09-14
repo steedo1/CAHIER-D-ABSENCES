@@ -12,6 +12,8 @@ import {
   type EducationScopeValue,
 } from "@/lib/education-scope";
 
+import { readAttendancePages, sessionBelongsToSlot } from "@/lib/attendance-surveillance";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -26,6 +28,13 @@ type MonitorStatus =
 
 type MonitorRow = {
   id: string;
+  session_id: string | null;
+  teacher_id: string;
+  subject_id: string;
+  actual_call_at: string | null;
+  ended_at: string | null;
+  attendance_received_at: string | null;
+  attendance_receipt_available: boolean;
   date: string; // "YYYY-MM-DD"
   weekday_label?: string | null;
   period_label?: string | null;
@@ -149,7 +158,6 @@ const MISSING_CONTROL_WINDOW_MIN =
     ? Math.max(1, Math.floor(Number(process.env.ATTENDANCE_MISSING_CONTROL_WINDOW_MIN)))
     : LATE_THRESHOLD_MIN;
 
-const MAX_CARRY_AFTER_END_MIN = 120;
 
 export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
@@ -256,6 +264,10 @@ export async function GET(req: NextRequest) {
     toDate = tmp;
   }
 
+  if (toDate.getTime() - fromDate.getTime() > 365 * 86_400_000) {
+    return NextResponse.json({ error: "Période trop longue : 366 jours maximum." }, { status: 400 });
+  }
+
   const dates: { ymd: string; weekdayJs: number }[] = [];
   const cursor = new Date(fromDate.getTime());
   while (cursor.getTime() <= toDate.getTime()) {
@@ -273,28 +285,28 @@ export async function GET(req: NextRequest) {
     { data: subjects, error: sErr },
     { data: teachers, error: tErr },
   ] = await Promise.all([
-    srv
+    readAttendancePages<any>((from, to) => srv
       .from("institution_periods")
-      .select("id,institution_id,weekday,label,start_time,end_time")
-      .eq("institution_id", institution_id),
-    srv
+      .select("id,institution_id,weekday,label,start_time,end_time", { count: "exact" })
+      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => srv
       .from("teacher_timetables")
-      .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id")
-      .eq("institution_id", institution_id),
-    srv
+      .select("id,institution_id,class_id,subject_id,teacher_id,weekday,period_id", { count: "exact" })
+      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => srv
       .from("classes")
       .select(
-        "id,label,level,education_type,formation_code,formation_level_code",
+        "id,label,level,education_type,formation_code,formation_level_code", { count: "exact" },
       )
-      .eq("institution_id", institution_id),
-    srv
+      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => srv
       .from("institution_subjects")
-      .select("id,custom_name,subjects:subject_id(id,name)")
-      .eq("institution_id", institution_id),
-    srv
+      .select("id,custom_name,subjects:subject_id(id,name)", { count: "exact" })
+      .eq("institution_id", institution_id).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => srv
       .from("profiles")
-      .select("id,display_name,email,phone")
-      .eq("institution_id", institution_id),
+      .select("id,display_name,email,phone", { count: "exact" })
+      .eq("institution_id", institution_id).order("id").range(from, to)),
   ]);
 
   if (pErr) {
@@ -337,21 +349,21 @@ export async function GET(req: NextRequest) {
     { data: sessions, error: sessErr },
     { data: absenceRequests, error: absErr },
   ] = await Promise.all([
-    srv
+    readAttendancePages<any>((from, to) => srv
       .from("teacher_sessions")
-      .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,origin")
+      .select("id,institution_id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at,origin", { count: "exact" })
       .eq("institution_id", institution_id)
       .gte("started_at", dateMinIso.toISOString())
-      .lt("started_at", dateMaxIso.toISOString()),
-    srv
+      .lt("started_at", dateMaxIso.toISOString()).order("id").range(from, to)),
+    readAttendancePages<any>((from, to) => srv
       .from("teacher_absence_requests")
       .select(
-        "id,institution_id,teacher_profile_id,start_date,end_date,reason_label,status,admin_comment"
+        "id,institution_id,teacher_profile_id,start_date,end_date,reason_label,status,admin_comment", { count: "exact" }
       )
       .eq("institution_id", institution_id)
       .in("status", ["pending", "approved"])
       .lte("start_date", toYMD(toDate))
-      .gte("end_date", toYMD(fromDate)),
+      .gte("end_date", toYMD(fromDate)).order("id").range(from, to)),
   ]);
 
   if (sessErr) {
@@ -361,6 +373,29 @@ export async function GET(req: NextRequest) {
   if (absErr) {
     console.error("[attendance/monitor] absence_requests_err", { error: absErr.message });
     return NextResponse.json({ error: absErr.message }, { status: 400 });
+  }
+
+  // A causal receipt proves a student-attendance batch was accepted, not that a
+  // disconnected device has no newer pending corrections.
+  const receiptBySession = new Map<string, string>();
+  let receiptAvailable = true;
+  const sessionIds = (sessions || []).map((session: any) => String(session.id));
+  for (let offset = 0; offset < sessionIds.length; offset += 200) {
+    const receipt = await readAttendancePages<{ session_id: string; updated_at: string }>((from, to) =>
+      srv.from("relay_attendance_session_causality")
+        .select("session_id,updated_at", { count: "exact" })
+        .eq("institution_id", institution_id)
+        .in("session_id", sessionIds.slice(offset, offset + 200))
+        .order("session_id").range(from, to));
+    if (receipt.error) {
+      receiptAvailable = false;
+      receiptBySession.clear();
+      console.warn("[attendance/monitor] receipt_unavailable", { error: receipt.error.message });
+      break;
+    }
+    for (const receiptRow of receipt.data || []) {
+      receiptBySession.set(receiptRow.session_id, receiptRow.updated_at);
+    }
   }
 
   type PeriodRow = {
@@ -452,6 +487,9 @@ export async function GET(req: NextRequest) {
   });
 
   type SessIndexItem = {
+    session_id: string;
+    actual_call_at: string | null;
+    ended_at: string | null;
     startedMin: number;
     callMin: number | null;
     opened_from: "teacher" | "class_device" | null;
@@ -474,6 +512,9 @@ export async function GET(req: NextRequest) {
 
     const arr = sessionsIndex.get(key) || [];
     arr.push({
+      session_id: String(s.id),
+      actual_call_at: callIso,
+      ended_at: s.ended_at || null,
       startedMin,
       callMin,
       opened_from:
@@ -527,41 +568,6 @@ export async function GET(req: NextRequest) {
     }
   });
 
-  type SlotLite = { period_id: string; startMin: number };
-  const nextStartMinBySlot = new Map<string, number | null>();
-  const slotsByGroup = new Map<string, Map<string, SlotLite>>();
-
-  scopedTimetables.forEach((tt: any) => {
-    const period = periodById.get(String(tt.period_id));
-    if (!period) return;
-
-    const weekday = period.weekday;
-    const classId = String(tt.class_id);
-    const subjectId = String(tt.subject_id || "");
-    const teacherId = String(tt.teacher_id);
-    const periodId = String(tt.period_id);
-
-    const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
-
-    let m = slotsByGroup.get(group);
-    if (!m) {
-      m = new Map<string, SlotLite>();
-      slotsByGroup.set(group, m);
-    }
-    if (!m.has(periodId)) {
-      m.set(periodId, { period_id: periodId, startMin: period.startMin });
-    }
-  });
-
-  for (const [group, m] of slotsByGroup.entries()) {
-    const arr = Array.from(m.values()).sort((a, b) => a.startMin - b.startMin);
-    for (let i = 0; i < arr.length; i++) {
-      const cur = arr[i];
-      const next = arr[i + 1] || null;
-      nextStartMinBySlot.set(`${group}|${cur.period_id}`, next ? next.startMin : null);
-    }
-  }
-
   const rows: MonitorRow[] = [];
 
   scopedTimetables.forEach((tt: any) => {
@@ -573,7 +579,6 @@ export async function GET(req: NextRequest) {
     if (!datesForDay || !datesForDay.length) return;
 
     const startMin = period.startMin;
-    const endMin = period.endMin;
 
     const classId = String(tt.class_id);
     const subjectId = String(tt.subject_id || "");
@@ -602,15 +607,8 @@ export async function GET(req: NextRequest) {
       let bestCalled: SessIndexItem | null = null;
       let bestStarted: SessIndexItem | null = null;
 
-      const group = `${weekday}|${classId}|${subjectId}|${teacherId}`;
-      const nextStartMin =
-        nextStartMinBySlot.get(`${group}|${String(tt.period_id)}`) ?? null;
-
       for (const s of sessList) {
-        const eventMin = s.callMin ?? s.startedMin;
-        if (eventMin < startMin) continue;
-        if (eventMin > endMin + MAX_CARRY_AFTER_END_MIN) continue;
-        if (nextStartMin !== null && eventMin >= nextStartMin) continue;
+        if (!sessionBelongsToSlot(s.startedMin, startMin)) continue;
         if (s.callMin !== null) {
           if (!bestCalled || s.callMin < (bestCalled.callMin as number)) bestCalled = s;
         } else if (!bestStarted || s.startedMin < bestStarted.startedMin) {
@@ -690,7 +688,15 @@ export async function GET(req: NextRequest) {
           .filter(Boolean)
           .join(" – ");
 
+      const matched = bestCalled || bestStarted;
       rows.push({
+        session_id: matched?.session_id || null,
+        teacher_id: teacherId,
+        subject_id: subjectId,
+        actual_call_at: matched?.actual_call_at || null,
+        ended_at: matched?.ended_at || null,
+        attendance_received_at: matched ? receiptBySession.get(matched.session_id) || null : null,
+        attendance_receipt_available: receiptAvailable,
         id: [ymd, tt.period_id, classId, subjectId, teacherId].join("|"),
         date: ymd,
         weekday_label: null,
@@ -727,6 +733,11 @@ export async function GET(req: NextRequest) {
     return ca.localeCompare(cb);
   });
 
+  const matchedSessionIds = new Set(rows.map((row) => row.session_id).filter(Boolean));
+  const unmatchedSessionCount = (sessions || []).filter((session: any) =>
+    scopedClassIds.has(String(session.class_id)) && !matchedSessionIds.has(String(session.id)),
+  ).length;
+
   if (debug) {
     const distinctNums = (arr: any[], key: string) =>
       Array.from(
@@ -742,6 +753,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       institution_id,
       rows,
+      unmatched_session_count: unmatchedSessionCount,
       education_scope: educationScope,
       debug: {
         todayYmd,
@@ -767,5 +779,5 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ institution_id, education_scope: educationScope, rows });
+  return NextResponse.json({ institution_id, education_scope: educationScope, rows, unmatched_session_count: unmatchedSessionCount });
 }

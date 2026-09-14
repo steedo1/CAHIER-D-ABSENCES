@@ -1,6 +1,8 @@
 // src/components/teacher/TeacherDashboard.tsx
 "use client";
 
+import { attendanceCloudAvailableForSync, fetchAttendanceBackground } from "@/lib/attendance-network";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -563,10 +565,6 @@ export default function TeacherDashboard() {
 
   async function syncNow() {
     if (syncingRef.current) return;
-    if (!(await teacherSessionCloudAvailable())) {
-      setMsg("Hors connexion : synchronisation impossible.");
-      return;
-    }
     syncingRef.current = true;
     setSyncing(true);
     setMsg(null);
@@ -578,10 +576,11 @@ export default function TeacherDashboard() {
 
       // refresh open session depuis le serveur (si dispo)
       try {
-        const os = (await offlineGetJson(
-          "/api/teacher/sessions/open",
-          "teacher:open:afterSync"
-        )) as any;
+        // Never erase a pending local session using an old cached empty response.
+        if (result.remaining > 0 || result.retryableFailure || result.authRequired) throw new Error("sync_pending");
+        const response = await fetchAttendanceBackground("/api/teacher/sessions/open", { cache: "no-store" });
+        if (!response.ok) throw new Error("open_session_unavailable");
+        const os = await response.json();
         const openServer = (os?.item as OpenSession) || null;
         const openLocal = (await cacheGet("teacher:local-open").catch(() => null)) as OpenSession | null;
         if (openServer) {
@@ -633,12 +632,12 @@ export default function TeacherDashboard() {
   useEffect(() => {
     registerServiceWorker();
 
-    void teacherSessionCloudAvailable().then(setIsOnline);
+    void attendanceCloudAvailableForSync().then(setIsOnline);
 
     void refreshPending();
 
     const onOnline = () => {
-      void teacherSessionCloudAvailable().then((available) => {
+      void attendanceCloudAvailableForSync().then((available) => {
         setIsOnline(available);
         if (available) {
           void refreshPending();
@@ -2333,7 +2332,7 @@ export default function TeacherDashboard() {
       inst.institution_id,
     ).catch(() => syncStatus)).total;
 
-    if (remaining > 0 && await teacherSessionCloudAvailable()) {
+    if (remaining > 0 && await attendanceCloudAvailableForSync()) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
         const result = await syncTeacherAttendanceOperationsToCloud(

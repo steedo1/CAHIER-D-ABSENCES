@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
+import { parseAttendanceEndAt } from "@/lib/attendance-end-time";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -12,23 +14,6 @@ type Body = {
   client_session_id?: string | null;
   actual_end_at?: string | null;
 };
-
-function parseEffectiveEndAt(raw: unknown) {
-  const now = new Date();
-  const s = String(raw || "").trim();
-  if (!s) return now.toISOString();
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return now.toISOString();
-
-  const maxFutureMs = 10 * 60 * 1000;
-  const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
-
-  if (d.getTime() > now.getTime() + maxFutureMs) return now.toISOString();
-  if (d.getTime() < now.getTime() - maxAgeMs) return now.toISOString();
-
-  return d.toISOString();
-}
 
 export async function PATCH(req: NextRequest) {
   const supa = await getSupabaseServerClient();
@@ -60,7 +45,10 @@ export async function PATCH(req: NextRequest) {
     }
     const session_id = String(body?.session_id || "").trim();
     const client_session_id = String(body?.client_session_id || "").trim();
-    const endedAtIso = parseEffectiveEndAt(body?.actual_end_at);
+    const endedAtIso = parseAttendanceEndAt(body?.actual_end_at);
+    if (!endedAtIso) {
+      return NextResponse.json({ error: "invalid_actual_end_at", message: "Heure de fin invalide : corrigez l’horloge du téléphone puis réessayez." }, { status: 422 });
+    }
 
     if (session_id) {
       const { data: sess, error: sErr } = await srv

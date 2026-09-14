@@ -1,6 +1,8 @@
 // src/app/class/page.tsx
 "use client";
 
+import { fetchAttendanceBackground } from "@/lib/attendance-network";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -1109,11 +1111,11 @@ export default function ClassDevicePage() {
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(new DOMException("cloud_probe_timeout", "TimeoutError")),
-      3_500,
+      8_000,
     );
     setCloudStatus("checking");
     try {
-      const response = await fetch(
+      const response = await fetchAttendanceBackground(
         "/api/class/my-classes?offline_contract=v5&connectivity_probe=1",
         {
           method: "GET",
