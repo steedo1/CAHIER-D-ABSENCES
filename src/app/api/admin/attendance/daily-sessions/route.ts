@@ -26,8 +26,6 @@ function readDateRange(url: URL) {
   const startMs = new Date(`${startDate}T00:00:00.000Z`).getTime();
   const endMs = new Date(`${endDate}T00:00:00.000Z`).getTime();
   const days = Math.floor((endMs - startMs) / 86_400_000) + 1;
-  // L'historique reste une action explicite, mais une année complète peut être
-  // consultée en une seule requête au lieu d'un appel HTTP par jour.
   if (!Number.isFinite(days) || days < 1 || days > 366) return null;
 
   return { startDate, endDate };
@@ -70,7 +68,7 @@ export async function GET(req: NextRequest) {
   const { end } = nextUtcDay(range.endDate);
   const { data: sessions, error: sessionsError } = await srv
     .from("teacher_sessions")
-    .select("id,class_id,subject_id,teacher_id,started_at,ended_at")
+    .select("id,class_id,subject_id,teacher_id,started_at,actual_call_at,ended_at")
     .eq("institution_id", institutionId)
     .gte("started_at", start.toISOString())
     .lt("started_at", end.toISOString());
@@ -135,6 +133,7 @@ export async function GET(req: NextRequest) {
       teacher_name: teacherNames.get(String(row.teacher_id || "")) || "Enseignant",
       subject_name: subjectNames.get(String(row.subject_id || "")) || "Discipline",
       started_at: row.started_at || null,
+      actual_call_at: row.actual_call_at || null,
       ended_at: row.ended_at || null,
     })),
   });
