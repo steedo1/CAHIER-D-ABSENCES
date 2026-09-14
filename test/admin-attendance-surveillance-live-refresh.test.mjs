@@ -20,8 +20,10 @@ test("surveillance des appels rafraichit automatiquement les donnees Cloud", () 
 });
 
 test("l'historique charge ses seances en une requete et ne reste pas en polling", () => {
-  assert.match(source, /daily-sessions\?start_date=/);
-  assert.match(source, /&end_date=/);
+  assert.match(source, /fetchAdminAttendanceMonitor<MonitorRow>/);
+  assert.doesNotMatch(source, /daily-sessions/);
+  assert.doesNotMatch(source, /matchSessions|sameSessionScope/);
+  assert.match(source, /const session = row.session_id \? row : null/);
   assert.doesNotMatch(source, /Promise\.all\(\s*dates\.map/);
   assert.match(source, /if \(liveToday\) scheduleNext\(\)/);
 });

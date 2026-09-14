@@ -15,6 +15,9 @@ import {
 } from "@/lib/admin-attendance-monitor";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 
+import { attendanceReceiptLabel, type AttendanceReceiptFacts } from "@/lib/attendance-surveillance";
+import { fetchAttendanceBackground } from "@/lib/attendance-network";
+
 type MonitorStatus =
   | "not_started"
   | "started"
@@ -24,7 +27,9 @@ type MonitorStatus =
   | "pending_absence"
   | "justified_absence";
 
-type MonitorRow = {
+type MonitorRow = AttendanceReceiptFacts & {
+  teacher_id?: string | null;
+  actual_call_at?: string | null;
   id: string;
   date: string;
   planned_start?: string | null;
@@ -36,17 +41,6 @@ type MonitorRow = {
   teacher_name: string;
   status: MonitorStatus;
   late_minutes?: number | null;
-};
-
-type DailySession = {
-  id: string;
-  session_date?: string | null;
-  class_id?: string | null;
-  teacher_name: string;
-  subject_name?: string | null;
-  started_at?: string | null;
-  actual_call_at?: string | null;
-  ended_at?: string | null;
 };
 
 type DetailedRow = MonitorRow & {
@@ -174,56 +168,7 @@ function plural(count: number, singular: string, pluralForm?: string) {
   return `${count} ${count > 1 ? pluralForm || `${singular}s` : singular}`;
 }
 
-function sameSessionScope(row: MonitorRow, session: DailySession) {
-  if (session.session_date && session.session_date !== row.date) return false;
-  if (normalizeText(session.teacher_name) !== normalizeText(row.teacher_name)) return false;
-  if (row.class_id && String(session.class_id || "") !== String(row.class_id)) return false;
-  const rowSubject = normalizeText(row.subject_name);
-  const sessionSubject = normalizeText(session.subject_name);
-  if (rowSubject && sessionSubject && rowSubject !== sessionSubject) return false;
-  return true;
-}
-
-function matchSessions(rows: MonitorRow[], sessions: DailySession[]) {
-  const matches = new Map<string, DailySession>();
-  const used = new Set<string>();
-
-  const orderedRows = [...rows].sort((a, b) =>
-    `${a.date} ${a.planned_start || ""}`.localeCompare(`${b.date} ${b.planned_start || ""}`),
-  );
-
-  for (const row of orderedRows) {
-    if (isAbsenceStatus(row.status)) continue;
-    const plannedStart = hmToMinutes(row.planned_start);
-    if (plannedStart === null) continue;
-
-    const candidates = sessions
-      .filter((session) => !used.has(session.id) && sameSessionScope(row, session))
-      .map((session) => {
-        // started_at reste l'ancre canonique du créneau pour faire la correspondance.
-        // actual_call_at est utilisé ensuite comme fait réel de présence.
-        const canonicalStart = hmToMinutes(isoToHm(session.started_at));
-        return {
-          session,
-          distance:
-            canonicalStart === null
-              ? Number.MAX_SAFE_INTEGER
-              : Math.abs(canonicalStart - plannedStart),
-        };
-      })
-      .filter((candidate) => candidate.distance <= 90)
-      .sort((a, b) => a.distance - b.distance);
-
-    const selected = candidates[0]?.session;
-    if (!selected) continue;
-    matches.set(`${row.date}:${row.id}`, selected);
-    used.add(selected.id);
-  }
-
-  return matches;
-}
-
-function rawLateMinutes(row: MonitorRow, session: DailySession | null) {
+function rawLateMinutes(row: MonitorRow, session: MonitorRow | null) {
   if (!session?.actual_call_at) return Math.max(0, Number(row.late_minutes || 0));
   const planned = plannedIso(row, "planned_start");
   const actual = Date.parse(session.actual_call_at);
@@ -232,7 +177,7 @@ function rawLateMinutes(row: MonitorRow, session: DailySession | null) {
   return Math.ceil((actual - planned) / 60_000);
 }
 
-function rawEarlyDepartureMinutes(row: MonitorRow, session: DailySession | null) {
+function rawEarlyDepartureMinutes(row: MonitorRow, session: MonitorRow | null) {
   if (!session?.ended_at) return 0;
   const plannedEnd = plannedIso(row, "planned_end");
   const actualEnd = Date.parse(session.ended_at);
@@ -276,13 +221,14 @@ function detailLabel(row: DetailedRow) {
   }
   if (!pieces.length && row.status === "ok") pieces.push("À l'heure");
   if (!pieces.length && row.status === "started") pieces.push("Cours démarré");
+  pieces.push(attendanceReceiptLabel(row));
   return { planned, actual, suffix: pieces.join(" · ") };
 }
 
 function buildTeacherRows(detailedRows: DetailedRow[]) {
   const grouped = new Map<string, DetailedRow[]>();
   for (const row of detailedRows) {
-    const key = normalizeText(row.teacher_name);
+    const key = row.teacher_id || normalizeText(row.teacher_name);
     if (!key) continue;
     const current = grouped.get(key) || [];
     current.push(row);
@@ -341,7 +287,9 @@ export default function SurveillanceAppelsPage() {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [rows, setRows] = useState<MonitorRow[]>([]);
-  const [sessions, setSessions] = useState<DailySession[]>([]);
+  const [freshness, setFreshness] = useState<{ source: AdminAttendanceDataSource; savedAt: string } | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [unmatchedSessions, setUnmatchedSessions] = useState(0);
   const [reportContext, setReportContext] = useState<ReportContext>({
     institution_name: "Établissement",
     logo_url: null,
@@ -355,6 +303,31 @@ export default function SurveillanceAppelsPage() {
   const refreshInFlightRef = useRef(false);
   const dataSourceRef = useRef<AdminAttendanceDataSource | null>(null);
   const refreshErrorRef = useRef(false);
+
+  // Report branding must not delay attendance display or be reloaded every poll.
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetchAttendanceBackground("/api/admin/attendance/report-context", {
+          cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("report_context");
+        const payload = await response.json();
+        if (!payload?.institution_name) throw new Error("report_context");
+        if (controller.signal.aborted) return;
+        setReportContext({
+          institution_name: String(payload.institution_name),
+          logo_url: payload.logo_url ? String(payload.logo_url) : null,
+          head_name: payload.head_name ? String(payload.head_name) : null,
+          head_title: payload.head_title ? String(payload.head_title) : null,
+        });
+      } catch {
+        if (!controller.signal.aborted) setContextError("En-tête du rapport indisponible. Rechargez la page avant d’imprimer.");
+      }
+    })();
+    return () => controller.abort();
+  }, []);
 
   const choosePreset = useCallback((next: PeriodPreset) => {
     setPreset(next);
@@ -385,6 +358,9 @@ export default function SurveillanceAppelsPage() {
     if (!background) {
       setLoading(true);
       setError(null);
+      setRows([]);
+      setFreshness(null);
+      setUnmatchedSessions(0);
     }
 
     try {
@@ -399,48 +375,19 @@ export default function SurveillanceAppelsPage() {
         ? monitorResult.data.rows
         : [];
 
-      const [sessionResponse, contextResponse] = await Promise.all([
-        fetch(
-          `/api/admin/attendance/daily-sessions?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
-          { cache: "no-store", signal: controller.signal },
-        ),
-        fetch("/api/admin/attendance/report-context", {
-          cache: "no-store",
-          signal: controller.signal,
-        }).catch(() => null),
-      ]);
-
-      const sessionPayload = sessionResponse.ok
-        ? await sessionResponse.json().catch(() => ({}))
-        : {};
-      const sessionRows: DailySession[] = Array.isArray(sessionPayload?.rows)
-        ? sessionPayload.rows
-        : [];
-
-      if (contextResponse?.ok) {
-        const payload = await contextResponse.json().catch(() => null);
-        if (payload?.institution_name) {
-          setReportContext({
-            institution_name: String(payload.institution_name),
-            logo_url: payload.logo_url ? String(payload.logo_url) : null,
-            head_name: payload.head_name ? String(payload.head_name) : null,
-            head_title: payload.head_title ? String(payload.head_title) : null,
-          });
-        }
-      }
+      if (controller.signal.aborted) return;
 
       dataSourceRef.current = monitorResult.source;
       refreshErrorRef.current = false;
       setError(null);
       setRows(monitorRows);
-      setSessions(sessionRows);
+      setUnmatchedSessions(Number((monitorResult.data as { unmatched_session_count?: number }).unmatched_session_count || 0));
+      setFreshness({ source: monitorResult.source, savedAt: monitorResult.saved_at });
       if (!background) setExpandedTeacher(null);
     } catch (cause: any) {
       if (cause?.name === "AbortError") return;
       refreshErrorRef.current = true;
-      if (!background) {
-        setError(cause?.message || "Impossible de charger le contrôle des appels.");
-      }
+      setError(cause?.message || "Impossible de charger le contrôle des appels.");
     } finally {
       if (abortRef.current === controller) {
         refreshInFlightRef.current = false;
@@ -494,10 +441,8 @@ export default function SurveillanceAppelsPage() {
   }, [endDate, load, startDate, today]);
 
   const detailedRows = useMemo<DetailedRow[]>(() => {
-    const matches = matchSessions(rows, sessions);
-
     return rows.map((row) => {
-      const session = matches.get(`${row.date}:${row.id}`) || null;
+      const session = row.session_id ? row : null;
       const actualStart = isoToHm(session?.actual_call_at);
       const actualEnd = isoToHm(session?.ended_at);
       const measuredLate = rawLateMinutes(row, session);
@@ -522,7 +467,7 @@ export default function SurveillanceAppelsPage() {
         early_departure_minutes: rawEarlyDepartureMinutes(row, session),
       };
     });
-  }, [rows, sessions]);
+  }, [rows]);
 
   const allTeachers = useMemo(
     () => buildTeacherRows(detailedRows).sort((a, b) =>
@@ -649,7 +594,7 @@ export default function SurveillanceAppelsPage() {
               <button
                 type="button"
                 onClick={() => window.print()}
-                disabled={loading || rows.length === 0}
+                disabled={loading || rows.length === 0 || Boolean(error) || Boolean(contextError) || reportContext.institution_name === "Établissement"}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
               >
                 <Printer className="h-4 w-4" />
@@ -720,16 +665,29 @@ export default function SurveillanceAppelsPage() {
             ) : null}
           </div>
 
+          {freshness ? (
+            <p role="status" className="mb-3 text-sm text-slate-600">
+              Source : {freshness.source === "cloud" ? "Cloud" : freshness.source === "relay" ? "Relais local" : "Cache local"}
+              {" · "}Données du {new Date(freshness.savedAt).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}
+              {error ? " · Actualisation échouée : les dernières données affichées sont conservées." : ""}
+            </p>
+          ) : null}
+          {contextError ? <p role="alert" className="mb-3 text-sm text-amber-800">{contextError}</p> : null}
+          {unmatchedSessions > 0 ? <p role="alert" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{unmatchedSessions} séance(s) reçue(s) ne correspondent pas à l’EDT actuel. Les absences et durées du bilan doivent être vérifiées ; ces séances ne sont pas réaffectées automatiquement à un autre cours.</p> : null}
           {error ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {error}
-            </div>
-          ) : loading && rows.length === 0 ? (
+            <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+          ) : null}
+          {loading && rows.length === 0 ? (
             <div className="flex min-h-40 items-center justify-center text-sm text-slate-500">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement…
             </div>
           ) : (
             <section>
+              <details className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
+                <summary className="cursor-pointer font-semibold">Réception des appels élèves — {detailedRows.filter((row) => row.attendance_receipt_available && row.attendance_received_at).length} lot(s) confirmé(s) / {detailedRows.length} cours prévus</summary>
+                <p className="mt-2 text-xs text-slate-600">Un lot reçu ne garantit pas qu’un téléphone n’a plus de corrections en attente. Les horaires enseignants et la réception des données élèves sont contrôlés séparément.</p>
+                <TeacherDetails rows={detailedRows} showDate={!isToday} showTeacher />
+              </details>
               <div className="mb-2 flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-amber-600" />
                 <h2 className="text-lg font-bold text-slate-950">
@@ -739,7 +697,7 @@ export default function SurveillanceAppelsPage() {
 
               {teachers.length === 0 ? (
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
-                  Aucune anomalie détectée sur cette période.
+                  {error ? "Contrôle indisponible ou non actualisé sur cette période." : "Aucune anomalie d’horaire détectée dans les données disponibles."}
                 </div>
               ) : (
                 <>
@@ -831,6 +789,9 @@ export default function SurveillanceAppelsPage() {
             </div>
             <div style={{ fontSize: 9, marginTop: 3, color: "#475569" }}>
               Période : {formatDateFr(startDate)} au {formatDateFr(endDate)} · Généré le {formatGeneratedAt()}
+              {freshness ? ` · Source : ${freshness.source} · Données du ${new Date(freshness.savedAt).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}` : ""}
+              {error ? " · ATTENTION : actualisation échouée" : ""}
+              {unmatchedSessions > 0 ? ` · ATTENTION : ${unmatchedSessions} séance(s) sans correspondance dans l’EDT actuel` : ""}
             </div>
           </div>
           <div style={{ textAlign: "right", fontSize: 9, lineHeight: 1.45 }}>
@@ -958,7 +919,7 @@ function FragmentRow({
   );
 }
 
-function TeacherDetails({ rows, showDate }: { rows: DetailedRow[]; showDate: boolean }) {
+function TeacherDetails({ rows, showDate, showTeacher = false }: { rows: DetailedRow[]; showDate: boolean; showTeacher?: boolean }) {
   return (
     <div className="border-t border-slate-100 px-3 py-3 md:border-0 md:px-2 md:py-3">
       <div className="space-y-2">
@@ -972,6 +933,7 @@ function TeacherDetails({ rows, showDate }: { rows: DetailedRow[]; showDate: boo
                   <span className="text-slate-400"> · </span>
                 </>
               ) : null}
+              {showTeacher ? <span className="font-semibold text-slate-950">{row.teacher_name} · </span> : null}
               <span className="font-semibold text-slate-950">{row.class_label || "Classe"}</span>
               <span className="text-slate-400"> · </span>
               prévu {detail.planned}

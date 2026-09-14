@@ -1,5 +1,7 @@
 "use client";
 
+import { attendanceCloudAvailableForSync } from "@/lib/attendance-network";
+
 import {
   cacheGet,
   flushOutbox,
@@ -80,21 +82,6 @@ async function knownInstitutionIds(preferred?: string | null) {
       .map(text)
       .filter(Boolean),
   ));
-}
-
-async function cloudAvailable() {
-  if (typeof navigator === "undefined" || navigator.onLine === false) return false;
-  try {
-    const response = await fetch("/api/auth/role", {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    return response.status < 500;
-  } catch {
-    return false;
-  }
 }
 
 function parseTeacherAttemptKey(record: TeacherSessionDeliveryRecord) {
@@ -384,7 +371,7 @@ export async function syncTeacherAttendanceOperationsToCloud(
   institutionId?: string | null,
 ): Promise<TeacherAttendanceCloudSyncResult> {
   const institutionIds = await knownInstitutionIds(institutionId);
-  if (!(await cloudAvailable())) {
+  if (!(await attendanceCloudAvailableForSync())) {
     const status = await getTeacherAttendanceSyncStatus(institutionId);
     return {
       flushed: 0,

@@ -5,6 +5,7 @@
  * Les files de rejeu de fond gardent volontairement des délais plus longs.
  */
 export const ATTENDANCE_INTERACTIVE_NETWORK_TIMEOUT_MS = 1_800;
+export const ATTENDANCE_SYNC_NETWORK_TIMEOUT_MS = 8_000;
 
 type ConnectionLike = {
   effectiveType?: string;
@@ -128,6 +129,28 @@ export async function fetchAttendanceInteractive(
     init,
     timeoutMs,
   );
+}
+
+/** Replays must try a usable slow connection, independently of the input fast path. */
+export async function fetchAttendanceBackground(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetchWithAttendanceTimeout(nativeFetch(), input, init, ATTENDANCE_SYNC_NETWORK_TIMEOUT_MS);
+}
+
+let syncProbe: Promise<boolean> | null = null;
+export async function attendanceCloudAvailableForSync(): Promise<boolean> {
+  if (typeof navigator === "undefined" || navigator.onLine === false) return false;
+  if (syncProbe) return syncProbe;
+  syncProbe = (async () => {
+    try {
+      const response = await fetchAttendanceBackground("/api/auth/role", {
+        credentials: "include", cache: "no-store", headers: { Accept: "application/json" },
+      });
+      // A 401 is reachable: the replay reports authentication required without deleting data.
+      return response.status < 500;
+    } catch { return false; }
+    finally { syncProbe = null; }
+  })();
+  return syncProbe;
 }
 
 /**

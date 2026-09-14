@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
+import { parseAttendanceEndAt } from "@/lib/attendance-end-time";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -11,23 +13,6 @@ type Body = {
   actual_end_at?: string | null;
   operation_id?: string | null;
 };
-
-function parseEffectiveEndAt(raw: unknown) {
-  const now = new Date();
-  const s = String(raw || "").trim();
-  if (!s) return now.toISOString();
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return now.toISOString();
-
-  const maxFutureMs = 10 * 60 * 1000;
-  const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
-
-  if (d.getTime() > now.getTime() + maxFutureMs) return now.toISOString();
-  if (d.getTime() < now.getTime() - maxAgeMs) return now.toISOString();
-
-  return d.toISOString();
-}
 
 export async function PATCH(req: NextRequest) {
   try {
@@ -70,7 +55,10 @@ export async function PATCH(req: NextRequest) {
         { status: 400 },
       );
     }
-    const endedAtIso = parseEffectiveEndAt(body?.actual_end_at);
+    const endedAtIso = parseAttendanceEndAt(body?.actual_end_at);
+    if (!endedAtIso) {
+      return NextResponse.json({ error: "invalid_actual_end_at", message: "Heure de fin invalide : corrigez l’horloge du téléphone puis réessayez." }, { status: 422 });
+    }
 
     const { data: sess, error: sErr } = await srv
       .from("teacher_sessions")

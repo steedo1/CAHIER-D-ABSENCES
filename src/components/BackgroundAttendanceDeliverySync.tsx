@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { syncTeacherAttendanceOperationsToCloud } from "@/lib/teacher-attendance-cloud-sync";
 import { syncDurableAttendanceOperationsToRelay } from "@/lib/teacher-attendance-relay-sync";
-import { teacherSessionCloudAvailable } from "@/lib/teacher-session-delivery";
+import { attendanceCloudAvailableForSync } from "@/lib/attendance-network";
 
 /**
  * Rejoue silencieusement les appels durables dès qu'un chemin redevient disponible.
@@ -28,7 +28,7 @@ export default function BackgroundAttendanceDeliverySync() {
 
       running = true;
       try {
-        const cloudAvailable = await teacherSessionCloudAvailable();
+        const cloudAvailable = await attendanceCloudAvailableForSync();
         if (cloudAvailable) {
           await syncTeacherAttendanceOperationsToCloud();
         } else {
