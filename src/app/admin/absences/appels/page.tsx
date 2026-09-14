@@ -158,6 +158,10 @@ function isAbsenceStatus(status: MonitorStatus) {
   return status === "missing" || status === "pending_absence" || status === "justified_absence";
 }
 
+function isReportControllableStatus(status: MonitorStatus) {
+  return status !== "not_started" && status !== "started";
+}
+
 function formatMinutes(total: number) {
   const minutes = Math.max(0, Math.round(total));
   if (minutes < 60) return `${minutes} min`;
@@ -289,9 +293,10 @@ function buildTeacherRows(detailedRows: DetailedRow[]) {
     const sortedRows = [...teacherRows].sort((a, b) =>
       `${a.date} ${a.planned_start || ""}`.localeCompare(`${b.date} ${b.planned_start || ""}`),
     );
-    const lateRows = sortedRows.filter((row) => row.status === "late");
-    const absenceRows = sortedRows.filter((row) => isAbsenceStatus(row.status));
-    const earlyRows = sortedRows.filter((row) => row.early_departure_minutes > 0);
+    const controllableRows = sortedRows.filter((row) => isReportControllableStatus(row.status));
+    const lateRows = controllableRows.filter((row) => row.status === "late");
+    const absenceRows = controllableRows.filter((row) => isAbsenceStatus(row.status));
+    const earlyRows = controllableRows.filter((row) => row.early_departure_minutes > 0);
     const lateMinutes = lateRows.reduce(
       (sum, row) => sum + Math.max(0, Number(row.late_minutes || 0)),
       0,
@@ -310,24 +315,24 @@ function buildTeacherRows(detailedRows: DetailedRow[]) {
       teacher_name: sortedRows[0]?.teacher_name || "Enseignant",
       disciplines: Array.from(
         new Set(
-          sortedRows
+          controllableRows
             .map((row) => String(row.subject_name || "").trim())
             .filter(Boolean),
         ),
       ),
-      rows: sortedRows,
+      rows: controllableRows,
       late_count: lateRows.length,
       absence_count: absenceRows.length,
       early_departure_count: earlyRows.length,
       late_minutes: lateMinutes,
       early_departure_minutes: earlyMinutes,
-      expected_sessions: sortedRows.length,
-      actual_sessions: sortedRows.filter((row) => Boolean(row.actual_start)).length,
-      expected_minutes: sortedRows.reduce((sum, row) => sum + plannedDuration(row), 0),
-      effective_minutes: sortedRows.reduce((sum, row) => sum + effectiveDuration(row), 0),
+      expected_sessions: controllableRows.length,
+      actual_sessions: controllableRows.filter((row) => Boolean(row.actual_start)).length,
+      expected_minutes: controllableRows.reduce((sum, row) => sum + plannedDuration(row), 0),
+      effective_minutes: controllableRows.reduce((sum, row) => sum + effectiveDuration(row), 0),
       lost_minutes: lateMinutes + earlyMinutes + absenceMinutes,
     } satisfies TeacherControlRow;
-  });
+  }).filter((teacher) => teacher.expected_sessions > 0);
 }
 
 export default function SurveillanceAppelsPage() {
@@ -838,7 +843,7 @@ export default function SurveillanceAppelsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 6, marginBottom: 10 }}>
           {[
             ["Enseignants", teacherCount],
-            ["Cours prévus", totalExpected],
+            ["Cours à contrôler", totalExpected],
             ["Cours assurés", totalActual],
             ["Absences", totalAbsences],
             ["Retards", `${totalLate} / ${formatMinutes(totalLateMinutes)}`],
@@ -855,12 +860,12 @@ export default function SurveillanceAppelsPage() {
           <thead>
             <tr>
               <th style={{ width: "20%", textAlign: "left" }}>Enseignant</th>
-              <th style={{ width: "9%" }}>Cours prévus</th>
+              <th style={{ width: "9%" }}>Cours à contrôler</th>
               <th style={{ width: "9%" }}>Cours assurés</th>
               <th style={{ width: "9%" }}>Absences</th>
               <th style={{ width: "13%" }}>Retards</th>
               <th style={{ width: "13%" }}>Sorties anticipées</th>
-              <th style={{ width: "13%" }}>Durée prévue</th>
+              <th style={{ width: "13%" }}>Durée à contrôler</th>
               <th style={{ width: "14%" }}>Durée effective</th>
             </tr>
           </thead>
@@ -888,7 +893,7 @@ export default function SurveillanceAppelsPage() {
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginTop: 10, fontSize: 8, color: "#475569" }}>
           <div style={{ maxWidth: "70%" }}>
-            <strong>Règle de lecture :</strong> les retards et sorties anticipées correspondent aux heures réellement enregistrées par le cahier d’appel. Aucune franchise ni tolérance utilisée pour la paie n’est appliquée à ce rapport.
+            <strong>Règle de lecture :</strong> seuls les cours déjà contrôlables au moment de la génération entrent dans le bilan. Les cours non encore commencés ou encore en phase de démarrage ne sont pas comptés. Les retards et sorties anticipées correspondent aux heures réellement enregistrées par le cahier d’appel. Aucune franchise ni tolérance utilisée pour la paie n’est appliquée à ce rapport.
           </div>
           <div style={{ textAlign: "right" }}>
             {reportContext.head_title || "Administration"}
