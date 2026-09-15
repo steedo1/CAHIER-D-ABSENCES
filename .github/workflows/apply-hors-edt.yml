@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   patch-and-check:
-    if: github.event.head_commit.message == 'chore: stage hors-EDT patch runner'
+    if: ${{ github.event.head_commit.message == 'chore: stage hors-EDT patch runner' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
