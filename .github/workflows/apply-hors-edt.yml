@@ -6,13 +6,14 @@ on:
       - feat/class-device-hors-edt-20260915
     paths:
       - scripts/apply-hors-edt-patch.py
+      - .github/workflows/apply-hors-edt.yml
 
 permissions:
   contents: write
 
 jobs:
   patch-and-check:
-    if: ${{ github.event.head_commit.message == 'chore: stage hors-EDT patch runner' }}
+    if: ${{ github.event.head_commit.message == 'chore: rerun hors-EDT patch runner' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
