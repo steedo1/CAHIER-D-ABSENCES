@@ -554,7 +554,7 @@ async function calculatePayrollAction(formData: FormData) {
   // Read and calculate everything before replacing the existing draft.
   const preparedLines = [];
   for (const teacher of vacataires) {
-    const [stats, expectedSlots] = await Promise.all([
+    const [stats, expectedSlots, assignmentsResult] = await Promise.all([
       fetchStatisticsDetailServer(teacher.profile_id, effectiveRange.periodStart, effectiveRange.periodEnd),
       buildExpectedSlotsForTeacher({
         admin,
@@ -565,7 +565,14 @@ async function calculatePayrollAction(formData: FormData) {
         classMap,
         referenceMinutes: sessionReferenceMinutes,
       }),
+      admin
+        .from("class_teachers")
+        .select("class_id,subject_id,teacher_id,start_date,end_date")
+        .eq("institution_id", institutionId)
+        .eq("teacher_id", teacher.profile_id),
     ]);
+    if (assignmentsResult.error) throw new Error(assignmentsResult.error.message);
+    const payrollAssignments = (assignmentsResult.data ?? []) as ClassTeacherAssignmentRow[];
 
     const actualRows = (stats.rows || []).filter((r) => !!r.actual_call_iso || numberValue(r.real_minutes) > 0);
     const usedRows = new Set<number>();
@@ -597,6 +604,13 @@ async function calculatePayrollAction(formData: FormData) {
       if (!classId || !subjectId) return [];
       const sessionDate = String(row.dateISO || "").slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) return [];
+
+      const assignmentIsValid = payrollAssignments.some((assignment) =>
+        String(assignment.class_id || "") === classId &&
+        String(assignment.subject_id || "") === subjectId &&
+        assignmentCoversDay(assignment, sessionDate),
+      );
+      if (!assignmentIsValid) return [];
 
       const cycle = cycleFromLevel(classMap.get(classId)?.level);
       const expectedMinutes = Math.max(
