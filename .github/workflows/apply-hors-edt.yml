@@ -1,13 +1,51 @@
-name: Verify hors EDT runner
+name: Apply class-device hors EDT patch
 
 on:
   push:
     branches:
       - feat/class-device-hors-edt-20260915
+    paths:
+      - scripts/apply-hors-edt-patch.py
+      - .github/workflows/apply-hors-edt.yml
+
+permissions:
+  contents: write
 
 jobs:
-  verify:
+  patch-and-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: echo "runner-ok"
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply guarded patch
+        run: python scripts/apply-hors-edt-patch.py
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Commit checked implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/class/page.tsx \
+            src/lib/offline-readiness.ts \
+            src/app/api/class/sessions/start/route.ts \
+            src/app/api/admin/attendance/monitor/route.ts \
+            src/app/admin/absences/appels/page.tsx \
+            src/app/admin/finance/payroll/page.tsx \
+            src/app/admin/finance/payroll/PayrollPrintSheet.tsx
+          git diff --cached --check
+          git commit -m "feat: support class-device courses outside timetable"
+          git push origin HEAD:feat/class-device-hors-edt-20260915
