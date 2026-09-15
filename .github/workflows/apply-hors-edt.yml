@@ -23,6 +23,25 @@ jobs:
       - name: Apply guarded patch
         run: python scripts/apply-hors-edt-patch.py
 
+      - name: Keep print totals backward-compatible
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/app/admin/finance/payroll/PayrollPrintSheet.tsx')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace(
+              'totals: { actualSessions: number; gross: number; retained: number; payable: number; horsEdtSessions: number };',
+              'totals: { actualSessions: number; gross: number; retained: number; payable: number; horsEdtSessions?: number };',
+              1,
+          )
+          text = text.replace(
+              'min{totals.horsEdtSessions > 0 ? ` · Cours hors EDT payés : ${totals.horsEdtSessions}` : ""}',
+              'min{Number(totals.horsEdtSessions || 0) > 0 ? ` · Cours hors EDT payés : ${Number(totals.horsEdtSessions || 0)}` : ""}',
+              1,
+          )
+          p.write_text(text, encoding='utf-8')
+          PY
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
