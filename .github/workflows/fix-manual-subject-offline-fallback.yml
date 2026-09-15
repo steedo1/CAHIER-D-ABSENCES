@@ -1,0 +1,56 @@
+name: Harden manual subject selector offline
+
+on:
+  push:
+    branches:
+      - fix/manual-subject-selector-20260915
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/manual-subject-selector-20260915
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Add offline schedule fallback
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/app/class/page.tsx')
+          s = p.read_text()
+
+          marker = '''function relayRosterForClass(\n  schedule: RelayTeacherOfflineSchedule | null,\n  classId: string,\n): RosterItem[] | null {'''
+          helper = '''function relaySubjectsForClass(\n  schedule: RelayTeacherOfflineSchedule | null,\n  classId: string,\n): Subject[] {\n  if (!schedule) return [];\n  const subjects = new Map<string, Subject>();\n  for (const slot of schedule.slots || []) {\n    for (const item of slot.items || []) {\n      if (String(item.class_id || "") !== classId) continue;\n      const id = String(item.subject_id || "").trim();\n      if (!id || subjects.has(id)) continue;\n      subjects.set(id, {\n        id,\n        label: String(item.subject_name || "Discipline").trim() || "Discipline",\n      });\n    }\n  }\n  return Array.from(subjects.values()).sort((left, right) =>\n    left.label.localeCompare(right.label, "fr"),\n  );\n}\n\n'''
+          if 'function relaySubjectsForClass(' not in s:
+              if s.count(marker) != 1:
+                  raise SystemExit(f'expected roster marker once, found {s.count(marker)}')
+              s = s.replace(marker, helper + marker)
+
+          old = '''    const loadLegacySubjects = async () => {\n      const payload = await offlineGetJson(\n        `/api/class/subjects?class_id=${classId}`,\n        `classDevice:subjects:${classId}`,\n      ).catch(() => ({ items: [] as Subject[] }));\n      return (payload?.items || []) as Subject[];\n    };'''
+          new = '''    const loadLegacySubjects = async () => {\n      const localScheduleSubjects = relaySubjectsForClass(\n        relayClassSchedule,\n        classId,\n      );\n      const payload = await offlineGetJson(\n        `/api/class/subjects?class_id=${classId}`,\n        `classDevice:subjects:${classId}`,\n      ).catch(() => ({ items: localScheduleSubjects }));\n      const loaded = (payload?.items || []) as Subject[];\n      return loaded.length > 0 ? loaded : localScheduleSubjects;\n    };'''
+          if s.count(old) != 1:
+              raise SystemExit(f'expected loader block once, found {s.count(old)}')
+          s = s.replace(old, new)
+          p.write_text(s)
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Diff check
+        run: git diff --check
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/class/page.tsx
+          git commit -m "fix: populate manual subjects from prepared schedule offline"
+          git push
