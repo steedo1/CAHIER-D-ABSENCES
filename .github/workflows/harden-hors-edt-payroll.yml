@@ -1,0 +1,37 @@
+name: Harden hors EDT payroll
+
+on:
+  push:
+    branches:
+      - feat/class-device-hors-edt-20260915
+    paths:
+      - scripts/harden-hors-edt-payroll.py
+      - .github/workflows/harden-hors-edt-payroll.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply guarded payroll patch
+        run: python scripts/harden-hors-edt-payroll.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Commit guarded payroll change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/admin/finance/payroll/page.tsx
+          git diff --cached --check
+          git commit -m "fix: require active teacher assignment for hors-EDT payroll"
+          git push origin HEAD:feat/class-device-hors-edt-20260915
