@@ -10,8 +10,8 @@ type Props = {
   };
   selectedRun: { period_month: string; period_start: string; period_end: string; academic_year?: string | null; status: string };
   lines: Array<{ id: string; teacher_name_snapshot: string | null; actual_sessions: number; expected_sessions: number;
-    gross_amount: number | string; lost_amount?: number | string | null; adjusted_amount?: number | string | null }>;
-  totals: { actualSessions: number; gross: number; retained: number; payable: number };
+    gross_amount: number | string; lost_amount?: number | string | null; adjusted_amount?: number | string | null; hors_edt_sessions?: number }>;
+  totals: { actualSessions: number; gross: number; retained: number; payable: number; horsEdtSessions?: number };
   effectiveReferenceMinutes: number;
   effectiveLateTolerance: number;
   effectiveEarlyTolerance: number;
@@ -88,7 +88,7 @@ export default async function PayrollPrintSheet({
           <div className="text-xl font-black uppercase">{institutionName}</div>
           <div className="mt-2 text-2xl font-black">État de paie des vacataires — {formatMonthLabel(selectedRun.period_month.slice(0, 7))}</div>
           <div className="mt-2 text-sm">Année scolaire : {selectedRun.academic_year || "Non renseignée"} · Du {formatDate(selectedRun.period_start)} au {formatDate(selectedRun.period_end)} · {selectedRun.status === "validated" ? "Validée" : selectedRun.status === "cancelled" ? "Annulée" : "Brouillon — à vérifier avant paiement"}</div>
-          <div className="mt-2 text-sm">Séance de référence : {effectiveReferenceMinutes} min · Retard toléré : {effectiveLateTolerance} min · Sortie anticipée tolérée : {effectiveEarlyTolerance} min</div>
+          <div className="mt-2 text-sm">Séance de référence : {effectiveReferenceMinutes} min · Retard toléré : {effectiveLateTolerance} min · Sortie anticipée tolérée : {effectiveEarlyTolerance} min{Number(totals.horsEdtSessions || 0) > 0 ? ` · Cours hors EDT payés : ${Number(totals.horsEdtSessions || 0)}` : ""}</div>
         </div>
         <table className="mt-6 w-full border-collapse text-xs">
           <thead>
@@ -105,7 +105,12 @@ export default async function PayrollPrintSheet({
             {lines.map((row) => (
               <tr key={row.id}>
                 <td className="border border-slate-300 p-2 font-semibold">{row.teacher_name_snapshot || "Enseignant"}</td>
-                <td className="border border-slate-300 p-2 text-right">{row.actual_sessions} / {row.expected_sessions}</td>
+                <td className="border border-slate-300 p-2 text-right">
+                  {row.actual_sessions} / {row.expected_sessions}
+                  {Number(row.hors_edt_sessions || 0) > 0 ? (
+                    <div className="mt-1 text-[10px] font-semibold">dont {row.hors_edt_sessions} hors EDT</div>
+                  ) : null}
+                </td>
                 <td className="border border-slate-300 p-2 text-right">{formatMoney(row.gross_amount)}</td>
                 <td className="border border-slate-300 p-2 text-right">{formatMoney(row.lost_amount)}</td>
                 <td className="border border-slate-300 p-2 text-right font-black">{formatMoney(payrollPayable(row))}</td>

@@ -616,6 +616,7 @@ export default function ClassDevicePage() {
   /* état de base */
   const [classes, setClasses] = useState<MyClass[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [manualSubjectMode, setManualSubjectMode] = useState(false);
   const [classId, setClassId] = useState<string>("");
   const [subjectId, setSubjectId] = useState<string>("");
   const [subjectLoadMode, setSubjectLoadMode] = useState<SubjectLoadMode>("empty");
@@ -2340,12 +2341,17 @@ export default function ClassDevicePage() {
     return `${activeSlotKey}|${periodId}|${revision}`;
   }, [activeConfiguredSlot?.id, activeSlotKey, relayClassSchedule?.schedule_revision]);
 
+  useEffect(() => {
+    setManualSubjectMode(false);
+  }, [classId, activeSlotKey]);
+
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
   const usingUnverifiedLegacySubjects =
     subjectLoadMode === "legacy-offline" ||
     subjectLoadMode === "legacy-fallback";
   const canStartAttendanceNow =
-    !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
+    !!activeConfiguredSlot &&
+    (!usingUnverifiedLegacySubjects || manualSubjectMode);
 
   /* 2) charger les matières selon le mode courant
         - en ligne : le Cloud strict du créneau est prioritaire
@@ -2444,6 +2450,20 @@ export default function ClassDevicePage() {
         return;
       }
 
+      if (manualSubjectMode) {
+        const legacyList = await loadLegacySubjects();
+        applyList(
+          legacyList,
+          legacyList.length
+            ? isOnline
+              ? "legacy-fallback"
+              : "legacy-offline"
+            : "empty",
+        );
+        setSubjectId("");
+        return;
+      }
+
       const relayList = relaySubjectsForSlot(
         relayClassSchedule,
         classId,
@@ -2531,6 +2551,7 @@ export default function ClassDevicePage() {
     activeConfiguredSlot,
     canUseFallbackLegacyFlow,
     isOnline,
+    manualSubjectMode,
     open,
     relayClassSchedule?.schedule_revision,
   ]);
@@ -2745,7 +2766,7 @@ export default function ClassDevicePage() {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
-    if (usingUnverifiedLegacySubjects) {
+    if (usingUnverifiedLegacySubjects && !manualSubjectMode) {
       setMsg(
         "Cet ancien cache reste consultable, mais ne peut pas ouvrir un appel. Actualisez la préparation v5.",
       );
@@ -2788,8 +2809,9 @@ export default function ClassDevicePage() {
       if (
         preparedSchedule &&
         (!verifiedPeriod ||
-          !verifiedSubjects ||
-          !verifiedSubjects.some((subject) => subject.id === subjectId))
+          (!manualSubjectMode &&
+            (!verifiedSubjects ||
+              !verifiedSubjects.some((subject) => subject.id === subjectId))))
       ) {
         setSessionRuntimeState("recoverable_error");
         setMsg(
@@ -2830,7 +2852,7 @@ export default function ClassDevicePage() {
       const institutionId = selectedClass?.institution_id || "";
       const actorProfileId = selectedClass?.actor_profile_id || null;
       const cls = classes.find((candidate) => candidate.id === classId);
-      const subj = (verifiedSubjects ?? []).find(
+      const subj = (manualSubjectMode ? subjects : (verifiedSubjects ?? [])).find(
         (subject) => subject.id === subjectId,
       );
 
@@ -2900,8 +2922,8 @@ export default function ClassDevicePage() {
         classId,
         periodId: verifiedPeriod.id!,
         attemptKey,
-        relayBaseUrl: classRelayBaseUrl(selectedClass),
-        relayAccessToken: relayPolicy?.relay_access_token,
+        relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
+        relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,
       });
       const relayAttemptDuration = performance.now() - relayAttemptStartedAt;
 
@@ -3970,6 +3992,23 @@ export default function ClassDevicePage() {
                 </option>
               ))}
             </Select>
+            {activeConfiguredSlot && !open ? (
+              <div className="mt-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualSubjectMode((current) => !current);
+                    setSubjects([]);
+                    setSubjectId("");
+                    setSubjectLoadMode("empty");
+                    setSubjectScheduleIssue(null);
+                  }}
+                  className="text-[11px] font-semibold text-indigo-700 hover:underline"
+                >
+                  {manualSubjectMode ? "Retour auto" : "Autre cours"}
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -4013,21 +4052,21 @@ export default function ClassDevicePage() {
           </div>
         )}
 
-        {usingLegacyOfflineMode && (
+        {usingLegacyOfflineMode && !manualSubjectMode && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             Ancien cache consultable hors connexion. Il ne peut pas autoriser
             l’ouverture d’un appel sans préparation v5 cohérente.
           </div>
         )}
 
-        {usingLegacyFallbackMode && (
+        {usingLegacyFallbackMode && !manualSubjectMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Données legacy affichées en secours uniquement. Actualisez le
             planning vérifié avant de démarrer l’appel.
           </div>
         )}
 
-        {noScheduledSubjectNow && (
+        {noScheduledSubjectNow && !manualSubjectMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             Aucune discipline n’a pu être positionnée automatiquement pour cette classe dans le créneau en cours.
           </div>

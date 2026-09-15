@@ -2016,7 +2016,34 @@ async function prepareClassDevice(
     throw new Error(classDeviceReadinessMessage(selectedScope.status));
   }
 
+  const allSubjectsCacheKey = `classDevice:subjects:${classId}`;
+  const scheduledSubjects = Array.from(
+    new Map(
+      schedule.slots.flatMap((slot) =>
+        (slot.items || [])
+          .filter((item) => String(item.class_id || "") === classId)
+          .map((item) => [
+            String(item.subject_id || ""),
+            {
+              id: String(item.subject_id || ""),
+              label: String(item.subject_name || "Matière").trim() || "Matière",
+            },
+          ] as const),
+      ),
+    ).values(),
+  ).filter((subject) => Boolean(subject.id));
+  await cacheSet(allSubjectsCacheKey, { items: scheduledSubjects });
   if (cloudRevision !== null) {
+    onProgress("Préparation des disciplines de la classe…");
+    try {
+      await fetchAndCache(
+        `/api/class/subjects?class_id=${encodeURIComponent(classId)}`,
+        allSubjectsCacheKey,
+      );
+    } catch {
+      // Le planning préparé reste valide ; le cache hebdomadaire reste utilisable.
+    }
+
     try {
       await fetchAndCache(
         "/api/teacher/sessions/open",

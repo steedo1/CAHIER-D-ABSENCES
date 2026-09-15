@@ -734,9 +734,35 @@ export async function GET(req: NextRequest) {
   });
 
   const matchedSessionIds = new Set(rows.map((row) => row.session_id).filter(Boolean));
-  const unmatchedSessionCount = (sessions || []).filter((session: any) =>
-    scopedClassIds.has(String(session.class_id)) && !matchedSessionIds.has(String(session.id)),
-  ).length;
+  const unmatchedSessions = (sessions || [])
+    .filter((session: any) =>
+      scopedClassIds.has(String(session.class_id)) &&
+      !matchedSessionIds.has(String(session.id)),
+    )
+    .map((session: any) => {
+      const classId = String(session.class_id || "");
+      const subjectId = String(session.subject_id || "");
+      const teacherId = String(session.teacher_id || "");
+      const classRow = classById.get(classId);
+      return {
+        id: String(session.id),
+        date: isoToYMD(String(session.started_at)),
+        actual_call_at: session.actual_call_at ? String(session.actual_call_at) : null,
+        ended_at: session.ended_at ? String(session.ended_at) : null,
+        class_id: classId || null,
+        class_label: String(classRow?.label || "").trim() || null,
+        subject_id: subjectId || null,
+        subject_name: subjectNameById.get(subjectId) || "Discipline",
+        teacher_id: teacherId || null,
+        teacher_name: teacherNameById.get(teacherId) || "Enseignant",
+      };
+    })
+    .sort((a: any, b: any) =>
+      `${a.date}|${a.actual_call_at || ""}|${a.class_label || ""}`.localeCompare(
+        `${b.date}|${b.actual_call_at || ""}|${b.class_label || ""}`,
+      ),
+    );
+  const unmatchedSessionCount = unmatchedSessions.length;
 
   if (debug) {
     const distinctNums = (arr: any[], key: string) =>
@@ -754,6 +780,7 @@ export async function GET(req: NextRequest) {
       institution_id,
       rows,
       unmatched_session_count: unmatchedSessionCount,
+      unmatched_sessions: unmatchedSessions,
       education_scope: educationScope,
       debug: {
         todayYmd,
@@ -779,5 +806,11 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ institution_id, education_scope: educationScope, rows, unmatched_session_count: unmatchedSessionCount });
+  return NextResponse.json({
+    institution_id,
+    education_scope: educationScope,
+    rows,
+    unmatched_session_count: unmatchedSessionCount,
+    unmatched_sessions: unmatchedSessions,
+  });
 }
