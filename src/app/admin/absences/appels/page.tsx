@@ -43,6 +43,16 @@ type MonitorRow = AttendanceReceiptFacts & {
   late_minutes?: number | null;
 };
 
+type HorsEdtRow = {
+  id: string;
+  date: string;
+  actual_call_at?: string | null;
+  ended_at?: string | null;
+  class_label?: string | null;
+  subject_name?: string | null;
+  teacher_name: string;
+};
+
 type DetailedRow = MonitorRow & {
   actual_start: string | null;
   actual_end: string | null;
@@ -290,6 +300,7 @@ export default function SurveillanceAppelsPage() {
   const [freshness, setFreshness] = useState<{ source: AdminAttendanceDataSource; savedAt: string } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [unmatchedSessions, setUnmatchedSessions] = useState(0);
+  const [horsEdtRows, setHorsEdtRows] = useState<HorsEdtRow[]>([]);
   const [reportContext, setReportContext] = useState<ReportContext>({
     institution_name: "Établissement",
     logo_url: null,
@@ -361,6 +372,7 @@ export default function SurveillanceAppelsPage() {
       setRows([]);
       setFreshness(null);
       setUnmatchedSessions(0);
+      setHorsEdtRows([]);
     }
 
     try {
@@ -381,7 +393,16 @@ export default function SurveillanceAppelsPage() {
       refreshErrorRef.current = false;
       setError(null);
       setRows(monitorRows);
-      setUnmatchedSessions(Number((monitorResult.data as { unmatched_session_count?: number }).unmatched_session_count || 0));
+      const monitorMeta = monitorResult.data as {
+        unmatched_session_count?: number;
+        unmatched_sessions?: HorsEdtRow[];
+      };
+      setUnmatchedSessions(Number(monitorMeta.unmatched_session_count || 0));
+      setHorsEdtRows(
+        Array.isArray(monitorMeta.unmatched_sessions)
+          ? monitorMeta.unmatched_sessions
+          : [],
+      );
       setFreshness({ source: monitorResult.source, savedAt: monitorResult.saved_at });
       if (!background) setExpandedTeacher(null);
     } catch (cause: any) {
@@ -673,7 +694,25 @@ export default function SurveillanceAppelsPage() {
             </p>
           ) : null}
           {contextError ? <p role="alert" className="mb-3 text-sm text-amber-800">{contextError}</p> : null}
-          {unmatchedSessions > 0 ? <p role="alert" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{unmatchedSessions} séance(s) reçue(s) ne correspondent pas à l’EDT actuel. Les absences et durées du bilan doivent être vérifiées ; ces séances ne sont pas réaffectées automatiquement à un autre cours.</p> : null}
+          {unmatchedSessions > 0 ? (
+            <details className="mb-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+              <summary className="cursor-pointer font-semibold">
+                Cours hors EDT : {unmatchedSessions}
+              </summary>
+              <p className="mt-1 text-xs text-indigo-800">
+                Cours réellement enregistrés sans correspondance dans l’EDT actuel.
+              </p>
+              {horsEdtRows.length > 0 ? (
+                <div className="mt-2 space-y-1 text-xs">
+                  {horsEdtRows.map((row) => (
+                    <div key={row.id} className="rounded-md bg-white/70 px-2 py-1">
+                      {formatDateFr(row.date)} · {isoToHm(row.actual_call_at) || "heure non reçue"} · {row.class_label || "Classe"} · {row.subject_name || "Discipline"} · {row.teacher_name}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </details>
+          ) : null}
           {error ? (
             <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
           ) : null}

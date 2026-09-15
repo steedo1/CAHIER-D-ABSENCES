@@ -425,17 +425,6 @@ export async function POST(req: NextRequest) {
       ((scheduledRows || []) as any[]).map((r) => String(r.teacher_id || "")).filter(Boolean)
     );
 
-    if (scheduledTeacherIds.length === 0) {
-      return NextResponse.json(
-        {
-          error: "class_subject_not_scheduled_for_slot",
-          message:
-            "Démarrage refusé : cette discipline n’est pas prévue pour cette classe dans le créneau en cours selon l’emploi du temps.",
-        },
-        { status: 403 }
-      );
-    }
-
     if (scheduledTeacherIds.length > 1) {
       return NextResponse.json(
         {
@@ -447,7 +436,64 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const teacher_id = scheduledTeacherIds[0]!;
+    const sessionDate = ymdInTZ(actualCallAt, tz);
+    let teacher_id = scheduledTeacherIds[0] || "";
+    let isHorsEdt = false;
+
+    if (!teacher_id) {
+      const assignmentSubjectIds = uniq<string>(
+        [instSubjectId, canonicalSubjectId]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      );
+      const { data: assignmentRows, error: assignmentErr } = await srv
+        .from("class_teachers")
+        .select("teacher_id,start_date,end_date")
+        .eq("institution_id", cls.institution_id)
+        .eq("class_id", class_id)
+        .in("subject_id", assignmentSubjectIds);
+
+      if (assignmentErr) {
+        return NextResponse.json(
+          { error: "class_teacher_lookup_unavailable" },
+          { status: 503 },
+        );
+      }
+
+      const assignedTeacherIds = uniq<string>(
+        ((assignmentRows || []) as any[])
+          .filter((row) => {
+            const start = String(row.start_date || "").slice(0, 10);
+            const end = String(row.end_date || "").slice(0, 10);
+            return (!start || start <= sessionDate) && (!end || end >= sessionDate);
+          })
+          .map((row) => String(row.teacher_id || ""))
+          .filter(Boolean),
+      );
+
+      if (assignedTeacherIds.length === 0) {
+        return NextResponse.json(
+          {
+            error: "class_subject_not_assigned_to_teacher",
+            message:
+              "Cette discipline n’est affectée à aucun enseignant de cette classe.",
+          },
+          { status: 403 },
+        );
+      }
+      if (assignedTeacherIds.length > 1) {
+        return NextResponse.json(
+          {
+            error: "ambiguous_class_subject_teacher",
+            message:
+              "Plusieurs enseignants sont affectés à cette discipline dans cette classe. Impossible d’attribuer la séance automatiquement.",
+          },
+          { status: 409 },
+        );
+      }
+      teacher_id = assignedTeacherIds[0]!;
+      isHorsEdt = true;
+    }
 
     let expected_minutes: number | null;
     if (b?.expected_minutes === null) {
@@ -458,7 +504,7 @@ export async function POST(req: NextRequest) {
       expected_minutes = periodDuration ?? defSessionMin;
     }
 
-    const ymd = ymdInTZ(actualCallAt, tz);
+    const ymd = sessionDate;
     const hh = Math.floor(currentPeriod.startMin / 60);
     const mm = currentPeriod.startMin % 60;
     const slotStartedAt = dateInTZFromYMDHM(ymd, `${pad2(hh)}:${pad2(mm)}`, tz);
@@ -638,6 +684,7 @@ export async function POST(req: NextRequest) {
         operation_id: operationId || null,
         server_time: serverNow.toISOString(),
         idempotent,
+        hors_edt: isHorsEdt,
         clock_anomaly:
           requestedPeriodMismatch ||
           (clientClockSkewMs != null &&

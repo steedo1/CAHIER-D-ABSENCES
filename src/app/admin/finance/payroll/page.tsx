@@ -83,6 +83,7 @@ type TeacherPayrollLineRow = {
   lost_minutes_after_tolerance?: number | string | null;
   lost_amount?: number | string | null;
   adjusted_amount?: number | string | null;
+  hors_edt_sessions?: number;
 };
 
 type StatisticsDetailRow = {
@@ -569,7 +570,7 @@ async function calculatePayrollAction(formData: FormData) {
     const actualRows = (stats.rows || []).filter((r) => !!r.actual_call_iso || numberValue(r.real_minutes) > 0);
     const usedRows = new Set<number>();
 
-    const sessionItems = expectedSlots.map((slot) => {
+    const plannedSessionItems = expectedSlots.map((slot) => {
       const matched = findPayrollSession(actualRows, usedRows, slot);
       const expectedMinutes = Math.max(1, numberValue(slot.expected_minutes) || sessionReferenceMinutes);
       const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
@@ -579,9 +580,58 @@ async function calculatePayrollAction(formData: FormData) {
       };
     });
 
-    const expectedSessions = sessionItems.length;
+    const horsEdtItems = actualRows.flatMap((row, index) => {
+      if (usedRows.has(index) || !row.actual_call_iso || !row.ended_at) return [];
+      const classIds = row.class_ids?.length
+        ? row.class_ids
+        : row.class_id
+          ? [row.class_id]
+          : [];
+      const subjectIds = row.subject_ids?.length
+        ? row.subject_ids
+        : row.subject_id
+          ? [row.subject_id]
+          : [];
+      const classId = classIds[0] || null;
+      const subjectId = subjectIds[0] || null;
+      if (!classId || !subjectId) return [];
+      const sessionDate = String(row.dateISO || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) return [];
+
+      const cycle = cycleFromLevel(classMap.get(classId)?.level);
+      const expectedMinutes = Math.max(
+        1,
+        numberValue(row.expected_minutes) || sessionReferenceMinutes,
+      );
+      const rate = cycle === "first_cycle" ? rateFirst : rateSecond;
+      const calculated = calculatePayrollSession(
+        row,
+        expectedMinutes,
+        sessionReferenceMinutes,
+        rate,
+        lateToleranceMin,
+        earlyDepartureToleranceMin,
+      );
+      if (!calculated.counted_for_pay) return [];
+
+      return [{
+        class_id: classId,
+        subject_id: subjectId,
+        period_id: null,
+        session_date: sessionDate,
+        start_time: null,
+        weekday: new Date(`${sessionDate}T00:00:00Z`).getUTCDay(),
+        cycle,
+        expected_minutes: expectedMinutes,
+        ...calculated,
+        source_origin: "class_device_hors_edt",
+      }];
+    });
+
+    const sessionItems = [...plannedSessionItems, ...horsEdtItems];
+    const expectedSessions = expectedSlots.length;
     const actualSessions = sessionItems.filter((item) => item.counted_for_pay).length;
-    const expectedMinutes = sessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
+    const expectedMinutes = plannedSessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
     const actualMinutes = sessionItems.reduce((acc, item) => acc + item.actual_minutes, 0);
     const sessionsFirstCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "first_cycle").length;
     const sessionsSecondCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "second_cycle").length;
@@ -881,7 +931,29 @@ export default async function FinancePayrollPage({
     : { data: [], error: null as any };
   if (linesResult.error) throw new Error(linesResult.error.message);
 
-  const lines = (linesResult.data ?? []) as TeacherPayrollLineRow[];
+  const baseLines = (linesResult.data ?? []) as TeacherPayrollLineRow[];
+  const horsEdtResult = selectedRun
+    ? await supabase
+        .schema("finance")
+        .from("teacher_payroll_line_sessions")
+        .select("line_id")
+        .eq("run_id", selectedRun.id)
+        .eq("source_origin", "class_device_hors_edt")
+        .eq("counted_for_pay", true)
+    : { data: [], error: null as any };
+  if (horsEdtResult.error) throw new Error(horsEdtResult.error.message);
+
+  const horsEdtByLine = new Map<string, number>();
+  for (const row of horsEdtResult.data ?? []) {
+    const lineId = String((row as any).line_id || "");
+    if (!lineId) continue;
+    horsEdtByLine.set(lineId, (horsEdtByLine.get(lineId) || 0) + 1);
+  }
+
+  const lines = baseLines.map((row) => ({
+    ...row,
+    hors_edt_sessions: horsEdtByLine.get(row.id) || 0,
+  }));
   const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
   const totals = lines.reduce(
     (acc, row) => {
@@ -892,9 +964,10 @@ export default async function FinancePayrollPage({
       acc.gross += numberValue(row.gross_amount);
       acc.retained += numberValue(row.lost_amount);
       acc.payable += payrollPayable(row);
+      acc.horsEdtSessions += numberValue(row.hors_edt_sessions);
       return acc;
     },
-    { expectedSessions: 0, actualSessions: 0, actualMinutes: 0, lostMinutes: 0, gross: 0, retained: 0, payable: 0 },
+    { expectedSessions: 0, actualSessions: 0, actualMinutes: 0, lostMinutes: 0, gross: 0, retained: 0, payable: 0, horsEdtSessions: 0 },
   );
 
   if (printMode && selectedRun) {
@@ -1026,7 +1099,7 @@ export default async function FinancePayrollPage({
                 <h2 className="text-2xl font-black text-slate-900">{formatMonthLabel(selectedRun.period_month.slice(0, 7))}</h2>
                 <StatusPill status={selectedRun.status} />
               </div>
-              <p className="mt-2 text-sm text-slate-600">{lines.length} vacataire(s) · {totals.actualSessions} séance(s) payée(s) · Total {formatMoney(totals.payable)}</p>
+              <p className="mt-2 text-sm text-slate-600">{lines.length} vacataire(s) · {totals.actualSessions} séance(s) payée(s){totals.horsEdtSessions > 0 ? ` · dont ${totals.horsEdtSessions} hors EDT` : ""} · Total {formatMoney(totals.payable)}</p>
             </div>
             <div className="flex flex-wrap gap-3">
               {selectedRun.status === "draft" ? (
@@ -1067,6 +1140,9 @@ export default async function FinancePayrollPage({
                       <td className="px-3 py-3">
                         <div className="font-black text-slate-900">{row.teacher_name_snapshot || "Enseignant"}</div>
                         <div className="mt-1 text-xs text-slate-500">1er cycle : {row.sessions_first_cycle} · 2nd cycle : {row.sessions_second_cycle}</div>
+                        {numberValue(row.hors_edt_sessions) > 0 ? (
+                          <div className="mt-1 text-xs font-semibold text-indigo-700">Hors EDT : {row.hors_edt_sessions}</div>
+                        ) : null}
                       </td>
                       <td className="px-3 py-3 text-right font-semibold text-slate-800">{row.actual_sessions} <span className="font-normal text-slate-400">/ {row.expected_sessions}</span></td>
                       <td className="px-3 py-3 text-right text-slate-700">{formatMinutes(row.actual_minutes)}</td>
