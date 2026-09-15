@@ -2460,7 +2460,6 @@ export default function ClassDevicePage() {
               : "legacy-offline"
             : "empty",
         );
-        setSubjectId("");
         return;
       }
 
