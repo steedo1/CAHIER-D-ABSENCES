@@ -528,6 +528,28 @@ function relaySubjectsForSlot(
   return subjects;
 }
 
+function relaySubjectsForClass(
+  schedule: RelayTeacherOfflineSchedule | null,
+  classId: string,
+): Subject[] {
+  if (!schedule) return [];
+  const subjects = new Map<string, Subject>();
+  for (const slot of schedule.slots || []) {
+    for (const item of slot.items || []) {
+      if (String(item.class_id || "") !== classId) continue;
+      const id = String(item.subject_id || "").trim();
+      if (!id || subjects.has(id)) continue;
+      subjects.set(id, {
+        id,
+        label: String(item.subject_name || "Discipline").trim() || "Discipline",
+      });
+    }
+  }
+  return Array.from(subjects.values()).sort((left, right) =>
+    left.label.localeCompare(right.label, "fr"),
+  );
+}
+
 function relayRosterForClass(
   schedule: RelayTeacherOfflineSchedule | null,
   classId: string,
@@ -2431,11 +2453,16 @@ export default function ClassDevicePage() {
     };
 
     const loadLegacySubjects = async () => {
+      const localScheduleSubjects = relaySubjectsForClass(
+        relayClassSchedule,
+        classId,
+      );
       const payload = await offlineGetJson(
         `/api/class/subjects?class_id=${classId}`,
         `classDevice:subjects:${classId}`,
-      ).catch(() => ({ items: [] as Subject[] }));
-      return (payload?.items || []) as Subject[];
+      ).catch(() => ({ items: localScheduleSubjects }));
+      const loaded = (payload?.items || []) as Subject[];
+      return loaded.length > 0 ? loaded : localScheduleSubjects;
     };
 
     (async () => {
@@ -2460,7 +2487,6 @@ export default function ClassDevicePage() {
               : "legacy-offline"
             : "empty",
         );
-        setSubjectId("");
         return;
       }
 
