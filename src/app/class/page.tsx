@@ -3200,10 +3200,23 @@ export default function ClassDevicePage() {
       setOpen(null);
       await cacheSet("classDevice:local-open", null);
       setSessionRuntimeState("recoverable_error");
+      const cloudBusinessMessage =
+        cloudResult.ok === false
+          ? String(
+              (cloudResult as any)?.data?.message ||
+                (cloudResult as any)?.message ||
+                "",
+            ).trim()
+          : "";
+      const cloudBusinessCode =
+        cloudResult.ok === false ? String(cloudResult.error || "").trim() : "";
       setMsg(
-        cloudResult.ok === false && cloudResult.error
-          ? cloudResult.error
-          : "Le Cloud a refusé l'ouverture pour une règle métier. Vérifiez la classe, la matière ou l'autorisation de l'appareil.",
+        cloudBusinessMessage ||
+          (cloudBusinessCode === "class_session_already_open"
+            ? "Un cours est déjà ouvert pour cette classe. Terminez-le avant de démarrer « Autre cours »."
+            : cloudBusinessCode
+              ? "Impossible de démarrer ce cours pour le moment. Actualisez la page puis réessayez."
+              : "Le Cloud a refusé l'ouverture pour une règle métier. Vérifiez la classe, la matière ou l'autorisation de l'appareil."),
       );
     } catch (e: any) {
       if (openRef.current?.open_operation_id) {
