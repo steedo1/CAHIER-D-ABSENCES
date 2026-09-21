@@ -215,6 +215,24 @@ export async function GET() {
       return noStoreJson({ items: [], source: "teacher_timetables" });
     }
 
+    const { data: revisionRow, error: revisionError } = await srv
+      .from("attendance_schedule_revisions")
+      .select("revision")
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+    if (revisionError) {
+      return noStoreJson({ error: revisionError.message }, 400);
+    }
+    const scheduleRevision = Number(revisionRow?.revision ?? 0);
+    if (!Number.isSafeInteger(scheduleRevision) || scheduleRevision < 0) {
+      return noStoreJson({ error: "schedule_revision_invalid" }, 409);
+    }
+    const scheduleMeta = {
+      institution_id: institutionId,
+      actor_profile_id: user.id,
+      schedule_revision: scheduleRevision,
+    };
+
     const { data: institution, error: institutionError } = await srv
       .from("institutions")
       .select("id,tz,settings_json")
@@ -252,7 +270,11 @@ export async function GET() {
     });
 
     if (!activePeriod?.id) {
-      return noStoreJson({ items: [], source: "teacher_timetables" });
+      return noStoreJson({
+        ...scheduleMeta,
+        items: [],
+        source: "teacher_timetables",
+      });
     }
 
     const { data: timetableData, error: timetableError } = await srv
@@ -271,7 +293,12 @@ export async function GET() {
     ) as TimetableRow[];
 
     if (!timetables.length) {
-      return noStoreJson({ items: [], source: "teacher_timetables" });
+      return noStoreJson({
+        ...scheduleMeta,
+        items: [],
+        source: "teacher_timetables",
+        period_id: String(activePeriod.id),
+      });
     }
 
     const classIds = uniqStrings(timetables.map((row) => row.class_id));
@@ -334,6 +361,7 @@ export async function GET() {
       .filter((item): item is ItemOut => Boolean(item));
 
     return noStoreJson({
+      ...scheduleMeta,
       items: dedupeAndSort(items),
       source: "teacher_timetables",
       period_id: String(activePeriod.id),
