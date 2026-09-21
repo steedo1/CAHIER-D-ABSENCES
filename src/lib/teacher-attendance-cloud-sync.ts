@@ -86,7 +86,9 @@ async function knownInstitutionIds(preferred?: string | null) {
 
 function parseTeacherAttemptKey(record: TeacherSessionDeliveryRecord) {
   const parts = record.attempt_key.split("_");
-  const subjectId = text(parts[1]);
+  // New durable records carry the selected subject explicitly. Fall back to
+  // the legacy attempt-key encoding only for records created before this fix.
+  const subjectId = text(record.subject_id) || text(parts[1]);
   const parsedStartedAt = text(parts.slice(2).join("_"));
   const startedAt = text(record.started_at) || parsedStartedAt;
   if (!subjectId || subjectId === "none" || !Number.isFinite(Date.parse(startedAt))) {
@@ -348,86 +350,3 @@ export async function getTeacherAttendanceSyncStatus(
     state: record.state,
     lastError: record.last_error,
     lastStatus: record.last_status,
-    requiresAuthentication: record.requires_authentication,
-  }));
-
-  return {
-    total: pending + blocked + conflicts,
-    pending,
-    blocked,
-    conflicts,
-    authRequired,
-    securedOnRelay,
-    lastError,
-    lastStatus,
-  };
-}
-
-/**
- * Rejoue toute la transaction PWA dans l'ordre ouverture → appel → fermeture.
- * Chaque phase attend l'ACK exact avant de rendre la suivante éligible.
- */
-export async function syncTeacherAttendanceOperationsToCloud(
-  institutionId?: string | null,
-): Promise<TeacherAttendanceCloudSyncResult> {
-  const institutionIds = await knownInstitutionIds(institutionId);
-  if (!(await attendanceCloudAvailableForSync())) {
-    const status = await getTeacherAttendanceSyncStatus(institutionId);
-    return {
-      flushed: 0,
-      remaining: status.total,
-      blocked: status.blocked,
-      conflicts: status.conflicts,
-      authRequired: status.authRequired,
-      retryableFailure: status.pending > 0,
-      lastError: status.lastError,
-      lastStatus: status.lastStatus,
-    };
-  }
-
-  await materializeDurableOperations(institutionIds);
-  const results: FlushResult[] = [];
-
-  const starts = await flushOutbox({
-    includeOperationTypes: ["session-start"],
-    releaseNetworkBackoff: true,
-  });
-  results.push(starts);
-  await applyAcknowledgements(starts.acknowledged);
-
-  const attendance = await flushOutbox({
-    includeOperationTypes: ["attendance"],
-    releaseNetworkBackoff: true,
-  });
-  results.push(attendance);
-  await applyAcknowledgements(attendance.acknowledged);
-
-  const attendanceAfter = (await durableRecords(institutionIds)).attendance;
-  const remainingAttendanceRows = (await listOfflineOutboxEntries())
-    .filter((entry) => entry.operationType === "attendance")
-    .map((entry) => entry.sessionDependencyKey)
-    .filter((value): value is string => Boolean(value));
-  const deferredSessionEnds = Array.from(new Set([
-    ...attendanceAfter
-      .filter((record) => record.state !== "cloud_synced" && record.state !== "superseded")
-      .map((record) => record.session_reference),
-    ...remainingAttendanceRows,
-  ]));
-  const endings = await flushOutbox({
-    excludeOperationTypes: ["session-start", "attendance"],
-    deferSessionEndKeys: deferredSessionEnds,
-    releaseNetworkBackoff: true,
-  });
-  results.push(endings);
-  await applyAcknowledgements(endings.acknowledged);
-
-  const combined = combineFlushResults(results);
-  const status = await getTeacherAttendanceSyncStatus(institutionId);
-  return {
-    ...combined,
-    remaining: status.total,
-    blocked: status.blocked,
-    conflicts: status.conflicts,
-    authRequired: combined.authRequired || status.authRequired,
-  };
-}
