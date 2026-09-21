@@ -580,6 +580,26 @@ export function teacherScheduleSlotCacheKey(input: {
   ].join(":");
 }
 
+export function classDeviceSubjectSlotCacheKey(input: {
+  classId?: string | null;
+  slotKey?: string | null;
+  periodId?: string | null;
+  scheduleRevision?: number | null;
+}) {
+  const classId = String(input.classId || "").trim();
+  const slotKey = String(input.slotKey || "").trim();
+  const periodId = String(input.periodId || "").trim();
+  const revision = safeRevision(input.scheduleRevision);
+  if (!classId || !slotKey || !periodId || revision === null) return null;
+  return [
+    "classDevice:subjects:v2",
+    encodeURIComponent(classId),
+    String(revision),
+    encodeURIComponent(periodId),
+    encodeURIComponent(slotKey),
+  ].join(":");
+}
+
 async function applyTeacherScheduleFromRelay(
   readiness: OfflineReadiness,
   basics: any,
@@ -1367,7 +1387,18 @@ async function projectClassDeviceScheduleCaches(
           id: item.subject_id,
           label: item.subject_name,
         }));
-      await cacheSet(`classDevice:subjects:${classId}:${slot.key}`, {
+      const scopedKey = classDeviceSubjectSlotCacheKey({
+        classId,
+        slotKey: slot.key,
+        periodId: slot.period_id,
+        scheduleRevision: schedule.schedule_revision,
+      });
+      if (!scopedKey) return;
+      await cacheSet(scopedKey, {
+        class_id: classId,
+        schedule_revision: schedule.schedule_revision,
+        period_id: slot.period_id,
+        slot_key: slot.key,
         items: subjects,
       }).catch(() => undefined);
     }),
