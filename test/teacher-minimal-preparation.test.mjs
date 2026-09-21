@@ -54,3 +54,22 @@ test("la préparation est single-flight par rôle et accepte le relais sans Clou
   assert.match(source, /Cloud indisponible : récupération du paquet d’appel depuis le relais/);
   assert.match(source, /fetchRelayTeacherOfflineSchedule\(/);
 });
+
+test("le cache des créneaux professeur est isolé par établissement, compte et révision", async () => {
+  const [readiness, dashboard, route] = await Promise.all([
+    read("src/lib/offline-readiness.ts"),
+    read("src/components/teacher/TeacherDashboard.tsx"),
+    read("src/app/api/teacher/classes/route.ts"),
+  ]);
+
+  assert.match(readiness, /"teacher:classes:v2"/);
+  assert.match(readiness, /actorProfileId/);
+  assert.match(readiness, /scheduleRevision/);
+  assert.match(dashboard, /teacherScheduleSlotCacheKey\(/);
+  assert.doesNotMatch(dashboard, /`teacher:classes:${activeSlotKey}`/);
+  assert.match(dashboard, /responseActorProfileId !== actorProfileId/);
+  assert.match(dashboard, /responseInstitutionId !== institutionId/);
+  assert.match(dashboard, /Number\(payload\?\.schedule_revision\) !== localRevision/);
+  assert.match(route, /actor_profile_id:\s*user\.id/);
+  assert.match(route, /schedule_revision:\s*scheduleRevision/);
+});
