@@ -13,6 +13,7 @@ import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
+  teacherScheduleSlotCacheKey,
 } from "@/lib/offline-readiness";
 import {
   registerServiceWorker,
@@ -1256,15 +1257,84 @@ export default function TeacherDashboard() {
 
     (async () => {
       try {
-        const cl = await offlineGetJson(
-          "/api/teacher/classes",
-          `teacher:classes:${activeSlotKey}`
-        );
+        const institutionId = String(inst.institution_id || "").trim();
+        const actorProfileId = String(inst.actor_profile_id || "").trim();
+        if (!institutionId || !actorProfileId) {
+          throw new Error("teacher_schedule_identity_missing");
+        }
+
+        const readiness = await getOfflineReadiness("teacher").catch(() => null);
+        const localRevision =
+          Number.isSafeInteger(Number(readiness?.schedule_revision))
+            ? Number(readiness?.schedule_revision)
+            : null;
+        const localKey = teacherScheduleSlotCacheKey({
+          institutionId,
+          actorProfileId,
+          scheduleRevision: localRevision,
+          slotKey: activeSlotKey,
+        });
+
+        let payload: any = null;
+
+        if (isOnline) {
+          const response = await fetch("/api/teacher/classes", {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+          });
+          payload = await response.json().catch(() => null);
+          if (!response.ok || !payload) {
+            throw new Error(String(payload?.error || `HTTP ${response.status}`));
+          }
+
+          const responseInstitutionId = String(
+            payload?.institution_id || "",
+          ).trim();
+          const responseActorProfileId = String(
+            payload?.actor_profile_id || "",
+          ).trim();
+          const responseRevision = Number(payload?.schedule_revision);
+          if (
+            responseInstitutionId !== institutionId ||
+            responseActorProfileId !== actorProfileId ||
+            !Number.isSafeInteger(responseRevision) ||
+            responseRevision < 0
+          ) {
+            throw new Error("teacher_schedule_scope_mismatch");
+          }
+
+          const responseKey = teacherScheduleSlotCacheKey({
+            institutionId,
+            actorProfileId,
+            scheduleRevision: responseRevision,
+            slotKey: activeSlotKey,
+          });
+          if (!responseKey) throw new Error("teacher_schedule_cache_key_invalid");
+          await cacheSet(responseKey, {
+            ...payload,
+            slot_key: activeSlotKey,
+          });
+        } else {
+          if (!localKey) throw new Error("teacher_schedule_not_prepared");
+          payload = await cacheGet<any>(localKey);
+          if (
+            !payload ||
+            String(payload?.institution_id || "").trim() !== institutionId ||
+            String(payload?.actor_profile_id || "").trim() !== actorProfileId ||
+            Number(payload?.schedule_revision) !== localRevision ||
+            String(payload?.slot_key || "").trim() !== activeSlotKey
+          ) {
+            throw new Error("teacher_schedule_cache_scope_mismatch");
+          }
+        }
+
         if (cancelled) return;
-        setTeachClasses((((cl as any)?.items) || []) as TeachClass[]);
+        setTeachClasses(((payload?.items || []) as TeachClass[]));
       } catch {
         if (cancelled) return;
-        // Sans réponse ni cache pour CE créneau, on garde la sélection verrouillée.
+        // Aucune donnée non scoppée ou d'une ancienne révision n'est réutilisée.
         setTeachClasses([]);
         setClassesLoadError(true);
       } finally {
@@ -1275,7 +1345,14 @@ export default function TeacherDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [activeConfiguredSlot, activeSlotKey, open]);
+  }, [
+    activeConfiguredSlot,
+    activeSlotKey,
+    open,
+    isOnline,
+    inst.institution_id,
+    inst.actor_profile_id,
+  ]);
 
   useEffect(() => {
     if (open) return;
