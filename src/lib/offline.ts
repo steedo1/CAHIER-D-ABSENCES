@@ -634,7 +634,10 @@ class HttpResponseError extends Error {
 }
 
 function isRetryableStatus(status: number) {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
+  // 402 = restriction temporaire du fournisseur Cloud (quota/Fair Use).
+  // Pour les fonctions déjà préparées hors ligne, on le traite comme une
+  // indisponibilité transitoire afin de conserver lectures et mutations locales.
+  return status === 402 || status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function responseErrorMessage(payload: any, status: number) {
