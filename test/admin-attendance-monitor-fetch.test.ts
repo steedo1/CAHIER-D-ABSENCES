@@ -148,7 +148,7 @@ test("la fusion privilégie une preuve Relais plus avancée sans perdre les mét
     class_label: "3e1",
   }];
 
-  const merged = mergeAdminAttendanceRows(cloud, relay);
+  const merged = mergeAdminAttendanceRows<Record<string, any>>(cloud, relay);
   assert.equal(merged.length, 1);
   assert.equal(merged[0]?.status, "ok");
   assert.equal(merged[0]?.opened_from, "class_device");
@@ -169,14 +169,14 @@ test("la fusion conserve le Cloud lorsqu'il possède déjà une preuve équivale
     opened_from: "teacher",
   }];
 
-  const merged = mergeAdminAttendanceRows(cloud, relay);
+  const merged = mergeAdminAttendanceRows<Record<string, any>>(cloud, relay);
   assert.equal(merged[0]?.status, "ok");
   assert.equal(merged[0]?.session_id, "cloud-session");
   assert.equal(merged[0]?.actual_call_at, "2026-09-21T10:02:00.000Z");
 });
 
 test("la fusion conserve aussi les lignes présentes uniquement sur le Relais", () => {
-  const merged = mergeAdminAttendanceRows(
+  const merged = mergeAdminAttendanceRows<Record<string, any>>(
     [{ id: "cloud-only", status: "not_started" }],
     [{ id: "relay-only", status: "started" }],
   );
