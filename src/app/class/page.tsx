@@ -1147,7 +1147,10 @@ export default function ClassDevicePage() {
           signal: controller.signal,
         },
       );
-      const reachable = response.status < 500;
+      // Un navigateur peut avoir Internet alors que l'API Cloud n'est
+      // pas exploitable (session hors ligne active, restriction 402, etc.).
+      // Le rejeu de l'outbox ne part que si le probe est réellement accepté.
+      const reachable = response.ok;
       setCloudStatus(reachable ? "connected" : "unavailable");
       return reachable;
     } catch {
