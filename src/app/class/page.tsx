@@ -2365,15 +2365,16 @@ export default function ClassDevicePage() {
 
   useEffect(() => {
     setManualSubjectMode(false);
-  }, [classId, activeSlotKey]);
+  }, [classId]);
 
   const canUseFallbackLegacyFlow = isOnline && !!activeConfiguredSlot;
   const usingUnverifiedLegacySubjects =
     subjectLoadMode === "legacy-offline" ||
     subjectLoadMode === "legacy-fallback";
   const canStartAttendanceNow =
-    !!activeConfiguredSlot &&
-    (!usingUnverifiedLegacySubjects || manualSubjectMode);
+    manualSubjectMode
+      ? !!classId
+      : !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
 
   /* 2) charger les matières selon le mode courant
         - en ligne : le Cloud strict du créneau est prioritaire
@@ -2466,17 +2467,8 @@ export default function ClassDevicePage() {
     };
 
     (async () => {
-      if (!activeConfiguredSlot) {
-        if (cancelled) return;
-        setSubjects([]);
-        setSubjectId("");
-        setSubjectLoadMode("closed-online");
-        setSubjectScheduleIssue(null);
-        subjectSelectionSlotRef.current = "";
-        pendingSnapshotSubjectRef.current = "";
-        return;
-      }
-
+      // "Autre cours" est une voie volontaire : elle reste disponible même
+      // hors créneau ou pendant le créneau d'un autre enseignant.
       if (manualSubjectMode) {
         const legacyList = await loadLegacySubjects();
         applyList(
@@ -2487,6 +2479,17 @@ export default function ClassDevicePage() {
               : "legacy-offline"
             : "empty",
         );
+        return;
+      }
+
+      if (!activeConfiguredSlot) {
+        if (cancelled) return;
+        setSubjects([]);
+        setSubjectId("");
+        setSubjectLoadMode("closed-online");
+        setSubjectScheduleIssue(null);
+        subjectSelectionSlotRef.current = "";
+        pendingSnapshotSubjectRef.current = "";
         return;
       }
 
@@ -2711,7 +2714,7 @@ export default function ClassDevicePage() {
 
   const usingLegacyOfflineMode = !open && subjectLoadMode === "legacy-offline";
   const usingLegacyFallbackMode = !open && subjectLoadMode === "legacy-fallback";
-  const scheduleBlocked = !open && !activeConfiguredSlot;
+  const scheduleBlocked = !open && !manualSubjectMode && !activeConfiguredSlot;
   const noScheduledSubjectNow =
     !!classId &&
     !!activeConfiguredSlot &&
@@ -2788,7 +2791,7 @@ export default function ClassDevicePage() {
       return;
     }
 
-    if (!activeConfiguredSlot?.id) {
+    if (!manualSubjectMode && !activeConfiguredSlot?.id) {
       setMsg("L’appel n’est autorisé que pendant un créneau ouvert par l’administration.");
       return;
     }
@@ -2825,19 +2828,23 @@ export default function ClassDevicePage() {
       const verifiedPeriods: Record<number, Period[]> = preparedSchedule
         ? periodsFromRelayClassSchedule(preparedSchedule, classId)
         : periodsByDay;
-      const verifiedPeriod = Object.values(verifiedPeriods)
-        .flat()
-        .find((period) => period.id === activeConfiguredSlot.id) || activeConfiguredSlot;
-      const verifiedSubjects = preparedSchedule
-        ? relaySubjectsForSlot(preparedSchedule, classId, verifiedPeriod)
-        : subjects;
+      const verifiedPeriod = activeConfiguredSlot?.id
+        ? Object.values(verifiedPeriods)
+            .flat()
+            .find((period) => period.id === activeConfiguredSlot.id) || activeConfiguredSlot
+        : null;
+      const verifiedSubjects = manualSubjectMode
+        ? subjects
+        : preparedSchedule && verifiedPeriod
+          ? relaySubjectsForSlot(preparedSchedule, classId, verifiedPeriod)
+          : subjects;
 
       if (
+        !manualSubjectMode &&
         preparedSchedule &&
         (!verifiedPeriod ||
-          (!manualSubjectMode &&
-            (!verifiedSubjects ||
-              !verifiedSubjects.some((subject) => subject.id === subjectId))))
+          !verifiedSubjects ||
+          !verifiedSubjects.some((subject) => subject.id === subjectId))
       ) {
         setSessionRuntimeState("recoverable_error");
         setMsg(
@@ -2853,27 +2860,51 @@ export default function ClassDevicePage() {
       }
 
       const observedAt = relayAdjustedDate();
-      const [hh, mm] = verifiedPeriod.start_time.split(":").map((value) => Number(value));
-      const started = new Date(
-        observedAt.getFullYear(),
-        observedAt.getMonth(),
-        observedAt.getDate(),
-        Number.isFinite(hh) ? hh : observedAt.getHours(),
-        Number.isFinite(mm) ? mm : 0,
-        0,
-        0,
-      );
-      const effectiveDuration = Math.max(
+      const actualCallAtISO = observedAt.toISOString();
+      const dateKey = dateKeyInTZ(observedAt, inst.tz || "Africa/Abidjan");
+
+      let started = observedAt;
+      let effectiveDuration = Math.max(
         1,
-        minutesDiff(verifiedPeriod.start_time, verifiedPeriod.end_time),
+        Number(duration || inst.default_session_minutes || 60),
       );
+
+      if (!manualSubjectMode) {
+        if (!verifiedPeriod?.id) {
+          setSessionRuntimeState("recoverable_error");
+          setMsg("Le créneau courant n’est plus disponible. Actualisez le planning avant de démarrer l’appel.");
+          return;
+        }
+        const [hh, mm] = verifiedPeriod.start_time
+          .split(":")
+          .map((value) => Number(value));
+        started = new Date(
+          observedAt.getFullYear(),
+          observedAt.getMonth(),
+          observedAt.getDate(),
+          Number.isFinite(hh) ? hh : observedAt.getHours(),
+          Number.isFinite(mm) ? mm : 0,
+          0,
+          0,
+        );
+        effectiveDuration = Math.max(
+          1,
+          minutesDiff(verifiedPeriod.start_time, verifiedPeriod.end_time),
+        );
+      }
+
+      const persistedPeriodId = manualSubjectMode
+        ? activeConfiguredSlot?.id || null
+        : verifiedPeriod!.id;
+      const deliveryPeriodKey = manualSubjectMode
+        ? `manual:${persistedPeriodId || "outside"}:${dateKey}:${actualCallAtISO.slice(11, 16)}`
+        : String(verifiedPeriod!.id);
       const attemptKey = [
         classId,
-        verifiedPeriod.id,
+        deliveryPeriodKey,
         subjectId,
-        dateKeyInTZ(observedAt, inst.tz || "Africa/Abidjan"),
+        dateKey,
       ].join(":");
-      const actualCallAtISO = observedAt.toISOString();
 
       const institutionId = selectedClass?.institution_id || "";
       const actorProfileId = selectedClass?.actor_profile_id || null;
@@ -2886,7 +2917,7 @@ export default function ClassDevicePage() {
       const stagedOpen = await stageTeacherAttendanceSessionOpen({
         institutionId,
         classId,
-        periodId: verifiedPeriod.id!,
+        periodId: deliveryPeriodKey,
         attemptKey,
       });
       const operationId = stagedOpen.operation_id;
@@ -2910,7 +2941,7 @@ export default function ClassDevicePage() {
               ? "cloud_fallback"
               : "local_pending",
         open_operation_id: operationId,
-        period_id: verifiedPeriod.id,
+        period_id: persistedPeriodId,
         scheduled_end_at: stagedOpen.scheduled_end_at,
         grace_expires_at: stagedOpen.grace_expires_at,
         session_state: stagedOpen.session_state || "open",
@@ -2946,7 +2977,7 @@ export default function ClassDevicePage() {
       const relayDelivery = await openTeacherAttendanceSessionOnRelay({
         institutionId,
         classId,
-        periodId: verifiedPeriod.id!,
+        periodId: deliveryPeriodKey,
         attemptKey,
         relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
         relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,
@@ -3004,11 +3035,12 @@ export default function ClassDevicePage() {
         body: {
           class_id: classId,
           subject_id: subjectId,
-          period_id: verifiedPeriod.id,
+          period_id: persistedPeriodId,
           expected_minutes: effectiveDuration,
           actual_call_at: actualCallAtISO,
           client_session_id: clientSessionId,
           operation_id: operationId,
+          manual_course: manualSubjectMode,
         },
       };
       const cloudStartOptions = {
@@ -3019,7 +3051,7 @@ export default function ClassDevicePage() {
           clientSessionId,
           institutionId,
           classId,
-          periodId: verifiedPeriod.id,
+          periodId: persistedPeriodId,
           subjectId,
         },
         timeoutMs: 6_000,
@@ -3080,8 +3112,10 @@ export default function ClassDevicePage() {
         }
 
         const cloudCorrectedPeriod = Boolean(
+          !manualSubjectMode &&
+          verifiedPeriod?.id &&
           cloudItem.period_id &&
-            String(cloudItem.period_id) !== String(verifiedPeriod.id),
+          String(cloudItem.period_id) !== String(verifiedPeriod.id),
         );
         relayClockRef.current = captureLiveCloudClock(
           cloudItem.server_time,
@@ -3103,7 +3137,7 @@ export default function ClassDevicePage() {
           local_relay: false,
           delivery_origin: "cloud_fallback",
           open_operation_id: operationId,
-          period_id: cloudItem.period_id || verifiedPeriod.id,
+          period_id: cloudItem.period_id ?? persistedPeriodId,
           session_state: cloudItem.session_state || "open",
         };
         setCloudStatus("connected");
@@ -3120,13 +3154,15 @@ export default function ClassDevicePage() {
           actualCallAt: cloudOpen.actual_call_at,
         });
         setMsg(
-          cloudCorrectedPeriod
-            ? "Le Cloud a recalé le créneau avec son heure serveur. L'appel continue normalement."
-            : relayUiEnabled
-              ? relayIssue
-                ? "Le relais n'a pas confirmé l'ouverture, mais le Cloud l'a sécurisée."
-                : "Relais local indisponible. L'appel continue via le Cloud."
-              : "L'appel continue via le Cloud.",
+          manualSubjectMode
+            ? "Autre cours démarré et confirmé par le Cloud."
+            : cloudCorrectedPeriod
+              ? "Le Cloud a recalé le créneau avec son heure serveur. L'appel continue normalement."
+              : relayUiEnabled
+                ? relayIssue
+                  ? "Le relais n'a pas confirmé l'ouverture, mais le Cloud l'a sécurisée."
+                  : "Relais local indisponible. L'appel continue via le Cloud."
+                : "L'appel continue via le Cloud.",
         );
         if (cloudCorrectedPeriod) setNowTick(Date.now());
         await refreshPending();
@@ -3143,13 +3179,15 @@ export default function ClassDevicePage() {
         );
         setSessionRuntimeState("open_local_pending");
         setMsg(
-          relayUiEnabled && relayIssue
-            ? `${relayIssue} L'appel reste sécurisé sur ce téléphone et le Cloud sera réessayé automatiquement.`
-            : cloudResult.status === 401
-              ? "La session Cloud doit être renouvelée. L'appel reste sécurisé sur ce téléphone et sera synchronisé automatiquement."
-              : relayUiEnabled
-                ? "Relais et Internet indisponibles. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement."
-                : "Internet indisponible. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement.",
+          manualSubjectMode
+            ? "Autre cours sécurisé sur ce téléphone. Il sera synchronisé automatiquement dès que le Cloud sera disponible."
+            : relayUiEnabled && relayIssue
+              ? `${relayIssue} L'appel reste sécurisé sur ce téléphone et le Cloud sera réessayé automatiquement.`
+              : cloudResult.status === 401
+                ? "La session Cloud doit être renouvelée. L'appel reste sécurisé sur ce téléphone et sera synchronisé automatiquement."
+                : relayUiEnabled
+                  ? "Relais et Internet indisponibles. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement."
+                  : "Internet indisponible. L'appel est sécurisé sur ce téléphone et sera synchronisé automatiquement.",
         );
         await refreshPending();
         return;
@@ -4003,13 +4041,15 @@ export default function ClassDevicePage() {
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={!!open || subjects.length === 0}>
               {subjects.length === 0 ? (
                 <option value="">
-                  {isOnline
-                    ? activeConfiguredSlot
-                      ? "— Aucune discipline disponible —"
-                      : "— Hors créneau —"
-                    : subjectLoadMode === "auto-offline"
-                      ? "— Aucun cours prévu —"
-                      : "— Aucun cours vérifié pour ce créneau —"}
+                  {manualSubjectMode
+                    ? "— Aucune discipline affectée à cette classe —"
+                    : isOnline
+                      ? activeConfiguredSlot
+                        ? "— Aucune discipline disponible —"
+                        : "— Hors créneau —"
+                      : subjectLoadMode === "auto-offline"
+                        ? "— Aucun cours prévu —"
+                        : "— Aucun cours vérifié pour ce créneau —"}
                 </option>
               ) : null}
               {subjects.map((s) => (
@@ -4018,7 +4058,7 @@ export default function ClassDevicePage() {
                 </option>
               ))}
             </Select>
-            {activeConfiguredSlot && !open ? (
+            {classId && !open ? (
               <div className="mt-1 flex justify-end">
                 <button
                   type="button"
@@ -4045,11 +4085,19 @@ export default function ClassDevicePage() {
               </div>
               <Input
                 type="time"
-                value={startTime}
+                value={
+                  manualSubjectMode
+                    ? hmInTZ(relayAdjustedDate(nowTick), inst.tz || "Africa/Abidjan")
+                    : startTime
+                }
                 onChange={(e) => setStartTime(e.target.value)}
-                disabled={locked}
+                disabled={locked || manualSubjectMode}
               />
-              <div className="mt-1 text-[11px] text-slate-500">{slotLabel}</div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                {manualSubjectMode
+                  ? "Autre cours — heure réelle capturée au démarrage"
+                  : slotLabel}
+              </div>
             </div>
             <div>
               <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
@@ -4074,7 +4122,14 @@ export default function ClassDevicePage() {
 
         {scheduleBlocked && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-            Hors créneau : l’appel reste bloqué tant qu’aucun créneau administratif n’est ouvert.
+            Hors créneau : le cours automatique est bloqué. Utilisez « Autre cours » pour un cours exceptionnel réel.
+          </div>
+        )}
+
+        {manualSubjectMode && !open && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+            <b>Autre cours :</b> disponible même hors créneau ou si le professeur prévu est absent.
+            La matière doit être réellement affectée à cette classe ; l’heure réelle est conservée et la séance sera signalée hors EDT.
           </div>
         )}
 
