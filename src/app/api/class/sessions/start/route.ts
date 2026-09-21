@@ -21,6 +21,9 @@ type Body = {
   period_id?: string | null;
   client_session_id?: string | null;
   operation_id?: string | null;
+  // Voie explicite "Autre cours" du téléphone de classe.
+  // Elle n'altère jamais la résolution automatique de l'EDT.
+  manual_course?: boolean;
 };
 
 function uniq<T>(arr: T[]): T[] {
@@ -139,6 +142,7 @@ export async function POST(req: NextRequest) {
     const class_id = String(b?.class_id ?? "").trim();
     const subject_id =
       b?.subject_id && String(b.subject_id).trim() ? String(b.subject_id).trim() : null;
+    const manualCourse = b?.manual_course === true;
 
     if (!class_id) {
       return NextResponse.json({ error: "class_id_required" }, { status: 400 });
@@ -384,7 +388,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (!currentPeriod) {
+    // Le flux automatique reste strictement borné par l'EDT.
+    // Seule la voie explicite "Autre cours" peut démarrer hors créneau.
+    if (!currentPeriod && !manualCourse) {
       const configuredSlots = (Array.isArray(periods) ? periods : [])
         .map((p: any) => `${String(p.start_time || "").slice(0, 5)}–${String(p.end_time || "").slice(0, 5)}`)
         .filter(Boolean)
@@ -406,41 +412,49 @@ export async function POST(req: NextRequest) {
     }
 
     const requestedPeriodMismatch = Boolean(
-      requestedPeriodId && requestedPeriodId !== currentPeriod.periodId,
+      !manualCourse &&
+      requestedPeriodId &&
+      currentPeriod &&
+      requestedPeriodId !== currentPeriod.periodId,
     );
 
-    const { data: scheduledRows, error: scheduledErr } = await srv
-      .from("teacher_timetables")
-      .select("teacher_id")
-      .eq("institution_id", cls.institution_id)
-      .eq("class_id", class_id)
-      .eq("subject_id", instSubjectId)
-      .eq("period_id", currentPeriod.periodId);
+    let scheduledTeacherIds: string[] = [];
+    if (!manualCourse && currentPeriod) {
+      const { data: scheduledRows, error: scheduledErr } = await srv
+        .from("teacher_timetables")
+        .select("teacher_id")
+        .eq("institution_id", cls.institution_id)
+        .eq("class_id", class_id)
+        .eq("subject_id", instSubjectId)
+        .eq("period_id", currentPeriod.periodId);
 
-    if (scheduledErr) {
-      return NextResponse.json({ error: "timetable_lookup_unavailable" }, { status: 503 });
-    }
+      if (scheduledErr) {
+        return NextResponse.json({ error: "timetable_lookup_unavailable" }, { status: 503 });
+      }
 
-    const scheduledTeacherIds = uniq<string>(
-      ((scheduledRows || []) as any[]).map((r) => String(r.teacher_id || "")).filter(Boolean)
-    );
-
-    if (scheduledTeacherIds.length > 1) {
-      return NextResponse.json(
-        {
-          error: "ambiguous_timetable_for_slot",
-          message:
-            "Démarrage refusé : plusieurs enseignants sont prévus pour cette classe et cette discipline sur le même créneau. Corrigez l’emploi du temps.",
-        },
-        { status: 409 }
+      scheduledTeacherIds = uniq<string>(
+        ((scheduledRows || []) as any[]).map((r) => String(r.teacher_id || "")).filter(Boolean)
       );
+
+      if (scheduledTeacherIds.length > 1) {
+        return NextResponse.json(
+          {
+            error: "ambiguous_timetable_for_slot",
+            message:
+              "Démarrage refusé : plusieurs enseignants sont prévus pour cette classe et cette discipline sur le même créneau. Corrigez l’emploi du temps.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const sessionDate = ymdInTZ(actualCallAt, tz);
     let teacher_id = scheduledTeacherIds[0] || "";
-    let isHorsEdt = false;
+    let isHorsEdt = manualCourse;
 
-    if (!teacher_id) {
+    // En mode "Autre cours", l'enseignant vient toujours de l'affectation
+    // classe + discipline, jamais du cours programmé sur le créneau.
+    if (manualCourse || !teacher_id) {
       const assignmentSubjectIds = uniq<string>(
         [instSubjectId, canonicalSubjectId]
           .map((value) => String(value || "").trim())
@@ -505,9 +519,17 @@ export async function POST(req: NextRequest) {
     }
 
     const ymd = sessionDate;
-    const hh = Math.floor(currentPeriod.startMin / 60);
-    const mm = currentPeriod.startMin % 60;
-    const slotStartedAt = dateInTZFromYMDHM(ymd, `${pad2(hh)}:${pad2(mm)}`, tz);
+    let slotStartedAt = actualCallAt;
+    if (!manualCourse) {
+      if (!currentPeriod) {
+        return NextResponse.json({ error: "attendance_period_missing" }, { status: 409 });
+      }
+      const hh = Math.floor(currentPeriod.startMin / 60);
+      const mm = currentPeriod.startMin % 60;
+      slotStartedAt = dateInTZFromYMDHM(ymd, `${pad2(hh)}:${pad2(mm)}`, tz);
+    }
+    // "Autre cours" conserve l'heure réelle du clic. Un cours normal conserve,
+    // lui, le début canonique du créneau comme auparavant.
     const slotStartedISO = slotStartedAt.toISOString();
     const callISO = actualCallAt.toISOString();
 
@@ -534,13 +556,68 @@ export async function POST(req: NextRequest) {
         }
       | null = null;
 
+    const cloudSessionId = classDeviceCloudSessionId({
+      institutionId: String(cls.institution_id),
+      classId: class_id,
+      actorProfileId: user.id,
+      operationId,
+    });
+
+    // Protection propre au mode "Autre cours" : il peut ignorer l'EDT, mais
+    // jamais ouvrir une deuxième séance sur la classe ni faire enseigner le
+    // même professeur dans deux classes en même temps.
+    if (manualCourse) {
+      const { data: openClassSessions, error: openClassErr } = await srv
+        .from("teacher_sessions")
+        .select("id,teacher_id,subject_id")
+        .eq("institution_id", cls.institution_id)
+        .eq("class_id", class_id)
+        .eq("status", "open")
+        .is("ended_at", null)
+        .neq("id", cloudSessionId)
+        .limit(1);
+
+      if (openClassErr) {
+        return NextResponse.json({ error: "open_class_session_lookup_unavailable" }, { status: 503 });
+      }
+      if ((openClassSessions || []).length > 0) {
+        return NextResponse.json(
+          {
+            error: "class_session_already_open",
+            message:
+              "Un cours est déjà ouvert pour cette classe. Terminez-le avant de démarrer « Autre cours ».",
+          },
+          { status: 409 },
+        );
+      }
+
+      const { data: openTeacherSessions, error: openTeacherErr } = await srv
+        .from("teacher_sessions")
+        .select("id,class_id,subject_id")
+        .eq("institution_id", cls.institution_id)
+        .eq("teacher_id", teacher_id)
+        .eq("status", "open")
+        .is("ended_at", null)
+        .neq("id", cloudSessionId)
+        .limit(1);
+
+      if (openTeacherErr) {
+        return NextResponse.json({ error: "open_teacher_session_lookup_unavailable" }, { status: 503 });
+      }
+      if ((openTeacherSessions || []).length > 0) {
+        return NextResponse.json(
+          {
+            error: "teacher_session_already_open",
+            message:
+              "Cet enseignant a déjà un cours ouvert. Impossible de démarrer une seconde séance simultanée.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const upPayload = {
-      id: classDeviceCloudSessionId({
-        institutionId: String(cls.institution_id),
-        classId: class_id,
-        actorProfileId: user.id,
-        operationId,
-      }),
+      id: cloudSessionId,
       institution_id: cls.institution_id,
       teacher_id,
       class_id,
@@ -676,7 +753,7 @@ export async function POST(req: NextRequest) {
         class_label: cls.label as string,
         subject_id,
         subject_name,
-        period_id: currentPeriod.periodId,
+        period_id: currentPeriod?.periodId || null,
         started_at: session.started_at,
         actual_call_at: session.actual_call_at ?? callISO,
         expected_minutes: session.expected_minutes ?? expected_minutes ?? null,
@@ -692,7 +769,7 @@ export async function POST(req: NextRequest) {
             ? {
                 client_server_skew_ms: clientClockSkewMs,
                 requested_period_id: requestedPeriodId || null,
-                cloud_period_id: currentPeriod.periodId,
+                cloud_period_id: currentPeriod?.periodId || null,
                 action: clientObservedAtAccepted
                   ? "device_time_preserved_for_offline_sync"
                   : "cloud_time_applied_invalid_device_time",
