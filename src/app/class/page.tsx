@@ -2407,17 +2407,16 @@ export default function ClassDevicePage() {
 
       const automaticMode =
         mode === "relay" || mode === "auto" || mode === "auto-offline";
-      const normalizedList = normalizeSubjects(rawList);
-      const automaticConflict = automaticMode && normalizedList.length > 1;
-      const list = automaticConflict ? [] : normalizedList;
+      const list = normalizeSubjects(rawList);
 
+      // Multiple simultaneous subjects are legitimate for split groups
+      // (for example German + Spanish). Keep them all and require an explicit
+      // choice instead of treating the timetable as corrupted.
       setSubjects(list);
-      setSubjectLoadMode(automaticConflict ? "empty" : mode);
+      setSubjectLoadMode(mode);
       setSubjectScheduleIssue(
-        automaticConflict
-          ? relayUiEnabled
-            ? "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez le relais avant de démarrer le nouvel appel."
-            : "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez les données d’appel avant de démarrer le nouvel appel."
+        automaticMode && list.length > 1
+          ? "Plusieurs cours sont prévus sur ce créneau. Choisissez la discipline correspondant au professeur présent."
           : null,
       );
 
@@ -2507,7 +2506,7 @@ export default function ClassDevicePage() {
         `classDevice:subjects:${classId}:${activeSubjectScopeKey}`;
 
       if (!isOnline) {
-        if (normalizedRelayList !== null && normalizedRelayList.length <= 1) {
+        if (normalizedRelayList !== null) {
           await cacheSet(strictCacheKey, { items: normalizedRelayList }).catch(
             () => null,
           );
@@ -2533,8 +2532,15 @@ export default function ClassDevicePage() {
           return;
         }
 
-        const legacyList = await loadLegacySubjects();
-        applyList(legacyList, legacyList.length ? "legacy-offline" : "empty");
+        // Never substitute the class-wide legacy subject list for a
+        // missing scheduled slot. That can display an unrelated discipline
+        // (for example Informatique) when the verified schedule is unavailable.
+        setSubjects([]);
+        setSubjectId("");
+        setSubjectLoadMode("empty");
+        setSubjectScheduleIssue(
+          "Le planning vérifié de ce créneau n’est pas disponible hors connexion. Actualisez les données d’appel avant de démarrer.",
+        );
         return;
       }
 
@@ -2556,14 +2562,10 @@ export default function ClassDevicePage() {
         return;
       }
 
-      if (canUseFallbackLegacyFlow) {
-        const legacyList = await legacyWarmPromise;
-        if (legacyList.length > 0) {
-          applyList(legacyList, "legacy-fallback");
-          return;
-        }
-      }
-
+      // A class-wide legacy list must never masquerade as the current
+      // scheduled slot. Keep it available only through the explicit manual
+      // exceptional-course flow.
+      void legacyWarmPromise;
       applyList([], "empty");
     })();
 
