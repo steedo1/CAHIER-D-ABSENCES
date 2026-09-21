@@ -446,12 +446,25 @@ async function replayAttendanceOutboxFromWorker() {
 
   for (const row of callRows) {
     const operationType = attendanceOperationType(row);
-    if (!operationType || row?.state === "blocked") continue;
+    if (!operationType) continue;
 
     const originalBody = row?.body && typeof row.body === "object" ? row.body : row?.body;
     const body = rewriteAttendanceBodyWithMap(originalBody, map);
     const dependency = attendanceDependencyKey(row, body);
     const normalizedDependency = normalizedAttendanceDependency(dependency);
+
+    // Un appel déjà bloqué lors d'une passe antérieure continue de protéger sa
+    // fermeture. On ne doit jamais certifier une fin de séance si l'ouverture
+    // ou les présences de cette même séance sont encore en conflit.
+    if (row?.state === "blocked") {
+      if (
+        normalizedDependency &&
+        (operationType === "session-start" || operationType === "attendance")
+      ) {
+        blockedSessions.add(normalizedDependency);
+      }
+      continue;
+    }
 
     if (
       normalizedDependency &&
