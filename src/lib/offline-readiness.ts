@@ -109,6 +109,7 @@ export type OfflineReadiness = {
   relay_capabilities?: RelayCapabilities;
   schedule_compatibility?: TeacherScheduleCompatibilityStatus;
   institution_id?: string | null;
+  actor_profile_id?: string | null;
   authorized_class_id?: string | null;
   authorized_actor_profile_id?: string | null;
   relay_revision?: number | null;
@@ -557,6 +558,28 @@ function safeRevision(value: unknown) {
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
+export function teacherScheduleSlotCacheKey(input: {
+  institutionId?: string | null;
+  actorProfileId?: string | null;
+  scheduleRevision?: number | null;
+  slotKey?: string | null;
+}) {
+  const institutionId = String(input.institutionId || "").trim();
+  const actorProfileId = String(input.actorProfileId || "").trim();
+  const revision = safeRevision(input.scheduleRevision);
+  const slotKey = String(input.slotKey || "").trim();
+  if (!institutionId || !actorProfileId || revision === null || !slotKey) {
+    return null;
+  }
+  return [
+    "teacher:classes:v2",
+    encodeURIComponent(institutionId),
+    encodeURIComponent(actorProfileId),
+    String(revision),
+    encodeURIComponent(slotKey),
+  ].join(":");
+}
+
 async function applyTeacherScheduleFromRelay(
   readiness: OfflineReadiness,
   basics: any,
@@ -581,10 +604,24 @@ async function applyTeacherScheduleFromRelay(
   const entries: Array<readonly [string, any]> = [
     ["teacher:offline:bootstrap", schedule],
   ];
+  const scheduleActorProfileId = String(
+    schedule.actor_profile_id || basics?.actor_profile_id || "",
+  ).trim();
   for (const slot of schedule.slots) {
+    const scopedKey = teacherScheduleSlotCacheKey({
+      institutionId: schedule.institution_id || basics?.institution_id,
+      actorProfileId: scheduleActorProfileId,
+      scheduleRevision: schedule.schedule_revision,
+      slotKey: slot.key,
+    });
+    if (!scopedKey) continue;
     entries.push([
-      `teacher:classes:${slot.key}`,
+      scopedKey,
       {
+        institution_id: schedule.institution_id || basics?.institution_id || null,
+        actor_profile_id: scheduleActorProfileId || null,
+        schedule_revision: schedule.schedule_revision,
+        slot_key: slot.key,
         items: slot.items,
         has_active_slot: true,
         scheduled_for_slot: slot.items.length > 0,
@@ -620,6 +657,8 @@ async function applyTeacherScheduleFromRelay(
       textbook_assignments: readiness.textbook_assignment_count,
       assignments: schedule.assignments.length,
     },
+    institution_id: String(schedule.institution_id || basics?.institution_id || "").trim() || null,
+    actor_profile_id: scheduleActorProfileId || null,
     preparation_source: "relay",
   };
   entries.push([readinessKey("teacher"), next]);
@@ -659,12 +698,20 @@ export async function assessTeacherOfflineReadiness(
 
   const basics: any = await cacheGet("teacher:inst:basics").catch(() => null);
   const institutionId = String(basics?.institution_id || "").trim();
+  const actorProfileId = String(basics?.actor_profile_id || "").trim();
+  const readinessInstitutionId = String(initial?.institution_id || "").trim();
+  const readinessActorProfileId = String(initial?.actor_profile_id || "").trim();
   const relayPolicy = basics?.attendance_presence || {};
-  if (!institutionId) {
+  if (
+    !institutionId ||
+    !actorProfileId ||
+    (readinessInstitutionId && readinessInstitutionId !== institutionId) ||
+    (readinessActorProfileId && readinessActorProfileId !== actorProfileId)
+  ) {
     return {
       ...base,
       status: "not_prepared",
-      message: "L’établissement du paquet d’appel local n’est pas identifiable.",
+      message: "Le paquet d’appel local ne correspond pas exactement à l’enseignant actuellement connecté.",
     };
   }
 
@@ -1803,6 +1850,8 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     schedule_revision: scheduleRevision,
     schedule_generated_at: String(bootstrap.generated_at || "") || null,
+    institution_id: institutionId || null,
+    actor_profile_id: String(basics?.actor_profile_id || "").trim() || null,
     data_presence: {
       classes: classIds.length,
       students: studentIds.size,
@@ -1825,12 +1874,28 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     ["teacher:inst:basics", basics],
     [readinessKey("teacher"), readiness],
   ];
+  const actorProfileId = String(basics?.actor_profile_id || "").trim();
   for (const slot of slots) {
     if (!slot?.key) continue;
     const items = Array.isArray(slot.items) ? slot.items : [];
+    const scopedKey = teacherScheduleSlotCacheKey({
+      institutionId,
+      actorProfileId,
+      scheduleRevision,
+      slotKey: slot.key,
+    });
+    if (!scopedKey) continue;
     entries.push([
-      `teacher:classes:${slot.key}`,
-      { items, has_active_slot: true, scheduled_for_slot: items.length > 0 },
+      scopedKey,
+      {
+        institution_id: institutionId || null,
+        actor_profile_id: actorProfileId || null,
+        schedule_revision: scheduleRevision,
+        slot_key: slot.key,
+        items,
+        has_active_slot: true,
+        scheduled_for_slot: items.length > 0,
+      },
     ]);
   }
   for (const [classId, roster] of rosters) {
