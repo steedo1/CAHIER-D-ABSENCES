@@ -136,6 +136,27 @@ export async function fetchAttendanceBackground(input: RequestInfo | URL, init: 
   return fetchWithAttendanceTimeout(nativeFetch(), input, init, ATTENDANCE_SYNC_NETWORK_TIMEOUT_MS);
 }
 
+function hasOfflineAccessSessionHint() {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.sessionStorage.getItem("mc:offline-auth:active:v1");
+    if (!raw) return false;
+    const active = JSON.parse(raw) as { grant_token?: string; expires_at?: number } | null;
+    if (
+      !active?.grant_token ||
+      !Number.isFinite(Number(active.expires_at)) ||
+      Number(active.expires_at) <= Date.now()
+    ) {
+      return false;
+    }
+    return document.cookie
+      .split(";")
+      .some((part) => part.trim().startsWith("mc_offline_access="));
+  } catch {
+    return false;
+  }
+}
+
 let syncProbe: Promise<boolean> | null = null;
 export async function attendanceCloudAvailableForSync(): Promise<boolean> {
   if (typeof navigator === "undefined" || navigator.onLine === false) return false;
@@ -145,7 +166,12 @@ export async function attendanceCloudAvailableForSync(): Promise<boolean> {
       const response = await fetchAttendanceBackground("/api/auth/role", {
         credentials: "include", cache: "no-store", headers: { Accept: "application/json" },
       });
-      // A 401 is reachable: the replay reports authentication required without deleting data.
+      // Une vraie 401 hors mode secours reste "joignable" pour permettre
+      // au replay de signaler qu'une réauthentification est nécessaire.
+      // En session locale déjà validée, 401/402 signifie que le Cloud n'est
+      // momentanément pas exploitable : inutile de marteler l'outbox.
+      if (response.status === 402) return false;
+      if (response.status === 401 && hasOfflineAccessSessionHint()) return false;
       return response.status < 500;
     } catch { return false; }
     finally { syncProbe = null; }
