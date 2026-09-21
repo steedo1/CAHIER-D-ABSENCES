@@ -11,6 +11,7 @@ const OFFLINE_KV_STORE = "kv";
 const OFFLINE_META_STORE = "meta";
 const OFFLINE_OUTBOX_STORE = "outbox";
 const ATTENDANCE_BACKGROUND_SYNC_TAG = "moncahier-attendance-outbox-v1";
+const ATTENDANCE_REPLAY_TIMEOUT_MS = 8_000;
 const ATTENDANCE_CALL_OPERATION_TYPES = new Set([
   "session-start",
   "attendance",
@@ -515,13 +516,17 @@ async function replayAttendanceOutboxFromWorker() {
 
     let response;
     try {
-      response = await fetch(url.href, {
+      const replayRequest = new Request(url.href, {
         method: String(row?.method || "POST").toUpperCase(),
         credentials: "include",
         cache: "no-store",
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
+      response = await fetchWithTimeout(
+        replayRequest,
+        ATTENDANCE_REPLAY_TIMEOUT_MS,
+      );
     } catch (error) {
       await patchAttendanceOutboxRow(row.id, {
         state: "pending",
