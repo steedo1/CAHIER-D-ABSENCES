@@ -17,6 +17,7 @@ import {
   adminAttendanceCacheKeys,
   createTimedAbortSignal,
   isInstitutionScopedAdminAttendanceEnvelope,
+  mergeAdminAttendanceRows,
   readCloudRelayCache,
   type AdminAttendanceDataSource,
 } from "@/lib/admin-attendance-monitor";
@@ -523,7 +524,7 @@ export async function hasInstitutionScopedAdminAttendanceMonitorCache(
   return isInstitutionScopedAdminAttendanceEnvelope(envelope, expectedInstitutionId);
 }
 
-export async function fetchAdminAttendanceMonitor<T>(
+export async function fetchAdminAttendanceMonitor<T extends Record<string, any>>(
   from: string,
   to: string,
   signal?: AbortSignal,
@@ -537,87 +538,200 @@ export async function fetchAdminAttendanceMonitor<T>(
     educationScope,
     includeExpectedStatuses,
   );
-
   const queryString = query.toString();
   let institutionId = getRememberedRelayInstitution();
+
+  type MonitorPayload = {
+    rows: T[];
+    institution_id?: string | null;
+    unmatched_session_count?: number;
+    unmatched_sessions?: Array<Record<string, any>>;
+  };
+
   const scopedKey = (value: string) =>
     adminAttendanceCacheKeys(queryString, value).scoped;
-  const legacyKey = adminAttendanceCacheKeys(queryString, institutionId || "").legacy;
 
-  return await readCloudRelayCache<LocalReadResult<{ rows: T[] }>>({
-    signal,
-    cloud: async () => {
-      const cloud = await cloudJson<{ rows: T[]; institution_id?: string | null }>(
-        `/api/admin/attendance/monitor?${queryString}`,
-        signal,
-        ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS,
+  const readCached = async () => {
+    const currentInstitutionId =
+      String(institutionId || getRememberedRelayInstitution() || "").trim();
+    if (!currentInstitutionId) return null;
+
+    const currentKey = scopedKey(currentInstitutionId);
+    const scoped = await readEnvelope<MonitorPayload>(currentKey);
+    if (
+      scoped &&
+      isInstitutionScopedAdminAttendanceEnvelope(scoped, currentInstitutionId)
+    ) {
+      return { ...scoped, source: "cache" as const };
+    }
+
+    const legacyKey = adminAttendanceCacheKeys(
+      queryString,
+      currentInstitutionId,
+    ).legacy;
+    const legacy = await readEnvelope<MonitorPayload>(legacyKey);
+    if (
+      !legacy ||
+      !isInstitutionScopedAdminAttendanceEnvelope(
+        legacy,
+        currentInstitutionId,
+      )
+    ) {
+      return null;
+    }
+
+    const migrated: CacheEnvelope<MonitorPayload> = { ...legacy };
+    try {
+      await cacheSet(currentKey, migrated);
+    } catch {
+      // La vue legacy reste lisible même si IndexedDB refuse la migration.
+    }
+    return { ...migrated, source: "cache" as const };
+  };
+
+  const loadCloud = async () => {
+    const cloud = await cloudJson<MonitorPayload>(
+      `/api/admin/attendance/monitor?${queryString}`,
+      signal,
+      ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS,
+    );
+    const cloudInstitutionId = String(
+      cloud.institution_id || institutionId || "",
+    ).trim();
+    if (cloudInstitutionId) {
+      institutionId = cloudInstitutionId;
+      rememberRelayInstitution(cloudInstitutionId);
+      return await writeEnvelope(
+        scopedKey(cloudInstitutionId),
+        cloud,
+        "cloud",
+        cloudInstitutionId,
       );
-      const cloudInstitutionId = String(cloud.institution_id || institutionId || "").trim();
-      if (cloudInstitutionId) {
-        institutionId = cloudInstitutionId;
-        rememberRelayInstitution(cloudInstitutionId);
-        return await writeEnvelope(
-          scopedKey(cloudInstitutionId),
-          cloud,
-          "cloud",
-          cloudInstitutionId,
-        );
-      }
-      return {
-        data: cloud,
-        source: "cloud",
-        saved_at: new Date().toISOString(),
-      };
-    },
-    relay: institutionId && relayEnabledForInstitution(institutionId)
-      ? async () => {
-          const relayInstitutionId = institutionId as string;
-          const relayQuery = new URLSearchParams(query);
-          relayQuery.set("institution_id", relayInstitutionId);
-          const relay = await relayJson<{ rows: T[] }>(
-            `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
-            { signal },
-          );
-          const compatibleRelay = {
-            ...relay,
-            rows: legacyCompatibleAttendanceMonitorRows(
-              relay.rows || [],
-              includeExpectedStatuses,
-            ),
-          };
-          return await writeEnvelope(
-            scopedKey(relayInstitutionId),
-            compatibleRelay,
-            "relay",
-            relayInstitutionId,
-          );
-        }
-      : undefined,
-    cache: async () => {
-      if (!institutionId) return null;
+    }
+    return {
+      data: cloud,
+      source: "cloud" as const,
+      saved_at: new Date().toISOString(),
+    };
+  };
 
-      const currentKey = scopedKey(institutionId);
-      const scoped = await readEnvelope<{ rows: T[] }>(currentKey);
-      if (scoped && isInstitutionScopedAdminAttendanceEnvelope(scoped, institutionId)) {
-        return { ...scoped, source: "cache" };
-      }
+  const loadRelay = async (relayInstitutionId: string) => {
+    const relayQuery = new URLSearchParams(query);
+    relayQuery.set("institution_id", relayInstitutionId);
+    const relay = await relayJson<{ rows: T[] }>(
+      `/v1/admin/attendance/monitor?${relayQuery.toString()}`,
+      { signal },
+    );
+    const compatibleRelay: MonitorPayload = {
+      ...relay,
+      rows: legacyCompatibleAttendanceMonitorRows(
+        relay.rows || [],
+        includeExpectedStatuses,
+      ),
+    };
+    return await writeEnvelope(
+      scopedKey(relayInstitutionId),
+      compatibleRelay,
+      "relay",
+      relayInstitutionId,
+    );
+  };
 
-      // Compatibilité uniquement avec une enveloppe legacy qui portait déjà
-      // une identité vérifiable. Une ancienne vue non scoped n'est jamais attribuée
-      // implicitement au compte actuellement mémorisé.
-      const legacy = await readEnvelope<{ rows: T[] }>(legacyKey);
-      if (!legacy || !isInstitutionScopedAdminAttendanceEnvelope(legacy, institutionId)) return null;
-      const migrated: CacheEnvelope<{ rows: T[] }> = {
-        ...legacy,
-      };
+  const mergeCloudRelay = async (
+    cloud: LocalReadResult<MonitorPayload>,
+    relay: LocalReadResult<MonitorPayload>,
+    resolvedInstitutionId: string,
+  ) => {
+    const merged: MonitorPayload = {
+      ...cloud.data,
+      rows: mergeAdminAttendanceRows(
+        cloud.data?.rows || [],
+        relay.data?.rows || [],
+      ),
+    };
+    return await writeEnvelope(
+      scopedKey(resolvedInstitutionId),
+      merged,
+      "hybrid",
+      resolvedInstitutionId,
+    );
+  };
+
+  const initialInstitutionId = String(institutionId || "").trim();
+
+  // Si le Relais est configuré, Cloud et Relais sont lus ensemble.
+  // Un Cloud joignable mais en retard ne doit plus masquer un appel déjà reçu localement.
+  if (
+    initialInstitutionId &&
+    relayEnabledForInstitution(initialInstitutionId)
+  ) {
+    const [cloudResult, relayResult] = await Promise.allSettled([
+      loadCloud(),
+      loadRelay(initialInstitutionId),
+    ]);
+
+    if (signal?.aborted) throw signal.reason;
+
+    if (
+      cloudResult.status === "fulfilled" &&
+      relayResult.status === "fulfilled"
+    ) {
+      return await mergeCloudRelay(
+        cloudResult.value,
+        relayResult.value,
+        initialInstitutionId,
+      );
+    }
+    if (cloudResult.status === "fulfilled") return cloudResult.value;
+    if (relayResult.status === "fulfilled") return relayResult.value;
+
+    const cached = await readCached();
+    if (cached) return cached;
+    throw cloudResult.reason || relayResult.reason;
+  }
+
+  // Premier passage sur un navigateur : le Cloud peut nous apprendre l'établissement,
+  // puis on complète immédiatement avec le Relais si cette capacité est active.
+  try {
+    const cloud = await loadCloud();
+    const resolvedInstitutionId = String(institutionId || "").trim();
+    if (
+      resolvedInstitutionId &&
+      relayEnabledForInstitution(resolvedInstitutionId)
+    ) {
       try {
-        await cacheSet(currentKey, migrated);
-      } catch {
-        // La vue legacy reste lisible même si IndexedDB refuse la migration.
+        const relay = await loadRelay(resolvedInstitutionId);
+        return await mergeCloudRelay(
+          cloud,
+          relay,
+          resolvedInstitutionId,
+        );
+      } catch (error) {
+        if (signal?.aborted) throw error;
       }
-      return { ...migrated, source: "cache" };
-    },
-  });
+    }
+    return cloud;
+  } catch (cloudError) {
+    if (signal?.aborted) throw cloudError;
+
+    const relayInstitutionId = String(
+      institutionId || getRememberedRelayInstitution() || "",
+    ).trim();
+    if (
+      relayInstitutionId &&
+      relayEnabledForInstitution(relayInstitutionId)
+    ) {
+      try {
+        return await loadRelay(relayInstitutionId);
+      } catch (relayError) {
+        if (signal?.aborted) throw relayError;
+      }
+    }
+
+    const cached = await readCached();
+    if (cached) return cached;
+    throw cloudError;
+  }
 }
 
 export async function fetchDashboardMetrics<T extends Record<string, any>>(
