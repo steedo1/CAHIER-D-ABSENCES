@@ -46,6 +46,31 @@ type RoleResponse = {
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 const AUTH_RETRY_TIMEOUT_MS = 15_000;
 
+const MAINTENANCE_MESSAGE = `Maintenance technique exceptionnelle
+
+Afin de renforcer la sécurité, la stabilité et la fiabilité de Mon Cahier, une intervention technique exceptionnelle est actuellement en cours.
+
+Vos données restent protégées et aucune information n’est perdue.
+
+Le service reprendra progressivement dans un délai maximum de 72 heures.
+
+Merci pour votre confiance et votre compréhension.
+L’équipe Mon Cahier — Nexa Digital SARL`;
+
+function isMaintenanceError(value?: string | null) {
+  const lower = String(value || "").trim().toLowerCase();
+  return (
+    lower === "online_service_unavailable" ||
+    lower === "service_maintenance" ||
+    lower === "http_402" ||
+    lower.includes("service for this project is restricted") ||
+    lower.includes("exceed egress") ||
+    lower.includes("egress quota") ||
+    lower.includes("fair use") ||
+    lower.includes("status code 402")
+  );
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -64,6 +89,8 @@ function humanError(error?: string | null) {
   const value = String(error || "").trim();
   if (!value) return "Connexion impossible. Vérifie les informations saisies.";
 
+  if (isMaintenanceError(value)) return MAINTENANCE_MESSAGE;
+
   const lower = value.toLowerCase();
   if (value === "PASSWORD_REQUIRED") return "Mot de passe obligatoire.";
   if (value === "EMAIL_OR_PHONE_REQUIRED") return "Email ou numéro obligatoire.";
@@ -78,7 +105,7 @@ function humanError(error?: string | null) {
     return "La session locale n’a pas été enregistrée. Recharge la page puis reconnecte-toi.";
   }
   if (value === "ONLINE_SERVICE_UNAVAILABLE") {
-    return "Le service en ligne de Mon Cahier est momentanément indisponible. Réessaie dans quelques secondes.";
+    return MAINTENANCE_MESSAGE;
   }
   if (value === "offline_access_not_prepared") {
     return "Cet appareil n’a pas encore été autorisé en ligne pour cette connexion.";
@@ -478,7 +505,15 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
         </label>
 
         {error ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          <div
+            role="status"
+            className={[
+              "whitespace-pre-line rounded-2xl border px-4 py-3 text-sm font-medium",
+              error === MAINTENANCE_MESSAGE
+                ? "border-sky-200 bg-sky-50 text-sky-900"
+                : "border-red-200 bg-red-50 text-red-700",
+            ].join(" ")}
+          >
             {error}
           </div>
         ) : null}
