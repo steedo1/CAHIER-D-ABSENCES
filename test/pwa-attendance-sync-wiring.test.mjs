@@ -110,16 +110,22 @@ test("les établissements sans relais disposent d'un vrai Background Sync des ap
 
 
 test("une restriction Cloud 402 conserve le secours PWA et la file des appels", async () => {
-  const [login, offline, worker] = await Promise.all([
+  const [login, offline, worker, network, classPage] = await Promise.all([
     read("src/components/auth/LoginCard.tsx"),
     read("src/lib/offline.ts"),
     read("public/moncahier-sw.js"),
+    read("src/lib/attendance-network.ts"),
+    read("src/app/class/page.tsx"),
   ]);
 
-  assert.match(login, /res\.status === 402 \|\| res\.status >= 500/);
+  assert.match(login, /maintenanceFailure[\s\S]*res\.status === 402 \|\| isMaintenanceError\(json\.error\)/);
   assert.match(
     offline,
     /return status === 402 \|\| status === 408 \|\| status === 425 \|\| status === 429 \|\| status >= 500/,
+  );
+  assert.match(
+    offline,
+    /res\.status === 401 && hasActiveOfflineAccessHint\(\)/,
   );
   assert.match(
     worker,
@@ -129,4 +135,10 @@ test("une restriction Cloud 402 conserve le secours PWA et la file des appels", 
     worker,
     /networkResponse\.status !== 402 && networkResponse\.status < 500/,
   );
+  assert.match(network, /response\.status === 402/);
+  assert.match(
+    network,
+    /response\.status === 401 && hasOfflineAccessSessionHint\(\)/,
+  );
+  assert.match(classPage, /const reachable = response\.ok/);
 });
