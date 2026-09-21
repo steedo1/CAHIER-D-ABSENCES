@@ -170,6 +170,32 @@ function isBrowser() {
   return typeof window !== "undefined";
 }
 
+const OFFLINE_ACTIVE_SESSION_KEY = "mc:offline-auth:active:v1";
+
+function hasActiveOfflineAccessHint() {
+  if (!isBrowser()) return false;
+  try {
+    const raw = window.sessionStorage.getItem(OFFLINE_ACTIVE_SESSION_KEY);
+    if (!raw) return false;
+    const active = JSON.parse(raw) as {
+      grant_token?: string;
+      expires_at?: number;
+    } | null;
+    if (
+      !active?.grant_token ||
+      !Number.isFinite(Number(active.expires_at)) ||
+      Number(active.expires_at) <= Date.now()
+    ) {
+      return false;
+    }
+    return document.cookie
+      .split(";")
+      .some((part) => part.trim().startsWith("mc_offline_access="));
+  } catch {
+    return false;
+  }
+}
+
 function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
@@ -693,14 +719,19 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
       const j = await safeJson(res);
       const msg = responseErrorMessage(j, res.status);
 
-      // Un 401/403/404/422 ne doit jamais être masqué par une ancienne donnée
-      // locale. Le cache n'est toléré que pour une panne serveur temporaire.
-      if (isRetryableStatus(res.status)) {
+      // Un 403/404/422 reste une décision métier et ne doit jamais
+      // être masqué. Un 401 ne peut relire le cache que si l'appareil possède
+      // déjà une session hors ligne active, validée avant l'accès à l'écran.
+      const offlineAuthFallback =
+        res.status === 401 && hasActiveOfflineAccessHint();
+      const allowCache =
+        isRetryableStatus(res.status) || offlineAuthFallback;
+      if (allowCache) {
         const cached = await cacheGet<T>(cacheKey);
         if (cached != null) return cached;
       }
 
-      throw new HttpResponseError(msg, res.status, isRetryableStatus(res.status));
+      throw new HttpResponseError(msg, res.status, allowCache);
     }
 
     const j = (await safeJson(res)) as T;
