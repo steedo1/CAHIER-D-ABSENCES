@@ -99,6 +99,8 @@ test("les établissements sans relais disposent d'un vrai Background Sync des ap
   assert.match(worker, /attendanceResponseOperationId/);
   assert.match(worker, /writeAttendanceSessionMap/);
   assert.match(worker, /credentials: "include"/);
+  assert.match(worker, /ATTENDANCE_REPLAY_TIMEOUT_MS = 8_000/);
+  assert.match(worker, /fetchWithTimeout\([\s\S]*ATTENDANCE_REPLAY_TIMEOUT_MS/);
 
   assert.doesNotMatch(
     background,
