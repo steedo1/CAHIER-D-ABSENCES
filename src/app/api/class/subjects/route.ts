@@ -29,20 +29,17 @@ type TimetableSubjectRow = {
 };
 
 function currentTimetableSubjectIds(rows: TimetableSubjectRow[]): string[] {
-  const ranked = (rows || [])
-    .map((row) => ({
-      id: String(row?.id || "").trim(),
-      subjectId: String(row?.subject_id || "").trim(),
-      updatedAt: Date.parse(String(row?.updated_at || "")),
-    }))
-    .filter((row) => row.subjectId)
-    .sort((left, right) => {
-      const leftTime = Number.isFinite(left.updatedAt) ? left.updatedAt : 0;
-      const rightTime = Number.isFinite(right.updatedAt) ? right.updatedAt : 0;
-      return rightTime - leftTime || right.id.localeCompare(left.id);
-    });
-
-  return ranked[0]?.subjectId ? [ranked[0].subjectId] : [];
+  // Several subjects can legitimately coexist in the same class/period
+  // (for example German + Spanish language groups). The timetable table is
+  // the source of truth here, so preserve every distinct scheduled subject
+  // instead of arbitrarily choosing the most recently updated row.
+  return Array.from(
+    new Set(
+      (rows || [])
+        .map((row) => String(row?.subject_id || "").trim())
+        .filter(Boolean),
+    ),
+  );
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -457,9 +454,9 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: ttErr.message }, { status: 400 });
         }
 
-        // Une classe ne peut avoir qu'une matière active dans un créneau.
-        // En cas d'ancienne ligne restée active après une modification, la ligne
-        // la plus récente gagne et l'ancienne matière n'est plus exposée.
+        // Plusieurs matières peuvent être légitimes au même créneau
+        // (groupes de langues notamment). On restitue exactement les matières
+        // présentes dans l'EDT Cloud courant.
         const autoSubjectIds = currentTimetableSubjectIds(
           (ttRows || []) as TimetableSubjectRow[],
         );
