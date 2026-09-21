@@ -20,7 +20,10 @@ import {
   cacheSet,
   resolveOfflineSessionReference,
 } from "@/lib/offline";
-import { getClassDeviceCoherentSchedule } from "@/lib/offline-readiness";
+import {
+  classDeviceSubjectSlotCacheKey,
+  getClassDeviceCoherentSchedule,
+} from "@/lib/offline-readiness";
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
@@ -2502,22 +2505,33 @@ export default function ClassDevicePage() {
       const strictUrl =
         `/api/class/subjects?class_id=${classId}` +
         `&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`;
-      const strictCacheKey =
-        `classDevice:subjects:${classId}:${activeSubjectScopeKey}`;
+      const strictCacheKey = classDeviceSubjectSlotCacheKey({
+        classId,
+        slotKey: activeSlotKey,
+        periodId: activeConfiguredSlot.id,
+        scheduleRevision: relayClassSchedule?.schedule_revision ?? null,
+      });
 
       if (!isOnline) {
         if (normalizedRelayList !== null) {
-          await cacheSet(strictCacheKey, { items: normalizedRelayList }).catch(
-            () => null,
-          );
+          if (strictCacheKey) {
+            await cacheSet(strictCacheKey, {
+              class_id: classId,
+              schedule_revision: relayClassSchedule?.schedule_revision ?? null,
+              period_id: activeConfiguredSlot.id,
+              slot_key: activeSlotKey,
+              items: normalizedRelayList,
+            }).catch(() => null);
+          }
           applyList(normalizedRelayList, "relay");
           return;
         }
 
-        const preparedResp = await offlineGetJson(
-          strictUrl,
-          strictCacheKey,
-        ).catch(() => null as any);
+        const preparedResp = strictCacheKey
+          ? await offlineGetJson(strictUrl, strictCacheKey).catch(
+              () => null as any,
+            )
+          : null;
 
         if (preparedResp != null) {
           applyList(
@@ -2548,9 +2562,21 @@ export default function ClassDevicePage() {
       // Un planning relais mémorisé avant une modification ne doit jamais
       // réintroduire la matière du créneau précédent.
       const legacyWarmPromise = loadLegacySubjects();
-      const autoResp = await offlineGetJson(strictUrl, strictCacheKey).catch(
-        () => null as any,
-      );
+      const autoResp = strictCacheKey
+        ? await offlineGetJson(strictUrl, strictCacheKey).catch(
+            () => null as any,
+          )
+        : await fetch(strictUrl, {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+          })
+            .then(async (response) => {
+              if (!response.ok) return null;
+              return await response.json();
+            })
+            .catch(() => null as any);
 
       if (autoResp != null) {
         applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
