@@ -726,6 +726,22 @@ export default function ClassDevicePage() {
     useState<RelayTeacherOfflineSchedule | null>(null);
   const [cloudScheduleRevision, setCloudScheduleRevision] =
     useState<number | null>(null);
+  const cloudRevisionCacheKey = useMemo(() => {
+    const institutionId = String(selectedClass?.institution_id || "").trim();
+    const actorProfileId = String(selectedClass?.actor_profile_id || "").trim();
+    const selectedClassId = String(selectedClass?.id || "").trim();
+    if (!institutionId || !actorProfileId || !selectedClassId) return null;
+    return [
+      "classDevice:known-cloud-revision:v1",
+      encodeURIComponent(institutionId),
+      encodeURIComponent(selectedClassId),
+      encodeURIComponent(actorProfileId),
+    ].join(":");
+  }, [
+    selectedClass?.institution_id,
+    selectedClass?.id,
+    selectedClass?.actor_profile_id,
+  ]);
   const [relayScheduleIssue, setRelayScheduleIssue] = useState<string | null>(
     null,
   );
@@ -744,6 +760,29 @@ export default function ClassDevicePage() {
   const [relayStatus, setRelayStatus] = useState<ConnectivityState>("checking");
   const [sessionRuntimeState, setSessionRuntimeState] =
     useState<SessionRuntimeState>("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    setCloudScheduleRevision(null);
+    if (!cloudRevisionCacheKey) return () => { cancelled = true; };
+
+    void cacheGet<number>(cloudRevisionCacheKey)
+      .then((value) => {
+        const revision = Number(value);
+        if (
+          !cancelled &&
+          Number.isSafeInteger(revision) &&
+          revision >= 0
+        ) {
+          setCloudScheduleRevision(revision);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudRevisionCacheKey]);
 
   function relayAdjustedDate(baseMs = Date.now()) {
     return estimateClassDeviceNow(relayClockRef.current, {
@@ -2580,7 +2619,6 @@ export default function ClassDevicePage() {
       // En ligne, le Cloud du créneau courant est la source de vérité.
       // Un planning relais mémorisé avant une modification ne doit jamais
       // réintroduire la matière du créneau précédent.
-      const legacyWarmPromise = loadLegacySubjects();
       const autoResp = await fetch(strictUrl, {
         method: "GET",
         credentials: "include",
@@ -2624,6 +2662,11 @@ export default function ClassDevicePage() {
         }
 
         setCloudScheduleRevision(responseRevision);
+        if (cloudRevisionCacheKey) {
+          await cacheSet(cloudRevisionCacheKey, responseRevision).catch(
+            () => undefined,
+          );
+        }
         const currentPreparedRevision = Number(
           relayClassScheduleRef.current?.schedule_revision,
         );
@@ -2686,9 +2729,8 @@ export default function ClassDevicePage() {
       }
 
       // A class-wide legacy list must never masquerade as the current
-      // scheduled slot. Keep it available only through the explicit manual
+      // scheduled slot. It remains available only through the explicit manual
       // exceptional-course flow.
-      void legacyWarmPromise;
       applyList([], "empty");
     })();
 
@@ -2705,6 +2747,10 @@ export default function ClassDevicePage() {
     manualSubjectMode,
     open,
     relayClassSchedule?.schedule_revision,
+    cloudScheduleRevision,
+    cloudRevisionCacheKey,
+    selectedClass?.institution_id,
+    selectedClass?.actor_profile_id,
   ]);
 
   /* 2bis) préchauffer la liste des élèves dès que la classe est connue en ligne
@@ -2947,19 +2993,20 @@ export default function ClassDevicePage() {
         }).catch(() => preparedSchedule);
 
         if (
-          isOnline &&
           cloudScheduleRevision !== null &&
           Number(preparedSchedule?.schedule_revision) !== cloudScheduleRevision
         ) {
-          try {
-            await prepareOffline("class-device");
-            preparedSchedule = await getClassDeviceCoherentSchedule({
-              institutionId: selectedClass.institution_id,
-              classId: selectedClass.id,
-              actorProfileId: selectedClass.actor_profile_id,
-            });
-          } catch {
-            preparedSchedule = null;
+          if (isOnline) {
+            try {
+              await prepareOffline("class-device");
+              preparedSchedule = await getClassDeviceCoherentSchedule({
+                institutionId: selectedClass.institution_id,
+                classId: selectedClass.id,
+                actorProfileId: selectedClass.actor_profile_id,
+              });
+            } catch {
+              preparedSchedule = null;
+            }
           }
 
           if (
@@ -2969,7 +3016,9 @@ export default function ClassDevicePage() {
           ) {
             setSessionRuntimeState("recoverable_error");
             setMsg(
-              "Le Cloud a le bon cours, mais la préparation locale n’est pas encore sur la même version. Actualisez les données d’appel puis réessayez.",
+              isOnline
+                ? "Le Cloud a le bon cours, mais la préparation locale n’est pas encore sur la même version. Actualisez les données d’appel puis réessayez."
+                : "Ce téléphone connaît une version plus récente de l’emploi du temps que sa préparation hors connexion. Reconnectez-le pour actualiser les données avant de démarrer.",
             );
             return;
           }
