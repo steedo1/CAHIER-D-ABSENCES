@@ -430,6 +430,28 @@ export async function GET(req: NextRequest) {
 
     const tz = String(inst?.tz || "Africa/Abidjan");
 
+    const { data: revisionRow, error: revisionError } = await srv
+      .from("attendance_schedule_revisions")
+      .select("revision")
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+    if (revisionError) {
+      return NextResponse.json({ error: revisionError.message }, { status: 400 });
+    }
+    const scheduleRevision = Number(revisionRow?.revision ?? 0);
+    if (!Number.isSafeInteger(scheduleRevision) || scheduleRevision < 0) {
+      return NextResponse.json(
+        { error: "schedule_revision_invalid" },
+        { status: 409 },
+      );
+    }
+    const scheduleMeta = {
+      institution_id: institutionId,
+      class_id,
+      actor_profile_id: user.id,
+      schedule_revision: scheduleRevision,
+    };
+
     // 1) Si un slot est fourni, le filtrage par emploi du temps est strict.
     //    Une réponse vide signifie qu'aucun cours n'est prévu : ne jamais exposer
     //    toutes les matières de la classe dans ce cas.
@@ -464,12 +486,12 @@ export async function GET(req: NextRequest) {
         if (autoSubjectIds.length > 0) {
           const autoItems = await mapSubjectIdsToItems(srv, institutionId, autoSubjectIds);
           if (autoItems.length > 0) {
-            return NextResponse.json({ items: autoItems });
+            return NextResponse.json({ ...scheduleMeta, items: autoItems });
           }
         }
       }
 
-      return NextResponse.json({ items: [] as SubjectItem[] });
+      return NextResponse.json({ ...scheduleMeta, items: [] as SubjectItem[] });
     }
 
     // 2) Sans créneau demandé : constitution du cache de secours.
@@ -513,7 +535,7 @@ export async function GET(req: NextRequest) {
         institutionId,
         configuredSubjectIds,
       );
-      return NextResponse.json({ items: configuredItems });
+      return NextResponse.json({ ...scheduleMeta, items: configuredItems });
     }
 
     const legacySubjectIds = await getLegacySubjectIds(
@@ -522,7 +544,7 @@ export async function GET(req: NextRequest) {
       institutionId,
     );
     if (!legacySubjectIds.length) {
-      return NextResponse.json({ items: [] as SubjectItem[] });
+      return NextResponse.json({ ...scheduleMeta, items: [] as SubjectItem[] });
     }
 
     const legacyItems = await mapSubjectIdsToItems(
@@ -530,7 +552,7 @@ export async function GET(req: NextRequest) {
       institutionId,
       legacySubjectIds,
     );
-    return NextResponse.json({ items: legacyItems });
+    return NextResponse.json({ ...scheduleMeta, items: legacyItems });
   } catch (err: any) {
     console.error("[class.subjects] unexpected error", err);
     return NextResponse.json({ error: err?.message || "class_subjects_failed" }, { status: 500 });
