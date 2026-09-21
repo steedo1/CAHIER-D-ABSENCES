@@ -150,7 +150,10 @@ test("un 5xx Cloud garde le secours local sans masquer une prÃ©paration incomplÃ
   const serverFailure = login.slice(errorStart, serverEnd);
 
   assert.ok(errorStart >= 0 && serverEnd > errorStart);
-  assert.match(serverFailure, /if \(res\.status >= 500\)/);
+  assert.match(
+    serverFailure,
+    /if \(maintenanceFailure \|\| res\.status >= 500\)/,
+  );
   assert.match(
     serverFailure,
     /try \{\s*await openOfflineSession\(\);\s*return;\s*\} catch \{\s*throw new Error\("ONLINE_SERVICE_UNAVAILABLE"\);\s*\}/,
