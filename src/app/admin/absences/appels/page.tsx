@@ -688,7 +688,7 @@ export default function SurveillanceAppelsPage() {
 
           {freshness ? (
             <p role="status" className="mb-3 text-sm text-slate-600">
-              Source : {freshness.source === "cloud" ? "Cloud" : freshness.source === "relay" ? "Relais local" : "Cache local"}
+              Source : {freshness.source === "cloud" ? "Cloud" : freshness.source === "relay" ? "Relais local" : freshness.source === "hybrid" ? "Cloud + Relais" : "Cache local"}
               {" · "}Données du {new Date(freshness.savedAt).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}
               {error ? " · Actualisation échouée : les dernières données affichées sont conservées." : ""}
             </p>
@@ -828,7 +828,7 @@ export default function SurveillanceAppelsPage() {
             </div>
             <div style={{ fontSize: 9, marginTop: 3, color: "#475569" }}>
               Période : {formatDateFr(startDate)} au {formatDateFr(endDate)} · Généré le {formatGeneratedAt()}
-              {freshness ? ` · Source : ${freshness.source} · Données du ${new Date(freshness.savedAt).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}` : ""}
+              {freshness ? ` · Source : ${freshness.source === "hybrid" ? "Cloud + Relais" : freshness.source} · Données du ${new Date(freshness.savedAt).toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}` : ""}
               {error ? " · ATTENTION : actualisation échouée" : ""}
               {unmatchedSessions > 0 ? ` · ATTENTION : ${unmatchedSessions} séance(s) sans correspondance dans l’EDT actuel` : ""}
             </div>
