@@ -3041,6 +3041,7 @@ export default function ClassDevicePage() {
         institutionId,
         classId,
         periodId: verifiedPeriod.id!,
+        subjectId,
         attemptKey,
       });
       const operationId = stagedOpen.operation_id;
@@ -3101,6 +3102,7 @@ export default function ClassDevicePage() {
         institutionId,
         classId,
         periodId: verifiedPeriod.id!,
+        subjectId,
         attemptKey,
         relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
         relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,
