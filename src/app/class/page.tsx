@@ -2897,7 +2897,7 @@ export default function ClassDevicePage() {
         ? activeConfiguredSlot?.id || null
         : verifiedPeriod!.id;
       const deliveryPeriodKey = manualSubjectMode
-        ? `manual:${persistedPeriodId || "outside"}:${dateKey}:${actualCallAtISO.slice(11, 16)}`
+        ? `manual:${persistedPeriodId || "outside"}:${dateKey}:${actualCallAtISO}`
         : String(verifiedPeriod!.id);
       const attemptKey = [
         classId,
