@@ -1729,6 +1729,7 @@ export default function TeacherDashboard() {
           institutionId: inst.institution_id,
           classId: sel.class_id,
           periodId: activeConfiguredSlot.id,
+          subjectId: sel.subject_id,
           attemptKey: clientSessionId,
           relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
