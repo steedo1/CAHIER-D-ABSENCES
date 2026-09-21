@@ -30,7 +30,7 @@ test("un cache legacy de classe ne remplace jamais le cours du créneau courant"
 
   assert.match(
     page,
-    /Never substitute the class-wide legacy subject list for a\s*missing scheduled slot/,
+    /Never substitute the class-wide legacy subject list for a[\s\/]*missing scheduled slot/,
   );
   assert.match(
     page,
