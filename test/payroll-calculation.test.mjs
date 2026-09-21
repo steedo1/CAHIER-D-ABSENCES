@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const source = fs.readFileSync(new URL('../src/lib/finance/payroll-values.ts', import.meta.url), 'utf8');
+const payrollPageSource = fs.readFileSync(new URL('../src/app/admin/finance/payroll/page.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText;
 const exports = {};
 new Function('exports', compiled)(exports);
@@ -57,6 +58,33 @@ test('grouped-class sessions are consumed once; another discipline or date canno
   assert.equal(findPayrollSession([row],new Set(),{...slot,subject_id:'physics'}),null);
   assert.equal(findPayrollSession([row],new Set(),{...slot,session_date:'2026-06-02'}),null);
   assert.throws(()=>findPayrollSession([row,{...row}],new Set(),slot),/Plusieurs appels/);
+});
+
+test('a grouped physical slot matches any of its linked classes but is consumed once', () => {
+  const groupedSlot = {
+    ...slot,
+    class_ids: ['class', 'group'],
+    subject_ids: ['math'],
+  };
+  const row = {
+    ...closed(),
+    class_id: 'group',
+    class_ids: ['group'],
+    subject_id: 'math',
+    subject_ids: ['math'],
+    period_id: 'morning',
+  };
+  const used = new Set();
+  assert.equal(findPayrollSession([row], used, groupedSlot), row);
+  assert.equal(findPayrollSession([row], used, groupedSlot), null);
+});
+
+test('payroll groups timetable assignments by teacher physical day and period', () => {
+  assert.match(payrollPageSource, /const physicalSlots = new Map<string, ExpectedSlot>\(\)/);
+  assert.match(payrollPageSource, /const physicalKey = `\$\{day\}\|\$\{periodId\}`/);
+  assert.match(payrollPageSource, /existing\.class_ids\.push\(classId\)/);
+  assert.match(payrollPageSource, /existing\.subject_ids\.push\(subjectId\)/);
+  assert.match(payrollPageSource, /classes de cycles différents/);
 });
 
 test('assignments apply on each date, including both boundaries', () => {
