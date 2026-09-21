@@ -91,6 +91,10 @@ test("les établissements sans relais disposent d'un vrai Background Sync des ap
   assert.match(worker, /ATTENDANCE_CALL_OPERATION_TYPES/);
   assert.match(worker, /sessionsWaitingForStart/);
   assert.match(worker, /blockedSessions/);
+  assert.match(
+    worker,
+    /row\?\.state === "blocked"[\s\S]*operationType === "session-start"[\s\S]*operationType === "attendance"[\s\S]*blockedSessions\.add/,
+  );
   assert.match(worker, /X-Mon-Cahier-Operation-Id/);
   assert.match(worker, /attendanceResponseOperationId/);
   assert.match(worker, /writeAttendanceSessionMap/);
