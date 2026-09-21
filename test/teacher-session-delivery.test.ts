@@ -102,6 +102,26 @@ test("ouverture locale confirmée : identité dérivée conservée sans jeton ni
   assert.equal(persisted.includes("presence-proof-never-persisted"), false);
 });
 
+test("la matière choisie est persistée et envoyée explicitement au relais", async () => {
+  const store = new TestStore();
+  let sentPayload: any = null;
+  const record = await openTeacherAttendanceSessionWithDependencies(
+    input({ subjectId: "subject-a" }),
+    scenario(store, {
+      postRelay: async ({ payload }) => {
+        sentPayload = payload;
+        const response = success(payload.operation_id);
+        response.body.session.subject_id = "subject-a";
+        return response;
+      },
+    }),
+  );
+
+  assert.equal(record.subject_id, "subject-a");
+  assert.equal(store.records[0]?.subject_id, "subject-a");
+  assert.equal(sentPayload.subject_id, "subject-a");
+});
+
 test("le démarrage est journalisé sur l'appareil avant toute tentative réseau", async () => {
   const store = new TestStore();
   let relayPosts = 0;
