@@ -36,7 +36,7 @@ type SchoolSummary = {
 };
 
 export type FounderAttendancePayload = {
-  source: "cloud" | "relay" | "cache";
+  source: "cloud" | "relay" | "hybrid" | "cache";
   generated_at: string;
   today: string;
   nowLabel: string;
