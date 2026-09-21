@@ -68,3 +68,42 @@ test("le périmètre notes reste cloud-only", async () => {
     /OFFLINE_GRADE_WRITES_ENABLED\s*=\s*\n\s*process\.env\.NEXT_PUBLIC_MONCAHIER_OFFLINE_GRADE_WRITES_ENABLED === "true"/,
   );
 });
+
+
+test("les établissements sans relais disposent d'un vrai Background Sync des appels", async () => {
+  const [offline, worker, background] = await Promise.all([
+    read("src/lib/offline.ts"),
+    read("public/moncahier-sw.js"),
+    read("src/components/BackgroundAttendanceDeliverySync.tsx"),
+  ]);
+
+  assert.match(offline, /ATTENDANCE_BACKGROUND_SYNC_TAG = "moncahier-attendance-outbox-v1"/);
+  assert.match(offline, /requestAttendanceBackgroundSync/);
+  assert.match(offline, /syncManager\.register\(ATTENDANCE_BACKGROUND_SYNC_TAG\)/);
+  assert.match(
+    offline,
+    /queuedOperationType === "session-start"[\s\S]*queuedOperationType === "attendance"[\s\S]*queuedOperationType === "session-end"[\s\S]*requestAttendanceBackgroundSync/,
+  );
+
+  assert.match(worker, /self\.addEventListener\("sync"/);
+  assert.match(worker, /event\.tag !== ATTENDANCE_BACKGROUND_SYNC_TAG/);
+  assert.match(worker, /replayAttendanceOutboxFromWorker/);
+  assert.match(worker, /ATTENDANCE_CALL_OPERATION_TYPES/);
+  assert.match(worker, /sessionsWaitingForStart/);
+  assert.match(worker, /blockedSessions/);
+  assert.match(
+    worker,
+    /row\?\.state === "blocked"[\s\S]*operationType === "session-start"[\s\S]*operationType === "attendance"[\s\S]*blockedSessions\.add/,
+  );
+  assert.match(worker, /X-Mon-Cahier-Operation-Id/);
+  assert.match(worker, /attendanceResponseOperationId/);
+  assert.match(worker, /writeAttendanceSessionMap/);
+  assert.match(worker, /credentials: "include"/);
+  assert.match(worker, /ATTENDANCE_REPLAY_TIMEOUT_MS = 8_000/);
+  assert.match(worker, /fetchWithTimeout\([\s\S]*ATTENDANCE_REPLAY_TIMEOUT_MS/);
+
+  assert.doesNotMatch(
+    background,
+    /document\.visibilityState === "hidden"\) return/,
+  );
+});

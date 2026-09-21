@@ -123,13 +123,13 @@ test("la déconnexion compte aussi les appels et fermetures du nouveau protocole
   assert.doesNotMatch(page, /clearOfflineAll/);
 });
 
-test("le Web et le service worker portent la même release PWA stable v5.8", async () => {
+test("le Web et le service worker portent la même release PWA avec Background Sync", async () => {
   const [worker, release] = await Promise.all([
     read("public/moncahier-sw.js"),
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-08-29-attendance-slot-cache-v5-8";
+  const expected = "2026-09-21-attendance-background-sync-v1";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
   assert.match(worker, /const OFFLINE_SCHEMA_VERSION = 1/);

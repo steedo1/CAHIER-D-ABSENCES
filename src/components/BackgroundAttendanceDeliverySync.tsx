@@ -24,8 +24,11 @@ export default function BackgroundAttendanceDeliverySync() {
 
     const run = async () => {
       if (disposed || running) return;
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
 
+      // Ne jamais annuler une reprise uniquement parce que l'écran est masqué.
+      // Sur mobile, l'événement online peut arriver après verrouillage ou
+      // changement d'application ; si le navigateur nous donne du CPU, on
+      // profite de cette fenêtre pour vider l'outbox.
       running = true;
       try {
         const cloudAvailable = await attendanceCloudAvailableForSync();
@@ -50,7 +53,7 @@ export default function BackgroundAttendanceDeliverySync() {
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible") wake();
+      wake();
     };
 
     wake();

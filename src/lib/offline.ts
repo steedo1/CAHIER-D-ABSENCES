@@ -157,6 +157,7 @@ export {
 // URL volontairement stable : le navigateur compare le contenu du script et
 // met à jour la même inscription au lieu de créer des variantes par commit.
 export const MON_CAHIER_SW_URL = "/moncahier-sw.js";
+export const ATTENDANCE_BACKGROUND_SYNC_TAG = "moncahier-attendance-outbox-v1";
 
 export type OfflineWorkerInfo = {
   release: string;
@@ -408,6 +409,47 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
     // Ne casse rien si le service worker est momentanément indisponible.
     return null;
   }
+}
+
+/**
+ * Programme le rejeu des appels sans dépendre de la page React.
+ *
+ * Chromium/Android supporte Background Sync : le service worker se réveillera
+ * au retour du réseau, même si l'écran d'appel n'est plus visible. Les
+ * navigateurs sans SyncManager reçoivent au moins une demande immédiate ; les
+ * listeners online/visibilitychange restent le filet de sécurité.
+ */
+export async function requestAttendanceBackgroundSync(): Promise<boolean> {
+  if (!isBrowser() || !("serviceWorker" in navigator)) return false;
+
+  const notifyWorker = (registration?: ServiceWorkerRegistration | null) => {
+    const worker =
+      registration?.active ||
+      navigator.serviceWorker.controller ||
+      registration?.waiting ||
+      registration?.installing;
+    worker?.postMessage({ type: "MON_CAHIER_ATTENDANCE_SYNC_NOW" });
+  };
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const syncManager = (
+      registration as ServiceWorkerRegistration & {
+        sync?: { register(tag: string): Promise<void> };
+      }
+    ).sync;
+
+    if (syncManager && typeof syncManager.register === "function") {
+      await syncManager.register(ATTENDANCE_BACKGROUND_SYNC_TAG);
+      return true;
+    }
+
+    notifyWorker(registration);
+  } catch {
+    notifyWorker(null);
+  }
+
+  return false;
 }
 
 function isMonCahierWorker(worker: ServiceWorker | null) {
@@ -915,6 +957,18 @@ export async function offlineMutateJson<T = any>(
       ackContractVersion: OUTBOX_ACK_CONTRACT_VERSION,
     };
     await outboxAdd(row);
+    const queuedOperationType = mutationOperationType(
+      url,
+      opts?.meta?.operationType,
+    );
+    if (
+      queuedOperationType === "session-start" ||
+      queuedOperationType === "attendance" ||
+      queuedOperationType === "session-end"
+    ) {
+      // Ne jamais retarder la validation locale de l'appel pour attendre le SW.
+      void requestAttendanceBackgroundSync();
+    }
     return {
       ok: false,
       queued: true,

@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-08-29-attendance-slot-cache-v5-8";
+const VERSION = "2026-09-21-attendance-background-sync-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -8,6 +8,15 @@ const ASSET_CACHE = `${CACHE_PREFIX}assets-${CACHE_VERSION}`;
 const OFFLINE_URL = "/moncahier-offline.html";
 const OFFLINE_DB_NAME = "moncahier_offline_v1";
 const OFFLINE_KV_STORE = "kv";
+const OFFLINE_META_STORE = "meta";
+const OFFLINE_OUTBOX_STORE = "outbox";
+const ATTENDANCE_BACKGROUND_SYNC_TAG = "moncahier-attendance-outbox-v1";
+const ATTENDANCE_REPLAY_TIMEOUT_MS = 8_000;
+const ATTENDANCE_CALL_OPERATION_TYPES = new Set([
+  "session-start",
+  "attendance",
+  "session-end",
+]);
 const PRECACHE_URLS = [
   OFFLINE_URL,
   "/manifest.webmanifest",
@@ -121,6 +130,18 @@ self.addEventListener("activate", (event) => {
       // caches. Un déploiement ne peut donc pas retirer l'écran /class hors ligne.
       await migrateLegacyCaches();
       await self.clients.claim();
+
+      // Les appareils qui possèdent déjà une ancienne outbox bénéficient du
+      // nouveau rejeu sans devoir créer une nouvelle mutation après la mise à jour.
+      try {
+        const syncManager = self.registration?.sync;
+        if (syncManager && typeof syncManager.register === "function") {
+          await syncManager.register(ATTENDANCE_BACKGROUND_SYNC_TAG);
+        }
+      } catch {
+        // Background Sync n'est pas disponible partout ; les événements de page
+        // restent le fallback.
+      }
     })(),
   );
 });
@@ -185,6 +206,434 @@ async function readOfflineKv(key) {
     };
   });
 }
+
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_request_failed"));
+  });
+}
+
+function idbTransactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(transaction.error || new Error("indexeddb_transaction_failed"));
+    transaction.onabort = () =>
+      reject(transaction.error || new Error("indexeddb_transaction_aborted"));
+  });
+}
+
+async function openOfflineDbForAttendance() {
+  return await new Promise((resolve, reject) => {
+    const request = indexedDB.open(OFFLINE_DB_NAME);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error || new Error("offline_db_open_failed"));
+  });
+}
+
+async function readAttendanceOutboxRows() {
+  const db = await openOfflineDbForAttendance();
+  try {
+    if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return [];
+    const transaction = db.transaction([OFFLINE_OUTBOX_STORE], "readonly");
+    const rows = await idbRequest(
+      transaction.objectStore(OFFLINE_OUTBOX_STORE).getAll(),
+    );
+    await idbTransactionDone(transaction);
+    return (Array.isArray(rows) ? rows : []).sort(
+      (left, right) => Number(left?.createdAt || 0) - Number(right?.createdAt || 0),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+async function patchAttendanceOutboxRow(id, patch) {
+  const db = await openOfflineDbForAttendance();
+  try {
+    if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return;
+    const transaction = db.transaction([OFFLINE_OUTBOX_STORE], "readwrite");
+    const store = transaction.objectStore(OFFLINE_OUTBOX_STORE);
+    const current = await idbRequest(store.get(id));
+    if (current) store.put({ ...current, ...patch });
+    await idbTransactionDone(transaction);
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteAttendanceOutboxRow(id) {
+  const db = await openOfflineDbForAttendance();
+  try {
+    if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return;
+    const transaction = db.transaction([OFFLINE_OUTBOX_STORE], "readwrite");
+    transaction.objectStore(OFFLINE_OUTBOX_STORE).delete(id);
+    await idbTransactionDone(transaction);
+  } finally {
+    db.close();
+  }
+}
+
+async function readAttendanceSessionMap() {
+  const db = await openOfflineDbForAttendance();
+  try {
+    if (!db.objectStoreNames.contains(OFFLINE_META_STORE)) return {};
+    const transaction = db.transaction([OFFLINE_META_STORE], "readonly");
+    const row = await idbRequest(
+      transaction.objectStore(OFFLINE_META_STORE).get("sessionIdMap"),
+    );
+    await idbTransactionDone(transaction);
+    return row?.value && typeof row.value === "object" ? { ...row.value } : {};
+  } finally {
+    db.close();
+  }
+}
+
+async function writeAttendanceSessionMap(map) {
+  const db = await openOfflineDbForAttendance();
+  try {
+    if (!db.objectStoreNames.contains(OFFLINE_META_STORE)) return;
+    const transaction = db.transaction([OFFLINE_META_STORE], "readwrite");
+    transaction.objectStore(OFFLINE_META_STORE).put({
+      key: "sessionIdMap",
+      value: map,
+    });
+    await idbTransactionDone(transaction);
+  } finally {
+    db.close();
+  }
+}
+
+function attendanceOperationType(row) {
+  const explicit = String(row?.meta?.operationType || "").trim();
+  if (ATTENDANCE_CALL_OPERATION_TYPES.has(explicit)) return explicit;
+  const url = String(row?.url || "");
+  if (/\/api\/(?:class|teacher)\/sessions\/start(?:[/?]|$)/.test(url)) {
+    return "session-start";
+  }
+  if (/\/api\/teacher\/attendance\/bulk(?:[/?]|$)/.test(url)) {
+    return "attendance";
+  }
+  if (/\/api\/(?:class|teacher)\/sessions\/end(?:[/?]|$)/.test(url)) {
+    return "session-end";
+  }
+  return null;
+}
+
+function attendancePathMatchesType(url, operationType) {
+  if (url.origin !== self.location.origin) return false;
+  if (operationType === "session-start") {
+    return /^\/api\/(?:class|teacher)\/sessions\/start$/.test(url.pathname);
+  }
+  if (operationType === "attendance") {
+    return url.pathname === "/api/teacher/attendance/bulk";
+  }
+  if (operationType === "session-end") {
+    return /^\/api\/(?:class|teacher)\/sessions\/end$/.test(url.pathname);
+  }
+  return false;
+}
+
+function attendanceDependencyKey(row, body) {
+  return String(
+    row?.meta?.clientSessionId ||
+      body?.client_session_id ||
+      body?.session_id ||
+      row?.body?.client_session_id ||
+      row?.body?.session_id ||
+      "",
+  ).trim() || null;
+}
+
+function normalizedAttendanceDependency(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  return text.startsWith("client:") ? text : `client:${text}`;
+}
+
+function rewriteAttendanceBodyWithMap(body, map) {
+  if (!body || typeof body !== "object") return body;
+
+  if (typeof body.session_id === "string" && body.session_id.startsWith("client:")) {
+    const mapped = map[body.session_id];
+    if (mapped) return { ...body, session_id: mapped };
+  }
+
+  if (typeof body.client_session_id === "string") {
+    const key = body.client_session_id.startsWith("client:")
+      ? body.client_session_id
+      : `client:${body.client_session_id}`;
+    const mapped = map[key];
+    if (mapped) return { ...body, session_id: mapped };
+  }
+
+  return body;
+}
+
+function attendanceResponseOperationId(payload) {
+  return String(
+    payload?.operation_id ||
+      payload?.item?.operation_id ||
+      payload?.data?.operation_id ||
+      payload?.data?.item?.operation_id ||
+      "",
+  ).trim();
+}
+
+function attendanceResponseSessionId(payload) {
+  return String(
+    payload?.session_id ||
+      payload?.item?.id ||
+      payload?.data?.session_id ||
+      payload?.data?.item?.id ||
+      "",
+  ).trim();
+}
+
+async function responseJsonSafe(response) {
+  try {
+    const value = await response.json();
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function attendanceRetryableStatus(status) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function notifyAttendanceSyncClients(summary) {
+  const windows = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  for (const client of windows) {
+    client.postMessage({
+      type: "MON_CAHIER_ATTENDANCE_BACKGROUND_SYNC",
+      ...summary,
+    });
+  }
+}
+
+/**
+ * Rejoue uniquement le journal des appels. Aucune note, sanction ou autre
+ * mutation n'est envoyée par ce chemin.
+ */
+async function replayAttendanceOutboxFromWorker() {
+  const rows = await readAttendanceOutboxRows();
+  const callRows = rows.filter((row) =>
+    ATTENDANCE_CALL_OPERATION_TYPES.has(attendanceOperationType(row)),
+  );
+  if (!callRows.length) {
+    await notifyAttendanceSyncClients({ flushed: 0, remaining: 0 });
+    return { flushed: 0, remaining: 0 };
+  }
+
+  const map = await readAttendanceSessionMap();
+  const sessionsWaitingForStart = new Set(
+    callRows
+      .filter((row) => attendanceOperationType(row) === "session-start")
+      .map((row) =>
+        normalizedAttendanceDependency(attendanceDependencyKey(row, row.body)),
+      )
+      .filter(Boolean),
+  );
+  const blockedSessions = new Set();
+  let flushed = 0;
+
+  for (const row of callRows) {
+    const operationType = attendanceOperationType(row);
+    if (!operationType) continue;
+
+    const originalBody = row?.body && typeof row.body === "object" ? row.body : row?.body;
+    const body = rewriteAttendanceBodyWithMap(originalBody, map);
+    const dependency = attendanceDependencyKey(row, body);
+    const normalizedDependency = normalizedAttendanceDependency(dependency);
+
+    // Un appel déjà bloqué lors d'une passe antérieure continue de protéger sa
+    // fermeture. On ne doit jamais certifier une fin de séance si l'ouverture
+    // ou les présences de cette même séance sont encore en conflit.
+    if (row?.state === "blocked") {
+      if (
+        normalizedDependency &&
+        (operationType === "session-start" || operationType === "attendance")
+      ) {
+        blockedSessions.add(normalizedDependency);
+      }
+      continue;
+    }
+
+    if (
+      normalizedDependency &&
+      blockedSessions.has(normalizedDependency) &&
+      (operationType === "attendance" || operationType === "session-end")
+    ) {
+      continue;
+    }
+    if (
+      normalizedDependency &&
+      sessionsWaitingForStart.has(normalizedDependency) &&
+      (operationType === "attendance" || operationType === "session-end")
+    ) {
+      continue;
+    }
+
+    let url;
+    try {
+      url = new URL(String(row?.url || ""), self.location.origin);
+    } catch {
+      await patchAttendanceOutboxRow(row.id, {
+        state: "blocked",
+        lastStatus: 400,
+        lastError: "background_sync_invalid_url",
+        lastAttemptAt: Date.now(),
+      });
+      continue;
+    }
+
+    if (!attendancePathMatchesType(url, operationType)) {
+      await patchAttendanceOutboxRow(row.id, {
+        state: "blocked",
+        lastStatus: 400,
+        lastError: "background_sync_operation_scope_mismatch",
+        lastAttemptAt: Date.now(),
+      });
+      continue;
+    }
+
+    const headers = new Headers(row?.headers || {});
+    headers.set("Accept", "application/json");
+    if (body !== undefined && body !== null && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (row?.operationId && !headers.has("X-Mon-Cahier-Operation-Id")) {
+      headers.set("X-Mon-Cahier-Operation-Id", String(row.operationId));
+    }
+
+    let response;
+    try {
+      const replayRequest = new Request(url.href, {
+        method: String(row?.method || "POST").toUpperCase(),
+        credentials: "include",
+        cache: "no-store",
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      response = await fetchWithTimeout(
+        replayRequest,
+        ATTENDANCE_REPLAY_TIMEOUT_MS,
+      );
+    } catch (error) {
+      await patchAttendanceOutboxRow(row.id, {
+        state: "pending",
+        attempts: Number(row?.attempts || 0) + 1,
+        lastAttemptAt: Date.now(),
+        lastStatus: 0,
+        lastError: String(error?.message || "background_sync_network_error"),
+      });
+      throw error;
+    }
+
+    const payload = await responseJsonSafe(response);
+    if (!response.ok) {
+      const errorCode = String(
+        payload?.error || payload?.message || `HTTP_${response.status}`,
+      ).slice(0, 256);
+      const patch = {
+        attempts: Number(row?.attempts || 0) + 1,
+        lastAttemptAt: Date.now(),
+        lastStatus: response.status,
+        lastError: errorCode,
+      };
+
+      if (response.status === 401) {
+        await patchAttendanceOutboxRow(row.id, {
+          ...patch,
+          state: "pending",
+        });
+        // Une nouvelle authentification utilisateur est nécessaire.
+        break;
+      }
+
+      if (attendanceRetryableStatus(response.status)) {
+        await patchAttendanceOutboxRow(row.id, {
+          ...patch,
+          state: "pending",
+        });
+        throw new Error(`attendance_background_retry_${response.status}`);
+      }
+
+      await patchAttendanceOutboxRow(row.id, {
+        ...patch,
+        state: "blocked",
+      });
+      if (
+        normalizedDependency &&
+        (operationType === "session-start" || operationType === "attendance")
+      ) {
+        blockedSessions.add(normalizedDependency);
+      }
+      continue;
+    }
+
+    const acknowledgedOperationId = attendanceResponseOperationId(payload);
+    if (
+      row?.operationId &&
+      acknowledgedOperationId !== String(row.operationId)
+    ) {
+      await patchAttendanceOutboxRow(row.id, {
+        state: "blocked",
+        attempts: Number(row?.attempts || 0) + 1,
+        lastAttemptAt: Date.now(),
+        lastStatus: 409,
+        lastError: acknowledgedOperationId
+          ? "background_sync_operation_id_mismatch"
+          : "background_sync_operation_id_missing",
+      });
+      if (normalizedDependency) blockedSessions.add(normalizedDependency);
+      continue;
+    }
+
+    if (operationType === "session-start") {
+      const serverSessionId = attendanceResponseSessionId(payload);
+      if (normalizedDependency && serverSessionId) {
+        const existing = String(map[normalizedDependency] || "").trim();
+        if (existing && existing !== serverSessionId) {
+          await patchAttendanceOutboxRow(row.id, {
+            state: "blocked",
+            attempts: Number(row?.attempts || 0) + 1,
+            lastAttemptAt: Date.now(),
+            lastStatus: 409,
+            lastError: "background_sync_session_mapping_conflict",
+          });
+          blockedSessions.add(normalizedDependency);
+          continue;
+        }
+        map[normalizedDependency] = serverSessionId;
+        await writeAttendanceSessionMap(map);
+        sessionsWaitingForStart.delete(normalizedDependency);
+      }
+    }
+
+    await deleteAttendanceOutboxRow(row.id);
+    flushed += 1;
+  }
+
+  const remaining = (await readAttendanceOutboxRows()).filter((row) =>
+    ATTENDANCE_CALL_OPERATION_TYPES.has(attendanceOperationType(row)),
+  ).length;
+  await notifyAttendanceSyncClients({ flushed, remaining });
+  return { flushed, remaining };
+}
+
+self.addEventListener("sync", (event) => {
+  if (event.tag !== ATTENDANCE_BACKGROUND_SYNC_TAG) return;
+  event.waitUntil(replayAttendanceOutboxFromWorker());
+});
 
 function jsonResponse(payload, status = 200, source = null) {
   const headers = {
@@ -448,6 +897,15 @@ async function warmDocument(rawUrl) {
 }
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "MON_CAHIER_ATTENDANCE_SYNC_NOW") {
+    event.waitUntil(
+      replayAttendanceOutboxFromWorker().catch(() => {
+        // Le journal reste intact ; Background Sync ou le prochain réveil retentera.
+      }),
+    );
+    return;
+  }
+
   if (event.data?.type === "MON_CAHIER_GET_RELEASE") {
     event.ports?.[0]?.postMessage({
       ok: true,
