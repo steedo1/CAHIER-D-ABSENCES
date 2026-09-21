@@ -1,9 +1,10 @@
-export type AdminAttendanceDataSource = "cloud" | "relay" | "cache";
+export type AdminAttendanceDataSource = "cloud" | "relay" | "hybrid" | "cache";
 
 export const ADMIN_ATTENDANCE_CLOUD_TIMEOUT_MS = 4_000;
 export const ADMIN_ATTENDANCE_POLL_MS = {
   cloud: 20_000,
   relay: 10_000,
+  hybrid: 10_000,
   cache: 60_000,
   error: 60_000,
   initial: 60_000,
@@ -81,7 +82,12 @@ export function isInstitutionScopedAdminAttendanceEnvelope(
   if (!envelope || typeof envelope !== "object") return false;
   const value = envelope as Record<string, unknown>;
   if (value.institution_id !== expectedInstitutionId) return false;
-  if (value.source !== "cloud" && value.source !== "relay" && value.source !== "cache") {
+  if (
+    value.source !== "cloud" &&
+    value.source !== "relay" &&
+    value.source !== "hybrid" &&
+    value.source !== "cache"
+  ) {
     return false;
   }
   if (typeof value.saved_at !== "string") return false;
@@ -92,6 +98,62 @@ export function isInstitutionScopedAdminAttendanceEnvelope(
       typeof data === "object" &&
       Array.isArray((data as Record<string, unknown>).rows),
   );
+}
+
+
+export type AdminAttendanceMergeableRow = Record<string, any> & {
+  id?: unknown;
+  status?: unknown;
+};
+
+function attendanceEvidenceRank(status: unknown) {
+  const value = String(status || "").trim();
+  if (value === "ok" || value === "late") return 3;
+  if (value === "started") return 2;
+  return 1;
+}
+
+/**
+ * Fusionne les faits Cloud et Relais sans faire disparaître les métadonnées Cloud.
+ *
+ * Le Relais gagne uniquement lorsqu'il apporte une preuve de cours plus avancée
+ * (ex. Cloud "missing/not_started" mais Relais "started/ok/late").
+ * Si les deux sources ont le même niveau de preuve, le Cloud reste prioritaire
+ * car il expose davantage de métadonnées de réception.
+ */
+export function mergeAdminAttendanceRows<T extends AdminAttendanceMergeableRow>(
+  cloudRows: readonly T[],
+  relayRows: readonly T[],
+): T[] {
+  const relayById = new Map<string, T>();
+  for (const row of relayRows || []) {
+    const id = String(row?.id || "").trim();
+    if (id) relayById.set(id, row);
+  }
+
+  const seen = new Set<string>();
+  const merged = (cloudRows || []).map((cloudRow) => {
+    const id = String(cloudRow?.id || "").trim();
+    if (!id) return cloudRow;
+    seen.add(id);
+    const relayRow = relayById.get(id);
+    if (!relayRow) return cloudRow;
+
+    const cloudRank = attendanceEvidenceRank(cloudRow.status);
+    const relayRank = attendanceEvidenceRank(relayRow.status);
+    if (relayRank > cloudRank) {
+      return { ...cloudRow, ...relayRow } as T;
+    }
+    return { ...relayRow, ...cloudRow } as T;
+  });
+
+  for (const relayRow of relayRows || []) {
+    const id = String(relayRow?.id || "").trim();
+    if (!id || seen.has(id)) continue;
+    merged.push(relayRow);
+  }
+
+  return merged;
 }
 
 export function createTimedAbortSignal(
