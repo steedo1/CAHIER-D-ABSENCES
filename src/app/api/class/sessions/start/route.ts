@@ -563,9 +563,12 @@ export async function POST(req: NextRequest) {
       operationId,
     });
 
-    // Protection propre au mode "Autre cours" : il peut ignorer l'EDT, mais
-    // jamais ouvrir une deuxième séance sur la classe ni faire enseigner le
-    // même professeur dans deux classes en même temps.
+    // Protection propre au mode "Autre cours" : il peut ignorer l'EDT,
+    // mais jamais ouvrir une deuxième séance sur LA MEME CLASSE.
+    //
+    // Ne pas verrouiller globalement l'enseignant : Mon Cahier autorise les
+    // cours groupés / lignes simultanées d'un même enseignant, et la paie
+    // regroupe déjà ces situations pour éviter une double vacation.
     if (manualCourse) {
       const { data: openClassSessions, error: openClassErr } = await srv
         .from("teacher_sessions")
@@ -586,30 +589,6 @@ export async function POST(req: NextRequest) {
             error: "class_session_already_open",
             message:
               "Un cours est déjà ouvert pour cette classe. Terminez-le avant de démarrer « Autre cours ».",
-          },
-          { status: 409 },
-        );
-      }
-
-      const { data: openTeacherSessions, error: openTeacherErr } = await srv
-        .from("teacher_sessions")
-        .select("id,class_id,subject_id")
-        .eq("institution_id", cls.institution_id)
-        .eq("teacher_id", teacher_id)
-        .eq("status", "open")
-        .is("ended_at", null)
-        .neq("id", cloudSessionId)
-        .limit(1);
-
-      if (openTeacherErr) {
-        return NextResponse.json({ error: "open_teacher_session_lookup_unavailable" }, { status: 503 });
-      }
-      if ((openTeacherSessions || []).length > 0) {
-        return NextResponse.json(
-          {
-            error: "teacher_session_already_open",
-            message:
-              "Cet enseignant a déjà un cours ouvert. Impossible de démarrer une seconde séance simultanée.",
           },
           { status: 409 },
         );
