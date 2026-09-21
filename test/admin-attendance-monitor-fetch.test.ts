@@ -7,6 +7,7 @@ import {
   adminAttendancePollDelay,
   createTimedAbortSignal,
   isInstitutionScopedAdminAttendanceEnvelope,
+  mergeAdminAttendanceRows,
   readCloudRelayCache,
 } from "../src/lib/admin-attendance-monitor";
 
@@ -46,6 +47,7 @@ test("une enveloppe cache sans preuve d'établissement n'est jamais acceptée", 
 test("le polling s'adapte à la source et ralentit après une erreur", () => {
   assert.equal(adminAttendancePollDelay("cloud", false), ADMIN_ATTENDANCE_POLL_MS.cloud);
   assert.equal(adminAttendancePollDelay("relay", false), ADMIN_ATTENDANCE_POLL_MS.relay);
+  assert.equal(adminAttendancePollDelay("hybrid", false), ADMIN_ATTENDANCE_POLL_MS.hybrid);
   assert.equal(adminAttendancePollDelay("cache", false), ADMIN_ATTENDANCE_POLL_MS.cache);
   assert.equal(adminAttendancePollDelay("cloud", true), ADMIN_ATTENDANCE_POLL_MS.error);
   assert.equal(adminAttendancePollDelay(null, false), ADMIN_ATTENDANCE_POLL_MS.initial);
@@ -128,4 +130,58 @@ test("le signal temporisé relaie l'annulation externe et nettoie son timer", ()
   assert.equal(timed.signal.aborted, true);
   assert.equal(timed.signal.reason, reason);
   timed.cleanup();
+});
+
+
+test("la fusion privilégie une preuve Relais plus avancée sans perdre les métadonnées Cloud", () => {
+  const cloud = [{
+    id: "2026-09-21|p1|c1|s1|t1",
+    status: "missing",
+    session_id: null,
+    attendance_receipt_available: true,
+    class_label: "3e1",
+  }];
+  const relay = [{
+    id: "2026-09-21|p1|c1|s1|t1",
+    status: "ok",
+    opened_from: "class_device",
+    class_label: "3e1",
+  }];
+
+  const merged = mergeAdminAttendanceRows(cloud, relay);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.status, "ok");
+  assert.equal(merged[0]?.opened_from, "class_device");
+  assert.equal(merged[0]?.attendance_receipt_available, true);
+  assert.equal(merged[0]?.session_id, null);
+});
+
+test("la fusion conserve le Cloud lorsqu'il possède déjà une preuve équivalente ou supérieure", () => {
+  const cloud = [{
+    id: "row-1",
+    status: "ok",
+    session_id: "cloud-session",
+    actual_call_at: "2026-09-21T10:02:00.000Z",
+  }];
+  const relay = [{
+    id: "row-1",
+    status: "started",
+    opened_from: "teacher",
+  }];
+
+  const merged = mergeAdminAttendanceRows(cloud, relay);
+  assert.equal(merged[0]?.status, "ok");
+  assert.equal(merged[0]?.session_id, "cloud-session");
+  assert.equal(merged[0]?.actual_call_at, "2026-09-21T10:02:00.000Z");
+});
+
+test("la fusion conserve aussi les lignes présentes uniquement sur le Relais", () => {
+  const merged = mergeAdminAttendanceRows(
+    [{ id: "cloud-only", status: "not_started" }],
+    [{ id: "relay-only", status: "started" }],
+  );
+  assert.deepEqual(
+    merged.map((row) => row.id),
+    ["cloud-only", "relay-only"],
+  );
 });
