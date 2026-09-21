@@ -504,3 +504,77 @@ export async function retryTeacherSessionOpenOperationOnRelay(
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
   });
+}
+
+export async function markTeacherSessionOpenedInCloud(input: {
+  institutionId: string;
+  operationId: string;
+  sessionId: string;
+  subjectId?: string | null;
+  startedAt?: string | null;
+  actualCallAt?: string | null;
+}) {
+  const institutionId = normalizedText(input.institutionId);
+  const operationId = normalizedText(input.operationId);
+  const sessionId = normalizedText(input.sessionId);
+  if (!institutionId || !operationId || !sessionId) return null;
+  const store = createIndexedDbTeacherSessionStore();
+  const records = await store.list(institutionId);
+  const record = records.find(
+    (candidate) => candidate.operation_id === operationId,
+  );
+  if (!record) return null;
+  const next: TeacherSessionDeliveryRecord = {
+    ...record,
+    state: "cloud_opened",
+    session_id: sessionId,
+    subject_id: normalizedText(input.subjectId) || record.subject_id,
+    started_at: normalizedText(input.startedAt) || record.started_at,
+    actual_call_at:
+      normalizedText(input.actualCallAt) || record.actual_call_at,
+    updated_at: new Date().toISOString(),
+    last_error: null,
+    last_status: 200,
+  };
+  await store.put(next);
+  return next;
+}
+
+export function teacherSessionDeliveryMessage(record: TeacherSessionDeliveryRecord) {
+  if (record.state === "relay_opened") return "Séance ouverte et sécurisée sur le relais local.";
+  if (record.state === "cloud_opened") return "Séance ouverte et sécurisée dans le Cloud.";
+  if (record.last_error === "relay_session_open_route_unavailable") {
+    return "Séance conservée sur cet appareil : le relais doit être mis à jour avant l’ouverture locale.";
+  }
+  if (record.last_error === "teacher_attendance_writes_disabled") {
+    return "Séance conservée sur cet appareil : les écritures du relais restent désactivées.";
+  }
+  if (record.last_error === "attendance_outside_slot") {
+    return "Ouverture refusée : l’appel est hors du créneau connu par le relais. Vérifiez que ses horaires ont bien été synchronisés.";
+  }
+  if (record.last_error === "period_not_found") {
+    return "Ouverture refusée : ce créneau n’existe pas encore sur le relais. Synchronisez le PC relais depuis les paramètres administrateur.";
+  }
+  if (record.last_error === "class_not_found") {
+    return "Ouverture refusée : cette classe n’existe pas encore sur le relais. Synchronisez les données pédagogiques.";
+  }
+  if (record.last_error === "attendance_sunday_not_allowed") {
+    return "Ouverture refusée : aucun appel ne peut être ouvert le dimanche.";
+  }
+  if (record.last_error === "teacher_not_scheduled_for_slot") {
+    return "Ouverture refusée : vous n’êtes pas affecté à ce cours dans l’emploi du temps local.";
+  }
+  if (record.last_error === "teacher_timetable_ambiguous") {
+    return "Ouverture refusée : plusieurs cours locaux correspondent à ce créneau.";
+  }
+  if (record.last_error === "concurrent_session_open" || record.last_error === "session_slot_conflict") {
+    return "Ouverture refusée : une autre séance est déjà ouverte.";
+  }
+  if (record.requires_authentication) {
+    return "Séance conservée sur cet appareil : reconnectez-vous avant de réessayer.";
+  }
+  if (record.state === "blocked") {
+    return "Ouverture refusée par le relais local. Actualisez l’emploi du temps puis synchronisez le PC relais avant de réessayer.";
+  }
+  return "Séance conservée sur cet appareil : relais local inaccessible.";
+}
