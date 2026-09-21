@@ -348,11 +348,14 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
-        if (res.status === 402 || res.status >= 500) {
-          // Une restriction temporaire du fournisseur Cloud (402) est traitée
-          // comme une indisponibilité de service : les appareils déjà préparés
-          // continuent via l'autorisation et les données locales, sans affaiblir
-          // les contrôles 401/403 ni l'authentification habituelle.
+        const maintenanceFailure =
+          res.status === 402 || isMaintenanceError(json.error);
+
+        if (maintenanceFailure || res.status >= 500) {
+          // Supabase peut être bloqué en 402 directement, ou notre route
+          // d'authentification peut encapsuler cette indisponibilité en 401.
+          // Seule une erreur explicitement reconnue comme panne/restriction
+          // déclenche le secours local ; un vrai mauvais mot de passe reste refusé.
           try {
             await openOfflineSession();
             return;
