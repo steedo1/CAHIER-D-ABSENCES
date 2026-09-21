@@ -21,6 +21,7 @@ import {
   offlineMutateJson,
   cacheGet,
   cacheSet,
+  cacheDeleteByPrefixes,
 } from "@/lib/offline";
 import {
   checkGpsInsideZones,
@@ -2462,8 +2463,22 @@ export default function TeacherDashboard() {
         }
       }
     } finally {
-      // La déconnexion ferme l'accès actif, mais conserve les données préparées,
-      // les opérations en attente et l'autorisation locale de cet appareil.
+      // Never expose one teacher's prepared timetable/read caches to the next
+      // account used on the same browser. Durable attendance/session delivery
+      // journals and the outbox are intentionally NOT deleted here.
+      await cacheDeleteByPrefixes([
+        "teacher:classes:",
+        "teacher:offline:bootstrap",
+        "offline:readiness:teacher",
+        "teacher:inst:",
+        "teacher:conduct:",
+        "teacher:roster:",
+        "teacher:open",
+      ]).catch(() => {});
+      await cacheSet("teacher:local-open", null).catch(() => {});
+
+      // La déconnexion ferme l'accès actif. Les opérations en attente et
+      // l'autorisation locale de l'appareil restent conservées pour reprise.
       await clearActiveOfflineAccess().catch(() => {});
       window.location.href = "/login";
     }
