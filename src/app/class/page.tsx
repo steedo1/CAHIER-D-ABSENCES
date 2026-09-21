@@ -3307,6 +3307,7 @@ export default function ClassDevicePage() {
       });
       clearReminderLoop();
       setSubjects([]);
+      setManualSubjectMode(false);
       setSubjectScheduleIssue(null);
       subjectSelectionSlotRef.current = "";
       setOpen(null);
