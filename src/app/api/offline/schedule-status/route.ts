@@ -53,6 +53,7 @@ export async function GET() {
     return noStore({
       ok: true,
       institution_id: institutionId,
+      actor_profile_id: user.id,
       schedule_revision:
         Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
       generated_at: String(revisionRow?.updated_at || new Date().toISOString()),

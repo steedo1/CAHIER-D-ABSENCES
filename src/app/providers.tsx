@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { setAttendanceCacheActor } from "@/lib/attendance-cache-identity";
 
 const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
   session: null,
@@ -72,6 +73,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         }
 
         if (mountedRef.current) {
+          setAttendanceCacheActor(s?.user.id || null);
           setSession(s);
           setLoading(false);
         }
@@ -87,6 +89,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, s) => {
+      setAttendanceCacheActor(s?.user.id || null);
       if (mountedRef.current) setSession(s ?? null);
 
       try {

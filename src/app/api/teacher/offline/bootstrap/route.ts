@@ -342,6 +342,7 @@ export async function GET() {
       version: 1,
       web_release: MON_CAHIER_WEB_RELEASE,
       institution_id: institutionId,
+      actor_profile_id: user.id,
       schedule_revision: revisionAfter.revision,
       snapshot_completeness: "complete",
       generated_at: revisionAfter.generated_at,

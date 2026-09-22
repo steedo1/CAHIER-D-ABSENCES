@@ -2,6 +2,8 @@
 // Helpers Offline (client only) : cache JSON + outbox (mutations) + flush on reconnect.
 
 type JsonValue = any;
+import { isTeacherCacheKey, isTeacherScheduleKey, teacherCacheKey, validAttendanceScope, type AttendanceCacheScope } from "@/lib/attendance-cache-contract";
+import { attendanceCacheActor, attendanceAuthGeneration, knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance-cache-identity";
 
 import {
   MON_CAHIER_OFFLINE_SCHEMA_VERSION,
@@ -228,7 +230,7 @@ async function openDB(): Promise<IDBDatabase> {
 
 /* ───────────────────────── KV cache ───────────────────────── */
 
-export async function cacheGet<T = any>(key: string): Promise<T | null> {
+async function rawCacheGet<T = any>(key: string): Promise<T | null> {
   const db = await openDB();
   const tx = db.transaction(["kv"], "readonly");
   const store = tx.objectStore("kv");
@@ -237,13 +239,27 @@ export async function cacheGet<T = any>(key: string): Promise<T | null> {
   return row ? (row.value as T) : null;
 }
 
+const teacherIdentityKey = (actor: string) => `teacher-cache:identity:v1:${actor}`;
+
+async function teacherScope(actor?: string): Promise<AttendanceCacheScope | null> {
+  const userId = actor || await attendanceCacheActor();
+  if (!userId) return null;
+  const scope = await rawCacheGet<AttendanceCacheScope>(teacherIdentityKey(userId));
+  if (!validAttendanceScope(scope) || scope.actor_profile_id !== userId) return null;
+  const known = knownScheduleRevision(scope.institution_id);
+  return { ...scope, schedule_revision: Math.max(scope.schedule_revision, known ?? 0) };
+}
+
+export async function cacheGet<T = any>(key: string, actor?: string): Promise<T | null> {
+  if (!isTeacherCacheKey(key)) return rawCacheGet<T>(key);
+  const scope = await teacherScope(actor);
+  // Legacy unscoped data is deliberately never migrated: its owner is unknown.
+  if (!scope) return null;
+  return rawCacheGet<T>(teacherCacheKey(key, scope));
+}
+
 export async function cacheSet(key: string, value: any): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction(["kv"], "readwrite");
-  const store = tx.objectStore("kv");
-  const row: KVRow = { key, value, updatedAt: Date.now() };
-  store.put(row);
-  await txDone(tx);
+  await cacheSetMany([[key, value]]);
 }
 
 /**
@@ -258,12 +274,28 @@ export async function cacheSetMany(
 ): Promise<void> {
   if (!entries.length) return;
 
+  const hasTeacher = entries.some(([key]) => isTeacherCacheKey(key));
+  const actor = hasTeacher ? await attendanceCacheActor() : null;
+  let scope = actor ? await teacherScope(actor) : null;
+  const contract = entries.find(([key, value]) =>
+    isTeacherCacheKey(key) && validAttendanceScope(value))?.[1] as AttendanceCacheScope | undefined;
+  if (contract) {
+    if (contract.actor_profile_id !== actor) throw new Error("attendance_cache_identity_changed");
+    const known = knownScheduleRevision(contract.institution_id);
+    if (known !== null && contract.schedule_revision < known) throw new Error("attendance_schedule_stale");
+    scope = { institution_id: contract.institution_id, actor_profile_id: contract.actor_profile_id,
+      schedule_revision: contract.schedule_revision };
+  }
+  if (hasTeacher && (!actor || !scope)) return;
+
   const normalized = new Map<string, any>();
   for (const [rawKey, value] of entries) {
     const key = String(rawKey || "").trim();
     if (!key) throw new Error("offline_cache_key_required");
-    normalized.set(key, value);
+    normalized.set(isTeacherCacheKey(key) ? teacherCacheKey(key, scope!) : key, value);
   }
+  if (contract && scope && actor) normalized.set(teacherIdentityKey(actor), scope);
+  if (hasTeacher && actor !== await attendanceCacheActor()) throw new Error("attendance_cache_identity_changed");
 
   const db = await openDB();
   const tx = db.transaction(["kv"], "readwrite");
@@ -274,6 +306,7 @@ export async function cacheSetMany(
     store.put(row);
   }
   await txDone(tx);
+  if (contract && scope) observeScheduleRevision(scope.institution_id, scope.schedule_revision);
 }
 
 export async function cacheDeleteByPrefixes(prefixes: string[]): Promise<void> {
@@ -674,6 +707,22 @@ function outboxRetryDelayMs(attempts: number) {
  * - HTTP error (401/403/500) -> essaie cache, sinon throw.
  */
 export async function offlineGetJson<T = any>(url: string, cacheKey: string): Promise<T> {
+  const scoped = isTeacherCacheKey(cacheKey);
+  const actor = scoped ? await attendanceCacheActor() : null;
+  const authGeneration = attendanceAuthGeneration();
+  const before = scoped ? await teacherScope() : null;
+  const assertCurrent = async () => {
+    if (scoped && (authGeneration !== attendanceAuthGeneration() || actor !== await attendanceCacheActor())) {
+      throw new HttpResponseError("attendance_cache_identity_changed", 409, false);
+    }
+  };
+  const fallback = async () => {
+    await assertCurrent();
+    const current = scoped ? await teacherScope() : null;
+    if (scoped && isTeacherScheduleKey(cacheKey) &&
+      (!before || !current || teacherCacheKey(cacheKey, before) !== teacherCacheKey(cacheKey, current))) return null;
+    return cacheGet<T>(cacheKey);
+  };
   try {
     const res = await fetchWithTimeout(
       url,
@@ -693,7 +742,7 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
       // Un 401/403/404/422 ne doit jamais être masqué par une ancienne donnée
       // locale. Le cache n'est toléré que pour une panne serveur temporaire.
       if (isRetryableStatus(res.status)) {
-        const cached = await cacheGet<T>(cacheKey);
+        const cached = await fallback();
         if (cached != null) return cached;
       }
 
@@ -701,13 +750,23 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
     }
 
     const j = (await safeJson(res)) as T;
+    await assertCurrent();
+    if (scoped && validAttendanceScope(j) && j.actor_profile_id !== actor) {
+      throw new HttpResponseError("attendance_cache_identity_mismatch", 409, false);
+    }
+    if (scoped && before && !validAttendanceScope(j) && isTeacherScheduleKey(cacheKey)) {
+      const current = await teacherScope();
+      if (!current || teacherCacheKey(cacheKey, before) !== teacherCacheKey(cacheKey, current)) {
+        throw new HttpResponseError("attendance_schedule_changed", 409, false);
+      }
+    }
     await cacheSet(cacheKey, j);
     return j;
   } catch (error) {
     if (error instanceof HttpResponseError && !error.allowCache) {
       throw error;
     }
-    const cached = await cacheGet<T>(cacheKey);
+    const cached = await fallback();
     if (cached != null) return cached;
     throw new Error("Hors connexion : aucune donnée en cache pour cette page.");
   }

@@ -38,11 +38,11 @@ function timetableFreshnessCompare(left: TimetableRow, right: TimetableRow) {
   return left.id.localeCompare(right.id);
 }
 
-function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
+export function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
   const winnerBySlot = new Map<string, TimetableRow>();
 
   for (const row of rows) {
-    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
+    const key = `${row.class_id}|${row.subject_id}|${row.teacher_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
     const current = winnerBySlot.get(key);
     if (!current || timetableFreshnessCompare(row, current) > 0) {
       winnerBySlot.set(key, row);
@@ -50,7 +50,7 @@ function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
   }
 
   return rows.filter((row) => {
-    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
+    const key = `${row.class_id}|${row.subject_id}|${row.teacher_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
     return winnerBySlot.get(key)?.id === row.id;
   });
 }

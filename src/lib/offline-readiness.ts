@@ -1,4 +1,6 @@
 "use client";
+import { attendanceCacheActor, knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance-cache-identity";
+import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
 
 import {
   cacheGet,
@@ -154,6 +156,7 @@ export type ClassDeviceAssessmentContext = {
 type ProgressCallback = (message: string) => void;
 
 type TeacherBootstrap = {
+  actor_profile_id?: string;
   version?: number;
   institution_id?: string | null;
   web_release?: string;
@@ -512,7 +515,7 @@ function migrateOfflineReadinessSchema(
     : { ...value, offline_schema_version: offlineSchemaVersion };
 }
 
-export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineReadiness | null> {
+export async function getOfflineReadiness(role: OfflineRole, actor?: string): Promise<OfflineReadiness | null> {
   if (role === "class-device") {
     const bundle = await cacheGet<
       ClassDeviceCoherentBundle<OfflineReadiness, RelayTeacherOfflineSchedule>
@@ -533,7 +536,7 @@ export async function getOfflineReadiness(role: OfflineRole): Promise<OfflineRea
       return migrated;
     }
   }
-  const value = await cacheGet<OfflineReadiness>(readinessKey(role));
+  const value = await cacheGet<OfflineReadiness>(readinessKey(role), actor);
   const migrated =
     value?.role === role ? migrateOfflineReadinessSchema(value) : null;
   if (migrated && migrated !== value) {
@@ -1384,7 +1387,8 @@ export async function getClassDeviceCoherentSchedule(input: {
 }) {
   const bundle = await readClassDeviceBundle();
   const validation = validateClassDeviceScheduleScope(bundle?.schedule, input);
-  return validation.ok ? bundle!.schedule : null;
+  return validation.ok && scheduleIsCurrent(validation.revision, knownScheduleRevision(input.institutionId))
+    ? bundle!.schedule : null;
 }
 
 export async function assessClassDeviceOfflineReadiness(
@@ -1665,6 +1669,7 @@ export async function assessClassDeviceOfflineReadiness(
 }
 
 async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineReadiness> {
+  const actor = await attendanceCacheActor();
   let bootstrap: TeacherBootstrap;
   let basics: any = null;
   let preparationSource: "cloud" | "relay" = "cloud";
@@ -1677,6 +1682,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
       fetchFreshJson<any>("/api/teacher/institution/basics"),
     ]);
     if (
+      !actor || bootstrap.actor_profile_id !== actor || basics?.actor_profile_id !== actor ||
+      bootstrap.institution_id !== basics?.institution_id ||
+      bootstrap.schedule_revision !== basics?.schedule_revision ||
       bootstrap.snapshot_completeness !== "complete" ||
       safeRevision(bootstrap.schedule_revision) === null ||
       !Array.isArray(bootstrap.slots) ||
@@ -1776,6 +1784,16 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   }
 
   const scheduleRevision = safeRevision(bootstrap.schedule_revision);
+  if (preparationSource === "cloud") {
+    const finalStatus = await fetchFreshJson<any>("/api/offline/schedule-status");
+    if (finalStatus.institution_id !== institutionId || finalStatus.actor_profile_id !== actor ||
+        finalStatus.schedule_revision !== scheduleRevision) throw new Error("schedule_changed_during_prepare");
+    observeScheduleRevision(institutionId, finalStatus.schedule_revision);
+  }
+  if (!actor || actor !== await attendanceCacheActor() || bootstrap.actor_profile_id !== actor ||
+      !scheduleIsCurrent(scheduleRevision, knownScheduleRevision(institutionId))) {
+    throw new Error("attendance_schedule_identity_or_revision_changed");
+  }
   const relayAligned =
     scheduleRevision !== null &&
     scheduleRevision === safeRevision(relayConnectivity.snapshot_revision) &&
@@ -1784,6 +1802,8 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
   const readiness: OfflineReadiness = {
     version: 5,
     role: "teacher",
+    institution_id: institutionId,
+    authorized_actor_profile_id: actor,
     prepared_at: new Date().toISOString(),
     class_count: classIds.length,
     student_count: studentIds.size,

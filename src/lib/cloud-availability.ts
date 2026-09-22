@@ -1,8 +1,10 @@
 "use client";
+import { attendanceCacheActor, observeScheduleRevision } from "@/lib/attendance-cache-identity";
 
 export type CloudScheduleStatus = {
   ok: true;
   institution_id: string;
+  actor_profile_id?: string;
   schedule_revision: number;
   generated_at: string;
   web_release: string;
@@ -14,15 +16,23 @@ const CLOUD_PROBE_FAILURE_TTL_MS = 10_000;
 
 let cloudProbeInFlight: Promise<CloudScheduleStatus | null> | null = null;
 let lastCloudProbe: { checkedAt: number; value: CloudScheduleStatus | null } | null = null;
+let probeActor: string | null = null;
 
 export async function probeCloudSchedule(
   timeoutMs = CLOUD_PROBE_TIMEOUT_MS,
+  force = false,
 ): Promise<CloudScheduleStatus | null> {
+  const actor = await attendanceCacheActor();
+  if (actor !== probeActor) {
+    probeActor = actor;
+    cloudProbeInFlight = null;
+    lastCloudProbe = null;
+  }
   const now = Date.now();
   const cacheTtl = lastCloudProbe?.value
     ? CLOUD_PROBE_SUCCESS_TTL_MS
     : CLOUD_PROBE_FAILURE_TTL_MS;
-  if (lastCloudProbe && now - lastCloudProbe.checkedAt < cacheTtl) {
+  if (!force && lastCloudProbe && now - lastCloudProbe.checkedAt < cacheTtl) {
     return lastCloudProbe.value;
   }
   if (cloudProbeInFlight) return cloudProbeInFlight;
@@ -30,6 +40,9 @@ export async function probeCloudSchedule(
   cloudProbeInFlight = runCloudScheduleProbe(timeoutMs);
   try {
     const value = await cloudProbeInFlight;
+    if (actor !== await attendanceCacheActor()) return null;
+    if (value?.actor_profile_id && value.actor_profile_id !== actor) return null;
+    if (value) observeScheduleRevision(value.institution_id, value.schedule_revision);
     lastCloudProbe = { checkedAt: Date.now(), value };
     return value;
   } finally {
@@ -65,6 +78,7 @@ async function runCloudScheduleProbe(
     return {
       ok: true,
       institution_id: institutionId,
+      actor_profile_id: String(payload?.actor_profile_id || ""),
       schedule_revision: revision,
       generated_at: String(payload?.generated_at || ""),
       web_release: String(payload?.web_release || "unknown"),
