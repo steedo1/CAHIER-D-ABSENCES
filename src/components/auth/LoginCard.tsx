@@ -46,15 +46,13 @@ type RoleResponse = {
 const AUTH_REQUEST_TIMEOUT_MS = 8_000;
 const AUTH_RETRY_TIMEOUT_MS = 15_000;
 
-const MAINTENANCE_MESSAGE = `Maintenance technique exceptionnelle
+const MAINTENANCE_MESSAGE = `Service momentanément indisponible
 
-Afin de renforcer la sécurité, la stabilité et la fiabilité de Mon Cahier, une intervention technique exceptionnelle est actuellement en cours.
+Mon Cahier est momentanément indisponible. Une intervention technique est en cours.
 
-Vos données restent protégées et aucune information n’est perdue.
+Vos données restent protégées.
 
-Le service reprendra progressivement dans un délai maximum de 72 heures.
-
-Merci pour votre confiance et votre compréhension.
+Merci pour votre patience et votre compréhension.
 L’équipe Mon Cahier — Nexa Digital SARL`;
 
 function isMaintenanceError(value?: string | null) {
@@ -348,14 +346,9 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
       const json = (await res.json().catch(() => ({}))) as LoginResponse;
       if (!res.ok || !json.ok) {
-        const maintenanceFailure =
-          res.status === 402 || isMaintenanceError(json.error);
-
-        if (maintenanceFailure || res.status >= 500) {
-          // Supabase peut être bloqué en 402 directement, ou notre route
-          // d'authentification peut encapsuler cette indisponibilité en 401.
-          // Seule une erreur explicitement reconnue comme panne/restriction
-          // déclenche le secours local ; un vrai mauvais mot de passe reste refusé.
+        if (res.status >= 500) {
+          // Le secours local reste disponible lors d'une panne Cloud, mais une
+          // préparation locale incomplète ne doit jamais masquer l'erreur serveur.
           try {
             await openOfflineSession();
             return;

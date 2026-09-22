@@ -8,12 +8,22 @@ import {
   getClassDeviceCoherentSchedule,
   getOfflineReadiness,
 } from "@/lib/offline-readiness";
+import { hasInstitutionScopedAdminAttendanceMonitorCache } from "@/lib/local-relay";
 import {
   adminEssentialPreparationKey,
   isAdminEssentialPreparationMarker,
   type AdminEssentialPreparationMarker,
 } from "@/lib/admin-essential-contract";
 import type { OfflineAccessGrantPayload } from "@/lib/offline-auth-contract";
+
+function todayInAbidjan() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Abidjan",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
 
 async function teacherPrepared(payload: OfflineAccessGrantPayload) {
   const readiness = await getOfflineReadiness("teacher");
@@ -97,10 +107,14 @@ async function classDevicePrepared(payload: OfflineAccessGrantPayload) {
 }
 
 async function adminPrepared(payload: OfflineAccessGrantPayload) {
-  // L'accès Admin hors ligne est lié au paquet essentiel complet du compte et
-  // de l'établissement. Un snapshot de surveillance des appels daté du jour
-  // est une donnée consultable facultative : son absence ne doit jamais
-  // empêcher l'Admin d'ouvrir les autres fonctions déjà préparées.
+  const date = todayInAbidjan();
+  const attendanceReady = await hasInstitutionScopedAdminAttendanceMonitorCache(
+    payload.institution_id,
+    date,
+    date,
+  );
+  if (!attendanceReady) return false;
+
   const marker = await cacheGet<AdminEssentialPreparationMarker>(
     adminEssentialPreparationKey(payload.user_id, payload.institution_id),
   ).catch(() => null);

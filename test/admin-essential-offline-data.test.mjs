@@ -57,18 +57,13 @@ test("le cache Admin est cloisonné en ligne et hors ligne par utilisateur et é
   assert.match(code, /scope\.user_id[^\n]+scope\.institution_id/);
 });
 
-test("la restriction Cloud utilise le cache sans masquer les refus métier", async () => {
+test("une erreur d'authentification n'est jamais masquée par une ancienne copie", async () => {
   const code = await read(bridgePath);
 
-  assert.match(code, /getActiveOfflineAccess/);
-  assert.match(code, /active\?\.payload\.role === "admin"/);
-  assert.match(code, /status === 402/);
-  assert.match(
-    code,
-    /response\.status === 401 && \(await activeOfflineAdminSession\(\)\)/,
-  );
-  assert.match(code, /!cacheAllowedStatus\(response\.status\) && !offlineAdminUnauthorized/);
-  assert.doesNotMatch(code, /response\.status === 403 &&.*fallback/s);
+  assert.match(code, /if \(!cacheAllowedStatus\(response\.status\)\) return response/);
+  assert.match(code, /status >= 500/);
+  assert.doesNotMatch(code, /status === 401.*cached/s);
+  assert.doesNotMatch(code, /status === 403.*cached/s);
 });
 
 test("les listes essentielles passent Cloud puis relais puis cache sans modifier les pages", async () => {
@@ -152,11 +147,10 @@ test("le marqueur complet est publié seulement après la préparation officiell
   assert.match(contract, /shell_ready: true/);
 });
 
-test("la connexion Admin hors ligne exige le paquet essentiel du même scope sans dépendre des appels du jour", async () => {
+test("la connexion Admin hors ligne exige appels ET paquet essentiel du même scope", async () => {
   const code = await read(readinessPath);
 
-  assert.doesNotMatch(code, /hasInstitutionScopedAdminAttendanceMonitorCache/);
-  assert.doesNotMatch(code, /todayInAbidjan/);
+  assert.match(code, /hasInstitutionScopedAdminAttendanceMonitorCache/);
   assert.match(code, /adminEssentialPreparationKey\(payload\.user_id, payload\.institution_id\)/);
   assert.match(code, /isAdminEssentialPreparationMarker/);
   assert.match(code, /userId: payload\.user_id/);

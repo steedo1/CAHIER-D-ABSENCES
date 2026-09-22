@@ -1,7 +1,7 @@
 "use client";
 
 import { cacheGet, cacheSet } from "@/lib/offline";
-import { getActiveOfflineAccess, getOfflineAccessIntent } from "@/lib/offline-auth-client";
+import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import { getRelayConfig } from "@/lib/local-relay";
 import { relayEnabledForInstitution } from "@/lib/relay-capability";
 
@@ -162,18 +162,7 @@ async function cacheKey(url: URL) {
 }
 
 function cacheAllowedStatus(status: number) {
-  return (
-    status === 402 ||
-    status === 408 ||
-    status === 425 ||
-    status === 429 ||
-    status >= 500
-  );
-}
-
-async function activeOfflineAdminSession() {
-  const active = await getActiveOfflineAccess().catch(() => null);
-  return active?.payload.role === "admin";
+  return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 
 function dataResponse(
@@ -633,15 +622,9 @@ export async function adminEssentialFetch(
       return response;
     }
 
-    // Une 401 n'est masquée que lorsqu'une vraie session Admin hors ligne
-    // active, liée à cet appareil, a déjà été validée. Un 403/404/422 reste
-    // toujours une décision métier. Le 402 fournisseur est une indisponibilité
-    // temporaire et peut utiliser le dernier paquet préparé.
-    const offlineAdminUnauthorized =
-      response.status === 401 && (await activeOfflineAdminSession());
-    if (!cacheAllowedStatus(response.status) && !offlineAdminUnauthorized) {
-      return response;
-    }
+    // 401/403/404/422 et autres erreurs métier ne doivent jamais être masquées
+    // par une ancienne copie locale ou par le relais.
+    if (!cacheAllowedStatus(response.status)) return response;
     return (await fallbackResponse(originalFetch, url, init)) || response;
   } catch (error) {
     const fallback = await fallbackResponse(originalFetch, url, init);

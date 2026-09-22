@@ -403,7 +403,7 @@ async function responseJsonSafe(response) {
 }
 
 function attendanceRetryableStatus(status) {
-  return status === 402 || status === 408 || status === 425 || status === 429 || status >= 500;
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 async function notifyAttendanceSyncClients(summary) {
@@ -674,11 +674,9 @@ async function classDeviceSubjectsResponse(request, url) {
   let networkResponse = null;
   try {
     networkResponse = await fetchWithTimeout(request, 2500);
-    // Les erreurs métier explicites restent l'autorité du Cloud. Une restriction
-    // fournisseur 402, comme les 5xx, bascule vers la préparation PWA du créneau.
-    if (networkResponse.status !== 402 && networkResponse.status < 500) {
-      return networkResponse;
-    }
+    // Les erreurs métier explicites restent l'autorité du Cloud. Seules les
+    // pannes temporaires (5xx) basculent vers la préparation PWA du créneau.
+    if (networkResponse.status < 500) return networkResponse;
   } catch {
     networkResponse = null;
   }
