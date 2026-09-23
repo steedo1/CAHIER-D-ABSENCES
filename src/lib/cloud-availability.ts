@@ -37,16 +37,18 @@ export async function probeCloudSchedule(
   }
   if (cloudProbeInFlight) return cloudProbeInFlight;
 
-  cloudProbeInFlight = runCloudScheduleProbe(timeoutMs);
-  try {
-    const value = await cloudProbeInFlight;
+  const task = runCloudScheduleProbe(timeoutMs).then(async (value) => {
     if (actor !== await attendanceCacheActor()) return null;
     if (value?.actor_profile_id && value.actor_profile_id !== actor) return null;
     if (value) observeScheduleRevision(value.institution_id, value.schedule_revision);
     lastCloudProbe = { checkedAt: Date.now(), value };
     return value;
+  });
+  cloudProbeInFlight = task;
+  try {
+    return await task;
   } finally {
-    cloudProbeInFlight = null;
+    if (cloudProbeInFlight === task) cloudProbeInFlight = null;
   }
 }
 

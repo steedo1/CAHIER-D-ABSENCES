@@ -139,6 +139,13 @@ test("réponse d'un autre professeur et erreurs 401/403 ne deviennent pas un cac
   }
 });
 
+test("une réponse sans contrat de révision n'est jamais promue dans le cache courant", async () => {
+  const api = await fixture(); await api.prepare();
+  globalThis.fetch = async () => Response.json({ items: ["Informatique ancienne"] });
+  await assert.rejects(api.offlineGetJson("/api/teacher/classes", slot), /contract_missing/);
+  assert.deepEqual((await api.cacheGet(slot)).items, ["EPS"]);
+});
+
 test("rechargement : les clés physiques ne dépendent ni de la session mémoire ni du navigateur", () => {
   const a = contract.teacherCacheKey(slot, scope());
   assert.equal(a, contract.teacherCacheKey(slot, JSON.parse(JSON.stringify(scope()))));

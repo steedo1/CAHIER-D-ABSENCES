@@ -762,6 +762,10 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
 
     const j = (await safeJson(res)) as T;
     await assertCurrent();
+    if (scoped && /^\/api\/teacher\/(classes|offline\/bootstrap|institution\/basics)(?:[?]|$)/.test(url) &&
+        !validAttendanceScope(j)) {
+      throw new HttpResponseError("attendance_cache_contract_missing", 409, false);
+    }
     if (scoped && validAttendanceScope(j) && j.actor_profile_id !== actor) {
       throw new HttpResponseError("attendance_cache_identity_mismatch", 409, false);
     }
