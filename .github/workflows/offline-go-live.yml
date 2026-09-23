@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Node 22
         uses: actions/setup-node@v4
@@ -50,7 +52,10 @@ jobs:
             test/offline-auth-logout-wiring.test.mjs \
             test/offline-schedule-wiring.test.mjs \
             test/teacher-minimal-preparation.test.mjs \
+            test/attendance-cache-isolation.test.mjs \
             test/class-device-minimal-preparation.test.mjs \
+            test/class-device-subject-transition.test.mjs \
+            test/payroll-calculation.test.mjs \
             test/class-device-offline-lifecycle-wiring.test.mjs \
             test/class-device-offline-logout-pwa.test.mjs \
             test/class-device-relay-cloud-local-fallback.test.mjs \

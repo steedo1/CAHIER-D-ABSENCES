@@ -26,14 +26,14 @@ function todayInAbidjan() {
 }
 
 async function teacherPrepared(payload: OfflineAccessGrantPayload) {
-  const readiness = await getOfflineReadiness("teacher");
+  const readiness = await getOfflineReadiness("teacher", payload.user_id);
   const basics = await cacheGet<{ institution_id?: string }>(
-    "teacher:inst:basics",
+    "teacher:inst:basics", payload.user_id,
   ).catch(() => null);
   const bootstrap = await cacheGet<{
     schedule_revision?: number;
     slots?: Array<{ items?: Array<{ class_id?: string }> }>;
-  }>("teacher:offline:bootstrap").catch(() => null);
+  }>("teacher:offline:bootstrap", payload.user_id).catch(() => null);
   const slots = Array.isArray(bootstrap?.slots) ? bootstrap.slots : [];
   const classIds = Array.from(
     new Set(
@@ -47,6 +47,8 @@ async function teacherPrepared(payload: OfflineAccessGrantPayload) {
     !readiness ||
     readiness.version !== 5 ||
     readiness.role !== "teacher" ||
+    readiness.authorized_actor_profile_id !== payload.user_id ||
+    readiness.institution_id !== payload.institution_id ||
     readiness.offline_schema_version !== MON_CAHIER_OFFLINE_SCHEMA_VERSION ||
     readiness.shell_ready !== true ||
     String(basics?.institution_id || "") !== payload.institution_id ||
@@ -61,7 +63,7 @@ async function teacherPrepared(payload: OfflineAccessGrantPayload) {
   }
   const rosters = await Promise.all(
     classIds.map((classId) =>
-      cacheGet<{ items?: unknown[] }>(`teacher:roster:${classId}`).catch(
+      cacheGet<{ items?: unknown[] }>(`teacher:roster:${classId}`, payload.user_id).catch(
         () => null,
       ),
     ),

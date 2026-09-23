@@ -72,7 +72,7 @@ test("le Cloud conserve l'heure capturée hors ligne et vérifie le period_id ex
   assert.match(route, /const requestedPeriodMismatch\s*=\s*Boolean/);
   assert.match(route, /requestedPeriodId !== currentPeriod\.periodId/);
   assert.doesNotMatch(route, /error: "period_id_mismatch"/);
-  assert.match(route, /period_id: currentPeriod\.periodId/);
+  assert.match(route, /period_id: currentPeriod\?\.periodId \|\| null/);
   assert.match(route, /delivery_origin: "cloud_fallback"/);
   assert.match(route, /server_time: serverNow\.toISOString\(\)/);
   assert.match(route, /"device_time_preserved_for_offline_sync"/);

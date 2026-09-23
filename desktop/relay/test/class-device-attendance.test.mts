@@ -221,7 +221,7 @@ test("le planning relais du téléphone de classe suit sa classe et expose le cr
   }
 });
 
-test("le planning du téléphone écarte l'ancienne matière restée sur le même créneau", () => {
+test("le planning du téléphone conserve deux matières distinctes sur le même créneau", () => {
   const db = openRelayDatabase(":memory:");
   try {
     seed(db);
@@ -251,14 +251,14 @@ test("le planning du téléphone écarte l'ancienne matière restée sur le mêm
     assert.ok(nextSlot);
     assert.deepEqual(
       nextSlot.items.map((item) => item.subject_name),
-      ["Français"],
+      ["Français", "Mathématiques"],
     );
   } finally {
     db.close();
   }
 });
 
-test("le téléphone de classe ouvre la matière la plus récente malgré une ancienne ligne active", () => {
+test("le téléphone de classe ouvre exactement la matière choisie quand le créneau en contient plusieurs", () => {
   const db = openRelayDatabase(":memory:");
   try {
     seed(db);
@@ -282,6 +282,7 @@ test("le téléphone de classe ouvre la matière la plus récente malgré une an
       operation_type: "attendance.session.open",
       class_id: CLASS_ID,
       period_id: NEXT_PERIOD_ID,
+      subject_id: NEXT_SUBJECT_ID,
     }, classActor(), new Date("2026-07-22T09:31:00.000Z"));
 
     assert.equal(opened.session.subject_id, NEXT_SUBJECT_ID);
@@ -291,6 +292,42 @@ test("le téléphone de classe ouvre la matière la plus récente malgré une an
       WHERE institution_id = ? AND id = ?
     `).get(INSTITUTION_ID, opened.session.id) as { teacher_id: string };
     assert.equal(stored.teacher_id, NEXT_TEACHER_ID);
+  } finally {
+    db.close();
+  }
+});
+
+test("un créneau multi-matières sans choix explicite est refusé au lieu de choisir arbitrairement", () => {
+  const db = openRelayDatabase(":memory:");
+  try {
+    seed(db);
+    db.prepare(`
+      INSERT INTO teacher_timetables(
+        id, institution_id, class_id, subject_id, teacher_id,
+        period_id, weekday, server_version, updated_at
+      ) VALUES ('timetable-second-same-slot', ?, ?, ?, ?, ?, 3, 0, ?)
+    `).run(
+      INSTITUTION_ID,
+      CLASS_ID,
+      SUBJECT_ID,
+      TEACHER_ID,
+      NEXT_PERIOD_ID,
+      "2026-07-22T08:00:00.000Z",
+    );
+
+    assert.throws(
+      () => openTeacherAttendanceSession(db, {
+        protocol_version: 1,
+        operation_id: "class-device-open-ambiguous",
+        operation_type: "attendance.session.open",
+        class_id: CLASS_ID,
+        period_id: NEXT_PERIOD_ID,
+      }, classActor(), new Date("2026-07-22T09:31:00.000Z")),
+      (error: unknown) =>
+        error instanceof TeacherSessionOpenError &&
+        error.status === 409 &&
+        error.code === "class_timetable_ambiguous",
+    );
   } finally {
     db.close();
   }

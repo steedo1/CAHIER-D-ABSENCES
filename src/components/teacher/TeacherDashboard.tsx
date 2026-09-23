@@ -13,6 +13,7 @@ import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import {
   assessTeacherOfflineReadiness,
   getOfflineReadiness,
+  prepareOffline,
 } from "@/lib/offline-readiness";
 import {
   registerServiceWorker,
@@ -1275,7 +1276,7 @@ export default function TeacherDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [activeConfiguredSlot, activeSlotKey, open]);
+  }, [activeConfiguredSlot, activeSlotKey, open, isOnline, inst.institution_id, inst.actor_profile_id]);
 
   useEffect(() => {
     if (open) return;
@@ -1523,11 +1524,17 @@ export default function TeacherDashboard() {
   }
 
   async function startSession() {
-    const storedReadiness = await getOfflineReadiness("teacher").catch(
+    let storedReadiness = await getOfflineReadiness("teacher").catch(
       () => null,
     );
-    const scheduleAssessment =
-      await assessTeacherOfflineReadiness(storedReadiness);
+    let scheduleAssessment = await assessTeacherOfflineReadiness(storedReadiness);
+    if (scheduleAssessment.status === "not_prepared" || scheduleAssessment.status === "phone_stale") {
+      try {
+        await prepareOffline("teacher");
+        storedReadiness = await getOfflineReadiness("teacher");
+        scheduleAssessment = await assessTeacherOfflineReadiness(storedReadiness);
+      } catch { /* Keep the explicit assessment message if refresh failed. */ }
+    }
     if (scheduleAssessment.status !== "ready") {
       setMsg(scheduleAssessment.message);
       return;
@@ -1548,6 +1555,13 @@ export default function TeacherDashboard() {
           ? "Aucune classe ne vous est attribuée dans votre emploi du temps pour ce créneau."
           : "L’appel n’est pas autorisé pour le moment."
       );
+      return;
+    }
+
+    const verifiedSlot = await cacheGet<{ items?: TeachClass[] }>(`teacher:classes:${activeSlotKey}`);
+    if (!verifiedSlot?.items?.some((item) => item.class_id === sel.class_id && item.subject_id === sel.subject_id)) {
+      setMsg("L’emploi du temps a changé. Actualisez le cours sélectionné avant de démarrer l’appel.");
+      setSelKey("");
       return;
     }
 
@@ -1652,6 +1666,7 @@ export default function TeacherDashboard() {
           institutionId: inst.institution_id,
           classId: sel.class_id,
           periodId: activeConfiguredSlot.id,
+          subjectId: sel.subject_id,
           attemptKey: clientSessionId,
           relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,

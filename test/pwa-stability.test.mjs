@@ -48,7 +48,7 @@ test("les releases Web et worker ne décident plus de la compatibilité métier"
     /readiness\.web_release !== input\.expected_web_release[\s\S]{0,100}return "web_release_stale"/,
   );
   assert.match(readiness, /migrateOfflineReadinessSchema/);
-  assert.match(card, /Appels hors ligne prêts/);
+  assert.match(card, /Mode hors ligne prêt/);
   assert.doesNotMatch(card, /La version Web de cet appareil est ancienne/);
   assert.doesNotMatch(card, /mise à jour disponible/);
 });

@@ -2,6 +2,8 @@
 "use client";
 
 import { fetchAttendanceBackground } from "@/lib/attendance-network";
+import { knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance-cache-identity";
+import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
@@ -20,7 +22,11 @@ import {
   cacheSet,
   resolveOfflineSessionReference,
 } from "@/lib/offline";
-import { getClassDeviceCoherentSchedule } from "@/lib/offline-readiness";
+import {
+  classDeviceSubjectSlotCacheKey,
+  getClassDeviceCoherentSchedule,
+  prepareOffline,
+} from "@/lib/offline-readiness";
 import {
   saveClassDeviceSnapshot,
   loadClassDeviceSnapshot,
@@ -720,6 +726,24 @@ export default function ClassDevicePage() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [relayClassSchedule, setRelayClassSchedule] =
     useState<RelayTeacherOfflineSchedule | null>(null);
+  const [cloudScheduleRevision, setCloudScheduleRevision] =
+    useState<number | null>(null);
+  const cloudRevisionCacheKey = useMemo(() => {
+    const institutionId = String(selectedClass?.institution_id || "").trim();
+    const actorProfileId = String(selectedClass?.actor_profile_id || "").trim();
+    const selectedClassId = String(selectedClass?.id || "").trim();
+    if (!institutionId || !actorProfileId || !selectedClassId) return null;
+    return [
+      "classDevice:known-cloud-revision:v1",
+      encodeURIComponent(institutionId),
+      encodeURIComponent(selectedClassId),
+      encodeURIComponent(actorProfileId),
+    ].join(":");
+  }, [
+    selectedClass?.institution_id,
+    selectedClass?.id,
+    selectedClass?.actor_profile_id,
+  ]);
   const [relayScheduleIssue, setRelayScheduleIssue] = useState<string | null>(
     null,
   );
@@ -738,6 +762,29 @@ export default function ClassDevicePage() {
   const [relayStatus, setRelayStatus] = useState<ConnectivityState>("checking");
   const [sessionRuntimeState, setSessionRuntimeState] =
     useState<SessionRuntimeState>("idle");
+
+  useEffect(() => {
+    let cancelled = false;
+    setCloudScheduleRevision(null);
+    if (!cloudRevisionCacheKey) return () => { cancelled = true; };
+
+    void cacheGet<number>(cloudRevisionCacheKey)
+      .then((value) => {
+        const revision = Number(value);
+        if (
+          !cancelled && value !== null &&
+          Number.isSafeInteger(revision) &&
+          revision >= 0
+        ) {
+          setCloudScheduleRevision(revision);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudRevisionCacheKey]);
 
   function relayAdjustedDate(baseMs = Date.now()) {
     return estimateClassDeviceNow(relayClockRef.current, {
@@ -784,6 +831,9 @@ export default function ClassDevicePage() {
           class_data_missing: "relay_class_schedule_snapshot_invalid",
         } as const;
         throw new Error(codeByStatus[scope.status]);
+      }
+      if (!scheduleIsCurrent(scope.revision, knownScheduleRevision(target.institution_id))) {
+        throw new Error("attendance_schedule_stale");
       }
       if (source === "live") {
         relayClockRef.current = captureLiveRelayClock(schedule.relay_time);
@@ -2359,9 +2409,20 @@ export default function ClassDevicePage() {
 
   const activeSubjectScopeKey = useMemo(() => {
     const periodId = String(activeConfiguredSlot?.id || "no-period");
-    const revision = String(relayClassSchedule?.schedule_revision ?? "no-revision");
+    const revision = String(
+      cloudScheduleRevision ??
+        relayClassSchedule?.schedule_revision ??
+        "no-revision",
+    );
     return `${activeSlotKey}|${periodId}|${revision}`;
-  }, [activeConfiguredSlot?.id, activeSlotKey, relayClassSchedule?.schedule_revision]);
+  }, [
+    activeConfiguredSlot?.id,
+    activeSlotKey,
+    cloudScheduleRevision,
+    relayClassSchedule?.schedule_revision,
+    selectedClass?.institution_id,
+    selectedClass?.actor_profile_id,
+  ]);
 
   useEffect(() => {
     setManualSubjectMode(false);
@@ -2408,17 +2469,16 @@ export default function ClassDevicePage() {
 
       const automaticMode =
         mode === "relay" || mode === "auto" || mode === "auto-offline";
-      const normalizedList = normalizeSubjects(rawList);
-      const automaticConflict = automaticMode && normalizedList.length > 1;
-      const list = automaticConflict ? [] : normalizedList;
+      const list = normalizeSubjects(rawList);
 
+      // Multiple simultaneous subjects are legitimate for split groups
+      // (for example German + Spanish). Keep them all and require an explicit
+      // choice instead of treating the timetable as corrupted.
       setSubjects(list);
-      setSubjectLoadMode(automaticConflict ? "empty" : mode);
+      setSubjectLoadMode(mode);
       setSubjectScheduleIssue(
-        automaticConflict
-          ? relayUiEnabled
-            ? "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez le relais avant de démarrer le nouvel appel."
-            : "Conflit d’emploi du temps détecté pour ce créneau. La matière précédente n’est pas réutilisée : actualisez les données d’appel avant de démarrer le nouvel appel."
+        automaticMode && list.length > 1
+          ? "Plusieurs cours sont prévus sur ce créneau. Choisissez la discipline correspondant au professeur présent."
           : null,
       );
 
@@ -2499,31 +2559,53 @@ export default function ClassDevicePage() {
         activeConfiguredSlot,
       );
       const normalizedRelayList =
-        relayList === null ? null : normalizeSubjects(relayList);
+        relayList === null || !relayClassSchedule ||
+        !scheduleIsCurrent(relayClassSchedule.schedule_revision,
+          knownScheduleRevision(selectedClass?.institution_id || "") ?? cloudScheduleRevision)
+          ? null : normalizeSubjects(relayList);
       const periodParam = activeConfiguredSlot.id
         ? `&period_id=${encodeURIComponent(activeConfiguredSlot.id)}`
         : "";
       const strictUrl =
         `/api/class/subjects?class_id=${classId}` +
         `&slot=${encodeURIComponent(activeSlotKey)}${periodParam}`;
-      const strictCacheKey =
-        `classDevice:subjects:${classId}:${activeSubjectScopeKey}`;
+      const localScheduleRevision =
+        cloudScheduleRevision ??
+        relayClassSchedule?.schedule_revision ??
+        null;
+      const strictCacheKey = classDeviceSubjectSlotCacheKey({
+        classId,
+        slotKey: activeSlotKey,
+        periodId: activeConfiguredSlot.id,
+        scheduleRevision: localScheduleRevision,
+      });
 
       if (!isOnline) {
-        if (normalizedRelayList !== null && normalizedRelayList.length <= 1) {
-          await cacheSet(strictCacheKey, { items: normalizedRelayList }).catch(
-            () => null,
-          );
+        if (normalizedRelayList !== null) {
+          if (strictCacheKey) {
+            await cacheSet(strictCacheKey, {
+              class_id: classId,
+              schedule_revision: relayClassSchedule?.schedule_revision ?? null,
+              period_id: activeConfiguredSlot.id,
+              slot_key: activeSlotKey,
+              items: normalizedRelayList,
+            }).catch(() => null);
+          }
           applyList(normalizedRelayList, "relay");
           return;
         }
 
-        const preparedResp = await offlineGetJson(
-          strictUrl,
-          strictCacheKey,
-        ).catch(() => null as any);
+        const preparedResp = strictCacheKey
+          ? await offlineGetJson(strictUrl, strictCacheKey).catch(
+              () => null as any,
+            )
+          : null;
 
-        if (preparedResp != null) {
+        if (preparedResp != null &&
+            preparedResp.class_id === classId &&
+            preparedResp.period_id === activeConfiguredSlot.id &&
+            preparedResp.slot_key === activeSlotKey &&
+            preparedResp.schedule_revision === localScheduleRevision) {
           applyList(
             ((preparedResp?.items || []) as Subject[]) ?? [],
             "auto-offline",
@@ -2536,20 +2618,129 @@ export default function ClassDevicePage() {
           return;
         }
 
-        const legacyList = await loadLegacySubjects();
-        applyList(legacyList, legacyList.length ? "legacy-offline" : "empty");
+        // Never substitute the class-wide legacy subject list for a
+        // missing scheduled slot. That can display an unrelated discipline
+        // (for example Informatique) when the verified schedule is unavailable.
+        setSubjects([]);
+        setSubjectId("");
+        setSubjectLoadMode("empty");
+        setSubjectScheduleIssue(
+          "Le planning vérifié de ce créneau n’est pas disponible hors connexion. Actualisez les données d’appel avant de démarrer.",
+        );
         return;
       }
 
       // En ligne, le Cloud du créneau courant est la source de vérité.
       // Un planning relais mémorisé avant une modification ne doit jamais
       // réintroduire la matière du créneau précédent.
-      const legacyWarmPromise = loadLegacySubjects();
-      const autoResp = await offlineGetJson(strictUrl, strictCacheKey).catch(
-        () => null as any,
-      );
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8_000);
+      const autoResp = await fetch(strictUrl, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) return null;
+          return await response.json();
+        })
+        .catch(() => null as any)
+        .finally(() => window.clearTimeout(timeout));
+      if (cancelled) return;
 
       if (autoResp != null) {
+        const responseRevision = Number(autoResp?.schedule_revision);
+        const responseInstitutionId = String(
+          autoResp?.institution_id || "",
+        ).trim();
+        const responseClassId = String(autoResp?.class_id || "").trim();
+        const responseActorProfileId = String(
+          autoResp?.actor_profile_id || "",
+        ).trim();
+        const expectedInstitutionId = String(
+          selectedClass?.institution_id || "",
+        ).trim();
+        const expectedActorProfileId = String(
+          selectedClass?.actor_profile_id || "",
+        ).trim();
+
+        if (
+          !Number.isSafeInteger(responseRevision) ||
+          responseRevision < 0 ||
+          !scheduleIsCurrent(responseRevision, knownScheduleRevision(expectedInstitutionId)) ||
+          responseInstitutionId !== expectedInstitutionId ||
+          responseClassId !== classId ||
+          responseActorProfileId !== expectedActorProfileId
+        ) {
+          applyList([], "empty");
+          setSubjectScheduleIssue(
+            "Le Cloud a renvoyé un planning qui ne correspond pas exactement à cette tablette de classe.",
+          );
+          return;
+        }
+
+        observeScheduleRevision(responseInstitutionId, responseRevision);
+        setCloudScheduleRevision(responseRevision);
+        if (cloudRevisionCacheKey) {
+          await cacheSet(cloudRevisionCacheKey, responseRevision).catch(
+            () => undefined,
+          );
+        }
+        const currentPreparedRevision = Number(
+          relayClassScheduleRef.current?.schedule_revision,
+        );
+        if (currentPreparedRevision !== responseRevision) {
+          // Never keep displaying a known-stale relay schedule once Cloud has
+          // proved a newer revision. The strict Cloud slot is cached under the
+          // current revision while a coherent full bundle is rebuilt.
+          relayClassScheduleRef.current = null;
+          setRelayClassSchedule(null);
+        }
+
+        const cloudCacheKey = classDeviceSubjectSlotCacheKey({
+          classId,
+          slotKey: activeSlotKey,
+          periodId: activeConfiguredSlot.id,
+          scheduleRevision: responseRevision,
+        });
+        if (cloudCacheKey) {
+          await cacheSet(cloudCacheKey, {
+            ...autoResp,
+            slot_key: activeSlotKey,
+            period_id: activeConfiguredSlot.id,
+          }).catch(() => undefined);
+        }
+        applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
+
+        if (
+          currentPreparedRevision !== responseRevision &&
+          selectedClass?.institution_id &&
+          selectedClass.actor_profile_id
+        ) {
+          try {
+            await prepareOffline("class-device");
+            const refreshed = await getClassDeviceCoherentSchedule({
+              institutionId: selectedClass.institution_id,
+              classId,
+              actorProfileId: selectedClass.actor_profile_id,
+            });
+            if (
+              refreshed &&
+              Number(refreshed.schedule_revision) === responseRevision
+            ) {
+              relayClassScheduleRef.current = refreshed;
+              setRelayClassSchedule(refreshed);
+              setPeriodsByDay(periodsFromRelayClassSchedule(refreshed, classId));
+            }
+          } catch {
+            // The current Cloud subject remains visible, but the stale local
+            // schedule is not restored. StartSession will fail closed until the
+            // coherent bundle can be rebuilt.
+          }
+        }
+
         applyList(((autoResp?.items || []) as Subject[]) ?? [], "auto");
         return;
       }
@@ -2559,14 +2750,9 @@ export default function ClassDevicePage() {
         return;
       }
 
-      if (canUseFallbackLegacyFlow) {
-        const legacyList = await legacyWarmPromise;
-        if (legacyList.length > 0) {
-          applyList(legacyList, "legacy-fallback");
-          return;
-        }
-      }
-
+      // A class-wide legacy list must never masquerade as the current
+      // scheduled slot. It remains available only through the explicit manual
+      // exceptional-course flow.
       applyList([], "empty");
     })();
 
@@ -2583,6 +2769,10 @@ export default function ClassDevicePage() {
     manualSubjectMode,
     open,
     relayClassSchedule?.schedule_revision,
+    cloudScheduleRevision,
+    cloudRevisionCacheKey,
+    selectedClass?.institution_id,
+    selectedClass?.actor_profile_id,
   ]);
 
   /* 2bis) préchauffer la liste des élèves dès que la classe est connue en ligne
@@ -2823,6 +3013,39 @@ export default function ClassDevicePage() {
           classId: selectedClass.id,
           actorProfileId: selectedClass.actor_profile_id,
         }).catch(() => preparedSchedule);
+
+        if (
+          !manualSubjectMode && (!preparedSchedule ||
+            !scheduleIsCurrent(preparedSchedule.schedule_revision,
+              knownScheduleRevision(selectedClass.institution_id) ?? cloudScheduleRevision))
+        ) {
+          if (isOnline) {
+            try {
+              await prepareOffline("class-device");
+              preparedSchedule = await getClassDeviceCoherentSchedule({
+                institutionId: selectedClass.institution_id,
+                classId: selectedClass.id,
+                actorProfileId: selectedClass.actor_profile_id,
+              });
+            } catch {
+              preparedSchedule = null;
+            }
+          }
+
+          if (
+            !preparedSchedule ||
+            !scheduleIsCurrent(preparedSchedule.schedule_revision,
+              knownScheduleRevision(selectedClass.institution_id) ?? cloudScheduleRevision)
+          ) {
+            setSessionRuntimeState("recoverable_error");
+            setMsg(
+              isOnline
+                ? "Le Cloud a le bon cours, mais la préparation locale n’est pas encore sur la même version. Actualisez les données d’appel puis réessayez."
+                : "Ce téléphone connaît une version plus récente de l’emploi du temps que sa préparation hors connexion. Reconnectez-le pour actualiser les données avant de démarrer.",
+            );
+            return;
+          }
+        }
       }
 
       const verifiedPeriods: Record<number, Period[]> = preparedSchedule
@@ -2918,6 +3141,7 @@ export default function ClassDevicePage() {
         institutionId,
         classId,
         periodId: deliveryPeriodKey,
+        subjectId,
         attemptKey,
       });
       const operationId = stagedOpen.operation_id;
@@ -2978,6 +3202,7 @@ export default function ClassDevicePage() {
         institutionId,
         classId,
         periodId: deliveryPeriodKey,
+        subjectId,
         attemptKey,
         relayBaseUrl: manualSubjectMode ? null : classRelayBaseUrl(selectedClass),
         relayAccessToken: manualSubjectMode ? null : relayPolicy?.relay_access_token,

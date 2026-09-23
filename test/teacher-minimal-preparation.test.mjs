@@ -49,8 +49,8 @@ test("le paquet professeur et son marqueur prêt sont publiés atomiquement", as
 test("la préparation est single-flight par rôle et accepte le relais sans Cloud", async () => {
   const source = await read("src/lib/offline-readiness.ts");
 
-  assert.match(source, /const preparationInFlight = new Map<OfflineRole, PreparationTask>/);
-  assert.match(source, /const running = preparationInFlight\.get\(role\)/);
+  assert.match(source, /const preparationInFlight = new Map<string, PreparationTask>/);
+  assert.match(source, /const running = preparationInFlight\.get\(preparationKey\)/);
   assert.match(source, /Cloud indisponible : récupération du paquet d’appel depuis le relais/);
   assert.match(source, /fetchRelayTeacherOfflineSchedule\(/);
 });

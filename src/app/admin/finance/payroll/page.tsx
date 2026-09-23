@@ -131,7 +131,9 @@ type ClassTeacherAssignmentRow = {
 
 type ExpectedSlot = {
   class_id: string;
+  class_ids: string[];
   subject_id: string;
+  subject_ids: string[];
   period_id: string;
   session_date: string;
   start_time?: string | null;
@@ -437,8 +439,10 @@ async function buildExpectedSlotsForTeacher(params: {
   );
   const from = new Date(`${periodStart}T00:00:00`);
   const to = new Date(`${periodEnd}T00:00:00`);
-  const out: ExpectedSlot[] = [];
-  const seenSlots = new Set<string>();
+  // A physical teaching slot is one payable unit for one teacher, even when
+  // the official timetable links that same slot to several grouped classes.
+  // Preserve every class/subject for matching and audit, but count the slot once.
+  const physicalSlots = new Map<string, ExpectedSlot>();
 
   for (const row of (ttRows ?? []) as TeacherTimetableRow[]) {
     const classId = String(row.class_id || "");
@@ -460,14 +464,31 @@ async function buildExpectedSlotsForTeacher(params: {
       if (d.getDay() !== dbWeekdayToJs(weekday)) continue;
       const day = ymd(d);
       if (!((ctRows ?? []) as ClassTeacherAssignmentRow[]).some((assignment) =>
-        assignment.class_id === classId && assignment.subject_id === subjectId && assignmentCoversDay(assignment, day),
+        assignment.class_id === classId &&
+        assignment.subject_id === subjectId &&
+        assignmentCoversDay(assignment, day),
       )) continue;
-      const slotKey = `${day}|${classId}|${subjectId}|${periodId}`;
-      if (seenSlots.has(slotKey)) continue;
-      seenSlots.add(slotKey);
-      out.push({
+
+      const physicalKey = `${day}|${periodId}`;
+      const existing = physicalSlots.get(physicalKey);
+      if (existing) {
+        if (existing.cycle !== cycle) {
+          throw new Error(
+            `Le même professeur est programmé le ${day} sur le même créneau dans des classes de cycles différents. La paie ne peut pas choisir automatiquement un tarif : corrigez ou validez cette affectation avant recalcul.`,
+          );
+        }
+        if (!existing.class_ids.includes(classId)) existing.class_ids.push(classId);
+        if (!existing.subject_ids.includes(subjectId)) existing.subject_ids.push(subjectId);
+        existing.class_ids.sort();
+        existing.subject_ids.sort();
+        continue;
+      }
+
+      physicalSlots.set(physicalKey, {
         class_id: classId,
+        class_ids: [classId],
         subject_id: subjectId,
+        subject_ids: [subjectId],
         period_id: periodId,
         session_date: day,
         start_time: period.start_time,
@@ -478,8 +499,10 @@ async function buildExpectedSlotsForTeacher(params: {
     }
   }
 
-  return out.sort((a, b) =>
-    `${a.session_date}|${a.class_id}|${a.period_id}`.localeCompare(`${b.session_date}|${b.class_id}|${b.period_id}`),
+  return Array.from(physicalSlots.values()).sort((a, b) =>
+    `${a.session_date}|${a.start_time || ""}|${a.period_id}`.localeCompare(
+      `${b.session_date}|${b.start_time || ""}|${b.period_id}`,
+    ),
   );
 }
 

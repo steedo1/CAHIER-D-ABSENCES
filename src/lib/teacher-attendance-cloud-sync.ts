@@ -86,7 +86,9 @@ async function knownInstitutionIds(preferred?: string | null) {
 
 function parseTeacherAttemptKey(record: TeacherSessionDeliveryRecord) {
   const parts = record.attempt_key.split("_");
-  const subjectId = text(parts[1]);
+  // New durable records carry the selected subject explicitly. Fall back to
+  // the legacy attempt-key encoding only for records created before this fix.
+  const subjectId = text(record.subject_id) || text(parts[1]);
   const parsedStartedAt = text(parts.slice(2).join("_"));
   const startedAt = text(record.started_at) || parsedStartedAt;
   if (!subjectId || subjectId === "none" || !Number.isFinite(Date.parse(startedAt))) {

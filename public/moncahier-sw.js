@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-09-21-attendance-background-sync-v1";
+const VERSION = "2026-09-22-attendance-schedule-identity-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -681,21 +681,9 @@ async function classDeviceSubjectsResponse(request, url) {
     networkResponse = null;
   }
 
-  const canonicalKey = `classDevice:subjects:${classId}:${slot}`;
-  const prepared = await readOfflineKv(canonicalKey);
-  if (prepared && Array.isArray(prepared.items)) {
-    return jsonResponse(prepared, 200, "class-device-slot-cache");
-  }
-
-  // Fail-closed : un créneau non préparé ne doit surtout pas déclencher le
-  // fallback historique qui affichait toutes les matières de la classe.
-  if (fromClassDevice) {
-    return jsonResponse(
-      { items: [], diagnostic: "class_device_subject_slot_not_prepared" },
-      200,
-      "class-device-slot-missing",
-    );
-  }
+  // Only the page has the authenticated actor and the current revision.
+  // Never impersonate a fresh Cloud response with an unscoped IndexedDB row.
+  // Its scoped coherent bundle is responsible for the offline fallback.
 
   return (
     networkResponse ||

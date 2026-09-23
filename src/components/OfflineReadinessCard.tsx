@@ -24,6 +24,7 @@ import {
   type ClassDeviceReadinessStatus,
 } from "@/lib/offlineClassDevice";
 import { cacheGet } from "@/lib/offline";
+import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type Props = {
   role: OfflineRole;
@@ -139,6 +140,7 @@ export default function OfflineReadinessCard({
   classDeviceContext,
   onPrepared,
 }: Props) {
+  const { relayEnabled } = useRelayCapability();
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
@@ -455,7 +457,7 @@ export default function OfflineReadinessCard({
       ? readiness?.relay_connectivity
       : undefined;
   const relayCheckedAt = formatCheckedAt(relayConnectivity?.checked_at);
-  const relayConnectivityMessage = isAutomaticAttendance
+  const relayConnectivityMessage = isAutomaticAttendance || !relayEnabled
     ? null
     : assessment
       ? assessment.message
@@ -668,7 +670,9 @@ export default function OfflineReadinessCard({
           {assessment && !assessment.cloud_reachable && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-800">
               <WifiOff className="h-3.5 w-3.5" />
-              Cloud indisponible : la cohérence est décidée avec le relais local.
+              {relayEnabled
+                ? "Cloud indisponible : la cohérence est décidée avec le relais local."
+                : "Connexion indisponible : les données préparées restent disponibles sur cet appareil."}
             </p>
           )}
         </div>

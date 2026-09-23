@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
+import { readAttendanceScheduleRevision } from "@/lib/attendance-schedule-revision-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,7 @@ export async function GET() {
   }
 
   const instId = prof.institution_id;
+  const revision = await readAttendanceScheduleRevision(service, instId);
 
   // 3) Paramètres d’établissement
   const { data: inst, error: ierr } = await supabase
@@ -146,9 +148,13 @@ export async function GET() {
       })
     : null;
 
+  if (revision !== await readAttendanceScheduleRevision(service, instId)) {
+    return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
+  }
   return NextResponse.json({
     institution_id: instId,
     actor_profile_id: me.user.id,
+    schedule_revision: revision,
     tz: inst?.tz ?? "Africa/Abidjan",
     default_session_minutes: Number(inst?.default_session_minutes ?? 60),
     auto_lateness: !!inst?.auto_lateness,

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { resolveAttendanceEducationContext } from "@/lib/education-attendance";
+import { readAttendanceScheduleRevision } from "@/lib/attendance-schedule-revision-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -200,6 +201,14 @@ export async function GET() {
       return noStoreJson({ items: [], source: "teacher_timetables" });
     }
 
+    const revision = await readAttendanceScheduleRevision(srv, institutionId);
+    async function scopedJson(body: Record<string, unknown>) {
+      if (revision !== await readAttendanceScheduleRevision(srv, institutionId)) {
+        return noStoreJson({ error: "schedule_changed_during_read" }, 409);
+      }
+      return noStoreJson({ ...body, institution_id: institutionId,
+        actor_profile_id: user!.id, schedule_revision: revision });
+    }
     const { data: currentYearRow, error: currentYearError } = await srv
       .from("academic_years")
       .select("code")
@@ -212,7 +221,7 @@ export async function GET() {
     }
     const activeAcademicYear = String(currentYearRow?.code || "").trim();
     if (!activeAcademicYear) {
-      return noStoreJson({ items: [], source: "teacher_timetables" });
+      return scopedJson({ items: [], source: "teacher_timetables" });
     }
 
     const { data: institution, error: institutionError } = await srv
@@ -252,7 +261,7 @@ export async function GET() {
     });
 
     if (!activePeriod?.id) {
-      return noStoreJson({ items: [], source: "teacher_timetables" });
+      return scopedJson({ items: [], source: "teacher_timetables" });
     }
 
     const { data: timetableData, error: timetableError } = await srv
@@ -271,7 +280,7 @@ export async function GET() {
     ) as TimetableRow[];
 
     if (!timetables.length) {
-      return noStoreJson({ items: [], source: "teacher_timetables" });
+      return scopedJson({ items: [], source: "teacher_timetables" });
     }
 
     const classIds = uniqStrings(timetables.map((row) => row.class_id));
@@ -333,7 +342,7 @@ export async function GET() {
       })
       .filter((item): item is ItemOut => Boolean(item));
 
-    return noStoreJson({
+    return scopedJson({
       items: dedupeAndSort(items),
       source: "teacher_timetables",
       period_id: String(activePeriod.id),

@@ -129,7 +129,7 @@ test("le Web et le service worker portent la même release PWA avec Background S
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-09-21-attendance-background-sync-v1";
+  const expected = "2026-09-22-attendance-schedule-identity-v1";
   assert.match(worker, new RegExp(expected));
   assert.match(release, new RegExp(expected));
   assert.match(worker, /const OFFLINE_SCHEMA_VERSION = 1/);

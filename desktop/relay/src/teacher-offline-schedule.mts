@@ -39,19 +39,34 @@ function timetableFreshnessCompare(left: TimetableRow, right: TimetableRow) {
 }
 
 function currentClassDeviceTimetableRows(rows: TimetableRow[]) {
-  const winnerBySlot = new Map<string, TimetableRow>();
+  // A class can legitimately have multiple simultaneous assignments
+  // (for example German + Spanish language groups). Only collapse exact
+  // semantic duplicates; never choose a single "winner" for the whole slot.
+  const winnerByAssignment = new Map<string, TimetableRow>();
 
   for (const row of rows) {
-    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
-    const current = winnerBySlot.get(key);
+    const key = [
+      row.class_id,
+      row.subject_id,
+      row.teacher_id,
+      row.period_id,
+      normalizedWeekday(row.weekday),
+    ].join("|");
+    const current = winnerByAssignment.get(key);
     if (!current || timetableFreshnessCompare(row, current) > 0) {
-      winnerBySlot.set(key, row);
+      winnerByAssignment.set(key, row);
     }
   }
 
   return rows.filter((row) => {
-    const key = `${row.class_id}|${row.period_id}|${normalizedWeekday(row.weekday)}`;
-    return winnerBySlot.get(key)?.id === row.id;
+    const key = [
+      row.class_id,
+      row.subject_id,
+      row.teacher_id,
+      row.period_id,
+      normalizedWeekday(row.weekday),
+    ].join("|");
+    return winnerByAssignment.get(key)?.id === row.id;
   });
 }
 

@@ -72,6 +72,7 @@ export type OpenTeacherSessionOnRelayInput = {
   institutionId: string;
   classId: string;
   periodId: string;
+  subjectId?: string | null;
   attemptKey?: string | null;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
@@ -84,8 +85,18 @@ function normalizedText(value: unknown) {
   return String(value || "").trim();
 }
 
-function contentKey(classId: string, periodId: string, attemptKey: string) {
-  return JSON.stringify({ class_id: classId, period_id: periodId, attempt_key: attemptKey });
+function contentKey(
+  classId: string,
+  periodId: string,
+  subjectId: string,
+  attemptKey: string,
+) {
+  return JSON.stringify({
+    class_id: classId,
+    period_id: periodId,
+    subject_id: subjectId || null,
+    attempt_key: attemptKey,
+  });
 }
 
 function uuid() {
@@ -135,12 +146,18 @@ async function getOrCreateRecord(
     institutionId: string;
     classId: string;
     periodId: string;
+    subjectId: string;
     attemptKey: string;
   },
   deps: TeacherSessionDeliveryDependencies,
 ) {
   const records = await deps.store.list(input.institutionId);
-  const expectedContent = contentKey(input.classId, input.periodId, input.attemptKey);
+  const expectedContent = contentKey(
+    input.classId,
+    input.periodId,
+    input.subjectId,
+    input.attemptKey,
+  );
   const existing = records
     .filter((record) => record.content_key === expectedContent)
     .sort((left, right) => left.created_at.localeCompare(right.created_at))
@@ -158,7 +175,7 @@ async function getOrCreateRecord(
     content_key: expectedContent,
     state: "device_pending",
     session_id: null,
-    subject_id: null,
+    subject_id: input.subjectId || null,
     started_at: null,
     actual_call_at: null,
     scheduled_end_at: null,
@@ -189,14 +206,22 @@ async function openInternal(
   const institutionId = normalizedText(input.institutionId);
   const classId = normalizedText(input.classId);
   const periodId = normalizedText(input.periodId);
-  const attemptKey = normalizedText(input.attemptKey) || `${classId}:${periodId}`;
+  const subjectId = normalizedText(input.subjectId);
+  const attemptKey = normalizedText(input.attemptKey) ||
+    `${classId}:${periodId}:${subjectId || "none"}`;
   const relayBaseUrl = normalizedText(input.relayBaseUrl);
   const relayAccessToken = normalizedText(input.relayAccessToken);
   if (!institutionId) throw new Error("institution_id_required");
   if (!classId) throw new Error("class_id_required");
   if (!periodId) throw new Error("period_id_required");
 
-  const current = await getOrCreateRecord({ institutionId, classId, periodId, attemptKey }, deps);
+  const current = await getOrCreateRecord({
+    institutionId,
+    classId,
+    periodId,
+    subjectId,
+    attemptKey,
+  }, deps);
   if (current.state === "relay_opened" || current.state === "cloud_opened") {
     return current;
   }
@@ -218,6 +243,7 @@ async function openInternal(
     operationId: attempted.operation_id,
     classId,
     periodId,
+    subjectId,
     capturedAtDevice: attempted.created_at,
   });
 
@@ -246,7 +272,8 @@ async function openInternal(
       operationId !== attempted.operation_id ||
       !sessionId ||
       responseClassId !== classId ||
-      responsePeriodId !== periodId
+      responsePeriodId !== periodId ||
+      (subjectId && normalizedText(session?.subject_id) !== subjectId)
     ) {
       return await storePatch(deps, attempted, {
         state: "blocked",
@@ -323,7 +350,13 @@ export async function openTeacherAttendanceSessionWithDependencies(
   input: OpenTeacherSessionOnRelayInput,
   deps: TeacherSessionDeliveryDependencies,
 ) {
-  const lockKey = [input.institutionId, input.classId, input.periodId, input.attemptKey]
+  const lockKey = [
+    input.institutionId,
+    input.classId,
+    input.periodId,
+    input.subjectId,
+    input.attemptKey,
+  ]
     .map(normalizedText)
     .join(":");
   const running = inFlight.get(lockKey);
@@ -351,12 +384,14 @@ export async function stageTeacherAttendanceSessionOpenWithDependencies(
   const institutionId = normalizedText(input.institutionId);
   const classId = normalizedText(input.classId);
   const periodId = normalizedText(input.periodId);
-  const attemptKey = normalizedText(input.attemptKey) || `${classId}:${periodId}`;
+  const subjectId = normalizedText(input.subjectId);
+  const attemptKey = normalizedText(input.attemptKey) ||
+    `${classId}:${periodId}:${subjectId || "none"}`;
   if (!institutionId) throw new Error("institution_id_required");
   if (!classId) throw new Error("class_id_required");
   if (!periodId) throw new Error("period_id_required");
   return await getOrCreateRecord(
-    { institutionId, classId, periodId, attemptKey },
+    { institutionId, classId, periodId, subjectId, attemptKey },
     deps,
   );
 }
@@ -464,6 +499,7 @@ export async function retryTeacherSessionOpenOperationOnRelay(
     institutionId: record.institution_id,
     classId: record.class_id,
     periodId: record.period_id,
+    subjectId: record.subject_id,
     attemptKey: record.attempt_key,
     relayBaseUrl: input.relayBaseUrl,
     relayAccessToken: input.relayAccessToken,
