@@ -53,9 +53,13 @@ jobs:
             test/offline-schedule-wiring.test.mjs \
             test/teacher-minimal-preparation.test.mjs \
             test/attendance-cache-isolation.test.mjs \
+            test/offline-attendance-admin-e2e.test.mjs \
+            test/teacher-attendance-bulk-offline-route.test.mjs \
             test/class-device-minimal-preparation.test.mjs \
+            test/class-session-manual-route.test.mjs \
             test/class-device-subject-transition.test.mjs \
             test/payroll-calculation.test.mjs \
+            test/manual-course-payroll-flow.test.mjs \
             test/class-device-offline-lifecycle-wiring.test.mjs \
             test/class-device-offline-logout-pwa.test.mjs \
             test/class-device-relay-cloud-local-fallback.test.mjs \

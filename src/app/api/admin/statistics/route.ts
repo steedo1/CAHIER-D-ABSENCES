@@ -1055,8 +1055,8 @@ export async function GET(req: NextRequest) {
       }));
 
     /**
-     * ✅ DÉDOUBLONNAGE "NORMAL" : 1 séance = 1 PROF + 1 JOUR + 1 CRÉNEAU (HH:MM)
-     * -> On IGNORE class_id dans la clé de comptage.
+     * ✅ DÉDOUBLONNAGE "NORMAL" : 1 séance = 1 PROF + 1 JOUR + 1 COURS PHYSIQUE
+     * -> On regroupe les départs et fins proches d'un même cours physique.
      * -> On conserve :
      *    - la 1ère heure started_at (la plus tôt)
      *    - expected_minutes max
@@ -1104,36 +1104,59 @@ export async function GET(req: NextRequest) {
       _valid_call_at: string | null;
       class_ids: Set<string>;
       subject_ids: Set<string>;
+      class_subject_pairs: Map<string, { class_id: string; subject_id: string }>;
     };
 
-    const sessionsBySlot = new Map<string, SlotAgg>();
+    const sessionsByTeacherDay = new Map<string, SlotAgg[]>();
 
     for (const s of sessionsRaw) {
       const tid = s.teacher_id || "";
       if (!tid) continue;
 
       const day = getDateKeyFromISO(s.started_at);
-      const hm = getHMKeyFromISO(s.started_at);
-
-      // ✅ clé "normale" (pas de class_id)
-      const key = `${tid}|${day}|${hm}`;
+      const key = `${tid}|${day}`;
 
       const validCall =
         s.actual_call_at && isCallWithinPlannedSlot(s.started_at, s.actual_call_at, s.expected_minutes)
           ? s.actual_call_at
           : null;
 
-      const existing = sessionsBySlot.get(key);
+      const groups = sessionsByTeacherDay.get(key) || [];
+      const sessionStart = new Date(s.started_at).getTime();
+      const sessionEnd = s.ended_at
+        ? new Date(s.ended_at).getTime()
+        : sessionStart + Math.max(1, s.expected_minutes || 60) * 60_000;
+      const existing = groups.find((group) => {
+        const groupStart = new Date(group.started_at).getTime();
+        const groupEnd = group.ended_at
+          ? new Date(group.ended_at).getTime()
+          : groupStart + Math.max(1, group.expected_minutes || 60) * 60_000;
+        if (!Number.isFinite(sessionStart) || !Number.isFinite(sessionEnd) ||
+            !Number.isFinite(groupStart) || !Number.isFinite(groupEnd)) return false;
+        const shorterDuration = Math.min(sessionEnd - sessionStart, groupEnd - groupStart);
+        const overlap = Math.min(sessionEnd, groupEnd) - Math.max(sessionStart, groupStart);
+        const sameStart = Math.abs(sessionStart - groupStart) <= 10 * 60_000;
+        const sameEnd = Math.abs(sessionEnd - groupEnd) <= 10 * 60_000;
+        return sameStart && sameEnd && shorterDuration > 0 && overlap * 2 >= shorterDuration;
+      });
       if (!existing) {
         const agg: SlotAgg = {
           ...s,
           _valid_call_at: validCall,
           class_ids: new Set<string>(),
           subject_ids: new Set<string>(),
+          class_subject_pairs: new Map(),
         };
         if (s.class_id) agg.class_ids.add(String(s.class_id));
         if (s.subject_id) agg.subject_ids.add(String(s.subject_id));
-        sessionsBySlot.set(key, agg);
+        if (s.class_id && s.subject_id) {
+          agg.class_subject_pairs.set(`${s.class_id}|${s.subject_id}`, {
+            class_id: s.class_id,
+            subject_id: s.subject_id,
+          });
+        }
+        groups.push(agg);
+        sessionsByTeacherDay.set(key, groups);
       } else {
         // started_at le plus tôt
         if (s.started_at < existing.started_at) existing.started_at = s.started_at;
@@ -1167,17 +1190,28 @@ export async function GET(req: NextRequest) {
         // listes (pour affichage)
         if (s.class_id) existing.class_ids.add(String(s.class_id));
         if (s.subject_id) existing.subject_ids.add(String(s.subject_id));
+        if (s.class_id && s.subject_id) {
+          existing.class_subject_pairs.set(`${s.class_id}|${s.subject_id}`, {
+            class_id: s.class_id,
+            subject_id: s.subject_id,
+          });
+        }
       }
     }
 
-    // ✅ liste finale : 1 entrée par créneau + UNIQUEMENT si séance effectuée (clic valide)
-    type SessionAggOut = SessionRow & { class_ids: string[]; subject_ids: string[] };
-    const sessions: SessionAggOut[] = Array.from(sessionsBySlot.values())
-      .map(({ _valid_call_at, class_ids, subject_ids, ...rest }) => ({
+    // ✅ liste finale : 1 entrée par cours physique + UNIQUEMENT si séance effectuée (clic valide)
+    type SessionAggOut = SessionRow & {
+      class_ids: string[];
+      subject_ids: string[];
+      class_subject_pairs: { class_id: string; subject_id: string }[];
+    };
+    const sessions: SessionAggOut[] = Array.from(sessionsByTeacherDay.values()).flat()
+      .map(({ _valid_call_at, class_ids, subject_ids, class_subject_pairs, ...rest }) => ({
         ...rest,
         actual_call_at: _valid_call_at,
         class_ids: Array.from(class_ids),
         subject_ids: Array.from(subject_ids),
+        class_subject_pairs: Array.from(class_subject_pairs.values()),
       }))
       .filter((s: any) => !!s.actual_call_at);
 
@@ -1568,6 +1602,7 @@ export async function GET(req: NextRequest) {
           dateISO: r.started_at,
           subject_name: subjJoined,
           subject_ids: r.subject_ids || [],
+          class_subject_pairs: r.class_subject_pairs || [],
           class_id: (r.class_ids && r.class_ids[0]) || r.class_id || null, // compat
           class_label: classLabelJoined,
           class_ids: r.class_ids || [],
