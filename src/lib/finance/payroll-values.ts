@@ -24,6 +24,7 @@ export type PayrollObservedSession = {
   dateISO: string;
   class_id?: string | null;
   class_ids?: string[];
+  class_subject_pairs?: { class_id: string; subject_id: string }[];
   subject_id?: string | null;
   subject_ids?: string[];
   period_id?: string | null;
@@ -48,6 +49,7 @@ export function findPayrollSession<T extends PayrollObservedSession>(
     session_date: string;
     class_id: string;
     class_ids?: string[];
+    class_subject_pairs?: { class_id: string; subject_id: string }[];
     subject_id: string;
     subject_ids?: string[];
     period_id: string;
@@ -76,12 +78,18 @@ export function findPayrollSession<T extends PayrollObservedSession>(
         ? [row.subject_id]
         : [])
       .filter((value): value is string => Boolean(value));
-    if (!classes.some((classId) => slotClasses.includes(classId))) return [];
-    if (
-      subjects.length &&
-      slotSubjects.length &&
-      !subjects.some((subjectId) => slotSubjects.includes(subjectId))
-    ) return [];
+    if (row.class_subject_pairs?.length && slot.class_subject_pairs?.length) {
+      if (!row.class_subject_pairs.some((actual) => slot.class_subject_pairs?.some(
+        (expected) => actual.class_id === expected.class_id && actual.subject_id === expected.subject_id,
+      ))) return [];
+    } else {
+      if (!classes.some((classId) => slotClasses.includes(classId))) return [];
+      if (
+        subjects.length &&
+        slotSubjects.length &&
+        !subjects.some((subjectId) => slotSubjects.includes(subjectId))
+      ) return [];
+    }
     if (row.period_id) {
       if (row.period_id !== slot.period_id) return [];
     } else {

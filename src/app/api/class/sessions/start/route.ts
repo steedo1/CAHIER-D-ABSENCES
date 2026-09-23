@@ -226,6 +226,7 @@ export async function POST(req: NextRequest) {
         .from("institution_subjects")
         .select("id,subject_id")
         .eq("id", subject_id)
+        .eq("institution_id", cls.institution_id)
         .maybeSingle();
 
       if (asInst?.id) {

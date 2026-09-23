@@ -100,6 +100,7 @@ type StatisticsDetailRow = {
   period_id?: string | null;
   class_ids?: string[];
   subject_ids?: string[];
+  class_subject_pairs?: { class_id: string; subject_id: string }[];
 };
 
 type StatisticsDetailPayload = {
@@ -132,6 +133,7 @@ type ClassTeacherAssignmentRow = {
 type ExpectedSlot = {
   class_id: string;
   class_ids: string[];
+  class_subject_pairs: { class_id: string; subject_id: string }[];
   subject_id: string;
   subject_ids: string[];
   period_id: string;
@@ -479,6 +481,9 @@ async function buildExpectedSlotsForTeacher(params: {
         }
         if (!existing.class_ids.includes(classId)) existing.class_ids.push(classId);
         if (!existing.subject_ids.includes(subjectId)) existing.subject_ids.push(subjectId);
+        if (!existing.class_subject_pairs.some((pair) =>
+          pair.class_id === classId && pair.subject_id === subjectId,
+        )) existing.class_subject_pairs.push({ class_id: classId, subject_id: subjectId });
         existing.class_ids.sort();
         existing.subject_ids.sort();
         continue;
@@ -487,6 +492,7 @@ async function buildExpectedSlotsForTeacher(params: {
       physicalSlots.set(physicalKey, {
         class_id: classId,
         class_ids: [classId],
+        class_subject_pairs: [{ class_id: classId, subject_id: subjectId }],
         subject_id: subjectId,
         subject_ids: [subjectId],
         period_id: periodId,
@@ -557,7 +563,11 @@ async function calculatePayrollAction(formData: FormData) {
     selectedAcademicYearEnd,
   );
 
-  const [{ data: classRows, error: clsErr }, teachers] = await Promise.all([
+  const [
+    { data: classRows, error: clsErr },
+    teachers,
+    { data: subjectRows, error: subjectsErr },
+  ] = await Promise.all([
     (() => {
       let query = admin
         .from("classes")
@@ -567,11 +577,19 @@ async function calculatePayrollAction(formData: FormData) {
       return query;
     })(),
     getPayrollTeachers(institutionId),
+    admin
+      .from("institution_subjects")
+      .select("id,subject_id")
+      .eq("institution_id", institutionId),
   ]);
   if (clsErr) throw new Error(clsErr.message);
+  if (subjectsErr) throw new Error(subjectsErr.message);
 
   const classes = (classRows ?? []) as ClassRow[];
   const classMap = new Map(classes.map((c) => [String(c.id), c]));
+  const canonicalSubjectByInstitutionId = new Map(
+    (subjectRows ?? []).map((subject) => [String(subject.id), String(subject.subject_id)]),
+  );
   const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
 
   // Read and calculate everything before replacing the existing draft.
@@ -612,28 +630,29 @@ async function calculatePayrollAction(formData: FormData) {
 
     const horsEdtItems = actualRows.flatMap((row, index) => {
       if (usedRows.has(index) || !row.actual_call_iso || !row.ended_at) return [];
-      const classIds = row.class_ids?.length
-        ? row.class_ids
-        : row.class_id
-          ? [row.class_id]
+      const classSubjectPairs = row.class_subject_pairs?.length
+        ? row.class_subject_pairs
+        : row.class_id && row.subject_id
+          ? [{ class_id: row.class_id, subject_id: row.subject_id }]
           : [];
-      const subjectIds = row.subject_ids?.length
-        ? row.subject_ids
-        : row.subject_id
-          ? [row.subject_id]
-          : [];
-      const classId = classIds[0] || null;
-      const subjectId = subjectIds[0] || null;
-      if (!classId || !subjectId) return [];
       const sessionDate = String(row.dateISO || "").slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(sessionDate)) return [];
 
-      const assignmentIsValid = payrollAssignments.some((assignment) =>
-        String(assignment.class_id || "") === classId &&
-        String(assignment.subject_id || "") === subjectId &&
-        assignmentCoversDay(assignment, sessionDate),
+      const assignedPairs = classSubjectPairs.filter((pair) =>
+        payrollAssignments.some((assignment) =>
+          String(assignment.class_id || "") === pair.class_id &&
+          [pair.subject_id, canonicalSubjectByInstitutionId.get(pair.subject_id)]
+            .includes(String(assignment.subject_id || "")) &&
+          assignmentCoversDay(assignment, sessionDate),
+        ),
       );
-      if (!assignmentIsValid) return [];
+      if (!assignedPairs.length) return [];
+      const cycles = new Set(assignedPairs.map((pair) => cycleFromLevel(classMap.get(pair.class_id)?.level)));
+      if (cycles.size > 1) {
+        throw new Error(`Le cours groupé du ${sessionDate} relie des classes de cycles différents. Vérifiez cette séance avant de recalculer la paie.`);
+      }
+      const classId = assignedPairs[0].class_id;
+      const subjectId = assignedPairs[0].subject_id;
 
       const cycle = cycleFromLevel(classMap.get(classId)?.level);
       const expectedMinutes = Math.max(
