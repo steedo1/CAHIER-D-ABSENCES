@@ -111,6 +111,7 @@ export type OfflineReadiness = {
   relay_capabilities?: RelayCapabilities;
   schedule_compatibility?: TeacherScheduleCompatibilityStatus;
   institution_id?: string | null;
+  actor_profile_id?: string | null;
   authorized_class_id?: string | null;
   authorized_actor_profile_id?: string | null;
   relay_revision?: number | null;
@@ -156,7 +157,7 @@ export type ClassDeviceAssessmentContext = {
 type ProgressCallback = (message: string) => void;
 
 type TeacherBootstrap = {
-  actor_profile_id?: string;
+  actor_profile_id?: string | null;
   version?: number;
   institution_id?: string | null;
   web_release?: string;
@@ -560,6 +561,48 @@ function safeRevision(value: unknown) {
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
+export function teacherScheduleSlotCacheKey(input: {
+  institutionId?: string | null;
+  actorProfileId?: string | null;
+  scheduleRevision?: number | null;
+  slotKey?: string | null;
+}) {
+  const institutionId = String(input.institutionId || "").trim();
+  const actorProfileId = String(input.actorProfileId || "").trim();
+  const revision = safeRevision(input.scheduleRevision);
+  const slotKey = String(input.slotKey || "").trim();
+  if (!institutionId || !actorProfileId || revision === null || !slotKey) {
+    return null;
+  }
+  return [
+    "teacher:classes:v2",
+    encodeURIComponent(institutionId),
+    encodeURIComponent(actorProfileId),
+    String(revision),
+    encodeURIComponent(slotKey),
+  ].join(":");
+}
+
+export function classDeviceSubjectSlotCacheKey(input: {
+  classId?: string | null;
+  slotKey?: string | null;
+  periodId?: string | null;
+  scheduleRevision?: number | null;
+}) {
+  const classId = String(input.classId || "").trim();
+  const slotKey = String(input.slotKey || "").trim();
+  const periodId = String(input.periodId || "").trim();
+  const revision = safeRevision(input.scheduleRevision);
+  if (!classId || !slotKey || !periodId || revision === null) return null;
+  return [
+    "classDevice:subjects:v2",
+    encodeURIComponent(classId),
+    String(revision),
+    encodeURIComponent(periodId),
+    encodeURIComponent(slotKey),
+  ].join(":");
+}
+
 async function applyTeacherScheduleFromRelay(
   readiness: OfflineReadiness,
   basics: any,
@@ -583,11 +626,28 @@ async function applyTeacherScheduleFromRelay(
   }
   const entries: Array<readonly [string, any]> = [
     ["teacher:offline:bootstrap", schedule],
+    ["teacher:inst:basics", { ...basics, schedule_revision: schedule.schedule_revision,
+      periods: schedule.slots.map((slot) => ({ id: slot.period_id, weekday: slot.weekday,
+        label: slot.label, start_time: slot.start_time, end_time: slot.end_time })) }],
   ];
+  const scheduleActorProfileId = String(
+    schedule.actor_profile_id || basics?.actor_profile_id || "",
+  ).trim();
   for (const slot of schedule.slots) {
+    const scopedKey = teacherScheduleSlotCacheKey({
+      institutionId: schedule.institution_id || basics?.institution_id,
+      actorProfileId: scheduleActorProfileId,
+      scheduleRevision: schedule.schedule_revision,
+      slotKey: slot.key,
+    });
+    if (!scopedKey) continue;
     entries.push([
       `teacher:classes:${slot.key}`,
       {
+        institution_id: schedule.institution_id || basics?.institution_id || null,
+        actor_profile_id: scheduleActorProfileId || null,
+        schedule_revision: schedule.schedule_revision,
+        slot_key: slot.key,
         items: slot.items,
         has_active_slot: true,
         scheduled_for_slot: slot.items.length > 0,
@@ -623,6 +683,8 @@ async function applyTeacherScheduleFromRelay(
       textbook_assignments: readiness.textbook_assignment_count,
       assignments: schedule.assignments.length,
     },
+    institution_id: String(schedule.institution_id || basics?.institution_id || "").trim() || null,
+    actor_profile_id: scheduleActorProfileId || null,
     preparation_source: "relay",
   };
   entries.push([readinessKey("teacher"), next]);
@@ -662,12 +724,20 @@ export async function assessTeacherOfflineReadiness(
 
   const basics: any = await cacheGet("teacher:inst:basics").catch(() => null);
   const institutionId = String(basics?.institution_id || "").trim();
+  const actorProfileId = String(basics?.actor_profile_id || "").trim();
+  const readinessInstitutionId = String(initial?.institution_id || "").trim();
+  const readinessActorProfileId = String(initial?.actor_profile_id || "").trim();
   const relayPolicy = basics?.attendance_presence || {};
-  if (!institutionId) {
+  if (
+    !institutionId ||
+    !actorProfileId ||
+    (readinessInstitutionId && readinessInstitutionId !== institutionId) ||
+    (readinessActorProfileId && readinessActorProfileId !== actorProfileId)
+  ) {
     return {
       ...base,
       status: "not_prepared",
-      message: "L’établissement du paquet d’appel local n’est pas identifiable.",
+      message: "Le paquet d’appel local ne correspond pas exactement à l’enseignant actuellement connecté.",
     };
   }
 
@@ -1150,6 +1220,14 @@ async function buildClassDeviceScheduleFromCloud(input: {
     ).values(),
   );
 
+  const finalStatus = await fetchFreshJson<any>("/api/offline/schedule-status");
+  if (finalStatus.institution_id !== input.institutionId ||
+      finalStatus.actor_profile_id !== input.actorProfileId ||
+      finalStatus.schedule_revision !== input.scheduleRevision) {
+    throw new Error("schedule_changed_during_prepare");
+  }
+  observeScheduleRevision(input.institutionId, finalStatus.schedule_revision);
+
   return {
     version: 1,
     scope_version: 1,
@@ -1291,6 +1369,10 @@ async function persistClassDeviceBundle(
   readiness: OfflineReadiness,
   schedule: RelayTeacherOfflineSchedule,
 ) {
+  if (schedule.actor_profile_id !== await attendanceCacheActor() ||
+      !scheduleIsCurrent(schedule.schedule_revision, knownScheduleRevision(schedule.institution_id))) {
+    throw new Error("attendance_schedule_identity_or_revision_changed");
+  }
   const bundle: ClassDeviceCoherentBundle<
     OfflineReadiness,
     RelayTeacherOfflineSchedule
@@ -1323,7 +1405,18 @@ async function projectClassDeviceScheduleCaches(
           id: item.subject_id,
           label: item.subject_name,
         }));
-      await cacheSet(`classDevice:subjects:${classId}:${slot.key}`, {
+      const scopedKey = classDeviceSubjectSlotCacheKey({
+        classId,
+        slotKey: slot.key,
+        periodId: slot.period_id,
+        scheduleRevision: schedule.schedule_revision,
+      });
+      if (!scopedKey) return;
+      await cacheSet(scopedKey, {
+        class_id: classId,
+        schedule_revision: schedule.schedule_revision,
+        period_id: slot.period_id,
+        slot_key: slot.key,
         items: subjects,
       }).catch(() => undefined);
     }),
@@ -1733,6 +1826,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
       accessToken: String(relayPolicy.relay_access_token),
     });
     bootstrap = { ...relaySchedule, web_release: MON_CAHIER_WEB_RELEASE };
+    basics = { ...basics, schedule_revision: relaySchedule.schedule_revision,
+      periods: relaySchedule.slots.map((slot) => ({ id: slot.period_id, weekday: slot.weekday,
+        label: slot.label, start_time: slot.start_time, end_time: slot.end_time })) };
     for (const [classId, roster] of Object.entries(relaySchedule.rosters || {})) {
       if (!Array.isArray(roster?.items)) throw new Error("relay_teacher_roster_incomplete");
       rosters.set(classId, { items: roster.items });
@@ -1823,6 +1919,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     schedule_revision: scheduleRevision,
     schedule_generated_at: String(bootstrap.generated_at || "") || null,
+    actor_profile_id: String(basics?.actor_profile_id || "").trim() || null,
     data_presence: {
       classes: classIds.length,
       students: studentIds.size,
@@ -1845,12 +1942,28 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
     ["teacher:inst:basics", basics],
     [readinessKey("teacher"), readiness],
   ];
+  const actorProfileId = String(basics?.actor_profile_id || "").trim();
   for (const slot of slots) {
     if (!slot?.key) continue;
     const items = Array.isArray(slot.items) ? slot.items : [];
+    const scopedKey = teacherScheduleSlotCacheKey({
+      institutionId,
+      actorProfileId,
+      scheduleRevision,
+      slotKey: slot.key,
+    });
+    if (!scopedKey) continue;
     entries.push([
       `teacher:classes:${slot.key}`,
-      { items, has_active_slot: true, scheduled_for_slot: items.length > 0 },
+      {
+        institution_id: institutionId || null,
+        actor_profile_id: actorProfileId || null,
+        schedule_revision: scheduleRevision,
+        slot_key: slot.key,
+        items,
+        has_active_slot: true,
+        scheduled_for_slot: items.length > 0,
+      },
     ]);
   }
   for (const [classId, roster] of rosters) {
@@ -2007,7 +2120,9 @@ async function prepareClassDevice(
     }
   }
 
-  if (!schedule && relaySchedule) {
+  if (!schedule && relaySchedule &&
+      (cloudRevision === null || relayScopeRevision === cloudRevision) &&
+      scheduleIsCurrent(relayScopeRevision, cloudRevision ?? knownScheduleRevision(institutionId))) {
     const localRevision = existingScope.ok ? existingScope.revision : null;
     if (localRevision === null || (relayScopeRevision ?? -1) >= localRevision) {
       schedule = relaySchedule;
@@ -2015,7 +2130,8 @@ async function prepareClassDevice(
     }
   }
 
-  if (!schedule && existingScope.ok) {
+  if (!schedule && existingScope.ok &&
+      scheduleIsCurrent(existingScope.revision, cloudRevision ?? knownScheduleRevision(institutionId))) {
     schedule = existingBundle!.schedule;
     preparationSource = "local";
   }
@@ -2358,7 +2474,7 @@ type PreparationTask = {
   listeners: Set<ProgressCallback>;
 };
 
-const preparationInFlight = new Map<OfflineRole, PreparationTask>();
+const preparationInFlight = new Map<string, PreparationTask>();
 
 async function prepareOfflineOnce(
   role: OfflineRole,
@@ -2371,7 +2487,7 @@ async function prepareOfflineOnce(
     return await prepareTeacher(onProgress);
   }
 
-  const cloud = await probeCloudSchedule();
+  const cloud = await probeCloudSchedule(undefined, true);
   if (!cloud && role !== "class-device") {
     throw new Error("Reconnectez Internet pour actualiser les données hors ligne.");
   }
@@ -2384,11 +2500,12 @@ async function prepareOfflineOnce(
   return readiness;
 }
 
-export function prepareOffline(
+export async function prepareOffline(
   role: OfflineRole,
   onProgress: ProgressCallback = () => undefined,
 ): Promise<OfflineReadiness> {
-  const running = preparationInFlight.get(role);
+  const preparationKey = `${role}:${await attendanceCacheActor()}`;
+  const running = preparationInFlight.get(preparationKey);
   if (running) {
     running.listeners.add(onProgress);
     return running.promise;
@@ -2399,12 +2516,12 @@ export function prepareOffline(
     for (const listener of listeners) listener(message);
   };
   const promise = prepareOfflineOnce(role, progress).finally(() => {
-    if (preparationInFlight.get(role)?.listeners === listeners) {
-      preparationInFlight.delete(role);
+    if (preparationInFlight.get(preparationKey)?.listeners === listeners) {
+      preparationInFlight.delete(preparationKey);
     }
     listeners.clear();
   });
   const task: PreparationTask = { promise, listeners };
-  preparationInFlight.set(role, task);
+  preparationInFlight.set(preparationKey, task);
   return promise;
 }

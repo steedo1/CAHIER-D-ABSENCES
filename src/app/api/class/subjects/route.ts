@@ -7,6 +7,7 @@ import {
   isNonGeneralAttendanceEducation,
 } from "@/lib/education-attendance";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
+import { readAttendanceScheduleRevision } from "@/lib/attendance-schedule-revision-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,20 +30,17 @@ type TimetableSubjectRow = {
 };
 
 function currentTimetableSubjectIds(rows: TimetableSubjectRow[]): string[] {
-  const ranked = (rows || [])
-    .map((row) => ({
-      id: String(row?.id || "").trim(),
-      subjectId: String(row?.subject_id || "").trim(),
-      updatedAt: Date.parse(String(row?.updated_at || "")),
-    }))
-    .filter((row) => row.subjectId)
-    .sort((left, right) => {
-      const leftTime = Number.isFinite(left.updatedAt) ? left.updatedAt : 0;
-      const rightTime = Number.isFinite(right.updatedAt) ? right.updatedAt : 0;
-      return rightTime - leftTime || right.id.localeCompare(left.id);
-    });
-
-  return ranked[0]?.subjectId ? [ranked[0].subjectId] : [];
+  // Several subjects can legitimately coexist in the same class/period
+  // (for example German + Spanish language groups). The timetable table is
+  // the source of truth here, so preserve every distinct scheduled subject
+  // instead of arbitrarily choosing the most recently updated row.
+  return Array.from(
+    new Set(
+      (rows || [])
+        .map((row) => String(row?.subject_id || "").trim())
+        .filter(Boolean),
+    ),
+  );
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -433,6 +431,36 @@ export async function GET(req: NextRequest) {
 
     const tz = String(inst?.tz || "Africa/Abidjan");
 
+    const { data: revisionRow, error: revisionError } = await srv
+      .from("attendance_schedule_revisions")
+      .select("revision")
+      .eq("institution_id", institutionId)
+      .maybeSingle();
+    if (revisionError) {
+      return NextResponse.json({ error: revisionError.message }, { status: 400 });
+    }
+    const scheduleRevision = Number(revisionRow?.revision ?? 0);
+    if (!Number.isSafeInteger(scheduleRevision) || scheduleRevision < 0) {
+      return NextResponse.json(
+        { error: "schedule_revision_invalid" },
+        { status: 409 },
+      );
+    }
+    const scheduleMeta = {
+      institution_id: institutionId,
+      class_id,
+      actor_profile_id: user.id,
+      schedule_revision: scheduleRevision,
+    };
+    async function scheduleJson(items: SubjectItem[]) {
+      if (scheduleRevision !== await readAttendanceScheduleRevision(srv, institutionId)) {
+        return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
+      }
+      return NextResponse.json({ ...scheduleMeta, items }, {
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      });
+    }
+
     // 1) Si un slot est fourni, le filtrage par emploi du temps est strict.
     //    Une réponse vide signifie qu'aucun cours n'est prévu : ne jamais exposer
     //    toutes les matières de la classe dans ce cas.
@@ -457,9 +485,9 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: ttErr.message }, { status: 400 });
         }
 
-        // Une classe ne peut avoir qu'une matière active dans un créneau.
-        // En cas d'ancienne ligne restée active après une modification, la ligne
-        // la plus récente gagne et l'ancienne matière n'est plus exposée.
+        // Plusieurs matières peuvent être légitimes au même créneau
+        // (groupes de langues notamment). On restitue exactement les matières
+        // présentes dans l'EDT Cloud courant.
         const autoSubjectIds = currentTimetableSubjectIds(
           (ttRows || []) as TimetableSubjectRow[],
         );
@@ -467,12 +495,12 @@ export async function GET(req: NextRequest) {
         if (autoSubjectIds.length > 0) {
           const autoItems = await mapSubjectIdsToItems(srv, institutionId, autoSubjectIds);
           if (autoItems.length > 0) {
-            return NextResponse.json({ items: autoItems });
+            return scheduleJson(autoItems);
           }
         }
       }
 
-      return NextResponse.json({ items: [] as SubjectItem[] });
+      return scheduleJson([]);
     }
 
     // 2) Sans créneau demandé : constitution du cache de secours.
@@ -516,7 +544,7 @@ export async function GET(req: NextRequest) {
         institutionId,
         configuredSubjectIds,
       );
-      return NextResponse.json({ items: configuredItems });
+      return NextResponse.json({ ...scheduleMeta, items: configuredItems });
     }
 
     const legacySubjectIds = await getLegacySubjectIds(
@@ -525,7 +553,7 @@ export async function GET(req: NextRequest) {
       institutionId,
     );
     if (!legacySubjectIds.length) {
-      return NextResponse.json({ items: [] as SubjectItem[] });
+      return NextResponse.json({ ...scheduleMeta, items: [] as SubjectItem[] });
     }
 
     const legacyItems = await mapSubjectIdsToItems(
@@ -533,7 +561,7 @@ export async function GET(req: NextRequest) {
       institutionId,
       legacySubjectIds,
     );
-    return NextResponse.json({ items: legacyItems });
+    return NextResponse.json({ ...scheduleMeta, items: legacyItems });
   } catch (err: any) {
     console.error("[class.subjects] unexpected error", err);
     return NextResponse.json({ error: err?.message || "class_subjects_failed" }, { status: 500 });

@@ -11,6 +11,7 @@ export function validAttendanceScope(value: unknown): value is AttendanceCacheSc
 }
 
 export function isTeacherCacheKey(key: string) {
+  if (/^teacher:(attendance-delivery|session-delivery|session-lifecycle):/.test(key)) return false;
   return key.startsWith("teacher:") || key === "offline:readiness:teacher";
 }
 

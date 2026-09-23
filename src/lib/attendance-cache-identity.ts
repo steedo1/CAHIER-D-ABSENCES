@@ -35,5 +35,5 @@ export function observeScheduleRevision(institutionId: string, revision: number)
   const previous = knownScheduleRevision(institutionId);
   if (previous !== null && previous >= revision) return;
   try { window.localStorage.setItem(revisionKey(institutionId), String(revision)); } catch {}
-  window.dispatchEvent(new Event("moncahier:schedule-revision"));
+  window.dispatchEvent?.(new Event("moncahier:schedule-revision"));
 }

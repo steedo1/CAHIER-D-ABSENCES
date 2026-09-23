@@ -252,10 +252,13 @@ async function teacherScope(actor?: string): Promise<AttendanceCacheScope | null
 
 export async function cacheGet<T = any>(key: string, actor?: string): Promise<T | null> {
   if (!isTeacherCacheKey(key)) return rawCacheGet<T>(key);
+  const generation = attendanceAuthGeneration();
   const scope = await teacherScope(actor);
   // Legacy unscoped data is deliberately never migrated: its owner is unknown.
   if (!scope) return null;
-  return rawCacheGet<T>(teacherCacheKey(key, scope));
+  const value = await rawCacheGet<T>(teacherCacheKey(key, scope));
+  if (!actor && (generation !== attendanceAuthGeneration() || scope.actor_profile_id !== await attendanceCacheActor())) return null;
+  return value;
 }
 
 export async function cacheSet(key: string, value: any): Promise<void> {
@@ -287,6 +290,14 @@ export async function cacheSetMany(
       schedule_revision: contract.schedule_revision };
   }
   if (hasTeacher && (!actor || !scope)) return;
+  for (const [key, value] of entries) {
+    if (isTeacherCacheKey(key) && validAttendanceScope(value) &&
+        (value.institution_id !== scope!.institution_id ||
+         value.actor_profile_id !== scope!.actor_profile_id ||
+         value.schedule_revision !== scope!.schedule_revision)) {
+      throw new Error("attendance_cache_mixed_contracts");
+    }
+  }
 
   const normalized = new Map<string, any>();
   for (const [rawKey, value] of entries) {

@@ -135,6 +135,7 @@ export function resolveTeacherScheduledSlot(
     teacher: AuthenticatedRelayTeacher;
     classId: string;
     periodId: string;
+    subjectId?: string | null;
     now: Date;
   },
 ): TeacherScheduledSlot {
@@ -183,30 +184,24 @@ export function resolveTeacherScheduledSlot(
   }
 
   const actorKind = relayActorKind(input.teacher);
+  const requestedSubjectId = String(input.subjectId || "").trim();
   const teacherFilter = actorKind === "teacher"
     ? "AND teacher_id = ?"
     : "";
-  const params = actorKind === "teacher"
-    ? [
-        input.teacher.institution_id,
-        input.teacher.actor_profile_id,
-        input.classId,
-        input.periodId,
-        localNow.weekday,
-        localNow.weekday,
-      ]
-    : [
-        input.teacher.institution_id,
-        input.classId,
-        input.periodId,
-        localNow.weekday,
-        localNow.weekday,
-      ];
+  const subjectFilter = requestedSubjectId ? "AND subject_id = ?" : "";
+  const params: Array<string | number> = [input.teacher.institution_id];
+  if (actorKind === "teacher") {
+    params.push(input.teacher.actor_profile_id);
+  }
+  params.push(input.classId, input.periodId);
+  if (requestedSubjectId) params.push(requestedSubjectId);
+  params.push(localNow.weekday, localNow.weekday);
+
   const timetables = db.prepare(`
     SELECT id, subject_id, teacher_id, server_version, updated_at
     FROM teacher_timetables
     WHERE institution_id = ? ${teacherFilter} AND class_id = ?
-      AND period_id = ? AND deleted_at IS NULL
+      AND period_id = ? ${subjectFilter} AND deleted_at IS NULL
       AND (weekday = ? OR (? = 0 AND weekday = 7))
     ORDER BY server_version DESC, updated_at DESC, id DESC
   `).all(...params) as Array<{
@@ -219,15 +214,24 @@ export function resolveTeacherScheduledSlot(
   if (timetables.length === 0) {
     throw new TeacherSessionRuleError(
       403,
-      actorKind === "class_device"
-        ? "class_not_scheduled_for_slot"
-        : "teacher_not_scheduled_for_slot",
+      requestedSubjectId
+        ? "subject_not_scheduled_for_slot"
+        : actorKind === "class_device"
+          ? "class_not_scheduled_for_slot"
+          : "teacher_not_scheduled_for_slot",
     );
   }
-  if (actorKind === "teacher" && (timetables.length > 1 || !timetables[0])) {
+  const assignments = new Set(timetables.map((row) => `${row.subject_id}|${row.teacher_id}`));
+  if (assignments.size > 1) {
     throw new TeacherSessionRuleError(
       409,
-      "teacher_timetable_ambiguous",
+      actorKind === "teacher"
+        ? "teacher_timetable_ambiguous"
+        : "class_timetable_ambiguous",
+      {
+        subject_id: requestedSubjectId || null,
+        matches: timetables.length,
+      },
     );
   }
   const selectedTimetable = timetables[0];

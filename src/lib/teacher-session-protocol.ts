@@ -9,6 +9,7 @@ export type TeacherSessionOpenRelayPayload = {
   captured_at_device?: string;
   class_id: string;
   period_id: string;
+  subject_id?: string;
 };
 
 function requiredText(value: unknown, name: string, maxLength = 256) {
@@ -29,6 +30,7 @@ export function buildTeacherSessionOpenRelayPayload(input: {
   operationId: string;
   classId: string;
   periodId: string;
+  subjectId?: string | null;
   capturedAtDevice?: string | Date | null;
 }): TeacherSessionOpenRelayPayload {
   const payload: TeacherSessionOpenRelayPayload = {
@@ -38,6 +40,8 @@ export function buildTeacherSessionOpenRelayPayload(input: {
     class_id: requiredText(input.classId, "class_id"),
     period_id: requiredText(input.periodId, "period_id"),
   };
+  const subjectId = String(input.subjectId || "").trim();
+  if (subjectId) payload.subject_id = requiredText(subjectId, "subject_id");
   const capturedAtDevice = optionalIso(input.capturedAtDevice, "captured_at_device");
   if (capturedAtDevice) payload.captured_at_device = capturedAtDevice;
   return payload;

@@ -44,8 +44,19 @@ export function assignmentCoversDay(
 
 export function findPayrollSession<T extends PayrollObservedSession>(
   rows: T[], used: Set<number>,
-  slot: { session_date: string; class_id: string; subject_id: string; period_id: string; start_time?: string | null },
+  slot: {
+    session_date: string;
+    class_id: string;
+    class_ids?: string[];
+    subject_id: string;
+    subject_ids?: string[];
+    period_id: string;
+    start_time?: string | null;
+  },
 ) {
+  const slotClasses = slot.class_ids?.length ? slot.class_ids : [slot.class_id];
+  const slotSubjects = slot.subject_ids?.length ? slot.subject_ids : [slot.subject_id];
+
   const candidates = rows.flatMap((row, index) => {
     if (used.has(index)) return [];
     const started = new Date(row.dateISO);
@@ -57,10 +68,20 @@ export function findPayrollSession<T extends PayrollObservedSession>(
     }).formatToParts(started);
     const part = (type: string) => parts.find((p) => p.type === type)?.value;
     if (`${part("year")}-${part("month")}-${part("day")}` !== slot.session_date) return [];
-    const classes = row.class_ids?.length ? row.class_ids : [row.class_id];
-    const subjects = row.subject_ids?.length ? row.subject_ids : row.subject_id ? [row.subject_id] : [];
-    if (!classes.includes(slot.class_id)) return [];
-    if (subjects.length && !subjects.includes(slot.subject_id)) return [];
+    const classes = (row.class_ids?.length ? row.class_ids : [row.class_id])
+      .filter((value): value is string => Boolean(value));
+    const subjects = (row.subject_ids?.length
+      ? row.subject_ids
+      : row.subject_id
+        ? [row.subject_id]
+        : [])
+      .filter((value): value is string => Boolean(value));
+    if (!classes.some((classId) => slotClasses.includes(classId))) return [];
+    if (
+      subjects.length &&
+      slotSubjects.length &&
+      !subjects.some((subjectId) => slotSubjects.includes(subjectId))
+    ) return [];
     if (row.period_id) {
       if (row.period_id !== slot.period_id) return [];
     } else {

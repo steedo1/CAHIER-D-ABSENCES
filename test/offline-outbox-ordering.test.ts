@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setAttendanceCacheActor } from "../src/lib/attendance-cache-identity";
 import {
   cacheGet,
   cacheSet,
@@ -696,7 +697,8 @@ test("les anciens journaux PWA sont matérialisés puis ACKés dans l'ordre comp
 
   try {
     await clearOfflineAll();
-    await cacheSet("teacher:inst:basics", { institution_id: "school-a" });
+    setAttendanceCacheActor("teacher-a");
+    await cacheSet("teacher:inst:basics", { institution_id: "school-a", actor_profile_id: "teacher-a", schedule_revision: 1 });
     await cacheSet("teacher:attendance-delivery:v1:institutions", ["school-a"]);
     await cacheSet("teacher:session-delivery:v1:school-a", [{
       schema_version: 1,
@@ -830,7 +832,8 @@ test("école sans Relais : trois appels PWA se synchronisent seuls en 9 ACK ordo
 
   try {
     await clearOfflineAll();
-    await cacheSet("teacher:inst:basics", { institution_id: "pwa-only-school" });
+    setAttendanceCacheActor("teacher-a");
+    await cacheSet("teacher:inst:basics", { institution_id: "pwa-only-school", actor_profile_id: "teacher-a", schedule_revision: 1 });
     for (let index = 1; index <= 3; index += 1) {
       const clientId = `pwa-course-${index}`;
       const meta = {

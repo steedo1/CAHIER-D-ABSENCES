@@ -27,6 +27,7 @@ type TeacherSessionOpenOperation = {
   captured_at_device?: string;
   class_id: string;
   period_id: string;
+  subject_id?: string;
 };
 
 type PeriodRow = {
@@ -147,6 +148,7 @@ function parseOperation(raw: unknown): TeacherSessionOpenOperation {
     "captured_at_device",
     "class_id",
     "period_id",
+    "subject_id",
   ]);
   if (Object.keys(row).some((key) => !accepted.has(key))) {
     throw new TeacherSessionOpenError(400, "operation_field_not_supported");
@@ -164,6 +166,10 @@ function parseOperation(raw: unknown): TeacherSessionOpenOperation {
     const code = error instanceof CapturedAtDeviceError ? error.code : "captured_at_device_invalid";
     throw new TeacherSessionOpenError(400, code);
   }
+  const subjectId =
+    typeof row.subject_id === "string" && row.subject_id.trim()
+      ? text(row.subject_id, "subject_id_required")
+      : null;
   return {
     protocol_version: PROTOCOL_VERSION,
     operation_id: text(row.operation_id, "operation_id_required", 128),
@@ -171,6 +177,7 @@ function parseOperation(raw: unknown): TeacherSessionOpenOperation {
     ...(capturedAtDevice ? { captured_at_device: capturedAtDevice } : {}),
     class_id: text(row.class_id, "class_id_required"),
     period_id: text(row.period_id, "period_id_required"),
+    ...(subjectId ? { subject_id: subjectId } : {}),
   };
 }
 
@@ -191,6 +198,7 @@ function fingerprint(
       : {}),
     class_id: operation.class_id,
     period_id: operation.period_id,
+    ...(operation.subject_id ? { subject_id: operation.subject_id } : {}),
   })).digest("hex");
 }
 
@@ -317,6 +325,7 @@ function validateBusinessRules(
       teacher,
       classId: operation.class_id,
       periodId: operation.period_id,
+      subjectId: operation.subject_id || null,
       now,
     });
   } catch (error) {
@@ -607,6 +616,7 @@ export function openTeacherAttendanceSession(
       auth_class_id: teacher.class_id || null,
       class_id: operation.class_id,
       period_id: operation.period_id,
+      requested_subject_id: operation.subject_id || null,
       timetable_id: business.timetable.id,
       subject_id: business.timetable.subject_id,
       local_session_id: session.id,
