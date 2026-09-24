@@ -53,6 +53,8 @@ jobs:
             test/offline-schedule-wiring.test.mjs \
             test/teacher-minimal-preparation.test.mjs \
             test/attendance-cache-isolation.test.mjs \
+            test/class-list-transfer-removal.test.mjs \
+            test/student-permanent-removal.test.mjs \
             test/offline-attendance-admin-e2e.test.mjs \
             test/teacher-attendance-bulk-offline-route.test.mjs \
             test/class-device-minimal-preparation.test.mjs \
@@ -70,6 +72,36 @@ jobs:
             test/attendance-integrity-wiring.test.mjs \
             test/relay-supervision-ui.test.mjs \
             test/cloud-only-grade-writes.test.mjs
+
+  student-removal-db:
+    name: Student removal transaction
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify atomic student removal and rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -f test/student-permanent-removal-db.sql
 
   web-production-dependencies:
     name: Web production dependency audit

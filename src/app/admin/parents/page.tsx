@@ -1253,7 +1253,7 @@ export default function AdminStudentsByClassPage() {
     const ok = window.confirm(
       `RETIRER = SUPPRIMER DÉFINITIVEMENT. Supprimer ${nomAvantPrenoms(
         student.full_name
-      )} de la base de données ? Cette action effacera sa fiche élève et les données liées et est irréversible.`
+      )} de la base de données ? Ses inscriptions, appels, notes et données financières seront aussi effacés. Cette action est irréversible. Pour changer de classe, utilisez Transférer.`
     );
 
     if (!ok) return;
@@ -1809,7 +1809,7 @@ export default function AdminStudentsByClassPage() {
                                 tone="danger"
                                 onClick={() => removeFromClass(student)}
                                 disabled={!student.class_id || removingId === student.id}
-                                title="Retirer l'eleve de cette classe"
+                                title="Supprimer définitivement l'élève et ses données associées"
                               >
                                 {removingId === student.id ? "Retrait..." : "Retirer"}
                               </Button>
