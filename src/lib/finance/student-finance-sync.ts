@@ -48,6 +48,18 @@ type ComponentRow = FinanceScheduleComponentLike & {
   order_index?: number | null;
 };
 
+type YearProfileRow = {
+  affectation_status?: string | null;
+  is_boarder?: boolean | null;
+};
+
+function affectationStatusToBoolean(value: unknown): boolean | null {
+  const normalized = normalizeFinanceText(value).replace(/[-\s]+/g, "_");
+  if (normalized === "affecte" || normalized === "reaffecte") return true;
+  if (normalized === "non_affecte") return false;
+  return null;
+}
+
 type ChargeRow = {
   id: string;
   school_id: string;
@@ -336,19 +348,44 @@ export async function applyStudentFinanceReconciliation({
 
   const targetClass = classResult.data as ClassRow;
   const storedProfile = studentResult.data as FinanceStudentProfileLike;
+
+  let yearProfile: YearProfileRow | null = null;
+  const targetAcademicYear = cleanId(targetClass.academic_year);
+  if (targetAcademicYear) {
+    const { data: yearProfiles, error: yearProfileError } = await srv
+      .from("student_year_profiles")
+      .select("affectation_status,is_boarder,updated_at")
+      .eq("institution_id", institutionId)
+      .eq("student_id", studentId)
+      .eq("academic_year", targetAcademicYear)
+      .eq("class_id", classId)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (yearProfileError) throw new Error(yearProfileError.message);
+    yearProfile = ((yearProfiles ?? [])[0] as YearProfileRow | undefined) ?? null;
+  }
+
+  const yearlyAffectation = affectationStatusToBoolean(
+    yearProfile?.affectation_status,
+  );
   const profile: FinanceStudentProfileLike = {
     is_affecte:
       typeof studentProfile?.is_affecte === "boolean"
         ? studentProfile.is_affecte
-        : typeof storedProfile.is_affecte === "boolean"
-          ? storedProfile.is_affecte
-          : null,
+        : typeof yearlyAffectation === "boolean"
+          ? yearlyAffectation
+          : typeof storedProfile.is_affecte === "boolean"
+            ? storedProfile.is_affecte
+            : null,
     is_boarder:
       typeof studentProfile?.is_boarder === "boolean"
         ? studentProfile.is_boarder
-        : typeof storedProfile.is_boarder === "boolean"
-          ? storedProfile.is_boarder
-          : null,
+        : typeof yearProfile?.is_boarder === "boolean"
+          ? yearProfile.is_boarder
+          : typeof storedProfile.is_boarder === "boolean"
+            ? storedProfile.is_boarder
+            : null,
   };
 
   const classes = (classesResult.data ?? []) as ClassRow[];
