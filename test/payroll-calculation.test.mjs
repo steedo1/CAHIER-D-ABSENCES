@@ -34,6 +34,19 @@ test('closed session pays the cycle rate; lateness and early departure have sepa
   assert.equal(pay({...closed(0,40),real_minutes:10}).lost_amount,364); // explicit 0 late is not missing
 });
 
+test('payroll loss never exceeds the expected session duration', () => {
+  const short = calculatePayrollSession(
+    { ...closed(0, 1), real_minutes: 1, observed_minutes: 1, late_minutes: 4 },
+    5,
+    55,
+    2000,
+    0,
+    0,
+  );
+  assert.equal(short.lost_minutes_after_tolerance, 4);
+  assert.ok(short.lost_minutes_after_tolerance <= 5);
+});
+
 test('absent, unstarted, unclosed, or zero-duration sessions are unpaid', () => {
   for (const row of [null,{...closed(),actual_call_iso:null},{...closed(),ended_at:null},closed(0,0)]) {
     assert.equal(pay(row).adjusted_amount,0);
