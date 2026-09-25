@@ -157,6 +157,24 @@ test("Autre cours dans un créneau garde la matière et l'enseignant affecté, p
   }]);
 });
 
+test("deux disciplines prévues : le Cloud rattache l'appel à l'enseignant choisi", async () => {
+  const cloud = makeCloud({ teacher_timetables: [
+    { institution_id: "csca", class_id: "class-5e2", subject_id: "inst-eps", period_id: "period-0905", teacher_id: "teacher-eps" },
+    { institution_id: "csca", class_id: "class-5e2", subject_id: "inst-info", period_id: "period-0905", teacher_id: "teacher-info" },
+  ] });
+  const result = await cloud.start({
+    manual_course: false,
+    subject_id: "inst-info",
+    actual_call_at: at(9, 12),
+    period_id: "period-0905",
+  }, "operation-selected-info");
+  assert.equal(result.status, 200);
+  assert.equal(result.body.item.period_id, "period-0905");
+  assert.equal(cloud.tables.teacher_sessions.length, 1);
+  assert.equal(cloud.tables.teacher_sessions[0].subject_id, "inst-info");
+  assert.equal(cloud.tables.teacher_sessions[0].teacher_id, "teacher-info");
+});
+
 test("Autre cours démarre hors créneau tandis que le cours automatique y est refusé", async () => {
   const cloud = makeCloud();
   const automatic = await cloud.start({ manual_course: false, actual_call_at: at(7) }, "operation-auto-001");

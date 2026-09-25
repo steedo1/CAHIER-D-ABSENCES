@@ -2436,6 +2436,8 @@ export default function ClassDevicePage() {
     manualSubjectMode
       ? !!classId
       : !!activeConfiguredSlot && !usingUnverifiedLegacySubjects;
+  const hasSelectedSubject =
+    !!subjectId && subjects.some((subject) => subject.id === subjectId);
 
   /* 2) charger les matières selon le mode courant
         - en ligne : le Cloud strict du créneau est prioritaire
@@ -2976,7 +2978,7 @@ export default function ClassDevicePage() {
 
     void ensureAlarmReady();
 
-    if (!subjectId) {
+    if (!hasSelectedSubject) {
       setMsg("Choisissez une discipline avant de démarrer l’appel.");
       return;
     }
@@ -4278,7 +4280,9 @@ export default function ClassDevicePage() {
               Discipline
             </div>
             <Select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={!!open || subjects.length === 0}>
-              {subjects.length === 0 ? (
+              {!manualSubjectMode && subjects.length > 1 ? (
+                <option value="">— Choisissez la discipline du professeur présent —</option>
+              ) : subjects.length === 0 ? (
                 <option value="">
                   {manualSubjectMode
                     ? "— Aucune discipline affectée à cette classe —"
@@ -4407,7 +4411,7 @@ export default function ClassDevicePage() {
         {/* Actions */}
         {!open ? (
           <div className="flex items-center gap-2">
-            <Button onClick={startSession} disabled={!classId || !subjectId || busy || !canStartAttendanceNow}>
+            <Button onClick={startSession} disabled={!classId || !hasSelectedSubject || busy || !canStartAttendanceNow}>
               <Play className="h-4 w-4" />
               {busy ? "Démarrage…" : "Démarrer l’appel"}
             </Button>
