@@ -338,7 +338,7 @@ export async function GET(req: NextRequest) {
     const jar = await cookies();
     const deviceId = jar.get("parent_device")?.value || "";
 
-    let student_id = qStudent;
+    const student_id = qStudent;
     let institution_id: string | undefined;
 
     // ── Cookie d’abord
@@ -352,7 +352,7 @@ export async function GET(req: NextRequest) {
       if (!link || !link.length)
         return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-      let { data: enr } = await srv
+      const { data: enr } = await srv
         .from("class_enrollments")
         .select("institution_id")
         .eq("student_id", student_id)
@@ -422,7 +422,7 @@ export async function GET(req: NextRequest) {
     /* ───────── Minutes d’absence/retard INJUSTIFIÉES (et comptages) ─────────
        On aligne la logique sur /api/admin/absences/by-class :
        - v_mark_minutes + attendance_marks.reason pour filtrer les justifiées
-       - v_tardy_minutes + attendance_marks.reason pour les retards
+       - v_mark_minutes (minutes_late > 0) + attendance_marks.reason pour les retards
     */
 
     // --- Absences injustifiées ---
@@ -480,10 +480,11 @@ export async function GET(req: NextRequest) {
 
     try {
       const { data: tardyMarks, error: tardyErr } = await srv
-        .from("v_tardy_minutes")
-        .select("id, minutes, started_at")
+        .from("v_mark_minutes")
+        .select("id, minutes_late, started_at")
         .eq("institution_id", institution_id)
         .eq("student_id", student_id)
+        .gt("minutes_late", 0)
         .gte("started_at", startISO(from))
         .lte("started_at", endISO(to));
 
@@ -516,7 +517,7 @@ export async function GET(req: NextRequest) {
           const reason = String(tarReasonById.get(mark_id) ?? "").trim();
           if (reason) continue; // ✅ retard justifié → on ignore
 
-          const minutes = Number(t.minutes || 0);
+          const minutes = Number(t.minutes_late || 0);
           if (!minutes) continue;
           tardy_minutes += minutes;
           tardy_count += 1;

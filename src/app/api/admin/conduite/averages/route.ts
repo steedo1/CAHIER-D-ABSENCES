@@ -1,6 +1,6 @@
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /* ───────── Réglages par défaut + loader depuis conduct_settings ───────── */
@@ -873,7 +873,7 @@ export async function GET(req: NextRequest) {
 
   const {
     data: { user },
-  } = await supa.auth.getUser();
+  } = await getVerifiedServerUser(supa);
 
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });

@@ -254,16 +254,15 @@ export async function prepareAdminEssentialOffline(
   onProgress("Préparation des listes administratives…");
   const [classesPayload, affectationsPayload] = await Promise.all([
     jsonGet<AdminClassesPayload>("/api/admin/classes?limit=999"),
-    // Le conseil de classe utilise cette URL sans limite ; on prépare aussi sa
-    // clé exacte pour que son code actuel puisse fonctionner sans modification.
-    jsonGet<AdminClassesPayload>("/api/admin/classes").then(() =>
-      jsonGet<AdminClassesPayload>("/api/admin/classes?limit=999"),
-    ),
     jsonGet("/api/admin/students"),
     jsonGet("/api/admin/institution/settings"),
     jsonGet("/api/admin/institution/academic-years"),
     optional(() => jsonGet<any>("/api/admin/affectations/current"), { items: [] }),
-  ]).then((values) => [values[0], values[5]] as const);
+  ]).then((values) => [values[0], values[4]] as const);
+
+  // Sans filtre, /api/admin/classes utilise aussi la limite 999 : conserver
+  // l'URL exacte du Conseil dans le cache sans relancer deux GET identiques.
+  await cacheAdminEssentialJson("/api/admin/classes", classesPayload);
 
   // Si l'API facultative des affectations n'a pas répondu, Conseil doit recevoir
   // une réponse vide plutôt qu'une exception réseau dans son Promise.all.

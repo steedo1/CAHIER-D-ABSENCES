@@ -9,7 +9,7 @@ import React, {
   useState,
 } from "react";
 import { Printer, RefreshCw, X } from "lucide-react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { bulletinDocumentTitle } from "@/lib/education-bulletins";
 import {
   EDUCATION_TYPE_OPTIONS,
@@ -2445,6 +2445,7 @@ export default function BulletinsPage() {
 
   const [bulletinRaw, setBulletinRaw] = useState<BulletinResponse | null>(null);
   const [bulletinLoading, setBulletinLoading] = useState(false);
+  const [printPreparing, setPrintPreparing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [conductSummary, setConductSummary] =
@@ -2883,9 +2884,38 @@ export default function BulletinsPage() {
     })).filter((group) => group.items.length > 0);
   }, [classes]);
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!items.length) return;
     if (typeof window === "undefined") return;
+
+    if (navigator.onLine) {
+      try {
+        setPrintPreparing(true);
+        const params = new URLSearchParams({
+          class_id: selectedClassId,
+          from: dateFrom,
+          to: dateTo,
+        });
+        const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+        const year = selectedAcademicYear || selectedPeriod?.academic_year;
+        if (year) params.set("academic_year", year);
+        if (selectedPeriod?.code) params.set("period_code", selectedPeriod.code);
+        const response = await fetch(`/api/admin/grades/bulletin?${params}`, {
+          method: "POST", cache: "no-store",
+        });
+        const fresh = (await response.json()) as BulletinResponse;
+        if (!response.ok || !fresh.ok || !Array.isArray(fresh.items)) {
+          throw new Error("Impossible de préparer les QR des bulletins pour impression.");
+        }
+        // Le DOM imprimé doit contenir les QR émis par l'action d'impression.
+        flushSync(() => setBulletinRaw(fresh));
+      } catch (error: any) {
+        setErrorMsg(error?.message || "Impossible de préparer l’impression.");
+        return;
+      } finally {
+        setPrintPreparing(false);
+      }
+    }
 
     // ✅ force recalcul fit-to-page AVANT print (tous les bulletins)
     window.dispatchEvent(new Event("bulletins:recalc-fit"));
@@ -3436,9 +3466,9 @@ export default function BulletinsPage() {
               Recharger
             </Button>
 
-            <Button type="button" onClick={handlePrint}>
+            <Button type="button" onClick={handlePrint} disabled={printPreparing}>
               <Printer className="h-4 w-4" />
-              Imprimer
+              {printPreparing ? "Préparation…" : "Imprimer"}
             </Button>
           </div>
 

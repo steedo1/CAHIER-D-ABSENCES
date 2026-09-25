@@ -1,6 +1,6 @@
 // src/app/api/admin/absences/by-class/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 function startISO(d?: string) {
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const {
     data: { user },
-  } = await supa.auth.getUser();
+  } = await getVerifiedServerUser(supa);
   if (!user) return NextResponse.json({ items: [] });
 
   const { searchParams } = new URL(req.url);
@@ -86,15 +86,17 @@ export async function GET(req: NextRequest) {
     absCountAgg.set(sid, (absCountAgg.get(sid) || 0) + 1);
   }
 
-  // --- Retards (minutes) depuis v_tardy_minutes (NON JUSTIFIÉS uniquement)
+  // v_tardy_minutes n'expose pas id : v_mark_minutes conserve l'identifiant
+  // nécessaire pour exclure les marques justifiées.
   const tarAgg = new Map<string, number>();
   const tarCountAgg = new Map<string, number>();
   try {
     const { data: tardy } = await srv
-      .from("v_tardy_minutes")
-      .select("id, student_id, minutes, started_at")
+      .from("v_mark_minutes")
+      .select("id, student_id, minutes_late, started_at")
       .eq("institution_id", institution_id)
       .eq("class_id", class_id)
+      .gt("minutes_late", 0)
       .gte("started_at", startISO(from))
       .lte("started_at", endISO(to));
 
@@ -128,7 +130,7 @@ export async function GET(req: NextRequest) {
       if (reason) continue; // ✅ retard justifié → on ignore
 
       const sid = String((t as any).student_id);
-      const v = Number((t as any).minutes || 0);
+      const v = Number((t as any).minutes_late || 0);
       if (!sid || !v) continue;
       tarAgg.set(sid, (tarAgg.get(sid) || 0) + v);
       tarCountAgg.set(sid, (tarCountAgg.get(sid) || 0) + 1);

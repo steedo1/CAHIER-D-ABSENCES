@@ -5,11 +5,71 @@ import { hashOfficialSnapshot } from "@/lib/official-documents";
 
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // sans 0/O, 1/I
 
+function codeForSnapshot(bulletinKey: string, payloadHash: string, expiresAt: string | null, attempt: number) {
+  // Le code est stable pour un même bulletin. L'index UNIQUE sur code empêche
+  // deux instances Vercel de créer le même QR en parallèle, sans migration SQL.
+  const secret = process.env.BULLETIN_QR_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret) throw new Error("Clé de signature des QR indisponible.");
+  const bytes = crypto.createHmac("sha256", secret)
+    .update(JSON.stringify([bulletinKey, payloadHash, expiresAt, attempt]))
+    .digest();
+  return Array.from(bytes.subarray(0, 20), (byte) => ALPHABET[byte % ALPHABET.length]).join("");
+}
+
 export function makeShortCode(len = 12) {
   const bytes = crypto.randomBytes(len);
   let out = "";
   for (let i = 0; i < len; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
   return out;
+}
+
+/** Lecture groupée pour les aperçus et la préparation hors ligne : aucune écriture. */
+export async function findExistingBulletinShortCodes(
+  srv: SupabaseClient,
+  candidates: Array<{ bulletinKey: string; payload: unknown }>,
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const keys = Array.from(new Set(candidates.map((candidate) => candidate.bulletinKey)));
+  const hashes = new Map(candidates.map((candidate) => [
+    candidate.bulletinKey, hashOfficialSnapshot(candidate.payload),
+  ]));
+  for (let start = 0; start < keys.length; start += 50) {
+    const { data, error } = await srv.from("bulletin_qr_codes")
+      .select("id,bulletin_key,code,expires_at,payload_hash,official_issue_id,created_at")
+      .in("bulletin_key", keys.slice(start, start + 50))
+      .eq("revoked", false)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const rows = (data || []).filter((row: any) =>
+      row.code && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()));
+    // Un QR officiel de contenu identique prime sur un brouillon plus récent.
+    for (const row of rows.filter((row: any) => row.official_issue_id)) {
+      const key = String(row.bulletin_key || "");
+      if (!result.has(key) && row.payload_hash && row.payload_hash === hashes.get(key)) {
+        result.set(key, row.code);
+      }
+    }
+    // Compatibilité des anciens bulletins émis avant l'ajout de payload_hash.
+    const legacy = rows.filter((row: any) => row.official_issue_id && !row.payload_hash && !result.has(String(row.bulletin_key || "")));
+    if (legacy.length) {
+      const { data: oldRows, error: oldError } = await srv.from("bulletin_qr_codes")
+        .select("id,bulletin_key,code,payload").in("id", legacy.map((row: any) => row.id));
+      if (oldError) throw oldError;
+      for (const row of oldRows || []) {
+        const key = String(row.bulletin_key || "");
+        if (!result.has(key) && hashOfficialSnapshot(row.payload) === hashes.get(key)) {
+          result.set(key, row.code);
+        }
+      }
+    }
+    for (const row of rows.filter((row: any) => !row.official_issue_id)) {
+      const key = String(row.bulletin_key || "");
+      if (!result.has(key) && row.payload_hash && row.payload_hash === hashes.get(key)) {
+        result.set(key, row.code);
+      }
+    }
+  }
+  return result;
 }
 
 export async function getOrCreateBulletinShortCode(
@@ -25,13 +85,17 @@ export async function getOrCreateBulletinShortCode(
 
   // 1) Réutilise un code existant seulement tant qu'il n'a pas été
   // rattaché à un bulletin officiellement émis. Un QR officiel est immuable.
-  const { data: existingRows } = await srv
+  const { data: existingRows, error: readError } = await srv
     .from("bulletin_qr_codes")
     .select("id, code, expires_at, revoked, payload_hash, official_issue_id")
     .eq("bulletin_key", opts.bulletinKey)
     .eq("revoked", false)
     .order("created_at", { ascending: false })
     .limit(20);
+
+  // Une lecture refusée ou invalide ne doit jamais être prise pour une absence
+  // de QR, sous peine de recréer le même code à chaque requête.
+  if (readError) throw readError;
 
   const usableRows = (existingRows ?? []).filter((row: any) => {
     if (!row?.code) return false;
@@ -89,9 +153,9 @@ export async function getOrCreateBulletinShortCode(
     if (!updateError) return editableDraft.code;
   }
 
-  // 2) Sinon crée un nouveau code (anti-collision)
+  // 2) Sinon crée un code déterministe. Les tentatives simultanées convergent.
   for (let i = 0; i < 8; i++) {
-    const code = makeShortCode(12);
+    const code = codeForSnapshot(opts.bulletinKey, payloadHash, opts.expiresAt ?? null, i);
 
     const { error } = await srv.from("bulletin_qr_codes").insert({
       code,
@@ -105,8 +169,20 @@ export async function getOrCreateBulletinShortCode(
 
     if (!error) return code;
 
-    // collision unique sur code => on réessaye
-    if ((error as any)?.code === "23505") continue;
+    if ((error as any)?.code === "23505") {
+      const { data: concurrent, error: concurrentError } = await srv
+        .from("bulletin_qr_codes")
+        .select("bulletin_key,payload_hash,revoked,expires_at")
+        .eq("code", code).maybeSingle();
+      if (concurrentError) throw concurrentError;
+      if (concurrent && !concurrent.revoked &&
+        concurrent.bulletin_key === opts.bulletinKey &&
+        concurrent.payload_hash === payloadHash &&
+        (!concurrent.expires_at || new Date(concurrent.expires_at).getTime() > Date.now())) {
+        return code;
+      }
+      continue;
+    }
 
     throw error;
   }

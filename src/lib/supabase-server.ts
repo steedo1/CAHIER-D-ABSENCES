@@ -1,6 +1,18 @@
 // src/lib/supabase-server.ts
 import { cookies } from "next/headers";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { AuthError, SupabaseClient, User } from "@supabase/supabase-js";
+
+const verifiedUserByClient = new WeakMap<SupabaseClient, { data: { user: User | null }; error: AuthError | null }>();
+
+/** setSession() valide déjà le token auprès de Supabase Auth ; on réutilise
+ * cette validation pendant la même requête au lieu d'appeler /auth/v1/user
+ * immédiatement une seconde fois. Le cache est lié au client de la requête. */
+export function getVerifiedServerUser(client: SupabaseClient) {
+  return verifiedUserByClient.get(client)
+    ? Promise.resolve(verifiedUserByClient.get(client)!)
+    : client.auth.getUser();
+}
 
 const SUPABASE_URL  = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
 const SUPABASE_ANON = (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
@@ -39,7 +51,12 @@ export async function getSupabaseServerClient(opts: { writable?: boolean } = {})
   }
 
   if (access && refresh) {
-    try { await client.auth.setSession({ access_token: access, refresh_token: refresh }); } catch {}
+    try {
+      const verified = await client.auth.setSession({ access_token: access, refresh_token: refresh });
+      if (!verified.error && verified.data.user) {
+        verifiedUserByClient.set(client, { data: { user: verified.data.user }, error: null });
+      }
+    } catch {}
   }
 
   return client;
@@ -48,5 +65,4 @@ export async function getSupabaseServerClient(opts: { writable?: boolean } = {})
 export async function getSupabaseActionClient() {
   return getSupabaseServerClient({ writable: true });
 }
-
 

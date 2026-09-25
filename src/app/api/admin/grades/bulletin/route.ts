@@ -1,6 +1,6 @@
 // src/app/api/admin/grades/bulletin/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -8,7 +8,7 @@ import crypto from "crypto";
 import QRCode from "qrcode";
 
 // ✅ QR court stocké en DB (table bulletin_qr_codes)
-import { getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
+import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import {
@@ -718,6 +718,7 @@ async function addQrToItems<T extends { student_id: string }>(
       short_label?: string | null;
       academic_year?: string | null;
     };
+    createQr: boolean;
   }
 ): Promise<
   (T & {
@@ -781,6 +782,57 @@ const snapFor = (row: any) => {
   // On essaie le mode "short" par défaut (idéal pour le scan)
   const envMode = String(process.env.BULLETIN_QR_MODE || "short").toLowerCase();
   const preferShort = envMode !== "token";
+
+  // Un GET (dont la préparation automatique hors ligne) ne crée jamais de QR.
+  // Une impression demandée explicitement passe par POST et peut les émettre.
+  if (!opts.createQr) {
+    const candidates = items.map((it) => ({
+      bulletinKey: computeBulletinKey({
+        instId: opts.institutionId,
+        classId: opts.classId,
+        studentId: it.student_id,
+        academicYear,
+        periodFrom: opts.periodMeta.from ?? null,
+        periodTo: opts.periodMeta.to ?? null,
+        periodLabel,
+      }),
+      payload: {
+        instId: opts.institutionId,
+        classId: opts.classId,
+        studentId: it.student_id,
+        academicYear,
+        periodFrom: opts.periodMeta.from ?? null,
+        periodTo: opts.periodMeta.to ?? null,
+        periodLabel,
+        periodShortLabel: opts.periodMeta.short_label ?? null,
+        s: snapFor(it),
+      },
+    }));
+    let existing = new Map<string, string>();
+    if (preferShort && candidates.length) {
+      try {
+        existing = await findExistingBulletinShortCodes(srv, candidates);
+      } catch (error) {
+        console.warn("[bulletin] lecture des QR indisponible", error);
+      }
+    }
+    return items.map((it, index) => {
+      const { bulletinKey, payload } = candidates[index];
+      const code = existing.get(bulletinKey) || null;
+      const token = code ? null : signBulletinQRToken(payload);
+      return {
+        ...it,
+        qr_mode: code ? ("short" as const) : token ? ("token" as const) : null,
+        qr_code: code,
+        qr_token: token,
+        qr_url: code
+          ? `${opts.origin}${BULLETIN_VERIFY_SHORT_PREFIX}/${code}`
+          : token ? `${opts.origin}${BULLETIN_VERIFY_LEGACY_PATH}?t=${encodeURIComponent(token)}` : null,
+        official_document_source_id: bulletinKey,
+        official_document_number: bulletinOfficialNumber(code, bulletinKey),
+      };
+    });
+  }
 
   // 1) Test "short" une fois (évite de spammer les erreurs si table absente)
   let shortSupported = false;
@@ -967,7 +1019,7 @@ async function getAdminAndInstitution(
   const {
     data: { user },
     error: authError,
-  } = await supabase.auth.getUser();
+  } = await getVerifiedServerUser(supabase);
 
   if (authError || !user) {
     return { error: "UNAUTHENTICATED" as const };
@@ -1599,7 +1651,7 @@ async function attachOfficialEndOfYearDecisions(
 }
 
 /* ───────── GET /api/admin/grades/bulletin ───────── */
-export async function GET(req: NextRequest) {
+async function loadBulletin(req: NextRequest, createQr: boolean) {
   const supabase = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
   const srvClient = srv as unknown as SupabaseClient;
@@ -2339,6 +2391,7 @@ export async function GET(req: NextRequest) {
       ? baseItems
       : await attachQrPng(
           await addQrToItems(srvClient, baseItems, {
+            createQr,
             origin,
             institutionId,
             classId: classRow.id,
@@ -4072,6 +4125,7 @@ export async function GET(req: NextRequest) {
     ? items
     : await attachQrPng(
         await addQrToItems(srvClient, items, {
+          createQr,
           origin,
           institutionId,
           classId: classRow.id,
@@ -4132,4 +4186,18 @@ export async function GET(req: NextRequest) {
     subject_components: subjectComponentsForReport,
     items: itemsForResponse,
   });
+}
+
+export async function GET(req: NextRequest) {
+  return loadBulletin(req, false);
+}
+
+export async function POST(req: NextRequest) {
+  // Émission réservée à une action explicite sur le même site. L'authentification
+  // et le contrôle d'établissement restent dans loadBulletin.
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) {
+    return NextResponse.json({ ok: false, error: "FORBIDDEN_ORIGIN" }, { status: 403 });
+  }
+  return loadBulletin(req, true);
 }

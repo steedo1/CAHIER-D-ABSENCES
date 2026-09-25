@@ -1,6 +1,6 @@
 // src/app/api/admin/students/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { buildProtectedStudentPhotoUrl } from "@/lib/studentPhotoAccess";
 import {
@@ -107,7 +107,7 @@ async function requireReadableInstitution() {
 
   const {
     data: { user },
-  } = await supa.auth.getUser();
+  } = await getVerifiedServerUser(supa);
 
   if (!user) {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };

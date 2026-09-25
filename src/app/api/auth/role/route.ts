@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import type { AppRole } from "@/lib/auth/role";
 import { ROLE_PRIORITY } from "@/lib/auth/role";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser();
+  } = await getVerifiedServerUser(supabase);
 
   if (error || !user) {
     return noStore({ role: null }, 401);
