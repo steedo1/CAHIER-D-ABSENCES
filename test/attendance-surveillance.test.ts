@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attendanceReceiptLabel, readAttendancePages, sessionBelongsToSlot } from "../src/lib/attendance-surveillance";
+import { attendanceReceiptLabel, cappedAttendanceLostMinutes, readAttendancePages, sessionBelongsToSlot } from "../src/lib/attendance-surveillance";
 import { parseAttendanceEndAt } from "../src/lib/attendance-end-time";
 import { attendanceCloudAvailableForSync, attendanceConnectionConstrained } from "../src/lib/attendance-network";
+
+test("lost time is capped by the planned course duration", () => {
+  assert.equal(cappedAttendanceLostMinutes({ planned_minutes: 5, late_minutes: 2, early_departure_minutes: 4 }), 5);
+  assert.equal(cappedAttendanceLostMinutes({ planned_minutes: 55, late_minutes: 20, early_departure_minutes: 10 }), 30);
+  assert.equal(cappedAttendanceLostMinutes({ planned_minutes: 5, late_minutes: 0, early_departure_minutes: 0, absent: true }), 5);
+});
 
 test("a late 08:00 call stays attached to 08:00, never the adjacent 09:00 slot", () => {
   assert.equal(sessionBelongsToSlot(480, 480), true);

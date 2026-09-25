@@ -15,7 +15,7 @@ import {
 } from "@/lib/admin-attendance-monitor";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 
-import { attendanceReceiptLabel, type AttendanceReceiptFacts } from "@/lib/attendance-surveillance";
+import { attendanceReceiptLabel, type AttendanceReceiptFacts, cappedAttendanceLostMinutes } from "@/lib/attendance-surveillance";
 import { fetchAttendanceBackground } from "@/lib/attendance-network";
 
 type MonitorStatus =
@@ -286,7 +286,17 @@ function buildTeacherRows(detailedRows: DetailedRow[]) {
       actual_sessions: controllableRows.filter((row) => Boolean(row.actual_start)).length,
       expected_minutes: controllableRows.reduce((sum, row) => sum + plannedDuration(row), 0),
       effective_minutes: controllableRows.reduce((sum, row) => sum + effectiveDuration(row), 0),
-      lost_minutes: lateMinutes + earlyMinutes + absenceMinutes,
+      lost_minutes: controllableRows.reduce(
+        (sum, row) =>
+          sum +
+          cappedAttendanceLostMinutes({
+            planned_minutes: plannedDuration(row),
+            late_minutes: row.status === "late" ? row.late_minutes : 0,
+            early_departure_minutes: row.early_departure_minutes,
+            absent: isAbsenceStatus(row.status),
+          }),
+        0,
+      ),
     } satisfies TeacherControlRow;
   }).filter((teacher) => teacher.expected_sessions > 0);
 }
