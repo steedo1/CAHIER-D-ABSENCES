@@ -3268,6 +3268,9 @@ function BulletinsPageContent() {
   const handlePrint = async () => {
     if (!items.length || !enriched || !classInfo) return;
     if (typeof window === "undefined") return;
+    let printItems = items;
+    let issuedQrByStudent = new Map<string, BulletinItemBase>();
+    let qrReady = true;
 
     const launchBrowserPrint = () => {
       window.dispatchEvent(new Event("bulletins:recalc-fit"));
@@ -3298,8 +3301,17 @@ function BulletinsPageContent() {
                   return item;
                 }
 
+                const fresh = issuedQrByStudent.get(item.student_id);
+
                 return {
                   ...item,
+                  ...(fresh ? {
+                    qr_code: fresh.qr_code,
+                    qr_token: fresh.qr_token,
+                    qr_url: fresh.qr_url,
+                    qr_png: fresh.qr_png,
+                    official_document_number: fresh.official_document_number,
+                  } : {}),
                   official_print_kind: liveDuplicateMode ? "duplicate" : "original",
                   official_duplicate_number: liveDuplicateMode
                     ? Math.max(
@@ -3397,7 +3409,7 @@ function BulletinsPageContent() {
     };
 
     const sendPrepareRequest = async (reason = "") => {
-      const documents = items.map(buildDocument);
+      const documents = printItems.map(buildDocument);
       const response = await fetch("/api/admin/duplicata/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3416,6 +3428,41 @@ function BulletinsPageContent() {
     try {
       setPrintPreparing(true);
       setErrorMsg(null);
+      if (!liveDuplicateMode) {
+        qrReady = false;
+        const selectedPeriod = periods.find((p) => p.id === selectedPeriodId);
+        const params = new URLSearchParams({
+          class_id: selectedClassId,
+          from: dateFrom,
+          to: dateTo,
+        });
+        const year = selectedAcademicYear || selectedPeriod?.academic_year;
+        if (year) params.set("academic_year", year);
+        if (selectedPeriod?.code) params.set("period_code", selectedPeriod.code);
+        const qrResponse = await fetch(`/api/admin/grades/bulletin?${params}`, {
+          method: "POST", cache: "no-store",
+        });
+        const issued = (await qrResponse.json()) as BulletinResponse;
+        if (!qrResponse.ok || !issued.ok || !Array.isArray(issued.items)) {
+          throw new Error("Impossible de préparer les QR des bulletins pour impression.");
+        }
+        issuedQrByStudent = new Map(issued.items.map((item) => [item.student_id, item]));
+        printItems = items.map((item) => {
+          const fresh = issuedQrByStudent.get(item.student_id);
+          if (!fresh || fresh.official_document_source_id !== item.official_document_source_id) {
+            throw new Error("Le bulletin a changé. Rechargez-le avant impression.");
+          }
+          return {
+            ...item,
+            qr_code: fresh.qr_code,
+            qr_token: fresh.qr_token,
+            qr_url: fresh.qr_url,
+            qr_png: fresh.qr_png,
+            official_document_number: fresh.official_document_number,
+          };
+        });
+        qrReady = true;
+      }
       const prepared = await sendPrepareRequest();
 
       if (!prepared.response.ok || !prepared.payload?.ok) {
@@ -3444,8 +3491,16 @@ function BulletinsPageContent() {
                   String(item.official_document_source_id || ""),
                 );
                 if (!meta) return item;
+                const fresh = issuedQrByStudent.get(item.student_id);
                 return {
                   ...item,
+                  ...(fresh ? {
+                    qr_code: fresh.qr_code,
+                    qr_token: fresh.qr_token,
+                    qr_url: fresh.qr_url,
+                    qr_png: fresh.qr_png,
+                    official_document_number: fresh.official_document_number,
+                  } : {}),
                   official_issue_id: meta.issue_id || null,
                   official_print_kind: meta.print_kind || null,
                   official_duplicate_number: meta.duplicate_number ?? null,
@@ -3459,6 +3514,10 @@ function BulletinsPageContent() {
 
       window.setTimeout(launchBrowserPrint, 0);
     } catch (error: any) {
+      if (!qrReady) {
+        setErrorMsg(error?.message || "Impossible de préparer les QR des bulletins.");
+        return;
+      }
       launchOfficialPrintWithoutRegistry(error);
     } finally {
       setPrintPreparing(false);

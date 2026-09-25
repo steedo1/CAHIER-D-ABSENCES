@@ -1,6 +1,6 @@
 //src/app/api/admin/institution/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -45,7 +45,7 @@ async function guard(
 ): Promise<GuardOk | GuardErr> {
   const {
     data: { user },
-  } = await supa.auth.getUser();
+  } = await getVerifiedServerUser(supa);
   if (!user) return { error: "unauthorized" };
 
   const { data: me } = await supa

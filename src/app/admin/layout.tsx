@@ -3,7 +3,7 @@ import AdminShell from "./ui/shell"; // ⚠ casse correcte
 import FileCorrespondentShell from "./ui/file-correspondent-shell";
 import OfflineScheduleSyncBridge from "@/components/admin/OfflineScheduleSyncBridge";
 import RelaySupervisionBadge from "@/components/admin/RelaySupervisionBadge";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { ROLE_PRIORITY, type AppRole } from "@/lib/auth/role";
 
@@ -16,7 +16,7 @@ async function getPrimaryRole(): Promise<AppRole | null> {
     const supabase = await getSupabaseServerClient();
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } = await getVerifiedServerUser(supabase);
 
     if (!user) return null;
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type RequireInstitutionAccessOptions = {
@@ -27,7 +27,7 @@ export async function requireInstitutionAccess(
 
   const {
     data: { user },
-  } = await supa.auth.getUser();
+  } = await getVerifiedServerUser(supa);
 
   if (!user) {
     return {

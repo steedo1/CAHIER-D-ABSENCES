@@ -1,6 +1,6 @@
 // src/app/api/admin/classes/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType } from "@/lib/education-organization";
 import { dedupeEquivalentGeneralSecondaryClasses } from "@/lib/general-secondary-class-equivalence";
@@ -92,7 +92,7 @@ async function requireReadableInstitution() {
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getVerifiedServerUser(supabase);
 
   if (!user) {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };

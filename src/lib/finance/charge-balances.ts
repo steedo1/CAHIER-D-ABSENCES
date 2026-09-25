@@ -62,7 +62,7 @@ export async function fetchFinanceChargeBalancesByClasses({
   if (schoolIds.length === 0 || targetClassIds.length === 0) return [];
 
   const admin = getSupabaseServiceClient();
-  const rowsById = new Map<string, FinanceChargeBalanceRow>();
+  const rows: FinanceChargeBalanceRow[] = [];
   const safePageSize = Math.max(1, Math.min(pageSize, 1000));
 
   for (const classPart of chunkStrings(targetClassIds)) {
@@ -96,11 +96,11 @@ export async function fetchFinanceChargeBalancesByClasses({
       if (error) throw new Error(error.message);
 
       const pageRows = (data ?? []) as FinanceChargeBalanceRow[];
-      for (const row of pageRows) rowsById.set(row.id, row);
+      rows.push(...pageRows);
 
       if (pageRows.length < safePageSize) break;
     }
   }
 
-  return Array.from(rowsById.values());
+  return rows;
 }

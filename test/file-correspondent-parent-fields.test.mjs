@@ -9,12 +9,15 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 test("la résolution du rôle vérifie la session puis lit les rôles côté service", () => {
   const layout = read("src/app/admin/layout.tsx");
   const roleApi = read("src/app/api/auth/role/route.ts");
+  const auth = read("src/lib/supabase-server.ts");
 
   for (const source of [layout, roleApi]) {
-    assert.match(source, /auth\.getUser\(\)/);
+    assert.match(source, /getVerifiedServerUser\(/);
     assert.match(source, /getSupabaseServiceClient\(\)/);
     assert.match(source, /\.from\("user_roles"\)/);
   }
+  assert.match(auth, /await client\.auth\.setSession\(/);
+  assert.match(auth, /if \(!verified\.error && verified\.data\.user\)/);
 });
 
 test("les opérations du périmètre fichier acceptent le correspondant", () => {

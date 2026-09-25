@@ -1,10 +1,10 @@
 // src/app/api/admin/_helpers/getMyInstitution.ts
 import { NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 
 export async function getMyInstitutionId() {
   const supabaseAuth = await getSupabaseServerClient();
-  const { data: { user } } = await supabaseAuth.auth.getUser();
+  const { data: { user } } = await getVerifiedServerUser(supabaseAuth);
 
   if (!user) {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };

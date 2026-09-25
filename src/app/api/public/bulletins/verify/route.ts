@@ -1422,7 +1422,7 @@ async function computeStudentGeneralAvgForRange(opts: {
     bonusMaps,
   } = opts;
 
-  let evalQuery = srv
+  const evalQuery = srv
     .from("grade_evaluations")
     .select(
       "id, class_id, subject_id, teacher_id, eval_date, scale, coeff, is_published, subject_component_id",
@@ -2078,7 +2078,7 @@ export async function GET(req: NextRequest) {
   }
 
   let periodLooksAnnual = false;
-  let yearForAnnual: string | null =
+  const yearForAnnual: string | null =
     periodMeta.academic_year ??
     academicYearToken ??
     classRow.academic_year ??
@@ -2571,10 +2571,11 @@ export async function GET(req: NextRequest) {
       const tarCountAgg = new Map<string, number>();
       try {
         const { data: tardy } = await srv
-          .from("v_tardy_minutes")
-          .select("id, student_id, minutes, started_at")
+          .from("v_mark_minutes")
+          .select("id, student_id, minutes_late, started_at")
           .eq("institution_id", instIdStr)
           .eq("class_id", classIdStr)
+          .gt("minutes_late", 0)
           .gte("started_at", startISO(from))
           .lte("started_at", endISO(to));
 
@@ -2605,7 +2606,7 @@ export async function GET(req: NextRequest) {
           if (reason) continue;
 
           const sid = String((t as any).student_id || "");
-          const v = Number((t as any).minutes || 0);
+          const v = Number((t as any).minutes_late || 0);
           if (!sid || !Number.isFinite(v) || v <= 0) continue;
           tarAgg.set(sid, (tarAgg.get(sid) || 0) + v);
           tarCountAgg.set(sid, (tarCountAgg.get(sid) || 0) + 1);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 
@@ -18,7 +18,7 @@ async function getMyInstitutionId() {
   const supabaseAuth = await getSupabaseServerClient();
   const {
     data: { user },
-  } = await supabaseAuth.auth.getUser();
+  } = await getVerifiedServerUser(supabaseAuth);
 
   if (!user) {
     return {
