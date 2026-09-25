@@ -1081,35 +1081,59 @@ export async function PATCH(
     }
   }
 
-  const [studentSnapshotsResult, enrollmentSnapshotsResult] = await Promise.all(
-    [
-      rows.length > 0
-        ? srv
-            .from("students")
-            .select(
-              "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder",
-            )
-            .in(
-              "id",
-              rows.map((row) => row.student_id),
-            )
-        : Promise.resolve({ data: [], error: null } as any),
-      rows.length > 0
-        ? srv
-            .from("class_enrollments")
-            .select(
-              "id,institution_id,class_id,student_id,start_date,end_date,official_track_code",
-            )
-            .eq("institution_id", institutionId)
-            .eq("class_id", classId)
-            .is("end_date", null)
-            .in(
-              "student_id",
-              rows.map((row) => row.student_id),
-            )
-        : Promise.resolve({ data: [], error: null } as any),
-    ],
-  );
+  const currentAcademicYear = cleanText((cls as any).academic_year);
+
+  const [
+    studentSnapshotsResult,
+    enrollmentSnapshotsResult,
+    yearProfileSnapshotsResult,
+    academicYearResult,
+  ] = await Promise.all([
+    rows.length > 0
+      ? srv
+          .from("students")
+          .select(
+            "id,institution_id,first_name,last_name,full_name,matricule,gender,birthdate,birth_place,parent_names,parent_contact,nationality,is_repeater,lv2,is_affecte,is_boarder",
+          )
+          .in(
+            "id",
+            rows.map((row) => row.student_id),
+          )
+      : Promise.resolve({ data: [], error: null } as any),
+    rows.length > 0
+      ? srv
+          .from("class_enrollments")
+          .select(
+            "id,institution_id,class_id,student_id,start_date,end_date,official_track_code",
+          )
+          .eq("institution_id", institutionId)
+          .eq("class_id", classId)
+          .is("end_date", null)
+          .in(
+            "student_id",
+            rows.map((row) => row.student_id),
+          )
+      : Promise.resolve({ data: [], error: null } as any),
+    rows.length > 0 && currentAcademicYear
+      ? srv
+          .from("student_year_profiles")
+          .select("*")
+          .eq("institution_id", institutionId)
+          .eq("academic_year", currentAcademicYear)
+          .in(
+            "student_id",
+            rows.map((row) => row.student_id),
+          )
+      : Promise.resolve({ data: [], error: null } as any),
+    currentAcademicYear
+      ? srv
+          .from("academic_years")
+          .select("id")
+          .eq("institution_id", institutionId)
+          .eq("code", currentAcademicYear)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null } as any),
+  ]);
 
   if (studentSnapshotsResult.error) {
     return NextResponse.json(
@@ -1127,6 +1151,18 @@ export async function PATCH(
       { status: 400 },
     );
   }
+  if (yearProfileSnapshotsResult.error) {
+    return NextResponse.json(
+      { error: yearProfileSnapshotsResult.error.message },
+      { status: 400 },
+    );
+  }
+  if (academicYearResult.error) {
+    return NextResponse.json(
+      { error: academicYearResult.error.message },
+      { status: 400 },
+    );
+  }
 
   const studentSnapshots = new Map(
     (studentSnapshotsResult.data || []).map((snapshot: any) => [
@@ -1140,6 +1176,25 @@ export async function PATCH(
       snapshot,
     ]),
   );
+  const yearProfileSnapshots = new Map(
+    (yearProfileSnapshotsResult.data || []).map((snapshot: any) => [
+      String(snapshot.student_id),
+      snapshot,
+    ]),
+  );
+  const currentAcademicYearId = cleanText(
+    (academicYearResult.data as any)?.id,
+  );
+
+  if (currentAcademicYear && !currentAcademicYearId) {
+    return NextResponse.json(
+      {
+        error:
+          "L’année scolaire de la classe est introuvable dans academic_years. La correction est bloquée pour éviter un profil annuel incohérent.",
+      },
+      { status: 409 },
+    );
+  }
 
   const currentClass: StudentSeriesTargetClass = {
     id: String((cls as any).id),
@@ -1158,7 +1213,6 @@ export async function PATCH(
     )
     .eq("institution_id", institutionId);
 
-  const currentAcademicYear = cleanText((cls as any).academic_year);
   if (currentAcademicYear) {
     classCatalogQuery = classCatalogQuery.eq(
       "academic_year",
@@ -1248,6 +1302,76 @@ export async function PATCH(
       })
       .eq("id", enrollmentSnapshot.id)
       .eq("institution_id", institutionId);
+
+    if (currentAcademicYear && currentAcademicYearId) {
+      const yearProfileSnapshot: any = yearProfileSnapshots.get(studentId);
+      if (yearProfileSnapshot) {
+        await srv
+          .from("student_year_profiles")
+          .upsert(yearProfileSnapshot, {
+            onConflict: "institution_id,academic_year_id,student_id",
+          });
+      } else {
+        await srv
+          .from("student_year_profiles")
+          .delete()
+          .eq("institution_id", institutionId)
+          .eq("academic_year_id", currentAcademicYearId)
+          .eq("student_id", studentId);
+      }
+    }
+  }
+
+  async function syncStudentYearProfile(
+    studentId: string,
+    targetClass: StudentSeriesTargetClass,
+    studentProfile: FinanceStudentProfile,
+  ) {
+    const academicYear = cleanText(targetClass.academic_year);
+    if (!academicYear || academicYear !== currentAcademicYear) return;
+    if (!currentAcademicYearId) {
+      throw new Error(
+        "Année scolaire introuvable : synchronisation du profil annuel impossible.",
+      );
+    }
+
+    const previous: any = yearProfileSnapshots.get(studentId);
+    const affecte = studentProfile.is_affecte;
+    const boarder = studentProfile.is_boarder;
+
+    const { error } = await srv
+      .from("student_year_profiles")
+      .upsert(
+        {
+          institution_id: institutionId,
+          academic_year_id: currentAcademicYearId,
+          academic_year: academicYear,
+          student_id: studentId,
+          class_id: String(targetClass.id),
+          level: cleanText(targetClass.level || targetClass.label) || "unknown",
+          is_boarder: boarder === true,
+          boarding_status_raw:
+            boarder === null ? "unknown" : boarder ? "interne" : "externe",
+          affectation_status:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          affectation_status_raw:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          billing_affectation_group:
+            affecte === null ? "unknown" : affecte ? "affecte" : "non_affecte",
+          scholarship_status: previous?.scholarship_status ?? "unknown",
+          guardian_phone: previous?.guardian_phone ?? null,
+          notes: previous?.notes ?? null,
+          source: "class_roster_edit",
+          source_payload: {
+            class_id: String(targetClass.id),
+            previous_source: previous?.source ?? null,
+          },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "institution_id,academic_year_id,student_id" },
+      );
+
+    if (error) throw error;
   }
 
   let updated = 0;
@@ -1341,6 +1465,12 @@ export async function PATCH(
       };
       const targetClass =
         targetClassByStudentId.get(row.student_id) ?? currentClass;
+
+      await syncStudentYearProfile(
+        row.student_id,
+        targetClass,
+        studentProfile,
+      );
 
       if (String(targetClass.id) !== classId) {
         const appliedMove = await transferStudentToSeriesClass({
