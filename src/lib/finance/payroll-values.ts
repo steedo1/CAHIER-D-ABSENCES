@@ -121,7 +121,7 @@ export function calculatePayrollSession(
   const credited = closed ? Math.min(Math.max(0, expectedMinutes - late), observed) : 0;
   const held = Boolean(matched?.actual_call_iso) && closed && credited > 0;
   const early = Math.max(0, expectedMinutes - late - credited);
-  const lost = held ? Math.min(referenceMinutes,
+  const lost = held ? Math.min(expectedMinutes, referenceMinutes,
     Math.max(0, late - lateTolerance) + Math.max(0, early - earlyTolerance)) : expectedMinutes;
   const equivalent = held ? Math.min(1, lost / referenceMinutes) : 0;
   const gross = held ? rate : 0;
