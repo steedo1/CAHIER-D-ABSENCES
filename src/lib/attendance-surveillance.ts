@@ -1,3 +1,17 @@
+export function cappedAttendanceLostMinutes(input: {
+  planned_minutes: number;
+  late_minutes?: number | null;
+  early_departure_minutes?: number | null;
+  absent?: boolean;
+}) {
+  const planned = Math.max(0, Number(input.planned_minutes) || 0);
+  if (!planned) return 0;
+  if (input.absent) return planned;
+  const late = Math.max(0, Number(input.late_minutes) || 0);
+  const early = Math.max(0, Number(input.early_departure_minutes) || 0);
+  return Math.min(planned, late + early);
+}
+
 /** Never move a session to another timetable slot because its call was late. */
 export function sessionBelongsToSlot(startedMinute: number, plannedMinute: number) {
   return Number.isFinite(startedMinute) && startedMinute === plannedMinute;
