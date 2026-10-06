@@ -45,6 +45,7 @@ const { aggregateSessions } = evaluate(`
 `);
 
 const payrollValues = evaluate(payrollValuesSource);
+const permanentPayroll = evaluate(read("src/lib/finance/payroll-permanents.ts"));
 const { classifyExtraSessions } = evaluate(`
   ${functionSource(payrollSource, "numberValue")}
   ${functionSource(payrollSource, "cycleFromLevel")}
@@ -58,14 +59,17 @@ const { classifyExtraSessions } = evaluate(`
     const rateSecond = 2000;
     const lateToleranceMin = 15;
     const earlyDepartureToleranceMin = 5;
+    const teacher = { employment_type: "vacataire", permanent_cycle: null };
+    const isPermanent = false;
     ${sourceBetween(payrollSource,
       "const horsEdtItems = actualRows.flatMap",
-      "const sessionItems =")}
+      "const inMonth =")}
     return horsEdtItems;
   }
-`, ["assignmentCoversDay", "calculatePayrollSession"], [
+`, ["assignmentCoversDay", "calculatePayrollSession", "payrollTeacherRate"], [
   payrollValues.assignmentCoversDay,
   payrollValues.calculatePayrollSession,
+  permanentPayroll.payrollTeacherRate,
 ]);
 
 const day = "2026-09-22";

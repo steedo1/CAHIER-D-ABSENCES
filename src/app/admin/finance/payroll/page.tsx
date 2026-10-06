@@ -17,12 +17,16 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getFinanceAccessForCurrentUser } from "@/lib/finance-access";
 import PayrollPrintSheet from "./PayrollPrintSheet";
 import { parsePayrollAmount, parsePayrollMinutes, payrollPayable, assignmentCoversDay, findPayrollSession, calculatePayrollSession } from "@/lib/finance/payroll-values";
+import { allocatePermanentOvertime, expectedPermanentOvertime, payrollFullWeeks, payrollTeacherRate, permanentCycle, permanentCyclesFromSettings, permanentPayrollSnapshot, permanentWeeklyQuota, type PermanentCycle, type PermanentPayrollSnapshot } from "@/lib/finance/payroll-permanents";
+import { readPayrollSettings } from "@/lib/finance/payroll-settings";
 import {
   AcademicYearSelector,
   getFinanceAcademicYearContext,
 } from "../_shared/academic-year";
 
 export const dynamic = "force-dynamic";
+const PERMANENT_PAYROLL_RUN_MARKER = "permanent_overtime_v1";
+const PAYROLL_HISTORY_FILTER = `scope.eq.vacataires_only,and(scope.eq.all_teachers,notes.eq.${PERMANENT_PAYROLL_RUN_MARKER})`;
 
 type EmploymentType = "vacataire" | "permanent";
 type PayrollStatus = "draft" | "validated" | "cancelled";
@@ -43,6 +47,7 @@ type PayrollTeacherRow = {
   employment_type: EmploymentType;
   payroll_enabled: boolean;
   notes: string | null;
+  permanent_cycle: PermanentCycle | null;
 };
 
 type TeacherPayrollRunRow = {
@@ -84,6 +89,7 @@ type TeacherPayrollLineRow = {
   lost_amount?: number | string | null;
   adjusted_amount?: number | string | null;
   hors_edt_sessions?: number;
+  notes?: string | null;
 };
 
 type StatisticsDetailRow = {
@@ -372,7 +378,7 @@ async function getPayrollTeachers(institutionId: string): Promise<PayrollTeacher
   const teacherIds = Array.from(new Set((roles ?? []).map((r: any) => String(r.profile_id))));
   if (!teacherIds.length) return [];
 
-  const [{ data: profiles, error: profErr }, { data: payProfiles, error: payErr }] = await Promise.all([
+  const [{ data: profiles, error: profErr }, { data: payProfiles, error: payErr }, payrollSettings] = await Promise.all([
     admin.from("profiles").select("id,display_name,email,phone").in("id", teacherIds),
     admin
       .schema("finance")
@@ -380,11 +386,13 @@ async function getPayrollTeachers(institutionId: string): Promise<PayrollTeacher
       .select("profile_id,employment_type,payroll_enabled,notes")
       .eq("institution_id", institutionId)
       .in("profile_id", teacherIds),
+    readPayrollSettings(admin, institutionId),
   ]);
   if (profErr) throw new Error(profErr.message);
   if (payErr) throw new Error(payErr.message);
 
   const payMap = new Map((payProfiles ?? []).map((r: any) => [String(r.profile_id), r]));
+  const permanentCycles = permanentCyclesFromSettings(payrollSettings);
   return (profiles ?? [])
     .map((p: any) => {
       const pay = payMap.get(String(p.id));
@@ -396,6 +404,7 @@ async function getPayrollTeachers(institutionId: string): Promise<PayrollTeacher
         employment_type: ((pay?.employment_type as EmploymentType | undefined) ?? "permanent") as EmploymentType,
         payroll_enabled: typeof pay?.payroll_enabled === "boolean" ? pay.payroll_enabled : true,
         notes: pay?.notes ?? null,
+        permanent_cycle: permanentCycle(permanentCycles[String(p.id)]),
       };
     })
     .sort((a, b) => teacherLabel(a).localeCompare(teacherLabel(b), "fr"));
@@ -409,6 +418,7 @@ async function buildExpectedSlotsForTeacher(params: {
   periodEnd: string;
   classMap: Map<string, ClassRow>;
   referenceMinutes: number;
+  allowMixedCycles?: boolean;
 }) {
   const { admin, institutionId, teacherId, periodStart, periodEnd, classMap, referenceMinutes } = params;
   const [{ data: ttRows, error: ttErr }, { data: periodRows, error: pErr }, { data: ctRows, error: ctErr }] = await Promise.all([
@@ -474,7 +484,7 @@ async function buildExpectedSlotsForTeacher(params: {
       const physicalKey = `${day}|${periodId}`;
       const existing = physicalSlots.get(physicalKey);
       if (existing) {
-        if (existing.cycle !== cycle) {
+        if (existing.cycle !== cycle && !params.allowMixedCycles) {
           throw new Error(
             `Le même professeur est programmé le ${day} sur le même créneau dans des classes de cycles différents. La paie ne peut pas choisir automatiquement un tarif : corrigez ou validez cette affectation avant recalcul.`,
           );
@@ -520,6 +530,8 @@ function payrollMessage(code: string | null | undefined) {
       return { tone: "emerald", title: "Paie validée", body: "Cet état de paie est maintenant validé et conservé dans l’historique." };
     case "month_outside_academic_year":
       return { tone: "amber", title: "Mois hors année scolaire", body: "Choisis un mois compris dans l’année scolaire sélectionnée." };
+    case "permanent_quota_missing":
+      return { tone: "amber", title: "Quotas à renseigner", body: "Choisissez collège (21 h) ou lycée (18 h) dans les fiches de paie des permanents actifs avant de calculer leurs heures supplémentaires. Le calcul des vacataires seuls reste disponible." };
     default:
       return null;
   }
@@ -534,6 +546,7 @@ async function calculatePayrollAction(formData: FormData) {
   const { institutionId, userId } = await getCurrentContextOrThrow();
   const admin = getSupabaseServiceClient();
   const month = normalizeMonth(String(formData.get("month") || ""));
+  const payrollScope = formData.get("scope") === "all_teachers" ? "all_teachers" : "vacataires_only";
   const rateFirst = parseAmount(formData.get("rate_first"), 1500);
   const rateSecond = parseAmount(formData.get("rate_second"), 2000);
   const lateToleranceMin = parsePositiveInt(formData.get("late_tolerance_min"), 15);
@@ -590,21 +603,36 @@ async function calculatePayrollAction(formData: FormData) {
   const canonicalSubjectByInstitutionId = new Map(
     (subjectRows ?? []).map((subject) => [String(subject.id), String(subject.subject_id)]),
   );
-  const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
+  const payrollTeachers = teachers.filter((t) => t.payroll_enabled &&
+    (payrollScope === "all_teachers" || t.employment_type === "vacataire"));
+  if (payrollTeachers.some((t) => t.employment_type === "permanent" && !t.permanent_cycle)) {
+    redirect(`/admin/finance/payroll?${returnParams}&message=permanent_quota_missing`);
+  }
 
   // Read and calculate everything before replacing the existing draft.
   const preparedLines = [];
-  for (const teacher of vacataires) {
+  for (const teacher of payrollTeachers) {
+    const isPermanent = teacher.employment_type === "permanent";
+    // Read the whole boundary weeks before applying the quota, then persist
+    // only this month's sessions. A month change must never reset the quota.
+    const calculationRange = isPermanent
+      ? clampPeriodToAcademicYear(
+          payrollFullWeeks(effectiveRange.periodStart, effectiveRange.periodEnd).periodStart,
+          payrollFullWeeks(effectiveRange.periodStart, effectiveRange.periodEnd).periodEnd,
+          selectedAcademicYearStart, selectedAcademicYearEnd,
+        )
+      : effectiveRange;
     const [stats, expectedSlots, assignmentsResult] = await Promise.all([
-      fetchStatisticsDetailServer(teacher.profile_id, effectiveRange.periodStart, effectiveRange.periodEnd),
+      fetchStatisticsDetailServer(teacher.profile_id, calculationRange.periodStart, calculationRange.periodEnd),
       buildExpectedSlotsForTeacher({
         admin,
         institutionId,
         teacherId: teacher.profile_id,
-        periodStart: effectiveRange.periodStart,
-        periodEnd: effectiveRange.periodEnd,
+        periodStart: calculationRange.periodStart,
+        periodEnd: calculationRange.periodEnd,
         classMap,
         referenceMinutes: sessionReferenceMinutes,
+        allowMixedCycles: isPermanent,
       }),
       admin
         .from("class_teachers")
@@ -621,7 +649,7 @@ async function calculatePayrollAction(formData: FormData) {
     const plannedSessionItems = expectedSlots.map((slot) => {
       const matched = findPayrollSession(actualRows, usedRows, slot);
       const expectedMinutes = Math.max(1, numberValue(slot.expected_minutes) || sessionReferenceMinutes);
-      const rate = slot.cycle === "first_cycle" ? rateFirst : rateSecond;
+      const rate = payrollTeacherRate(teacher.employment_type, teacher.permanent_cycle, slot.cycle, rateFirst, rateSecond);
       return {
         ...slot,
         ...calculatePayrollSession(matched, expectedMinutes, sessionReferenceMinutes, rate, lateToleranceMin, earlyDepartureToleranceMin),
@@ -648,7 +676,7 @@ async function calculatePayrollAction(formData: FormData) {
       );
       if (!assignedPairs.length) return [];
       const cycles = new Set(assignedPairs.map((pair) => cycleFromLevel(classMap.get(pair.class_id)?.level)));
-      if (cycles.size > 1) {
+      if (cycles.size > 1 && !isPermanent) {
         throw new Error(`Le cours groupé du ${sessionDate} relie des classes de cycles différents. Vérifiez cette séance avant de recalculer la paie.`);
       }
       const classId = assignedPairs[0].class_id;
@@ -659,7 +687,7 @@ async function calculatePayrollAction(formData: FormData) {
         1,
         numberValue(row.expected_minutes) || sessionReferenceMinutes,
       );
-      const rate = cycle === "first_cycle" ? rateFirst : rateSecond;
+      const rate = payrollTeacherRate(teacher.employment_type, teacher.permanent_cycle, cycle, rateFirst, rateSecond);
       const calculated = calculatePayrollSession(
         row,
         expectedMinutes,
@@ -675,7 +703,7 @@ async function calculatePayrollAction(formData: FormData) {
         subject_id: subjectId,
         period_id: null,
         session_date: sessionDate,
-        start_time: null,
+        start_time: String(row.dateISO).slice(11, 19),
         weekday: new Date(`${sessionDate}T00:00:00Z`).getUTCDay(),
         cycle,
         expected_minutes: expectedMinutes,
@@ -684,10 +712,22 @@ async function calculatePayrollAction(formData: FormData) {
       }];
     });
 
-    const sessionItems = [...plannedSessionItems, ...horsEdtItems];
-    const expectedSessions = expectedSlots.length;
+    const inMonth = (item: { session_date: string }) =>
+      item.session_date >= effectiveRange.periodStart && item.session_date <= effectiveRange.periodEnd;
+    // For permanents the payroll cycle represents the teacher's single
+    // category, so the stored counts and rate fields reconcile with gross pay.
+    const fullSessionItems = [...plannedSessionItems, ...horsEdtItems].map((item) => isPermanent
+      ? { ...item, cycle: (teacher.permanent_cycle === "lycee" ? "second_cycle" : "first_cycle") as SchoolCycle }
+      : item);
+    const sessionItems = isPermanent
+      ? allocatePermanentOvertime(fullSessionItems, teacher.permanent_cycle!).filter(inMonth)
+      : fullSessionItems;
+    const monthlyExpectedSlots = isPermanent
+      ? expectedPermanentOvertime(expectedSlots, teacher.permanent_cycle!).filter(inMonth)
+      : expectedSlots;
+    const expectedSessions = monthlyExpectedSlots.length;
     const actualSessions = sessionItems.filter((item) => item.counted_for_pay).length;
-    const expectedMinutes = plannedSessionItems.reduce((acc, item) => acc + item.expected_minutes, 0);
+    const expectedMinutes = monthlyExpectedSlots.reduce((acc, item) => acc + item.expected_minutes, 0);
     const actualMinutes = sessionItems.reduce((acc, item) => acc + item.actual_minutes, 0);
     const sessionsFirstCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "first_cycle").length;
     const sessionsSecondCycle = sessionItems.filter((item) => item.counted_for_pay && item.cycle === "second_cycle").length;
@@ -695,36 +735,46 @@ async function calculatePayrollAction(formData: FormData) {
     const lostMinutesAfterTolerance = sessionItems.reduce((acc, item) => acc + item.lost_minutes_after_tolerance, 0);
     const lostAmount = sessionItems.reduce((acc, item) => acc + item.lost_amount, 0);
     const adjustedAmount = sessionItems.reduce((acc, item) => acc + item.adjusted_amount, 0);
-    const expectedAmount = expectedSlots.reduce(
-      (acc, slot) => acc + (slot.cycle === "first_cycle" ? rateFirst : rateSecond),
+    const expectedAmount = monthlyExpectedSlots.reduce(
+      (acc, slot) => acc + payrollTeacherRate(teacher.employment_type, teacher.permanent_cycle, slot.cycle, rateFirst, rateSecond),
       0,
     );
 
-    preparedLines.push({ teacher, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount });
+    const snapshot: PermanentPayrollSnapshot | null = isPermanent ? {
+      kind: "permanent_overtime_v1",
+      cycle: teacher.permanent_cycle!,
+      weekly_quota: permanentWeeklyQuota(teacher.permanent_cycle!),
+      service_sessions: fullSessionItems.filter((item) => inMonth(item) && item.counted_for_pay).length,
+      overtime_sessions: actualSessions,
+      expected_overtime_sessions: expectedSessions,
+      notes: teacher.notes || null,
+    } : null;
+    preparedLines.push({ teacher, snapshot, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount });
   }
 
-  const { data: existingDraft, error: draftErr } = await admin
+  let draftQuery = admin
     .schema("finance")
     .from("teacher_payroll_runs")
     .select("id")
     .eq("institution_id", institutionId)
     .eq("academic_year", selectedAcademicYearCode || null)
     .eq("period_month", periodMonth)
-    .eq("scope", "vacataires_only")
+    .eq("scope", payrollScope)
     .eq("status", "draft")
     .order("generated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  if (payrollScope === "all_teachers") draftQuery = draftQuery.eq("notes", PERMANENT_PAYROLL_RUN_MARKER);
+  const { data: existingDraft, error: draftErr } = await draftQuery.maybeSingle();
   if (draftErr) throw new Error(draftErr.message);
 
   let runId = existingDraft?.id ? String(existingDraft.id) : "";
   const runPayload = {
-    scope: "vacataires_only",
+    scope: payrollScope,
     period_start: effectiveRange.periodStart,
     period_end: effectiveRange.periodEnd,
     default_rate_first_cycle: rateFirst,
     default_rate_second_cycle: rateSecond,
-    notes: null,
+    notes: payrollScope === "all_teachers" ? PERMANENT_PAYROLL_RUN_MARKER : null,
     academic_year_id: selectedAcademicYearId,
     academic_year: selectedAcademicYearCode || null,
     late_tolerance_min: lateToleranceMin,
@@ -775,7 +825,7 @@ async function calculatePayrollAction(formData: FormData) {
   if (delLinesErr) throw new Error(delLinesErr.message);
 
   for (const prepared of preparedLines) {
-    const { teacher, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount } = prepared;
+    const { teacher, snapshot, sessionItems, expectedSessions, actualSessions, expectedMinutes, actualMinutes, sessionsFirstCycle, sessionsSecondCycle, grossAmount, lostMinutesAfterTolerance, lostAmount, adjustedAmount, expectedAmount } = prepared;
 
     const { data: line, error: lineErr } = await admin
       .schema("finance")
@@ -785,7 +835,7 @@ async function calculatePayrollAction(formData: FormData) {
         institution_id: institutionId,
         teacher_id: teacher.profile_id,
         teacher_name_snapshot: teacherLabel(teacher),
-        employment_type: "vacataire",
+        employment_type: teacher.employment_type,
         payroll_enabled: true,
         expected_sessions: expectedSessions,
         actual_sessions: actualSessions,
@@ -793,15 +843,15 @@ async function calculatePayrollAction(formData: FormData) {
         actual_minutes: actualMinutes,
         sessions_first_cycle: sessionsFirstCycle,
         sessions_second_cycle: sessionsSecondCycle,
-        rate_first_cycle: rateFirst,
-        rate_second_cycle: rateSecond,
+        rate_first_cycle: teacher.employment_type === "permanent" && teacher.permanent_cycle === "lycee" ? 0 : rateFirst,
+        rate_second_cycle: teacher.employment_type === "permanent" && teacher.permanent_cycle === "college" ? 0 : rateSecond,
         gross_amount: grossAmount,
         expected_amount: expectedAmount,
         lost_minutes_after_tolerance: lostMinutesAfterTolerance,
         lost_sessions_equivalent: lostMinutesAfterTolerance / sessionReferenceMinutes,
         lost_amount: lostAmount,
         adjusted_amount: adjustedAmount,
-        notes: teacher.notes || null,
+        notes: snapshot ? JSON.stringify(snapshot) : teacher.notes || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as any)
@@ -944,7 +994,7 @@ export default async function FinancePayrollPage({
         .from("teacher_payroll_runs")
         .select("id,institution_id,period_month,period_start,period_end,scope,default_rate_first_cycle,default_rate_second_cycle,status,generated_at,validated_at,notes,academic_year_id,academic_year,late_tolerance_min,early_departure_tolerance_min,session_reference_minutes")
         .eq("institution_id", institutionId)
-        .eq("scope", "vacataires_only");
+        .or(PAYROLL_HISTORY_FILTER);
       if (selectedAcademicYearCode) query = query.eq("academic_year", selectedAcademicYearCode);
       return query.order("generated_at", { ascending: false }).limit(24);
     })(),
@@ -965,7 +1015,7 @@ export default async function FinancePayrollPage({
     const { data: requestedRun, error } = await supabase.schema("finance")
       .from("teacher_payroll_runs").select("*")
       .eq("id", requestedRunId).eq("institution_id", institutionId)
-      .eq("scope", "vacataires_only").maybeSingle();
+      .or(PAYROLL_HISTORY_FILTER).maybeSingle();
     if (error) throw new Error(error.message);
     selectedRun = requestedRun as TeacherPayrollRunRow | null;
     if (!selectedRun) return <p role="alert">Cet état de paie est introuvable ou inaccessible.</p>;
@@ -981,7 +1031,7 @@ export default async function FinancePayrollPage({
     ? await supabase
         .schema("finance")
         .from("teacher_payroll_lines")
-        .select("id,run_id,teacher_id,teacher_name_snapshot,employment_type,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,lost_minutes_after_tolerance,lost_amount,adjusted_amount")
+        .select("id,run_id,teacher_id,teacher_name_snapshot,employment_type,expected_sessions,actual_sessions,expected_minutes,actual_minutes,sessions_first_cycle,sessions_second_cycle,rate_first_cycle,rate_second_cycle,gross_amount,lost_minutes_after_tolerance,lost_amount,adjusted_amount,notes")
         .eq("run_id", selectedRun.id)
         .order("teacher_name_snapshot", { ascending: true })
     : { data: [], error: null as any };
@@ -1011,6 +1061,8 @@ export default async function FinancePayrollPage({
     hors_edt_sessions: horsEdtByLine.get(row.id) || 0,
   }));
   const vacataires = teachers.filter((t) => t.payroll_enabled && t.employment_type === "vacataire");
+  const permanents = teachers.filter((t) => t.payroll_enabled && t.employment_type === "permanent");
+  const unconfiguredPermanents = permanents.filter((t) => !t.permanent_cycle);
   const totals = lines.reduce(
     (acc, row) => {
       acc.expectedSessions += numberValue(row.expected_sessions);
@@ -1040,7 +1092,7 @@ export default async function FinancePayrollPage({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-black text-slate-900">Paie des enseignants</h1>
-          <p className="mt-1 text-sm text-slate-600">Calcul simple des vacataires à partir des séances réellement démarrées et clôturées.</p>
+          <p className="mt-1 text-sm text-slate-600">Vacations et heures supplémentaires des permanents à partir des séances démarrées et clôturées.</p>
         </div>
         {access.scope !== "payroll" ? (
           <Link href={`/admin/finance?academic_year=${encodeURIComponent(selectedAcademicYearCode)}`} className="text-sm font-bold text-slate-600 hover:text-slate-900">Retour Finance</Link>
@@ -1068,8 +1120,16 @@ export default async function FinancePayrollPage({
         </div>
       ) : null}
 
+      {unconfiguredPermanents.length > 0 ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>{unconfiguredPermanents.length} permanent(s) : quota collège ou lycée à renseigner.</strong>
+          <p className="mt-1">{unconfiguredPermanents.map(teacherLabel).join(", ")}</p>
+          <Link href="/admin/users#teacher-payroll" className="mt-2 inline-block font-bold underline">Paramétrer les fiches de paie</Link>
+        </div>
+      ) : null}
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<Users className="h-6 w-6" />} label="Vacataires à payer" value={vacataires.length} hint="Profils paie actifs" />
+        <StatCard icon={<Users className="h-6 w-6" />} label="Enseignants actifs" value={vacataires.length + permanents.length} hint={`${vacataires.length} vacataire(s) · ${permanents.length} permanent(s)`} />
         <StatCard icon={<CalendarClock className="h-6 w-6" />} label="Séances payées" value={totals.actualSessions} hint={`${formatMinutes(totals.actualMinutes)} observées`} />
         <StatCard icon={<Wallet className="h-6 w-6" />} label="Retenues" value={formatMoney(totals.retained)} hint={`${formatMinutes(totals.lostMinutes)} non rémunérées`} />
         <StatCard icon={<Wallet className="h-6 w-6" />} label="Montant à payer" value={formatMoney(totals.payable)} hint={`Brut : ${formatMoney(totals.gross)}`} />
@@ -1082,6 +1142,13 @@ export default async function FinancePayrollPage({
 
           <form action={calculatePayrollAction} className="mt-5 grid gap-4 md:grid-cols-2">
             <input type="hidden" name="academic_year" value={selectedAcademicYearCode} />
+            <div className="md:col-span-2">
+              <label htmlFor="payroll-scope" className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Enseignants inclus</label>
+              <select id="payroll-scope" name="scope" defaultValue={selectedRun?.scope || (unconfiguredPermanents.length ? "vacataires_only" : "all_teachers")} className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 font-semibold">
+                <option value="all_teachers">Vacataires et heures supplémentaires des permanents</option>
+                <option value="vacataires_only">Vacataires uniquement</option>
+              </select>
+            </div>
             <div>
               <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Mois</label>
               <input type="month" name="month" defaultValue={month} className="w-full rounded-2xl border border-slate-200 px-3 py-3 font-semibold text-slate-900" />
@@ -1112,6 +1179,7 @@ export default async function FinancePayrollPage({
 
             <div className="md:col-span-2 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
               <strong className="text-slate-900">Règle appliquée :</strong> une séance doit être démarrée et clôturée. Les minutes dépassant la tolérance de retard et celles dépassant la tolérance de sortie anticipée sont additionnées, puis déduites proportionnellement au tarif d’une séance de {effectiveReferenceMinutes} minutes.
+              <p className="mt-2">Permanent collège : 21 h / semaine, heures supplémentaires au tarif collège uniquement. Permanent lycée : 18 h / semaine, heures supplémentaires au tarif lycée uniquement. Une séance correspond à une heure pédagogique, comme pour les vacataires. Le tarif du permanent reste le même pour toutes ses classes. Les semaines vont du lundi au dimanche, même à cheval sur deux mois. Le salaire fixe du permanent n’est pas inclus dans cet état.</p>
             </div>
 
             <div className="md:col-span-2">
@@ -1136,7 +1204,7 @@ export default async function FinancePayrollPage({
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="font-black text-slate-900">{formatMonthLabel(run.period_month.slice(0, 7))}</div>
-                      <div className="mt-1 text-xs text-slate-500">Calculée le {formatDate(run.generated_at)}</div>
+                      <div className="mt-1 text-xs text-slate-500">Calculée le {formatDate(run.generated_at)} · {run.scope === "all_teachers" ? "Vacations + heures supplémentaires" : "Vacataires"}</div>
                     </div>
                     <StatusPill status={run.status} />
                   </div>
@@ -1155,7 +1223,7 @@ export default async function FinancePayrollPage({
                 <h2 className="text-2xl font-black text-slate-900">{formatMonthLabel(selectedRun.period_month.slice(0, 7))}</h2>
                 <StatusPill status={selectedRun.status} />
               </div>
-              <p className="mt-2 text-sm text-slate-600">{lines.length} vacataire(s) · {totals.actualSessions} séance(s) payée(s){totals.horsEdtSessions > 0 ? ` · dont ${totals.horsEdtSessions} hors EDT` : ""} · Total {formatMoney(totals.payable)}</p>
+              <p className="mt-2 text-sm text-slate-600">{lines.length} enseignant(s) · {totals.actualSessions} séance(s) payée(s){totals.horsEdtSessions > 0 ? ` · dont ${totals.horsEdtSessions} hors EDT` : ""} · Total {formatMoney(totals.payable)}</p>
             </div>
             <div className="flex flex-wrap gap-3">
               {selectedRun.status === "draft" ? (
@@ -1177,7 +1245,7 @@ export default async function FinancePayrollPage({
 
           <div className="mt-5 overflow-x-auto">
             {lines.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-600">Aucun vacataire calculé pour ce mois.</div>
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-600">Aucun enseignant calculé pour ce mois.</div>
             ) : (
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50">
@@ -1195,7 +1263,22 @@ export default async function FinancePayrollPage({
                     <tr key={row.id} className="border-t border-slate-100">
                       <td className="px-3 py-3">
                         <div className="font-black text-slate-900">{row.teacher_name_snapshot || "Enseignant"}</div>
-                        <div className="mt-1 text-xs text-slate-500">1er cycle : {row.sessions_first_cycle} · 2nd cycle : {row.sessions_second_cycle}</div>
+                        {row.employment_type === "permanent" ? (
+                          <div className="mt-1 text-xs font-semibold text-indigo-700">
+                            {(() => {
+                              const snapshot = permanentPayrollSnapshot(row.notes);
+                              return snapshot
+                                ? `Permanent ${snapshot.cycle === "college" ? "collège" : "lycée"} · ${snapshot.weekly_quota} h / semaine · service réalisé : ${snapshot.service_sessions} h · HS : ${snapshot.overtime_sessions} h`
+                                : "Permanent — heures supplémentaires";
+                            })()}
+                          </div>
+                        ) : <div className="mt-1 text-xs text-slate-500">Vacataire</div>}
+                        <div className="mt-1 text-xs text-slate-500">{row.employment_type === "permanent"
+                          ? (() => {
+                              const snapshot = permanentPayrollSnapshot(row.notes);
+                              return snapshot ? `Tarif ${snapshot.cycle === "college" ? "collège" : "lycée"} unique : ${formatMoney(snapshot.cycle === "college" ? row.rate_first_cycle : row.rate_second_cycle)} / h supplémentaire` : "";
+                            })()
+                          : `1er cycle : ${row.sessions_first_cycle} · 2nd cycle : ${row.sessions_second_cycle}`}</div>
                         {numberValue(row.hors_edt_sessions) > 0 ? (
                           <div className="mt-1 text-xs font-semibold text-indigo-700">Hors EDT : {row.hors_edt_sessions}</div>
                         ) : null}

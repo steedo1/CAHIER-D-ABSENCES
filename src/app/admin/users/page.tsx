@@ -8,6 +8,7 @@ import EducationTeachingContextFields, {
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingContext";
 import type { EducationType } from "@/lib/education-organization";
+import { permanentWeeklyQuota, type PermanentCycle } from "@/lib/finance/payroll-permanents";
 import {
   ALL_EDUCATION_TYPES,
   buildEducationScopeSearchParams,
@@ -101,6 +102,7 @@ type TeacherPayrollRow = {
   employment_type: "vacataire" | "permanent";
   payroll_enabled: boolean;
   notes?: string | null;
+  permanent_cycle?: PermanentCycle | null;
 };
 
 type AdminUserItem = {
@@ -233,6 +235,7 @@ export default function UsersPage() {
   const [tEmploymentType, setTEmploymentType] =
     useState<EmploymentType>("permanent");
   const [tPayrollEnabled, setTPayrollEnabled] = useState(true);
+  const [tPermanentCycle, setTPermanentCycle] = useState<PermanentCycle | "">("");
   const [createEducationContext, setCreateEducationContext] =
     useState<EducationTeachingContextValue>({
       educationType: "general_secondary",
@@ -292,6 +295,7 @@ export default function UsersPage() {
   const [payrollEmploymentType, setPayrollEmploymentType] =
     useState<EmploymentType>("permanent");
   const [payrollEnabled, setPayrollEnabled] = useState(true);
+  const [payrollPermanentCycle, setPayrollPermanentCycle] = useState<PermanentCycle | "">("");
   const [payrollNotes, setPayrollNotes] = useState("");
   const [savingPayroll, setSavingPayroll] = useState(false);
   const [payrollMsg, setPayrollMsg] = useState<string | null>(null);
@@ -439,6 +443,7 @@ export default function UsersPage() {
   useEffect(() => {
     if (!selectedPayrollTeacher) return;
     setPayrollEmploymentType(selectedPayrollTeacher.employment_type);
+    setPayrollPermanentCycle(selectedPayrollTeacher.permanent_cycle || "");
     setPayrollEnabled(!!selectedPayrollTeacher.payroll_enabled);
     setPayrollNotes(selectedPayrollTeacher.notes || "");
   }, [selectedPayrollTeacher]);
@@ -595,7 +600,8 @@ export default function UsersPage() {
     profileId: string,
     employmentType: EmploymentType,
     enabled: boolean,
-    notes?: string
+    notes?: string,
+    cycle?: PermanentCycle | "",
   ) {
     const r = await fetch("/api/admin/teachers/payroll-profile", {
       method: "POST",
@@ -605,6 +611,7 @@ export default function UsersPage() {
         employment_type: employmentType,
         payroll_enabled: enabled,
         notes: notes?.trim() || null,
+        ...(employmentType === "permanent" && cycle !== undefined ? { permanent_cycle: cycle || null } : {}),
       }),
     });
 
@@ -632,6 +639,7 @@ export default function UsersPage() {
     displayName: string;
     employmentType: EmploymentType;
     payrollEnabled: boolean;
+    permanentCycle: PermanentCycle | "";
   }) {
     const rows = await loadPayrollTeachers(opts.phone);
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -662,7 +670,9 @@ export default function UsersPage() {
     const up = await upsertPayrollProfile(
       target.profile_id,
       opts.employmentType,
-      opts.payrollEnabled
+      opts.payrollEnabled,
+      undefined,
+      opts.permanentCycle || undefined,
     );
 
     if (!up.ok) {
@@ -689,6 +699,11 @@ export default function UsersPage() {
     const rawSubject = tSubject.trim();
     const rawEmploymentType = tEmploymentType;
     const rawPayrollEnabled = tPayrollEnabled;
+    if (rawRole === "teacher" && createEducationContext.educationType === "general_secondary" && rawEmploymentType === "permanent" && rawPayrollEnabled && !tPermanentCycle) {
+      setSubmitting(false);
+      setMsg("Choisissez le quota collège (21 h) ou lycée (18 h).");
+      return;
+    }
     const canonicalSubject = matchedCreateSubject;
     const rawEducatorLevel = educatorLevel.trim();
     const rawEducatorClassIds = educatorClassIds.filter(Boolean);
@@ -778,6 +793,7 @@ export default function UsersPage() {
           displayName: rawName,
           employmentType: rawEmploymentType,
           payrollEnabled: rawPayrollEnabled,
+          permanentCycle: tPermanentCycle,
         });
         setMsg(
           canonicalSubject
@@ -807,6 +823,7 @@ export default function UsersPage() {
       setTSubject("");
       setTSubjectId("");
       setTEmploymentType("permanent");
+      setTPermanentCycle("");
       setTPayrollEnabled(true);
       setEducatorLevel("");
       setEducatorClassIds([]);
@@ -970,6 +987,10 @@ export default function UsersPage() {
 
   async function savePayrollProfile() {
     if (!payrollTeacherId) return;
+    if (payrollEmploymentType === "permanent" && payrollEnabled && !payrollPermanentCycle) {
+      setPayrollMsg("Choisissez le quota collège (21 h) ou lycée (18 h).");
+      return;
+    }
     setSavingPayroll(true);
     setPayrollMsg(null);
 
@@ -977,7 +998,8 @@ export default function UsersPage() {
       payrollTeacherId,
       payrollEmploymentType,
       payrollEnabled,
-      payrollNotes
+      payrollNotes,
+      payrollPermanentCycle,
     );
 
     if (!up.ok) {
@@ -1157,6 +1179,14 @@ export default function UsersPage() {
                   <option value="permanent">Permanent</option>
                   <option value="vacataire">Vacataire</option>
                 </Select>
+                {tEmploymentType === "permanent" && createEducationContext.educationType === "general_secondary" ? (
+                  <Select aria-label="Catégorie du permanent" value={tPermanentCycle}
+                    onChange={(e) => setTPermanentCycle(e.target.value as PermanentCycle | "")}>
+                    <option value="">— Choisir le quota hebdomadaire —</option>
+                    <option value="college">Permanent collège — 21 h / semaine</option>
+                    <option value="lycee">Permanent lycée — 18 h / semaine</option>
+                  </Select>
+                ) : null}
               </div>
 
               <div className="md:col-span-2">
@@ -1518,13 +1548,13 @@ export default function UsersPage() {
         {addMsg && <div className="mt-2 text-sm text-emerald-700">{addMsg}</div>}
       </div>
 
-      <div className="rounded-2xl border bg-white p-5">
+      <div id="teacher-payroll" className="scroll-mt-6 rounded-2xl border bg-white p-5">
         <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
           Mettre à jour la fiche de paie d’un enseignant
         </div>
         <Help>
           Permet de corriger les enseignants déjà en base : <b>vacataire</b> ou{" "}
-          <b>permanent</b>, et inclusion ou non dans la paie.
+          <b>permanent collège (21 h)</b> ou <b>permanent lycée (18 h)</b>, et inclusion ou non dans la paie. Pour les permanents, seules les heures supplémentaires sont rémunérées ici.
         </Help>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1561,6 +1591,15 @@ export default function UsersPage() {
               <option value="permanent">Permanent</option>
               <option value="vacataire">Vacataire</option>
             </Select>
+            {payrollEmploymentType === "permanent" ? (
+              <Select aria-label="Quota hebdomadaire du permanent" value={payrollPermanentCycle}
+                onChange={(e) => setPayrollPermanentCycle(e.target.value as PermanentCycle | "")}
+                disabled={!payrollTeacherId}>
+                <option value="">— Choisir le quota hebdomadaire —</option>
+                <option value="college">Permanent collège — 21 h / semaine</option>
+                <option value="lycee">Permanent lycée — 18 h / semaine</option>
+              </Select>
+            ) : null}
           </div>
 
           <div className="md:col-span-2">
@@ -1610,7 +1649,9 @@ export default function UsersPage() {
               <b>
                 {selectedPayrollTeacher.employment_type === "vacataire"
                   ? "Vacataire"
-                  : "Permanent"}
+                  : selectedPayrollTeacher.permanent_cycle
+                    ? `Permanent ${selectedPayrollTeacher.permanent_cycle === "college" ? "collège" : "lycée"} — ${permanentWeeklyQuota(selectedPayrollTeacher.permanent_cycle)} h / semaine`
+                    : "Permanent — quota à renseigner"}
               </b>{" "}
               —{" "}
               {selectedPayrollTeacher.payroll_enabled

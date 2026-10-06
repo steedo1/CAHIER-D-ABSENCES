@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { permanentCycle, permanentCyclesFromSettings, permanentWeeklyQuota } from "@/lib/finance/payroll-permanents";
+import { readPayrollSettings, savePermanentCycle } from "@/lib/finance/payroll-settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -128,6 +130,13 @@ export async function GET(req: NextRequest) {
     (pay.data ?? []).map((r: any) => [String(r.profile_id), r])
   );
 
+  let cycles: Record<string, unknown>;
+  try {
+    cycles = permanentCyclesFromSettings(await readPayrollSettings(srv, institution_id));
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Paramètres de paie indisponibles." }, { status: 400 });
+  }
+
   const items = (pf.data ?? [])
     .map((p: any) => {
       const pp = payMap.get(String(p.id));
@@ -141,6 +150,9 @@ export async function GET(req: NextRequest) {
         payroll_enabled:
           typeof pp?.payroll_enabled === "boolean" ? pp.payroll_enabled : true,
         notes: (pp?.notes ?? null) as string | null,
+        permanent_cycle: permanentCycle(cycles[String(p.id)]),
+        weekly_quota: permanentCycle(cycles[String(p.id)])
+          ? permanentWeeklyQuota(permanentCycle(cycles[String(p.id)])!) : null,
       };
     })
     .filter((row) => {
@@ -172,6 +184,7 @@ export async function POST(req: NextRequest) {
     employment_type?: EmploymentType;
     payroll_enabled?: boolean;
     notes?: string | null;
+    permanent_cycle?: unknown;
   };
 
   const profile_id = String(body.profile_id || "").trim();
@@ -203,6 +216,21 @@ export async function POST(req: NextRequest) {
       { error: "Cet utilisateur n'est pas un enseignant de cet établissement." },
       { status: 400 }
     );
+  }
+
+  let cycle;
+  try {
+    const cycles = permanentCyclesFromSettings(await readPayrollSettings(srv, institution_id));
+    cycle = permanentCycle(cycles[profile_id]);
+    if (Object.hasOwn(body, "permanent_cycle")) {
+      cycle = permanentCycle(body.permanent_cycle);
+      if (employment_type === "permanent" && payroll_enabled && !cycle) {
+        return NextResponse.json({ error: "Choisissez Permanent collège (21 h) ou Permanent lycée (18 h)." }, { status: 400 });
+      }
+      await savePermanentCycle(srv, institution_id, profile_id, cycle);
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Échec de l’enregistrement du quota." }, { status: 400 });
   }
 
   const up = await srv
@@ -246,6 +274,8 @@ export async function POST(req: NextRequest) {
       employment_type: up.data.employment_type as EmploymentType,
       payroll_enabled: !!up.data.payroll_enabled,
       notes: (up.data.notes ?? null) as string | null,
+      permanent_cycle: cycle,
+      weekly_quota: cycle ? permanentWeeklyQuota(cycle) : null,
     },
   });
 }
