@@ -1,5 +1,6 @@
 import PayrollPrintDocument from "./PayrollPrintDocument";
 import { payrollPayable } from "@/lib/finance/payroll-values";
+import { permanentPayrollSnapshot } from "@/lib/finance/payroll-permanents";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type Props = {
@@ -8,9 +9,10 @@ type Props = {
     institution_name?: string | null; institution_label?: string | null; name?: string | null;
     institution_logo_url?: string | null; institution_head_name?: string | null; institution_head_title?: string | null;
   };
-  selectedRun: { period_month: string; period_start: string; period_end: string; academic_year?: string | null; status: string };
+  selectedRun: { period_month: string; period_start: string; period_end: string; academic_year?: string | null; status: string; scope?: string };
   lines: Array<{ id: string; teacher_name_snapshot: string | null; actual_sessions: number; expected_sessions: number;
-    gross_amount: number | string; lost_amount?: number | string | null; adjusted_amount?: number | string | null; hors_edt_sessions?: number }>;
+    gross_amount: number | string; lost_amount?: number | string | null; adjusted_amount?: number | string | null; hors_edt_sessions?: number;
+    employment_type?: string; notes?: string | null; rate_first_cycle?: number | string; rate_second_cycle?: number | string }>;
   totals: { actualSessions: number; gross: number; retained: number; payable: number; horsEdtSessions?: number };
   effectiveReferenceMinutes: number;
   effectiveLateTolerance: number;
@@ -86,9 +88,10 @@ export default async function PayrollPrintSheet({
             <img src={institutionCfg.institution_logo_url} alt={`Logo de ${institutionName}`} width={80} height={80} loading="eager" className="mx-auto mb-3 h-20 w-20 object-contain" />
           ) : null}
           <div className="text-xl font-black uppercase">{institutionName}</div>
-          <div className="mt-2 text-2xl font-black">État de paie des vacataires — {formatMonthLabel(selectedRun.period_month.slice(0, 7))}</div>
+          <div className="mt-2 text-2xl font-black">{selectedRun.scope === "all_teachers" ? "Vacations et heures supplémentaires des permanents" : "État de paie des vacataires"} — {formatMonthLabel(selectedRun.period_month.slice(0, 7))}</div>
           <div className="mt-2 text-sm">Année scolaire : {selectedRun.academic_year || "Non renseignée"} · Du {formatDate(selectedRun.period_start)} au {formatDate(selectedRun.period_end)} · {selectedRun.status === "validated" ? "Validée" : selectedRun.status === "cancelled" ? "Annulée" : "Brouillon — à vérifier avant paiement"}</div>
           <div className="mt-2 text-sm">Séance de référence : {effectiveReferenceMinutes} min · Retard toléré : {effectiveLateTolerance} min · Sortie anticipée tolérée : {effectiveEarlyTolerance} min{Number(totals.horsEdtSessions || 0) > 0 ? ` · Cours hors EDT payés : ${Number(totals.horsEdtSessions || 0)}` : ""}</div>
+          {selectedRun.scope === "all_teachers" ? <div className="mt-2 text-sm">Permanent collège : quota 21 h et tarif collège uniquement. Permanent lycée : quota 18 h et tarif lycée uniquement. Salaire fixe exclu.</div> : null}
         </div>
         <table className="mt-6 w-full border-collapse text-xs">
           <thead>
@@ -104,7 +107,17 @@ export default async function PayrollPrintSheet({
           <tbody>
             {lines.map((row) => (
               <tr key={row.id}>
-                <td className="border border-slate-300 p-2 font-semibold">{row.teacher_name_snapshot || "Enseignant"}</td>
+                <td className="border border-slate-300 p-2 font-semibold">
+                  {row.teacher_name_snapshot || "Enseignant"}
+                  {row.employment_type === "permanent" ? (
+                    <div className="mt-1 text-[10px] font-normal">{(() => {
+                      const snapshot = permanentPayrollSnapshot(row.notes);
+                      return snapshot
+                        ? `Permanent ${snapshot.cycle === "college" ? "collège" : "lycée"} · ${snapshot.weekly_quota} h / semaine · service : ${snapshot.service_sessions} h · HS : ${snapshot.overtime_sessions} h · tarif unique : ${formatMoney(snapshot.cycle === "college" ? row.rate_first_cycle : row.rate_second_cycle)}`
+                        : "Permanent — heures supplémentaires";
+                    })()}</div>
+                  ) : null}
+                </td>
                 <td className="border border-slate-300 p-2 text-right">
                   {row.actual_sessions} / {row.expected_sessions}
                   {Number(row.hors_edt_sessions || 0) > 0 ? (
