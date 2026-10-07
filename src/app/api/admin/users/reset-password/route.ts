@@ -1,35 +1,16 @@
 // src/app/api/admin/users/reset-password/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY!; // �a� secret c�t� serveur
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "";
 
 /* ---------- helpers ---------- */
-function extractTokens(jar: Awaited<ReturnType<typeof cookies>>) {
-  let access  = jar.get("sb-access-token")?.value || null;
-  let refresh = jar.get("sb-refresh-token")?.value || null;
-  try {
-    if (!access || !refresh) {
-      const ref  = process.env.NEXT_PUBLIC_SUPABASE_URL?.match(/^https:\/\/([^.]+)\.supabase\.co/i)?.[1];
-      const name = ref ? `sb-${ref}-auth-token` : null;
-      const raw  = name ? jar.get(name)?.value : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        access  = access  || parsed?.currentSession?.access_token  || null;
-        refresh = refresh || parsed?.currentSession?.refresh_token || null;
-      }
-    }
-  } catch {}
-  return { access, refresh };
-}
 
 function randomPass(len = 10) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -59,15 +40,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) Auth appelant via cookies (SDK navigateur)
-    const jar = await cookies();
-    const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-      cookies: { get: (n) => jar.get(n)?.value, set() {}, remove() {} },
-    });
-    const { access, refresh } = extractTokens(jar);
-    if (access && refresh) {
-      try { await supabase.auth.setSession({ access_token: access, refresh_token: refresh }); } catch {}
-    }
-
+    const supabase = await getSupabaseServerClient({ writable: true });
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Non authentifi�." }, { status: 401 });
 

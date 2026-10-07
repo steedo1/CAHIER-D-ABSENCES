@@ -1,3 +1,4 @@
+import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -212,50 +213,8 @@ function equivalentLegacyLevels(level: string | null) {
 
 /* ───────── Helper auth admin ───────── */
 
-async function guard(
-  supa: SupabaseClient,
-  srv: SupabaseClient,
-): Promise<GuardOk | GuardErr> {
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-  if (!user) return { error: "unauthorized" };
-
-  const { data: prof } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  let instId: string | null = (prof?.institution_id as string) || null;
-  let roleProfile: Role = (prof?.role as Role) ?? "";
-
-  let roleFromUR: Role | null = null;
-  if (!instId || !["admin", "super_admin", "file_correspondent"].includes(roleProfile)) {
-    const { data: urRows } = await srv
-      .from("user_roles")
-      .select("role,institution_id")
-      .eq("profile_id", user.id);
-
-    const adminRow = (urRows || []).find((r: any) =>
-      ["admin", "super_admin", "file_correspondent"].includes(String(r.role || "")),
-    );
-    if (adminRow) {
-      roleFromUR = adminRow.role as Role;
-      if (!instId && adminRow.institution_id) {
-        instId = String(adminRow.institution_id);
-      }
-    }
-  }
-
-  const isAdmin =
-    ["admin", "super_admin", "file_correspondent"].includes(roleProfile) ||
-    ["admin", "super_admin", "file_correspondent"].includes(String(roleFromUR || ""));
-
-  if (!instId) return { error: "no_institution" };
-  if (!isAdmin) return { error: "forbidden" };
-
-  return { user: { id: user.id }, instId };
+async function guard(supa: SupabaseClient, srv: SupabaseClient): Promise<GuardOk | GuardErr> {
+  return requireInstitutionRole(supa, srv, ["admin", "super_admin", "file_correspondent"]);
 }
 
 function error(msg: string, status = 400) {

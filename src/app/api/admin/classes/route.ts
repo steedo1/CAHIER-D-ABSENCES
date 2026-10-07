@@ -1,3 +1,4 @@
+import { getRequestProfile, getRequestRoles } from "@/lib/auth/server-context";
 // src/app/api/admin/classes/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -98,20 +99,13 @@ async function requireReadableInstitution() {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const { data: me, error: meErr } = await getRequestProfile(supabase, user.id);
 
   if (meErr) {
     return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };
   }
 
-  const { data: roleRows, error: roleErr } = await srv
-    .from("user_roles")
-    .select("role,institution_id")
-    .eq("profile_id", user.id);
+  const { data: roleRows, error: roleErr } = await getRequestRoles(supabase, srv, user.id);
 
   if (roleErr) {
     return { error: NextResponse.json({ error: roleErr.message }, { status: 400 }) };

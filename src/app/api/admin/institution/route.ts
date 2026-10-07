@@ -1,3 +1,4 @@
+import { requireInstitutionRole } from "@/lib/auth/server-context";
 // src/app/api/admin/institution/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -22,29 +23,7 @@ function cleanAcronym(s: unknown) {
 type ServerSupaPromise = ReturnType<typeof getSupabaseServerClient>;
 
 async function guard(supaP: ServerSupaPromise) {
-  const supa = await supaP; // ← résoudre UNE seule fois
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supa.auth.getUser();
-  if (userErr) return { error: String(userErr.message) };
-  if (!user) return { error: "unauthorized" };
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr) return { error: String(meErr.message) };
-  if (!me?.institution_id) return { error: "no_institution" };
-
-  const role = String(me.role || "");
-  const isAdmin = role === "admin" || role === "super_admin";
-  if (!isAdmin) return { error: "forbidden" };
-
-  return { user, instId: String(me.institution_id) };
+  return requireInstitutionRole(await supaP, getSupabaseServiceClient(), ["admin", "super_admin"]);
 }
 
 /* 

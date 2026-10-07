@@ -1,3 +1,4 @@
+import { requireInstitutionRole } from "@/lib/auth/server-context";
 //src/app/api/admin/institution/bulletin-subject-structure/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -39,26 +40,9 @@ export async function GET(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-
-  if (!user) return error("unauthorized", 401);
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr) return error(meErr.message, 400);
-  if (!me?.institution_id) return error("Profil incomplet (institution manquante).", 400);
-
-  // On autorise seulement super_admin / admin pour ces paramètres
-  const role = (me.role || "") as Role;
-  if (role !== "super_admin" && role !== "admin") {
-    return error("forbidden", 403);
-  }
+  const access = await requireInstitutionRole(supa, srv, ["admin", "super_admin"]);
+  if ("error" in access) return error(access.error, access.error === "unauthorized" ? 401 : 403);
+  const me = { institution_id: access.instId };
 
   const url = new URL(req.url);
   const level = (url.searchParams.get("level") || "").trim();
@@ -128,25 +112,9 @@ export async function PUT(req: NextRequest) {
   const supa = await getSupabaseServerClient();
   const srv = getSupabaseServiceClient();
 
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-
-  if (!user) return error("unauthorized", 401);
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle<ProfileRow>();
-
-  if (meErr) return error(meErr.message, 400);
-  if (!me?.institution_id) return error("Profil incomplet (institution manquante).", 400);
-
-  const role = (me.role || "") as Role;
-  if (role !== "super_admin" && role !== "admin") {
-    return error("forbidden", 403);
-  }
+  const access = await requireInstitutionRole(supa, srv, ["admin", "super_admin"]);
+  if ("error" in access) return error(access.error, access.error === "unauthorized" ? 401 : 403);
+  const me = { institution_id: access.instId };
 
   let body: PutBody;
   try {

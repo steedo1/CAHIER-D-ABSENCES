@@ -1,3 +1,4 @@
+import { getRequestProfile, getRequestRoles } from "@/lib/auth/server-context";
 // src/app/api/admin/_helpers/getMyInstitution.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -10,11 +11,7 @@ export async function getMyInstitutionId() {
     return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
-  const { data: me, error: meErr } = await supabaseAuth
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const { data: me, error: meErr } = await getRequestProfile(supabaseAuth, user.id);
 
   if (meErr) {
     return { error: NextResponse.json({ error: meErr.message }, { status: 400 }) };

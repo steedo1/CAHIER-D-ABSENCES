@@ -1,3 +1,4 @@
+import { getRequestProfile, getRequestRoles } from "@/lib/auth/server-context";
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -37,15 +38,8 @@ export async function requireInstitutionAccess(
 
   const [{ data: profile, error: profileError }, { data: roleRows, error: roleError }] =
     await Promise.all([
-      supa
-        .from("profiles")
-        .select("institution_id")
-        .eq("id", user.id)
-        .maybeSingle(),
-      srv
-        .from("user_roles")
-        .select("role,institution_id")
-        .eq("profile_id", user.id),
+      getRequestProfile(supa, user.id),
+      getRequestRoles(supa, srv, user.id),
     ]);
 
   if (profileError) {

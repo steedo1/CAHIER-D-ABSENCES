@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+import { isSessionCookie } from "@/lib/auth/session-cookies";
 // src/app/api/auth/sync/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
@@ -113,6 +115,9 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const res = NextResponse.json({ ok: true }, { status: 200 });
   const secure = requestUsesHttps(req);
+  for (const cookie of (await cookies()).getAll()) {
+    if (isSessionCookie(cookie.name)) clearReadableCookie(res, cookie.name, secure);
+  }
 
   clearCookie(res, "sb-access-token", secure);
   clearCookie(res, "sb-refresh-token", secure);

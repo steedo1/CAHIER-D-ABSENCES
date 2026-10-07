@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+import { isSessionCookie } from "@/lib/auth/session-cookies";
 // src/app/api/auth/signout/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -43,7 +45,7 @@ function clearAuthCookies(res: NextResponse) {
 
 export async function POST() {
   try {
-    const supabase = await getSupabaseServerClient();
+    const supabase = await getSupabaseServerClient({ writable: true });
     await supabase.auth.signOut();
   } catch {
     // Tolérant : l'objectif principal est de nettoyer les cookies côté navigateur.
@@ -51,5 +53,8 @@ export async function POST() {
 
   const res = NextResponse.json({ ok: true }, { status: 200 });
   clearAuthCookies(res);
+  for (const cookie of (await cookies()).getAll()) {
+    if (isSessionCookie(cookie.name)) clearCookie(res, cookie.name, false);
+  }
   return withNoStore(res);
 }
