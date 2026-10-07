@@ -1,6 +1,6 @@
 "use client";
 
-import { cacheGet, cacheSet } from "@/lib/offline";
+import { cacheGet, putDurableAttendanceRecord } from "@/lib/offline";
 import {
   LocalRelayHttpError,
   postRelayTeacherAttendanceSessionClose,
@@ -115,16 +115,7 @@ export function createIndexedDbTeacherSessionLifecycleStore(): TeacherSessionLif
         : [];
     },
     async put(record) {
-      const key = `${STORE_PREFIX}${record.institution_id}`;
-      const stored = await cacheGet<TeacherSessionLifecycleDeliveryRecord[]>(key);
-      const records = Array.isArray(stored) ? [...stored] : [];
-      const index = records.findIndex((candidate) =>
-        candidate.institution_id === record.institution_id &&
-        candidate.operation_id === record.operation_id,
-      );
-      if (index >= 0) records[index] = record;
-      else records.push(record);
-      await cacheSet(key, records);
+      await putDurableAttendanceRecord("session-lifecycle", record);
     },
   };
 }

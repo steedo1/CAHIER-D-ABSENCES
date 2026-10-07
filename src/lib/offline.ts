@@ -693,16 +693,28 @@ async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
   timeoutMs: number,
-): Promise<Response> {
+): Promise<{ response: Response; data: any }> {
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(new DOMException("request_timeout", "TimeoutError")),
-    Math.max(500, timeoutMs),
-  );
+  let timeout: ReturnType<typeof setTimeout>;
+  const expired = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new DOMException("request_timeout", "TimeoutError");
+      controller.abort(error);
+      reject(error);
+    }, Math.max(500, timeoutMs));
+  });
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    // fetch resolves at the headers. Keep the deadline until the JSON body is
+    // received too; a dropped mobile connection must release the UI and queue.
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(input, { ...init, signal: controller.signal });
+        return { response, data: await safeJson(response) };
+      })(),
+      expired,
+    ]);
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeout!);
   }
 }
 
@@ -735,7 +747,7 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
     return cacheGet<T>(cacheKey);
   };
   try {
-    const res = await fetchWithTimeout(
+    const { response: res, data: j } = await fetchWithTimeout(
       url,
       {
         method: "GET",
@@ -747,7 +759,6 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
     );
 
     if (!res.ok) {
-      const j = await safeJson(res);
       const msg = responseErrorMessage(j, res.status);
 
       // Un 401/403/404/422 ne doit jamais être masqué par une ancienne donnée
@@ -760,7 +771,6 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
       throw new HttpResponseError(msg, res.status, isRetryableStatus(res.status));
     }
 
-    const j = (await safeJson(res)) as T;
     await assertCurrent();
     if (scoped && /^\/api\/teacher\/(classes|offline\/bootstrap|institution\/basics)(?:[?]|$)/.test(url) &&
         !validAttendanceScope(j)) {
@@ -776,7 +786,7 @@ export async function offlineGetJson<T = any>(url: string, cacheKey: string): Pr
       }
     }
     await cacheSet(cacheKey, j);
-    return j;
+    return j as T;
   } catch (error) {
     if (error instanceof HttpResponseError && !error.allowCache) {
       throw error;
@@ -804,29 +814,53 @@ function nextMutationCreatedAt() {
 
 async function outboxAdd(row: OutboxRow): Promise<void> {
   const db = await openDB();
-  const tx = db.transaction(["outbox"], "readwrite");
+  const tx = db.transaction(["outbox", "kv"], "readwrite");
   const store = tx.objectStore("outbox");
+  const completed = txDone(tx);
+  const kind = outboxOperationType(row);
+  const journal = outboxDeliveryJournal(kind);
+  const institutionId = String(row.meta?.institutionId || "").trim();
+  if (journal && institutionId) {
+    const saved = await reqToPromise<KVRow | undefined>(tx.objectStore("kv").get(
+      `teacher:${journal}:v1:${institutionId}`,
+    ));
+    if (Array.isArray(saved?.value) && saved.value.some((record: any) =>
+      record.operation_id === row.operationId &&
+      ["cloud_opened", "cloud_synced", "cloud_confirmed"].includes(record.state),
+    )) {
+      await completed;
+      return;
+    }
+  }
 
   // MergeKey: on remplace l’ancienne action (ex: plusieurs "save" d'une même séance)
   if (row.mergeKey) {
     const idx = store.index("mergeKey");
     const existing = await reqToPromise<OutboxRow[]>(idx.getAll(row.mergeKey));
+    if (existing.some((candidate) => candidate.operationId === row.operationId)) {
+      await completed;
+      return;
+    }
     for (const e of existing) {
-      store.delete(e.id);
+      // A request whose response was lost keeps its original payload and ID.
+      // A newer correction follows it instead of erasing evidence of delivery.
+      if (!e.attempts && !e.lastAttemptAt) store.delete(e.id);
     }
   }
 
   store.put(row);
-  await txDone(tx);
+  await completed;
 }
 
-async function outboxUpdate(id: string, patch: Partial<OutboxRow>): Promise<void> {
+async function outboxUpdate(id: string, patch: Partial<OutboxRow>): Promise<boolean> {
   const db = await openDB();
   const tx = db.transaction(["outbox"], "readwrite");
+  const completed = txDone(tx);
   const store = tx.objectStore("outbox");
   const current = await reqToPromise<OutboxRow | undefined>(store.get(id));
   if (current) store.put({ ...current, ...patch });
-  await txDone(tx);
+  await completed;
+  return Boolean(current);
 }
 
 async function outboxAll(): Promise<OutboxRow[]> {
@@ -912,6 +946,64 @@ async function outboxDelete(id: string): Promise<void> {
   const tx = db.transaction(["outbox"], "readwrite");
   tx.objectStore("outbox").delete(id);
   await txDone(tx);
+}
+
+function outboxDeliveryJournal(kind: string | null) {
+  return kind === "session-start" ? "session-delivery"
+    : kind === "attendance" ? "attendance-delivery"
+    : kind === "session-end" ? "session-lifecycle" : null;
+}
+
+export async function putDurableAttendanceRecord<T extends {
+  operation_id: string; institution_id: string; state: string;
+}>(journal: "session-delivery" | "attendance-delivery" | "session-lifecycle", record: T) {
+  const db = await openDB();
+  const tx = db.transaction(["kv"], "readwrite");
+  const completed = txDone(tx);
+  const kv = tx.objectStore("kv");
+  const key = `teacher:${journal}:v1:${record.institution_id}`;
+  const stored = await reqToPromise<KVRow | undefined>(kv.get(key));
+  const records: T[] = Array.isArray(stored?.value) ? [...stored.value] : [];
+  const index = records.findIndex((candidate) => candidate.operation_id === record.operation_id);
+  const current = records[index];
+  const confirmed = new Set(["cloud_opened", "cloud_synced", "cloud_confirmed"]);
+  // A stale page draft cannot undo a worker ACK committed in this same store.
+  if (!current || !confirmed.has(current.state) || confirmed.has(record.state)) {
+    if (index >= 0) records[index] = record;
+    else records.push(record);
+    kv.put({ ...stored, key, value: records, updatedAt: Date.now() });
+  }
+  await completed;
+}
+
+async function acknowledgeOutboxRow(row: OutboxRow, sessionId: string | null) {
+  const db = await openDB();
+  const tx = db.transaction(["outbox", "kv"], "readwrite");
+  const completed = txDone(tx);
+  const kind = outboxOperationType(row);
+  const institutionId = String(row.meta?.institutionId || "").trim();
+  const journal = outboxDeliveryJournal(kind);
+  if (journal && institutionId) {
+    const kv = tx.objectStore("kv");
+    const key = `teacher:${journal}:v1:${institutionId}`;
+    const stored = await reqToPromise<KVRow | undefined>(kv.get(key));
+    if (Array.isArray(stored?.value)) {
+      const value = stored.value.map((record: any) => record.operation_id !== row.operationId ? record : {
+        ...record,
+        state: kind === "session-start" ? "cloud_opened"
+          : kind === "attendance" ? "cloud_synced" : "cloud_confirmed",
+        session_id: sessionId || record.session_id,
+        last_error: null,
+        requires_authentication: false,
+        updated_at: new Date().toISOString(),
+      });
+      kv.put({ ...stored, value, updatedAt: Date.now() });
+    }
+  }
+  // The ACK and removal commit together. A restart cannot resurrect a draft
+  // whose outbox row was already accepted by the Cloud or the worker.
+  tx.objectStore("outbox").delete(row.id);
+  await completed;
 }
 
 export async function outboxCount(): Promise<number> {
@@ -1061,7 +1153,7 @@ export async function offlineMutateJson<T = any>(
   }
 
   try {
-    const res = await fetchWithTimeout(
+    const { response: res, data: j } = await fetchWithTimeout(
       url,
       {
         method,
@@ -1074,7 +1166,6 @@ export async function offlineMutateJson<T = any>(
     );
 
     const status = res.status;
-    const j = await safeJson(res);
 
     // Les erreurs temporaires sont conservées ; les validations métier restent visibles.
     if (!res.ok) {
@@ -1178,6 +1269,8 @@ function outboxOperationType(row: OutboxRow) {
 }
 
 function outboxSessionDependencyKey(row: OutboxRow, body: any) {
+  const serverId = String(body?.session_id || "").trim();
+  if (serverId && !serverId.startsWith("client:")) return serverId;
   const candidate =
     row?.meta?.clientSessionId ||
     body?.client_session_id ||
@@ -1237,12 +1330,16 @@ async function flushOutboxInternal(
     ? Math.max(1, Math.floor(Number(options.maxAcknowledgements)))
     : Number.POSITIVE_INFINITY;
   const map = await getSessionIdMap();
+  const canonicalDependency = (value: unknown) => {
+    const key = normalizedSessionDependencyKey(value);
+    return key && map[key] ? normalizedSessionDependencyKey(map[key]) : key;
+  };
   // Un enfant ne devient éligible qu'après disparition durable de son parent.
   // Ce calcul se fait sur tout le journal, y compris lors d'un flush par phase.
   const sessionsWaitingForStart = new Set(
     rows
       .filter(isSessionStartRow)
-      .map((row) => normalizedSessionDependencyKey(
+      .map((row) => canonicalDependency(
         outboxSessionDependencyKey(row, row.body),
       ))
       .filter((value): value is string => Boolean(value)),
@@ -1252,7 +1349,7 @@ async function flushOutboxInternal(
     const body = rewriteBodyWithSessionMap(row.body, map);
     const operationType = outboxOperationType(row);
     const dependencyKey = outboxSessionDependencyKey(row, body);
-    const normalizedDependencyKey = normalizedSessionDependencyKey(dependencyKey);
+    const normalizedDependencyKey = canonicalDependency(dependencyKey);
 
     if (
       (includedTypes && (!operationType || !includedTypes.has(operationType))) ||
@@ -1343,7 +1440,9 @@ async function flushOutboxInternal(
     if (
       operationType === "session-end" &&
       normalizedDependencyKey &&
-      deferredSessionEnds.has(normalizedDependencyKey)
+      (Array.from(deferredSessionEnds).some((key) => canonicalDependency(key) === normalizedDependencyKey) ||
+        (await outboxAll()).some((pending) => outboxOperationType(pending) === "attendance" &&
+          canonicalDependency(outboxSessionDependencyKey(pending, pending.body)) === normalizedDependencyKey))
     ) {
       continue;
     }
@@ -1369,7 +1468,12 @@ async function flushOutboxInternal(
     }
 
     try {
-      const res = await fetchWithTimeout(
+      const stillQueued = await outboxUpdate(row.id, {
+        attempts: attemptsBeforeRun + 1,
+        lastAttemptAt: Date.now(),
+      });
+      if (!stillQueued) continue;
+      const { response: res, data: j } = await fetchWithTimeout(
         row.url,
         {
           method: row.method,
@@ -1382,7 +1486,6 @@ async function flushOutboxInternal(
       );
 
       if (!res.ok) {
-        const j = await safeJson(res);
         const msg = responseErrorMessage(j, res.status);
         const attempts = Number(row.attempts || 0) + 1;
         lastError = msg;
@@ -1429,7 +1532,6 @@ async function flushOutboxInternal(
         continue;
       }
 
-      const j = await safeJson(res);
       const acknowledgedOperationId = responseOperationId(j);
       if (
         operationType &&
@@ -1499,7 +1601,7 @@ async function flushOutboxInternal(
         classId: String(row?.meta?.classId || "").trim() || null,
         status: res.status,
       });
-      await outboxDelete(row.id);
+      await acknowledgeOutboxRow(row, resolvedSessionId);
       flushed += 1;
       if (flushed >= maxAcknowledgements) break;
     } catch (error: any) {

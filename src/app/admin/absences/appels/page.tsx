@@ -15,7 +15,7 @@ import {
 } from "@/lib/admin-attendance-monitor";
 import { fetchAdminAttendanceMonitor } from "@/lib/local-relay";
 
-import { attendanceReceiptLabel, type AttendanceReceiptFacts, cappedAttendanceLostMinutes } from "@/lib/attendance-surveillance";
+import { attendanceReceiptLabel, attendanceReceptionSummary, type AttendanceReceiptFacts, cappedAttendanceLostMinutes } from "@/lib/attendance-surveillance";
 import { fetchAttendanceBackground } from "@/lib/attendance-network";
 
 type MonitorStatus =
@@ -500,6 +500,8 @@ export default function SurveillanceAppelsPage() {
     });
   }, [rows]);
 
+  const reception = useMemo(() => attendanceReceptionSummary(detailedRows), [detailedRows]);
+
   const allTeachers = useMemo(
     () => buildTeacherRows(detailedRows).sort((a, b) =>
       a.teacher_name.localeCompare(b.teacher_name, "fr", { sensitivity: "base" }),
@@ -732,8 +734,14 @@ export default function SurveillanceAppelsPage() {
             </div>
           ) : (
             <section>
+              <p role="status" className="mb-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-800">
+                {reception.sessions} séance(s) reçue(s)
+                {" · "}{reception.confirmed} appel(s) élèves confirmé(s)
+                {" · "}{reception.unconfirmed} réception(s) élèves à confirmer
+                {reception.unavailable > 0 ? " · Vérification de certaines réceptions indisponible" : ""}
+              </p>
               <details className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
-                <summary className="cursor-pointer font-semibold">Réception des appels élèves — {detailedRows.filter((row) => row.attendance_receipt_available && row.attendance_received_at).length} lot(s) confirmé(s) / {detailedRows.length} cours prévus</summary>
+                <summary className="cursor-pointer font-semibold">Détail des {detailedRows.length} cours prévus et des réceptions élèves</summary>
                 <p className="mt-2 text-xs text-slate-600">Un lot reçu ne garantit pas qu’un téléphone n’a plus de corrections en attente. Les horaires enseignants et la réception des données élèves sont contrôlés séparément.</p>
                 <TeacherDetails rows={detailedRows} showDate={!isToday} showTeacher />
               </details>

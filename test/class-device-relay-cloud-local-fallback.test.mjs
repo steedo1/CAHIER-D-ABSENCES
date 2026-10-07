@@ -146,7 +146,7 @@ test("chaque fermeture locale est une opération ordonnée et ne peut pas être 
   assert.match(page, /operationType: "attendance"[\s\S]*operationType: "session-end"/);
   assert.match(page, /mergeKey: `end:\$\{openId\}`/);
   assert.doesNotMatch(page, /cacheSet\(PENDING_END_KEY,\s*\{\s*actual_end_at:/);
-  assert.match(page, /aucun marqueur unique ne peut être écrasé/);
+  assert.match(page, /queueOnly: true,[\s\S]*mergeKey: `end:\$\{openId\}`/);
 });
 
 test("le retour Cloud respecte ouverture, appel puis fermeture sans dépasser une opération bloquée", async () => {

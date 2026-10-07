@@ -104,6 +104,31 @@ async function queueDurableSessionOpen(
   if (record.state !== "device_pending" || existingOperationIds.has(record.operation_id)) {
     return;
   }
+  if (record.class_start && record.subject_id) {
+    const clientSessionId = `client:${record.operation_id}`;
+    await offlineMutateJson("/api/class/sessions/start", {
+      method: "POST",
+      body: {
+        class_id: record.class_id,
+        subject_id: record.subject_id,
+        ...record.class_start,
+        client_session_id: clientSessionId,
+        operation_id: record.operation_id,
+      },
+    }, {
+      queueOnly: true,
+      operationId: record.operation_id,
+      createdAt: Date.parse(record.created_at),
+      mergeKey: `session-start:${record.attempt_key}`,
+      meta: {
+        operationType: "session-start", clientSessionId,
+        institutionId: record.institution_id, classId: record.class_id,
+        subjectId: record.subject_id, periodId: record.class_start.period_id,
+      },
+    });
+    existingOperationIds.add(record.operation_id);
+    return;
+  }
   const attempt = parseTeacherAttemptKey(record);
   if (!attempt) return;
   await offlineMutateJson(
