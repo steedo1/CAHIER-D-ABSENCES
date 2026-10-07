@@ -1385,7 +1385,8 @@ export default function TeacherDashboard() {
   }, [open, inst.institution_id]);
 
   function attendanceMarksFromRows(source: Record<string, Row>) {
-    return Object.entries(source).map(([student_id, row]) => {
+    return roster.map(({ id: student_id }) => {
+      const row = source[student_id] || {};
       if (row.absent) {
         return { student_id, status: "absent" as const, reason: row.reason ?? null, observed_at: null };
       }
@@ -1917,7 +1918,11 @@ export default function TeacherDashboard() {
   }
 
   async function endSession() {
-    if (!open) return;
+    if (!open || busy) return;
+    if (loadingRoster || roster.length === 0) {
+      setMsg("La liste des élèves doit être chargée avant de terminer l’appel. La séance reste ouverte.");
+      return;
+    }
 
     const finalMarksPreview = attendanceMarksFromRows(rows);
     const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
@@ -2075,6 +2080,8 @@ export default function TeacherDashboard() {
         { method: "PATCH", body },
         {
           mergeKey: `teacher:end:${open.id}`,
+          // A pending student batch must receive its ACK before the close.
+          queueOnly: true,
           meta: {
             operationType: "session-end",
             clientSessionId: clientId || open.id,
@@ -2089,7 +2096,7 @@ export default function TeacherDashboard() {
         setMsg("Séance terminée ✅");
       } else if (shouldTreatAsOffline(r)) {
         await finishLocal();
-        setMsg("Hors connexion : fin de séance mise en attente (sync auto).");
+        setMsg("Appel et fin de séance enregistrés sur cet appareil. Synchronisation automatique en cours dès qu’Internet est disponible.");
         await refreshPending();
       } else {
         const err = extractRespError(r);

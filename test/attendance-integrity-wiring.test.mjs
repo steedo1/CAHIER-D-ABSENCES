@@ -11,7 +11,8 @@ test("tous les chemins UI transmettent captured_at_device au clic de validation"
     read("src/lib/teacher-attendance-delivery.ts"),
   ]);
   assert.match(classPage, /const attendanceCapturedAt = actualEndAt/);
-  assert.ok((classPage.match(/captured_at_device: attendanceCapturedAt/g) || []).length >= 2);
+  assert.match(classPage, /captured_at_device: attendanceCapturedAt/);
+  assert.match(classPage, /captured_at_device: input\.attendanceCapturedAt/);
   assert.match(classPage, /capturedAtDevice: attendanceCapturedAt/);
   assert.match(teacher, /const attendanceCapturedAt = observedNowIso\(\)/);
   assert.ok((teacher.match(/capturedAtDevice: attendanceCapturedAt/g) || []).length >= 2);

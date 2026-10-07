@@ -163,7 +163,8 @@ function loadMonitorRoute(cloud) {
   });
 }
 
-test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin", async () => {
+for (const allPresent of [false, true]) {
+test(`appel ${allPresent ? "tous présents" : "avec absents et retards"} hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin`, async () => {
   const restoreIndexedDb = installFakeIndexedDb();
   const previousWindow = globalThis.window;
   const previousFetch = globalThis.fetch;
@@ -218,8 +219,8 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
         captured_at_device: "2026-09-21T09:14:00.000Z",
         marks: [
           { student_id: "student-a", status: "present", reason: null, observed_at: null },
-          { student_id: "student-b", status: "absent", reason: "Malade", observed_at: null },
-          { student_id: "student-c", status: "late", reason: "Transport", observed_at: "2026-09-21T09:12:00.000Z" },
+          { student_id: "student-b", status: allPresent ? "present" : "absent", reason: allPresent ? null : "Malade", observed_at: null },
+          { student_id: "student-c", status: allPresent ? "present" : "late", reason: allPresent ? null : "Transport", observed_at: allPresent ? null : "2026-09-21T09:12:00.000Z" },
         ],
       },
     }, {
@@ -264,7 +265,7 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
     assert.equal(cloud.tables.teacher_sessions.length, 1);
     assert.equal(cloud.calls[2].body.captured_at_device, "2026-09-21T09:14:00.000Z");
     assert.deepEqual(cloud.calls[2].body.marks, cloud.calls[3].body.marks);
-    assert.deepEqual(cloud.calls[2].body.marks.map((mark) => mark.status), ["present", "absent", "late"]);
+    assert.deepEqual(cloud.calls[2].body.marks.map((mark) => mark.status), allPresent ? ["present", "present", "present"] : ["present", "absent", "late"]);
 
     const visible = await monitor();
     assert.equal(visible.rows.length, 1);
@@ -284,3 +285,4 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
     restoreIndexedDb();
   }
 });
+}

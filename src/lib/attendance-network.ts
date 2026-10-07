@@ -96,17 +96,43 @@ async function fetchWithAttendanceTimeout(
 ) {
   const controller = new AbortController();
   const external = init.signal;
-  const abortFromExternal = () => controller.abort(external?.reason);
+  let rejectAborted: (reason: unknown) => void = () => {};
+  const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
+  const abortFromExternal = () => {
+    const reason = external?.reason || new DOMException("request_aborted", "AbortError");
+    controller.abort(reason);
+    rejectAborted(reason);
+  };
   if (external) {
     if (external.aborted) abortFromExternal();
     else external.addEventListener("abort", abortFromExternal, { once: true });
   }
   const timeout = setTimeout(
-    () => controller.abort(new DOMException("attendance_network_timeout", "TimeoutError")),
+    () => {
+      const reason = new DOMException("attendance_network_timeout", "TimeoutError");
+      controller.abort(reason);
+      rejectAborted(reason);
+    },
     Math.max(500, timeoutMs),
   );
   try {
-    return await baseFetch(input, { ...init, signal: controller.signal });
+    return await Promise.race([
+      (async () => {
+        const response = await baseFetch(input, { ...init, signal: controller.signal });
+        // These API responses are JSON. Keep the budget through the body,
+        // then give callers a readable response with the original metadata.
+        if (!response.body) return response;
+        const body = await response.arrayBuffer();
+        const buffered = new Response(body, {
+          status: response.status, statusText: response.statusText, headers: response.headers,
+        });
+        for (const key of ["url", "redirected", "type"] as const) {
+          Object.defineProperty(buffered, key, { value: response[key] });
+        }
+        return buffered;
+      })(),
+      aborted,
+    ]);
   } finally {
     clearTimeout(timeout);
     external?.removeEventListener("abort", abortFromExternal);
