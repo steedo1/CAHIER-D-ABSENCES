@@ -43,10 +43,10 @@ export async function requireInstitutionRole(
   ]);
   if (profile.error || roleRows.error) return { error: "forbidden" };
   const profileInstitution = String(profile.data?.institution_id || "");
-  const applicable = (roleRows.data || []).filter((row: { role: string }) => allowedRoles.includes(row.role));
-  const instId = profileInstitution || String(applicable.find((row: { institution_id: string }) => row.institution_id)?.institution_id || "");
+  const applicable = (roleRows.data || []).filter((row) => allowedRoles.includes(row.role));
+  const instId = profileInstitution || String(applicable.find((row) => row.institution_id)?.institution_id || "");
   if (!instId) return { error: "no_institution" };
-  const allowed = applicable.some((row: { role: string; institution_id: string | null }) =>
+  const allowed = applicable.some((row) =>
     row.role === "super_admin" || row.institution_id === instId ||
     (!row.institution_id && Boolean(profileInstitution)),
   );
