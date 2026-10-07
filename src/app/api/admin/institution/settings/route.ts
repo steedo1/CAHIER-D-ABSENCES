@@ -1,7 +1,7 @@
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 //src/app/api/admin/institution/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
 

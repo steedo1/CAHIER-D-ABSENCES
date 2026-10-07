@@ -6,9 +6,9 @@ import ts from "typescript";
 const require = createRequire(import.meta.url);
 function load(path, mocks = {}) {
   const code = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
-  const module = { exports: {} };
-  new Function("require", "module", "exports", code)((name) => mocks[name] ?? require(name), module, module.exports);
-  return module.exports;
+  const loaded = { exports: {} };
+  new Function("require", "module", "exports", code)((name) => mocks[name] ?? require(name), loaded, loaded.exports);
+  return loaded.exports;
 }
 const cookieHelpers = load("src/lib/auth/session-cookies.ts");
 const { SESSION_STORAGE_KEY } = cookieHelpers;

@@ -50,3 +50,23 @@ Tests contrôlés : vingt contrôles simultanés sur un même client produisent 
 8. Relever les sept endpoints ci-dessus sur une fenêtre comparable, distinguer la Preview du trafic concurrent de production autant que les journaux le permettent, et confirmer 0 HTTP 429 token, 0 HTTP 400 profiles répétitif et 0 INSERT QR inutile.
 
 La fusion et la promotion doivent attendre cette validation.
+
+## Validation automatisée et limites
+
+- Build Vercel réussi pour le code `80b81953306812af9659264bc81d1e393533c5fe` : [Preview](https://cahier-d-absences-pro-ces5d0g52-ange-aristide-kouadios-projects.vercel.app). Contrôle HTTP : `/login` 200, `/manifest.webmanifest` 200, `/api/admin/settings` sans session 401. Il s'agit de contrôles HTTP, pas d'une recette navigateur authentifiée.
+- TypeScript : `tsc --noEmit --incremental false` réussi ; le job CI « Web offline critical » confirme aussi le typage et les régressions offline.
+- Suite complète `node --test --test-concurrency=4 test/*.test.mjs` : **382 tests, 363 réussis, 19 échecs, aucun ignoré**. Les 19 échecs sont reproduits sur la base de production exacte, dans `student-transfer-regression.test.mjs` (18, double de base ne gérant pas `lifecycle_status.eq.active`) et `relay-grade-versioned-routing.test.mjs` (1, assertion de forme du wrapper V4). Comparaison sur une copie isolée du commit de production : 31 tests de ces deux fichiers, 12 réussis, les mêmes 19 échecs. Le test historique d'authentification a été adapté au helper commun : il exige toujours une identité vérifiée et des rôles lus côté service, sans exiger la réinjection répétitive de session supprimée.
+- Les huit tests dédiés à cette passe vérifient déduplication, renouvellement avec le SDK installé, persistance, cookies découpés, isolement des établissements, invalidation, erreurs et course entre lecture/écriture.
+- `npm run lint` lancé sur tout le dépôt : échec, avec des problèmes hors périmètre dans des composants et chargeurs de tests existants. Les deux erreurs de chargeurs ajoutés dans cette passe ont été corrigées. Lint de tous les fichiers sources modifiés : **0 erreur, 1 avertissement existant** (`req` inutilisé dans `institution/slots`).
+- [CI du code vérifié](https://github.com/steedo1/CAHIER-D-ABSENCES/actions/runs/37652817700) : contrat de release, typage/régressions web offline, transaction de suppression élève dans une base CI éphémère, vérification complète du relais et audit des dépendances relais réussis.
+- **Blocage du gate de release : audit des dépendances web**. Il signale 7 vulnérabilités de production (2 modérées, 4 élevées, 1 critique), notamment dans Next, Sharp, Axios et xmldom. `package.json` et `package-lock.json` sont identiques à la base de production : aucune dépendance n'a été ajoutée ou mise à niveau par cette optimisation. Ce gate reste rouge ; la résolution des vulnérabilités et sa validation sont nécessaires avant une release. Aucun contournement du gate n'a été effectué.
+
+La branche est livrée en [PR draft #89](https://github.com/steedo1/CAHIER-D-ABSENCES/pull/89). La PR référence le commit final et sa Preview. La recette authentifiée, la mesure après correction et les vérifications métier réelles restent à effectuer par l'utilisateur, selon son choix. Ni fusion ni promotion en production.
+
+## Fichiers concernés
+
+- Session : `middleware.ts`, `src/middleware.ts`, `src/lib/supabase-server.ts`, `src/lib/auth/session-cookies.ts`, `src/lib/auth/session-middleware.ts`.
+- Contexte de requête et références : `src/lib/auth/server-context.ts`, `src/lib/supabase-reference-fetch.ts`, `src/lib/supabaseAdmin.ts`, `src/app/api/admin/_helpers/getMyInstitution.ts`, `src/app/api/admin/_helpers/institutionAccess.ts`, `src/app/api/admin/classes/route.ts`, `src/app/admin/layout.tsx`, `src/app/api/auth/role/route.ts`.
+- Guards corrigés : les sept routes sous `src/app/api/admin/institution/` (`route.ts`, `settings`, `periods`, `slots`, `subject-components`, `bulletin-subject-groups`, `bulletin-subject-structure`), `src/app/api/admin/rapport-f/settings/route.ts`, `src/app/api/admin/offline/relay-devices/route.ts`.
+- Clients unifiés/déconnexion : `src/app/redirect/route.ts`, `src/app/api/admin/users/route.ts`, `src/app/api/admin/users/reset-password/route.ts`, `src/app/api/admin/password/route.ts`, `src/app/api/auth/sync/route.ts`, `src/app/api/auth/signout/route.ts`.
+- Tests et rapport : `test/supabase-server-auth-dedupe.test.mjs`, `test/supabase-reference-fetch.test.mjs`, `test/file-correspondent-parent-fields.test.mjs`, ce document.

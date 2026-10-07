@@ -3,8 +3,8 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
 const code=ts.transpileModule(readFileSync(new URL('../src/lib/supabase-reference-fetch.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText;
-const module={exports:{}};new Function('module','exports',code)(module,module.exports);
-const {createReferenceFetch}=module.exports;
+const loaded={exports:{}};new Function('module','exports',code)(loaded,loaded.exports);
+const {createReferenceFetch}=loaded.exports;
 const classes='https://project.supabase.co/rest/v1/classes?select=id,label&institution_id=eq.school-a';
 test('20 lectures de référence concurrentes partagent une requête, avec réponses indépendantes',async()=>{
  let count=0;const fetcher=createReferenceFetch(async()=>{count++;await new Promise(r=>setTimeout(r,5));return Response.json([{id:'class-a'}])});

@@ -11,17 +11,6 @@ export const dynamic = "force-dynamic";
 type GuardOk = { user: { id: string }; instId: string };
 type GuardErr = { error: "unauthorized" | "no_institution" | "forbidden" };
 
-type ProfileRow = {
-  id: string;
-  role: string | null;
-  institution_id: string | null;
-};
-
-type UserRoleRow = {
-  role: string | null;
-  institution_id: string | null;
-};
-
 type InstitutionPeriodRow = {
   id: string;
   weekday: number | null;

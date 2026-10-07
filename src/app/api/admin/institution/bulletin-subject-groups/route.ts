@@ -8,8 +8,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
-
 type GuardOk = {
   user: { id: string };
   instId: string;

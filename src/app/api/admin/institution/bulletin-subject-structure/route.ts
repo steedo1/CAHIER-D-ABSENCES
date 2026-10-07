@@ -7,14 +7,6 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Role = "super_admin" | "admin" | "educator" | "teacher" | "parent" | string;
-
-type ProfileRow = {
-  id: string;
-  role: Role | null;
-  institution_id: string | null;
-};
-
 type GroupItemRow = {
   id: string;
   subject_id: string;

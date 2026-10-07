@@ -1,4 +1,4 @@
-import { getRequestProfile, getRequestRoles } from "@/lib/auth/server-context";
+import { getRequestProfile } from "@/lib/auth/server-context";
 // src/app/api/admin/_helpers/getMyInstitution.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
