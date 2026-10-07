@@ -31,6 +31,10 @@ Le worker et l’application portent la même release `2026-10-07-attendance-com
 
 Ces régressions sont incluses dans `Offline Go-Live Gate`. Les résultats de compilation, de tests et du déploiement doivent être rattachés au commit exact de la PR.
 
+La suite locale complète passe 193 tests. Le premier commit de correction passe aussi le contrôle TypeScript et les tests hors ligne, le contrôle complet du relais et le build Vercel. Le contrôle de publication a ensuite nécessité les versions correctives de dépendances : Next.js 15.5.27, Sharp 0.35.5, Axios 1.20.0, xmldom 0.8.15, source-map-js 1.2.2, fflate 0.8.3 et qs 6.16.0 dans le verrou. L’audit de production du verrou mis à jour signale zéro vulnérabilité. Le gate et le build sont relancés avec ces dépendances.
+
+Versions correctives minimales documentées par les éditeurs : [Next.js 15.5.24](https://github.com/vercel/next.js/security/advisories/GHSA-p293-qw3h-jr36) et [Sharp 0.35.5](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w).
+
 ## Vérification terrain à terminer
 
 Un test sur une tablette ou un téléphone du CSCA reste nécessaire pour vérifier le navigateur installé, son stockage et ses caches réels. Le navigateur accessible à l’agent demande une connexion à l’application ; aucun parcours admin authentifié réel n’a été certifié.
