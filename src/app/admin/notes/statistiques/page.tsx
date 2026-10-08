@@ -183,19 +183,22 @@ function currentDateForPeriod(period?: GradePeriod | null) {
   return today;
 }
 
+function isPublished(ev: RegisterEvaluation) {
+  return ev.is_published || String(ev.publication_status || "").toLowerCase() === "published";
+}
+
 function evaluationStatus(ev: RegisterEvaluation) {
-  if (ev.is_locked) return { label: "Verrouillé", className: "bg-slate-100 text-slate-600" };
-  const status = String(ev.publication_status || "");
-  if (ev.is_published || status === "published") {
-    return { label: "Publié", className: "bg-emerald-50 text-emerald-700" };
+  const status = String(ev.publication_status || "").toLowerCase();
+  if (isPublished(ev)) {
+    return { label: "Publiée", className: "bg-emerald-50 text-emerald-700" };
   }
   if (status === "submitted") {
-    return { label: "Soumis", className: "bg-amber-50 text-amber-700" };
+    return { label: "Non publiée · Soumise", className: "bg-amber-50 text-amber-700" };
   }
   if (status === "changes_requested") {
-    return { label: "À corriger", className: "bg-rose-50 text-rose-700" };
+    return { label: "Non publiée · À corriger", className: "bg-rose-50 text-rose-700" };
   }
-  return { label: "Brouillon", className: "bg-sky-50 text-sky-700" };
+  return { label: "Non publiée · Brouillon", className: "bg-sky-50 text-sky-700" };
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -279,6 +282,7 @@ export default function AdminGradeRegisterPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [publicationFilter, setPublicationFilter] = useState<"all" | "published" | "unpublished">("all");
   const [dirty, setDirty] = useState<Record<string, Record<string, string>>>({});
   const [saving, setSaving] = useState(false);
 
@@ -366,6 +370,11 @@ export default function AdminGradeRegisterPage() {
   );
 
   const evaluations = register?.evaluations || [];
+  const publishedCount = evaluations.filter(isPublished).length;
+  const visibleEvaluations = evaluations.filter((evaluation) =>
+    publicationFilter === "all" ||
+    (publicationFilter === "published" ? isPublished(evaluation) : !isPublished(evaluation)),
+  );
   const roster = register?.roster || [];
   const originalScoreMap = useMemo(() => {
     const map = new Map<string, number | null>();
@@ -733,6 +742,7 @@ export default function AdminGradeRegisterPage() {
       }
 
       setShowNewEvaluation(false);
+      setPublicationFilter("all");
       setMessage("Nouvelle colonne ajoutée. Vous pouvez saisir les notes.");
       await loadRegister(false);
     } catch (reason: any) {
@@ -766,7 +776,7 @@ export default function AdminGradeRegisterPage() {
                     Registre des notes
                   </h1>
                   <p className="text-sm text-slate-500">
-                    Consulter et saisir les notes d’un enseignant.
+                    Consulter les notes d’un enseignant, publiées ou non, et compléter la saisie.
                   </p>
                 </div>
               </div>
@@ -1020,21 +1030,35 @@ export default function AdminGradeRegisterPage() {
               </div>
               {register && (
                 <p className="mt-1 text-xs text-slate-500">
-                  {roster.length} élève{roster.length > 1 ? "s" : ""} · {evaluations.length} note{evaluations.length > 1 ? "s" : ""}
+                  {roster.length} élève{roster.length > 1 ? "s" : ""} · {evaluations.length} évaluation{evaluations.length > 1 ? "s" : ""} · {publishedCount} publiée{publishedCount > 1 ? "s" : ""} · {evaluations.length - publishedCount} non publiée{evaluations.length - publishedCount > 1 ? "s" : ""}
                 </p>
               )}
             </div>
 
-            <label className="relative block w-full lg:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Rechercher un élève…"
-                className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
-              />
-            </label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="block w-full sm:w-48">
+                <FieldLabel>Publication</FieldLabel>
+                <Select
+                  value={publicationFilter}
+                  onChange={(event) => setPublicationFilter(event.target.value as typeof publicationFilter)}
+                  disabled={!register || registerLoading}
+                >
+                  <option value="all">Toutes les notes</option>
+                  <option value="published">Publiées</option>
+                  <option value="unpublished">Non publiées</option>
+                </Select>
+              </label>
+              <label className="relative block w-full sm:w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Rechercher un élève…"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+                />
+              </label>
+            </div>
           </div>
 
           {registerLoading ? (
@@ -1062,6 +1086,10 @@ export default function AdminGradeRegisterPage() {
                 Ajouter une note
               </Button>
             </div>
+          ) : register && visibleEvaluations.length === 0 ? (
+            <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
+              Aucune évaluation {publicationFilter === "published" ? "publiée" : "non publiée"} pour cette sélection.
+            </div>
           ) : register ? (
             <div className="max-h-[68vh] overflow-auto">
               <table className="min-w-max border-separate border-spacing-0 text-sm">
@@ -1070,7 +1098,7 @@ export default function AdminGradeRegisterPage() {
                     <th className="sticky left-0 z-40 min-w-[250px] border-b border-r border-slate-200 bg-slate-50 px-4 py-3 text-left font-semibold text-slate-700">
                       Élève
                     </th>
-                    {evaluations.map((evaluation, index) => {
+                    {visibleEvaluations.map((evaluation, index) => {
                       const status = evaluationStatus(evaluation);
                       return (
                         <th
@@ -1092,11 +1120,15 @@ export default function AdminGradeRegisterPage() {
                           <span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${status.className}`}>
                             {status.label}
                           </span>
+                          {evaluation.is_locked && (
+                            <div className="mt-1 text-[10px] font-medium text-slate-500">Verrouillée</div>
+                          )}
                         </th>
                       );
                     })}
                     <th className="sticky right-0 z-40 min-w-[120px] border-b border-l border-slate-200 bg-slate-100 px-4 py-3 text-center font-bold text-slate-800">
                       Moyenne /20
+                      <div className="text-[10px] font-normal text-slate-500">Toutes les notes saisies</div>
                     </th>
                   </tr>
                 </thead>
@@ -1112,7 +1144,7 @@ export default function AdminGradeRegisterPage() {
                           )}
                         </td>
 
-                        {evaluations.map((evaluation) => {
+                        {visibleEvaluations.map((evaluation) => {
                           const value = getCellValue(evaluation.id, student.id);
                           const editable = evaluation.editable === true;
                           return (
