@@ -8,6 +8,7 @@ import {
   type EducationScopeValue,
 } from "@/lib/education-scope";
 import {
+  ArrowLeft,
   BookOpenCheck,
   CalendarDays,
   Check,
@@ -114,6 +115,18 @@ type RegisterResponse = {
   evaluations?: RegisterEvaluation[];
   scores?: RegisterScore[];
   components?: SubjectComponent[];
+};
+
+type RegisterOverviewItem = {
+  teacher_id: string;
+  teacher_name: string;
+  subject_id: string;
+  subject_label: string;
+  evaluations_count: number;
+  notes_count: number;
+  published_notes_count: number;
+  unpublished_notes_count: number;
+  last_eval_date: string;
 };
 
 type NewEvaluationForm = {
@@ -265,7 +278,6 @@ export default function AdminGradeRegisterPage() {
   const [selectedYear, setSelectedYear] = useState("");
   const [educationScope, setEducationScope] =
     useState<EducationScopeValue>(DEFAULT_EDUCATION_SCOPE);
-  const selectedLevel = educationScope.levelCode;
   const selectedClassId = educationScope.classId;
 
   const [periods, setPeriods] = useState<GradePeriod[]>([]);
@@ -295,6 +307,8 @@ export default function AdminGradeRegisterPage() {
     coeff: 1,
     subject_component_id: "",
   });
+  const [overviewItems, setOverviewItems] = useState<RegisterOverviewItem[]>([]);
+  const overviewMode = selectedSubjectId === "";
 
   const loadSeq = useRef(0);
 
@@ -341,10 +355,15 @@ export default function AdminGradeRegisterPage() {
       if (!id || !label) continue;
       if (!map.has(id)) map.set(id, { id, label });
     }
+    for (const item of overviewItems) {
+      if (!map.has(item.subject_id)) {
+        map.set(item.subject_id, { id: item.subject_id, label: item.subject_label });
+      }
+    }
     return Array.from(map.values()).sort((a, b) =>
       a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
     );
-  }, [affectations]);
+  }, [affectations, overviewItems]);
 
   const teacherOptions = useMemo(() => {
     const map = new Map<string, { id: string; label: string }>();
@@ -354,10 +373,15 @@ export default function AdminGradeRegisterPage() {
       if (!id) continue;
       map.set(id, { id, label: teacherLabel(item) });
     }
+    for (const item of overviewItems) {
+      if (item.subject_id === selectedSubjectId && !map.has(item.teacher_id)) {
+        map.set(item.teacher_id, { id: item.teacher_id, label: item.teacher_name });
+      }
+    }
     return Array.from(map.values()).sort((a, b) =>
       a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
     );
-  }, [affectations, selectedSubjectId]);
+  }, [affectations, selectedSubjectId, overviewItems]);
 
   const selectedSubject = useMemo(
     () => subjectOptions.find((row) => row.id === selectedSubjectId) || null,
@@ -392,6 +416,13 @@ export default function AdminGradeRegisterPage() {
       return haystack.includes(query);
     });
   }, [roster, search]);
+
+  const filteredOverview = overviewItems.filter((item) => {
+    if (publicationFilter === "published" && !item.published_notes_count) return false;
+    if (publicationFilter === "unpublished" && !item.unpublished_notes_count) return false;
+    const query = search.trim().toLocaleLowerCase("fr");
+    return !query || `${item.teacher_name} ${item.subject_label}`.toLocaleLowerCase("fr").includes(query);
+  });
 
   const dirtyCount = useMemo(
     () =>
@@ -437,6 +468,7 @@ export default function AdminGradeRegisterPage() {
   useEffect(() => {
     let cancelled = false;
     setRegister(null);
+    setOverviewItems([]);
     setDirty({});
     setMessage(null);
     setError(null);
@@ -522,6 +554,7 @@ export default function AdminGradeRegisterPage() {
     setSelectedSubjectId("");
     setSelectedTeacherId("");
     setRegister(null);
+    setOverviewItems([]);
     setDirty({});
   }
 
@@ -535,19 +568,59 @@ export default function AdminGradeRegisterPage() {
 
   useEffect(() => {
     setSelectedSubjectId((current) =>
-      current && subjectOptions.some((row) => row.id === current)
+      !current || subjectOptions.some((row) => row.id === current)
         ? current
-        : subjectOptions[0]?.id || "",
+        : "",
     );
   }, [subjectOptions]);
 
   useEffect(() => {
     setSelectedTeacherId((current) =>
-      current && teacherOptions.some((row) => row.id === current)
+      overviewMode ? "" : current && teacherOptions.some((row) => row.id === current)
         ? current
         : teacherOptions[0]?.id || "",
     );
-  }, [teacherOptions]);
+  }, [teacherOptions, overviewMode]);
+
+  async function loadOverview() {
+    const seq = ++loadSeq.current;
+    setError(null);
+    setRegister(null);
+    if (!selectedClassId || !selectedPeriodId) return;
+    setRegisterLoading(true);
+    try {
+      const params = new URLSearchParams({
+        view: "overview",
+        class_id: selectedClassId,
+        grading_period_id: selectedPeriodId,
+      });
+      const response = await fetch(`/api/admin/grades/register?${params.toString()}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) throw new Error(data?.error || "Impossible de charger les enseignants.");
+      if (seq !== loadSeq.current) return;
+      setOverviewItems(Array.isArray(data.items) ? data.items : []);
+    } catch (reason: any) {
+      if (seq !== loadSeq.current) return;
+      setOverviewItems([]);
+      setError(reason?.message || "Impossible de charger les enseignants.");
+    } finally {
+      if (seq === loadSeq.current) setRegisterLoading(false);
+    }
+  }
+
+  function openTeacherNotes(item: RegisterOverviewItem) {
+    setSelectedSubjectId(item.subject_id);
+    setSelectedTeacherId(item.teacher_id);
+    setSearch("");
+    setShowNewEvaluation(false);
+  }
+
+  function showAllDisciplines() {
+    setSelectedSubjectId("");
+    setSelectedTeacherId("");
+    setSearch("");
+    setShowNewEvaluation(false);
+  }
 
   async function loadRegister(showBusy = true) {
     const seq = ++loadSeq.current;
@@ -590,11 +663,15 @@ export default function AdminGradeRegisterPage() {
   }
 
   useEffect(() => {
+    ++loadSeq.current;
+    setRegisterLoading(false);
     setRegister(null);
     setDirty({});
     setSearch("");
     setMessage(null);
-    if (
+    if (selectedClassId && selectedPeriodId && overviewMode) {
+      void loadOverview();
+    } else if (
       selectedClassId &&
       selectedPeriodId &&
       selectedSubjectId &&
@@ -602,6 +679,7 @@ export default function AdminGradeRegisterPage() {
     ) {
       void loadRegister();
     }
+    return () => { ++loadSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClassId, selectedPeriodId, selectedSubjectId, selectedTeacherId]);
 
@@ -754,12 +832,12 @@ export default function AdminGradeRegisterPage() {
 
   const ready = Boolean(
     selectedYear &&
-      selectedLevel &&
       selectedClassId &&
       selectedPeriodId &&
       selectedSubjectId &&
       selectedTeacherId,
   );
+  const contextReady = Boolean(selectedYear && selectedClassId && selectedPeriodId);
 
   return (
     <div className="min-h-screen bg-slate-50/70 px-4 py-5 sm:px-6 lg:px-8">
@@ -776,18 +854,24 @@ export default function AdminGradeRegisterPage() {
                     Registre des notes
                   </h1>
                   <p className="text-sm text-slate-500">
-                    Consulter les notes d’un enseignant, publiées ou non, et compléter la saisie.
+                    Consulter les enseignants ayant saisi des notes, puis ouvrir leur registre.
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {!overviewMode && (
+                <Button type="button" tone="ghost" onClick={showAllDisciplines} disabled={saving}>
+                  <ArrowLeft className="h-4 w-4" />
+                  Toutes les disciplines
+                </Button>
+              )}
               <Button
                 type="button"
                 tone="ghost"
-                onClick={() => void loadRegister()}
-                disabled={!ready || registerLoading}
+                onClick={() => void (overviewMode ? loadOverview() : loadRegister())}
+                disabled={!(overviewMode ? contextReady : ready) || registerLoading}
               >
                 <RefreshCw className={`h-4 w-4 ${registerLoading ? "animate-spin" : ""}`} />
                 Actualiser
@@ -820,6 +904,7 @@ export default function AdminGradeRegisterPage() {
                 value={selectedYear}
                 onChange={(event) => {
                   setSelectedYear(event.target.value);
+                  showAllDisciplines();
                   setEducationScope((current) => ({
                     ...current,
                     levelCode: "",
@@ -838,7 +923,11 @@ export default function AdminGradeRegisterPage() {
               <FieldLabel>Trimestre / période</FieldLabel>
               <Select
                 value={selectedPeriodId}
-                onChange={(event) => setSelectedPeriodId(event.target.value)}
+                onChange={(event) => {
+                  setSelectedPeriodId(event.target.value);
+                  setOverviewItems([]);
+                  showAllDisciplines();
+                }}
                 disabled={periodsLoading || !periodOptions.length}
               >
                 {periodOptions.map((period) => (
@@ -851,9 +940,15 @@ export default function AdminGradeRegisterPage() {
               <FieldLabel>Discipline</FieldLabel>
               <Select
                 value={selectedSubjectId}
-                onChange={(event) => setSelectedSubjectId(event.target.value)}
-                disabled={affectationsLoading || !subjectOptions.length}
+                onChange={(event) => {
+                  setSelectedSubjectId(event.target.value);
+                  setSelectedTeacherId("");
+                  setSearch("");
+                  setShowNewEvaluation(false);
+                }}
+                disabled={affectationsLoading || !selectedClassId}
               >
+                <option value="">Toutes les disciplines</option>
                 {subjectOptions.map((row) => (
                   <option key={row.id} value={row.id}>{row.label}</option>
                 ))}
@@ -865,8 +960,9 @@ export default function AdminGradeRegisterPage() {
               <Select
                 value={selectedTeacherId}
                 onChange={(event) => setSelectedTeacherId(event.target.value)}
-                disabled={affectationsLoading || !teacherOptions.length}
+                disabled={overviewMode || affectationsLoading || !teacherOptions.length}
               >
+                {overviewMode && <option value="">Tous les enseignants</option>}
                 {teacherOptions.map((row) => (
                   <option key={row.id} value={row.id}>{row.label}</option>
                 ))}
@@ -1016,11 +1112,11 @@ export default function AdminGradeRegisterPage() {
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <span className="font-bold text-slate-900">{classLabel(selectedClass)}</span>
                 <span className="text-slate-300">•</span>
-                <span className="font-medium text-slate-700">{selectedSubject?.label || "Discipline"}</span>
+                <span className="font-medium text-slate-700">{overviewMode ? "Toutes les disciplines" : selectedSubject?.label || "Discipline"}</span>
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
                   <UserRound className="h-3.5 w-3.5" />
-                  {selectedTeacher?.label || "Professeur"}
+                  {overviewMode ? "Tous les enseignants" : selectedTeacher?.label || "Professeur"}
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="inline-flex items-center gap-1 text-slate-600">
@@ -1033,6 +1129,11 @@ export default function AdminGradeRegisterPage() {
                   {roster.length} élève{roster.length > 1 ? "s" : ""} · {evaluations.length} évaluation{evaluations.length > 1 ? "s" : ""} · {publishedCount} publiée{publishedCount > 1 ? "s" : ""} · {evaluations.length - publishedCount} non publiée{evaluations.length - publishedCount > 1 ? "s" : ""}
                 </p>
               )}
+              {overviewMode && contextReady && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Cliquez sur une ligne pour consulter les notes de l’enseignant.
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -1041,7 +1142,7 @@ export default function AdminGradeRegisterPage() {
                 <Select
                   value={publicationFilter}
                   onChange={(event) => setPublicationFilter(event.target.value as typeof publicationFilter)}
-                  disabled={!register || registerLoading}
+                  disabled={!contextReady || registerLoading}
                 >
                   <option value="all">Toutes les notes</option>
                   <option value="published">Publiées</option>
@@ -1054,7 +1155,7 @@ export default function AdminGradeRegisterPage() {
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Rechercher un élève…"
+                  placeholder={overviewMode ? "Enseignant ou discipline…" : "Rechercher un élève…"}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
                 />
               </label>
@@ -1066,6 +1167,50 @@ export default function AdminGradeRegisterPage() {
               <Loader2 className="h-5 w-5 animate-spin" />
               Chargement du registre…
             </div>
+          ) : overviewMode && contextReady ? (
+            error ? null : filteredOverview.length === 0 ? (
+              <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
+                Aucun enseignant avec des notes saisies pour cette sélection.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <caption className="sr-only">Enseignants ayant saisi des notes pour la classe et la période sélectionnées</caption>
+                  <thead className="bg-slate-50 text-left text-slate-600">
+                    <tr>
+                      <th scope="col" className="px-4 py-3">Enseignant</th>
+                      <th scope="col" className="px-4 py-3">Discipline</th>
+                      <th scope="col" className="px-4 py-3 text-center">Évaluations</th>
+                      <th scope="col" className="px-4 py-3 text-center">Notes saisies</th>
+                      <th scope="col" className="px-4 py-3 text-center">Publiées</th>
+                      <th scope="col" className="px-4 py-3 text-center">Non publiées</th>
+                      <th scope="col" className="px-4 py-3">Dernière évaluation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOverview.map((item) => (
+                      <tr
+                        key={`${item.teacher_id}:${item.subject_id}`}
+                        onClick={() => openTeacherNotes(item)}
+                        className="cursor-pointer border-t border-slate-100 transition hover:bg-emerald-50/60 focus-within:bg-emerald-50/60"
+                      >
+                        <td className="px-4 py-3 font-semibold text-slate-900">
+                          <button type="button" className="rounded text-left text-emerald-700 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600" aria-label={`Voir les notes de ${item.teacher_name} en ${item.subject_label}`}>
+                            {item.teacher_name}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">{item.subject_label}</td>
+                        <td className="px-4 py-3 text-center tabular-nums">{item.evaluations_count}</td>
+                        <td className="px-4 py-3 text-center font-semibold tabular-nums">{item.notes_count}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-emerald-700">{item.published_notes_count}</td>
+                        <td className="px-4 py-3 text-center tabular-nums text-amber-700">{item.unpublished_notes_count}</td>
+                        <td className="px-4 py-3 text-slate-500">{formatDate(item.last_eval_date)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           ) : !ready ? (
             <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-slate-500">
               Sélectionnez l’année, la période, le niveau, la classe, la discipline et le professeur.
