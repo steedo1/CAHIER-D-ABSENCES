@@ -27,17 +27,43 @@ function database(seed) {
     from(table) {
       const filters = [];
       const q = {
+        offset: 0, pageSize: 1000,
         select() { return this; },
         eq(key, value) { filters.push((row) => row[key] === value); return this; },
         is(key, value) { return this.eq(key, value); },
         in(key, values) { filters.push((row) => values.includes(row[key])); return this; },
-        or() { return this; },
+        or(expression) {
+          const split = (value) => {
+            let depth = 0, start = 0;
+            const parts = [];
+            for (let i = 0; i < value.length; i++) {
+              if (value[i] === "(") depth++;
+              if (value[i] === ")") depth--;
+              if (value[i] === "," && !depth) { parts.push(value.slice(start, i)); start = i + 1; }
+            }
+            return [...parts, value.slice(start)];
+          };
+          const matches = (row, clause) => {
+            if (clause.startsWith("and(")) return split(clause.slice(4, -1)).every((c) => matches(row, c));
+            const [key, op, ...rest] = clause.split(".");
+            const value = rest.join(".");
+            if (op === "is") return row[key] == null;
+            if (op === "eq") return row[key] === value;
+            if (op === "gte") return row[key] >= value;
+            if (op === "lte") return row[key] <= value;
+            throw new Error(`Unexpected filter ${clause}`);
+          };
+          filters.push((row) => split(expression).some((clause) => matches(row, clause)));
+          return this;
+        },
         order() { return this; },
-        limit() { return this; },
+        limit(count) { this.pageSize = count; return this; },
+        range(start, end) { this.offset = start; this.pageSize = end - start + 1; return this; },
         maybeSingle() { this.single = true; return this; },
         then(resolve, reject) {
           calls.push(table);
-          const rows = (seed[table] || []).filter((row) => filters.every((matches) => matches(row)));
+          const rows = (seed[table] || []).filter((row) => filters.every((matches) => matches(row)))
+            .slice(this.offset, this.offset + this.pageSize);
           return Promise.resolve({ data: this.single ? rows[0] || null : rows, error: null }).then(resolve, reject);
         },
       };
@@ -66,7 +92,7 @@ const base = {
 function handlers(seed) {
   const db = database(seed);
   const mocks = {
-    "@/lib/supabase-server": { getSupabaseServerClient: async () => db.srv },
+    "@/lib/supabase-server": { getSupabaseServerClient: async () => db.srv, getVerifiedServerUser: (srv) => srv.auth.getUser() },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => db.srv },
   };
   return { ...db, mocks };
@@ -170,4 +196,140 @@ test("le registre affiche et filtre les deux publications sans masquer le statut
   // Le filtre est visuel : la moyenne reste celle de toutes les notes saisies.
   assert.match(published, /7,50/);
   assert.match(unpublished, /7,50/);
+});
+
+const overviewPeriod = { id: "T1", institution_id: "csca", academic_year: "2026-2027", start_date: "2026-08-31", end_date: "2026-12-04" };
+const overviewEval = (id, extra = {}) => ({
+  id, class_id: "6e1", teacher_id: "teacher", subject_id: subject.id, grading_period_id: "T1",
+  eval_date: "2026-09-16", is_published: false, publication_status: "draft", scale: 20, coeff: 1,
+  ...extra,
+});
+const overviewUrl = () => ({ nextUrl: new URL("https://test/api?view=overview&class_id=6e1&grading_period_id=T1") });
+const overviewBase = {
+  ...base,
+  profiles: [...base.profiles, { id: "teacher", display_name: "Professeur test" }],
+  grade_periods: [overviewPeriod],
+};
+
+test("toutes les disciplines ne liste que les enseignants avec des notes, publiées ou non, dans le contexte choisi", async () => {
+  const { mocks } = handlers({
+    ...overviewBase,
+    grade_evaluations: [
+      overviewEval("draft"), overviewEval("alias", { subject_id: instSubject.id }),
+      overviewEval("published", { is_published: true, publication_status: "published", eval_date: "2026-09-21" }),
+      overviewEval("empty", { teacher_id: "empty-teacher" }),
+      overviewEval("null", { teacher_id: "null-teacher" }),
+      overviewEval("other-class", { class_id: "5e1", teacher_id: "foreign-class" }),
+      overviewEval("other-period", { grading_period_id: "T2", teacher_id: "foreign-period" }),
+    ],
+    student_grades: [
+      { evaluation_id: "draft", student_id: "a", score: 0 },
+      { evaluation_id: "alias", student_id: "b", score: 12 },
+      { evaluation_id: "published", student_id: "c", score: 19 },
+      { evaluation_id: "published", student_id: "d", score: 18 },
+      { evaluation_id: "null", student_id: "e", score: null },
+      { evaluation_id: "other-class", student_id: "f", score: 10 },
+      { evaluation_id: "other-period", student_id: "g", score: 10 },
+    ],
+    v_grade_scores_official_for_reports: [{ evaluation_id: "published", student_id: "c", score: 15 }],
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const response = await route.GET(overviewUrl());
+  assert.equal(response.status, 200);
+  const { items } = await response.json();
+  assert.deepEqual(items, [{
+    teacher_id: "teacher", teacher_name: "Professeur test", subject_id: "inst-subject", subject_label: "Anglais",
+    notes_count: 3, published_notes_count: 1, unpublished_notes_count: 2,
+    evaluations_count: 3, published_evaluations_count: 1, unpublished_evaluations_count: 2,
+    last_eval_date: "2026-09-21",
+  }]);
+});
+
+test("la synthèse compte plus de 1000 notes sans troncature", async () => {
+  const { mocks, calls } = handlers({
+    ...overviewBase, grade_evaluations: [overviewEval("draft")],
+    student_grades: Array.from({ length: 1205 }, (_, index) => ({ evaluation_id: "draft", student_id: `student-${index}`, score: 0 })),
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const response = await route.GET(overviewUrl());
+  assert.equal((await response.json()).items[0].notes_count, 1205);
+  assert.equal(calls.filter((table) => table === "student_grades").length, 2);
+});
+
+test("la synthèse refuse les accès hors établissement et hors rôle admin", async () => {
+  for (const [seed, expectedStatus] of [
+    [{ ...overviewBase, classes: [{ ...classRow, institution_id: "other" }] }, 404],
+    [{ ...overviewBase, user_roles: [{ profile_id: "admin", role: "teacher", institution_id: "csca" }] }, 403],
+    [{ ...overviewBase, grade_periods: [{ ...overviewPeriod, academic_year: "2025-2026" }] }, 400],
+  ]) {
+    const { mocks, calls } = handlers(seed);
+    const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+    assert.equal((await route.GET(overviewUrl())).status, expectedStatus);
+    assert.equal(calls.includes("student_grades"), false);
+  }
+});
+
+test("les notes d'un ancien enseignant s'ouvrent mais la création exige toujours une affectation", async () => {
+  const { mocks } = handlers({
+    ...overviewBase, class_teachers: [], grade_evaluations: [overviewEval("draft")],
+    students: [{ id: "student", full_name: "Élève test" }],
+    student_grades: [{ evaluation_id: "draft", student_id: "student", score: 13 }],
+  });
+  const route = load("src/app/api/admin/grades/register/route.ts", mocks);
+  const overview = await (await route.GET(overviewUrl())).json();
+  const item = overview.items[0];
+  const params = new URLSearchParams({ class_id: "6e1", grading_period_id: "T1", subject_id: item.subject_id, teacher_id: item.teacher_id });
+  const detail = await route.GET({ nextUrl: new URL(`https://test/api?${params}`) });
+  assert.equal(detail.status, 200);
+  assert.equal((await detail.json()).scores[0].score, 13);
+  const create = await route.POST({ json: async () => ({
+    action: "create_evaluation", class_id: "6e1", grading_period_id: "T1", subject_id: item.subject_id,
+    teacher_id: item.teacher_id, eval_date: "2026-09-21", eval_kind: "devoir", scale: 20, coeff: 1,
+  }) });
+  assert.equal(create.status, 403);
+});
+
+test("un clic sur la ligne de synthèse sélectionne la discipline et l'enseignant du registre", () => {
+  const item = {
+    teacher_id: "teacher", teacher_name: "Professeur test", subject_id: "inst-subject", subject_label: "Anglais",
+    notes_count: 28, published_notes_count: 0, unpublished_notes_count: 28, evaluations_count: 1, last_eval_date: "2026-09-16",
+  };
+  const states = [
+    [classRow], false, "2026-2027", { educationType: "general_secondary", formationCode: "", levelCode: "6e", classId: "6e1" },
+    [overviewPeriod], false, "T1", [], false, "", "", null, false, null, null, "", "all", {}, false, false, false, {}, [item],
+  ];
+  let index = 0;
+  const hooks = { ...React,
+    useState(initial) {
+      const current = index++;
+      if (current >= states.length) states[current] = initial;
+      return [states[current], (value) => { states[current] = typeof value === "function" ? value(states[current]) : value; }];
+    },
+    useEffect: () => {}, useMemo: (fn) => fn(), useRef: (current) => ({ current }),
+  };
+  const Page = load("src/app/admin/notes/statistiques/page.tsx", {
+    react: { __esModule: true, ...hooks, default: hooks },
+    "@/components/admin/EducationScopeFilter": { __esModule: true, default: () => null },
+  }).default;
+  const markup = () => { index = 0; return renderToStaticMarkup(React.createElement(Page)); };
+  assert.match(markup(), /Toutes les disciplines/);
+  assert.match(markup(), /Professeur test/);
+  assert.match(markup(), /28/);
+  states[16] = "published";
+  assert.doesNotMatch(markup(), /Voir les notes de Professeur test/);
+  states[16] = "all";
+  index = 0;
+  const tree = Page();
+  const findRow = (node) => {
+    if (!node || typeof node !== "object") return null;
+    if (node.type === "tr" && node.props.onClick) return node;
+    return React.Children.toArray(node.props?.children).map(findRow).find(Boolean);
+  };
+  findRow(tree).props.onClick();
+  assert.equal(states[9], "inst-subject");
+  assert.equal(states[10], "teacher");
+  states[11] = { ok: true, evaluations: [{ id: "draft", column_label: "Note 1", eval_date: "2026-09-16", is_published: false, scale: 20 }], roster: [{ id: "student", full_name: "Élève test" }], scores: [{ evaluation_id: "draft", student_id: "student", score: 13 }] };
+  assert.match(markup(), /Élève test/);
+  assert.match(markup(), />Note 1</);
+  assert.match(markup(), />13</);
 });
