@@ -173,15 +173,19 @@ test("le retour Cloud respecte ouverture, appel puis fermeture sans dépasser un
 });
 
 test("une réponse Cloud perdue est rejouée avec le même identifiant au lieu de réécrire l'histoire", async () => {
-  const [attendanceDelivery, lifecycle, page] = await Promise.all([
+  const [attendanceDelivery, lifecycle, page, offline, reconcile] = await Promise.all([
     read("src/lib/teacher-attendance-delivery.ts"),
     read("src/lib/teacher-session-lifecycle-delivery.ts"),
     read("src/app/class/page.tsx"),
+    read("src/lib/offline.ts"),
+    read("src/lib/class-device-sync-reconcile-v2.ts"),
   ]);
 
   assert.doesNotMatch(attendanceDelivery, /state === "delivery_unknown" \|\|/);
   assert.match(attendanceDelivery, /cloud_operation_id_mismatch/);
   assert.match(lifecycle, /state === "cloud_confirmed"/);
-  assert.match(page, /relay_state: "cloud_confirmed"/);
+  assert.match(offline, /relay_state: "cloud_confirmed"/);
+  assert.match(reconcile, /confirmClassDeviceCompletionInCloud\(completion\)/);
+  assert.match(page, /class-device-sync-updated/);
   assert.match(page, /sans modifier leurs heures originales/);
 });

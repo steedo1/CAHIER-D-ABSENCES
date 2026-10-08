@@ -14,7 +14,7 @@ type OperationInput = {
   session_dependency_key?: unknown;
   operation_body?: unknown;
 };
-type ReconcileBody = { class_id?: unknown; operations?: unknown };
+type ReconcileBody = { class_id?: unknown; operations?: unknown; completion?: unknown };
 
 type LocalMark = {
   studentId: string;
@@ -389,11 +389,38 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // The worker may already have removed acknowledged outbox rows. Check the
+    // final student receipt and exact close, never an empty queue or another course.
+    let completionResult: { confirmed: boolean; session_id: string | null; reason: string } | null = null;
+    if (body.completion) {
+      const completion = asBody(body.completion);
+      const localEndMs = parseDateMs(completion.ended_at);
+      const sessionId = await resolveSessionId({
+        operationType: "session-end", operationId: "completion-check",
+        dependencyKey: text(completion.session_id) || (text(completion.open_operation_id) ? `client:${text(completion.open_operation_id)}` : ""),
+        localBody: { session_id: completion.session_id }, institutionId, classId, actorProfileId: user.id,
+      });
+      completionResult = { confirmed: false, session_id: sessionId, reason: "completion_not_confirmed" };
+      if (sessionId && localEndMs != null) {
+        const { data: session, error: sessionError } = await srv.from("teacher_sessions")
+          .select("id,created_by,ended_at").eq("id", sessionId)
+          .eq("institution_id", institutionId).eq("class_id", classId).maybeSingle();
+        if (!sessionError && session && text(session.created_by) === user.id && parseDateMs(session.ended_at) === localEndMs) {
+          const { data: receipt, error: receiptError } = await srv.from("relay_attendance_session_causality")
+            .select("last_operation_id,last_captured_at_device").eq("institution_id", institutionId)
+            .eq("session_id", sessionId).maybeSingle();
+          const confirmed = !receiptError && Boolean(text(receipt?.last_operation_id)) && parseDateMs(receipt?.last_captured_at_device) === localEndMs;
+          completionResult = { confirmed, session_id: sessionId, reason: confirmed ? "final_attendance_and_close_confirmed" : "final_attendance_not_confirmed" };
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       class_id: classId,
       institution_id: institutionId,
       results,
+      completion: completionResult,
       acknowledged_operation_ids: results
         .filter((item) => item.acknowledged)
         .map((item) => item.operation_id),

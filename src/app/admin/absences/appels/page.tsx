@@ -43,7 +43,7 @@ type MonitorRow = AttendanceReceiptFacts & {
   late_minutes?: number | null;
 };
 
-type HorsEdtRow = {
+type HorsEdtRow = AttendanceReceiptFacts & {
   id: string;
   date: string;
   actual_call_at?: string | null;
@@ -139,7 +139,7 @@ function isoToHm(value?: string | null) {
   if (!value) return null;
   const d = new Date(value);
   if (!Number.isFinite(d.getTime())) return null;
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`;
 }
 
 function plannedIso(row: MonitorRow, field: "planned_start" | "planned_end") {
@@ -167,11 +167,12 @@ function isReportControllableStatus(status: MonitorStatus) {
 }
 
 function formatMinutes(total: number) {
-  const minutes = Math.max(0, Math.round(total));
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m ? `${h} h ${String(m).padStart(2, "0")}` : `${h} h`;
+  const seconds = Math.max(0, Math.round(total * 60));
+  if (!seconds) return "0 min";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [h ? `${h} h` : "", m ? `${m} min` : "", s ? `${s} s` : ""].filter(Boolean).join(" ");
 }
 
 function plural(count: number, singular: string, pluralForm?: string) {
@@ -183,8 +184,8 @@ function rawLateMinutes(row: MonitorRow, session: MonitorRow | null) {
   const planned = plannedIso(row, "planned_start");
   const actual = Date.parse(session.actual_call_at);
   if (planned === null || !Number.isFinite(actual) || actual <= planned) return 0;
-  // Surveillance = fait brut : tout dépassement positif est visible dès la première minute.
-  return Math.ceil((actual - planned) / 60_000);
+  // Keep the measured seconds; rounding each course upward inflates totals.
+  return (actual - planned) / 60_000;
 }
 
 function rawEarlyDepartureMinutes(row: MonitorRow, session: MonitorRow | null) {
@@ -192,19 +193,19 @@ function rawEarlyDepartureMinutes(row: MonitorRow, session: MonitorRow | null) {
   const plannedEnd = plannedIso(row, "planned_end");
   const actualEnd = Date.parse(session.ended_at);
   if (plannedEnd === null || !Number.isFinite(actualEnd) || actualEnd >= plannedEnd) return 0;
-  return Math.ceil((plannedEnd - actualEnd) / 60_000);
+  return (plannedEnd - actualEnd) / 60_000;
 }
 
 function effectiveDuration(row: DetailedRow) {
   if (isAbsenceStatus(row.status) || !row.actual_start || !row.actual_end) return 0;
   const planned = plannedDuration(row);
   if (!planned) return 0;
-  const start = hmToMinutes(row.actual_start);
-  const end = hmToMinutes(row.actual_end);
-  if (start === null || end === null || end <= start) return 0;
-  const observed = end - start;
-  const afterLate = Math.max(0, planned - Math.max(0, Number(row.late_minutes || 0)));
-  return Math.min(afterLate, observed);
+  const start = Date.parse(row.actual_call_at || "");
+  const end = Date.parse(row.ended_at || "");
+  const plannedStart = plannedIso(row, "planned_start");
+  const plannedEnd = plannedIso(row, "planned_end");
+  if (!Number.isFinite(start) || !Number.isFinite(end) || plannedStart === null || plannedEnd === null) return 0;
+  return Math.max(0, Math.min(end, plannedEnd) - Math.max(start, plannedStart)) / 60_000;
 }
 
 function detailLabel(row: DetailedRow) {
@@ -224,10 +225,10 @@ function detailLabel(row: DetailedRow) {
   const actual = row.actual_start ? `${row.actual_start}–${row.actual_end || "…"}` : null;
   const pieces: string[] = [];
   if (row.status === "late" && Number(row.late_minutes || 0) > 0) {
-    pieces.push(`+${row.late_minutes} min`);
+    pieces.push(`+${formatMinutes(Number(row.late_minutes))} au démarrage`);
   }
   if (row.early_departure_minutes > 0) {
-    pieces.push(`${row.early_departure_minutes} min avant la fin`);
+    pieces.push(`${formatMinutes(row.early_departure_minutes)} avant la fin`);
   }
   if (!pieces.length && row.status === "ok") pieces.push("À l'heure");
   if (!pieces.length && row.status === "started") pieces.push("Cours démarré");
@@ -259,10 +260,6 @@ function buildTeacherRows(detailedRows: DetailedRow[]) {
     );
     const earlyMinutes = earlyRows.reduce(
       (sum, row) => sum + row.early_departure_minutes,
-      0,
-    );
-    const absenceMinutes = absenceRows.reduce(
-      (sum, row) => sum + plannedDuration(row),
       0,
     );
 
@@ -500,7 +497,7 @@ export default function SurveillanceAppelsPage() {
     });
   }, [rows]);
 
-  const reception = useMemo(() => attendanceReceptionSummary(detailedRows), [detailedRows]);
+  const reception = useMemo(() => attendanceReceptionSummary([...detailedRows, ...horsEdtRows]), [detailedRows, horsEdtRows]);
 
   const allTeachers = useMemo(
     () => buildTeacherRows(detailedRows).sort((a, b) =>
@@ -714,15 +711,7 @@ export default function SurveillanceAppelsPage() {
               <p className="mt-1 text-xs text-indigo-800">
                 Cours réellement enregistrés sans correspondance dans l’EDT actuel.
               </p>
-              {horsEdtRows.length > 0 ? (
-                <div className="mt-2 space-y-1 text-xs">
-                  {horsEdtRows.map((row) => (
-                    <div key={row.id} className="rounded-md bg-white/70 px-2 py-1">
-                      {formatDateFr(row.date)} · {isoToHm(row.actual_call_at) || "heure non reçue"} · {row.class_label || "Classe"} · {row.subject_name || "Discipline"} · {row.teacher_name}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              {horsEdtRows.length > 0 ? <ManualCourseDetails rows={horsEdtRows} /> : null}
             </details>
           ) : null}
           {error ? (
@@ -742,7 +731,7 @@ export default function SurveillanceAppelsPage() {
               </p>
               <details className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
                 <summary className="cursor-pointer font-semibold">Détail des {detailedRows.length} cours prévus et des réceptions élèves</summary>
-                <p className="mt-2 text-xs text-slate-600">Un lot reçu ne garantit pas qu’un téléphone n’a plus de corrections en attente. Les horaires enseignants et la réception des données élèves sont contrôlés séparément.</p>
+                <p className="mt-2 text-xs text-slate-600">Les écarts horaires sont mesurés à la seconde. Un lot reçu ne garantit pas qu’un téléphone n’a plus de corrections en attente. Les horaires enseignants et la réception des données élèves sont contrôlés séparément.</p>
                 <TeacherDetails rows={detailedRows} showDate={!isToday} showTeacher />
               </details>
               <div className="mb-2 flex items-center gap-2">
@@ -908,6 +897,7 @@ export default function SurveillanceAppelsPage() {
             ))}
           </tbody>
         </table>
+        {horsEdtRows.length > 0 ? <div style={{ marginTop: 10 }}><strong>Cours hors EDT</strong><ManualCourseDetails rows={horsEdtRows} /></div> : null}
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 20, marginTop: 10, fontSize: 8, color: "#475569" }}>
           <div style={{ maxWidth: "70%" }}>
@@ -921,6 +911,22 @@ export default function SurveillanceAppelsPage() {
       </section>
     </>
   );
+}
+
+function ManualCourseDetails({ rows }: { rows: HorsEdtRow[] }) {
+  return <div className="mt-2 space-y-2 text-xs">
+    {rows.map((row) => {
+      const start = Date.parse(row.actual_call_at || "");
+      const end = Date.parse(row.ended_at || "");
+      const duration = Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatMinutes((end - start) / 60_000) : null;
+      return <div key={row.id} className="rounded-md bg-white/70 px-3 py-2">
+        <div className="font-semibold">{formatDateFr(row.date)} · {row.class_label || "Classe"} · {row.subject_name || "Discipline"} · {row.teacher_name}</div>
+        <div className="mt-1">Démarrage réel : {isoToHm(row.actual_call_at) || "heure non reçue"} · Fin réelle : {isoToHm(row.ended_at) || "séance non clôturée"}{duration ? ` · Durée enregistrée : ${duration}` : ""}</div>
+        <div className="mt-1 font-medium">{attendanceReceiptLabel(row)}{row.attendance_received_at ? ` · Réception à ${isoToHm(row.attendance_received_at)}` : ""}</div>
+        <div className="mt-1 text-slate-600">Sans créneau prévu correspondant : aucun retard ou départ anticipé n’est calculé pour ce cours.</div>
+      </div>;
+    })}
+  </div>;
 }
 
 function FragmentRow({

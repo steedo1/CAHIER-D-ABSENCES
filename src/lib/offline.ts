@@ -1015,6 +1015,23 @@ export async function outboxCount(): Promise<number> {
   return count;
 }
 
+/** Confirm only the completion checked, even if another course ended meanwhile. */
+export async function confirmClassDeviceCompletionInCloud(expected: {
+  class_id: string; session_id: string; ended_at: string;
+}) {
+  const db = await openDB();
+  const tx = db.transaction(["kv"], "readwrite");
+  const completed = txDone(tx);
+  const store = tx.objectStore("kv");
+  const key = "classDevice:last-completion:v1";
+  const row = await reqToPromise<KVRow | undefined>(store.get(key));
+  const value = row?.value as Record<string, any> | undefined;
+  if (value && value.class_id === expected.class_id && value.session_id === expected.session_id && value.ended_at === expected.ended_at) {
+    store.put({ ...row, key, value: { ...value, relay_state: "cloud_confirmed" }, updatedAt: Date.now() });
+  }
+  await completed;
+}
+
 function normalizedSessionDependencyKey(value: unknown) {
   const normalized = String(value || "").trim();
   if (!normalized) return null;

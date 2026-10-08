@@ -1054,8 +1054,18 @@ export default function ClassDevicePage() {
   async function refreshPending() {
     const next = await countPendingForCurrentClass();
     setPendingSync(next);
+    const completion = await cacheGet<ClassDeviceCompletion>(LAST_COMPLETION_KEY).catch(() => null);
+    if (completion) setLastCompletion(completion);
     return next;
   }
+  const refreshPendingRef = useRef(refreshPending);
+  refreshPendingRef.current = refreshPending;
+
+  useEffect(() => {
+    const refresh = () => void refreshPendingRef.current();
+    window.addEventListener("class-device-sync-updated", refresh);
+    return () => window.removeEventListener("class-device-sync-updated", refresh);
+  }, []);
 
   // 🔁 Tente de récupérer une séance serveur et remplace une séance locale "client:*"
   async function refreshServerOpenSession(): Promise<OpenSession | null> {
@@ -1233,23 +1243,7 @@ export default function ClassDevicePage() {
           operationId: acknowledgement.operationId,
           status: acknowledgement.status,
         });
-        const completion = lastCompletion;
-        const completionClientSessionId = completion?.open_operation_id
-          ? `client:${completion.open_operation_id}`
-          : null;
-        if (
-          completion &&
-          (acknowledgement.classId === completion.class_id ||
-            acknowledgement.clientSessionId === completion.session_id ||
-            acknowledgement.clientSessionId === completionClientSessionId)
-        ) {
-          const cloudConfirmedCompletion: ClassDeviceCompletion = {
-            ...completion,
-            relay_state: "cloud_confirmed",
-          };
-          setLastCompletion(cloudConfirmedCompletion);
-          await cacheSet(LAST_COMPLETION_KEY, cloudConfirmedCompletion);
-        }
+        // The shared guard checks the exact final attendance receipt and close.
       }
     }
   }

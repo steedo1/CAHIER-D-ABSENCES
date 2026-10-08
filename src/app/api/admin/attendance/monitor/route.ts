@@ -746,6 +746,9 @@ export async function GET(req: NextRequest) {
       const classRow = classById.get(classId);
       return {
         id: String(session.id),
+        session_id: String(session.id),
+        attendance_received_at: receiptBySession.get(String(session.id)) || null,
+        attendance_receipt_available: receiptAvailable,
         date: isoToYMD(String(session.started_at)),
         actual_call_at: session.actual_call_at ? String(session.actual_call_at) : null,
         ended_at: session.ended_at ? String(session.ended_at) : null,

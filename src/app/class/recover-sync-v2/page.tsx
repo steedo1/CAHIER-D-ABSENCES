@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { fetchAttendanceBackground } from "@/lib/attendance-network";
+import { repairClassDeviceSyncV2 } from "@/lib/class-device-sync-reconcile-v2";
 import {
   listOfflineOutboxEntries,
   registerOfflineSessionReference,
@@ -195,18 +198,43 @@ export default function RecoverClassSyncV2Page() {
   const [remaining, setRemaining] = useState<number | null>(null);
   const [rows, setRows] = useState<RowView[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [runId, setRunId] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   const unresolved = useMemo(
     () => rows.filter((row) => !row.result?.acknowledged),
     [rows],
   );
+  const diagnostic = unresolved.map((row) => [
+    `Action : ${row.operationType} / ${row.operationId}`,
+    `Séance : ${row.resolvedSession || row.localSession || "non trouvée"}`,
+    `Preuve : ${row.result?.reason || "non vérifiée"}`,
+    `État local : ${row.state} / HTTP ${row.lastStatus ?? "non reçu"} / ${row.lastError || "aucune erreur enregistrée"}`,
+  ].join("\n")).join("\n\n");
+
+  async function retry() {
+    if (retrying) return;
+    setRetrying(true);
+    setError(null);
+    setStatus("Reprise de l’envoi des appels conservés sur cet appareil…");
+    try {
+      await repairClassDeviceSyncV2();
+    } catch (cause: any) {
+      setError(text(cause?.message) || "La reprise a échoué. Les données restent conservées.");
+    } finally {
+      setRetrying(false);
+      setRunId((value) => value + 1);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
 
     void (async () => {
       try {
-        const classResponse = await fetch(
+        const classResponse = await fetchAttendanceBackground(
           "/api/class/my-classes?offline_contract=v5&sync_reconcile=3",
           { credentials: "include", cache: "no-store" },
         );
@@ -223,14 +251,13 @@ export default function RecoverClassSyncV2Page() {
           .filter((item: ClassItem) => item.id && item.institution_id);
         if (!classes.length) throw new Error("Aucune classe autorisée n’a été trouvée.");
 
-        const initial = (await listOfflineOutboxEntries()).filter((entry) =>
-          isCallType(entry.operationType),
-        );
+        const initial = await listOfflineOutboxEntries();
         if (cancelled) return;
         setBefore(initial.length);
         if (!initial.length) {
           setRemaining(0);
-          setStatus("Aucun résidu d’appel à réconcilier.");
+          setRows([]);
+          setStatus("Aucune action dans la file d’envoi. Le badge de l’appel vérifie séparément sa réception dans le Cloud.");
           return;
         }
 
@@ -276,7 +303,7 @@ export default function RecoverClassSyncV2Page() {
             }
 
             setStatus(`Vérification Cloud de ${operations.length} opération(s) pour ${cls.label || "la classe"}…`);
-            const response = await fetch("/api/class/sync/reconcile-v2", {
+            const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
               method: "POST",
               credentials: "include",
               cache: "no-store",
@@ -317,9 +344,7 @@ export default function RecoverClassSyncV2Page() {
           if (progress === 0) break;
         }
 
-        const finalEntries = (await listOfflineOutboxEntries()).filter((entry) =>
-          isCallType(entry.operationType),
-        );
+        const finalEntries = await listOfflineOutboxEntries();
         const rawFinal = await readRawRows(finalEntries.map((entry) => entry.id));
         const view: RowView[] = [];
         for (const entry of finalEntries) {
@@ -359,13 +384,17 @@ export default function RecoverClassSyncV2Page() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [runId]);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900">
       <section className="mx-auto max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Récupération Sync — liaison locale/Cloud</h1>
+        <h1 className="text-xl font-semibold">Détails de synchronisation</h1>
+        <p className="mt-2 text-sm text-slate-600">Cette page vérifie les actions conservées dans cette PWA. Une action déjà confirmée peut être retirée de la file d’envoi ; les autres restent conservées.</p>
         <p className="mt-2 text-sm text-slate-600">{status}</p>
+        <button type="button" disabled={retrying} onClick={() => void retry()} className="mt-4 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {retrying ? "Reprise en cours…" : "Réessayer l’envoi des appels"}
+        </button>
 
         <div className="mt-6 grid grid-cols-3 gap-3 text-center">
           <div className="rounded-2xl bg-slate-100 p-3"><div className="text-2xl font-bold">{before ?? "…"}</div><div className="text-xs text-slate-600">avant</div></div>
@@ -383,17 +412,27 @@ export default function RecoverClassSyncV2Page() {
                 <div className="mt-1 break-all">{row.operationId}</div>
                 <div className="mt-1 break-all">Local : {row.localSession || "non trouvé"}</div>
                 <div className="mt-1 break-all">Cloud lié : {row.resolvedSession || "NON — mapping local perdu"}</div>
-                <div className="mt-1">Preuve : {row.result?.reason || "non vérifiée"}</div>
+                <div className="mt-1">Preuve : {row.result?.reason || (isCallType(row.operationType) ? "non vérifiée" : "action hors appel — conservée pour vérification")}</div>
                 <div className="mt-1">État local : {row.state}{row.lastStatus ? ` / HTTP ${row.lastStatus}` : ""}{row.lastError ? ` / ${row.lastError}` : ""}</div>
               </div>
             ))}
+          </div>
+        ) : null}
+        {diagnostic ? (
+          <div className="mt-4">
+            <button type="button" onClick={async () => {
+              try { await navigator.clipboard.writeText(diagnostic); setCopyStatus("Diagnostic copié."); }
+              catch { setCopyStatus("Copie indisponible. Le texte ci-dessous peut être sélectionné."); }
+            }} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Copier le diagnostic</button>
+            {copyStatus ? <p role="status" className="mt-2 text-sm">{copyStatus}</p> : null}
+            <details className="mt-3 text-xs"><summary>Voir le texte du diagnostic</summary><pre className="mt-2 whitespace-pre-wrap break-all select-text">{diagnostic}</pre></details>
           </div>
         ) : null}
 
         <p className="mt-5 text-xs leading-5 text-slate-500">
           Cette récupération ne vide pas IndexedDB. Elle retire uniquement une opération après preuve Cloud, puis met son journal durable en état terminal.
         </p>
-        <a href="/class" className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Retour aux appels</a>
+        <Link href="/class" className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Retour aux appels</Link>
       </section>
     </main>
   );

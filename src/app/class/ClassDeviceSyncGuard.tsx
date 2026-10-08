@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cacheGet } from "@/lib/offline";
+import Link from "next/link";
+import { cacheGet, listOfflineOutboxEntries } from "@/lib/offline";
 import { repairClassDeviceSyncV2 } from "@/lib/class-device-sync-reconcile-v2";
 
 const LAST_COMPLETION_KEY = "classDevice:last-completion:v1";
@@ -31,13 +32,13 @@ function friendlyPresentation(state: FriendlySyncState) {
   switch (state) {
     case "synced":
       return {
-        label: "✓ Données synchronisées",
+        label: "✓ Dernier appel reçu",
         tone: "bg-emerald-500/20 text-emerald-100",
         title: "Le dernier appel est confirmé dans le Cloud.",
       };
     case "secured_on_relay":
       return {
-        label: "✓ Données sécurisées",
+        label: "✓ Dernier appel sécurisé",
         tone: "bg-emerald-500/20 text-emerald-100",
         title: "Le dernier appel est confirmé par le relais local. La remontée Cloud se poursuit en arrière-plan.",
       };
@@ -51,7 +52,7 @@ function friendlyPresentation(state: FriendlySyncState) {
       return {
         label: "↻ Synchronisation en cours…",
         tone: "bg-amber-500/20 text-amber-100",
-        title: "Le dernier appel est en cours de synchronisation. Les anciens résidus techniques ne pilotent pas cet affichage.",
+        title: "Le dernier appel est en cours de synchronisation. Consultez les détails pour voir les autres actions en attente.",
       };
     case "needs_attention":
       return {
@@ -81,6 +82,7 @@ export default function ClassDeviceSyncGuard() {
   const manualRunRef = useRef<() => Promise<void>>(async () => undefined);
   const [friendlyState, setFriendlyState] = useState<FriendlySyncState>("ready");
   const [statusHost, setStatusHost] = useState<HTMLElement | null>(null);
+  const [protectedCount, setProtectedCount] = useState(0);
 
   useEffect(() => {
     if (window.location.pathname !== "/class") return;
@@ -123,11 +125,13 @@ export default function ClassDeviceSyncGuard() {
 
     const refreshFriendlyState = async () => {
       if (cancelled || window.location.pathname !== "/class") return;
-      const [completion, localOpen] = await Promise.all([
+      const [completion, localOpen, outbox] = await Promise.all([
         cacheGet<CompletionRecord>(LAST_COMPLETION_KEY).catch(() => null),
         cacheGet<LocalOpenRecord>(LOCAL_OPEN_KEY).catch(() => null),
+        listOfflineOutboxEntries().catch(() => []),
       ]);
       if (cancelled) return;
+      setProtectedCount(outbox.filter((entry) => entry.state === "blocked").length);
 
       const online = typeof navigator === "undefined" ? true : navigator.onLine;
       const openStillActive = Boolean(
@@ -246,6 +250,7 @@ export default function ClassDeviceSyncGuard() {
   const presentation = friendlyPresentation(friendlyState);
 
   return createPortal(
+    <>
     <button
       type="button"
       onClick={() => {
@@ -263,8 +268,12 @@ export default function ClassDeviceSyncGuard() {
       title={presentation.title}
       aria-live="polite"
     >
-      {presentation.label}
-    </button>,
+      {friendlyState === "needs_attention" ? "⚠ Reprendre la synchronisation" : presentation.label}
+    </button>
+    <Link href="/class/recover-sync-v2" className="rounded-full border border-white/30 px-3 py-1 text-xs font-semibold text-white hover:bg-white/10">
+      {protectedCount > 0 ? `${protectedCount} action(s) à vérifier — Détails` : "Détails de synchronisation"}
+    </Link>
+    </>,
     statusHost,
   );
 }
