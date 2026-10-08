@@ -197,6 +197,33 @@ test("CSCA: three scheduled calls plus two manual calls all carry receipts and c
   });
 });
 
+test("after moving a timetable slot, its old closed call stays outside the new slot while manual calls keep their real times", async () => {
+  const cloud = makeCloud();
+  cloud.tables.institution_periods[0].start_time = "04:50:00";
+  cloud.tables.institution_periods[0].end_time = "04:52:00";
+  cloud.tables.teacher_sessions = [
+    { id: "old-closed-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: cloud.teacherId,
+      started_at: "2026-09-21T03:20:00.000Z", actual_call_at: "2026-09-21T03:20:12.241Z", ended_at: "2026-09-21T03:20:42.223Z", origin: "class_device" },
+    { id: "new-manual-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: cloud.teacherId,
+      started_at: "2026-09-21T04:45:15.247Z", actual_call_at: "2026-09-21T04:45:15.247Z", ended_at: "2026-09-21T04:45:47.919Z", origin: "class_device" },
+  ];
+  cloud.tables.relay_attendance_session_causality = cloud.tables.teacher_sessions.map((session) => ({
+    institution_id: cloud.institutionId, session_id: session.id, updated_at: "2026-09-21T04:48:09.126Z",
+  }));
+  const response = await loadMonitorRoute(cloud).GET({ url: "https://test.invalid/api/admin/attendance/monitor?from=2026-09-21&to=2026-09-21&include_expected=1" });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].planned_start, "04:50");
+  assert.equal(result.rows[0].session_id, null);
+  assert.equal(result.rows[0].attendance_received_at, null);
+  assert.equal(result.unmatched_sessions.length, 2);
+  const manual = result.unmatched_sessions.find((row) => row.id === "new-manual-call");
+  assert.equal(manual.actual_call_at, "2026-09-21T04:45:15.247Z");
+  assert.equal(manual.ended_at, "2026-09-21T04:45:47.919Z");
+  assert.ok(manual.attendance_received_at);
+});
+
 for (const allPresent of [false, true]) {
 test(`appel ${allPresent ? "tous présents" : "avec absents et retards"} hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin`, async () => {
   const restoreIndexedDb = installFakeIndexedDb();

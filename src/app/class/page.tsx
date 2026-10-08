@@ -3126,12 +3126,17 @@ export default function ClassDevicePage() {
       const deliveryPeriodKey = manualSubjectMode
         ? `manual:${persistedPeriodId || "outside"}:${dateKey}:${actualCallAtISO}`
         : String(verifiedPeriod!.id);
-      const attemptKey = [
+      const legacyAttemptKey = [
         classId,
         deliveryPeriodKey,
         subjectId,
         dateKey,
       ].join(":");
+      // A period ID survives timetable edits. Its planned start distinguishes
+      // a moved course from an earlier, already closed course on the same day.
+      const attemptKey = manualSubjectMode
+        ? legacyAttemptKey
+        : `${legacyAttemptKey}:${started.toISOString()}`;
 
       const institutionId = selectedClass?.institution_id || "";
       const actorProfileId = selectedClass?.actor_profile_id || null;
@@ -3147,11 +3152,14 @@ export default function ClassDevicePage() {
         periodId: deliveryPeriodKey,
         subjectId,
         attemptKey,
+        legacyAttemptKey: manualSubjectMode ? null : legacyAttemptKey,
         classStart: {
           period_id: persistedPeriodId,
           expected_minutes: effectiveDuration,
           actual_call_at: actualCallAtISO,
           manual_course: manualSubjectMode,
+          planned_start_at: manualSubjectMode ? undefined : started.toISOString(),
+          planned_end_at: manualSubjectMode ? undefined : new Date(started.getTime() + effectiveDuration * 60_000).toISOString(),
         },
       });
       const operationId = stagedOpen.operation_id;
