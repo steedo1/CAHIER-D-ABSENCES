@@ -23,3 +23,19 @@ Les cinq séances ont `origin=class_device`, `status=submitted`, une heure de fe
 ## Limites et suite des essais
 
 Les deux actions protégées de la PWA doivent encore être identifiées à partir de leur diagnostic local ; la réception des cinq appels ne prouve pas leur résolution. Aucun effacement des données des essais n’a été effectué. Leur nettoyage doit cibler uniquement les cinq identifiants ci-dessus lorsque les essais et le diagnostic seront terminés. Les anciens caches et opérations en attente sont conservés. Les versions du schéma IndexedDB (1) et des caches métier (v2) restent compatibles.
+
+## Deuxième série : créneaux déplacés à 04:50–04:56
+
+Le diagnostic local reçu ensuite montre quatre actions historiques du 21 septembre (403), ainsi que six actions du 8 octobre visant les trois anciennes séances prévues. Les créneaux ont conservé leurs UUID lors du déplacement de 03:20/03:22/03:24 à 04:50/04:52/04:54. La clé d'ouverture locale ne comportait pas l'heure prévue : le journal a donc renvoyé les anciennes ouvertures et leurs heures. Les nouveaux lots sont refusés par `session_closed` ; la réconciliation refuse également les écarts d'horodatage. Ces nouveaux essais prévus ne sont pas confirmés en base.
+
+La clé inclut désormais le début prévu du créneau. Un ancien journal sur le même créneau peut être migré sans changer son opération ni son contenu : il faut prouver l'égalité du début canonique, ou, pour une ouverture encore locale, une capture comprise dans le créneau. Un journal appartenant au créneau précédent reste intact et ne sert pas au nouveau cours. Une reprise du même nouveau créneau conserve son identifiant ; « Autre cours » garde son identité fondée sur l'heure réelle.
+
+Les trois nouveaux cours hors EDT sont reçus et clôturés, avec leurs heures d'origine :
+
+| Discipline | Séance | Début réel | Fin réelle | Réception | Absents | Retards élèves |
+| --- | --- | --- | --- | --- | --- | --- |
+| Informatique | `6c9958a7-2cfe-5b31-ab05-aa842ae8cc8f` | 04:45:15.247 | 04:45:47.919 | 04:48:09.126 | 1 | 0 |
+| Mathématiques | `c9e13219-c385-5f62-98cc-a4c79a21b742` | 04:46:14.148 | 04:46:28.528 | 04:48:13.205 | 1 | 1 |
+| Musique | `9112d5e2-d23d-506c-835b-2e3bb1c9c063` | 04:56:17.446 | 04:57:02.707 | 05:17:35.194 | 0 | 0 |
+
+La route réelle du contrôle admin a été rejouée en lecture seule sur un instantané Supabase de ces données (authentification admin simulée, aucun appel HTTP authentifié revendiqué) : les trois nouveaux cours hors EDT comportent leurs heures, reçu et clôture ; les trois créneaux déplacés n'ont aucune séance reçue. Le correctif prévient la confusion pour les prochains appels ; il ne reconstruit pas les débuts réels manquants des trois essais refusés et ne supprime aucune action locale. Les huit séances de test restent conservées jusqu'à la fin des vérifications.

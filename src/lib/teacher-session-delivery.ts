@@ -49,6 +49,8 @@ export type TeacherSessionDeliveryRecord = {
     expected_minutes: number;
     actual_call_at: string;
     manual_course: boolean;
+    planned_start_at?: string;
+    planned_end_at?: string;
   };
 };
 
@@ -80,6 +82,7 @@ export type OpenTeacherSessionOnRelayInput = {
   periodId: string;
   subjectId?: string | null;
   attemptKey?: string | null;
+  legacyAttemptKey?: string | null;
   relayBaseUrl?: string | null;
   relayAccessToken?: string | null;
   classStart?: TeacherSessionDeliveryRecord["class_start"];
@@ -146,6 +149,7 @@ async function getOrCreateRecord(
     periodId: string;
     subjectId: string;
     attemptKey: string;
+    legacyAttemptKey?: string | null;
     classStart?: TeacherSessionDeliveryRecord["class_start"];
   },
   deps: TeacherSessionDeliveryDependencies,
@@ -162,6 +166,26 @@ async function getOrCreateRecord(
     .sort((left, right) => left.created_at.localeCompare(right.created_at))
     .at(-1);
   if (existing) return existing;
+
+  // Keep an older version's operation ID on an unchanged slot. A moved slot
+  // must never inherit its Cloud session or overwrite its original payload.
+  if (input.legacyAttemptKey && input.classStart && !input.classStart.manual_course) {
+    const plannedStart = Date.parse(input.classStart.planned_start_at || "");
+    const plannedEnd = Date.parse(input.classStart.planned_end_at || "");
+    const legacyContent = contentKey(input.classId, input.periodId, input.subjectId, input.legacyAttemptKey);
+    const legacy = records.filter((record) => {
+      if (record.content_key !== legacyContent || record.class_start?.manual_course) return false;
+      if (!Number.isFinite(plannedStart)) return false;
+      if (record.started_at) return Date.parse(record.started_at) === plannedStart;
+      const captured = Date.parse(record.class_start?.actual_call_at || record.actual_call_at || "");
+      return Number.isFinite(captured) && Number.isFinite(plannedEnd) && captured >= plannedStart && captured < plannedEnd;
+    }).sort((left, right) => left.created_at.localeCompare(right.created_at)).at(-1);
+    if (legacy) {
+      const migrated = { ...legacy, attempt_key: input.attemptKey, content_key: expectedContent };
+      await deps.store.put(migrated);
+      return migrated;
+    }
+  }
 
   const timestamp = deps.now().toISOString();
   const created: TeacherSessionDeliveryRecord = {
@@ -391,7 +415,7 @@ export async function stageTeacherAttendanceSessionOpenWithDependencies(
   if (!classId) throw new Error("class_id_required");
   if (!periodId) throw new Error("period_id_required");
   return await getOrCreateRecord(
-    { institutionId, classId, periodId, subjectId, attemptKey, classStart: input.classStart },
+    { institutionId, classId, periodId, subjectId, attemptKey, legacyAttemptKey: input.legacyAttemptKey, classStart: input.classStart },
     deps,
   );
 }
