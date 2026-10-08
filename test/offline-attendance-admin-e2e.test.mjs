@@ -199,12 +199,13 @@ test("CSCA: three scheduled calls plus two manual calls all carry receipts and c
 
 test("after moving a timetable slot, its old closed call stays outside the new slot while manual calls keep their real times", async () => {
   const cloud = makeCloud();
+  const teacherId = cloud.tables.teacher_timetables[0].teacher_id;
   cloud.tables.institution_periods[0].start_time = "04:50:00";
   cloud.tables.institution_periods[0].end_time = "04:52:00";
   cloud.tables.teacher_sessions = [
-    { id: "old-closed-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: cloud.teacherId,
+    { id: "old-closed-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: teacherId,
       started_at: "2026-09-21T03:20:00.000Z", actual_call_at: "2026-09-21T03:20:12.241Z", ended_at: "2026-09-21T03:20:42.223Z", origin: "class_device" },
-    { id: "new-manual-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: cloud.teacherId,
+    { id: "new-manual-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: teacherId,
       started_at: "2026-09-21T04:45:15.247Z", actual_call_at: "2026-09-21T04:45:15.247Z", ended_at: "2026-09-21T04:45:47.919Z", origin: "class_device" },
   ];
   cloud.tables.relay_attendance_session_causality = cloud.tables.teacher_sessions.map((session) => ({
