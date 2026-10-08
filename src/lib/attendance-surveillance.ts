@@ -34,8 +34,10 @@ export function attendanceReceiptLabel(row: AttendanceReceiptFacts) {
 
 export function attendanceReceptionSummary(rows: AttendanceReceiptFacts[]) {
   const summary = { sessions: 0, confirmed: 0, unconfirmed: 0, unavailable: 0 };
+  const counted = new Set<string>();
   for (const row of rows) {
-    if (!row.session_id) continue;
+    if (!row.session_id || counted.has(row.session_id)) continue;
+    counted.add(row.session_id);
     summary.sessions += 1;
     if (!row.attendance_receipt_available) summary.unavailable += 1;
     else if (row.attendance_received_at) summary.confirmed += 1;

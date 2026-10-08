@@ -57,6 +57,8 @@ jobs:
             test/student-permanent-removal.test.mjs \
             test/offline-attendance-admin-e2e.test.mjs \
             test/csca-attendance-reliability.test.mjs \
+            test/class-device-completion-proof.test.mjs \
+            test/attendance-surveillance-seconds.test.mjs \
             test/teacher-attendance-bulk-offline-route.test.mjs \
             test/class-device-minimal-preparation.test.mjs \
             test/class-session-manual-route.test.mjs \

@@ -163,6 +163,40 @@ function loadMonitorRoute(cloud) {
   });
 }
 
+test("CSCA: three scheduled calls plus two manual calls all carry receipts and count exactly five", async () => {
+  const cloud = makeCloud();
+  cloud.tables.institution_periods = [20, 22, 24].map((minute) => ({
+    id: `period-${minute}`, institution_id: cloud.institutionId, weekday: 1,
+    start_time: `03:${minute}:00`, end_time: `03:${minute + 2}:00`,
+  }));
+  cloud.tables.teacher_timetables = cloud.tables.institution_periods.map((period) => ({
+    institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps",
+    teacher_id: "teacher-eps", period_id: period.id, weekday: 1,
+  }));
+  cloud.tables.teacher_sessions = [15, 16, 20, 22, 24].map((minute) => ({
+    id: `session-${minute}`, institution_id: cloud.institutionId, class_id: "class-5e2",
+    subject_id: "subject-eps", teacher_id: "teacher-eps", origin: "class_device",
+    started_at: `2026-09-21T03:${minute}:00.000Z`,
+    actual_call_at: `2026-09-21T03:${minute}:12.000Z`, ended_at: `2026-09-21T03:${minute}:45.000Z`,
+  }));
+  cloud.tables.relay_attendance_session_causality = cloud.tables.teacher_sessions.map((session) => ({
+    session_id: session.id, institution_id: cloud.institutionId, updated_at: "2026-09-21T03:26:00.000Z",
+  }));
+  const response = await loadMonitorRoute(cloud).GET({
+    url: "https://test.invalid/api/admin/attendance/monitor?from=2026-09-21&to=2026-09-21&include_expected=1",
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.rows.length, 3);
+  assert.equal(result.unmatched_sessions.length, 2);
+  const receipt = evaluate("src/lib/attendance-surveillance.ts", {});
+  const rows = [...result.rows, ...result.unmatched_sessions];
+  for (const row of rows) assert.match(receipt.attendanceReceiptLabel(row), /Appel élèves reçu · séance clôturée/);
+  assert.deepEqual(receipt.attendanceReceptionSummary([...rows, result.rows[0]]), {
+    sessions: 5, confirmed: 5, unconfirmed: 0, unavailable: 0,
+  });
+});
+
 for (const allPresent of [false, true]) {
 test(`appel ${allPresent ? "tous présents" : "avec absents et retards"} hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin`, async () => {
   const restoreIndexedDb = installFakeIndexedDb();

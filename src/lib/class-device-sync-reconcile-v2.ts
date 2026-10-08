@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  cacheGet,
+  confirmClassDeviceCompletionInCloud,
   flushOutbox,
   listOfflineOutboxEntries,
   registerOfflineSessionReference,
@@ -8,6 +10,7 @@ import {
   type FlushedMutationAcknowledgement,
   type OfflineOutboxEntry,
 } from "@/lib/offline";
+import { fetchAttendanceBackground } from "@/lib/attendance-network";
 import {
   listTeacherAttendanceOperations,
   markTeacherAttendanceSyncedInCloud,
@@ -119,7 +122,7 @@ async function rawOutboxRows(ids: string[]) {
 }
 
 async function fetchClasses(): Promise<ClassItem[]> {
-  const response = await fetch(
+  const response = await fetchAttendanceBackground(
     "/api/class/my-classes?offline_contract=v5&sync_reconcile=2",
     { credentials: "include", cache: "no-store" },
   );
@@ -318,7 +321,7 @@ async function reconcileClass(
 ) {
   const operations = await classOperations(cls, classes, outbox, rawRows);
   if (!operations.length) return 0;
-  const response = await fetch("/api/class/sync/reconcile-v2", {
+  const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
     method: "POST",
     credentials: "include",
     cache: "no-store",
@@ -438,6 +441,24 @@ function latestError(entries: OfflineOutboxEntry[]) {
   return null;
 }
 
+async function reconcileLastCompletion(classes: ClassItem[]) {
+  const completion = await cacheGet<{
+    class_id: string; session_id: string; ended_at: string;
+    open_operation_id?: string | null; relay_state?: string;
+  }>("classDevice:last-completion:v1");
+  if (!completion || completion.relay_state !== "device_pending" || !classes.some((cls) => cls.id === completion.class_id)) return;
+  const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
+    method: "POST", credentials: "include", cache: "no-store",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ class_id: completion.class_id, operations: [], completion }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok && payload?.ok === true && payload?.completion?.confirmed === true) {
+    await confirmClassDeviceCompletionInCloud(completion);
+    window.dispatchEvent(new Event("class-device-sync-updated"));
+  }
+}
+
 export async function repairClassDeviceSyncV2(): Promise<ClassDeviceSyncRepairV2Summary> {
   const classes = await fetchClasses();
   const initialOutbox = await listOfflineOutboxEntries();
@@ -494,6 +515,7 @@ export async function repairClassDeviceSyncV2(): Promise<ClassDeviceSyncRepairV2
 
   const finalOutbox = await listOfflineOutboxEntries();
   const after = await pendingLogicalCount(classes);
+  await reconcileLastCompletion(classes).catch(() => undefined);
   return {
     before,
     after,
