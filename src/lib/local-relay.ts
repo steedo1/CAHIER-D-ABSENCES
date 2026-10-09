@@ -1500,6 +1500,7 @@ export type RelayTeacherOfflineSchedule = {
   class_id?: string | null;
   actor_profile_id?: string | null;
   schedule_revision: number;
+  preparation_revision?: number | null;
   generated_at: string | null;
   relay_time?: string | null;
   snapshot_completeness: "complete";

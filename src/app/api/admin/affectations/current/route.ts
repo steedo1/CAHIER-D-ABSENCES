@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { isEducationType } from "@/lib/education-organization";
+import { getClassLevelCode } from "@/lib/education-scope";
 
 type CurrentItem = {
   teacher: { id: string; display_name: string | null; email: string | null; phone: string | null };
@@ -191,9 +192,9 @@ export async function GET(req: NextRequest) {
     const classType = String(c?.education_type || "").trim();
     const normalizedClassType = classType || "general_secondary";
     const classFormation = String(c?.formation_code || "").trim();
-    const classFormationLevel = String(
-      c?.formation_level_code || c?.level || "",
-    ).trim();
+    // Le secondaire général utilise level (6e), les formations leur code (6eme, BTS1…).
+    // Le filtre partagé envoie le même code que getClassLevelCode.
+    const classFormationLevel = getClassLevelCode(c);
     const currentClassId = String(c?.id || "").trim();
 
     // Le mode « Tous les enseignements » est réservé aux vues de synthèse.

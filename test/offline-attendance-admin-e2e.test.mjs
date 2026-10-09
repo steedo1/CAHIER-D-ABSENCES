@@ -163,7 +163,70 @@ function loadMonitorRoute(cloud) {
   });
 }
 
-test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin", async () => {
+test("CSCA: three scheduled calls plus two manual calls all carry receipts and count exactly five", async () => {
+  const cloud = makeCloud();
+  cloud.tables.institution_periods = [20, 22, 24].map((minute) => ({
+    id: `period-${minute}`, institution_id: cloud.institutionId, weekday: 1,
+    start_time: `03:${minute}:00`, end_time: `03:${minute + 2}:00`,
+  }));
+  cloud.tables.teacher_timetables = cloud.tables.institution_periods.map((period) => ({
+    institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps",
+    teacher_id: "teacher-eps", period_id: period.id, weekday: 1,
+  }));
+  cloud.tables.teacher_sessions = [15, 16, 20, 22, 24].map((minute) => ({
+    id: `session-${minute}`, institution_id: cloud.institutionId, class_id: "class-5e2",
+    subject_id: "subject-eps", teacher_id: "teacher-eps", origin: "class_device",
+    started_at: `2026-09-21T03:${minute}:00.000Z`,
+    actual_call_at: `2026-09-21T03:${minute}:12.000Z`, ended_at: `2026-09-21T03:${minute}:45.000Z`,
+  }));
+  cloud.tables.relay_attendance_session_causality = cloud.tables.teacher_sessions.map((session) => ({
+    session_id: session.id, institution_id: cloud.institutionId, updated_at: "2026-09-21T03:26:00.000Z",
+  }));
+  const response = await loadMonitorRoute(cloud).GET({
+    url: "https://test.invalid/api/admin/attendance/monitor?from=2026-09-21&to=2026-09-21&include_expected=1",
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.rows.length, 3);
+  assert.equal(result.unmatched_sessions.length, 2);
+  const receipt = evaluate("src/lib/attendance-surveillance.ts", {});
+  const rows = [...result.rows, ...result.unmatched_sessions];
+  for (const row of rows) assert.match(receipt.attendanceReceiptLabel(row), /Appel élèves reçu · séance clôturée/);
+  assert.deepEqual(receipt.attendanceReceptionSummary([...rows, result.rows[0]]), {
+    sessions: 5, confirmed: 5, unconfirmed: 0, unavailable: 0,
+  });
+});
+
+test("after moving a timetable slot, its old closed call stays outside the new slot while manual calls keep their real times", async () => {
+  const cloud = makeCloud();
+  const teacherId = cloud.tables.teacher_timetables[0].teacher_id;
+  cloud.tables.institution_periods[0].start_time = "04:50:00";
+  cloud.tables.institution_periods[0].end_time = "04:52:00";
+  cloud.tables.teacher_sessions = [
+    { id: "old-closed-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: teacherId,
+      started_at: "2026-09-21T03:20:00.000Z", actual_call_at: "2026-09-21T03:20:12.241Z", ended_at: "2026-09-21T03:20:42.223Z", origin: "class_device" },
+    { id: "new-manual-call", institution_id: cloud.institutionId, class_id: "class-5e2", subject_id: "subject-eps", teacher_id: teacherId,
+      started_at: "2026-09-21T04:45:15.247Z", actual_call_at: "2026-09-21T04:45:15.247Z", ended_at: "2026-09-21T04:45:47.919Z", origin: "class_device" },
+  ];
+  cloud.tables.relay_attendance_session_causality = cloud.tables.teacher_sessions.map((session) => ({
+    institution_id: cloud.institutionId, session_id: session.id, updated_at: "2026-09-21T04:48:09.126Z",
+  }));
+  const response = await loadMonitorRoute(cloud).GET({ url: "https://test.invalid/api/admin/attendance/monitor?from=2026-09-21&to=2026-09-21&include_expected=1" });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].planned_start, "04:50");
+  assert.equal(result.rows[0].session_id, null);
+  assert.equal(result.rows[0].attendance_received_at, null);
+  assert.equal(result.unmatched_sessions.length, 2);
+  const manual = result.unmatched_sessions.find((row) => row.id === "new-manual-call");
+  assert.equal(manual.actual_call_at, "2026-09-21T04:45:15.247Z");
+  assert.equal(manual.ended_at, "2026-09-21T04:45:47.919Z");
+  assert.ok(manual.attendance_received_at);
+});
+
+for (const allPresent of [false, true]) {
+test(`appel ${allPresent ? "tous présents" : "avec absents et retards"} hors ligne → ACK Cloud idempotent → visible et reçu en surveillance admin`, async () => {
   const restoreIndexedDb = installFakeIndexedDb();
   const previousWindow = globalThis.window;
   const previousFetch = globalThis.fetch;
@@ -218,8 +281,8 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
         captured_at_device: "2026-09-21T09:14:00.000Z",
         marks: [
           { student_id: "student-a", status: "present", reason: null, observed_at: null },
-          { student_id: "student-b", status: "absent", reason: "Malade", observed_at: null },
-          { student_id: "student-c", status: "late", reason: "Transport", observed_at: "2026-09-21T09:12:00.000Z" },
+          { student_id: "student-b", status: allPresent ? "present" : "absent", reason: allPresent ? null : "Malade", observed_at: null },
+          { student_id: "student-c", status: allPresent ? "present" : "late", reason: allPresent ? null : "Transport", observed_at: allPresent ? null : "2026-09-21T09:12:00.000Z" },
         ],
       },
     }, {
@@ -264,7 +327,7 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
     assert.equal(cloud.tables.teacher_sessions.length, 1);
     assert.equal(cloud.calls[2].body.captured_at_device, "2026-09-21T09:14:00.000Z");
     assert.deepEqual(cloud.calls[2].body.marks, cloud.calls[3].body.marks);
-    assert.deepEqual(cloud.calls[2].body.marks.map((mark) => mark.status), ["present", "absent", "late"]);
+    assert.deepEqual(cloud.calls[2].body.marks.map((mark) => mark.status), allPresent ? ["present", "present", "present"] : ["present", "absent", "late"]);
 
     const visible = await monitor();
     assert.equal(visible.rows.length, 1);
@@ -284,3 +347,4 @@ test("appel 5e2 EPS hors ligne → ACK Cloud idempotent → visible et reçu en 
     restoreIndexedDb();
   }
 });
+}

@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-09-22-attendance-schedule-identity-v1";
+const VERSION = "2026-10-09-class-preparation-revision-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -146,11 +146,24 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-async function fetchWithTimeout(request, timeoutMs = 5000) {
+async function fetchWithTimeout(request, timeoutMs = 5000, readBody = false) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timeout;
+  const expired = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new DOMException("request_timeout", "TimeoutError");
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
   try {
-    return await fetch(request, { signal: controller.signal });
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(request, { signal: controller.signal });
+        return readBody ? { response, payload: await responseJsonSafe(response) } : response;
+      })(),
+      expired,
+    ]);
   } finally {
     clearTimeout(timeout);
   }
@@ -254,24 +267,48 @@ async function readAttendanceOutboxRows() {
 async function patchAttendanceOutboxRow(id, patch) {
   const db = await openOfflineDbForAttendance();
   try {
-    if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return;
+    if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return false;
     const transaction = db.transaction([OFFLINE_OUTBOX_STORE], "readwrite");
+    const completed = idbTransactionDone(transaction);
     const store = transaction.objectStore(OFFLINE_OUTBOX_STORE);
     const current = await idbRequest(store.get(id));
     if (current) store.put({ ...current, ...patch });
-    await idbTransactionDone(transaction);
+    await completed;
+    return Boolean(current);
   } finally {
     db.close();
   }
 }
 
-async function deleteAttendanceOutboxRow(id) {
+async function deleteAttendanceOutboxRow(id, row, sessionId) {
   const db = await openOfflineDbForAttendance();
   try {
     if (!db.objectStoreNames.contains(OFFLINE_OUTBOX_STORE)) return;
-    const transaction = db.transaction([OFFLINE_OUTBOX_STORE], "readwrite");
+    const transaction = db.transaction([OFFLINE_OUTBOX_STORE, OFFLINE_KV_STORE], "readwrite");
+    const completed = idbTransactionDone(transaction);
+    const kind = attendanceOperationType(row);
+    const institutionId = String(row?.meta?.institutionId || "").trim();
+    const journal = kind === "session-start" ? "session-delivery"
+      : kind === "attendance" ? "attendance-delivery"
+      : kind === "session-end" ? "session-lifecycle" : null;
+    if (journal && institutionId) {
+      const kv = transaction.objectStore(OFFLINE_KV_STORE);
+      const stored = await idbRequest(kv.get(`teacher:${journal}:v1:${institutionId}`));
+      if (Array.isArray(stored?.value)) {
+        const value = stored.value.map((record) => record.operation_id !== row.operationId ? record : {
+          ...record,
+          state: kind === "session-start" ? "cloud_opened"
+            : kind === "attendance" ? "cloud_synced" : "cloud_confirmed",
+          session_id: sessionId || record.session_id,
+          last_error: null,
+          requires_authentication: false,
+          updated_at: new Date().toISOString(),
+        });
+        kv.put({ ...stored, value, updatedAt: Date.now() });
+      }
+    }
     transaction.objectStore(OFFLINE_OUTBOX_STORE).delete(id);
-    await idbTransactionDone(transaction);
+    await completed;
   } finally {
     db.close();
   }
@@ -338,6 +375,8 @@ function attendancePathMatchesType(url, operationType) {
 }
 
 function attendanceDependencyKey(row, body) {
+  const serverId = String(body?.session_id || "").trim();
+  if (serverId && !serverId.startsWith("client:")) return serverId;
   return String(
     row?.meta?.clientSessionId ||
       body?.client_session_id ||
@@ -423,7 +462,17 @@ async function notifyAttendanceSyncClients(summary) {
  * Rejoue uniquement le journal des appels. Aucune note, sanction ou autre
  * mutation n'est envoyée par ce chemin.
  */
+let attendanceReplayInFlight = null;
 async function replayAttendanceOutboxFromWorker() {
+  if (attendanceReplayInFlight) return attendanceReplayInFlight;
+  const locks = self.navigator?.locks;
+  attendanceReplayInFlight = (locks
+    ? locks.request("moncahier-offline-outbox", replayAttendanceOutboxFromWorkerInternal)
+    : replayAttendanceOutboxFromWorkerInternal()).finally(() => { attendanceReplayInFlight = null; });
+  return attendanceReplayInFlight;
+}
+
+async function replayAttendanceOutboxFromWorkerInternal() {
   const rows = await readAttendanceOutboxRows();
   const callRows = rows.filter((row) =>
     ATTENDANCE_CALL_OPERATION_TYPES.has(attendanceOperationType(row)),
@@ -434,11 +483,15 @@ async function replayAttendanceOutboxFromWorker() {
   }
 
   const map = await readAttendanceSessionMap();
+  const canonicalDependency = (value) => {
+    const key = normalizedAttendanceDependency(value);
+    return key && map[key] ? normalizedAttendanceDependency(map[key]) : key;
+  };
   const sessionsWaitingForStart = new Set(
     callRows
       .filter((row) => attendanceOperationType(row) === "session-start")
       .map((row) =>
-        normalizedAttendanceDependency(attendanceDependencyKey(row, row.body)),
+        canonicalDependency(attendanceDependencyKey(row, row.body)),
       )
       .filter(Boolean),
   );
@@ -452,7 +505,7 @@ async function replayAttendanceOutboxFromWorker() {
     const originalBody = row?.body && typeof row.body === "object" ? row.body : row?.body;
     const body = rewriteAttendanceBodyWithMap(originalBody, map);
     const dependency = attendanceDependencyKey(row, body);
-    const normalizedDependency = normalizedAttendanceDependency(dependency);
+    const normalizedDependency = canonicalDependency(dependency);
 
     // Un appel déjà bloqué lors d'une passe antérieure continue de protéger sa
     // fermeture. On ne doit jamais certifier une fin de séance si l'ouverture
@@ -479,6 +532,11 @@ async function replayAttendanceOutboxFromWorker() {
       sessionsWaitingForStart.has(normalizedDependency) &&
       (operationType === "attendance" || operationType === "session-end")
     ) {
+      continue;
+    }
+    if (operationType === "session-end" && normalizedDependency &&
+        (await readAttendanceOutboxRows()).some((pending) => attendanceOperationType(pending) === "attendance" &&
+          canonicalDependency(attendanceDependencyKey(pending, pending.body)) === normalizedDependency)) {
       continue;
     }
 
@@ -515,7 +573,13 @@ async function replayAttendanceOutboxFromWorker() {
     }
 
     let response;
+    let payload;
     try {
+      const stillQueued = await patchAttendanceOutboxRow(row.id, {
+        attempts: Number(row?.attempts || 0) + 1,
+        lastAttemptAt: Date.now(),
+      });
+      if (!stillQueued) continue;
       const replayRequest = new Request(url.href, {
         method: String(row?.method || "POST").toUpperCase(),
         credentials: "include",
@@ -523,10 +587,13 @@ async function replayAttendanceOutboxFromWorker() {
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      response = await fetchWithTimeout(
+      const result = await fetchWithTimeout(
         replayRequest,
         ATTENDANCE_REPLAY_TIMEOUT_MS,
+        true,
       );
+      response = result.response;
+      payload = result.payload;
     } catch (error) {
       await patchAttendanceOutboxRow(row.id, {
         state: "pending",
@@ -538,7 +605,6 @@ async function replayAttendanceOutboxFromWorker() {
       throw error;
     }
 
-    const payload = await responseJsonSafe(response);
     if (!response.ok) {
       const errorCode = String(
         payload?.error || payload?.message || `HTTP_${response.status}`,
@@ -619,7 +685,7 @@ async function replayAttendanceOutboxFromWorker() {
       }
     }
 
-    await deleteAttendanceOutboxRow(row.id);
+    await deleteAttendanceOutboxRow(row.id, row, attendanceResponseSessionId(payload) || body?.session_id);
     flushed += 1;
   }
 

@@ -32,6 +32,20 @@ export function attendanceReceiptLabel(row: AttendanceReceiptFacts) {
   return row.ended_at ? "Appel élèves reçu · séance clôturée" : "Appel élèves reçu · séance non clôturée";
 }
 
+export function attendanceReceptionSummary(rows: AttendanceReceiptFacts[]) {
+  const summary = { sessions: 0, confirmed: 0, unconfirmed: 0, unavailable: 0 };
+  const counted = new Set<string>();
+  for (const row of rows) {
+    if (!row.session_id || counted.has(row.session_id)) continue;
+    counted.add(row.session_id);
+    summary.sessions += 1;
+    if (!row.attendance_receipt_available) summary.unavailable += 1;
+    else if (row.attendance_received_at) summary.confirmed += 1;
+    else summary.unconfirmed += 1;
+  }
+  return summary;
+}
+
 type PageResult<T> = { data: T[] | null; error: { message: string } | null; count?: number | null };
 /** Count-aware paging: never silently certify a truncated response as complete. */
 export async function readAttendancePages<T>(

@@ -1054,8 +1054,18 @@ export default function ClassDevicePage() {
   async function refreshPending() {
     const next = await countPendingForCurrentClass();
     setPendingSync(next);
+    const completion = await cacheGet<ClassDeviceCompletion>(LAST_COMPLETION_KEY).catch(() => null);
+    if (completion) setLastCompletion(completion);
     return next;
   }
+  const refreshPendingRef = useRef(refreshPending);
+  refreshPendingRef.current = refreshPending;
+
+  useEffect(() => {
+    const refresh = () => void refreshPendingRef.current();
+    window.addEventListener("class-device-sync-updated", refresh);
+    return () => window.removeEventListener("class-device-sync-updated", refresh);
+  }, []);
 
   // 🔁 Tente de récupérer une séance serveur et remplace une séance locale "client:*"
   async function refreshServerOpenSession(): Promise<OpenSession | null> {
@@ -1233,23 +1243,7 @@ export default function ClassDevicePage() {
           operationId: acknowledgement.operationId,
           status: acknowledgement.status,
         });
-        const completion = lastCompletion;
-        const completionClientSessionId = completion?.open_operation_id
-          ? `client:${completion.open_operation_id}`
-          : null;
-        if (
-          completion &&
-          (acknowledgement.classId === completion.class_id ||
-            acknowledgement.clientSessionId === completion.session_id ||
-            acknowledgement.clientSessionId === completionClientSessionId)
-        ) {
-          const cloudConfirmedCompletion: ClassDeviceCompletion = {
-            ...completion,
-            relay_state: "cloud_confirmed",
-          };
-          setLastCompletion(cloudConfirmedCompletion);
-          await cacheSet(LAST_COMPLETION_KEY, cloudConfirmedCompletion);
-        }
+        // The shared guard checks the exact final attendance receipt and close.
       }
     }
   }
@@ -2789,6 +2783,7 @@ export default function ClassDevicePage() {
 
   /* 3) charger roster si séance ouverte */
   useEffect(() => {
+    let cancelled = false;
     if (!open) {
       setRoster([]);
       setRows({});
@@ -2799,6 +2794,7 @@ export default function ClassDevicePage() {
         setLoadingRoster(true);
         const relayRoster = relayRosterForClass(relayClassSchedule, open.class_id);
         if (relayRoster !== null) {
+          if (cancelled) return;
           setRoster(relayRoster);
           await cacheSet(`classDevice:roster:${open.class_id}`, { items: relayRoster });
         } else {
@@ -2806,15 +2802,18 @@ export default function ClassDevicePage() {
             `/api/class/roster?class_id=${open.class_id}`,
             `classDevice:roster:${open.class_id}`
           ).catch(() => null as any);
+          if (cancelled) return;
           setRoster(((j?.items || []) as RosterItem[]) ?? []);
         }
 
+        if (cancelled) return;
         const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(open.class_id);
         setRows(snap?.state?.rows || {});
       } finally {
-        setLoadingRoster(false);
+        if (!cancelled) setLoadingRoster(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [open?.class_id, relayClassSchedule?.schedule_revision]);
 
   /* helpers saisie */
@@ -2862,7 +2861,10 @@ export default function ClassDevicePage() {
   }
 
   function attendanceMarksFromRows(source: Record<string, Row>) {
-    return Object.entries(source).map(([student_id, row]) => {
+    // Unchanged pupils are present. The final batch must certify the whole
+    // loaded roster, including a class with no absence or late arrival.
+    return roster.map(({ id: student_id }) => {
+      const row = source[student_id] || {};
       if (row.absent) {
         return { student_id, status: "absent" as const, reason: row.reason ?? null, observed_at: null };
       }
@@ -3124,12 +3126,17 @@ export default function ClassDevicePage() {
       const deliveryPeriodKey = manualSubjectMode
         ? `manual:${persistedPeriodId || "outside"}:${dateKey}:${actualCallAtISO}`
         : String(verifiedPeriod!.id);
-      const attemptKey = [
+      const legacyAttemptKey = [
         classId,
         deliveryPeriodKey,
         subjectId,
         dateKey,
       ].join(":");
+      // A period ID survives timetable edits. Its planned start distinguishes
+      // a moved course from an earlier, already closed course on the same day.
+      const attemptKey = manualSubjectMode
+        ? legacyAttemptKey
+        : `${legacyAttemptKey}:${started.toISOString()}`;
 
       const institutionId = selectedClass?.institution_id || "";
       const actorProfileId = selectedClass?.actor_profile_id || null;
@@ -3145,6 +3152,15 @@ export default function ClassDevicePage() {
         periodId: deliveryPeriodKey,
         subjectId,
         attemptKey,
+        legacyAttemptKey: manualSubjectMode ? null : legacyAttemptKey,
+        classStart: {
+          period_id: persistedPeriodId,
+          expected_minutes: effectiveDuration,
+          actual_call_at: actualCallAtISO,
+          manual_course: manualSubjectMode,
+          planned_start_at: manualSubjectMode ? undefined : started.toISOString(),
+          planned_end_at: manualSubjectMode ? undefined : new Date(started.getTime() + effectiveDuration * 60_000).toISOString(),
+        },
       });
       const operationId = stagedOpen.operation_id;
       const clientSessionId = `client:${operationId}`;
@@ -3264,7 +3280,7 @@ export default function ClassDevicePage() {
           subject_id: subjectId,
           period_id: persistedPeriodId,
           expected_minutes: effectiveDuration,
-          actual_call_at: actualCallAtISO,
+          actual_call_at: pendingOpen.actual_call_at,
           client_session_id: clientSessionId,
           operation_id: operationId,
           manual_course: manualSubjectMode,
@@ -3463,7 +3479,11 @@ export default function ClassDevicePage() {
 
   async function endSession() {
     const cur = openRef.current;
-    if (!cur) return;
+    if (!cur || busy) return;
+    if (loadingRoster || roster.length === 0) {
+      setMsg("La liste des élèves doit être chargée avant de terminer l’appel. La séance reste ouverte.");
+      return;
+    }
 
     const finalMarksPreview = attendanceMarksFromRows(rows);
     const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
@@ -3550,6 +3570,7 @@ export default function ClassDevicePage() {
       setManualSubjectMode(false);
       setSubjectScheduleIssue(null);
       subjectSelectionSlotRef.current = "";
+      openRef.current = null;
       setOpen(null);
       setRoster([]);
       setRows({});
@@ -3673,8 +3694,7 @@ export default function ClassDevicePage() {
     };
 
     try {
-      let openId = String(cur.id || "");
-      const isClientLocal = isClientSessionId(openId);
+      const openId = String(cur.id || "");
       const actualEndAt = observedNowIso();
       // Même instant métier pour tous les chemins (téléphone, relais, Cloud/outbox).
       const attendanceCapturedAt = actualEndAt;
@@ -3761,185 +3781,51 @@ export default function ClassDevicePage() {
         return;
       }
 
-      // ✅ Si séance locale et en ligne : essayer de sync + récupérer la vraie séance serveur
-      if (isClientLocal && isOnline) {
-        const ensured = await ensureServerSessionOrExplain();
-        if (ensured) {
-          openId = String(ensured.id);
-        } else {
-          const pendingMarks = attendanceMarksFromRows(rows);
-          if (pendingMarks.length > 0) {
-            await offlineMutateJson(
-              "/api/teacher/attendance/bulk",
-              {
-                method: "POST",
-                body: {
-                  session_id: openId,
-                  captured_at_device: attendanceCapturedAt,
-                  marks: pendingMarks,
-                },
-              },
-              {
-                mergeKey: `attendance:${openId}`,
-                queueOnly: true,
-                meta: {
-                  operationType: "attendance",
-                  clientSessionId: openId,
-                  institutionId:
-                    selectedClass?.institution_id || cur.institution_id || "",
-                  classId: cur.class_id,
-                  subjectId: cur.subject_id || null,
-                  periodId: cur.period_id || null,
-                },
-              },
-            );
-          }
-          // L'ordre monotone de l'outbox garantit ouverture → présences → fermeture.
-          // Chaque cours garde sa propre fermeture : aucun marqueur unique ne peut être écrasé
-          // par le cours suivant.
-          await offlineMutateJson(
-            "/api/class/sessions/end",
-            {
-              method: "PATCH",
-              body: { session_id: openId, actual_end_at: actualEndAt },
-            },
-            {
-              mergeKey: `end:${openId}`,
-              queueOnly: true,
-              meta: {
-                operationType: "session-end",
-                clientSessionId: openId,
-                institutionId:
-                  selectedClass?.institution_id || cur.institution_id || "",
-                classId: cur.class_id,
-                subjectId: cur.subject_id || null,
-                periodId: cur.period_id || null,
-              },
-            },
-          );
-          await finishLocal({
-            actualEndAt,
-            relayState: "device_pending",
-            message:
-              "Séance terminée sur ce téléphone. L’appel et la fermeture sont en attente de synchronisation ; le cours suivant peut commencer.",
-          });
-          await refreshPending();
-          return;
-        }
-      }
-
-      const finalMarks = attendanceMarksFromRows(rows);
-      if (finalMarks.length > 0) {
-        const attendance = await offlineMutateJson(
-          "/api/teacher/attendance/bulk",
-          {
-            method: "POST",
-            body: {
-              session_id: openId,
-              captured_at_device: attendanceCapturedAt,
-              marks: finalMarks,
-            },
+      // Persist both operations before releasing the screen. Background replay
+      // resolves client IDs and requires the student ACK before closing.
+      const finalMarks = finalMarksPreview;
+      const meta = {
+        clientSessionId: openId,
+        institutionId: selectedClass?.institution_id || cur.institution_id || "",
+        classId: cur.class_id,
+        subjectId: cur.subject_id || null,
+        periodId: cur.period_id || null,
+      };
+      await offlineMutateJson(
+        "/api/teacher/attendance/bulk",
+        {
+          method: "POST",
+          body: {
+            session_id: openId,
+            captured_at_device: attendanceCapturedAt,
+            marks: finalMarks,
           },
-          {
-            mergeKey: `attendance:${openId}`,
-            meta: {
-              operationType: "attendance",
-              clientSessionId: openId,
-              institutionId:
-                selectedClass?.institution_id || cur.institution_id || "",
-              classId: cur.class_id,
-              subjectId: cur.subject_id || null,
-              periodId: cur.period_id || null,
-            },
-          },
-        );
-        if (!(attendance as any).ok && !shouldTreatAsOffline(attendance)) {
-          const err = extractRespError(attendance);
-          setMsg(
-            err
-              ? `La séance reste ouverte : ${err}`
-              : "La séance reste ouverte : l’appel final n’a pas été enregistré.",
-          );
-          return;
-        }
-        if (!(attendance as any).ok && shouldTreatAsOffline(attendance)) {
-          await offlineMutateJson(
-            "/api/class/sessions/end",
-            {
-              method: "PATCH",
-              body: {
-                session_id: openId,
-                actual_end_at: actualEndAt,
-              },
-            },
-            {
-              mergeKey: `end:${openId}`,
-              queueOnly: true,
-              meta: {
-                operationType: "session-end",
-                clientSessionId: openId,
-                institutionId:
-                  selectedClass?.institution_id || cur.institution_id || "",
-                classId: cur.class_id,
-                subjectId: cur.subject_id || null,
-                periodId: cur.period_id || null,
-              },
-            },
-          );
-          await finishLocal({
-            actualEndAt,
-            relayState: "device_pending",
-            message:
-              "Appel et fin conservés sur ce téléphone. La fermeture attendra la confirmation de l’appel avant d’être synchronisée.",
-          });
-          await refreshPending();
-          return;
-        }
-      }
-
-      // ✅ On envoie toujours session_id + actual_end_at pour garder l'heure réelle de fin.
-      const r = await offlineMutateJson(
+        },
+        {
+          mergeKey: `attendance:${openId}`,
+          queueOnly: true,
+          meta: { ...meta, operationType: "attendance" },
+        },
+      );
+      await offlineMutateJson(
         "/api/class/sessions/end",
         {
           method: "PATCH",
-          body: {
-            session_id: openId,
-            actual_end_at: actualEndAt,
-          },
+          body: { session_id: openId, actual_end_at: actualEndAt },
         },
         {
           mergeKey: `end:${openId}`,
-          meta: {
-            operationType: "session-end",
-            clientSessionId: openId,
-            institutionId:
-              selectedClass?.institution_id || cur.institution_id || "",
-            classId: cur.class_id,
-            subjectId: cur.subject_id || null,
-            periodId: cur.period_id || null,
-          },
+          queueOnly: true,
+          meta: { ...meta, operationType: "session-end" },
         },
       );
-
-      if ((r as any).ok) {
-        await finishLocal({
-          actualEndAt,
-          relayState: "cloud_confirmed",
-          message: "Séance terminée et confirmée par le Cloud.",
-        });
-        await refreshPending();
-      } else if (shouldTreatAsOffline(r)) {
-        await finishLocal({
-          actualEndAt,
-          relayState: "device_pending",
-          message:
-            "Hors connexion : fin de séance mise en attente (sync auto).",
-        });
-        await refreshPending();
-      } else {
-        const err = extractRespError(r);
-        setMsg(err ? `Erreur serveur : ${err}` : "Erreur serveur : impossible de terminer la séance.");
-      }
+      await finishLocal({
+        actualEndAt,
+        relayState: "device_pending",
+        message: "Appel complet et fin de séance enregistrés sur ce téléphone. La synchronisation automatique attendra la confirmation de l’appel avant la fermeture ; le cours suivant peut commencer.",
+      });
+      await refreshPending();
+      void syncNowRef.current();
     } catch (e: any) {
       setSessionRuntimeState("recoverable_error");
       setMsg(e?.message || "Échec fin de séance");

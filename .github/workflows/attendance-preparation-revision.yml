@@ -1,0 +1,42 @@
+name: Attendance preparation database
+on:
+  pull_request:
+    branches: [reprise-propre-5418ce7-20260729, main]
+    paths:
+      - migrations/20261009133018_attendance_preparation_stable_revision.sql
+      - test/attendance-preparation-revision-db.sql
+      - .github/workflows/attendance-preparation-revision.yml
+  push:
+    branches: [reprise-propre-5418ce7-20260729]
+    paths:
+      - migrations/20261009133018_attendance_preparation_stable_revision.sql
+      - test/attendance-preparation-revision-db.sql
+      - .github/workflows/attendance-preparation-revision.yml
+permissions:
+  contents: read
+jobs:
+  preparation-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify preparation, relay, isolation and rollback
+        env:
+          PGPASSWORD: postgres
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres -f test/attendance-preparation-revision-db.sql

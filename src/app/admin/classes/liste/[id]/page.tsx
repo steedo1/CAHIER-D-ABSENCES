@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   EDUCATION_TYPE_OPTIONS,
   getConfiguredFormations,
@@ -347,7 +347,6 @@ function cloneEditable(
 
 export default function ClassListPrintPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const classId = String(params?.id || "").trim();
 
   const [data, setData] = useState<ClassListPayload | null>(null);
@@ -1129,13 +1128,12 @@ export default function ClassListPrintPage() {
               Corriger les champs
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => router.back()}
+          <a
+            href="/admin/parents"
             className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50"
           >
             Retour
-          </button>
+          </a>
           <button
             type="button"
             onClick={printPdf}

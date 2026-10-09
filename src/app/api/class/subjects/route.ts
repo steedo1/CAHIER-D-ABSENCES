@@ -7,7 +7,7 @@ import {
   isNonGeneralAttendanceEducation,
 } from "@/lib/education-attendance";
 import { classDeviceMayAccessClass } from "@/lib/class-device-identity";
-import { readAttendanceScheduleRevision } from "@/lib/attendance-schedule-revision-server";
+import { readAttendanceScheduleRevision, readAttendancePreparationSnapshot, attendancePreparationSnapshotsMatch } from "@/lib/attendance-schedule-revision-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -361,6 +361,7 @@ export async function GET(req: NextRequest) {
     }
 
     const url = new URL(req.url);
+    const preparingOffline = url.searchParams.get("offline_preparation") === "v1";
     const class_id = (url.searchParams.get("class_id") ?? "").trim();
     const slotRaw = (url.searchParams.get("slot") ?? "").trim() || null;
     const periodIdRaw = (url.searchParams.get("period_id") ?? "").trim() || null;
@@ -433,7 +434,7 @@ export async function GET(req: NextRequest) {
 
     const { data: revisionRow, error: revisionError } = await srv
       .from("attendance_schedule_revisions")
-      .select("revision")
+      .select(preparingOffline ? "*" : "revision")
       .eq("institution_id", institutionId)
       .maybeSingle();
     if (revisionError) {
@@ -453,7 +454,19 @@ export async function GET(req: NextRequest) {
       schedule_revision: scheduleRevision,
     };
     async function scheduleJson(items: SubjectItem[]) {
-      if (scheduleRevision !== await readAttendanceScheduleRevision(srv, institutionId)) {
+      if (preparingOffline) {
+        const initial = {
+          schedule_revision: scheduleRevision,
+          preparation_revision: revisionRow?.preparation_revision == null ? null : Number(revisionRow.preparation_revision),
+        };
+        const final = await readAttendancePreparationSnapshot(srv, institutionId);
+        if (!attendancePreparationSnapshotsMatch(initial, final)) {
+          return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
+        }
+        return NextResponse.json({ ...scheduleMeta, ...final, items }, {
+          headers: { "Cache-Control": "private, no-store, max-age=0" },
+        });
+      } else if (scheduleRevision !== await readAttendanceScheduleRevision(srv, institutionId)) {
         return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
       }
       return NextResponse.json({ ...scheduleMeta, items }, {

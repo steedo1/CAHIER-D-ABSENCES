@@ -24,6 +24,7 @@ import {
   type ClassDeviceReadinessStatus,
 } from "@/lib/offlineClassDevice";
 import { cacheGet } from "@/lib/offline";
+import { offlinePreparationFailureMessage, retryableOfflinePreparationFailure } from "@/lib/offline-preparation-failure";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 
 type Props = {
@@ -64,17 +65,8 @@ function automaticAttendanceRole(role: OfflineRole) {
   return role === "teacher" || role === "class-device";
 }
 
-function preparationFailureMessage(cause: unknown) {
-  return String(
-    (cause as { message?: unknown } | null)?.message || cause || "",
-  ).trim();
-}
-
 function retryablePreparationFailure(cause: unknown) {
-  const message = preparationFailureMessage(cause);
-  return /(?:timeout|délai|serveur[^.]*répon|failed to fetch|fetch failed|network|réseau|indisponible|aborted|http 5\d\d)/i.test(
-    message,
-  );
+  return retryableOfflinePreparationFailure(cause);
 }
 
 function waitForPreparationRetry(attempt: number) {
@@ -145,6 +137,7 @@ export default function OfflineReadinessCard({
   const [preparing, setPreparing] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [failureStep, setFailureStep] = useState<string | null>(null);
   const [assessment, setAssessment] =
     useState<TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null>(
       null,
@@ -229,9 +222,11 @@ export default function OfflineReadinessCard({
       const previousWasTooOld = readinessTooOld(previousReadiness);
 
       const task = (async () => {
+        let lastStep = "";
         if (mountedRef.current) {
           setPreparing(true);
           setError(null);
+          setFailureStep(null);
           setProgress(
             automatic
               ? "Actualisation automatique des données d’appel…"
@@ -251,6 +246,7 @@ export default function OfflineReadinessCard({
           for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             try {
               next = await prepareOffline(role, (message) => {
+                lastStep = message;
                 if (mountedRef.current && !automaticAttendanceRole(role)) {
                   setProgress(message);
                 }
@@ -352,11 +348,8 @@ export default function OfflineReadinessCard({
           }
         } catch (cause: any) {
           if (mountedRef.current) {
-            setError(
-              String(
-                cause?.message || "La préparation hors ligne a échoué.",
-              ),
-            );
+            setError(offlinePreparationFailureMessage(cause));
+            setFailureStep(lastStep || null);
             setProgress("");
           }
         } finally {
@@ -581,10 +574,11 @@ export default function OfflineReadinessCard({
                 : "Téléphone professeur pas encore prêt"}
             </p>
             <p className="mt-0.5 text-sm leading-5 text-amber-900">
-              {error
-                ? "La préparation n’a pas pu être terminée. Vérifiez la connexion, puis réessayez."
-                : "Une connexion est nécessaire pour terminer la préparation hors connexion."}
+              {error || "Une connexion est nécessaire pour terminer la préparation hors connexion."}
             </p>
+            {error && failureStep && (
+              <p className="mt-1 text-xs text-amber-800">Étape interrompue : {failureStep}</p>
+            )}
             <button
               type="button"
               onClick={() => void runPreparation(false)}

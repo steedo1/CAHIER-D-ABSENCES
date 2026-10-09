@@ -3,6 +3,7 @@
 import {
   cacheGet,
   cacheSet,
+  putDurableAttendanceRecord,
   findLegacyTeacherAttendanceMutation,
   removeLegacyTeacherAttendanceMutation,
   resolveOfflineSessionReference,
@@ -171,16 +172,7 @@ export function createIndexedDbTeacherAttendanceStore(): TeacherAttendanceOperat
         : [];
     },
     async put(record) {
-      const key = `${STORE_PREFIX}${record.institution_id}`;
-      const records = await cacheGet<TeacherAttendanceDeliveryRecord[]>(key);
-      const next = Array.isArray(records) ? [...records] : [];
-      const index = next.findIndex((candidate) =>
-        candidate.operation_id === record.operation_id &&
-        candidate.institution_id === record.institution_id,
-      );
-      if (index >= 0) next[index] = record;
-      else next.push(record);
-      await cacheSet(key, next);
+      await putDurableAttendanceRecord("attendance-delivery", record);
       const institutions = await cacheGet<string[]>(STORE_INSTITUTIONS_KEY);
       const nextInstitutions = new Set(Array.isArray(institutions) ? institutions : []);
       nextInstitutions.add(record.institution_id);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import {
   getClassLevelCode,
@@ -108,7 +108,7 @@ async function requireAdmin(): Promise<
   const srv = getSupabaseServiceClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await getVerifiedServerUser(supabase);
 
   if (!user?.id) {
     return { ok: false, response: bad("UNAUTHENTICATED", 401) };
@@ -436,6 +436,148 @@ async function includeStudentsReferencedByScores(
   return added;
 }
 
+async function loadRegisterScores(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  evaluations: EvaluationRow[],
+) {
+  const evaluationIds = uniqueStrings(evaluations.map((ev) => ev.id));
+  const publishedEvaluationIds = evaluations
+    .filter((ev) => {
+      const status = String(ev.publication_status || "").toLowerCase();
+      return ev.is_published === true || status === "published";
+    })
+    .map((ev) => ev.id);
+  const publishedSet = new Set(publishedEvaluationIds);
+  const workingEvaluationIds = evaluationIds.filter((id) => !publishedSet.has(id));
+
+  const scoreMap = new Map<
+    string,
+    { evaluation_id: string; student_id: string; score: number | null }
+  >();
+
+  for (const part of chunks(workingEvaluationIds)) {
+    for (let offset = 0; ; offset += 1000) {
+      const { data: workingRows, error: workingError } = await srv
+        .from("student_grades")
+        .select("evaluation_id,student_id,score")
+        .in("evaluation_id", part)
+        .order("evaluation_id", { ascending: true })
+        .order("student_id", { ascending: true })
+        .range(offset, offset + 999);
+      if (workingError) throw workingError;
+      mergeScores(scoreMap, workingRows as ScoreRow[] | null);
+      if ((workingRows || []).length < 1000) break;
+    }
+  }
+
+  for (const part of chunks(publishedEvaluationIds)) {
+    for (let offset = 0; ; offset += 1000) {
+      const { data: officialRows, error: officialError } = await srv
+        .from("v_grade_scores_official_for_reports")
+        .select("evaluation_id,student_id,score")
+        .in("evaluation_id", part)
+        .order("evaluation_id", { ascending: true })
+        .order("student_id", { ascending: true })
+        .range(offset, offset + 999);
+      if (officialError) throw officialError;
+      mergeScores(scoreMap, officialRows as ScoreRow[] | null);
+      if ((officialRows || []).length < 1000) break;
+    }
+  }
+
+  const scores = Array.from(scoreMap.values());
+  return { scores, publishedEvaluationIds, workingEvaluationIds };
+}
+
+
+async function loadRegisterOverview(
+  srv: ReturnType<typeof getSupabaseServiceClient>,
+  institutionId: string,
+  classId: string,
+  periodId: string,
+  period: PeriodRow,
+) {
+  const evaluations: EvaluationRow[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await srv
+      .from("grade_evaluations")
+      .select("id,class_id,subject_id,teacher_id,eval_date,is_published,publication_status")
+      .eq("class_id", classId)
+      .or(buildPeriodScope(periodId, period))
+      .order("eval_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + 999);
+    if (error) throw error;
+    evaluations.push(...((data || []) as EvaluationRow[]));
+    if ((data || []).length < 1000) break;
+  }
+
+  const { scores, publishedEvaluationIds } = await loadRegisterScores(srv, evaluations);
+  const countsByEvaluation = new Map<string, number>();
+  for (const score of scores) {
+    if (score.score === null) continue;
+    countsByEvaluation.set(score.evaluation_id, (countsByEvaluation.get(score.evaluation_id) || 0) + 1);
+  }
+  const withNotes = evaluations.filter((ev) =>
+    ev.teacher_id && ev.subject_id && (countsByEvaluation.get(ev.id) || 0) > 0,
+  );
+  if (!withNotes.length) return [];
+
+  const teacherIds = uniqueStrings(withNotes.map((ev) => ev.teacher_id));
+  const [{ data: teachers, error: teacherError }, { data: links, error: linkError }] = await Promise.all([
+    srv.from("profiles").select("id,display_name").in("id", teacherIds),
+    srv.from("institution_subjects").select("id,subject_id,custom_name")
+      .eq("institution_id", institutionId).order("id", { ascending: true }),
+  ]);
+  if (teacherError) throw teacherError;
+  if (linkError) throw linkError;
+  const teacherNames = new Map((teachers || []).map((row) => [String(row.id), String(row.display_name || "Enseignant")]));
+  const subjectLinks = links || [];
+  const linkFor = (id: string) => subjectLinks.find((row) => row.id === id)
+    || subjectLinks.find((row) => row.subject_id === id);
+  const globalIds = uniqueStrings(withNotes.map((ev) => linkFor(String(ev.subject_id))?.subject_id || ev.subject_id));
+  const { data: subjects, error: subjectError } = await srv.from("subjects").select("id,name,code").in("id", globalIds);
+  if (subjectError) throw subjectError;
+  const subjectNames = new Map((subjects || []).map((row) => [String(row.id), String(row.name || row.code || "Discipline")]));
+  const publishedSet = new Set(publishedEvaluationIds);
+  const groups = new Map<string, {
+    teacher_id: string; teacher_name: string; subject_id: string; subject_label: string;
+    notes_count: number; published_notes_count: number; unpublished_notes_count: number;
+    evaluations_count: number; published_evaluations_count: number; unpublished_evaluations_count: number;
+    last_eval_date: string;
+  }>();
+  for (const ev of withNotes) {
+    const link = linkFor(String(ev.subject_id));
+    const globalId = String(link?.subject_id || ev.subject_id);
+    const teacherId = String(ev.teacher_id);
+    const key = `${teacherId}:${globalId}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        teacher_id: teacherId,
+        teacher_name: teacherNames.get(teacherId) || "Enseignant",
+        subject_id: String(link?.id || globalId),
+        subject_label: String(link?.custom_name || subjectNames.get(globalId) || "Discipline"),
+        notes_count: 0, published_notes_count: 0, unpublished_notes_count: 0,
+        evaluations_count: 0, published_evaluations_count: 0, unpublished_evaluations_count: 0,
+        last_eval_date: ev.eval_date,
+      };
+      groups.set(key, group);
+    }
+    const count = countsByEvaluation.get(ev.id) || 0;
+    const published = publishedSet.has(ev.id);
+    group.notes_count += count;
+    group.evaluations_count += 1;
+    group[published ? "published_notes_count" : "unpublished_notes_count"] += count;
+    group[published ? "published_evaluations_count" : "unpublished_evaluations_count"] += 1;
+    if (ev.eval_date > group.last_eval_date) group.last_eval_date = ev.eval_date;
+  }
+  return Array.from(groups.values()).sort((a, b) =>
+    a.teacher_name.localeCompare(b.teacher_name, "fr", { sensitivity: "base" })
+    || a.subject_label.localeCompare(b.subject_label, "fr", { sensitivity: "base" }),
+  );
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAdmin();
@@ -446,8 +588,9 @@ export async function GET(req: NextRequest) {
     const rawSubjectId = String(req.nextUrl.searchParams.get("subject_id") || "").trim();
     const teacherId = String(req.nextUrl.searchParams.get("teacher_id") || "").trim();
     const periodId = String(req.nextUrl.searchParams.get("grading_period_id") || "").trim();
+    const overview = req.nextUrl.searchParams.get("view") === "overview";
 
-    if (!classId || !rawSubjectId || !teacherId || !periodId) {
+    if (!classId || !periodId || (!overview && (!rawSubjectId || !teacherId))) {
       return bad("MISSING_FILTERS", 400);
     }
 
@@ -465,17 +608,16 @@ export async function GET(req: NextRequest) {
       return bad("ACADEMIC_YEAR_MISMATCH", 400);
     }
 
+    if (overview) {
+      const items = await loadRegisterOverview(srv, institutionId, classId, periodId, period);
+      return json({ ok: true, items, class: classRow, period });
+    }
+
     const subject = await resolveSubjectIds(srv, institutionId, rawSubjectId);
     if (!subject.globalId || !subject.ids.length) return bad("SUBJECT_NOT_FOUND", 404);
 
-    const assigned = await ensureTeacherAssignment(
-      srv,
-      institutionId,
-      classId,
-      teacherId,
-      subject.ids,
-    );
-    if (!assigned) return bad("TEACHER_NOT_ASSIGNED", 403);
+    // La lecture admin reste limitée à la classe de son établissement.
+    // Les notes restent consultables après un changement d'affectation.
 
     const rosterMap = await loadRosterForPeriod(srv, classId, period);
 
@@ -497,39 +639,8 @@ export async function GET(req: NextRequest) {
     const evaluations = (evaluationsRaw || []) as unknown as EvaluationRow[];
     const evaluationIds = uniqueStrings(evaluations.map((ev) => ev.id));
 
-    const publishedEvaluationIds = evaluations
-      .filter((ev) => {
-        const status = String(ev.publication_status || "").toLowerCase();
-        return ev.is_published === true || status === "published";
-      })
-      .map((ev) => ev.id);
-    const publishedSet = new Set(publishedEvaluationIds);
-    const workingEvaluationIds = evaluationIds.filter((id) => !publishedSet.has(id));
-
-    const scoreMap = new Map<
-      string,
-      { evaluation_id: string; student_id: string; score: number | null }
-    >();
-
-    for (const part of chunks(workingEvaluationIds)) {
-      const { data: workingRows, error: workingError } = await srv
-        .from("student_grades")
-        .select("evaluation_id,student_id,score")
-        .in("evaluation_id", part);
-      if (workingError) throw workingError;
-      mergeScores(scoreMap, workingRows as ScoreRow[] | null);
-    }
-
-    for (const part of chunks(publishedEvaluationIds)) {
-      const { data: officialRows, error: officialError } = await srv
-        .from("v_grade_scores_official_for_reports")
-        .select("evaluation_id,student_id,score")
-        .in("evaluation_id", part);
-      if (officialError) throw officialError;
-      mergeScores(scoreMap, officialRows as ScoreRow[] | null);
-    }
-
-    const scores = Array.from(scoreMap.values());
+    const { scores, publishedEvaluationIds, workingEvaluationIds } =
+      await loadRegisterScores(srv, evaluations);
     const recoveredStudents = await includeStudentsReferencedByScores(srv, rosterMap, scores);
     const roster = Array.from(rosterMap.values()).sort((a, b) =>
       a.full_name.localeCompare(b.full_name, "fr", {

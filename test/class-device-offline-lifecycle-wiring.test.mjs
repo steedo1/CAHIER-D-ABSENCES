@@ -129,9 +129,10 @@ test("le Web et le service worker portent la même release PWA avec Background S
     read("src/lib/offline-release.ts"),
   ]);
 
-  const expected = "2026-09-22-attendance-schedule-identity-v1";
-  assert.match(worker, new RegExp(expected));
-  assert.match(release, new RegExp(expected));
+  const webRelease = release.match(/MON_CAHIER_SERVICE_WORKER_RELEASE\s*=\s*"([^"]+)"/)?.[1];
+  const workerRelease = worker.match(/const VERSION\s*=\s*"([^"]+)"/)?.[1];
+  assert.ok(webRelease);
+  assert.equal(workerRelease, webRelease);
   assert.match(worker, /const OFFLINE_SCHEMA_VERSION = 1/);
   assert.match(release, /MON_CAHIER_OFFLINE_SCHEMA_VERSION = 1/);
 });
