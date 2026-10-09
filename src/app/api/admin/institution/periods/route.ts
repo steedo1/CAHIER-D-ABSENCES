@@ -1,3 +1,4 @@
+import { requireInstitutionRole } from "@/lib/auth/server-context";
 // src/app/api/admin/institution/periods/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -9,17 +10,6 @@ export const dynamic = "force-dynamic";
 
 type GuardOk = { user: { id: string }; instId: string };
 type GuardErr = { error: "unauthorized" | "no_institution" | "forbidden" };
-
-type ProfileRow = {
-  id: string;
-  role: string | null;
-  institution_id: string | null;
-};
-
-type UserRoleRow = {
-  role: string | null;
-  institution_id: string | null;
-};
 
 type InstitutionPeriodRow = {
   id: string;
@@ -62,53 +52,8 @@ type InsertPayloadRow = {
   end_time: string;
 };
 
-async function guard(
-  supa: SupabaseClient,
-  srv: SupabaseClient
-): Promise<GuardOk | GuardErr> {
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-
-  if (!user) return { error: "unauthorized" };
-
-  const { data: me } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const profile = (me ?? null) as ProfileRow | null;
-
-  let instId: string | null = profile?.institution_id ?? null;
-  let roleProfile = String(profile?.role || "");
-
-  if (!instId || !["admin", "super_admin", "file_correspondent"].includes(roleProfile)) {
-    const { data: urRows } = await srv
-      .from("user_roles")
-      .select("role, institution_id")
-      .eq("profile_id", user.id);
-
-    const roles = (urRows ?? []) as UserRoleRow[];
-
-    const adminRow = roles.find((r: UserRoleRow) =>
-      ["admin", "super_admin", "file_correspondent"].includes(String(r.role || ""))
-    );
-
-    if (adminRow) {
-      if (!instId && adminRow.institution_id) {
-        instId = String(adminRow.institution_id);
-      }
-      roleProfile = roleProfile || String(adminRow.role || "");
-    }
-  }
-
-  const isAdmin = ["admin", "super_admin", "file_correspondent"].includes(roleProfile);
-
-  if (!instId) return { error: "no_institution" };
-  if (!isAdmin) return { error: "forbidden" };
-
-  return { user: { id: user.id }, instId };
+async function guard(supa: SupabaseClient, srv: SupabaseClient): Promise<GuardOk | GuardErr> {
+  return requireInstitutionRole(supa, srv, ["admin", "super_admin", "file_correspondent"]);
 }
 
 function guardStatus(err: GuardErr["error"]): number {

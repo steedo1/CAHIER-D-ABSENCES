@@ -10,14 +10,17 @@ test("la résolution du rôle vérifie la session puis lit les rôles côté ser
   const layout = read("src/app/admin/layout.tsx");
   const roleApi = read("src/app/api/auth/role/route.ts");
   const auth = read("src/lib/supabase-server.ts");
+  const context = read("src/lib/auth/server-context.ts");
 
   for (const source of [layout, roleApi]) {
     assert.match(source, /getVerifiedServerUser\(/);
     assert.match(source, /getSupabaseServiceClient\(\)/);
-    assert.match(source, /\.from\("user_roles"\)/);
+    assert.match(source, /getRequestRoles\(supabase, service, user\.id\)/);
   }
-  assert.match(auth, /await client\.auth\.setSession\(/);
-  assert.match(auth, /if \(!verified\.error && verified\.data\.user\)/);
+  assert.match(context, /reader\.from\("user_roles"\)/);
+  assert.match(context, /\.eq\("profile_id", userId\)/);
+  assert.match(auth, /const getUser = client\.auth\.getUser\.bind\(client\.auth\)/);
+  assert.doesNotMatch(auth, /\.setSession\(/);
 });
 
 test("les opérations du périmètre fichier acceptent le correspondant", () => {

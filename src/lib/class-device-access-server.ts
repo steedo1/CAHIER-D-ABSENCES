@@ -16,7 +16,7 @@ export type ClassDeviceSourceRow = {
 type InstitutionRow = {
   id?: string | null;
   name?: string | null;
-  short_name?: string | null;
+  acronym?: string | null;
   settings_json?: unknown;
 };
 
@@ -189,7 +189,7 @@ export async function enrichClassDeviceAccess(input: {
     readOptionalQuery<InstitutionRow>(() =>
       input.service
         .from("institutions")
-        .select("id,name,short_name")
+        .select("id,name,acronym")
         .in("id", institutionIds),
     ),
     readOptionalQuery<InstitutionRow>(() =>
@@ -341,7 +341,7 @@ export async function enrichClassDeviceAccess(input: {
     return {
       ...row,
       institution_name:
-        institution?.name || institution?.short_name || null,
+        institution?.name || institution?.acronym || null,
       education_type: education.education_type,
       education_label: education.education_label,
       education_short_label: education.education_short_label,

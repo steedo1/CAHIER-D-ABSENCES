@@ -46,6 +46,9 @@ jobs:
       - name: Critical offline regression suite
         run: |
           node --test \
+            test/supabase-consumption-regression.test.mjs \
+            test/supabase-server-auth-dedupe.test.mjs \
+            test/supabase-reference-fetch.test.mjs \
             test/pwa-stability.test.mjs \
             test/phone-offline-login-stability.test.mjs \
             test/offline-auth-contract.test.mjs \

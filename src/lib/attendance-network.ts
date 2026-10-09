@@ -163,18 +163,33 @@ export async function fetchAttendanceBackground(input: RequestInfo | URL, init: 
 }
 
 let syncProbe: Promise<boolean> | null = null;
+let lastSyncProbe: { checkedAt: number; available: boolean } | null = null;
+let syncProbeFailures = 0;
+export function resetAttendanceCloudProbe() {
+  lastSyncProbe = null;
+  syncProbeFailures = 0;
+}
+if (typeof window !== "undefined") window.addEventListener("online", resetAttendanceCloudProbe);
 export async function attendanceCloudAvailableForSync(): Promise<boolean> {
   if (typeof navigator === "undefined" || navigator.onLine === false) return false;
   if (syncProbe) return syncProbe;
+  const ttl = lastSyncProbe?.available ? 15_000 : Math.min(60_000, 5_000 * 2 ** Math.min(syncProbeFailures, 4));
+  if (lastSyncProbe && Date.now() - lastSyncProbe.checkedAt < ttl) return lastSyncProbe.available;
   syncProbe = (async () => {
+    let available = false;
     try {
       const response = await fetchAttendanceBackground("/api/auth/role", {
         credentials: "include", cache: "no-store", headers: { Accept: "application/json" },
       });
       // A 401 is reachable: the replay reports authentication required without deleting data.
-      return response.status < 500;
+      available = response.status < 500 && response.status !== 402 && response.status !== 429;
+      return available;
     } catch { return false; }
-    finally { syncProbe = null; }
+    finally {
+      syncProbeFailures = available ? 0 : syncProbeFailures + 1;
+      lastSyncProbe = { checkedAt: Date.now(), available };
+      syncProbe = null;
+    }
   })();
   return syncProbe;
 }

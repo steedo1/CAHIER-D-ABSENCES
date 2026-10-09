@@ -1,3 +1,4 @@
+import { createReferenceFetch } from "./supabase-reference-fetch";
 // src/lib/supabaseAdmin.ts
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -27,6 +28,7 @@ export function getSupabaseServiceClient(): SupabaseClient {
 
   _admin = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: createReferenceFetch() },
   });
 
   return _admin;

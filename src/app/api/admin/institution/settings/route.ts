@@ -1,6 +1,7 @@
+import { requireInstitutionRole } from "@/lib/auth/server-context";
 //src/app/api/admin/institution/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -38,68 +39,10 @@ type InstitutionSettingsRow = {
   settings_json?: any;
 };
 
-async function guard(
-  supa: SupabaseClient,
-  srv: SupabaseClient,
-  options: { write?: boolean } = {}
-): Promise<GuardOk | GuardErr> {
-  const {
-    data: { user },
-  } = await getVerifiedServerUser(supa);
-  if (!user) return { error: "unauthorized" };
-
-  const { data: me } = await supa
-    .from("profiles")
-    .select("id, role, institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  let instId: string | null = (me?.institution_id as string) || null;
-  const roleProfile = String(me?.role || "");
-
-  const allowedRoles = options.write
-    ? new Set(["admin", "super_admin", "file_correspondent"])
-    : new Set([
-        "admin",
-        "super_admin",
-        "founder",
-        "file_correspondent",
-        "finance_manager",
-        "infirmier",
-      ]);
-
-  let roleFromUR: string | null = null;
-  let hasAllowedRole = allowedRoles.has(roleProfile);
-
-  const { data: urRows } = await srv
-    .from("user_roles")
-    .select("role, institution_id")
-    .eq("profile_id", user.id);
-
-  for (const row of urRows || []) {
-    const role = String((row as any).role || "");
-    if (!allowedRoles.has(role)) continue;
-
-    const rowInstitutionId = String((row as any).institution_id || "").trim();
-    if (!instId && rowInstitutionId) instId = rowInstitutionId;
-
-    if (role === "super_admin" || !rowInstitutionId || rowInstitutionId === instId) {
-      roleFromUR = role;
-      hasAllowedRole = true;
-      break;
-    }
-  }
-
-  if (!instId) return { error: "no_institution" };
-
-  const isAllowed =
-    allowedRoles.has(roleProfile) ||
-    allowedRoles.has(String(roleFromUR || "")) ||
-    hasAllowedRole;
-
-  if (!isAllowed) return { error: "forbidden" };
-
-  return { user: { id: user.id }, instId };
+async function guard(supa: SupabaseClient, srv: SupabaseClient, options: { write?: boolean } = {}): Promise<GuardOk | GuardErr> {
+  return requireInstitutionRole(supa, srv, options.write
+    ? ["admin", "super_admin", "file_correspondent"]
+    : ["admin", "super_admin", "founder", "file_correspondent", "finance_manager", "infirmier"]);
 }
 
 function pickInstitutionName(row: InstitutionSettingsRow): string {
