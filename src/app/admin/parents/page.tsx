@@ -15,6 +15,7 @@ import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassLevelCode,
+  normalizeClassEducationType,
   type EducationScopedClass,
   type EducationScopeValue,
 } from "@/lib/education-scope";
@@ -237,8 +238,10 @@ function buildAttestationHtml(args: {
   academicYear: string;
   rows: StudentRow[];
   fallbackClassLabel?: string;
+  classEducationTypes: ReadonlyMap<string, string>;
+  selectedEducationType: EducationScopeValue["educationType"];
 }) {
-  const { cfg, academicYear, rows, fallbackClassLabel } = args;
+  const { cfg, academicYear, rows, fallbackClassLabel, classEducationTypes, selectedEducationType } = args;
 
   const today = formatDateLongFr(new Date());
 
@@ -265,7 +268,7 @@ function buildAttestationHtml(args: {
     .replace(/^(?:DRENAET|DRENA|DREN)\b[\s:-]*/i, "")
     .replace(/^(?:DE\s+|D['’]\s*)/i, "")
     .trim();
-  const regionalDirectorate = !institutionRegion
+  const regionalDirectorateBase = !institutionRegion
     ? ""
     : /^DIRECTION R[EÉ]GIONALE\b/i.test(institutionRegion)
       ? institutionRegion
@@ -280,6 +283,22 @@ function buildAttestationHtml(args: {
   const logoUrl = (cfg.institution_logo_url || "").trim();
 
   const pages = rows.map((student, idx) => {
+    // Dans un établissement mixte, on utilise le type de la classe de l'élève
+    // plutôt que celui de l'établissement ou d'un filtre global.
+    const studentEducationType =
+      classEducationTypes.get(student.class_id || "") || selectedEducationType;
+    const isTechnicalEducation =
+      studentEducationType !== "general_secondary" && studentEducationType !== "all";
+    const regionalDirectorate = isTechnicalEducation
+      ? regionalDirectorateBase.replace(
+          /(ALPHABETISATION)(?!\s+ET DE L['’]ENSEIGNEMENT TECHNIQUE)(\s+(?:D['’]|DE\s+))/i,
+          "$1 ET DE L'ENSEIGNEMENT TECHNIQUE$2",
+        )
+      : regionalDirectorateBase.replace(
+          /\s+ET DE L['’]ENSEIGNEMENT TECHNIQUE\b/i,
+          "",
+        );
+
     const classLabel =
       (student.class_label || "").trim() ||
       (fallbackClassLabel || "").trim() ||
@@ -1353,6 +1372,10 @@ export default function AdminStudentsByClassPage() {
         academicYear: academicYear || computeAcademicYearFromDate(),
         rows,
         fallbackClassLabel: cls?.name || cls?.label || "",
+        classEducationTypes: new Map(
+          classes.map((studentClass) => [studentClass.id, normalizeClassEducationType(studentClass)]),
+        ),
+        selectedEducationType: educationScope.educationType,
       });
 
       openPrintDocument(html);
