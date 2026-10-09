@@ -42,7 +42,7 @@ export async function GET() {
 
     const { data: revisionRow, error: revisionError } = await service
       .from("attendance_schedule_revisions")
-      .select("revision,updated_at")
+      .select("*")
       .eq("institution_id", institutionId)
       .maybeSingle();
     if (revisionError) {
@@ -50,12 +50,17 @@ export async function GET() {
     }
 
     const revision = Number(revisionRow?.revision ?? 0);
+    const preparationRevision = revisionRow?.preparation_revision == null
+      ? null : Number(revisionRow.preparation_revision);
     return noStore({
       ok: true,
       institution_id: institutionId,
       actor_profile_id: user.id,
       schedule_revision:
         Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
+      preparation_revision: preparationRevision !== null &&
+        Number.isSafeInteger(preparationRevision) && preparationRevision >= 0
+          ? preparationRevision : null,
       generated_at: String(revisionRow?.updated_at || new Date().toISOString()),
       web_release: MON_CAHIER_WEB_RELEASE,
     });

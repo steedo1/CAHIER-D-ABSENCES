@@ -265,6 +265,29 @@ export async function cacheSet(key: string, value: any): Promise<void> {
   await cacheSetMany([[key, value]]);
 }
 
+/** Ne remplace jamais un paquet modifié par une autre préparation en cours. */
+export async function cacheCompareAndSet<T>(
+  key: string, expected: T, next: T, actorProfileId: string, canWrite: () => boolean,
+): Promise<boolean> {
+  if (isTeacherCacheKey(key)) throw new Error("scoped_cache_compare_not_supported");
+  const generation = attendanceAuthGeneration();
+  if (actorProfileId !== await attendanceCacheActor()) return false;
+  const db = await openDB();
+  const tx = db.transaction(["kv"], "readwrite");
+  const done = txDone(tx);
+  const store = tx.objectStore("kv");
+  const request = store.get(key);
+  let replaced = false;
+  request.onsuccess = () => {
+    if (generation !== attendanceAuthGeneration() || !canWrite() ||
+        JSON.stringify(request.result?.value) !== JSON.stringify(expected)) return;
+    store.put({ key, value: next, updatedAt: Date.now() } satisfies KVRow);
+    replaced = true;
+  };
+  await done;
+  return replaced;
+}
+
 /**
  * Publie un paquet cohérent dans le cache local.
  *

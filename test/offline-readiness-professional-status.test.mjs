@@ -33,7 +33,9 @@ test("les téléphones classe et professeur confirment clairement la disponibili
 
 test("un échec reste compréhensible et permet de relancer sans exposer le détail technique", () => {
   assert.match(automaticUi, /pas encore prêt/);
-  assert.match(automaticUi, /Vérifiez la connexion, puis réessayez/);
+  assert.match(automaticUi, /error \|\|/);
+  assert.match(source, /setError\(offlinePreparationFailureMessage\(cause\)\)/);
+  assert.match(automaticUi, /Étape interrompue/);
   assert.match(automaticUi, /Réessayer/);
   assert.match(source, /prepareOffline\(role/);
 });

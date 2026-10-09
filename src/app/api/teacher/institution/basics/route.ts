@@ -4,7 +4,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { createRelayAttendanceAccessToken } from "@/lib/attendance-presence-server";
 import { relayEndpointCandidates } from "@/lib/relay-endpoints";
-import { readAttendanceScheduleRevision } from "@/lib/attendance-schedule-revision-server";
+import { readAttendanceScheduleRevision, readAttendancePreparationSnapshot, attendancePreparationSnapshotsMatch } from "@/lib/attendance-schedule-revision-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ type AttendancePresencePolicyRow = {
   relay_presence_secret?: string | null;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   // ✅ IMPORTANT : attendre le client
   const supabase = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
@@ -52,7 +52,9 @@ export async function GET() {
   }
 
   const instId = prof.institution_id;
-  const revision = await readAttendanceScheduleRevision(service, instId);
+  const preparingOffline = new URL(request.url).searchParams.get("offline_preparation") === "v1";
+  const preparation = preparingOffline ? await readAttendancePreparationSnapshot(service, instId) : null;
+  const revision = preparation?.schedule_revision ?? await readAttendanceScheduleRevision(service, instId);
 
   // 3) Paramètres d’établissement
   const { data: inst, error: ierr } = await supabase
@@ -148,13 +150,17 @@ export async function GET() {
       })
     : null;
 
-  if (revision !== await readAttendanceScheduleRevision(service, instId)) {
+  const finalPreparation = preparation ? await readAttendancePreparationSnapshot(service, instId) : null;
+  if (preparation && finalPreparation
+    ? !attendancePreparationSnapshotsMatch(preparation, finalPreparation)
+    : revision !== await readAttendanceScheduleRevision(service, instId)) {
     return NextResponse.json({ error: "schedule_changed_during_read" }, { status: 409 });
   }
   return NextResponse.json({
     institution_id: instId,
     actor_profile_id: me.user.id,
-    schedule_revision: revision,
+    schedule_revision: finalPreparation?.schedule_revision ?? revision,
+    ...(finalPreparation ? { preparation_revision: finalPreparation.preparation_revision } : {}),
     tz: inst?.tz ?? "Africa/Abidjan",
     default_session_minutes: Number(inst?.default_session_minutes ?? 60),
     auto_lateness: !!inst?.auto_lateness,
