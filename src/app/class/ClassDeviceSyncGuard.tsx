@@ -78,6 +78,8 @@ function friendlyPresentation(state: FriendlySyncState) {
 export default function ClassDeviceSyncGuard() {
   const runningRef = useRef(false);
   const lastRunRef = useRef(0);
+  const nextAttemptRef = useRef(0);
+  const failedAttemptsRef = useRef(0);
   const pendingSinceRef = useRef<number | null>(null);
   const manualRunRef = useRef<() => Promise<void>>(async () => undefined);
   const [friendlyState, setFriendlyState] = useState<FriendlySyncState>("ready");
@@ -176,7 +178,11 @@ export default function ClassDeviceSyncGuard() {
       setFriendlyState("ready");
     };
 
-    const run = async () => {
+    const postpone = () => {
+      failedAttemptsRef.current += 1;
+      nextAttemptRef.current = Date.now() + Math.min(60_000, 5_000 * 2 ** Math.min(failedAttemptsRef.current, 4));
+    };
+    const run = async (force = false) => {
       if (cancelled || runningRef.current) return;
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         await refreshFriendlyState();
@@ -185,7 +191,7 @@ export default function ClassDeviceSyncGuard() {
       if (window.location.pathname !== "/class") return;
 
       const now = Date.now();
-      if (now - lastRunRef.current < 1_500) {
+      if (now - lastRunRef.current < 1_500 || (!force && now < nextAttemptRef.current)) {
         await refreshFriendlyState();
         return;
       }
@@ -193,8 +199,11 @@ export default function ClassDeviceSyncGuard() {
       runningRef.current = true;
 
       try {
-        const result = await repairClassDeviceSyncV2();
+        const result = await repairClassDeviceSyncV2({ force });
         if (cancelled) return;
+        const progressed = result.flushed > 0 || result.reconciled > 0 || result.after < result.before;
+        if (!progressed && (result.after > 0 || result.completion_pending)) postpone();
+        else { failedAttemptsRef.current = 0; nextAttemptRef.current = 0; }
         if (result.flushed > 0 || result.reconciled > 0 || result.after < result.before) {
           // La page /class recalcule son compteur technique et poursuit son pipeline historique.
           // Ce compteur n'est plus exposé à l'utilisateur : l'état visible suit le dernier appel.
@@ -206,6 +215,7 @@ export default function ClassDeviceSyncGuard() {
         }
       } catch {
         // Aucune purge de secours : en cas d'échec les journaux IndexedDB restent intacts.
+        postpone();
       } finally {
         runningRef.current = false;
         await refreshFriendlyState();
@@ -214,11 +224,13 @@ export default function ClassDeviceSyncGuard() {
 
     manualRunRef.current = async () => {
       lastRunRef.current = 0;
-      await run();
+      nextAttemptRef.current = 0;
+      failedAttemptsRef.current = 0;
+      await run(true);
     };
 
     const onOnline = (event: Event) => {
-      if (event.isTrusted) void run();
+      if (event.isTrusted) { nextAttemptRef.current = 0; void run(); }
     };
     const onOffline = () => void refreshFriendlyState();
     const onVisible = () => {

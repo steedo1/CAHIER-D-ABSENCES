@@ -17,7 +17,9 @@ export function createReferenceFetch(network: typeof fetch = fetch): typeof fetc
     }
     const scoped = url.searchParams.has("institution_id") || /^eq\.[a-f0-9-]{36}$/i.test(url.searchParams.get("id") || "");
     const select = url.searchParams.get("select") || "";
-    if (!table || !scoped || !select || select.includes("*") || /password|login|device/i.test(select) || init?.signal) return network(input, init);
+    const sensitive = /password|login|device|token|secret|phone|settings_json/i;
+    if (!table || !scoped || !select || select.includes("*") || sensitive.test(select) ||
+        [...url.searchParams.keys()].some((column) => sensitive.test(column)) || init?.signal) return network(input, init);
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     const key = JSON.stringify([url.href, [...headers.entries()].sort()]);
     const cached = entries.get(key);

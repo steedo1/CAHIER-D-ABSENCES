@@ -174,12 +174,36 @@ export function createRelayCloudSyncAgent(
 ) {
   let timer: ReturnType<typeof setInterval> | null = null;
   let currentRun: Promise<void> | null = null;
-  const tick = () => {
+  let pauseUntil = 0;
+  let failures = 0;
+  const nowMs = () => (options.now || (() => new Date()))().getTime();
+  const postpone = () => {
+    failures += 1;
+    pauseUntil = nowMs() + Math.min(120_000, (config.cloudSyncIntervalMs || 15_000) * 2 ** Math.min(failures, 8));
+  };
+  const tick = (force = false) => {
     if (currentRun) return currentRun;
-    const run = syncRelayOnce(config, store, options)
-      .then(() => undefined)
+    if (!force && nowMs() < pauseUntil) return Promise.resolve();
+    let unavailable = false;
+    let healthy = false;
+    const network = options.fetchImpl || fetch;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      try {
+        const response = await network(input, init);
+        if (response.status === 402 || response.status === 429 || response.status >= 500) unavailable = true;
+        if (response.ok) healthy = true;
+        return response;
+      } catch (error) { unavailable = true; throw error; }
+    };
+    const run = syncRelayOnce(config, store, { ...options, fetchImpl })
+      .then(() => {
+        // A healthy institution keeps its normal automatic sync cadence.
+        if (unavailable && !healthy) postpone();
+        else { failures = 0; pauseUntil = 0; }
+      })
       .catch(() => {
         // Toute opération reste durablement dans SQLite et sera reprise plus tard.
+        postpone();
       })
       .finally(() => {
         if (currentRun === run) currentRun = null;
@@ -202,6 +226,6 @@ export function createRelayCloudSyncAgent(
       timer = null;
       await currentRun;
     },
-    runOnce: tick,
+    runOnce: () => tick(true),
   };
 }

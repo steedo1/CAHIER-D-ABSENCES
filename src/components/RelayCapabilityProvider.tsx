@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAuth } from "@/app/providers";
+import { fetchAuthRole } from "@/lib/auth/role-client";
 import { getOfflineAccessIntent } from "@/lib/offline-auth-client";
 import {
   readRelayCapability,
@@ -74,13 +75,12 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
       return;
     }
 
+    const actorId = sessionRef.current.user.id;
     try {
-      const response = await fetch("/api/auth/role", {
-        cache: "no-store",
-        credentials: "include",
-      });
+      const response = await fetchAuthRole(actorId);
       if (!response.ok) throw new Error(`relay_capability_http_${response.status}`);
       const payload = await response.json().catch(() => ({}));
+      if (sessionRef.current?.user.id !== actorId) return;
       const nextInstitutionId = String(payload?.institution_id || "").trim();
       const nextRelayEnabled = payload?.relay_enabled === true;
       if (nextInstitutionId) {
@@ -95,7 +95,7 @@ export default function RelayCapabilityProvider({ children }: { children: ReactN
     } catch {
       // Un timeout Cloud ne change jamais la capacité. On ne conserve qu'une
       // décision explicite déjà confirmée pour le même établissement.
-      await applyExplicitCache();
+      if (sessionRef.current?.user.id === actorId) await applyExplicitCache();
     }
   }, [applyExplicitCache]);
 
