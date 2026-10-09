@@ -1129,7 +1129,7 @@ export default function ClassListPrintPage() {
             </button>
           ) : null}
           <a
-            href={`/admin/classes${data?.class?.academic_year ? `?academic_year=${encodeURIComponent(data.class.academic_year)}` : ""}#liste-des-classes`}
+            href="/admin/parents"
             className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50"
           >
             Retour
