@@ -57,7 +57,10 @@ import {
   type RelayTeacherConnectivityResult,
   type RelayTeacherOfflineSchedule,
 } from "@/lib/local-relay";
-import { probeCloudSchedule } from "@/lib/cloud-availability";
+import { probeCloudSchedule, rememberCloudScheduleStatus } from "@/lib/cloud-availability";
+import { advanceClassDevicePreparation } from "@/lib/class-device-preparation-revision";
+import { retryableOfflinePreparationFailure } from "@/lib/offline-preparation-failure";
+import { cacheCompareAndSet } from "@/lib/offline";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
 import { relayEnabledForInstitution } from "@/lib/relay-capability";
 import {
@@ -99,6 +102,7 @@ export type OfflineReadiness = {
   service_worker_release?: string;
   offline_schema_version?: number;
   schedule_revision?: number | null;
+  preparation_revision?: number | null;
   schedule_generated_at?: string | null;
   data_presence?: {
     classes: number;
@@ -249,6 +253,20 @@ async function fetchFreshJson<T = any>(url: string): Promise<T> {
 
 async function fetchAndCache<T = any>(url: string, key: string): Promise<T> {
   const payload = await fetchFreshJson<T>(url);
+  await cacheSet(key, payload);
+  return payload;
+}
+
+async function fetchClassPreparationAndCache<T>(url: string, key: string): Promise<T> {
+  let payload: T;
+  try {
+    payload = await fetchFreshJson<T>(url);
+  } catch (error) {
+    if (!retryableOfflinePreparationFailure(error)) throw error;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+    payload = await fetchFreshJson<T>(url);
+  }
+  // Un refus de stockage n'est jamais traité comme une erreur réseau.
   await cacheSet(key, payload);
   return payload;
 }
@@ -1124,6 +1142,7 @@ async function buildClassDeviceScheduleFromCloud(input: {
   actorProfileId: string;
   selectedClass: CachedClassDevice;
   scheduleRevision: number;
+  preparationRevision?: number | null;
   generatedAt: string | null;
   onProgress: ProgressCallback;
 }): Promise<RelayTeacherOfflineSchedule> {
@@ -1131,11 +1150,11 @@ async function buildClassDeviceScheduleFromCloud(input: {
   const basics = await fetchFirstAndCache<ClassDeviceInstitutionBasics>(
     [
       {
-        url: "/api/teacher/institution/basics",
+        url: "/api/teacher/institution/basics?offline_preparation=v1",
         key: "classDevice:inst:basics:teacher",
       },
       {
-        url: "/api/institution/basics",
+        url: "/api/institution/basics?offline_preparation=v1",
         key: "classDevice:inst:basics:institution",
       },
     ],
@@ -1149,7 +1168,7 @@ async function buildClassDeviceScheduleFromCloud(input: {
   }
 
   input.onProgress("Téléchargement de la liste des élèves…");
-  const roster = await fetchAndCache<{ items?: Array<Record<string, unknown>> }>(
+  const roster = await fetchClassPreparationAndCache<{ items?: Array<Record<string, unknown>> }>(
     `/api/class/roster?class_id=${encodeURIComponent(input.classId)}`,
     `classDevice:roster:${input.classId}`,
   );
@@ -1172,8 +1191,9 @@ async function buildClassDeviceScheduleFromCloud(input: {
       class_id: input.classId,
       slot: key,
       period_id: periodId,
+      offline_preparation: "v1",
     });
-    const subjects = await fetchAndCache<{ items?: ClassDeviceSubjectItem[] }>(
+    const subjects = await fetchClassPreparationAndCache<{ items?: ClassDeviceSubjectItem[] }>(
       `/api/class/subjects?${params.toString()}`,
       `classDevice:subjects:${input.classId}:${key}`,
     );
@@ -1221,12 +1241,18 @@ async function buildClassDeviceScheduleFromCloud(input: {
   );
 
   const finalStatus = await fetchFreshJson<any>("/api/offline/schedule-status");
+  const preparationMatches = input.preparationRevision == null
+    ? finalStatus.schedule_revision === input.scheduleRevision
+    : safeRevision(finalStatus.preparation_revision) === input.preparationRevision;
   if (finalStatus.institution_id !== input.institutionId ||
       finalStatus.actor_profile_id !== input.actorProfileId ||
-      finalStatus.schedule_revision !== input.scheduleRevision) {
+      !preparationMatches ||
+      safeRevision(finalStatus.schedule_revision) === null ||
+      finalStatus.schedule_revision < input.scheduleRevision) {
     throw new Error("schedule_changed_during_prepare");
   }
   observeScheduleRevision(input.institutionId, finalStatus.schedule_revision);
+  await rememberCloudScheduleStatus(finalStatus);
 
   return {
     version: 1,
@@ -1235,7 +1261,8 @@ async function buildClassDeviceScheduleFromCloud(input: {
     actor_kind: "class_device",
     class_id: input.classId,
     actor_profile_id: input.actorProfileId,
-    schedule_revision: input.scheduleRevision,
+    schedule_revision: finalStatus.schedule_revision,
+    preparation_revision: safeRevision(finalStatus.preparation_revision),
     generated_at: input.generatedAt || new Date().toISOString(),
     relay_time: null,
     snapshot_completeness: "complete",
@@ -1488,8 +1515,8 @@ export async function assessClassDeviceOfflineReadiness(
   initial: OfflineReadiness | null,
   requested: ClassDeviceAssessmentContext = {},
 ): Promise<ClassDeviceScheduleAssessment> {
-  const bundle = await readClassDeviceBundle();
-  const readiness = migrateOfflineReadinessSchema(
+  let bundle = await readClassDeviceBundle();
+  let readiness = migrateOfflineReadinessSchema(
     bundle?.readiness?.version === 5 &&
       bundle.readiness.role === "class-device"
       ? bundle.readiness
@@ -1513,10 +1540,31 @@ export async function assessClassDeviceOfflineReadiness(
   ]);
   const activeServiceWorkerRelease = workerInfo?.release || null;
   const cloudRevision = safeRevision(cloud?.schedule_revision);
-  const bundleValidation = validateClassDeviceScheduleScope(
+  let bundleValidation = validateClassDeviceScheduleScope(
     bundle?.schedule,
     { institutionId, classId, actorProfileId },
   );
+  if (bundle && readiness && bundleValidation.ok &&
+      (!workerInfo || workerInfo.offlineSchemaVersion === MON_CAHIER_OFFLINE_SCHEMA_VERSION)) {
+    const advanced = advanceClassDevicePreparation(
+      { readiness, schedule: bundle.schedule }, cloud,
+      { institutionId, classId, actorProfileId }, knownScheduleRevision(institutionId),
+    );
+    if (advanced && actorProfileId === await attendanceCacheActor()) {
+      const nextBundle = { ...bundle, ...advanced };
+      const replaced = await cacheCompareAndSet(
+        CLASS_DEVICE_COHERENT_BUNDLE_KEY, bundle, nextBundle,
+        actorProfileId,
+        () => scheduleIsCurrent(advanced.schedule.schedule_revision, knownScheduleRevision(institutionId)),
+      );
+      if (replaced) {
+        bundle = nextBundle;
+        readiness = advanced.readiness;
+        bundleValidation = validateClassDeviceScheduleScope(bundle.schedule, { institutionId, classId, actorProfileId });
+        await projectClassDeviceScheduleCaches(bundle.schedule, classId);
+      }
+    }
+  }
   const baseState = {
     readiness,
     cloud_reachable: Boolean(cloud),
@@ -1975,9 +2023,9 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
 
 async function prepareClassDevice(
   onProgress: ProgressCallback,
-  cloud: { schedule_revision?: unknown; generated_at?: unknown } | null,
+  cloud: { schedule_revision?: unknown; preparation_revision?: unknown; generated_at?: unknown } | null,
 ): Promise<OfflineReadiness> {
-  const cloudRevision = safeRevision(cloud?.schedule_revision);
+  let cloudRevision = safeRevision(cloud?.schedule_revision);
   const cloudGeneratedAt = String(cloud?.generated_at || "").trim() || null;
   const existingBundle = await readClassDeviceBundle();
 
@@ -2111,10 +2159,12 @@ async function prepareClassDevice(
         actorProfileId,
         selectedClass,
         scheduleRevision: cloudRevision,
+        preparationRevision: safeRevision(cloud?.preparation_revision),
         generatedAt: cloudGeneratedAt,
         onProgress,
       });
       preparationSource = "cloud";
+      cloudRevision = safeRevision(schedule.schedule_revision);
     } catch (error) {
       lastSourceError = error;
     }
@@ -2238,6 +2288,7 @@ async function prepareClassDevice(
       workerInfo?.release || MON_CAHIER_SERVICE_WORKER_RELEASE,
     offline_schema_version: MON_CAHIER_OFFLINE_SCHEMA_VERSION,
     schedule_revision: selectedScope.revision,
+    preparation_revision: safeRevision(schedule.preparation_revision),
     schedule_generated_at: schedule.generated_at,
     institution_id: institutionId,
     authorized_class_id: classId,

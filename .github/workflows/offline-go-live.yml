@@ -62,6 +62,8 @@ jobs:
             test/attendance-surveillance-seconds.test.mjs \
             test/teacher-attendance-bulk-offline-route.test.mjs \
             test/class-device-minimal-preparation.test.mjs \
+            test/class-device-preparation-revision.test.mjs \
+            test/offline-readiness-professional-status.test.mjs \
             test/class-session-manual-route.test.mjs \
             test/class-device-subject-transition.test.mjs \
             test/payroll-calculation.test.mjs \
