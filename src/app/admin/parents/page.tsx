@@ -259,6 +259,17 @@ function buildAttestationHtml(args: {
   const institutionName = institutionDisplayName(cfg);
   const institutionStatus = (cfg.institution_status || "").trim();
   const institutionRegion = (cfg.institution_region || "").trim();
+  // La direction régionale dépend de l'établissement : pour le CSCA,
+  // institution_region = "ABOISSO". On évite de figer cette ville pour tous.
+  const regionalLocality = institutionRegion
+    .replace(/^(?:DRENAET|DRENA|DREN)\b[\s:-]*/i, "")
+    .replace(/^(?:DE\s+|D['’]\s*)/i, "")
+    .trim();
+  const regionalDirectorate = !institutionRegion
+    ? ""
+    : /^DIRECTION R[EÉ]GIONALE\b/i.test(institutionRegion)
+      ? institutionRegion
+      : `DIRECTION REGIONALE DE L'EDUCATION NATIONALE DE L'ALPHABETISATION ET DE L'ENSEIGNEMENT TECHNIQUE ${/^[AEIOUYHÀÂÉÈÊÎÏÔÙÛÜ]/i.test(regionalLocality) ? "D'" : "DE "}${regionalLocality}`;
   const institutionPostalAddress = (cfg.institution_postal_address || "").trim();
   const institutionPhone = (cfg.institution_phone || "").trim();
   const institutionEmail = (cfg.institution_email || "").trim();
@@ -305,6 +316,7 @@ function buildAttestationHtml(args: {
               <div class="country">${escapeHtml(countryName)}</div>
               <div class="motto">${escapeHtml(countryMotto)}</div>
               <div class="ministry">${escapeHtml(ministryName)}</div>
+              ${regionalDirectorate ? `<div class="regional-directorate">${escapeHtml(regionalDirectorate)}</div>` : ""}
             </div>
 
             <div class="institution-row">
@@ -532,6 +544,14 @@ function buildAttestationHtml(args: {
       font-weight: 700;
       text-transform: uppercase;
       line-height: 1.25;
+    }
+
+    .regional-directorate {
+      margin-top: 3px;
+      font-size: 9.5px;
+      font-weight: 600;
+      line-height: 1.25;
+      text-transform: uppercase;
     }
 
     .institution-row {
