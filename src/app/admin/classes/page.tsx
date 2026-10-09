@@ -451,8 +451,10 @@ export default function ClassesPage() {
 
       setAcademicYears(rows);
 
+      const requestedYear = new URLSearchParams(window.location.search).get("academic_year")?.trim();
       setAcademicYear((current) => {
         if (current && rows.some((row) => row.code === current)) return current;
+        if (requestedYear && rows.some((row) => row.code === requestedYear)) return requestedYear;
 
         const currentYear = rows.find((row) => row.is_current);
         return currentYear?.code || rows[0]?.code || "";
@@ -1077,7 +1079,7 @@ export default function ClassesPage() {
         ) : null}
       </div>
 
-      <div className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
+      <div id="liste-des-classes" className="scroll-mt-24 rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Liste des classes</div>
