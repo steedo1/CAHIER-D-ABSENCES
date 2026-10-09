@@ -20,7 +20,7 @@ type AttendancePresencePolicyRow = {
   relay_presence_secret?: string | null;
 };
 
-export async function GET(request?: Request) {
+export async function GET(request: Request) {
   // ✅ IMPORTANT : attendre le client
   const supabase = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
@@ -52,7 +52,7 @@ export async function GET(request?: Request) {
   }
 
   const instId = prof.institution_id;
-  const preparingOffline = request && new URL(request.url).searchParams.get("offline_preparation") === "v1";
+  const preparingOffline = new URL(request.url).searchParams.get("offline_preparation") === "v1";
   const preparation = preparingOffline ? await readAttendancePreparationSnapshot(service, instId) : null;
   const revision = preparation?.schedule_revision ?? await readAttendanceScheduleRevision(service, instId);
 
