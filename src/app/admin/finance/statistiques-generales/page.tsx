@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { BarChart3, Printer, RotateCcw } from "lucide-react";
 
 type Student = {
@@ -141,6 +142,7 @@ function sortedUnique(values: Array<string | null | undefined>) {
 
 function filterLabel(args: {
   level: string;
+  classLabel: string;
   boarding: Choice;
   affectation: Choice;
   scholarship: Choice;
@@ -150,7 +152,8 @@ function filterLabel(args: {
   maxAge: string;
 }) {
   const out: string[] = [];
-  if (args.level !== "all") out.push(args.level);
+  if (args.level !== "all") out.push(`Niveau : ${args.level}`);
+  if (args.classLabel) out.push(args.classLabel);
   if (args.boarding === "yes") out.push("Interne");
   if (args.boarding === "no") out.push("Externe");
   if (args.affectation === "yes") out.push("Affecté");
@@ -201,7 +204,9 @@ export default function GeneralStatisticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [printTarget, setPrintTarget] = useState<HTMLElement | null>(null);
   const [level, setLevel] = useState("all");
+  const [classId, setClassId] = useState("all");
   const [boarding, setBoarding] = useState<Choice>("all");
   const [affectation, setAffectation] = useState<Choice>("all");
   const [scholarship, setScholarship] = useState<Choice>("all");
@@ -211,6 +216,7 @@ export default function GeneralStatisticsPage() {
   const [maxAge, setMaxAge] = useState("");
 
   useEffect(() => {
+    setPrintTarget(document.body);
     let cancelled = false;
 
     (async () => {
@@ -251,12 +257,26 @@ export default function GeneralStatisticsPage() {
 
   const levels = useMemo(() => sortedUnique(students.map((student) => student.level)), [students]);
 
+  const classes = useMemo(() => {
+    const choices = new Map<string, string>();
+    for (const student of students) {
+      if (student.class_id && (level === "all" || clean(student.level) === level)) {
+        choices.set(student.class_id, clean(student.class_label) || student.class_id);
+      }
+    }
+    return Array.from(choices, ([id, label]) => ({ id, label })).sort((a, b) =>
+      a.label.localeCompare(b.label, "fr", { sensitivity: "base", numeric: true }),
+    );
+  }, [students, level]);
+  const selectedClassLabel = classes.find((item) => item.id === classId)?.label || "";
+
   const filtered = useMemo(() => {
     const min = minAge === "" ? null : Number(minAge);
     const max = maxAge === "" ? null : Number(maxAge);
 
     return students.filter((student) => {
       if (level !== "all" && clean(student.level) !== level) return false;
+      if (classId !== "all" && student.class_id !== classId) return false;
       if (!boolMatches(student.is_boarder, boarding)) return false;
       if (!boolMatches(student.is_affecte, affectation)) return false;
       if (!boolMatches(student.is_scholarship, scholarship)) return false;
@@ -271,7 +291,7 @@ export default function GeneralStatisticsPage() {
       }
       return true;
     });
-  }, [students, level, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
+  }, [students, level, classId, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
 
   const totals = useMemo(() => {
     let girls = 0;
@@ -288,6 +308,7 @@ export default function GeneralStatisticsPage() {
     () =>
       filterLabel({
         level,
+        classLabel: selectedClassLabel,
         boarding,
         affectation,
         scholarship,
@@ -296,7 +317,7 @@ export default function GeneralStatisticsPage() {
         minAge,
         maxAge,
       }),
-    [level, boarding, affectation, scholarship, gender, language, minAge, maxAge],
+    [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, minAge, maxAge],
   );
 
   // Le filtre d'âge compte pour un seul critère, même avec deux bornes.
@@ -304,6 +325,7 @@ export default function GeneralStatisticsPage() {
   const printTitle = useMemo(() => {
     const filterCount = [
       level !== "all",
+      classId !== "all",
       boarding !== "all",
       affectation !== "all",
       scholarship !== "all",
@@ -326,40 +348,46 @@ export default function GeneralStatisticsPage() {
     }
 
     let title = "LISTE DES " + parts.join(" ");
-    if (level !== "all") title += " DE " + level;
-    if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
     if (minAge || maxAge) {
       const ageAdjective = feminine ? "ÂGÉES" : "ÂGÉS";
-      title += minAge && maxAge ? ` ${ageAdjective} DE ${minAge} À ${maxAge} ANS`
+      title += minAge && maxAge ? Number(minAge) === Number(maxAge)
+        ? ` ${ageAdjective} DE ${minAge} ANS`
+        : ` ${ageAdjective} DE ${minAge} À ${maxAge} ANS`
         : minAge ? ` ${ageAdjective} DE ${minAge} ANS ET PLUS`
         : ` ${ageAdjective} DE ${maxAge} ANS AU PLUS`;
     }
+    if (classId !== "all") title += " — CLASSE " + selectedClassLabel;
+    if (level !== "all") title += " — NIVEAU " + level;
+    if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
     return title;
-  }, [level, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
+  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
 
-  // Colonnes d'identification conservées. Les colonnes de détail reflètent
-  // les filtres actifs ; sans filtre de détail, le PDF reste exhaustif.
-  const hasDetailFilters =
-    boarding !== "all" || affectation !== "all" || scholarship !== "all" ||
-    gender !== "all" || language !== "all" || minAge !== "" || maxAge !== "";
-  const detailColumnKeys: PrintColumnKey[] = hasDetailFilters
-    ? [
-        ...(gender !== "all" ? ["sex" as const] : []),
-        ...(minAge !== "" || maxAge !== "" ? ["age" as const] : []),
-        ...(boarding !== "all" ? ["boarding" as const] : []),
-        ...(affectation !== "all" ? ["affectation" as const] : []),
-        ...(scholarship !== "all" ? ["scholarship" as const] : []),
-        ...(language !== "all" ? ["lv2" as const] : []),
-      ]
-    : ["sex", "age", "boarding", "affectation", "scholarship", "lv2"];
-  const printColumns: PrintColumnKey[] = ["number", "matricule", "full_name", "class", ...detailColumnKeys];
+  // Une sélection de niveau reste distincte d'une classe. Même sous d'autres
+  // filtres, ne retirer CLASSE que si toutes les lignes ont la même classe connue.
+  const singleClass = filtered.length > 0 && Boolean(filtered[0].class_id) &&
+    filtered.every((student) => student.class_id === filtered[0].class_id);
+  const exactAge = minAge !== "" && maxAge !== "" && Number(minAge) === Number(maxAge);
+  const printColumns: PrintColumnKey[] = [
+    "number", "matricule", "full_name",
+    ...(!singleClass ? ["class" as const] : []),
+    ...(gender === "all" ? ["sex" as const] : []),
+    ...(!exactAge ? ["age" as const] : []),
+    ...(boarding === "all" ? ["boarding" as const] : []),
+    ...(affectation === "all" ? ["affectation" as const] : []),
+    ...(scholarship === "all" ? ["scholarship" as const] : []),
+    ...(language === "all" ? ["lv2" as const] : []),
+  ];
   const totalPrintWidth = printColumns.reduce((total, key) => total + PRINT_COLUMN_META[key].weight, 0);
-  // Harmonise un ancien libellé du ministère sans modifier les paramètres de l'école.
-  const officialMinistry = clean(institution.ministry_name)
-    .replace(/(EDUCATION NATIONALE)\s+DE L['’]ALPHAB[EÉ]TISATION\b/i, "$1 ET DE L'ALPHABETISATION");
+  // Préserver le ministère configuré, y compris sa mention technique éventuelle.
+  // Corriger aussi les variantes accentuées sans écrire dans les paramètres.
+  const officialMinistry = (clean(institution.ministry_name) ||
+    "MINISTÈRE DE L’ÉDUCATION NATIONALE ET DE L’ALPHABÉTISATION")
+    .replace(/([EÉ]DUCATION NATIONALE)\s+DE L['’]ALPHAB[EÉ]TISATION\b/i, "$1 ET DE L’ALPHABÉTISATION");
+  const ministryLines = officialMinistry.split(/\s+(?=ET DE L['’]ENSEIGNEMENT TECHNIQUE\b)/i);
 
   function reset() {
     setLevel("all");
+    setClassId("all");
     setBoarding("all");
     setAffectation("all");
     setScholarship("all");
@@ -398,91 +426,104 @@ export default function GeneralStatisticsPage() {
     <>
       <style jsx global>{`
         .stats-print-sheet { display: none; }
-        @page { size: A4 landscape; margin: 6mm; }
+        @page { size: A4 landscape; margin: 8mm; }
         @media print {
-          body { background: white !important; }
-          body * { visibility: hidden !important; }
-          .stats-print-sheet,
-          .stats-print-sheet * { visibility: visible !important; }
+          body:has(> .stats-print-sheet) {
+            background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            min-height: 0 !important;
+            height: auto !important;
+          }
+          body:has(> .stats-print-sheet) > :not(.stats-print-sheet) { display: none !important; }
           .stats-print-sheet {
             display: block !important;
-            position: absolute !important;
-            inset: 0 auto auto 0 !important;
+            position: static !important;
+            box-sizing: border-box;
             width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
             background: white !important;
             color: #0f172a !important;
             font-family: Arial, Helvetica, sans-serif !important;
+            line-height: 1.3;
+            print-color-adjust: exact;
           }
           .stats-print-sheet table { width: 100%; border-collapse: collapse; table-layout: fixed; }
           .stats-print-sheet thead { display: table-header-group; }
+          .stats-print-sheet tfoot { display: table-footer-group; }
+          .stats-print-sheet tfoot td { border: 0; padding: 8px 0 0; }
           .stats-print-sheet tr { break-inside: avoid; page-break-inside: avoid; }
           .stats-print-sheet th,
-          .stats-print-sheet td { border: 1px solid #64748b; padding: 3.2px 4px; vertical-align: middle; }
-          .stats-print-sheet th { background: #f1f5f9 !important; font-size: 8.5px; text-transform: uppercase; }
-          .stats-print-sheet td { font-size: 8.7px; }
-          .stats-print-sheet .national-header {
+          .stats-print-sheet td { border: 1px solid #64748b; padding: 3px 5px; vertical-align: middle; overflow-wrap: anywhere; }
+          .stats-print-sheet th { background: #f1f5f9 !important; font-size: 10px; text-transform: uppercase; }
+          .stats-print-sheet td { font-size: 10.5px; }
+          .stats-print-sheet .stats-national-header {
             text-align: center;
             font-size: 10px;
             line-height: 1.25;
             font-weight: 700;
             margin: 0 auto 9px;
             width: 100%;
-            text-transform: uppercase;
+            break-inside: avoid;
           }
-          .stats-print-sheet .national-header .motto {
+          .stats-print-sheet .stats-national-header .stats-motto {
             margin-top: 2px;
             font-size: 9px;
             font-weight: 500;
             text-transform: none;
           }
-          .stats-print-sheet .national-header .ministry {
+          .stats-print-sheet .stats-national-header .stats-ministry {
             margin: 3px auto 0;
             max-width: 95%;
             font-size: 9.6px;
             line-height: 1.3;
           }
-          .stats-print-sheet .official-header {
+          .stats-print-sheet .stats-official-header {
             display: grid;
-            grid-template-columns: minmax(0, 33%) minmax(0, 44%) minmax(0, 23%);
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
             gap: 8px;
             align-items: center;
-            margin-bottom: 7px;
+            margin-bottom: 10px;
+            break-inside: avoid;
           }
-          .stats-print-sheet .school-block { display: flex; align-items: center; gap: 8px; min-width: 0; }
-          .stats-print-sheet .school-logo { width: 42px; height: 42px; object-fit: contain; flex: 0 0 auto; }
-          .stats-print-sheet .school-name { font-size: 11.5px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
-          .stats-print-sheet .school-meta { margin-top: 2px; font-size: 8.3px; line-height: 1.25; color: #334155; }
-          .stats-print-sheet .list-title {
+          .stats-print-sheet .stats-school-block { overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; min-width: 0; }
+          .stats-print-sheet .stats-school-logo { width: 42px; height: 42px; object-fit: contain; flex: 0 0 auto; }
+          .stats-print-sheet .stats-school-name { font-size: 11.5px; font-weight: 900; line-height: 1.1; text-transform: uppercase; }
+          .stats-print-sheet .stats-school-meta { margin-top: 2px; font-size: 8.3px; line-height: 1.25; color: #334155; }
+          .stats-print-sheet .stats-list-title {
             border: 1.5px solid #0f172a;
             padding: 7px 8px;
-            font-size: 10.5px;
+            font-size: 12px;
             line-height: 1.3;
             font-weight: 900;
             text-align: center;
             text-transform: uppercase;
             overflow-wrap: anywhere;
           }
-          .stats-print-sheet .right-meta { font-size: 8.8px; line-height: 1.45; text-align: right; font-weight: 700; }
-          .stats-print-sheet .criteria-line {
-            margin: 0 0 6px;
+          .stats-print-sheet .stats-right-meta { font-size: 8.8px; line-height: 1.45; text-align: right; font-weight: 700; }
+          .stats-print-sheet .stats-criteria-line {
+            margin: 5px 0 0;
             padding: 4px 6px;
-            border: 1px solid #cbd5e1;
             background: #f8fafc !important;
-            font-size: 8.8px;
+            font-size: 10px;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
             font-weight: 700;
           }
-          .stats-print-sheet .sheet-footer {
+          .stats-print-sheet .stats-sheet-footer {
             display: grid;
             grid-template-columns: 1fr 1.45fr 1fr;
             align-items: end;
             gap: 12px;
-            margin-top: 9px;
+            margin-top: 0;
+            break-inside: avoid;
             padding-top: 6px;
             border-top: 1px solid #cbd5e1;
             font-size: 9.6px;
             color: #334155;
           }
-          .stats-print-sheet .export-brand-footer { text-align: center; line-height: 1.25; font-weight: 700; }
+          .stats-print-sheet .stats-export-brand-footer { text-align: center; line-height: 1.25; font-weight: 700; }
         }
       `}</style>
 
@@ -524,10 +565,17 @@ export default function GeneralStatisticsPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-              <Select label="Niveau" value={level} onChange={setLevel}>
+              <Select label="Niveau" value={level} onChange={(value) => { setLevel(value); setClassId("all"); }}>
                 <option value="all">Tous</option>
                 {levels.map((item) => (
                   <option key={item} value={item}>{item}</option>
+                ))}
+              </Select>
+
+              <Select label="Classe" value={classId} onChange={setClassId}>
+                <option value="all">Toutes</option>
+                {classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </Select>
 
@@ -642,37 +690,43 @@ export default function GeneralStatisticsPage() {
         </div>
       </div>
 
-      <section className="stats-print-sheet">
-        <div className="national-header">
-          {clean(institution.country_name) ? <div>{institution.country_name}</div> : null}
-          {clean(institution.country_motto) ? <div className="motto">{institution.country_motto}</div> : null}
-          {officialMinistry ? <div className="ministry">{officialMinistry}</div> : null}
+      {printTarget && createPortal(<section className="stats-print-sheet">
+        <div className="stats-national-header">
+          <div>{clean(institution.country_name) || "République de Côte d’Ivoire"}</div>
+          <div className="stats-motto">{clean(institution.country_motto) || "Union - Discipline - Travail"}</div>
+          <div className="stats-ministry">{ministryLines.map((line, index) => <div key={index}>{line}</div>)}</div>
         </div>
-        <header className="official-header">
-          <div className="school-block">
+        <header className="stats-official-header">
+          <div className="stats-school-block">
             {clean(institution.institution_logo_url) ? (
-              <img className="school-logo" src={clean(institution.institution_logo_url)} alt="Logo de l’établissement" />
+              <img className="stats-school-logo" src={clean(institution.institution_logo_url)} alt="Logo de l’établissement" />
             ) : null}
             <div>
-              <div className="school-name">{institutionName}</div>
-              <div className="school-meta">
+              <div className="stats-school-name">{institutionName}</div>
+              <div className="stats-school-meta">
                 {clean(institution.institution_code) ? <div>Code : {institution.institution_code}</div> : null}
                 {clean(institution.institution_phone) ? <div>Tél. : {institution.institution_phone}</div> : null}
                 {clean(institution.institution_email) ? <div>{institution.institution_email}</div> : null}
+                {clean(institution.institution_postal_address) ? <div>{institution.institution_postal_address}</div> : null}
               </div>
             </div>
           </div>
 
-          <div className="list-title">{printTitle}</div>
+          <div>
+            <div className="stats-list-title">{printTitle}</div>
+            <div className="stats-criteria-line">
+              Critères : {criteria}<br />
+              Effectif : {filtered.length} élève{filtered.length > 1 ? "s" : ""}
+            </div>
+          </div>
 
-          <div className="right-meta">
+          <div className="stats-right-meta">
             <div>Année scolaire : {academicYear || "—"}</div>
             <div>Niveau : {level === "all" ? "Tous" : displayLevel(level)}</div>
+            {classId !== "all" ? <div>Classe : {selectedClassLabel}</div> : null}
             <div>Effectif : {filtered.length}</div>
           </div>
         </header>
-
-        <div className="criteria-line">Critères : {criteria}</div>
 
         <table>
           <colgroup>
@@ -703,14 +757,20 @@ export default function GeneralStatisticsPage() {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={printColumns.length}>
+                <footer className="stats-sheet-footer">
+                  <div>Filles : {totals.girls} &nbsp;|&nbsp; Garçons : {totals.boys}</div>
+                  <div className="stats-export-brand-footer">{MON_CAHIER_EXPORT_SIGNATURE}</div>
+                  <div aria-hidden="true" />
+                </footer>
+              </td>
+            </tr>
+          </tfoot>
         </table>
 
-        <footer className="sheet-footer">
-          <div>Filles : {totals.girls} &nbsp;|&nbsp; Garçons : {totals.boys}</div>
-          <div className="export-brand-footer">{MON_CAHIER_EXPORT_SIGNATURE}</div>
-          <div aria-hidden="true" />
-        </footer>
-      </section>
+      </section>, printTarget)}
     </>
   );
 }
