@@ -418,12 +418,15 @@ const SUBJECT_ALIASES: Record<string, string[]> = {
 };
 
 function cleanNumber(value: unknown, precision = 2): number | null {
+  // Number(null), Number("") et Number(" ") valent 0 en JavaScript.
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Number(n.toFixed(precision));
 }
 
 function cleanRank(value: unknown): number | null {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.round(n);
@@ -802,6 +805,12 @@ function isAdminAnnualForcedNc(item: BulletinItem | null | undefined): boolean {
   return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
 }
 
+function hasValidatedAnnualCoverage(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
+  if (item.annual_avg_is_complete === false || item.annual_coverage?.is_complete === false) return false;
+  return item.annual_avg_is_complete === true || item.annual_coverage?.is_complete === true;
+}
+
 function formatAverageForExport(value: number | null, _hasStar: boolean): number | string {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "NC";
   return Number(Number(value).toFixed(2));
@@ -835,24 +844,17 @@ function formatSubjectValueForExport(
 }
 
 function formatDspsNumber(value: unknown): number | string {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return Number(n.toFixed(2));
 }
 
 function formatDspsRank(value: unknown): number | string {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return Math.round(n);
-}
-
-function annualDecisionLabel(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "";
-  const g = Number(avg);
-  if (g >= 16) return "Excellence";
-  if (g >= 14) return "Tableau d’honneur";
-  if (g >= 12) return "Encouragement";
-  return "";
 }
 
 function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
@@ -1212,11 +1214,6 @@ function classCycleLabel(cls: ClassRow): string {
   return isFirstCycleLevel(cls.level) ? "1er cycle" : "2nd cycle";
 }
 
-function dfaAutoDecision(avg: number | null): "admis" | "examiner" | "non_classe" {
-  if (avg === null || !Number.isFinite(Number(avg))) return "non_classe";
-  return Number(avg) >= 10 ? "admis" : "examiner";
-}
-
 async function getAdminAndInstitution() {
   const supabase = await getSupabaseServerClient();
   const {
@@ -1279,7 +1276,9 @@ async function resolvePeriod(params: {
     if (!period) return null;
 
     const row = period as GradePeriodRow;
-    const year = String(row.academic_year || academicYear || "").trim();
+    // Une période d'une autre année scolaire ne doit jamais être exportée.
+    if (String(row.academic_year || "").trim() !== academicYear) return null;
+    const year = academicYear;
     const label = String(row.short_label || row.label || row.code || "Période").trim();
     const code = String(row.code || row.short_label || row.label || "period").trim();
 
@@ -1296,6 +1295,7 @@ async function resolvePeriod(params: {
 
   if (periodRef.startsWith("annual:")) {
     const year = periodRef.slice("annual:".length).trim() || academicYear;
+    if (year !== academicYear) return null;
 
     const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear: year });
     if (!periods.length) return null;
@@ -1658,6 +1658,79 @@ function buildOrderedRow(headers: readonly string[], values: Record<string, unkn
   return row;
 }
 
+// Précontrôles sans lectures additionnelles de Supabase.
+function validateOfficialStudentRegistry(registry: Map<string, StudentMetaRow>): { error: string; status: number } | null {
+  if (!registry.size) return { error: "NO_ACTIVE_STUDENTS", status: 422 };
+  const seenMatricules = new Set<string>();
+  for (const student of registry.values()) {
+    const matricule = String(student.matricule || "").trim().toUpperCase();
+    if (!matricule) return { error: "MISSING_MATRICULE", status: 422 };
+    if (seenMatricules.has(matricule)) return { error: "DUPLICATE_MATRICULE", status: 422 };
+    seenMatricules.add(matricule);
+    if (!normalizeGender(student.gender)) return { error: "UNKNOWN_GENDER", status: 422 };
+  }
+  return null;
+}
+
+// Les élèves absents de la réponse de bulletins ne doivent jamais disparaître
+// silencieusement du fichier : le statut NC doit être présent explicitement.
+function classBulletinMatchesRegistry(
+  registry: Map<string, StudentMetaRow>,
+  classId: string,
+  bulletin: BulletinResponse,
+): boolean {
+  const expected = new Set<string>();
+  for (const meta of registry.values()) {
+    if (meta.class_id === classId) expected.add(String(meta.student_id));
+  }
+  const received = new Set<string>((bulletin.items || []).map((item) => String(item.student_id)));
+  if (received.size !== expected.size) return false;
+  for (const studentId of expected) if (!received.has(studentId)) return false;
+  return true;
+}
+
+
+type ValidatedDfa = "admis" | "redouble" | "exclu";
+
+function normalizedValidatedDfa(type: string | null, label: string | null): ValidatedDfa | null {
+  const t = normalizeForMatch(type);
+  const l = normalizeForMatch(label);
+  if (t === "admitted" || l === "admis" || l === "admise") return "admis";
+  if (["repeated", "retained", "repeat"].includes(t) || l.startsWith("redoubl")) return "redouble";
+  if (t === "excluded" || l.startsWith("exclu")) return "exclu";
+  // Une orientation ENO/RNO n'est pas assimilée arbitrairement à une admission.
+  return null;
+}
+
+async function loadValidatedYearDecisions(params: {
+  supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
+  institutionId: string;
+  academicYear: string;
+  classes: ClassRow[];
+  registry: Map<string, StudentMetaRow>;
+}): Promise<{ decisions: Map<string, ValidatedDfa> } | { error: string; status: number }> {
+  const { data, error } = await params.supabase
+    .from("student_year_decisions")
+    .select("student_id,current_class_id,decision_type,decision_label,decided_at")
+    .eq("institution_id", params.institutionId)
+    .eq("academic_year", params.academicYear)
+    .in("current_class_id", params.classes.map((cls) => cls.id));
+
+  if (error) return { error: "DFA_DECISIONS_UNAVAILABLE", status: 503 };
+
+  const decisions = new Map<string, ValidatedDfa>();
+  for (const row of data || []) {
+    const value = normalizedValidatedDfa(row.decision_type, row.decision_label);
+    const key = `${row.current_class_id}__${row.student_id}`;
+    if (!value || !row.decided_at || decisions.has(key)) return { error: "DFA_VALIDATION_REQUIRED", status: 422 };
+    decisions.set(key, value);
+  }
+  for (const key of params.registry.keys()) {
+    if (!decisions.has(key)) return { error: "DFA_VALIDATION_REQUIRED", status: 422 };
+  }
+  return { decisions };
+}
+
 async function prepareLegacyExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -1917,6 +1990,8 @@ async function prepareDspsNotesExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
   const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
@@ -1945,7 +2020,12 @@ async function prepareDspsNotesExport(params: {
       }),
     ]);
 
-    if (!bulletinData?.items?.length) continue;
+    // Une indisponibilité du serveur n'est pas une moyenne NC.
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+    }
+    if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
     const classRows: Record<string, unknown>[] = [];
@@ -2021,6 +2101,7 @@ async function prepareDspsAnnualExport(params: {
 
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
 
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
@@ -2042,6 +2123,12 @@ async function prepareDspsAnnualExport(params: {
     academicYear,
     activeFrom: firstActiveDate,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
+  const validatedDfa = await loadValidatedYearDecisions({
+    supabase, institutionId, academicYear, classes, registry: studentMetaByKey,
+  });
+  if ("error" in validatedDfa) return validatedDfa;
 
   const allRows: Record<string, unknown>[] = [];
   const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
@@ -2062,6 +2149,13 @@ async function prepareDspsAnnualExport(params: {
       })
     );
 
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
 
@@ -2077,6 +2171,7 @@ async function prepareDspsAnnualExport(params: {
       if (key.startsWith(`${currentClassId}__`)) studentIds.add(meta.student_id);
     }
 
+    let missingAnnualResults = false;
     const rawRows = Array.from(studentIds).map((studentId) => {
       const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
       const firstItem = displayPeriods
@@ -2104,19 +2199,11 @@ async function prepareDspsAnnualExport(params: {
         .find(Boolean) as BulletinItem | null;
 
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const validPeriodAvgs = periodCells
-        .map((p) => p.avg)
-        .filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg =
-        annualFromApi !== null
-          ? annualFromApi
-          : annualForcedNc
-          ? null
-          : validPeriodAvgs.length
-          ? cleanNumber(validPeriodAvgs.reduce((sum, value) => sum + value, 0) / validPeriodAvgs.length, 4)
-          : null;
+      // Aucune MGA approximative à partir de trimestres partiels.
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
+        missingAnnualResults = true;
+      }
 
       return {
         studentId,
@@ -2128,6 +2215,8 @@ async function prepareDspsAnnualExport(params: {
         annualRank: annualAvg !== null ? cleanRank(lastItem?.annual_rank) : null,
       };
     });
+
+    if (missingAnnualResults) return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
 
     const annualRankMap = new Map<string, number>();
     const annualEntries = rawRows
@@ -2165,7 +2254,10 @@ async function prepareDspsAnnualExport(params: {
           "Rang  ": formatDspsRank(p3.rank),
           MGA: formatDspsNumber(row.annualAvg),
           "Rang   ": formatDspsRank(annualRank),
-          "Décision du conseil": annualDecisionLabel(row.annualAvg),
+          // Une distinction scolaire ne constitue pas une décision de fin d'année.
+          "Décision du conseil": ({
+            admis: "ADMIS", redouble: "REDOUBLE", exclu: "EXCLU",
+          } as const)[validatedDfa.decisions.get(`${currentClassId}__${row.studentId}`)!],
         });
       })
       .sort((a, b) => {
@@ -2243,6 +2335,8 @@ async function prepareDespsTermSummaryExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
   const totalAcc = makeSummaryAccumulator();
@@ -2256,6 +2350,10 @@ async function prepareDespsTermSummaryExport(params: {
       to: resolvedPeriod.bulletinTo,
     });
 
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+    }
     const itemByStudent = new Map<string, BulletinItem>();
     for (const item of bulletinData?.items || []) itemByStudent.set(String(item.student_id), item);
 
@@ -2388,6 +2486,8 @@ async function prepareDespsSubjectSummaryExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
 
@@ -2405,9 +2505,11 @@ async function prepareDespsSubjectSummaryExport(params: {
       to: resolvedPeriod.bulletinTo,
     });
 
-    if (!bulletinData?.items?.length) {
-      continue;
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
     }
+    if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
     const metaByStudent = new Map<string, StudentMetaRow>();
@@ -2527,6 +2629,7 @@ async function prepareDespsDfaSummaryExport(params: {
 
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
 
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
@@ -2548,6 +2651,12 @@ async function prepareDespsDfaSummaryExport(params: {
     academicYear,
     activeFrom: firstActiveDate,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
+  const validatedDfa = await loadValidatedYearDecisions({
+    supabase, institutionId, academicYear, classes, registry: studentMetaByKey,
+  });
+  if ("error" in validatedDfa) return validatedDfa;
 
   const rows: Record<string, unknown>[] = [];
   const total = {
@@ -2583,6 +2692,13 @@ async function prepareDespsDfaSummaryExport(params: {
       })
     );
 
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
 
@@ -2608,8 +2724,8 @@ async function prepareDespsDfaSummaryExport(params: {
     let lt10 = 0;
     let admitted = 0;
     let toReview = 0;
-    const repeaters = 0;
-    const excluded = 0;
+    let repeaters = 0;
+    let excluded = 0;
     let sum = 0;
 
     for (const studentId of studentIds) {
@@ -2629,18 +2745,13 @@ async function prepareDespsDfaSummaryExport(params: {
       else boys += 1;
 
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const validPeriodAvgs = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg =
-        annualFromApi !== null
-          ? annualFromApi
-          : annualForcedNc
-          ? null
-          : validPeriodAvgs.length
-          ? cleanNumber(validPeriodAvgs.reduce((acc, value) => acc + value, 0) / validPeriodAvgs.length, 4)
-          : null;
+      // Aucune MGA approximative à partir de trimestres partiels.
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
 
-      const decision = dfaAutoDecision(annualAvg);
+      const decision = validatedDfa.decisions.get(`${currentClassId}__${studentId}`)!;
 
       if (annualAvg === null) {
         nonClassed += 1;
@@ -2651,7 +2762,6 @@ async function prepareDespsDfaSummaryExport(params: {
 
         if (avg >= 10) {
           ge10 += 1;
-          admitted += 1;
           if (gender === "F") ge10Girls += 1;
           else ge10Boys += 1;
         } else {
@@ -2659,7 +2769,11 @@ async function prepareDespsDfaSummaryExport(params: {
         }
       }
 
-      if (decision === "examiner") toReview += 1;
+      if (decision === "admis") admitted += 1;
+      if (decision === "redouble") repeaters += 1;
+      if (decision === "exclu") excluded += 1;
+      // Les décisions sont validées : aucun dossier ne reste « à examiner ».
+      void toReview;
     }
 
     total.effectif += studentIds.size;
@@ -2994,15 +3108,18 @@ function addOfficialGeneral(stats: OfficialGeneralStats, avg: number | null, gen
   else stats.lt850Boys += 1;
 }
 
-function addOfficialDfa(stats: OfficialDfaStats, avg: number | null, gender: "F" | "M" | "") {
+function addOfficialDfa(stats: OfficialDfaStats, avg: number | null, gender: "F" | "M" | "", decision: ValidatedDfa) {
   addOfficialGeneral(stats, avg, gender);
   const isGirl = gender === "F";
   if (avg === null || !Number.isFinite(Number(avg))) return;
-  if (Number(avg) >= 10) {
+  if (decision === "admis") {
     if (isGirl) stats.admittedGirls += 1;
     else stats.admittedBoys += 1;
-  } else if (isGirl) stats.repeatGirls += 1;
-  else stats.repeatBoys += 1;
+  } else if (decision === "redouble") {
+    if (isGirl) stats.repeatGirls += 1;
+    else stats.repeatBoys += 1;
+  } else if (isGirl) stats.excludedGirls += 1;
+  else stats.excludedBoys += 1;
 }
 
 function addOfficialSubject(stats: OfficialSubjectStats, value: number | null, gender: "F" | "M" | "") {
@@ -3298,6 +3415,8 @@ async function collectOfficialTermStats(params: {
   if (!classes.length) return { error: "NO_CLASSES_FOUND" as const, status: 404 };
 
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear: resolvedPeriod.academicYear, activeFrom: resolvedPeriod.bulletinFrom });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
   const generalByLevel = new Map<string, OfficialGeneralStats>();
   const subjectsByLevel = new Map<string, Map<string, OfficialSubjectStats>>();
 
@@ -3322,6 +3441,12 @@ async function collectOfficialTermStats(params: {
     });
     return { cls, currentClassId, bulletinData };
   });
+
+  if (classBulletins.some(({ bulletinData }) => !bulletinData)) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+
+  if (classBulletins.some(({ currentClassId, bulletinData }) =>
+    !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData!)
+  )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
   for (const { cls, currentClassId, bulletinData } of classBulletins) {
     const levelKey = officialLevelKey(cls);
@@ -3393,6 +3518,13 @@ async function collectOfficialTermStats(params: {
   return { resolvedPeriod, generalByLevel, subjectsByLevel, classes };
 }
 
+function officialPeriodMatchesTerm(period: GradePeriodRow, term: 1 | 2 | 3): boolean {
+  const label = normalizeForMatch([period.code, period.label, period.short_label].filter(Boolean).join(" "));
+  if (term === 1) return /\b(t1|trim1|trimestre 1|1er|premier)\b/.test(label);
+  if (term === 2) return /\b(t2|trim2|trimestre 2|2e|2eme|deuxieme)\b/.test(label);
+  return /\b(t3|trim3|trimestre 3|3e|3eme|troisieme)\b/.test(label);
+}
+
 async function prepareDespsOfficialTermExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -3414,6 +3546,9 @@ async function prepareDespsOfficialTermExport(params: {
     subjectsByLevel: Map<string, Map<string, OfficialSubjectStats>>;
     classes: ClassRow[];
   };
+  if (!officialPeriodMatchesTerm(resolvedPeriod.bulletinPeriod, params.term)) {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
+  }
   return {
     templateFileName:
       params.term === 1
@@ -3565,6 +3700,7 @@ async function prepareDespsOfficialAnnualExport(params: {
   const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
   const { classes, error: classError } = await loadClasses({
@@ -3578,6 +3714,12 @@ async function prepareDespsOfficialAnnualExport(params: {
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
 
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
+  const validatedDfa = await loadValidatedYearDecisions({
+    supabase, institutionId, academicYear, classes, registry: studentMetaByKey,
+  });
+  if ("error" in validatedDfa) return validatedDfa;
   const statsByLevel = new Map<string, OfficialDfaStats>();
   const annualSubjectsByLevel = new Map<string, Map<string, OfficialSubjectStats>>();
   const ensure = (level: string) => {
@@ -3605,6 +3747,14 @@ async function prepareDespsOfficialAnnualExport(params: {
     }));
     return { cls, currentClassId, bulletinsByPeriod };
   });
+
+  if (classBulletins.some(({ bulletinsByPeriod }) => displayPeriods.some((period) => !bulletinsByPeriod.has(period.id)))) {
+    return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+  }
+
+  if (classBulletins.some(({ currentClassId, bulletinsByPeriod }) => displayPeriods.some((period) =>
+    !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+  ))) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
   for (const { cls, currentClassId, bulletinsByPeriod } of classBulletins) {
     const levelKey = officialLevelKey(cls);
@@ -3648,11 +3798,14 @@ async function prepareDespsOfficialAnnualExport(params: {
       });
       const lastItem = [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) as BulletinItem | null;
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const valid = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg = annualFromApi !== null ? annualFromApi : annualForcedNc ? null : valid.length ? cleanNumber(valid.reduce((a, b) => a + b, 0) / valid.length, 4) : null;
+      // Une MGA non fournie par les bulletins reste absente (jamais recalculée au hasard).
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
       const gender = getStudentGender({ meta, item: lastItem });
-      addOfficialDfa(ensure(levelKey), annualAvg, gender);
+      addOfficialDfa(ensure(levelKey), annualAvg, gender,
+        validatedDfa.decisions.get(`${currentClassId}__${studentId}`)!);
 
       const bySubject = subjectValuesByStudent.get(studentId);
       for (const col of OFFICIAL_SUBJECT_COLUMNS) {
@@ -3990,6 +4143,7 @@ async function prepareRapportFOfficialExport(params: {
 }): Promise<PreparedWorkbook | { error: string; status: number }> {
   const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
   const { classes, error: classError } = await loadClasses({
@@ -4002,6 +4156,12 @@ async function prepareRapportFOfficialExport(params: {
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
+  const validatedDfa = await loadValidatedYearDecisions({
+    supabase, institutionId, academicYear, classes, registry: studentMetaByKey,
+  });
+  if ("error" in validatedDfa) return validatedDfa;
   const rapportFSettings = await loadRapportFSettings({ supabase, institutionId, academicYear });
   const rapportDrena = cleanRapportValue(rapportFSettings.drenaet || rapportFSettings.ddenaet);
 
@@ -4015,6 +4175,13 @@ async function prepareRapportFOfficialExport(params: {
       const bulletin = await fetchBulletinForClass({ req, classId: currentClassId, from: period.start_date, to: period.end_date });
       if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
     }));
+
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -4039,11 +4206,18 @@ async function prepareRapportFOfficialExport(params: {
         const item = itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null;
         return item && !isAdminForcedNc(item) ? cleanNumber(item.general_avg, 2) : null;
       });
-      const valid = avgs.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualAverage = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
-      const dfa = annualAverage === null ? "" : annualAverage >= 10 ? "Admis" : "Redouble";
-      const birthdate = getStudentBirthdate(meta, [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null);
-      const referenceItem = [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null;
+      const referenceItem = [...displayPeriods].reverse()
+        .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
+        .find(Boolean) || null;
+      const annualAverage = isAdminAnnualForcedNc(referenceItem) ? null : cleanNumber(referenceItem?.annual_avg, 4);
+      if (!isAdminAnnualForcedNc(referenceItem) && (annualAverage === null || !hasValidatedAnnualCoverage(referenceItem))) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
+      // Aucune décision de conseil de classe ne peut être déduite d'un seuil arbitraire.
+      const dfa = ({
+        admis: "Admis", redouble: "Redouble", exclu: "Exclu",
+      } as const)[validatedDfa.decisions.get(`${currentClassId}__${studentId}`)!];
+      const birthdate = getStudentBirthdate(meta, referenceItem);
       rows.push([
         line,
         meta?.matricule || "",
@@ -4526,6 +4700,19 @@ export async function GET(req: NextRequest) {
       {
         ok: false,
         error: prepared.error,
+        message: ({
+          NO_ACTIVE_STUDENTS: "Aucun élève actif trouvé pour les classes sélectionnées.",
+          MISSING_MATRICULE: "Export bloqué : au moins un élève actif n'a pas de matricule national.",
+          DUPLICATE_MATRICULE: "Export bloqué : un matricule national apparaît plusieurs fois dans les classes sélectionnées.",
+          UNKNOWN_GENDER: "Export bloqué : le sexe d'au moins un élève actif est absent ou non reconnu.",
+          BULLETIN_FETCH_FAILED: "Export interrompu : impossible de récupérer tous les bulletins. Réessaie sans produire de fichier incomplet.",
+          STUDENT_RESULTS_MISMATCH: "Export bloqué : les élèves des bulletins ne correspondent pas exactement à la liste active des classes.",
+          MISSING_ANNUAL_AVERAGE: "Export annuel bloqué : une moyenne annuelle manque ou sa couverture n'est pas complète.",
+          INCOMPLETE_ACADEMIC_YEAR: "Export annuel bloqué : les trois trimestres n'existent pas pour cette année.",
+          DFA_VALIDATION_REQUIRED: "Export annuel bloqué : décisions de fin d'année manquantes, non datées ou non reconnues. Validation du conseil requise.",
+          DFA_DECISIONS_UNAVAILABLE: "Export annuel interrompu : impossible de consulter les décisions de fin d'année.",
+          INVALID_PERIOD_REF: "Le trimestre sélectionné ne correspond pas à l'année scolaire.",
+        } as Record<string, string>)[prepared.error] || prepared.error,
         ...(generalSecondaryOnly && prepared.error === "NO_CLASSES_FOUND"
           ? {
               message:
