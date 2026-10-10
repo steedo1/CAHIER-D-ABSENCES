@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
       institution_name: institution.data?.name || "Établissement",
       enforcement_enabled: settings.data?.enforcement_enabled === true,
       can_collect: hasParentConnectRole(roles, PARENT_CONNECT_WRITE_ROLES),
+      can_activate: hasParentConnectRole(roles, PARENT_CONNECT_WRITE_ROLES),
       can_configure: false,
       activations_paused: settings.data?.activations_paused === true,
       school_end_date: effectiveEnd ? new Date(Date.parse(effectiveEnd) - 1).toISOString().slice(0, 10) : null,
@@ -64,6 +65,14 @@ export async function POST(req: NextRequest) {
   if (access.error) return access.error;
   const body = await req.json().catch(() => null);
   if (!body || !UUID.test(String(body.operation_id || ""))) return json({ error: "Opération invalide." }, 400);
+  if (body.action === "activate") {
+    if (!UUID.test(String(body.student_id || "")) || typeof body.academic_year !== "string" || !body.academic_year || body.academic_year.length > 40) return json({ error: "Élève ou année scolaire invalide." }, 400);
+    const result = await access.srv.rpc("parent_connect_activate", {
+      p_institution_id: access.institutionId, p_student_id: body.student_id, p_actor_id: access.user.id,
+      p_operation_id: body.operation_id, p_academic_year: body.academic_year,
+    });
+    return result.error ? json({ error: operationError(result.error.message) }, 409) : json({ activation: result.data });
+  }
   if (body.action === "remit") {
     const amount = Number(body.amount);
     const reference = String(body.reference || "").trim();
