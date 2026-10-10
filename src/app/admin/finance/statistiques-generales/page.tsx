@@ -578,7 +578,7 @@ export default function GeneralStatisticsPage() {
         <div className="national-heading">
           <div>{clean(institution.country_name) || "République de Côte d'Ivoire"}</div>
           <div>{clean(institution.country_motto) || "Union - Discipline - Travail"}</div>
-          <div className="ministry">{(clean(institution.ministry_name) || "MINISTÈRE DE L'ÉDUCATION NATIONALE ET DE L'ALPHABÉTISATION").replace(/NATIONALE\\s+DE\\s+L['’]ALPHAB[EÉ]TISATION/i, "NATIONALE ET DE L'ALPHABÉTISATION").replace(/\\s+ET DE L'ENSEIGNEMENT TECHNIQUE/i, "\\nET DE L'ENSEIGNEMENT TECHNIQUE")}</div>
+          <div className="ministry">{(clean(institution.ministry_name) || "MINISTÈRE DE L'ÉDUCATION NATIONALE ET DE L'ALPHABÉTISATION").replace(/NATIONALE\s+DE\s+L['’]ALPHAB[EÉ]TISATION/i, "NATIONALE ET DE L'ALPHABÉTISATION").replace(/\s+ET DE L'ENSEIGNEMENT TECHNIQUE/i, "\nET DE L'ENSEIGNEMENT TECHNIQUE")}</div>
         </div>
         <header className="official-header">
           <div className="school-block">
