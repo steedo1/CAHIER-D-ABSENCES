@@ -61,6 +61,7 @@ jobs:
             test/offline-attendance-admin-e2e.test.mjs \
             test/csca-attendance-reliability.test.mjs \
             test/class-device-completion-proof.test.mjs \
+            test/class-device-local-archive.test.mjs \
             test/class-device-rescheduled-session.test.mjs \
             test/attendance-surveillance-seconds.test.mjs \
             test/teacher-attendance-bulk-offline-route.test.mjs \
