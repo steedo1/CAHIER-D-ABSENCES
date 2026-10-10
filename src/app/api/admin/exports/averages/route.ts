@@ -1657,6 +1657,20 @@ function buildOrderedRow(headers: readonly string[], values: Record<string, unkn
   return row;
 }
 
+// Précontrôles sans lectures additionnelles de Supabase.
+function validateOfficialStudentRegistry(registry: Map<string, StudentMetaRow>): { error: string; status: number } | null {
+  if (!registry.size) return { error: "NO_ACTIVE_STUDENTS", status: 422 };
+  const seenMatricules = new Set<string>();
+  for (const student of registry.values()) {
+    const matricule = String(student.matricule || "").trim().toUpperCase();
+    if (!matricule) return { error: "MISSING_MATRICULE", status: 422 };
+    if (seenMatricules.has(matricule)) return { error: "DUPLICATE_MATRICULE", status: 422 };
+    seenMatricules.add(matricule);
+    if (!normalizeGender(student.gender)) return { error: "UNKNOWN_GENDER", status: 422 };
+  }
+  return null;
+}
+
 async function prepareLegacyExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -1916,6 +1930,8 @@ async function prepareDspsNotesExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
   const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
@@ -2043,6 +2059,8 @@ async function prepareDspsAnnualExport(params: {
     academicYear,
     activeFrom: firstActiveDate,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const allRows: Record<string, unknown>[] = [];
   const classSheets: { sheetName: string; rows: Record<string, unknown>[] }[] = [];
@@ -2062,6 +2080,10 @@ async function prepareDspsAnnualExport(params: {
         if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
       })
     );
+
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -2234,6 +2256,8 @@ async function prepareDespsTermSummaryExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
   const totalAcc = makeSummaryAccumulator();
@@ -2247,6 +2271,7 @@ async function prepareDespsTermSummaryExport(params: {
       to: resolvedPeriod.bulletinTo,
     });
 
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
     const itemByStudent = new Map<string, BulletinItem>();
     for (const item of bulletinData?.items || []) itemByStudent.set(String(item.student_id), item);
 
@@ -2379,6 +2404,8 @@ async function prepareDespsSubjectSummaryExport(params: {
     academicYear: resolvedPeriod.academicYear,
     activeFrom: resolvedPeriod.bulletinFrom,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
 
@@ -2396,9 +2423,8 @@ async function prepareDespsSubjectSummaryExport(params: {
       to: resolvedPeriod.bulletinTo,
     });
 
-    if (!bulletinData?.items?.length) {
-      continue;
-    }
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
     const metaByStudent = new Map<string, StudentMetaRow>();
@@ -2539,6 +2565,8 @@ async function prepareDespsDfaSummaryExport(params: {
     academicYear,
     activeFrom: firstActiveDate,
   });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
 
   const rows: Record<string, unknown>[] = [];
   const total = {
@@ -2573,6 +2601,10 @@ async function prepareDespsDfaSummaryExport(params: {
         if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
       })
     );
+
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -3281,6 +3313,8 @@ async function collectOfficialTermStats(params: {
   if (!classes.length) return { error: "NO_CLASSES_FOUND" as const, status: 404 };
 
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear: resolvedPeriod.academicYear, activeFrom: resolvedPeriod.bulletinFrom });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
   const generalByLevel = new Map<string, OfficialGeneralStats>();
   const subjectsByLevel = new Map<string, Map<string, OfficialSubjectStats>>();
 
@@ -3305,6 +3339,8 @@ async function collectOfficialTermStats(params: {
     });
     return { cls, currentClassId, bulletinData };
   });
+
+  if (classBulletins.some(({ bulletinData }) => !bulletinData)) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
 
   for (const { cls, currentClassId, bulletinData } of classBulletins) {
     const levelKey = officialLevelKey(cls);
@@ -3561,6 +3597,8 @@ async function prepareDespsOfficialAnnualExport(params: {
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
 
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
   const statsByLevel = new Map<string, OfficialDfaStats>();
   const annualSubjectsByLevel = new Map<string, Map<string, OfficialSubjectStats>>();
   const ensure = (level: string) => {
@@ -3588,6 +3626,10 @@ async function prepareDespsOfficialAnnualExport(params: {
     }));
     return { cls, currentClassId, bulletinsByPeriod };
   });
+
+  if (classBulletins.some(({ bulletinsByPeriod }) => displayPeriods.some((period) => !bulletinsByPeriod.has(period.id)))) {
+    return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+  }
 
   for (const { cls, currentClassId, bulletinsByPeriod } of classBulletins) {
     const levelKey = officialLevelKey(cls);
@@ -3984,6 +4026,8 @@ async function prepareRapportFOfficialExport(params: {
   if (classError) return { error: classError, status: classError === "INVALID_CLASS_ID" ? 400 : 500 };
   if (!classes.length) return { error: "NO_CLASSES_FOUND", status: 404 };
   const studentMetaByKey = await loadStudentMeta({ supabase, classes, academicYear, activeFrom: firstActiveDate });
+  const registryError = validateOfficialStudentRegistry(studentMetaByKey);
+  if (registryError) return registryError;
   const rapportFSettings = await loadRapportFSettings({ supabase, institutionId, academicYear });
   const rapportDrena = cleanRapportValue(rapportFSettings.drenaet || rapportFSettings.ddenaet);
 
@@ -3997,6 +4041,10 @@ async function prepareRapportFOfficialExport(params: {
       const bulletin = await fetchBulletinForClass({ req, classId: currentClassId, from: period.start_date, to: period.end_date });
       if (bulletin) bulletinsByPeriod.set(period.id, bulletin);
     }));
+
+    if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
+      return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    }
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -4508,6 +4556,15 @@ export async function GET(req: NextRequest) {
       {
         ok: false,
         error: prepared.error,
+        message: ({
+          NO_ACTIVE_STUDENTS: "Aucun élève actif trouvé pour les classes sélectionnées.",
+          MISSING_MATRICULE: "Export bloqué : au moins un élève actif n'a pas de matricule national.",
+          DUPLICATE_MATRICULE: "Export bloqué : un matricule national apparaît plusieurs fois dans les classes sélectionnées.",
+          UNKNOWN_GENDER: "Export bloqué : le sexe d'au moins un élève actif est absent ou non reconnu.",
+          BULLETIN_FETCH_FAILED: "Export interrompu : impossible de récupérer tous les bulletins. Réessaie sans produire de fichier incomplet.",
+          MISSING_ANNUAL_AVERAGE: "Export annuel bloqué : les moyennes annuelles ne sont pas toutes disponibles.",
+          INVALID_PERIOD_REF: "Le trimestre sélectionné ne correspond pas à l'année scolaire.",
+        } as Record<string, string>)[prepared.error] || prepared.error,
         ...(generalSecondaryOnly && prepared.error === "NO_CLASSES_FOUND"
           ? {
               message:
