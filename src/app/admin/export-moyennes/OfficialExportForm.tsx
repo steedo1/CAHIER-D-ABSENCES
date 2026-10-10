@@ -46,6 +46,7 @@ function fallbackFileName(fields: Record<string, string>) {
 
 export default function OfficialExportForm({
   fields,
+  periodRefByYear,
   academicYears,
   defaultAcademicYear,
   classes,
@@ -56,6 +57,7 @@ export default function OfficialExportForm({
   className = "grid gap-3",
 }: {
   fields: Record<string, string>;
+  periodRefByYear?: Record<string, string>;
   academicYears: string[];
   defaultAcademicYear: string;
   classes: SelectOption[];
@@ -65,9 +67,12 @@ export default function OfficialExportForm({
   color?: ExportColor;
   className?: string;
 }) {
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState(defaultAcademicYear);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isDisabled = disabled || loading || !hasAcademicYears;
+  const selectedPeriodRef = periodRefByYear?.[selectedAcademicYear] || "";
+  const isDisabled = disabled || loading || !hasAcademicYears ||
+    (!!periodRefByYear && !selectedPeriodRef);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,7 +129,7 @@ export default function OfficialExportForm({
   return (
     <form onSubmit={handleSubmit} className={className}>
       {Object.entries(fields).map(([name, value]) => (
-        <input key={name} type="hidden" name={name} value={value} />
+        <input key={name} type="hidden" name={name} value={name === "period_ref" && periodRefByYear ? selectedPeriodRef : value} />
       ))}
 
       <select
@@ -132,7 +137,8 @@ export default function OfficialExportForm({
         required
         disabled={loading || !hasAcademicYears}
         className={`w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 ${selectColorClass[color]}`}
-        defaultValue={defaultAcademicYear}
+        value={selectedAcademicYear}
+        onChange={(event) => setSelectedAcademicYear(event.target.value)}
       >
         {!hasAcademicYears ? (
           <option value="">Aucune année disponible</option>
@@ -167,6 +173,12 @@ export default function OfficialExportForm({
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         {loading ? "Préparation du fichier…" : "Télécharger Excel officiel"}
       </button>
+
+      {periodRefByYear && !selectedPeriodRef && (
+        <p className="text-xs font-semibold text-amber-700">
+          Aucun trimestre correspondant à l'année scolaire sélectionnée. Téléchargement désactivé.
+        </p>
+      )}
 
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
