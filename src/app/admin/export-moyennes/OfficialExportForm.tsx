@@ -224,7 +224,7 @@ export default function OfficialExportForm({
       <select
         name="academic_year"
         required
-        disabled={loading || !hasAcademicYears}
+        disabled={loading || diagnosticLoading || !hasAcademicYears}
         className={`w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 ${selectColorClass[color]}`}
         value={selectedAcademicYear}
         onChange={(event) => handleYearChange(event.target.value)}
@@ -248,7 +248,7 @@ export default function OfficialExportForm({
           setDiagnosticReport(null);
           setDiagnosticError(null);
         }}
-        disabled={loading || !availableClasses.length}
+        disabled={loading || diagnosticLoading || !availableClasses.length}
         className={`w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 ${selectColorClass[color]}`}
       >
         <option value="">{availableClasses.length ? "Toutes les classes" : "Aucune classe pour cette année"}</option>
