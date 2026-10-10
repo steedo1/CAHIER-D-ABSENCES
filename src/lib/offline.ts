@@ -1041,7 +1041,7 @@ async function callArchiveSnapshot(tx: IDBTransaction, requestedIds: string[]) {
   const journals = cached.filter((row) =>
     /^teacher:(?:session-delivery|attendance-delivery|session-lifecycle):v1:[^:]+$/.test(row.key) && Array.isArray(row.value),
   );
-  const candidates = [
+  const candidates: Array<{ id: string; refs: unknown[]; terminal: boolean }> = [
     ...callRows.map((row) => ({ id: row.operationId,
       refs: [outboxSessionDependencyKey(row, row.body), outboxOperationType(row) === "session-start" ? row.operationId : null],
       terminal: false })),
@@ -1149,7 +1149,8 @@ export async function archiveOfflineCalls(preview: OfflineCallArchivePreview): P
   };
   const locks = (navigator as Navigator & { locks?: LockManager }).locks;
   // Use the same cross-tab lock as the PWA worker and normal outbox replay.
-  const execute = () => locks ? locks.request("moncahier-offline-outbox", run) : run();
+  const execute = async (): Promise<OfflineCallArchiveResult> =>
+    locks ? await locks.request("moncahier-offline-outbox", run) : await run();
   const result = _flushTail.then(execute, execute);
   _flushTail = result.then(() => undefined, () => undefined);
   return await result;
