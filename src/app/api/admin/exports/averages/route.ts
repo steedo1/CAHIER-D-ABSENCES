@@ -418,12 +418,15 @@ const SUBJECT_ALIASES: Record<string, string[]> = {
 };
 
 function cleanNumber(value: unknown, precision = 2): number | null {
+  // Number(null), Number("") et Number(" ") valent 0 en JavaScript.
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Number(n.toFixed(precision));
 }
 
 function cleanRank(value: unknown): number | null {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.round(n);
@@ -835,24 +838,17 @@ function formatSubjectValueForExport(
 }
 
 function formatDspsNumber(value: unknown): number | string {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return Number(n.toFixed(2));
 }
 
 function formatDspsRank(value: unknown): number | string {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return Math.round(n);
-}
-
-function annualDecisionLabel(avg: number | null | undefined): string {
-  if (avg === null || avg === undefined || !Number.isFinite(Number(avg))) return "";
-  const g = Number(avg);
-  if (g >= 16) return "Excellence";
-  if (g >= 14) return "Tableau d’honneur";
-  if (g >= 12) return "Encouragement";
-  return "";
 }
 
 function buildExportRows(rows: ExportRow[], subjectHeaders: string[]) {
@@ -1279,7 +1275,9 @@ async function resolvePeriod(params: {
     if (!period) return null;
 
     const row = period as GradePeriodRow;
-    const year = String(row.academic_year || academicYear || "").trim();
+    // Une période d'une autre année scolaire ne doit jamais être exportée.
+    if (String(row.academic_year || "").trim() !== academicYear) return null;
+    const year = academicYear;
     const label = String(row.short_label || row.label || row.code || "Période").trim();
     const code = String(row.code || row.short_label || row.label || "period").trim();
 
@@ -1296,6 +1294,7 @@ async function resolvePeriod(params: {
 
   if (periodRef.startsWith("annual:")) {
     const year = periodRef.slice("annual:".length).trim() || academicYear;
+    if (year !== academicYear) return null;
 
     const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear: year });
     if (!periods.length) return null;
@@ -1945,7 +1944,9 @@ async function prepareDspsNotesExport(params: {
       }),
     ]);
 
-    if (!bulletinData?.items?.length) continue;
+    // Une indisponibilité du serveur n'est pas une moyenne NC.
+    if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
     const classRows: Record<string, unknown>[] = [];
@@ -2104,19 +2105,8 @@ async function prepareDspsAnnualExport(params: {
         .find(Boolean) as BulletinItem | null;
 
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const validPeriodAvgs = periodCells
-        .map((p) => p.avg)
-        .filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg =
-        annualFromApi !== null
-          ? annualFromApi
-          : annualForcedNc
-          ? null
-          : validPeriodAvgs.length
-          ? cleanNumber(validPeriodAvgs.reduce((sum, value) => sum + value, 0) / validPeriodAvgs.length, 4)
-          : null;
+      // Aucune MGA approximative à partir de trimestres partiels.
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
 
       return {
         studentId,
@@ -2165,7 +2155,8 @@ async function prepareDspsAnnualExport(params: {
           "Rang  ": formatDspsRank(p3.rank),
           MGA: formatDspsNumber(row.annualAvg),
           "Rang   ": formatDspsRank(annualRank),
-          "Décision du conseil": annualDecisionLabel(row.annualAvg),
+          // Une distinction scolaire ne constitue pas une décision de fin d'année.
+          "Décision du conseil": "",
         });
       })
       .sort((a, b) => {
@@ -2629,16 +2620,8 @@ async function prepareDespsDfaSummaryExport(params: {
       else boys += 1;
 
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const validPeriodAvgs = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg =
-        annualFromApi !== null
-          ? annualFromApi
-          : annualForcedNc
-          ? null
-          : validPeriodAvgs.length
-          ? cleanNumber(validPeriodAvgs.reduce((acc, value) => acc + value, 0) / validPeriodAvgs.length, 4)
-          : null;
+      // Aucune MGA approximative à partir de trimestres partiels.
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
 
       const decision = dfaAutoDecision(annualAvg);
 
@@ -3648,9 +3631,8 @@ async function prepareDespsOfficialAnnualExport(params: {
       });
       const lastItem = [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) as BulletinItem | null;
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
-      const valid = periodCells.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualFromApi = !annualForcedNc ? cleanNumber(lastItem?.annual_avg, 4) : null;
-      const annualAvg = annualFromApi !== null ? annualFromApi : annualForcedNc ? null : valid.length ? cleanNumber(valid.reduce((a, b) => a + b, 0) / valid.length, 4) : null;
+      // Une MGA non fournie par les bulletins reste absente (jamais recalculée au hasard).
+      const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
       const gender = getStudentGender({ meta, item: lastItem });
       addOfficialDfa(ensure(levelKey), annualAvg, gender);
 
