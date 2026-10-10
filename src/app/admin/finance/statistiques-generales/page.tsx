@@ -39,6 +39,22 @@ type Institution = {
 type Choice = "all" | "yes" | "no";
 type SexChoice = "all" | "F" | "M";
 type Lv2Choice = "all" | "allemand" | "espagnol";
+type PrintColumnKey =
+  | "number" | "matricule" | "full_name" | "class"
+  | "sex" | "age" | "boarding" | "affectation" | "scholarship" | "lv2";
+
+const PRINT_COLUMN_META: Record<PrintColumnKey, { label: string; weight: number; center?: boolean }> = {
+  number: { label: "N°", weight: 5, center: true },
+  matricule: { label: "Matricule", weight: 14 },
+  full_name: { label: "Nom et prénoms", weight: 32 },
+  class: { label: "Classe", weight: 10 },
+  sex: { label: "Sexe", weight: 6, center: true },
+  age: { label: "Âge", weight: 6, center: true },
+  boarding: { label: "Régime", weight: 11 },
+  affectation: { label: "Affectation", weight: 13 },
+  scholarship: { label: "Bourse", weight: 11 },
+  lv2: { label: "LV2", weight: 11 },
+};
 
 const MON_CAHIER_EXPORT_SIGNATURE =
   "Mon Cahier — La plateforme complète de gestion scolaire | www.mon-cahier.com";
@@ -95,6 +111,22 @@ function labelBool(value: boolean | null, yes: string, no: string) {
   if (value === true) return yes;
   if (value === false) return no;
   return "—";
+}
+
+function printCellValue(key: PrintColumnKey, student: Student, index: number): string | number {
+  switch (key) {
+    case "number": return index + 1;
+    case "matricule": return student.matricule || "—";
+    case "full_name": return student.full_name;
+    case "class": return student.class_label || "—";
+    case "sex": return sex(student.gender) || "—";
+    case "age": return ageOf(student.birthdate) ?? "—";
+    case "boarding": return labelBool(student.is_boarder, "Interne", "Externe");
+    case "affectation": return labelBool(student.is_affecte, "Affecté", "Non affecté");
+    case "scholarship": return labelBool(student.is_scholarship, "Boursier", "Non boursier");
+    case "lv2": return lv2(student.lv2) === "allemand" ? "Allemand"
+      : lv2(student.lv2) === "espagnol" ? "Espagnol" : student.lv2 || "—";
+  }
 }
 
 function displayLevel(value: string | null | undefined) {
@@ -267,6 +299,32 @@ export default function GeneralStatisticsPage() {
     [level, boarding, affectation, scholarship, gender, language, minAge, maxAge],
   );
 
+  const printTitle =
+    criteria === "Tous les élèves"
+      ? "STATISTIQUES GÉNÉRALES — TOUS LES ÉLÈVES"
+      : `LISTE DES ÉLÈVES — ${criteria.toUpperCase()}`;
+
+  // Colonnes d'identification conservées. Les colonnes de détail reflètent
+  // les filtres actifs ; sans filtre de détail, le PDF reste exhaustif.
+  const hasDetailFilters =
+    boarding !== "all" || affectation !== "all" || scholarship !== "all" ||
+    gender !== "all" || language !== "all" || minAge !== "" || maxAge !== "";
+  const detailColumnKeys: PrintColumnKey[] = hasDetailFilters
+    ? [
+        ...(gender !== "all" ? ["sex" as const] : []),
+        ...(minAge !== "" || maxAge !== "" ? ["age" as const] : []),
+        ...(boarding !== "all" ? ["boarding" as const] : []),
+        ...(affectation !== "all" ? ["affectation" as const] : []),
+        ...(scholarship !== "all" ? ["scholarship" as const] : []),
+        ...(language !== "all" ? ["lv2" as const] : []),
+      ]
+    : ["sex", "age", "boarding", "affectation", "scholarship", "lv2"];
+  const printColumns: PrintColumnKey[] = ["number", "matricule", "full_name", "class", ...detailColumnKeys];
+  const totalPrintWidth = printColumns.reduce((total, key) => total + PRINT_COLUMN_META[key].weight, 0);
+  // Harmonise un ancien libellé du ministère sans modifier les paramètres de l'école.
+  const officialMinistry = clean(institution.ministry_name)
+    .replace(/(EDUCATION NATIONALE)\s+DE L['’]ALPHAB[EÉ]TISATION\b/i, "$1 ET DE L'ALPHABETISATION");
+
   function reset() {
     setLevel("all");
     setBoarding("all");
@@ -329,10 +387,31 @@ export default function GeneralStatisticsPage() {
           .stats-print-sheet td { border: 1px solid #64748b; padding: 3.2px 4px; vertical-align: middle; }
           .stats-print-sheet th { background: #f1f5f9 !important; font-size: 8.5px; text-transform: uppercase; }
           .stats-print-sheet td { font-size: 8.7px; }
+          .stats-print-sheet .national-header {
+            text-align: center;
+            font-size: 10px;
+            line-height: 1.25;
+            font-weight: 700;
+            margin: 0 auto 9px;
+            width: 100%;
+            text-transform: uppercase;
+          }
+          .stats-print-sheet .national-header .motto {
+            margin-top: 2px;
+            font-size: 9px;
+            font-weight: 500;
+            text-transform: none;
+          }
+          .stats-print-sheet .national-header .ministry {
+            margin: 3px auto 0;
+            max-width: 95%;
+            font-size: 9.6px;
+            line-height: 1.3;
+          }
           .stats-print-sheet .official-header {
             display: grid;
-            grid-template-columns: minmax(0, 37%) minmax(0, 36%) minmax(0, 27%);
-            gap: 6px;
+            grid-template-columns: minmax(0, 33%) minmax(0, 44%) minmax(0, 23%);
+            gap: 8px;
             align-items: center;
             margin-bottom: 7px;
           }
@@ -343,10 +422,12 @@ export default function GeneralStatisticsPage() {
           .stats-print-sheet .list-title {
             border: 1.5px solid #0f172a;
             padding: 7px 8px;
-            font-size: 12px;
+            font-size: 10.5px;
+            line-height: 1.3;
             font-weight: 900;
             text-align: center;
             text-transform: uppercase;
+            overflow-wrap: anywhere;
           }
           .stats-print-sheet .right-meta { font-size: 8.8px; line-height: 1.45; text-align: right; font-weight: 700; }
           .stats-print-sheet .criteria-line {
@@ -529,6 +610,11 @@ export default function GeneralStatisticsPage() {
       </div>
 
       <section className="stats-print-sheet">
+        <div className="national-header">
+          {clean(institution.country_name) ? <div>{institution.country_name}</div> : null}
+          {clean(institution.country_motto) ? <div className="motto">{institution.country_motto}</div> : null}
+          {officialMinistry ? <div className="ministry">{officialMinistry}</div> : null}
+        </div>
         <header className="official-header">
           <div className="school-block">
             {clean(institution.institution_logo_url) ? (
@@ -544,12 +630,9 @@ export default function GeneralStatisticsPage() {
             </div>
           </div>
 
-          <div className="list-title">STATISTIQUES GÉNÉRALES</div>
+          <div className="list-title">{printTitle}</div>
 
           <div className="right-meta">
-            {clean(institution.country_name) ? <div>{institution.country_name}</div> : null}
-            {clean(institution.country_motto) ? <div>{institution.country_motto}</div> : null}
-            {clean(institution.ministry_name) ? <div>{institution.ministry_name}</div> : null}
             <div>Année scolaire : {academicYear || "—"}</div>
             <div>Niveau : {level === "all" ? "Tous" : displayLevel(level)}</div>
             <div>Effectif : {filtered.length}</div>
@@ -560,44 +643,30 @@ export default function GeneralStatisticsPage() {
 
         <table>
           <colgroup>
-            <col style={{ width: "4%" }} />
-            <col style={{ width: "11%" }} />
-            <col style={{ width: "27%" }} />
-            <col style={{ width: "9%" }} />
-            <col style={{ width: "5%" }} />
-            <col style={{ width: "5%" }} />
-            <col style={{ width: "9%" }} />
-            <col style={{ width: "11%" }} />
-            <col style={{ width: "10%" }} />
-            <col style={{ width: "9%" }} />
+            {printColumns.map((key) => (
+              <col key={key} style={{ width: `${(PRINT_COLUMN_META[key].weight / totalPrintWidth) * 100}%` }} />
+            ))}
           </colgroup>
           <thead>
             <tr>
-              <th>N°</th>
-              <th>Matricule</th>
-              <th>Nom et prénoms</th>
-              <th>Classe</th>
-              <th>Sexe</th>
-              <th>Âge</th>
-              <th>Régime</th>
-              <th>Affectation</th>
-              <th>Bourse</th>
-              <th>LV2</th>
+              {printColumns.map((key) => (
+                <th key={key} style={{ textAlign: PRINT_COLUMN_META[key].center ? "center" : "left" }}>
+                  {PRINT_COLUMN_META[key].label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {filtered.map((student, index) => (
               <tr key={`print-${student.id}`}>
-                <td style={{ textAlign: "center" }}>{index + 1}</td>
-                <td>{student.matricule || "—"}</td>
-                <td style={{ fontWeight: 700 }}>{student.full_name}</td>
-                <td>{student.class_label || "—"}</td>
-                <td style={{ textAlign: "center" }}>{sex(student.gender) || "—"}</td>
-                <td style={{ textAlign: "center" }}>{ageOf(student.birthdate) ?? "—"}</td>
-                <td>{labelBool(student.is_boarder, "Interne", "Externe")}</td>
-                <td>{labelBool(student.is_affecte, "Affecté", "Non affecté")}</td>
-                <td>{labelBool(student.is_scholarship, "Boursier", "Non boursier")}</td>
-                <td>{lv2(student.lv2) === "allemand" ? "Allemand" : lv2(student.lv2) === "espagnol" ? "Espagnol" : student.lv2 || "—"}</td>
+                {printColumns.map((key) => (
+                  <td key={key} style={{
+                    textAlign: PRINT_COLUMN_META[key].center ? "center" : "left",
+                    fontWeight: key === "full_name" ? 700 : undefined,
+                  }}>
+                    {printCellValue(key, student, index)}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
