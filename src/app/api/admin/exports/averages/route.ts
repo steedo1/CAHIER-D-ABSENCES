@@ -805,6 +805,12 @@ function isAdminAnnualForcedNc(item: BulletinItem | null | undefined): boolean {
   return item.admin_annual_forced_nc === true || item.annual_avg_status === "admin_nc";
 }
 
+function hasValidatedAnnualCoverage(item: BulletinItem | null | undefined): boolean {
+  if (!item) return false;
+  if (item.annual_avg_is_complete === false || item.annual_coverage?.is_complete === false) return false;
+  return item.annual_avg_is_complete === true || item.annual_coverage?.is_complete === true;
+}
+
 function formatAverageForExport(value: number | null, _hasStar: boolean): number | string {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "NC";
   return Number(Number(value).toFixed(2));
@@ -2095,6 +2101,7 @@ async function prepareDspsAnnualExport(params: {
 
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
 
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
@@ -2194,7 +2201,9 @@ async function prepareDspsAnnualExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Aucune MGA approximative à partir de trimestres partiels.
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
-      if (!annualForcedNc && annualAvg === null) missingAnnualResults = true;
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
+        missingAnnualResults = true;
+      }
 
       return {
         studentId,
@@ -2620,6 +2629,7 @@ async function prepareDespsDfaSummaryExport(params: {
 
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
 
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
@@ -2737,7 +2747,7 @@ async function prepareDespsDfaSummaryExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Aucune MGA approximative à partir de trimestres partiels.
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
-      if (!annualForcedNc && annualAvg === null) {
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
         return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
       }
 
@@ -3690,6 +3700,7 @@ async function prepareDespsOfficialAnnualExport(params: {
   const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
   if (!periods.length) return { error: "NO_PERIODS_FOUND", status: 404 };
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
   const { classes, error: classError } = await loadClasses({
@@ -3789,7 +3800,7 @@ async function prepareDespsOfficialAnnualExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Une MGA non fournie par les bulletins reste absente (jamais recalculée au hasard).
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
-      if (!annualForcedNc && annualAvg === null) {
+      if (!annualForcedNc && (annualAvg === null || !hasValidatedAnnualCoverage(lastItem))) {
         return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
       }
       const gender = getStudentGender({ meta, item: lastItem });
@@ -4132,6 +4143,7 @@ async function prepareRapportFOfficialExport(params: {
 }): Promise<PreparedWorkbook | { error: string; status: number }> {
   const { req, supabase, institutionId, institutionName, academicYear, classId } = params;
   const periods = await loadAcademicPeriods({ supabase, institutionId, academicYear });
+  if (periods.length < 3) return { error: "INCOMPLETE_ACADEMIC_YEAR", status: 422 };
   const displayPeriods = periods.slice(0, 3);
   const firstActiveDate = periods[0]?.start_date || `${academicYear.split("-")[0] || new Date().getFullYear()}-01-01`;
   const { classes, error: classError } = await loadClasses({
@@ -4198,7 +4210,7 @@ async function prepareRapportFOfficialExport(params: {
         .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
         .find(Boolean) || null;
       const annualAverage = isAdminAnnualForcedNc(referenceItem) ? null : cleanNumber(referenceItem?.annual_avg, 4);
-      if (!isAdminAnnualForcedNc(referenceItem) && annualAverage === null) {
+      if (!isAdminAnnualForcedNc(referenceItem) && (annualAverage === null || !hasValidatedAnnualCoverage(referenceItem))) {
         return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
       }
       // Aucune décision de conseil de classe ne peut être déduite d'un seuil arbitraire.
@@ -4695,7 +4707,8 @@ export async function GET(req: NextRequest) {
           UNKNOWN_GENDER: "Export bloqué : le sexe d'au moins un élève actif est absent ou non reconnu.",
           BULLETIN_FETCH_FAILED: "Export interrompu : impossible de récupérer tous les bulletins. Réessaie sans produire de fichier incomplet.",
           STUDENT_RESULTS_MISMATCH: "Export bloqué : les élèves des bulletins ne correspondent pas exactement à la liste active des classes.",
-          MISSING_ANNUAL_AVERAGE: "Export annuel bloqué : les moyennes annuelles ne sont pas toutes disponibles.",
+          MISSING_ANNUAL_AVERAGE: "Export annuel bloqué : une moyenne annuelle manque ou sa couverture n'est pas complète.",
+          INCOMPLETE_ACADEMIC_YEAR: "Export annuel bloqué : les trois trimestres n'existent pas pour cette année.",
           DFA_VALIDATION_REQUIRED: "Export annuel bloqué : décisions de fin d'année manquantes, non datées ou non reconnues. Validation du conseil requise.",
           DFA_DECISIONS_UNAVAILABLE: "Export annuel interrompu : impossible de consulter les décisions de fin d'année.",
           INVALID_PERIOD_REF: "Le trimestre sélectionné ne correspond pas à l'année scolaire.",
