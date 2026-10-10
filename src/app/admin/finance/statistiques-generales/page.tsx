@@ -252,33 +252,73 @@ export default function GeneralStatisticsPage() {
     return { girls, boys };
   }, [filtered]);
 
+  // Jusqu'à 3 critères, un titre lisible décrit la sélection. Au-delà,
+  // conserver le titre général et détailler intégralement les critères dessous.
+  // Les deux bornes d'âge constituent un seul critère.
   const printTitle = useMemo(() => {
-    const parts: string[] = [];
-    if (gender === "F") parts.push("FILLES");
-    else if (gender === "M") parts.push("GARÇONS");
-    else parts.push("ÉLÈVES");
-    if (level !== "all") parts.push("DU NIVEAU " + level);
+    const count = [
+      level !== "all",
+      boarding !== "all",
+      affectation !== "all",
+      scholarship !== "all",
+      gender !== "all",
+      language !== "all",
+      minAge !== "" || maxAge !== "",
+    ].filter(Boolean).length;
+
+    if (count === 0) return "LISTE GÉNÉRALE DES ÉLÈVES";
+    if (count >= 4) return "STATISTIQUES GÉNÉRALES";
+
+    const isFemale = gender === "F";
+    const noun = isFemale ? "FILLES" : gender === "M" ? "GARÇONS" : "ÉLÈVES";
+    const parts = [noun];
     if (boarding !== "all") parts.push(boarding === "yes" ? "INTERNES" : "EXTERNES");
-    if (affectation !== "all") parts.push(affectation === "yes" ? "AFFECTÉS" : "NON AFFECTÉS");
-    if (scholarship !== "all") parts.push(scholarship === "yes" ? "BOURSIERS" : "NON BOURSIERS");
-    if (language !== "all") parts.push("LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL"));
-    if (minAge || maxAge) parts.push(minAge && maxAge ? `DE ${minAge} À ${maxAge} ANS` : minAge ? `DE ${minAge} ANS ET PLUS` : `DE ${maxAge} ANS AU PLUS`);
-    return "LISTE DES " + parts.join(" ");
+    if (affectation !== "all") {
+      parts.push(affectation === "yes" ? (isFemale ? "AFFECTÉES" : "AFFECTÉS") : (isFemale ? "NON AFFECTÉES" : "NON AFFECTÉS"));
+    }
+    if (scholarship !== "all") {
+      parts.push(scholarship === "yes" ? (isFemale ? "BOURSIÈRES" : "BOURSIERS") : (isFemale ? "NON BOURSIÈRES" : "NON BOURSIERS"));
+    }
+
+    let title = "LISTE DES " + parts.join(" ");
+    if (level !== "all") title += " DE " + level;
+    if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
+    if (minAge || maxAge) {
+      const agePrefix = isFemale ? "ÂGÉES" : "ÂGÉS";
+      title += minAge && maxAge ? ` ${agePrefix} DE ${minAge} À ${maxAge} ANS`
+        : minAge ? ` ${agePrefix} DE ${minAge} ANS ET PLUS`
+        : ` ${agePrefix} DE ${maxAge} ANS AU PLUS`;
+    }
+    return title;
   }, [level, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
 
-  // Un critère fixé dans le filtre ne nécessite pas une colonne répétée à chaque ligne.
-  const printColumns = useMemo(() => [
-    { key: "number", label: "N°", weight: 4 },
-    { key: "matricule", label: "Matricule", weight: 12 },
-    { key: "name", label: "Nom et prénoms", weight: 31 },
-    { key: "class", label: "Classe", weight: 10 },
-    ...(gender === "all" ? [{ key: "gender", label: "Sexe", weight: 6 }] : []),
-    ...(!minAge && !maxAge ? [{ key: "age", label: "Âge", weight: 6 }] : []),
-    ...(boarding === "all" ? [{ key: "boarding", label: "Régime", weight: 10 }] : []),
-    ...(affectation === "all" ? [{ key: "affectation", label: "Affectation", weight: 12 }] : []),
-    ...(scholarship === "all" ? [{ key: "scholarship", label: "Bourse", weight: 10 }] : []),
-    ...(language === "all" ? [{ key: "language", label: "LV2", weight: 10 }] : []),
-  ], [gender, minAge, maxAge, boarding, affectation, scholarship, language]);
+  // Adapter les colonnes du PDF aux critères sélectionnés, en gardant toujours
+  // les colonnes d'identification. Sans critère de détail, conserver le tableau complet.
+  const printColumns = useMemo(() => {
+    const identity = [
+      { key: "number", label: "N°", weight: 4 },
+      { key: "matricule", label: "Matricule", weight: 12 },
+      { key: "name", label: "Nom et prénoms", weight: 31 },
+      { key: "class", label: "Classe", weight: 10 },
+    ];
+    const selected = [
+      ...(gender !== "all" ? [{ key: "gender", label: "Sexe", weight: 6 }] : []),
+      ...(minAge || maxAge ? [{ key: "age", label: "Âge", weight: 6 }] : []),
+      ...(boarding !== "all" ? [{ key: "boarding", label: "Régime", weight: 10 }] : []),
+      ...(affectation !== "all" ? [{ key: "affectation", label: "Affectation", weight: 12 }] : []),
+      ...(scholarship !== "all" ? [{ key: "scholarship", label: "Bourse", weight: 10 }] : []),
+      ...(language !== "all" ? [{ key: "language", label: "LV2", weight: 10 }] : []),
+    ];
+    const allDetails = [
+      { key: "gender", label: "Sexe", weight: 6 },
+      { key: "age", label: "Âge", weight: 6 },
+      { key: "boarding", label: "Régime", weight: 10 },
+      { key: "affectation", label: "Affectation", weight: 12 },
+      { key: "scholarship", label: "Bourse", weight: 10 },
+      { key: "language", label: "LV2", weight: 10 },
+    ];
+    return [...identity, ...(selected.length > 0 ? selected : allDetails)];
+  }, [gender, minAge, maxAge, boarding, affectation, scholarship, language]);
 
   const printValue = (student: Student, key: string, index: number): string | number => {
     switch (key) {
