@@ -38,12 +38,13 @@ await db.exec(await fs.readFile(new URL('../supabase/migrations/20261010033119_p
 await db.query('select parent_connect_grant_credits($1,$2,$3,$4,$5,$6)',[school,superAdmin,grantOp,year,2,'Ancien lot']);
 await db.query('select parent_connect_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[school,student,finance,op,'Parent Ange','cash','',null,year,'+2250700000000']);
 await db.exec(await fs.readFile(new URL('../supabase/migrations/20261010053906_parent_connect_flexible_amounts.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/migrations/20261010062246_parent_connect_activation_only.sql',import.meta.url),'utf8'));
 await test('migration : un ancien reçu garde ses montants et reçoit le lien vers son lot, sans crédit ajouté',async()=>{
  const p=(await db.query('select * from parent_connect_payments where id=$1',[op])).rows[0];
  assert.equal(p.amount,2000);assert.equal(p.school_share,500);assert.equal(p.nexa_share,1500);assert.equal(p.credit_grant_id,grantOp);
  assert.equal((await db.query('select count(*)::int as n from parent_connect_credit_grants')).rows[0].n,1);
 });
-await db.exec('truncate parent_connect_accounts,parent_connect_payments,parent_connect_school_settings,parent_connect_credit_grants,parent_connect_remittances,parent_connect_bulk_operations,parent_connect_phone_changes');
+await db.exec('truncate parent_connect_activations,parent_connect_accounts,parent_connect_payments,parent_connect_school_settings,parent_connect_credit_grants,parent_connect_remittances,parent_connect_bulk_operations,parent_connect_phone_changes');
 
 // Each deliberate refusal rolls back only that statement, like separate HTTP transactions.
 const rawQuery = db.query.bind(db);
@@ -285,4 +286,82 @@ await scenario('nouveaux points serveur : aucun rôle client ne peut appeler les
  }
 });
 
+const manualGrant=({actor=superAdmin,quantity=2,operation=grantOp,academicYear=year}={})=>value('select parent_connect_grant_activation_credits($1,$2,$3,$4,$5) as value',[school,actor,operation,academicYear,quantity]);
+const activate=({actor=finance,studentId=student,schoolId=school,operation=op,academicYear=year}={})=>value('select parent_connect_activate($1,$2,$3,$4,$5) as value',[schoolId,studentId,actor,operation,academicYear]);
+await scenario('activation directe : un crédit, aucun paiement, aucun téléphone requis, fin scolaire',async()=>{
+ await db.exec('set local role service_role');const g=await manualGrant();assert.equal(g.amount_received,null);const a=await activate();
+ assert.equal(a.credit_grant_id,grantOp);assert.equal(a.created_by,finance);assert.equal(a.student_name,'KOUADIO ANGE');
+ assert.equal((await summary()).credits_available,1);assert.equal((await summary()).credits_used,1);assert.equal((await summary()).payments_count,0);assert.equal((await summary()).collected,0);assert.equal((await summary()).nexa_received,0);
+ assert.equal(await value('select source as value from parent_connect_accounts where student_id=$1',[student]),'activation');
+ assert.equal(await value('select sms_phone_e164 as value from parent_connect_accounts where student_id=$1',[student]),null);
+ assert.equal(await value("select ends_at=((y.end_date+1)::timestamp at time zone 'UTC') as value from parent_connect_activations a join academic_years y on y.institution_id=a.institution_id where a.id=$1",[op]),true);
+});
+await scenario('activation : reprises et nouveau clic sur le même élève ne consomment pas deux crédits',async()=>{
+ await manualGrant();const first=await activate();assert.equal((await activate()).id,first.id);
+ assert.equal((await activate({operation:op2})).already_active,true);
+ await assert.rejects(activate({operation:op,studentId:second}),/OPERATION_CONFLICT/);
+ assert.equal((await summary()).credits_used,1);assert.equal((await summary()).credits_available,1);
+});
+await scenario('activation : aucun crédit, mauvaise école, aucun matricule ou inscription terminée bloquent sans écriture',async()=>{
+ await assert.rejects(activate(),/NO_CREDITS/);await manualGrant();
+ await assert.rejects(activate({studentId:otherStudent}),/STUDENT_NOT_FOUND/);
+ await assert.rejects(activate({studentId:blank}),/MATRICULE_REQUIRED/);
+ await db.query('update class_enrollments set end_date=current_date where student_id=$1',[student]);
+ await assert.rejects(activate(),/STUDENT_NOT_ENROLLED/);
+ assert.equal((await summary()).credits_used,0);assert.equal(await value('select count(*)::int as value from parent_connect_activations'),0);
+});
+await scenario('activation : crédits et contrôle restent réservés au super admin, correspondant en consultation',async()=>{
+ for(const actor of [admin,finance,correspondent])await assert.rejects(manualGrant({actor}),/FORBIDDEN/);
+ await manualGrant();await assert.rejects(activate({actor:correspondent}),/FORBIDDEN/);
+ await activate({actor:admin});assert.equal((await summary()).subscriptions_active,1);
+});
+await scenario('activation : dernier crédit partagé avec les anciens clients sans dépassement',async()=>{
+ await grant({quantity:1});await activate();
+ await assert.rejects(activate({studentId:second,operation:op2}),/NO_CREDITS/);
+ await assert.rejects(collect({studentId:second,operation:op2}),/NO_CREDITS/);
+ assert.equal((await summary()).credits_available,0);assert.equal((await summary()).payments_count,0);
+});
+await scenario('activation : un paiement historique et une activation utilisent le même lot une seule fois',async()=>{
+ await grant({quantity:2});await collect();await activate({studentId:second,operation:op2});
+ assert.equal((await summary()).credits_used,2);assert.equal((await summary()).credits_available,0);assert.equal((await summary()).payments_count,1);
+});
+await scenario('activation : lot manuel ne peut pas fabriquer un encaissement par un ancien client',async()=>{
+ await manualGrant();await assert.rejects(collect(),/INVALID_AMOUNT/);
+ assert.equal((await summary()).payments_count,0);assert.equal((await summary()).credits_used,0);
+ await assert.rejects(grant({quantity:2}),/OPERATION_CONFLICT/);
+});
+await scenario('crédits manuels : quantité contrôlée, reprise idempotente et aucune somme inventée',async()=>{
+ for(const quantity of [0,-1,1000001])await assert.rejects(manualGrant({quantity}),/INVALID_GRANT/);
+ await manualGrant({quantity:20});await manualGrant({quantity:20});
+ await assert.rejects(manualGrant({quantity:21}),/OPERATION_CONFLICT/);
+ assert.equal((await summary()).credits_granted,20);assert.equal((await summary()).nexa_received,0);
+ assert.equal(await value('select count(*)::int as value from parent_connect_remittances'),0);
+});
+await scenario('activation : pause, changement d’année et cap approuvé restent appliqués',async()=>{
+ await manualGrant();const approved=await value('select approved_ends_at as value from parent_connect_school_settings where institution_id=$1',[school]);
+ await db.query('update parent_connect_school_settings set activations_paused=true where institution_id=$1',[school]);
+ await assert.rejects(activate(),/ACTIVATIONS_PAUSED/);
+ await db.query('update parent_connect_school_settings set activations_paused=false where institution_id=$1',[school]);
+ await assert.rejects(activate({academicYear:'2027-2028'}),/YEAR_CHANGED/);
+ await db.query('update academic_years set end_date=end_date+100 where institution_id=$1',[school]);
+ const a=await activate();assert.equal(Date.parse(a.ends_at),Date.parse(approved));
+});
+await scenario('activation collective existante : aucun crédit ni journal individuel supplémentaire',async()=>{
+ await bulk();const a=await activate();assert.equal(a.already_active,true);
+ assert.equal((await summary()).school_covered,2);assert.equal((await summary()).credits_used,0);
+ assert.equal(await value('select count(*)::int as value from parent_connect_activations'),0);
+});
+await scenario('activation : ajout du numéro ensuite, SMS désactivés et push conservés',async()=>{
+ await db.query('insert into institution_notification_channel_settings(institution_id) values($1)',[school]);
+ await manualGrant();await activate();await setPhone({operation:op2});
+ assert.deepEqual((await db.query('select push_enabled,sms_premium_enabled,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled from institution_notification_channel_settings')).rows,[{push_enabled:true,sms_premium_enabled:false,sms_absence_enabled:false,sms_late_enabled:false,sms_notes_digest_enabled:false}]);
+ assert.equal((await summary()).credits_used,1);assert.equal((await summary()).collected,0);
+});
+await scenario('activation : journal et fonctions inaccessibles aux rôles clients',async()=>{
+ for(const role of ['anon','authenticated']) {
+  for(const fn of ['parent_connect_activate(uuid,uuid,uuid,uuid,text)','parent_connect_grant_activation_credits(uuid,uuid,uuid,text,integer,text)']) assert.equal(await value('select has_function_privilege($1,$2,\'EXECUTE\') as value',[role,'public.'+fn]),false);
+  assert.equal(await value('select has_table_privilege($1,\'public.parent_connect_activations\',\'SELECT\') as value',[role]),false);
+ }
+ assert.equal(await value("select relrowsecurity as value from pg_class where relname='parent_connect_activations'"),true);
+});
 await db.close();

@@ -49,11 +49,11 @@ async function mount({ canCollect = true, canConfigure = true, failOnce = false,
       if (body.action === 'phone') { items.find(s=>s.id===body.student_id).sms_phone_e164 = '+2250700000000'; return Response.json({phone_change:{}}); }
       const student = items.find((s) => s.id === body.student_id);
       student.parent_connect = { status: 'active', allowed: true, ends_at: endsAt };
-      return Response.json({ payment: { ends_at: endsAt, receipt_no: 'PC-TEST' } });
+      return Response.json({ activation: { ends_at: endsAt } });
     }
     const q = (u.searchParams.get('q') || '').toLowerCase();
     const filtered = items.filter((s) => (!u.searchParams.get('level') || s.level === u.searchParams.get('level')) && (!u.searchParams.get('class_id') || s.class_id === u.searchParams.get('class_id')) && (!q || `${s.full_name} ${s.matricule}`.toLowerCase().includes(q)));
-    return Response.json({ institution_name: 'École test', enforcement_enabled: true, can_collect: canCollect, can_configure: canConfigure, academic_year: '2026-2027', school_end_date: '2027-07-11', activations_paused: false, classes: [{ id: 'c1', label: '6ème A', level: '6ème', academic_year: '2026-2027' }, { id: 'c2', label: '5ème B', level: '5ème', academic_year: '2026-2027' }], items: filtered, page: 0, total: filtered.length, roster: { eligible_count: 513, skipped_no_matricule: 16 }, summary: { subscriptions_active: 0, collected: 0, school_share: 0, nexa_share: 0, credits_available: credits, nexa_received: 15000, pending_remittances: 0, school_covered: covered ? 1 : 0 }, payments: [], remittances: [] });
+    return Response.json({ institution_name: 'École test', enforcement_enabled: true, can_activate: canCollect, can_configure: canConfigure, academic_year: '2026-2027', school_end_date: '2027-07-11', activations_paused: false, classes: [{ id: 'c1', label: '6ème A', level: '6ème', academic_year: '2026-2027' }, { id: 'c2', label: '5ème B', level: '5ème', academic_year: '2026-2027' }], items: filtered, page: 0, total: filtered.length, roster: { eligible_count: 513, skipped_no_matricule: 16 }, summary: { subscriptions_active: 0, collected: 0, school_share: 0, nexa_share: 0, credits_available: credits, nexa_received: 15000, pending_remittances: 0, school_covered: covered ? 1 : 0 }, payments: [], remittances: [] });
   };
   const container = document.createElement('div'); document.body.appendChild(container);
   const root = createRoot(container);
@@ -71,13 +71,13 @@ async function change(element, value) {
 async function click(element) { assert.ok(element, 'bouton trouvé'); await act(async () => element.click()); }
 const button = (container, text) => [...container.querySelectorAll('button')].find((b) => b.textContent.includes(text));
 
-await test('niveau puis classe affiche la liste et active le bon matricule après paiement', async () => {
+await test('niveau puis classe affiche la liste et active le bon matricule en un clic sans paiement', async () => {
   const ui = await mount();
   try {
     assert.ok(ui.container.textContent.includes('Élèves activés'));
     assert.ok(ui.container.textContent.includes('529 élèves inscrits cette année'));
     assert.ok(ui.container.textContent.includes('16 sans matricule'));
-    for(const label of ['Part établissement','Reçu par Nexa','Versements à confirmer','par enfant','2 000','1 500']) assert.ok(!ui.container.textContent.includes(label), label);
+    for(const label of ['Part établissement','Reçu par Nexa','Versements à confirmer','par enfant','2 000','1 500','Encaisser','encaissement','Montant reçu','Payeur','Versements à Nexa']) assert.ok(!ui.container.textContent.includes(label), label);
     assert.ok(ui.container.textContent.includes('KOUADIO ANGE'));
     const selects = ui.container.querySelectorAll('form select');
     await change(selects[0], '6ème');
@@ -87,18 +87,13 @@ await test('niveau puis classe affiche la liste et active le bon matricule aprè
     assert.equal(ui.calls.at(-1).params.get('class_id'), 'c1');
     assert.ok(!ui.container.textContent.includes('YAO ALICE'));
     assert.ok(ui.container.textContent.includes('529 élèves inscrits cette année'));
-    await click(button(ui.container, 'Encaisser et activer'));
-    assert.equal(ui.container.querySelector('dialog').open, true);
-    assert.equal(ui.calls.filter((c) => c.method === 'POST').length, 0);
-    await change(ui.container.querySelector('dialog input'), 'Parent Ange');
-    await change(ui.container.querySelector('dialog input[name=amount]'), '3500');
-    await change(ui.container.querySelector('dialog input[type=tel]'), '07 00 00 00 00');
-    await act(async () => ui.container.querySelector('dialog form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    await click(button(ui.container, 'Activer'));
+    assert.equal(ui.container.querySelector('dialog').open, false);
     const payment = ui.calls.find((c) => c.method === 'POST').body;
-    assert.equal(payment.amount, 3500); assert.equal(payment.student_id, 's1'); assert.equal(payment.payer_name, 'Parent Ange'); assert.equal(payment.payment_method, 'cash');
-    assert.equal(payment.sms_phone, '07 00 00 00 00'); assert.equal(payment.expected_ends_at, null); assert.match(payment.operation_id, /^[0-9a-f-]{36}$/);
-    assert.ok(ui.container.textContent.includes('Matricule activé'));
-    assert.equal(button(ui.container, 'Déjà couvert').disabled, true);
+    assert.equal(payment.action, 'activate'); assert.equal(payment.student_id, 's1'); for (const key of ['amount','payer_name','payment_method','sms_phone']) assert.ok(!(key in payment));
+    assert.equal(ui.calls.filter(c=>c.method==='POST').length,1); assert.match(payment.operation_id, /^[0-9a-f-]{36}$/);
+    assert.ok(ui.container.textContent.includes('matricule activé'));
+    assert.equal(button(ui.container, 'Déjà activé').disabled, true);
     assert.ok(ui.container.textContent.includes('11/07/2027'));
     assert.equal(payment.academic_year, '2026-2027');
     assert.ok(!ui.container.textContent.includes('12 mois'));
@@ -118,31 +113,28 @@ await test('le Correspondant consulte sans boutons d’encaissement ni changemen
   const ui = await mount({ canCollect: false, canConfigure: false });
   try {
     assert.ok(ui.container.textContent.includes('Consultation des abonnements'));
-    assert.equal(button(ui.container, 'Encaisser et activer'), undefined);
+    assert.equal(button(ui.container, 'Activer'), undefined);
     assert.equal(button(ui.container, 'Revenir à l’accès actuel'), undefined);
     assert.equal(ui.calls.filter((c) => c.method !== 'GET').length, 0);
   } finally { await ui.close(); }
 });
-await test('une coupure permet de réessayer avec le même identifiant de paiement', async () => {
+await test('une coupure permet de réessayer avec le même identifiant d’activation', async () => {
   const ui = await mount({ failOnce: true });
   try {
-    await click(button(ui.container, 'Encaisser et activer'));
-    await change(ui.container.querySelector('dialog input'), 'Parent Ange');
-    await change(ui.container.querySelector('dialog input[name=amount]'), '3500');
-    await change(ui.container.querySelector('dialog input[type=tel]'), '07 00 00 00 00');
-    const submit = async () => act(async () => ui.container.querySelector('dialog form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
-    await submit(); assert.ok(ui.container.textContent.includes('Connexion interrompue'));
+    await click(button(ui.container, 'Activer'));
+    const submit = async () => click(button(ui.container, 'Activer'));
+    assert.ok(ui.container.textContent.includes('Connexion interrompue'));
     await submit();
     const payments = ui.calls.filter((c) => c.method === 'POST');
     assert.equal(payments.length, 2); assert.equal(payments[0].body.operation_id, payments[1].body.operation_id);
-    assert.ok(ui.container.textContent.includes('Matricule activé'));
+    assert.ok(ui.container.textContent.includes('matricule activé'));
   } finally { await ui.close(); }
 });
-await test('sans crédits, aucun encaissement ne peut être lancé', async () => {
- const ui = await mount({credits:0});try { assert.equal(button(ui.container,'Encaisser et activer').disabled,true); await click(button(ui.container,'Encaisser et activer')); assert.equal(ui.container.querySelector('dialog').open,false); assert.ok(ui.container.textContent.includes('Aucun crédit disponible')); }finally {await ui.close();}
+await test('sans crédits, aucune activation ne peut être lancé', async () => {
+ const ui = await mount({credits:0});try { assert.equal(button(ui.container,'Activer').disabled,true); await click(button(ui.container,'Activer')); assert.equal(ui.container.querySelector('dialog').open,false); assert.ok(ui.container.textContent.includes('Aucun crédit disponible')); }finally {await ui.close();}
 });
 await test('un élève pris en charge par l’école ne paie pas une deuxième fois',async()=>{
- const ui=await mount({covered:true});try{ assert.equal(button(ui.container,'Déjà couvert').disabled,true); assert.ok(ui.container.textContent.includes('Pris en charge par l’établissement'));assert.equal(ui.calls.filter(c=>c.method==='POST').length,0); }finally{await ui.close();}
+ const ui=await mount({covered:true});try{ assert.equal(button(ui.container,'Déjà activé').disabled,true); assert.ok(ui.container.textContent.includes('Pris en charge par l’établissement'));assert.equal(ui.calls.filter(c=>c.method==='POST').length,0); }finally{await ui.close();}
 });
 await test('CSCA couvert sans crédit : ajouter le numéro sans encaisser ni activer les SMS',async()=>{
  const ui=await mount({covered:true,credits:0});try {
@@ -150,7 +142,7 @@ await test('CSCA couvert sans crédit : ajouter le numéro sans encaisser ni act
   assert.ok(!ui.container.querySelector('dialog').textContent.includes('Mode de règlement'));
   await act(async()=>ui.container.querySelector('dialog form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));
   const body=ui.calls.find(c=>c.method==='POST').body;assert.equal(body.action,'phone');assert.equal(body.expected_phone,null);assert.ok(!('payment_method' in body));
-  assert.ok(ui.container.textContent.includes('Aucun paiement ni crédit consommé'));assert.ok(ui.container.textContent.includes('+2250700000000'));
+  assert.ok(ui.container.textContent.includes('Numéro SMS enregistré')); assert.ok(ui.container.textContent.includes('+2250700000000'));
  } finally {await ui.close();}
 });
 await window.happyDOM.abort();
