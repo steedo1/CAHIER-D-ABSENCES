@@ -1671,6 +1671,23 @@ function validateOfficialStudentRegistry(registry: Map<string, StudentMetaRow>):
   return null;
 }
 
+// Les élèves absents de la réponse de bulletins ne doivent jamais disparaître
+// silencieusement du fichier : le statut NC doit être présent explicitement.
+function classBulletinMatchesRegistry(
+  registry: Map<string, StudentMetaRow>,
+  classId: string,
+  bulletin: BulletinResponse,
+): boolean {
+  const expected = new Set<string>();
+  for (const meta of registry.values()) {
+    if (meta.class_id === classId) expected.add(String(meta.student_id));
+  }
+  const received = new Set<string>((bulletin.items || []).map((item) => String(item.student_id)));
+  if (received.size !== expected.size) return false;
+  for (const studentId of expected) if (!received.has(studentId)) return false;
+  return true;
+}
+
 async function prepareLegacyExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -1962,6 +1979,9 @@ async function prepareDspsNotesExport(params: {
 
     // Une indisponibilité du serveur n'est pas une moyenne NC.
     if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+    }
     if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
@@ -2084,6 +2104,9 @@ async function prepareDspsAnnualExport(params: {
     if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
       return { error: "BULLETIN_FETCH_FAILED", status: 503 };
     }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -2129,6 +2152,9 @@ async function prepareDspsAnnualExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Aucune MGA approximative à partir de trimestres partiels.
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && annualAvg === null) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
 
       return {
         studentId,
@@ -2272,6 +2298,9 @@ async function prepareDespsTermSummaryExport(params: {
     });
 
     if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+    }
     const itemByStudent = new Map<string, BulletinItem>();
     for (const item of bulletinData?.items || []) itemByStudent.set(String(item.student_id), item);
 
@@ -2424,6 +2453,9 @@ async function prepareDespsSubjectSummaryExport(params: {
     });
 
     if (!bulletinData) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
+    if (!classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData)) {
+      return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+    }
     if (!bulletinData.items?.length) continue;
 
     const { subjectNameById, componentById } = getSubjectMaps(bulletinData);
@@ -2605,6 +2637,9 @@ async function prepareDespsDfaSummaryExport(params: {
     if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
       return { error: "BULLETIN_FETCH_FAILED", status: 503 };
     }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -2654,6 +2689,9 @@ async function prepareDespsDfaSummaryExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Aucune MGA approximative à partir de trimestres partiels.
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && annualAvg === null) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
 
       const decision = dfaAutoDecision(annualAvg);
 
@@ -3342,6 +3380,10 @@ async function collectOfficialTermStats(params: {
 
   if (classBulletins.some(({ bulletinData }) => !bulletinData)) return { error: "BULLETIN_FETCH_FAILED", status: 503 };
 
+  if (classBulletins.some(({ currentClassId, bulletinData }) =>
+    !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinData!)
+  )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+
   for (const { cls, currentClassId, bulletinData } of classBulletins) {
     const levelKey = officialLevelKey(cls);
     const cycleKey = officialCycleKey(levelKey);
@@ -3631,6 +3673,10 @@ async function prepareDespsOfficialAnnualExport(params: {
     return { error: "BULLETIN_FETCH_FAILED", status: 503 };
   }
 
+  if (classBulletins.some(({ currentClassId, bulletinsByPeriod }) => displayPeriods.some((period) =>
+    !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+  ))) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
+
   for (const { cls, currentClassId, bulletinsByPeriod } of classBulletins) {
     const levelKey = officialLevelKey(cls);
     const studentIds = new Set<string>();
@@ -3675,6 +3721,9 @@ async function prepareDespsOfficialAnnualExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Une MGA non fournie par les bulletins reste absente (jamais recalculée au hasard).
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
+      if (!annualForcedNc && annualAvg === null) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
       const gender = getStudentGender({ meta, item: lastItem });
       addOfficialDfa(ensure(levelKey), annualAvg, gender);
 
@@ -4045,6 +4094,9 @@ async function prepareRapportFOfficialExport(params: {
     if (displayPeriods.some((period) => !bulletinsByPeriod.has(period.id))) {
       return { error: "BULLETIN_FETCH_FAILED", status: 503 };
     }
+    if (displayPeriods.some((period) =>
+      !classBulletinMatchesRegistry(studentMetaByKey, currentClassId, bulletinsByPeriod.get(period.id)!)
+    )) return { error: "STUDENT_RESULTS_MISMATCH", status: 422 };
 
     const studentIds = new Set<string>();
     const itemsByPeriodStudent = new Map<string, BulletinItem>();
@@ -4069,11 +4121,16 @@ async function prepareRapportFOfficialExport(params: {
         const item = itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null;
         return item && !isAdminForcedNc(item) ? cleanNumber(item.general_avg, 2) : null;
       });
-      const valid = avgs.filter((v): v is number => v !== null && Number.isFinite(Number(v)));
-      const annualAverage = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null;
-      const dfa = annualAverage === null ? "" : annualAverage >= 10 ? "Admis" : "Redouble";
-      const birthdate = getStudentBirthdate(meta, [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null);
-      const referenceItem = [...displayPeriods].reverse().map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null).find(Boolean) || null;
+      const referenceItem = [...displayPeriods].reverse()
+        .map((period) => itemsByPeriodStudent.get(`${period.id}__${studentId}`) || null)
+        .find(Boolean) || null;
+      const annualAverage = isAdminAnnualForcedNc(referenceItem) ? null : cleanNumber(referenceItem?.annual_avg, 4);
+      if (!isAdminAnnualForcedNc(referenceItem) && annualAverage === null) {
+        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
+      }
+      // Aucune décision de conseil de classe ne peut être déduite d'un seuil arbitraire.
+      const dfa = "";
+      const birthdate = getStudentBirthdate(meta, referenceItem);
       rows.push([
         line,
         meta?.matricule || "",
@@ -4562,6 +4619,7 @@ export async function GET(req: NextRequest) {
           DUPLICATE_MATRICULE: "Export bloqué : un matricule national apparaît plusieurs fois dans les classes sélectionnées.",
           UNKNOWN_GENDER: "Export bloqué : le sexe d'au moins un élève actif est absent ou non reconnu.",
           BULLETIN_FETCH_FAILED: "Export interrompu : impossible de récupérer tous les bulletins. Réessaie sans produire de fichier incomplet.",
+          STUDENT_RESULTS_MISMATCH: "Export bloqué : les élèves des bulletins ne correspondent pas exactement à la liste active des classes.",
           MISSING_ANNUAL_AVERAGE: "Export annuel bloqué : les moyennes annuelles ne sont pas toutes disponibles.",
           INVALID_PERIOD_REF: "Le trimestre sélectionné ne correspond pas à l'année scolaire.",
         } as Record<string, string>)[prepared.error] || prepared.error,
