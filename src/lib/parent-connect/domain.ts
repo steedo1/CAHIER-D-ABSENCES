@@ -1,6 +1,3 @@
-export const PARENT_CONNECT_PRICE = 2000;
-export const PARENT_CONNECT_SCHOOL_SHARE = 500;
-export const PARENT_CONNECT_NEXA_SHARE = 1500;
 export const PARENT_CONNECT_READ_ROLES = ["super_admin", "founder", "admin", "finance_manager", "file_correspondent"] as const;
 export const PARENT_CONNECT_WRITE_ROLES = ["super_admin", "founder", "admin", "finance_manager"] as const;
 export const PARENT_CONNECT_SETTINGS_ROLES = ["super_admin"] as const;
@@ -23,8 +20,8 @@ export function parentConnectStatus(enforced: boolean, endsAt?: string | null, n
 
 export function parentConnectMessage(status: ParentConnectStatus) {
   return status.status === "expired"
-    ? "Parent Connect a expiré. Renouvelez l’abonnement de 2 000 FCFA auprès de l’établissement."
-    : "Ce matricule n’est pas activé pour Parent Connect. Réglez l’abonnement de 2 000 FCFA auprès de l’établissement.";
+    ? "Parent Connect a expiré. Renouvelez l’abonnement auprès de l’établissement."
+    : "Ce matricule n’est pas activé pour Parent Connect. Contactez l’établissement pour activer l’abonnement.";
 }
 
 export function hasParentConnectRole(roles: Iterable<string>, allowed: readonly string[]) {

@@ -34,6 +34,17 @@ await db.exec(`
  grant select on public.user_roles,public.profiles,public.academic_years,public.classes,public.class_enrollments,public.institutions to service_role;
 `);
 await db.exec(await fs.readFile(new URL('../supabase/migrations/20261010033119_parent_connect_school_payment.sql',import.meta.url),'utf8'));
+// Seed an actual legacy receipt before applying the upgrade to verify historical preservation.
+await db.query('select parent_connect_grant_credits($1,$2,$3,$4,$5,$6)',[school,superAdmin,grantOp,year,2,'Ancien lot']);
+await db.query('select parent_connect_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[school,student,finance,op,'Parent Ange','cash','',null,year,'+2250700000000']);
+await db.exec(await fs.readFile(new URL('../supabase/migrations/20261010053906_parent_connect_flexible_amounts.sql',import.meta.url),'utf8'));
+await test('migration : un ancien reçu garde ses montants et reçoit le lien vers son lot, sans crédit ajouté',async()=>{
+ const p=(await db.query('select * from parent_connect_payments where id=$1',[op])).rows[0];
+ assert.equal(p.amount,2000);assert.equal(p.school_share,500);assert.equal(p.nexa_share,1500);assert.equal(p.credit_grant_id,grantOp);
+ assert.equal((await db.query('select count(*)::int as n from parent_connect_credit_grants')).rows[0].n,1);
+});
+await db.exec('truncate parent_connect_accounts,parent_connect_payments,parent_connect_school_settings,parent_connect_credit_grants,parent_connect_remittances,parent_connect_bulk_operations,parent_connect_phone_changes');
+
 // Each deliberate refusal rolls back only that statement, like separate HTTP transactions.
 const rawQuery = db.query.bind(db);
 db.query = async (...args) => {
@@ -231,6 +242,47 @@ await scenario('SMS désactivé par événement et panne SMS : l’appel et ses 
  await db.query('update institution_notification_channel_settings set sms_absence_enabled=true');
  await db.exec(`alter table notifications_queue add constraint fixture_sms_failure check (channels <> '["sms"]'::jsonb)`);
  await mark();assert.equal(await value('select count(*)::int as value from attendance_marks'),2);assert.equal(await value('select count(*)::int as value from notifications_queue'),2);
+});
+
+
+const grantAtPrice=({actor=superAdmin,quantity=1,amount=1200,operation=grantOp,remittance=null}={})=>value('select parent_connect_grant_credits_at_price($1,$2,$3,$4,$5,$6,$7,$8) as value',[school,actor,operation,year,quantity,'Contrat vérifié',amount,remittance]);
+const collectAtPrice=({studentId=student,actor=finance,amount=3500,operation=op}={})=>value('select parent_connect_collect_at_price($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as value',[school,studentId,actor,operation,'Parent Ange','cash','',amount,null,year,'+2250700000000']);
+await scenario('tarifs libres : école encaisse son prix, Nexa confirme un autre montant sans changer le crédit consommé',async()=>{
+ await remit(2600);await grantAtPrice({quantity:2,amount:2600,remittance:op});
+ const p=await collectAtPrice({amount:3500,operation:op2});assert.equal(p.amount,3500);assert.equal(p.nexa_share,1300);assert.equal(p.school_share,2200);assert.equal(p.credit_grant_id,grantOp);
+ const state=await summary();assert.equal(state.credits_used,1);assert.equal(state.credits_available,1);assert.equal(state.nexa_received,2600);
+ await grantAtPrice({amount:1000,operation:op3});
+ assert.equal(await value('select nexa_share as value from parent_connect_payments where id=$1',[op2]),1300);
+});
+await scenario('montant reçu libre : les fractions du lot sont réparties exactement en FCFA sans perte',async()=>{
+ await grantAtPrice({quantity:2,amount:2601});const a=await collectAtPrice();const b=await collectAtPrice({studentId:second,operation:op2});
+ assert.equal(a.nexa_share,1301);assert.equal(b.nexa_share,1300);assert.equal(a.nexa_share+b.nexa_share,2601);
+ assert.equal((await summary()).credits_available,0);
+});
+await scenario('nouveaux tarifs : refus des rôles école, montant invalide et paiement insuffisant sans effets partiels',async()=>{
+ for(const actor of [admin,finance,correspondent])await assert.rejects(grantAtPrice({actor}),/FORBIDDEN/);
+ for(const amount of [0,-1,2147483648])await assert.rejects(grantAtPrice({amount}),/INVALID_GRANT/);
+ await grantAtPrice({amount:1300});await assert.rejects(collectAtPrice({actor:correspondent}),/FORBIDDEN/);
+ await assert.rejects(collectAtPrice({amount:1200}),/INVALID_AMOUNT/);await assert.rejects(collectAtPrice({amount:0}),/INVALID_AMOUNT/);
+ assert.equal((await summary()).payments_count,0);assert.equal((await summary()).credits_available,1);
+});
+await scenario('tarifs libres : reprise idempotente et montant changé refusé, une seule consommation',async()=>{
+ await grantAtPrice();await grantAtPrice();await assert.rejects(grantAtPrice({amount:1100}),/OPERATION_CONFLICT/);
+ const p=await collectAtPrice();assert.equal((await collectAtPrice()).id,p.id);await assert.rejects(collectAtPrice({amount:3600}),/OPERATION_CONFLICT/);
+ assert.equal((await summary()).credits_used,1);assert.equal((await summary()).collected,3500);
+});
+await scenario('compteur activés : exclure un dossier sorti ou désinscrit sans effacer son reçu',async()=>{
+ await grantAtPrice();await collectAtPrice();assert.equal((await summary()).subscriptions_active,1);
+ await db.query('update students set lifecycle_status=$1 where id=$2',['exited',student]);assert.equal((await summary()).subscriptions_active,0);
+ assert.equal((await summary()).collected,3500);assert.equal((await summary()).credits_used,1);
+ await db.query('update students set lifecycle_status=$1 where id=$2',['active',student]);await db.query('update class_enrollments set end_date=current_date where student_id=$1',[student]);
+ assert.equal((await summary()).subscriptions_active,0);assert.equal((await summary()).payments_count,1);
+});
+await scenario('nouveaux points serveur : aucun rôle client ne peut appeler les fonctions de tarifs',async()=>{
+ for(const role of ['anon','authenticated']) {
+  assert.equal(await value("select has_function_privilege($1,'public.parent_connect_collect_at_price(uuid,uuid,uuid,uuid,text,text,text,integer,timestamptz,text,text)','EXECUTE') as value",[role]),false);
+  assert.equal(await value("select has_function_privilege($1,'public.parent_connect_grant_credits_at_price(uuid,uuid,uuid,text,integer,text,bigint,uuid)','EXECUTE') as value",[role]),false);
+ }
 });
 
 await db.close();

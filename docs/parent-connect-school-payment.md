@@ -1,74 +1,59 @@
-# Parent Connect : crédits prépayés et année scolaire
+# Parent Connect : activations et année scolaire
 
-Cette évolution a été commencée depuis le commit de production `d89a461e2184de5c29629201cb7a765a738c1f85` sur `reprise-propre-5418ce7-20260729`. La compatibilité est aussi vérifiée avec les changements publiés depuis, dont le retrait ciblé des anciennes actions PWA (`6e78dc72`). Le registre Parent Connect reste séparé de la scolarité. La connexion conserve le matricule actuel, sans nouveau code.
+Cette correction part du commit publié `5ec6b8cc0593a652180731fcfe0d0146d06f8b3a` sur `reprise-propre-5418ce7-20260729`. Le registre reste distinct de la scolarité. La connexion conserve le matricule actuel.
 
-## Période scolaire
+## Période
 
-L’abonnement couvre uniquement **l’année scolaire courante, jusqu’à sa date de fin configurée dans `academic_years`, dernier jour inclus**. Il ne dure pas douze mois. La borne stockée est minuit UTC après le dernier jour. Une année absente, ambiguë ou terminée bloque les nouvelles activations. Un enfant déjà couvert ne peut pas payer une deuxième fois pour cette année.
+L’abonnement couvre l’année scolaire courante jusqu’à sa date de fin configurée, dernier jour inclus. Il ne dure pas douze mois. La borne stockée est minuit UTC après le dernier jour. Une année absente, ambiguë ou terminée bloque les nouvelles activations. Un enfant déjà couvert ne paie pas une deuxième fois pour cette année.
 
-Le super admin approuve la période lors de la confirmation des crédits ou d’une prise en charge collective. Allonger le calendrier à l’école ne prolonge pas cette période approuvée ; raccourcir le calendrier réduit immédiatement l’accès. Une nouvelle année exige une nouvelle couverture. Les crédits inutilisés restent dans l’historique de leur année et ne sont pas reportés automatiquement.
+Le super admin approuve la période lors de l’attribution des crédits ou d’une prise en charge collective. Allonger le calendrier à l’école ne prolonge pas cette période approuvée ; le raccourcir réduit immédiatement l’accès. Une nouvelle année exige une nouvelle couverture. Les crédits inutilisés restent dans leur année.
 
-Le calendrier du CSCA consulté pendant la préparation indique le **11 juillet 2027** pour 2026-2027. Aucune couverture réelle n’a été ajoutée pendant les tests.
+## Écran de suivi
 
-## Part Nexa prépayée
+Admin : Administration & services → Parent Connect. Financier : Gestion financière → Parent Connect. Correspondant fichier : Organisation scolaire → Parent Connect. Sur mobile, Parent Connect est directement accessible.
 
-1. L’école verse à l’avance **1 500 FCFA par crédit** à Nexa.
-2. L’admin ou le financier peut déclarer ce versement et sa référence. Cette déclaration n’est pas une preuve de réception et ne crée aucun crédit.
-3. Dans **Super admin → Parent Connect → établissement → Gérer**, le super admin vérifie le paiement reçu puis confirme la déclaration, ou choisit **Attribuer des crédits**.
-4. Il confirme quantité, référence et réception effective. Une déclaration ne peut être confirmée deux fois. La confirmation réserve aussi l’accès aux matricules activés.
-5. L’école encaisse ensuite **2 000 FCFA par enfant**, active son matricule et consomme **un crédit** de cette année. Elle conserve **500 FCFA** ; Nexa a déjà reçu sa part.
+Le compteur principal est **Élèves activés**. L’effectif inscrit de l’année et le nombre sans matricule expliquent l’écart. Ces nombres restent ceux de toute l’école quand on recherche un nom, un niveau ou une classe. Les anciens tarifs fixes et cartes financières sont retirés du suivi ; reçus et journaux présentent uniquement les opérations réelles.
 
-Sans crédit, la page bloque l’encaissement et la base refuse l’activation. Reçu, activation et consommation sont exécutés dans une transaction, sous verrou par établissement ; le dernier crédit ne peut pas être consommé deux fois. Les admins ne peuvent pas s’attribuer de crédits ni désactiver la restriction. Le super admin peut suspendre les nouvelles activations en conservant les abonnements déjà payés.
+| Profil | Consulter les abonnements et reçus | Encaisser et enregistrer les numéros | Attribuer des crédits / activer toute l’école |
+| --- | --- | --- | --- |
+| Admin | Oui | Oui | Non |
+| Financier | Oui | Oui | Non |
+| Correspondant fichier | Oui | Non | Non |
+| Fondateur | Oui dans son établissement | Oui | Non |
+| Super admin | Oui | Oui dans le périmètre autorisé | Oui |
 
-Le registre ne transfère pas d’argent et ne vérifie pas automatiquement la banque ou le Mobile Money. Le super admin confirme après vérification effective de la réception. Il suit crédits, encaissements et déclarations, avec références, année, date et auteur. Les tableaux de bord concernent l’année courante ; les listes historiques présentent les dernières opérations.
+## Montants réellement reçus et contrôle Nexa
 
-## Parcours à l’établissement
+Les montants sont libres : l’école saisit son encaissement parent ; le super admin confirme séparément le montant reçu par Nexa et le nombre de crédits accordés. Aucun montant n’est déduit d’un tarif fixe. Les numéros sont donnés par les parents ; aucun numéro ni règlement n’est inventé.
 
-Dans **Parent Connect**, choisir niveau puis classe, ou rechercher directement nom, prénoms ou matricule. Les élèves proposés sont actifs et inscrits dans une classe de l’année courante. Après réception des 2 000 FCFA, choisir **Encaisser et activer**, renseigner le payeur, le numéro donné par le parent pour les SMS, le règlement et une référence facultative. Le numéro est normalisé au format international ; le zéro initial des numéros ivoiriens est conservé. Le reçu imprimable indique l’année et sa date de fin.
+L’école peut déclarer un versement déjà effectué. Cette déclaration ne crée aucun crédit. Dans Super admin → Parent Connect → établissement → Gérer, le super admin choisit **Confirmer la réception** ou **Attribuer des crédits**, renseigne quantité, montant reçu et référence, puis confirme la réception effective après vérification. Le registre ne vérifie pas automatiquement la banque et ne transfère pas d’argent.
 
-| Profil | Consulter et lire les reçus | Encaisser / déclarer un versement | Confirmer / attribuer des crédits | Activer toute l’école / gérer l’accès |
-| --- | --- | --- | --- | --- |
-| Admin | Oui | Oui | Non | Non |
-| Financier | Oui | Oui | Non | Non |
-| Correspondant fichier | Oui | Non | Non | Non |
-| Fondateur | Oui, dans son établissement | Oui | Non | Non |
-| Super admin | Oui | Oui, dans le périmètre autorisé | Oui, tous les établissements | Oui, tous les établissements |
+Un encaissement parent consomme un crédit de la même année. Le paiement est relié au lot de crédits utilisé, avec son montant Nexa historique. Les changements de prix sur un nouveau lot ne recalculent aucun ancien reçu. La part établissement correspond au montant réellement encaissé moins la part Nexa du crédit utilisé. Les restes d’un lot sont répartis exactement en FCFA. Un paiement inférieur à la part Nexa de son crédit est refusé sans encaissement enregistré ni crédit consommé.
 
-## École déjà payée : CSCA
+Sans crédit, la collecte est bloquée. Reçu, activation et consommation restent atomiques sous verrou d’établissement. Une même opération ne peut pas créer deux paiements ou être réutilisée avec un montant différent. Les comptes école ne s’attribuent pas de crédits et ne désactivent pas la restriction. Le super admin peut suspendre les nouvelles activations en conservant les couvertures déjà accordées.
 
-Dans **Super admin → Parent Connect → établissement → Activer tous les élèves**, vérifier année, date de fin et effectif. Indiquer la référence du paiement déjà reçu et confirmer sa réception. Le bouton couvre les élèves actifs actuellement inscrits, avec matricule. Les élèves sans matricule sont comptés et exclus ; aucun matricule n’est inventé.
+## Abonner un enfant
 
-La prise en charge garde un instantané des identifiants et un journal avec auteur, année, référence, effectif et date. Elle active la restriction des matricules. Elle ne crée aucun faux encaissement de 2 000 FCFA, n’invente pas le montant historique payé par l’école et ne consomme pas de crédits individuels. Les paiements parents existants restent conservés. Un élève inscrit après l’opération n’est pas automatiquement couvert : le super admin peut répéter une prise en charge ou l’école utiliser un crédit.
+Choisir niveau puis classe, ou rechercher nom, prénoms ou matricule. Les élèves proposés sont actifs et inscrits dans l’année courante. Après réception du paiement, choisir **Encaisser et activer**, renseigner payeur, **montant reçu**, numéro SMS, mode de règlement et référence facultative. Le reçu imprimable conserve le montant réel et la fin scolaire.
 
-## Numéro parent et SMS contrôlés par Nexa
+Le parent ouvre `/parents/login`, saisit le matricule activé et clique sur **Se connecter**. Il ajoute ensuite les autres enfants depuis son espace ; leur couverture est contrôlée séparément. Les messages de blocage ne présentent aucun prix imposé.
 
-Le parent donne son numéro à l’abonnement. Il est associé à **l’enfant, à l’établissement et à l’année scolaire**, enregistré avec le paiement et conservé sur le reçu. Le destinataire n’a pas besoin de compte parent, de téléphone de connexion ou d’ouverture de Mon Cahier. Pour un élève déjà pris en charge comme au CSCA, **Ajouter le numéro SMS** enregistre le numéro sans encaissement et sans consommation de crédit. Le Correspondant fichier voit le numéro mais ne le modifie pas. Les changements sont journalisés avec l’auteur, la date, l’ancien et le nouveau numéro ; Nexa les voit dans le pilotage super admin.
+## CSCA et couverture collective
 
-**Un crédit = un abonnement enfant, pas un SMS.** L’exemple « 20 crédits » signifie 20 activations Parent Connect, soit une part Nexa prépayée de 30 000 FCFA. Aucun quota de vingt SMS n’est créé.
+Le CSCA est couvert depuis le 10 octobre 2026 : **513 élèves éligibles activés jusqu’au 11 juillet 2027 inclus**, pour 2026-2027. La vérification de la base compte **529 élèves actifs inscrits**, dont **16 sans matricule**. Ces 16 sont exclus tant que l’établissement n’a pas renseigné leur matricule. Les 123 autres dossiers marqués actifs n’ont aucune inscription en classe ; ils ne constituent pas automatiquement des abonnements éligibles. Aucun élève ni matricule n’a été inventé, réaffecté ou supprimé pour augmenter ce compteur.
 
-Les envois réutilisent `institution_notification_channel_settings` : autorisation SMS principale et choix par événement (absences, retards, digest de notes, communications, rappels financiers). Seul l’espace **Super admin → Abonnements** peut modifier ces réglages. La page super admin Parent Connect affiche l’état et mène à ce contrôle existant. Ni crédit, ni couverture collective, ni numéro enregistré n’active les SMS.
+Super admin → Parent Connect → établissement → **Activer tous les élèves** couvre les élèves actifs inscrits avec matricule pour une école déjà payée. Cette action exige référence, confirmation et effectif exact, et conserve un instantané des identifiants. Elle ne crée aucun faux encaissement ni consommation de crédit. Un élève ajouté après l’opération exige une nouvelle prise en charge super admin ou un crédit individuel.
 
-Le CSCA a été contrôlé en lecture seule : **push actifs, SMS désactivés**, notamment absences, retards et notes. Ces valeurs ne sont pas changées. Aucun SMS de test n’est envoyé.
+Pour un enfant couvert, **Ajouter le numéro SMS** ou **Modifier le numéro** ne demande ni paiement ni crédit. Les modifications sont journalisées, visibles par Nexa, et réservées aux profils autorisés.
 
-Les nouvelles absences/retards de cours peuvent créer une ligne **SMS uniquement**, même sans parent enregistré. Les push et notifications dans l’application gardent leur trigger actuel. L’appel administratif garde ses notifications existantes, avec une ligne SMS séparée pour le numéro souscrit. Un échec de mise en file SMS ne fait pas échouer l’appel ni ses push. L’envoi relit le numéro actuel et vérifie à nouveau couverture, année, établissement, matricule, inscription et autorisation SMS. Il n’utilise pas le numéro d’un autre établissement. Aucun historique d’absence n’est rejoué automatiquement après activation du service.
+## SMS et push
 
-Les SMS de notes conservent le **digest manuel contrôlé de notes officiellement publiées**. Ce digest cible désormais le numéro de l’abonnement quand il existe, sans connexion parent. Le calendrier et les règles de publication du digest ne changent pas. Les communications/rappels conservent leur sélection de destinataires existante ; cette évolution relie le numéro souscrit aux messages individuels d’absence, retard et notes.
+Les SMS d’absence, retard et digest de notes publiées utilisent le numéro associé à l’enfant, à l’école et à l’année même sans compte ou ouverture de l’application parent. Les numéros ivoiriens conservent leur zéro initial.
 
-L’expédition reste assurée par le dispatcher Orange et ses déclenchements existants (en ligne/cron), indépendants de l’ouverture de l’application parent. Un secret cron est exigé ; un simple en-tête `x-vercel-cron` ne suffit plus. Une acceptation fournisseur est suivie dans l’outbox avec numéro et identifiant de file, sans inventer de profil parent. Les tests simulent le fournisseur : ils ne certifient pas une livraison sur un téléphone réel.
+Super admin → Abonnements reste le point de contrôle des SMS, avec autorisation principale et réglages par événement. Crédits, couverture collective et numéro enregistré n’activent pas les SMS. **Au CSCA, les SMS restent désactivés et les push actifs.** Cette correction ne modifie ni les réglages SMS, ni les triggers d’appel, ni le dispatcher. Aucun SMS réel n’est utilisé pour les tests.
 
-## Mise en service
+## Migration et validation
 
-1. Appliquer `supabase/migrations/20261010033119_parent_connect_school_payment.sql` par le circuit habituel de migrations avant de publier le code. Elle crée sept tables et treize fonctions publiques réservées au serveur, ainsi qu’une fonction de trigger interne. Les nouvelles données restent privées avec RLS et droits serveur uniquement. Un trigger SMS isolé est ajouté aux nouvelles marques d’appel, après le trigger existant : aucune présence ni note n’est modifiée. Les droits d’écriture directs des clients sur les réglages SMS existants sont retirés, sans changer les valeurs ni les droits de lecture.
-2. Publier la branche validée. La migration seule ne bascule aucune école : le super admin doit confirmer des crédits, valider la prise en charge collective ou activer explicitement la restriction.
-3. Pour le CSCA déjà payé, effectuer la prise en charge collective depuis l’espace super admin. Pour les autres écoles, confirmer les crédits prépayés avant toute collecte.
-4. Vérifier connexion, données et alertes avec un matricule couvert et un non couvert. Les anciennes sessions restent reconnues, mais les données d’un enfant sans couverture sont bloquées côté serveur.
+L’installation initiale `20261010033119_parent_connect_school_payment.sql` est déjà en production. La correction ajoute `20261010053906_parent_connect_flexible_amounts.sql` : contraintes de montants variables, deux fonctions serveur avec montant explicite, lien paiement/lot de crédits et compteur des couvertures effectivement éligibles. Les anciennes fonctions restent disponibles pour les clients déjà chargés ; les nouveaux écrans utilisent les montants explicites. RLS, droits serveur et contrôles de rôles restent en place.
 
-Seul le super admin peut rétablir l’accès antérieur sans abonnement. Reçus et journaux restent conservés. Un transfert ne débloque pas le suivi dans la nouvelle école avec l’ancien abonnement. Supprimer un élève conserve son reçu et son crédit consommé avec ses nom et matricule d’origine.
-
-**La migration reste à appliquer sur la base cible : aucun paiement, crédit ni activation du CSCA n’a été effectué en production pendant cette préparation.**
-
-## Vérifications
-
-`npm run test:parent-connect` couvre React et les événements DOM, les API et contrôles serveur avec le client Supabase et des réponses simulées, et la migration SQL avec PostgreSQL embarqué PGlite, ainsi que le dispatcher réel avec un fournisseur SMS simulé. Aucun paiement réel ni écriture sur la production ne sont effectués.
-
-Les scénarios vérifient recherche, niveau/classe, droits des profils, confirmations obligatoires, crédit épuisé, déclaration sans crédit, reçu atomique, double clic/reprise après coupure, seconde collecte annuelle refusée, calendrier, changement d’année, transfert, suppression, alertes par enfant et collectif de plus de 1 000 élèves sans fausse recette. L’absence de migration conserve l’accès antérieur ; une panne imprévue ferme l’accès payant et empêche la collecte.
+`npm run test:parent-connect` vérifie React/DOM, contrôles API, PostgreSQL embarqué PGlite et dispatcher avec fournisseur simulé. Les scénarios incluent tarifs différents, montant de lot non divisible, reprises, droits, crédit épuisé, période, transfert, suppression, numéro parent, autorisation SMS et collectif. Les tests n’effectuent aucun paiement réel ni envoi SMS.

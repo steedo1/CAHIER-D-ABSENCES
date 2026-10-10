@@ -33,8 +33,8 @@ export async function GET(req: NextRequest) {
     if ([settings, classes, institution, summary, payments, remittances, currentYear].some((r) => r.error)) return json({ error: "Parent Connect doit être installé avant de pouvoir enregistrer les abonnements." }, 503);
     const year = currentYear.data?.code || "";
     const currentClasses = (classes.data || []).filter((c) => c.academic_year === year);
-    const students = await srv.rpc("parent_connect_students", { p_institution_id: institutionId, p_academic_year: year, p_search: q, p_class_id: classId || null, p_level: level, p_offset: page * 40 });
-    if (students.error) throw students.error;
+    const [students, roster] = await Promise.all([srv.rpc("parent_connect_students", { p_institution_id: institutionId, p_academic_year: year, p_search: q, p_class_id: classId || null, p_level: level, p_offset: page * 40 }), srv.rpc("parent_connect_roster", { p_institution_id: institutionId, p_academic_year: year })]);
+    if (students.error || roster.error) throw students.error || roster.error;
     const items: { id: string; matricule: string | null; first_name: string | null; last_name: string | null; class_label: string }[] = students.data?.items || [];
     const ids = items.map((s) => s.id);
     const accounts = ids.length ? await srv.from("parent_connect_accounts").select("student_id,starts_at,ends_at,source,sms_phone_e164").eq("institution_id", institutionId).eq("academic_year", year).in("student_id", ids) : { data: [], error: null };
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
       school_end_date: effectiveEnd ? new Date(Date.parse(effectiveEnd) - 1).toISOString().slice(0, 10) : null,
       classes: currentClasses.map((c) => ({ ...c, level: c.formation_level_code || c.level || "" })), academic_year: year, page, total: students.data?.total || 0,
       items: items.map((s) => ({ ...s, full_name: `${s.last_name || ""} ${s.first_name || ""}`.trim(), coverage_source: accountById.get(s.id)?.source || null, sms_phone_e164: accountById.get(s.id)?.sms_phone_e164 || null, parent_connect: parentConnectStatus(true, endFor(accountById.get(s.id)?.ends_at)) })),
-      summary: summary.data,
+      summary: summary.data, roster: roster.data,
       payments: payments.data || [], remittances: remittances.data || [],
     });
   } catch { return json({ error: "Impossible de charger les abonnements. Réessayez." }, 503); }
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   if (body.action === "remit") {
     const amount = Number(body.amount);
     const reference = String(body.reference || "").trim();
-    if (!Number.isSafeInteger(amount) || amount <= 0 || amount % 1500 !== 0 || amount > 2147483647 || reference.length < 2 || reference.length > 160) return json({ error: "Renseignez un montant entier et une référence de reversement." }, 400);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 2147483647 || reference.length < 2 || reference.length > 160) return json({ error: "Renseignez un montant entier et une référence de reversement." }, 400);
     const { data, error } = await access.srv.rpc("parent_connect_remit", { p_institution_id: access.institutionId, p_actor_id: access.user.id, p_operation_id: body.operation_id, p_amount: amount, p_reference: reference, p_academic_year: String(body.academic_year || "") });
     return error ? json({ error: operationError(error.message) }, 409) : json({ remittance: data });
   }
@@ -82,15 +82,17 @@ export async function POST(req: NextRequest) {
     });
     return r.error ? json({ error: operationError(r.error.message) }, 409) : json({ phone_change: r.data });
   }
+  const amount = body.amount;
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 2147483647) return json({ error: "Renseignez le montant réellement reçu en FCFA." }, 400);
   const payer = String(body.payer_name || "").trim();
   const reference = String(body.payment_reference || "").trim();
   const expected = body.expected_ends_at ?? null;
   if (!UUID.test(String(body.student_id || "")) || payer.length < 2 || payer.length > 160 || reference.length > 160 || !PAYMENT_METHODS.includes(body.payment_method) || (expected !== null && (typeof expected !== "string" || !Number.isFinite(Date.parse(expected))))) return json({ error: "Renseignez l’élève, le payeur et le mode de règlement." }, 400);
-  const { data, error } = await access.srv.rpc("parent_connect_collect", {
+  const { data, error } = await access.srv.rpc("parent_connect_collect_at_price", {
     p_institution_id: access.institutionId, p_student_id: body.student_id,
     p_actor_id: access.user.id, p_operation_id: body.operation_id,
     p_sms_phone_e164: phone, p_payer_name: payer, p_payment_method: body.payment_method,
-    p_payment_reference: reference, p_expected_ends_at: expected, p_academic_year: String(body.academic_year || ""),
+    p_payment_reference: reference, p_amount: amount, p_expected_ends_at: expected, p_academic_year: String(body.academic_year || ""),
   });
   return error ? json({ error: operationError(error.message) }, 409) : json({ payment: data });
 }
