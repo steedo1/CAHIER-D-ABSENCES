@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 //src/app/api/parent/attach/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -34,6 +35,9 @@ export async function POST(req: NextRequest) {
     if (!st)   return NextResponse.json({ error: "student_not_found" }, { status: 404 });
     studentId = String(st.id);
   }
+
+  const subscriptionDenied = await parentConnectDenial(srv, studentId!);
+  if (subscriptionDenied) return subscriptionDenied;
 
   // Lien parent ↔ élève (idempotent)
   const row = {

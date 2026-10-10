@@ -324,6 +324,7 @@ export default function AdminShell({
       return [
         { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
         { href: "/admin/export-moyennes", label: "Correspondant", Icon: FileSpreadsheet },
+        { href: "/admin/parent-connect", label: "Parent Connect", Icon: UserRoundCheck },
         { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
         { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
       ];
@@ -357,6 +358,7 @@ export default function AdminShell({
         { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
         { href: "/admin/parents", label: "Listes", Icon: UserRoundCheck },
         { href: "/admin/finance", label: "Finance", Icon: FileSpreadsheet },
+        { href: "/admin/parent-connect", label: "Parent Connect", Icon: UserRoundCheck },
       ];
     }
 
@@ -373,6 +375,7 @@ export default function AdminShell({
       { href: "/admin/dashboard", label: "Accueil", Icon: LayoutDashboard },
       { href: "/admin/absences", label: "Absences", Icon: Ban },
       { href: "/admin/notes", label: "Notes", Icon: NotebookPen },
+      ...(isAdmin ? [{ href: "/admin/parent-connect", label: "Parent Connect", Icon: UserRoundCheck }] : []),
       { href: "/admin/parametres", label: "Paramètres", Icon: Settings },
     ];
   }, [

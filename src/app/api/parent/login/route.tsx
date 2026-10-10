@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 //src/app/api/parent/login/route.tsx
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -178,6 +179,9 @@ export async function POST(req: NextRequest) {
   try {
     // 1) Trouver l’élève
     const st = await findStudentByMatricule(srv, matriculeRaw);
+
+    const subscriptionDenied = await parentConnectDenial(srv, st.id);
+    if (subscriptionDenied) return subscriptionDenied;
 
     // 2) Si un PIN est configuré sur l’élève, il doit matcher
     if (st.parent_activation_code && (pin || "") !== st.parent_activation_code) {

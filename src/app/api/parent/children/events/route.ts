@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/children/events/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -127,6 +128,9 @@ export async function GET(req: NextRequest) {
   }
 
   if (!institution_id) return NextResponse.json({ items: [] }, { status: 403 });
+
+    const subscriptionDenied = await parentConnectDenial(srv, student_id);
+    if (subscriptionDenied) return subscriptionDenied;
 
   // Fenêtre
   const fromISO = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();

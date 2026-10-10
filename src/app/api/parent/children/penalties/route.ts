@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/children/penalties/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -75,6 +76,9 @@ export async function GET(req: NextRequest) {
         .limit(1);
       if (!link || !link.length) return NextResponse.json({ items: [] }, { status: 403 });
     }
+
+    const subscriptionDenied = await parentConnectDenial(srv, qStudent);
+    if (subscriptionDenied) return subscriptionDenied;
 
     // ── Pénalités
     let q = srv

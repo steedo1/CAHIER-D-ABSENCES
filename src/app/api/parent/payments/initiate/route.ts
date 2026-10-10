@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/payments/initiate/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -91,6 +92,9 @@ export async function POST(req: NextRequest) {
     if (!canAccess) {
       return NextResponse.json({ error: "Vous ne pouvez pas payer pour cet élève." }, { status: 403 });
     }
+
+    const subscriptionDenied = await parentConnectDenial(srv, studentId);
+    if (subscriptionDenied) return subscriptionDenied;
 
     const { data: charge, error: chargeErr } = await srv
       .schema("finance")

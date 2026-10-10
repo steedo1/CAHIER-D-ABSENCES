@@ -58,7 +58,7 @@ export default function ParentsLoginPage() {
 
       if (!res.ok) {
         const err = String(j?.error || "ATTACH_FAILED");
-        setMsg(err === "MATRICULE_NOT_FOUND" ? "Matricule introuvable." : "Échec de connexion. Réessayez.");
+        setMsg(j?.code === "PARENT_CONNECT_REQUIRED" || j?.code === "PARENT_CONNECT_UNAVAILABLE" ? err : err === "MATRICULE_NOT_FOUND" ? "Matricule introuvable." : "Échec de connexion. Réessayez.");
         return;
       }
 
@@ -129,7 +129,7 @@ export default function ParentsLoginPage() {
               </div>
 
               <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                Première connexion : saisissez le matricule d’un enfant.
+                Première connexion : saisissez le matricule d’un enfant activé par l’établissement.
                 Depuis le tableau de bord, vous pourrez ensuite ajouter les autres enfants au même compte parent.
               </div>
 

@@ -151,6 +151,20 @@ test("le financier conserve son menu métier", () => {
   assert.ok(!html.includes("Correspondant fichier"));
 });
 
+test("Parent Connect reste accessible aux trois profils sans élargir les droits du Correspondant", () => {
+  assert.equal(isFileCorrespondentPathAllowed("/admin/parent-connect"), true);
+  assert.equal(isFileCorrespondentPathAllowed("/admin/parent-connect/receipts/test"), true);
+  assert.equal(isFileCorrespondentPathAllowed("/admin/parent-connect-other"), false);
+  for (const role of ["admin", "finance_manager", "file_correspondent"]) {
+    const html = sidebar(role, "/admin/parent-connect");
+    assert.ok(links(html).includes("/admin/parent-connect"), role);
+    if (role === "file_correspondent") {
+      assert.ok(links(html).every(isFileCorrespondentPathAllowed));
+      assert.ok(!links(html).includes("/admin/finance/payments"));
+    }
+  }
+});
+
 test("le dashboard est réellement partagé et ses raccourcis respectent le profil", () => {
   const render = (role) => renderToStaticMarkup(h(AdminRoleContext.Provider, { value: role }, h(Dashboard)));
   const admin = render("admin");

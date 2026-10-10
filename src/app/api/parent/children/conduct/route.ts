@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -408,6 +409,9 @@ export async function GET(req: NextRequest) {
         { error: "institution_not_found" },
         { status: 404 },
       );
+
+    const subscriptionDenied = await parentConnectDenial(srv, student_id);
+    if (subscriptionDenied) return subscriptionDenied;
 
     // ── Chargement des réglages de conduite (ou défauts)
     const conductSettings = await loadConductSettings(srv, institution_id);

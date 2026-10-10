@@ -1,3 +1,4 @@
+import { filterParentConnectNotifications } from "@/lib/parent-connect/server";
 // src/app/api/parent/notifications/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -84,28 +85,32 @@ export async function GET(req: NextRequest) {
   if (user) {
     const { data, error } = await supa
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload")
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
       .eq("parent_id", user.id)
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
       .limit(limit);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.json({ items: data || [] });
+    const { data: guardians, error: guardianError } = await srv.from("student_guardians").select("student_id").or(`parent_id.eq.${user.id},guardian_profile_id.eq.${user.id}`);
+    if (guardianError) return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 });
+    try { return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], (guardians || []).map((g) => g.student_id)) }); }
+    catch { return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 }); }
   }
 
   if (claims) {
     const { uid, sid } = claims;
     const { data, error } = await srv
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload")
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
       .or(`parent_id.eq.${uid},student_id.eq.${sid}`)
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
       .limit(limit);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.json({ items: data || [] });
+    try { return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], [sid]) }); }
+    catch { return NextResponse.json({ error: "Messages indisponibles." }, { status: 503 }); }
   }
 
   try {
@@ -115,14 +120,14 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await srv
       .from("notifications_queue")
-      .select("id,title,body,severity,created_at,read_at,payload")
+      .select("id,title,body,severity,created_at,read_at,payload,student_id,institution_id")
       .or(ownerOr)
       .or(PARENT_NOTIFICATION_KIND_FILTER)
       .order("created_at", { ascending: false })
       .limit(limit);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    return NextResponse.json({ items: data || [] });
+    return NextResponse.json({ items: await filterParentConnectNotifications(srv, data || [], scope?.studentIds || []) });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 400 });
   }

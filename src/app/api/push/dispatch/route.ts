@@ -1,3 +1,4 @@
+import { filterParentConnectQueue } from "@/lib/parent-connect/server";
 // src/app/api/push/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -249,7 +250,20 @@ async function run(req: Request) {
     );
   }
 
-  const rows: QueueRow[] = (raw || []).filter(hasPushChannel);
+  const candidateRows: QueueRow[] = (raw || []).filter(hasPushChannel);
+  let rows: QueueRow[];
+  try {
+    rows = await filterParentConnectQueue(srv, candidateRows);
+  } catch {
+    return NextResponse.json({ ok: false, error: "Parent Connect indisponible. Aucun envoi parent effectué.", id }, { status: 503 });
+  }
+  const allowedRowIds = new Set(rows.map((row) => row.id));
+  const blockedIds = candidateRows.filter((row) => !allowedRowIds.has(row.id)).map((row) => row.id);
+  if (blockedIds.length) {
+    const { error: blockedError } = await srv.from("notifications_queue").update({ status: "error", last_error: "PARENT_CONNECT_REQUIRED" }).in("id", blockedIds);
+    if (blockedError) console.warn("[parent-connect] blocked notifications retained", { id });
+  }
+
   console.info("[push/dispatch] picked_effective", {
     id,
     total: rows.length,

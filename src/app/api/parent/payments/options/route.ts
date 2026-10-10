@@ -1,3 +1,4 @@
+import { filterParentConnectStudentIds } from "@/lib/parent-connect/server";
 // src/app/api/parent/payments/options/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -51,10 +52,11 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ error: linksErr.message }, { status: 400 });
     }
 
-    const studentIds = Array.from(
+    const linkedStudentIds = Array.from(
       new Set((links || []).map((row: any) => String(row.student_id || "")).filter(Boolean)),
     );
 
+    const studentIds = await filterParentConnectStudentIds(srv, linkedStudentIds);
     if (!studentIds.length) return NextResponse.json({ items: [] });
 
     const { data: students, error: studentsErr } = await srv
