@@ -1,3 +1,4 @@
+import { getRequestRoles } from "@/lib/auth/server-context";
 import type { Metadata } from "next";
 import AdminShell from "./ui/shell"; // ⚠ casse correcte
 import FileCorrespondentShell from "./ui/file-correspondent-shell";
@@ -21,10 +22,7 @@ async function getPrimaryRole(): Promise<AppRole | null> {
     if (!user) return null;
 
     const service = getSupabaseServiceClient();
-    const { data: rows } = await service
-      .from("user_roles")
-      .select("role")
-      .eq("profile_id", user.id);
+    const { data: rows } = await getRequestRoles(supabase, service, user.id);
 
     const roles = (rows ?? [])
       .map((row: any) => String(row.role || ""))

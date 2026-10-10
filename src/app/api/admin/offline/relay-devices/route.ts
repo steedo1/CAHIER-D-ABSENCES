@@ -1,3 +1,4 @@
+import { getRequestRoles } from "@/lib/auth/server-context";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -18,10 +19,7 @@ async function adminContext(request: NextRequest) {
   const { data: { user } } = await auth.auth.getUser();
   if (!user) return { response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   const requestedInstitutionId = text(new URL(request.url).searchParams.get("institution_id"));
-  const [{ data: profile }, { data: roles, error: rolesError }] = await Promise.all([
-    service.from("profiles").select("id,institution_id,role").eq("id", user.id).maybeSingle(),
-    service.from("user_roles").select("institution_id,role").eq("profile_id", user.id),
-  ]);
+  const { data: roles, error: rolesError } = await getRequestRoles(auth, service, user.id);
   if (rolesError) {
     return { response: NextResponse.json({ error: "role_lookup_failed" }, { status: 503 }) };
   }
@@ -34,7 +32,6 @@ async function adminContext(request: NextRequest) {
     set.add(normalizedRole);
     grants.set(id, set);
   };
-  add((profile as any)?.institution_id, (profile as any)?.role);
   for (const row of roles || []) add((row as any).institution_id, (row as any).role);
   const institutionId = requestedInstitutionId || Array.from(grants.keys())[0] || "";
   if (!institutionId || !grants.has(institutionId)) {

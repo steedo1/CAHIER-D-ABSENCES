@@ -18,7 +18,7 @@ async function guardAnyRole(supa: ServerSupa) {
 
   const { data: me, error: meErr } = await supa
     .from("profiles")
-    .select("id, role, institution_id")
+    .select("id, institution_id")
     .eq("id", user.id)
     .maybeSingle();
 

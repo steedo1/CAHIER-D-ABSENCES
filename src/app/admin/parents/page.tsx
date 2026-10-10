@@ -272,7 +272,13 @@ function buildAttestationHtml(args: {
     ? ""
     : /^DIRECTION R[EÉ]GIONALE\b/i.test(institutionRegion)
       ? institutionRegion
-      : `DIRECTION REGIONALE DE L'EDUCATION NATIONALE DE L'ALPHABETISATION ET DE L'ENSEIGNEMENT TECHNIQUE ${/^[AEIOUYHÀÂÉÈÊÎÏÔÙÛÜ]/i.test(regionalLocality) ? "D'" : "DE "}${regionalLocality}`;
+      : `DIRECTION REGIONALE DE L'EDUCATION NATIONALE ET DE L'ALPHABETISATION ET DE L'ENSEIGNEMENT TECHNIQUE ${/^[AEIOUYHÀÂÉÈÊÎÏÔÙÛÜ]/i.test(regionalLocality) ? "D'" : "DE "}${regionalLocality}`;
+  // Compatibilité avec les directions régionales déjà saisies intégralement
+  // dans les paramètres des établissements : rétablir « ET » s'il manque.
+  const regionalDirectorateNormalized = regionalDirectorateBase.replace(
+    /(EDUCATION NATIONALE)\s+DE L['’]ALPHAB[EÉ]TISATION\b/i,
+    "$1 ET DE L'ALPHABETISATION",
+  );
   const institutionPostalAddress = (cfg.institution_postal_address || "").trim();
   const institutionPhone = (cfg.institution_phone || "").trim();
   const institutionEmail = (cfg.institution_email || "").trim();
@@ -290,11 +296,11 @@ function buildAttestationHtml(args: {
     const isTechnicalEducation =
       studentEducationType !== "general_secondary" && studentEducationType !== "all";
     const regionalDirectorate = isTechnicalEducation
-      ? regionalDirectorateBase.replace(
+      ? regionalDirectorateNormalized.replace(
           /(ALPHABETISATION)(?!\s+ET DE L['’]ENSEIGNEMENT TECHNIQUE)(\s+(?:D['’]|DE\s+))/i,
           "$1 ET DE L'ENSEIGNEMENT TECHNIQUE$2",
         )
-      : regionalDirectorateBase.replace(
+      : regionalDirectorateNormalized.replace(
           /\s+ET DE L['’]ENSEIGNEMENT TECHNIQUE\b/i,
           "",
         );

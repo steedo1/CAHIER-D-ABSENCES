@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { parentConnectMessage, type ParentConnectStatus } from "@/lib/parent-connect/domain";
+import { parentConnectMessage, parentConnectEndLabel, type ParentConnectStatus } from "@/lib/parent-connect/domain";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
 const LOGOUT_PARENTS = "/parents/logout";
@@ -1119,7 +1119,7 @@ export default function ParentPage() {
                   <div className="mt-2 inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">
                     {kid.class_label || "Classe non renseignée"}
                   </div>
-                  {kid.parent_connect?.status !== "legacy" && kid.parent_connect ? <div className={`mt-3 rounded-xl px-3 py-2 text-xs font-bold ${kid.parent_connect.allowed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>{kid.parent_connect.allowed ? `Parent Connect actif jusqu’au ${new Date(kid.parent_connect.ends_at!).toLocaleDateString("fr-FR")}` : kid.parent_connect.status === "expired" ? "Parent Connect expiré · Renouveler à l’établissement" : "Parent Connect non activé · Paiement à l’établissement"}</div> : null}
+                  {kid.parent_connect?.status !== "legacy" && kid.parent_connect ? <div className={`mt-3 rounded-xl px-3 py-2 text-xs font-bold ${kid.parent_connect.allowed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>{kid.parent_connect.allowed ? `Parent Connect actif jusqu’au ${parentConnectEndLabel(kid.parent_connect.ends_at)}` : kid.parent_connect.status === "expired" ? "Parent Connect expiré · Renouveler à l’établissement" : "Parent Connect non activé · Paiement à l’établissement"}</div> : null}
                   {kid.matricule ? (
                     <div className="mt-4 text-xs font-bold text-slate-400">Matricule : {kid.matricule}</div>
                   ) : null}

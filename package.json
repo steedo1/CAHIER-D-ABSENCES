@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:parent-connect": "node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs"
+    "test:parent-connect": "node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-separator": "^1.1.7",

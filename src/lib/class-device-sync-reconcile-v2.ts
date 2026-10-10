@@ -55,6 +55,7 @@ export type ClassDeviceSyncRepairV2Summary = {
   reconciled: number;
   blocked: number;
   last_error: string | null;
+  completion_pending?: boolean;
 };
 
 const CALL_TYPES = new Set<OperationType>([
@@ -126,7 +127,7 @@ async function fetchClasses(): Promise<ClassItem[]> {
     "/api/class/my-classes?offline_contract=v5&sync_reconcile=2",
     { credentials: "include", cache: "no-store" },
   );
-  if (!response.ok) return [];
+  if (!response.ok) throw new Error(`class_sync_discovery_http_${response.status}`);
   const payload = await response.json().catch(() => ({}));
   return (Array.isArray(payload?.items) ? payload.items : [])
     .map((item: any) => ({
@@ -446,7 +447,8 @@ async function reconcileLastCompletion(classes: ClassItem[]) {
     class_id: string; session_id: string; ended_at: string;
     open_operation_id?: string | null; relay_state?: string;
   }>("classDevice:last-completion:v1");
-  if (!completion || completion.relay_state !== "device_pending" || !classes.some((cls) => cls.id === completion.class_id)) return;
+  if (!completion || completion.relay_state !== "device_pending") return false;
+  if (!classes.some((cls) => cls.id === completion.class_id)) return true;
   const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
     method: "POST", credentials: "include", cache: "no-store",
     headers: { "content-type": "application/json" },
@@ -456,12 +458,48 @@ async function reconcileLastCompletion(classes: ClassItem[]) {
   if (response.ok && payload?.ok === true && payload?.completion?.confirmed === true) {
     await confirmClassDeviceCompletionInCloud(completion);
     window.dispatchEvent(new Event("class-device-sync-updated"));
+    return false;
   }
+  return true;
 }
 
-export async function repairClassDeviceSyncV2(): Promise<ClassDeviceSyncRepairV2Summary> {
-  const classes = await fetchClasses();
+/** Local journals decide whether background recovery has work. They never
+ * authorize an API operation or prove that an attendance call reached Cloud. */
+export async function classDeviceSyncHasPendingWork(outbox: OfflineOutboxEntry[]) {
+  if (outbox.some((entry) => isCallType(entry.operationType))) return true;
+  try {
+    const [cached, completion, localOpen] = await Promise.all([
+      cacheGet<{ items?: ClassItem[] }>("classDevice:my-classes"),
+      cacheGet<{ relay_state?: string }>("classDevice:last-completion:v1"),
+      cacheGet<{ id?: string; delivery_origin?: string; session_state?: string }>("classDevice:local-open"),
+    ]);
+    if (completion?.relay_state === "device_pending") return true;
+    if (localOpen?.session_state !== "closed" &&
+        (localOpen?.delivery_origin === "local_pending" || localOpen?.id?.startsWith("client:"))) return true;
+    // A missing preparation cache must retain the original discovery path.
+    if (!Array.isArray(cached?.items) || !cached.items.length) return true;
+    const institutions = [...new Set(cached.items.map((cls) => text(cls.institution_id)).filter(Boolean))];
+    if (!institutions.length) return true;
+    for (const institution of institutions) {
+      const [opens, attendance, lifecycle] = await Promise.all([
+        listTeacherSessionOpenOperations(institution),
+        listTeacherAttendanceOperations(institution),
+        listTeacherSessionLifecycleOperations(institution),
+      ]);
+      if (opens.some((record) => !terminalOpen(record)) ||
+          attendance.some((record) => !terminalAttendance(record)) ||
+          lifecycle.some((record) => record.kind === "close" && !terminalClose(record))) return true;
+    }
+    return false;
+  } catch { return true; }
+}
+
+export async function repairClassDeviceSyncV2(options: { force?: boolean } = {}): Promise<ClassDeviceSyncRepairV2Summary> {
   const initialOutbox = await listOfflineOutboxEntries();
+  if (!options.force && !(await classDeviceSyncHasPendingWork(initialOutbox))) {
+    return { before: 0, after: 0, flushed: 0, reconciled: 0, blocked: 0, last_error: null };
+  }
+  const classes = await fetchClasses();
   const before = classes.length
     ? await pendingLogicalCount(classes)
     : initialOutbox.filter((entry) => isCallType(entry.operationType)).length;
@@ -515,7 +553,7 @@ export async function repairClassDeviceSyncV2(): Promise<ClassDeviceSyncRepairV2
 
   const finalOutbox = await listOfflineOutboxEntries();
   const after = await pendingLogicalCount(classes);
-  await reconcileLastCompletion(classes).catch(() => undefined);
+  const completionPending = await reconcileLastCompletion(classes).catch(() => true);
   return {
     before,
     after,
@@ -523,5 +561,6 @@ export async function repairClassDeviceSyncV2(): Promise<ClassDeviceSyncRepairV2
     reconciled,
     blocked: finalOutbox.filter((entry) => isCallType(entry.operationType) && entry.state === "blocked").length,
     last_error: latestError(finalOutbox) || lastError,
+    completion_pending: completionPending,
   };
 }

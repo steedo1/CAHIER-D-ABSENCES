@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from "r
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { setAttendanceCacheActor } from "@/lib/attendance-cache-identity";
+import { resetAttendanceCloudProbe } from "@/lib/attendance-network";
 
 const AuthContext = createContext<{ session: Session | null; loading: boolean }>({
   session: null,
@@ -89,6 +90,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, s) => {
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT") resetAttendanceCloudProbe();
       setAttendanceCacheActor(s?.user.id || null);
       if (mountedRef.current) setSession(s ?? null);
 

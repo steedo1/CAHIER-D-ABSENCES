@@ -3,7 +3,7 @@ export const PARENT_CONNECT_SCHOOL_SHARE = 500;
 export const PARENT_CONNECT_NEXA_SHARE = 1500;
 export const PARENT_CONNECT_READ_ROLES = ["super_admin", "founder", "admin", "finance_manager", "file_correspondent"] as const;
 export const PARENT_CONNECT_WRITE_ROLES = ["super_admin", "founder", "admin", "finance_manager"] as const;
-export const PARENT_CONNECT_SETTINGS_ROLES = ["super_admin", "founder", "admin"] as const;
+export const PARENT_CONNECT_SETTINGS_ROLES = ["super_admin"] as const;
 export const PAYMENT_METHODS = ["cash", "wave", "orange_money", "mtn_money", "bank_transfer"] as const;
 export type ParentConnectStatus = {
   status: "legacy" | "inactive" | "active" | "expired";
@@ -29,4 +29,9 @@ export function parentConnectMessage(status: ParentConnectStatus) {
 
 export function hasParentConnectRole(roles: Iterable<string>, allowed: readonly string[]) {
   return Array.from(roles).some((role) => allowed.includes(role));
+}
+
+/** The stored boundary is midnight after the last school day (exclusive). */
+export function parentConnectEndLabel(endsAt: string | null | undefined) {
+  return endsAt ? new Date(Date.parse(endsAt) - 1).toLocaleDateString("fr-FR", { timeZone: "UTC" }) : "—";
 }

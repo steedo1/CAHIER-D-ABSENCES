@@ -29,15 +29,16 @@ function load(relative) {
   return module.exports;
 }
 const Page = load('src/app/admin/parent-connect/page.tsx').default;
-const endsAt = '2027-10-10T12:00:00Z';
+const endsAt = '2027-07-12T00:00:00Z';
 const students = [
   { id: 's1', full_name: 'KOUADIO ANGE', matricule: 'MAT001', class_label: '6ème A', class_id: 'c1', level: '6ème', parent_connect: { status: 'inactive', allowed: false, ends_at: null } },
   { id: 's2', full_name: 'YAO ALICE', matricule: 'MAT002', class_label: '5ème B', class_id: 'c2', level: '5ème', parent_connect: { status: 'inactive', allowed: false, ends_at: null } },
 ];
 
-async function mount({ canCollect = true, canConfigure = true, failOnce = false } = {}) {
+async function mount({ canCollect = true, canConfigure = true, failOnce = false, credits = 10, covered = false } = {}) {
   const calls = [];
   const items = structuredClone(students);
+  if (covered) { items[0].coverage_source = 'school_cover'; items[0].parent_connect = { status: 'active', allowed: true, ends_at: endsAt }; }
   let fail = failOnce;
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url, window.location.origin);
@@ -51,7 +52,7 @@ async function mount({ canCollect = true, canConfigure = true, failOnce = false 
     }
     const q = (u.searchParams.get('q') || '').toLowerCase();
     const filtered = items.filter((s) => (!u.searchParams.get('level') || s.level === u.searchParams.get('level')) && (!u.searchParams.get('class_id') || s.class_id === u.searchParams.get('class_id')) && (!q || `${s.full_name} ${s.matricule}`.toLowerCase().includes(q)));
-    return Response.json({ institution_name: 'École test', enforcement_enabled: true, can_collect: canCollect, can_configure: canConfigure, academic_year: '2026-2027', classes: [{ id: 'c1', label: '6ème A', level: '6ème', academic_year: '2026-2027' }, { id: 'c2', label: '5ème B', level: '5ème', academic_year: '2026-2027' }], items: filtered, page: 0, total: filtered.length, summary: { subscriptions_active: 0, collected: 0, school_share: 0, nexa_share: 0, remitted: 0, due: 0 }, payments: [], remittances: [] });
+    return Response.json({ institution_name: 'École test', enforcement_enabled: true, can_collect: canCollect, can_configure: canConfigure, academic_year: '2026-2027', school_end_date: '2027-07-11', activations_paused: false, classes: [{ id: 'c1', label: '6ème A', level: '6ème', academic_year: '2026-2027' }, { id: 'c2', label: '5ème B', level: '5ème', academic_year: '2026-2027' }], items: filtered, page: 0, total: filtered.length, summary: { subscriptions_active: 0, collected: 0, school_share: 0, nexa_share: 0, credits_available: credits, nexa_received: 15000, pending_remittances: 0, school_covered: covered ? 1 : 0 }, payments: [], remittances: [] });
   };
   const container = document.createElement('div'); document.body.appendChild(container);
   const root = createRoot(container);
@@ -89,7 +90,10 @@ await test('niveau puis classe affiche la liste et active le bon matricule aprè
     assert.equal(payment.student_id, 's1'); assert.equal(payment.payer_name, 'Parent Ange'); assert.equal(payment.payment_method, 'cash');
     assert.equal(payment.expected_ends_at, null); assert.match(payment.operation_id, /^[0-9a-f-]{36}$/);
     assert.ok(ui.container.textContent.includes('Matricule activé'));
-    assert.ok(button(ui.container, 'Renouveler'));
+    assert.equal(button(ui.container, 'Déjà couvert').disabled, true);
+    assert.ok(ui.container.textContent.includes('11/07/2027'));
+    assert.equal(payment.academic_year, '2026-2027');
+    assert.ok(!ui.container.textContent.includes('12 mois'));
   } finally { await ui.close(); }
 });
 await test('la recherche directe par prénom retrouve l’enfant sans choisir de classe', async () => {
@@ -123,5 +127,11 @@ await test('une coupure permet de réessayer avec le même identifiant de paieme
     assert.equal(payments.length, 2); assert.equal(payments[0].body.operation_id, payments[1].body.operation_id);
     assert.ok(ui.container.textContent.includes('Matricule activé'));
   } finally { await ui.close(); }
+});
+await test('sans crédits, aucun encaissement ne peut être lancé', async () => {
+ const ui = await mount({credits:0});try { assert.equal(button(ui.container,'Encaisser et activer').disabled,true); await click(button(ui.container,'Encaisser et activer')); assert.equal(ui.container.querySelector('dialog').open,false); assert.ok(ui.container.textContent.includes('Aucun crédit disponible')); }finally {await ui.close();}
+});
+await test('un élève pris en charge par l’école ne paie pas une deuxième fois',async()=>{
+ const ui=await mount({covered:true});try{ assert.equal(button(ui.container,'Déjà couvert').disabled,true); assert.ok(ui.container.textContent.includes('Pris en charge par l’établissement'));assert.equal(ui.calls.filter(c=>c.method==='POST').length,0); }finally{await ui.close();}
 });
 await window.happyDOM.abort();

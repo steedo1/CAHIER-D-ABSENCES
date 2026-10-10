@@ -5,11 +5,16 @@ import Link from "next/link";
 import { fetchAttendanceBackground } from "@/lib/attendance-network";
 import { repairClassDeviceSyncV2 } from "@/lib/class-device-sync-reconcile-v2";
 import {
+  archiveOfflineCalls,
   listOfflineOutboxEntries,
+  previewOfflineCallArchive,
+  readOfflineCallArchive,
   registerOfflineSessionReference,
   removeQueuedOfflineMutation,
   resolveOfflineSessionReference,
   type OfflineOutboxEntry,
+  type OfflineCallArchivePreview,
+  type OfflineCallArchiveResult,
 } from "@/lib/offline";
 import {
   markTeacherAttendanceSyncedInCloud,
@@ -37,6 +42,8 @@ type ReconcileResult = {
 type RowView = {
   operationId: string;
   operationType: string;
+  createdAt: number;
+  classId: string | null;
   state: string;
   lastStatus: number | null;
   lastError: string | null;
@@ -53,6 +60,11 @@ const CALL_TYPES = new Set<OperationType>([
 
 function text(value: unknown) {
   return String(value ?? "").trim();
+}
+function localDate(value: string | number | null) {
+  if (!value) return "Date non enregistrée";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" }) : "Date non enregistrée";
 }
 function isCallType(value: unknown): value is OperationType {
   return CALL_TYPES.has(text(value) as OperationType);
@@ -201,6 +213,13 @@ export default function RecoverClassSyncV2Page() {
   const [runId, setRunId] = useState(0);
   const [retrying, setRetrying] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [archivePreview, setArchivePreview] = useState<OfflineCallArchivePreview | null>(null);
+  const [archiveConfirmed, setArchiveConfirmed] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archived, setArchived] = useState<OfflineCallArchiveResult | null>(null);
+  const busy = analyzing || retrying || archiving;
 
   const unresolved = useMemo(
     () => rows.filter((row) => !row.result?.acknowledged),
@@ -208,13 +227,15 @@ export default function RecoverClassSyncV2Page() {
   );
   const diagnostic = unresolved.map((row) => [
     `Action : ${row.operationType} / ${row.operationId}`,
+    `Enregistrée sur l’appareil : ${localDate(row.createdAt)}`,
     `Séance : ${row.resolvedSession || row.localSession || "non trouvée"}`,
     `Preuve : ${row.result?.reason || "non vérifiée"}`,
     `État local : ${row.state} / HTTP ${row.lastStatus ?? "non reçu"} / ${row.lastError || "aucune erreur enregistrée"}`,
   ].join("\n")).join("\n\n");
 
   async function retry() {
-    if (retrying) return;
+    if (busy) return;
+    setArchivePreview(null);
     setRetrying(true);
     setError(null);
     setStatus("Reprise de l’envoi des appels conservés sur cet appareil…");
@@ -228,12 +249,67 @@ export default function RecoverClassSyncV2Page() {
     }
   }
 
+  async function reviewArchive() {
+    if (busy || !selectedIds.length) return;
+    setArchiving(true);
+    setError(null);
+    setArchiveConfirmed(false);
+    try { setArchivePreview(await previewOfflineCallArchive(selectedIds)); }
+    catch (cause: any) { setError(text(cause?.message) || "La sélection n’a pas pu être vérifiée."); }
+    finally { setArchiving(false); }
+  }
+
+  async function archive() {
+    if (busy || !archivePreview || !archiveConfirmed) return;
+    setArchiving(true);
+    setError(null);
+    try {
+      setArchived(await archiveOfflineCalls(archivePreview));
+      setSelectedIds([]);
+      setArchivePreview(null);
+      setArchiveConfirmed(false);
+      setRunId((value) => value + 1);
+    } catch (cause: any) {
+      setError(text(cause?.message) || "Le retrait a échoué. Les actions restent conservées.");
+      setArchivePreview(null);
+      setArchiveConfirmed(false);
+    } finally { setArchiving(false); }
+  }
+
+  async function downloadArchive() {
+    if (!archived) return;
+    try {
+      const backup = await readOfflineCallArchive(archived.id);
+      if (!backup) throw new Error("Sauvegarde locale introuvable.");
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `mon-cahier-actions-archivees-${archived.id}.json`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (cause: any) { setError(text(cause?.message) || "Le téléchargement a échoué."); }
+  }
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setAnalyzing(true);
+    setArchivePreview(null);
 
     void (async () => {
       try {
+        // Local diagnostics stay available even when Cloud verification is unavailable.
+        const initial = await listOfflineOutboxEntries();
+        const initialRaw = await readRawRows(initial.map((entry) => entry.id));
+        if (cancelled) return;
+        setBefore(initial.length);
+        setRemaining(initial.length);
+        setRows(initial.map((entry) => ({
+          operationId: entry.operationId, operationType: text(entry.operationType) || "inconnue",
+          createdAt: entry.createdAt, classId: text(entry.meta?.classId) || null,
+          state: entry.state, lastStatus: entry.lastStatus, lastError: entry.lastError,
+          localSession: localSessionCandidate(entry, initialRaw.get(entry.id)), resolvedSession: null,
+        })));
         const classResponse = await fetchAttendanceBackground(
           "/api/class/my-classes?offline_contract=v5&sync_reconcile=3",
           { credentials: "include", cache: "no-store" },
@@ -251,9 +327,7 @@ export default function RecoverClassSyncV2Page() {
           .filter((item: ClassItem) => item.id && item.institution_id);
         if (!classes.length) throw new Error("Aucune classe autorisée n’a été trouvée.");
 
-        const initial = await listOfflineOutboxEntries();
         if (cancelled) return;
-        setBefore(initial.length);
         if (!initial.length) {
           setRemaining(0);
           setRows([]);
@@ -356,6 +430,8 @@ export default function RecoverClassSyncV2Page() {
           view.push({
             operationId: entry.operationId,
             operationType: text(entry.operationType) || "inconnue",
+            createdAt: entry.createdAt,
+            classId: text(entry.meta?.classId) || null,
             state: entry.state,
             lastStatus: entry.lastStatus,
             lastError: entry.lastError,
@@ -378,6 +454,8 @@ export default function RecoverClassSyncV2Page() {
         if (cancelled) return;
         setError(text(cause?.message) || "La récupération a échoué.");
         setStatus("Réconciliation interrompue.");
+      } finally {
+        if (!cancelled) setAnalyzing(false);
       }
     })();
 
@@ -392,7 +470,7 @@ export default function RecoverClassSyncV2Page() {
         <h1 className="text-xl font-semibold">Détails de synchronisation</h1>
         <p className="mt-2 text-sm text-slate-600">Cette page vérifie les actions conservées dans cette PWA. Une action déjà confirmée peut être retirée de la file d’envoi ; les autres restent conservées.</p>
         <p className="mt-2 text-sm text-slate-600">{status}</p>
-        <button type="button" disabled={retrying} onClick={() => void retry()} className="mt-4 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+        <button type="button" disabled={busy} onClick={() => void retry()} className="mt-4 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
           {retrying ? "Reprise en cours…" : "Réessayer l’envoi des appels"}
         </button>
 
@@ -403,12 +481,24 @@ export default function RecoverClassSyncV2Page() {
         </div>
 
         {error ? <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
+        {archived ? <div role="status" className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <p>{archived.operationCount} ancienne(s) action(s) retirée(s) de cet appareil et sauvegardée(s) localement. La préparation et les autres appels sont conservés. Aucun enregistrement de la BDD n’a été supprimé.</p>
+          <button type="button" onClick={() => void downloadArchive()} className="mt-3 rounded-xl border border-emerald-700 px-3 py-2 font-semibold">Télécharger la sauvegarde</button>
+        </div> : null}
 
         {unresolved.length > 0 ? (
           <div className="mt-5 space-y-3">
             {unresolved.map((row) => (
               <div key={row.operationId} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-950">
+                {isCallType(row.operationType) ? <label className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <input type="checkbox" disabled={busy} checked={selectedIds.includes(row.operationId)} onChange={(event) => {
+                    setSelectedIds((ids) => event.target.checked ? [...ids, row.operationId] : ids.filter((id) => id !== row.operationId));
+                    setArchivePreview(null); setArchiveConfirmed(false);
+                  }} />
+                  Sélectionner cette ancienne action
+                </label> : null}
                 <div className="font-semibold">{row.operationType}</div>
+                <div className="mt-1">Enregistrée sur l’appareil : {localDate(row.createdAt)}</div>
                 <div className="mt-1 break-all">{row.operationId}</div>
                 <div className="mt-1 break-all">Local : {row.localSession || "non trouvé"}</div>
                 <div className="mt-1 break-all">Cloud lié : {row.resolvedSession || "NON — mapping local perdu"}</div>
@@ -418,6 +508,18 @@ export default function RecoverClassSyncV2Page() {
             ))}
           </div>
         ) : null}
+        {unresolved.some((row) => isCallType(row.operationType)) ? <div className="mt-5 rounded-2xl border border-slate-300 p-4 text-sm">
+          <h2 className="font-semibold">Retirer d’anciennes actions de cet appareil</h2>
+          <p className="mt-2">Cochez uniquement les anciens essais ou actions à abandonner. Les actions liées à la même séance seront regroupées avant validation. Fermez les autres fenêtres Mon Cahier sur cet appareil.</p>
+          <p className="mt-2">Un appel réel qui n’a pas été envoyé doit rester dans la file. Retirer une action ne confirme pas sa réception par l’administration.</p>
+          <button type="button" disabled={busy || !selectedIds.length} onClick={() => void reviewArchive()} className="mt-3 rounded-xl border border-slate-400 px-3 py-2 font-semibold disabled:opacity-50">Vérifier la sélection ({selectedIds.length})</button>
+          {archivePreview ? <div className="mt-4 border-t border-slate-200 pt-4">
+            <p className="font-semibold">{archivePreview.operationIds.length} action(s) de ces séances seront archivées sur cet appareil, dont {archivePreview.outboxCount} dans la file d’envoi.</p>
+            <ul className="mt-2 space-y-2 text-xs">{archivePreview.actions.map((action) => <li key={action.operationId} className="break-all">{localDate(action.createdAt)} · {action.type} · {action.sessionReference || action.operationId}</li>)}</ul>
+            <label className="mt-4 flex items-start gap-2"><input type="checkbox" disabled={busy} checked={archiveConfirmed} onChange={(event) => setArchiveConfirmed(event.target.checked)} />Je confirme l’abandon de ces anciennes actions. Elles ne seront plus envoyées ; une sauvegarde locale sera conservée.</label>
+            <button type="button" disabled={busy || !archiveConfirmed} onClick={() => void archive()} className="mt-3 rounded-xl bg-slate-900 px-3 py-2 font-semibold text-white disabled:opacity-50">{archiving ? "Retrait en cours…" : "Retirer les anciennes actions sélectionnées"}</button>
+          </div> : null}
+        </div> : null}
         {diagnostic ? (
           <div className="mt-4">
             <button type="button" onClick={async () => {
@@ -430,7 +532,7 @@ export default function RecoverClassSyncV2Page() {
         ) : null}
 
         <p className="mt-5 text-xs leading-5 text-slate-500">
-          Cette récupération ne vide pas IndexedDB. Elle retire uniquement une opération après preuve Cloud, puis met son journal durable en état terminal.
+          La vérification retire automatiquement une action uniquement après preuve Cloud. Le retrait manuel conserve une sauvegarde locale et ne vaut pas confirmation Cloud. Les caches de préparation ne sont pas effacés.
         </p>
         <Link href="/class" className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Retour aux appels</Link>
       </section>

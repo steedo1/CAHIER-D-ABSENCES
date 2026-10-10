@@ -16,18 +16,32 @@ export async function getParentConnectStatuses(srv: Service, students: Student[]
   if (!students.length) return result;
   const institutionIds = [...new Set(students.map((s) => s.institution_id).filter(Boolean))] as string[];
   const settings = institutionIds.length
-    ? await srv.from("parent_connect_school_settings").select("institution_id,enforcement_enabled").in("institution_id", institutionIds)
+    ? await srv.from("parent_connect_school_settings").select("institution_id,enforcement_enabled,approved_academic_year,approved_ends_at").in("institution_id", institutionIds)
     : { data: [], error: null };
   if (settings.error && !parentConnectSchemaMissing(settings.error)) throw new Error("Parent Connect est momentanément indisponible.");
   const enforced = new Set((settings.data || []).filter((r) => r.enforcement_enabled === true).map((r) => String(r.institution_id)));
   const paidStudents = students.filter((s) => s.institution_id && enforced.has(s.institution_id));
-  const accounts = paidStudents.length
-    ? await srv.from("parent_connect_accounts").select("student_id,institution_id,ends_at").in("student_id", paidStudents.map((s) => s.id))
-    : { data: [], error: null };
-  if (accounts.error) throw new Error("Parent Connect est momentanément indisponible.");
-  const expiry = new Map((accounts.data || []).map((r) => [`${r.institution_id}:${r.student_id}`, r.ends_at]));
+  const paidInstitutions = [...new Set(paidStudents.map((s) => s.institution_id!))];
+  const [accounts, years] = paidStudents.length ? await Promise.all([
+    srv.from("parent_connect_accounts").select("student_id,institution_id,academic_year,ends_at").in("student_id", paidStudents.map((s) => s.id)),
+    srv.from("academic_years").select("institution_id,code,end_date").in("institution_id", paidInstitutions).eq("is_current", true),
+  ]) : [{ data: [], error: null }, { data: [], error: null }];
+  if (accounts.error || years.error) throw new Error("Parent Connect est momentanément indisponible.");
+  const currentYear = new Map<string, { code: string; end_date: string | null }>();
+  for (const year of years.data || []) {
+    if (currentYear.has(year.institution_id)) throw new Error("Année scolaire ambiguë.");
+    currentYear.set(year.institution_id, year);
+  }
+  const approved = new Map((settings.data || []).map((r) => [r.institution_id, r]));
+  const expiry = new Map((accounts.data || []).map((r) => [`${r.institution_id}:${r.student_id}:${r.academic_year}`, r.ends_at]));
   for (const student of students) {
-    result.set(student.id, parentConnectStatus(enforced.has(student.institution_id || ""), expiry.get(`${student.institution_id}:${student.id}`)));
+    const year = currentYear.get(student.institution_id || "");
+    const end = year?.end_date ? expiry.get(`${student.institution_id}:${student.id}:${year.code}`) : null;
+    const boundary = year?.end_date ? Date.parse(`${year.end_date}T00:00:00Z`) + 86400_000 : NaN;
+    const cfg = approved.get(student.institution_id || "");
+    const limit = cfg?.approved_academic_year === year?.code && cfg?.approved_ends_at ? Date.parse(cfg.approved_ends_at) : NaN;
+    const capped = end && Number.isFinite(boundary) && Number.isFinite(limit) ? new Date(Math.min(Date.parse(end), boundary, limit)).toISOString() : null;
+    result.set(student.id, parentConnectStatus(enforced.has(student.institution_id || ""), capped));
   }
   return result;
 }

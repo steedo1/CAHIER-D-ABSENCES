@@ -39,6 +39,7 @@ import ContactUsButton from "@/components/ContactUsButton";
 import MonCahierAiChatBubble from "@/components/admin/MonCahierAiChatBubble";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import type { AppRole } from "@/lib/auth/role";
+import { fetchAuthRole } from "@/lib/auth/role-client";
 import { AdminRoleContext } from "./admin-role-context";
 
 const OFFLINE_ADMIN_NAV_ITEMS = [
@@ -189,7 +190,7 @@ export default function AdminShell({
 
     (async () => {
       try {
-        const r = await fetch("/api/auth/role", { cache: "no-store" });
+        const r = await fetchAuthRole(session?.user.id || "anonymous");
         if (!r.ok) return;
 
         const j = await r.json().catch(() => ({}));
@@ -202,7 +203,7 @@ export default function AdminShell({
     return () => {
       cancelled = true;
     };
-  }, [initialRole]);
+  }, [initialRole, session?.user.id]);
 
   useEffect(() => {
     if (role !== "admin" || !session?.user?.id) return;

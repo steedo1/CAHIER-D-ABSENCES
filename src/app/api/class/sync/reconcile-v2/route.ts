@@ -282,13 +282,27 @@ export async function POST(req: NextRequest) {
       actual_call_at?: string | null;
     }> = [];
 
-    for (const operation of operations) {
-      const sessionId = await resolveSessionId({
+    const resolvedOperations = await Promise.all(operations.map(async (operation) => ({
+      operation,
+      sessionId: await resolveSessionId({
         ...operation,
         institutionId,
         classId,
         actorProfileId: user.id,
-      });
+      }),
+    })));
+    const sessionIds = [...new Set(resolvedOperations.map((item) => item.sessionId).filter((id): id is string => Boolean(id)))];
+    // One fresh, tenant-scoped read for the entire recovery request. No session
+    // or attendance proof is cached between requests.
+    const sessionLookup = sessionIds.length ? await srv
+      .from("teacher_sessions")
+      .select("id,institution_id,class_id,created_by,subject_id,started_at,actual_call_at,ended_at,status")
+      .in("id", sessionIds)
+      .eq("institution_id", institutionId)
+      .eq("class_id", classId) : { data: [], error: null };
+    const sessionsById = new Map((sessionLookup.data || []).map((session: any) => [text(session.id), session]));
+
+    for (const { operation, sessionId } of resolvedOperations) {
       if (!sessionId) {
         results.push({
           operation_id: operation.operationId,
@@ -300,14 +314,8 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const { data: session, error: sessionError } = await srv
-        .from("teacher_sessions")
-        .select("id,institution_id,class_id,created_by,subject_id,started_at,actual_call_at,ended_at,status")
-        .eq("id", sessionId)
-        .eq("institution_id", institutionId)
-        .eq("class_id", classId)
-        .maybeSingle();
-      if (sessionError) {
+      const session = sessionsById.get(sessionId);
+      if (sessionLookup.error) {
         results.push({
           operation_id: operation.operationId,
           operation_type: operation.operationType,

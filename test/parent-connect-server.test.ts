@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createClient } from '@supabase/supabase-js';
-import { parentConnectStatus, hasParentConnectRole, PARENT_CONNECT_READ_ROLES, PARENT_CONNECT_WRITE_ROLES } from '../src/lib/parent-connect/domain';
+import { parentConnectStatus, hasParentConnectRole, PARENT_CONNECT_READ_ROLES, PARENT_CONNECT_WRITE_ROLES, PARENT_CONNECT_SETTINGS_ROLES, parentConnectEndLabel } from '../src/lib/parent-connect/domain';
 import { getParentConnectStatuses, parentConnectDenial, filterParentConnectNotifications, filterParentConnectQueue } from '../src/lib/parent-connect/server';
 
 const school='10000000-0000-0000-0000-000000000001';
@@ -14,8 +14,9 @@ const parentB='30000000-0000-0000-0000-000000000002';
 const future = new Date(Date.now()+86400_000).toISOString();
 const fixtures: Record<string, any[]> = {
  students: [{id:active,institution_id:school},{id:inactive,institution_id:school},{id:legacy,institution_id:legacySchool}],
- parent_connect_school_settings:[{institution_id:school,enforcement_enabled:true}],
- parent_connect_accounts:[{student_id:active,institution_id:school,ends_at:future}],
+ parent_connect_school_settings:[{institution_id:school,enforcement_enabled:true,approved_academic_year:'2026-2027',approved_ends_at:future}],
+ parent_connect_accounts:[{student_id:active,institution_id:school,academic_year:'2026-2027',ends_at:future}],
+ academic_years:[{institution_id:school,code:'2026-2027',end_date:future.slice(0,10),is_current:true}],
  user_roles: [], parent_devices: [],
  student_guardians:[{id:'g1',student_id:active,parent_id:parentA,guardian_profile_id:null},{id:'g2',student_id:inactive,parent_id:parentB,guardian_profile_id:null}],
 };
@@ -35,7 +36,7 @@ function service(failure?: {table:string;code:string}, lookup?: any) {
  }} });return {client,calls};
 }
 
-test('expiration exacte et renouvellement : un matricule actif ouvre, un expiré ferme',()=>{
+test('expiration exacte et fin scolaire : un matricule actif ouvre, un expiré ferme',()=>{
  const now=Date.parse('2026-10-10T03:00:00Z');
  assert.equal(parentConnectStatus(true,'2026-10-10T03:00:00Z',now).allowed,false);
  assert.equal(parentConnectStatus(true,'2026-10-10T03:00:01Z',now).allowed,true);
@@ -87,4 +88,13 @@ test('push et SMS : préserver les admins et ne pas confondre deux familles',asy
  ];
  assert.deepEqual((await filterParentConnectQueue(client,rows)).map(r=>r.id),['a','d','e','f']);
  assert.ok(calls.length<10,'les notifications génériques doivent être contrôlées en lot');
+});
+
+test('la date affichée inclut le dernier jour scolaire, sans afficher le lendemain',()=>{assert.equal(parentConnectEndLabel('2027-07-12T00:00:00Z'),'11/07/2027');});
+test('seul le super admin peut changer les restrictions et accorder des crédits',()=>{assert.equal(hasParentConnectRole(['admin'],PARENT_CONNECT_SETTINGS_ROLES),false);assert.equal(hasParentConnectRole(['founder'],PARENT_CONNECT_SETTINGS_ROLES),false);assert.equal(hasParentConnectRole(['super_admin'],PARENT_CONNECT_SETTINGS_ROLES),true);});
+test('notification en lot : aucun accès avec une autre année ou sans période approuvée',async()=>{
+ const previous=fixtures.academic_years[0].code; fixtures.academic_years[0].code='2027-2028';
+ try{assert.equal((await getParentConnectStatuses(service().client,fixtures.students)).get(active)?.allowed,false);}finally{fixtures.academic_years[0].code=previous;}
+ const approved=fixtures.parent_connect_school_settings[0].approved_ends_at;fixtures.parent_connect_school_settings[0].approved_ends_at=null;
+ try{assert.equal((await getParentConnectStatuses(service().client,fixtures.students)).get(active)?.allowed,false);}finally{fixtures.parent_connect_school_settings[0].approved_ends_at=approved;}
 });

@@ -837,9 +837,13 @@ function nextMutationCreatedAt() {
 
 async function outboxAdd(row: OutboxRow): Promise<void> {
   const db = await openDB();
-  const tx = db.transaction(["outbox", "kv"], "readwrite");
+  const tx = db.transaction(["outbox", "kv", "meta"], "readwrite");
   const store = tx.objectStore("outbox");
   const completed = txDone(tx);
+  if (await reqToPromise(tx.objectStore("meta").get(archivedOperationKey(row.operationId)))) {
+    await completed;
+    throw new Error("offline_operation_archived");
+  }
   const kind = outboxOperationType(row);
   const journal = outboxDeliveryJournal(kind);
   const institutionId = String(row.meta?.institutionId || "").trim();
@@ -977,12 +981,195 @@ function outboxDeliveryJournal(kind: string | null) {
     : kind === "session-end" ? "session-lifecycle" : null;
 }
 
+const CALL_ARCHIVE_PREFIX = "classDevice:sync-archive:v1:";
+function archivedOperationKey(operationId: string) {
+  return `offline:archived-operation:v1:${operationId}`;
+}
+
+export type OfflineCallArchivePreview = {
+  operationIds: string[];
+  snapshot: string;
+  outboxCount: number;
+  actions: Array<{
+    operationId: string;
+    type: string;
+    createdAt: string | null;
+    classId: string | null;
+    sessionReference: string | null;
+  }>;
+};
+export type OfflineCallArchiveResult = {
+  id: string;
+  archivedAt: string;
+  operationCount: number;
+  outboxCount: number;
+};
+
+// Keep the original payloads for recovery, without copying credentials into a backup.
+function archivePayload(value: any): any {
+  if (Array.isArray(value)) return value.map(archivePayload);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/authorization|cookie|token|password/i.test(key))
+    .map(([key, item]) => [key, archivePayload(item)]));
+}
+
+async function callArchiveSnapshot(tx: IDBTransaction, requestedIds: string[]) {
+  const [outbox, keys, mapping] = await Promise.all([
+    reqToPromise<OutboxRow[]>(tx.objectStore("outbox").getAll()),
+    reqToPromise<IDBValidKey[]>(tx.objectStore("kv").getAllKeys()),
+    reqToPromise<{ value: Record<string, string> } | undefined>(tx.objectStore("meta").get("sessionIdMap")),
+  ]);
+  const markerKeys = new Set(["classDevice:local-open", "classDevice:open-session", "classDevice:pending-end", "classDevice:last-completion:v1"]);
+  const cached = (await Promise.all(keys.filter((key) => typeof key === "string" &&
+    (markerKeys.has(key) || /^teacher:(?:session-delivery|attendance-delivery|session-lifecycle):v1:[^:]+$/.test(key)))
+    .map((key) => reqToPromise<KVRow | undefined>(tx.objectStore("kv").get(key)))))
+    .filter((row): row is KVRow => Boolean(row));
+  const requested = new Set(requestedIds);
+  const selected = new Set(requestedIds);
+  const references = new Set<string>();
+  const canonical = (value: unknown) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const client = raw.startsWith("client:") ? raw : `client:${raw}`;
+    return mapping?.value?.[client] || raw.replace(/^client:/, "");
+  };
+  const callRows = outbox.filter((row) => Boolean(outboxDeliveryJournal(outboxOperationType(row))));
+  if (outbox.some((row) => requested.has(row.operationId) && !callRows.includes(row))) {
+    throw new Error("Seules les anciennes actions d’appel peuvent être retirées ici.");
+  }
+  const journals = cached.filter((row) =>
+    /^teacher:(?:session-delivery|attendance-delivery|session-lifecycle):v1:[^:]+$/.test(row.key) && Array.isArray(row.value),
+  );
+  const candidates: Array<{ id: string; refs: unknown[]; terminal: boolean }> = [
+    ...callRows.map((row) => ({ id: row.operationId,
+      refs: [outboxSessionDependencyKey(row, row.body), outboxOperationType(row) === "session-start" ? row.operationId : null],
+      terminal: false })),
+    ...journals.flatMap((row) => row.value.map((record: any) => ({
+      id: String(record.operation_id || ""),
+      refs: [record.session_reference, record.session_id,
+        row.key.startsWith("teacher:session-delivery:") ? record.operation_id : null],
+      terminal: ["cloud_opened", "cloud_synced", "cloud_confirmed", "superseded"].includes(record.state),
+    }))),
+  ];
+  if (!requested.size || [...requested].some((id) => !candidates.some((item) => item.id === id))) {
+    throw new Error("La liste a changé. Actualisez les actions avant de les sélectionner.");
+  }
+  // Expand a selection to the entire local course, including client → Cloud aliases
+  // and pending durable records that have not yet been migrated into the outbox.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of candidates) {
+      const refs = item.refs.map(canonical).filter(Boolean);
+      if (selected.has(item.id) || (!item.terminal && refs.some((ref) => references.has(ref)))) {
+        if (item.id && !selected.has(item.id)) { selected.add(item.id); changed = true; }
+        for (const ref of refs) {
+          if (!references.has(ref)) { references.add(ref); changed = true; }
+        }
+      }
+    }
+  }
+  const rows = callRows.filter((row) => selected.has(row.operationId)).sort((a, b) => a.id.localeCompare(b.id));
+  const records = journals.map((row) => ({ key: row.key,
+    value: row.value.filter((record: any) => selected.has(String(record.operation_id || "")))
+      .sort((a: any, b: any) => String(a.operation_id).localeCompare(String(b.operation_id))),
+  })).filter((row) => row.value.length).sort((a, b) => a.key.localeCompare(b.key));
+  const markers = cached.filter((row) => {
+    if (!markerKeys.has(row.key)) return false;
+    const value = row.key === "classDevice:open-session" ? row.value?.item : row.value;
+    return value && [value.id, value.session_id, value.client_session_id, value.open_operation_id]
+      .some((ref) => ref && (references.has(canonical(ref)) || selected.has(String(ref))));
+  }).sort((a, b) => a.key.localeCompare(b.key));
+  const actions = [...selected].sort().map((operationId) => {
+    const row = rows.find((entry) => entry.operationId === operationId);
+    const journal = records.find((entry) => entry.value.some((item: any) => item.operation_id === operationId));
+    const record = journal?.value.find((item: any) => item.operation_id === operationId);
+    const timestamp = row?.createdAt;
+    return { operationId,
+      type: row ? outboxOperationType(row)! : journal?.key.startsWith("teacher:session-delivery:") ? "session-start"
+        : journal?.key.startsWith("teacher:attendance-delivery:") ? "attendance" : "session-end",
+      createdAt: timestamp && Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : record?.created_at || null,
+      classId: row?.meta?.classId || row?.body?.class_id || record?.class_id || null,
+      sessionReference: row ? outboxSessionDependencyKey(row, row.body) : record?.session_reference || record?.session_id || null,
+    };
+  });
+  return { rows, records, markers, journals, preview: {
+    operationIds: [...selected].sort(), snapshot: JSON.stringify({ rows, records, markers }),
+    outboxCount: rows.length, actions,
+  } satisfies OfflineCallArchivePreview };
+}
+
+export async function previewOfflineCallArchive(operationIds: string[]): Promise<OfflineCallArchivePreview> {
+  const db = await openDB();
+  const tx = db.transaction(["outbox", "kv", "meta"], "readonly");
+  const completed = txDone(tx);
+  try {
+    return (await callArchiveSnapshot(tx, operationIds)).preview;
+  } finally { await completed; }
+}
+
+export async function archiveOfflineCalls(preview: OfflineCallArchivePreview): Promise<OfflineCallArchiveResult> {
+  const run = async () => {
+    const db = await openDB();
+    const tx = db.transaction(["outbox", "kv", "meta"], "readwrite");
+    const completed = txDone(tx);
+    try {
+      const current = await callArchiveSnapshot(tx, preview.operationIds);
+      if (current.preview.snapshot !== preview.snapshot) {
+        throw new Error("Les actions ont changé depuis la sélection. Vérifiez à nouveau la liste ; aucune action n’a été retirée.");
+      }
+      const id = uid();
+      const archivedAt = new Date().toISOString();
+      const result = { id, archivedAt, operationCount: current.preview.operationIds.length, outboxCount: current.rows.length };
+      const kv = tx.objectStore("kv");
+      // Backup, cancellation markers, journals and outbox commit together or not at all.
+      kv.put({ key: `${CALL_ARCHIVE_PREFIX}${id}`, updatedAt: Date.now(), value: archivePayload({
+        version: 1, ...result, operationIds: current.preview.operationIds,
+        outbox: current.rows, journals: current.records, markers: current.markers,
+      }) });
+      for (const operationId of current.preview.operationIds) {
+        tx.objectStore("meta").put({ key: archivedOperationKey(operationId), value: { archiveId: id, archivedAt } });
+      }
+      for (const journal of current.journals) {
+        const value = journal.value.filter((record: any) => !current.preview.operationIds.includes(String(record.operation_id || "")));
+        if (value.length !== journal.value.length) kv.put({ ...journal, value, updatedAt: Date.now() });
+      }
+      for (const marker of current.markers) {
+        kv.put({ ...marker, value: marker.key === "classDevice:open-session" ? { item: null } : null, updatedAt: Date.now() });
+      }
+      for (const row of current.rows) tx.objectStore("outbox").delete(row.id);
+      await completed;
+      return result;
+    } catch (cause) {
+      try { tx.abort(); } catch { /* Transaction may already have aborted. */ }
+      await completed.catch(() => undefined);
+      throw cause;
+    }
+  };
+  const locks = (navigator as Navigator & { locks?: LockManager }).locks;
+  // Use the same cross-tab lock as the PWA worker and normal outbox replay.
+  const execute = async (): Promise<OfflineCallArchiveResult> =>
+    locks ? await locks.request("moncahier-offline-outbox", run) : await run();
+  const result = _flushTail.then(execute, execute);
+  _flushTail = result.then(() => undefined, () => undefined);
+  return await result;
+}
+
+export async function readOfflineCallArchive(id: string): Promise<unknown> {
+  return await cacheGet(`${CALL_ARCHIVE_PREFIX}${id}`);
+}
+
 export async function putDurableAttendanceRecord<T extends {
   operation_id: string; institution_id: string; state: string;
 }>(journal: "session-delivery" | "attendance-delivery" | "session-lifecycle", record: T) {
   const db = await openDB();
-  const tx = db.transaction(["kv"], "readwrite");
+  const tx = db.transaction(["kv", "meta"], "readwrite");
   const completed = txDone(tx);
+  if (await reqToPromise(tx.objectStore("meta").get(archivedOperationKey(record.operation_id)))) {
+    await completed;
+    return;
+  }
   const kv = tx.objectStore("kv");
   const key = `teacher:${journal}:v1:${record.institution_id}`;
   const stored = await reqToPromise<KVRow | undefined>(kv.get(key));
@@ -1133,6 +1320,10 @@ export async function offlineMutateJson<T = any>(
   const method = init.method;
   const bodyObj = init.body ?? undefined;
   const operationId = opts?.operationId || uid();
+  if (mutationOperationType(url, opts?.meta?.operationType) &&
+      await metaGet(archivedOperationKey(operationId))) {
+    return { ok: false, queued: false, offline: false, status: 409, error: "offline_operation_archived" };
+  }
   const operationHeaders = {
     ...init.headers,
     "X-Mon-Cahier-Operation-Id": operationId,
@@ -1162,7 +1353,13 @@ export async function offlineMutateJson<T = any>(
       lastError: details.error,
       ackContractVersion: OUTBOX_ACK_CONTRACT_VERSION,
     };
-    await outboxAdd(row);
+    try { await outboxAdd(row); }
+    catch (cause) {
+      if (cause instanceof Error && cause.message === "offline_operation_archived") {
+        return { ok: false, queued: false, offline: false, status: 409, error: cause.message };
+      }
+      throw cause;
+    }
     const queuedOperationType = mutationOperationType(
       url,
       opts?.meta?.operationType,

@@ -23,6 +23,7 @@ const items: NavItem[] = [
   { href: "/super/dashboard",        label: "Tableau de bord", Icon: LayoutDashboard },
   { href: "/super/etablissements",   label: "Etablissements",  Icon: Building2 },
   { href: "/super/abonnements",      label: "Abonnements",     Icon: BadgeDollarSign },
+  { href: "/super/parent-connect", label: "Parent Connect", Icon: Users },
   { href: "/super/admins",           label: "Admins",          Icon: Users },
   { href: "/super/founders",         label: "Fondateurs",      Icon: Crown },
   { href: "/super/progressions-nationales", label: "Progressions", Icon: BookOpen },

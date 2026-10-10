@@ -1,7 +1,6 @@
 // src/app/redirect/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { createClient } from "@supabase/supabase-js";
 import { routeForUser, type Book } from "@/lib/auth/routing";
 import { resolveClassDeviceClassIds } from "@/lib/class-device-identity";
@@ -10,7 +9,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 function withNoStore(res: NextResponse) {
@@ -41,33 +39,14 @@ function loginRedirect(url: URL, book?: Book) {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const jar = await cookies();
+
 
   const rawBook = url.searchParams.get("book");
   const book: Book | undefined =
     rawBook === "grades" ? "grades" : rawBook === "attendance" ? "attendance" : undefined;
 
-  const access = jar.get("sb-access-token")?.value ?? null;
-  const refresh = jar.get("sb-refresh-token")?.value ?? null;
+  const supabase = await getSupabaseServerClient();
 
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
-    cookies: {
-      get: (n) => jar.get(n)?.value,
-      set() {},
-      remove() {},
-    },
-  });
-
-  // Cas principal : nos cookies simples existent, donc on force la session côté serveur.
-  if (access && refresh) {
-    try {
-      await supabase.auth.setSession({ access_token: access, refresh_token: refresh });
-    } catch {
-      // Tolérant : getUser ci-dessous décidera.
-    }
-  }
-
-  // Cas tolérant : même si nos cookies simples manquent, le cookie Supabase standard peut exister.
   const {
     data: { user },
   } = await supabase.auth.getUser();
