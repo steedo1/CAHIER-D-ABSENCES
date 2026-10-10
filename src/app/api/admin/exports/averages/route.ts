@@ -2164,6 +2164,7 @@ async function prepareDspsAnnualExport(params: {
       if (key.startsWith(`${currentClassId}__`)) studentIds.add(meta.student_id);
     }
 
+    let missingAnnualResults = false;
     const rawRows = Array.from(studentIds).map((studentId) => {
       const meta = studentMetaByKey.get(`${currentClassId}__${studentId}`);
       const firstItem = displayPeriods
@@ -2193,9 +2194,7 @@ async function prepareDspsAnnualExport(params: {
       const annualForcedNc = isAdminAnnualForcedNc(lastItem);
       // Aucune MGA approximative à partir de trimestres partiels.
       const annualAvg = annualForcedNc ? null : cleanNumber(lastItem?.annual_avg, 4);
-      if (!annualForcedNc && annualAvg === null) {
-        return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
-      }
+      if (!annualForcedNc && annualAvg === null) missingAnnualResults = true;
 
       return {
         studentId,
@@ -2207,6 +2206,8 @@ async function prepareDspsAnnualExport(params: {
         annualRank: annualAvg !== null ? cleanRank(lastItem?.annual_rank) : null,
       };
     });
+
+    if (missingAnnualResults) return { error: "MISSING_ANNUAL_AVERAGE", status: 422 };
 
     const annualRankMap = new Map<string, number>();
     const annualEntries = rawRows
