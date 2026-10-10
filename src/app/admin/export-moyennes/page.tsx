@@ -105,7 +105,6 @@ function TermExportCard({
   academicYears,
   defaultAcademicYear,
   hasAcademicYears,
-  hasClasses,
 }: {
   title: string;
   term: 1 | 2 | 3;
@@ -114,7 +113,6 @@ function TermExportCard({
   academicYears: string[];
   defaultAcademicYear: string;
   hasAcademicYears: boolean;
-  hasClasses: boolean;
 }) {
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -142,9 +140,8 @@ function TermExportCard({
         periodRefByYear={periodRefByYear}
         academicYears={academicYears}
         defaultAcademicYear={defaultAcademicYear}
-        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls), academicYear: String(cls.academic_year || "") }))}
         hasAcademicYears={hasAcademicYears}
-        hasClasses={hasClasses}
       />
     </section>
   );
@@ -155,13 +152,11 @@ function AnnualExportCard({
   academicYears,
   defaultAcademicYear,
   hasAcademicYears,
-  hasClasses,
 }: {
   classes: ClassRow[];
   academicYears: string[];
   defaultAcademicYear: string;
   hasAcademicYears: boolean;
-  hasClasses: boolean;
 }) {
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -186,9 +181,8 @@ function AnnualExportCard({
         }}
         academicYears={academicYears}
         defaultAcademicYear={defaultAcademicYear}
-        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls), academicYear: String(cls.academic_year || "") }))}
         hasAcademicYears={hasAcademicYears}
-        hasClasses={hasClasses}
       />
     </section>
   );
@@ -199,13 +193,11 @@ function RapportFCard({
   academicYears,
   defaultAcademicYear,
   hasAcademicYears,
-  hasClasses,
 }: {
   classes: ClassRow[];
   academicYears: string[];
   defaultAcademicYear: string;
   hasAcademicYears: boolean;
-  hasClasses: boolean;
 }) {
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2">
@@ -231,9 +223,8 @@ function RapportFCard({
         }}
         academicYears={academicYears}
         defaultAcademicYear={defaultAcademicYear}
-        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
+        classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls), academicYear: String(cls.academic_year || "") }))}
         hasAcademicYears={hasAcademicYears}
-        hasClasses={hasClasses}
       />
     </section>
   );
@@ -271,7 +262,6 @@ export default async function ExportDespsPage() {
 
   const defaultAcademicYear = academicYears[0] ?? "";
   const hasAcademicYears = academicYears.length > 0;
-  const hasClasses = classes.length > 0;
 
   // Chaque année scolaire doit utiliser ses propres périodes, jamais celle d'une autre année.
   const periodRefsForTerm = (term: 1 | 2 | 3): Record<string, string> =>
@@ -293,7 +283,6 @@ export default async function ExportDespsPage() {
     academicYears,
     defaultAcademicYear,
     hasAcademicYears,
-    hasClasses,
   };
 
   const annualProps = {
@@ -301,7 +290,6 @@ export default async function ExportDespsPage() {
     academicYears,
     defaultAcademicYear,
     hasAcademicYears,
-    hasClasses,
   };
 
   return (
@@ -324,13 +312,13 @@ export default async function ExportDespsPage() {
 
                 <div className="grid grid-cols-3 gap-3 rounded-[26px] border border-white/10 bg-white/10 p-3 backdrop-blur">
                   <div className="rounded-2xl bg-white/10 px-3 py-3 text-center ring-1 ring-white/10">
-                    <div className="text-2xl font-black">{classes.length}</div>
+                    <div className="text-2xl font-black">{classes.filter((cls) => cls.academic_year === defaultAcademicYear).length}</div>
                     <div className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-200">
                       Classes
                     </div>
                   </div>
                   <div className="rounded-2xl bg-white/10 px-3 py-3 text-center ring-1 ring-white/10">
-                    <div className="text-2xl font-black">{periods.length}</div>
+                    <div className="text-2xl font-black">{periods.filter((period) => period.academic_year === defaultAcademicYear).length}</div>
                     <div className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-200">
                       Périodes
                     </div>
