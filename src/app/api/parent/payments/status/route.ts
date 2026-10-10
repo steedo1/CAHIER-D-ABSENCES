@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/payments/status/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -65,6 +66,9 @@ export async function GET(req: NextRequest) {
 
   if (linkErr) return NextResponse.json({ error: linkErr.message }, { status: 400 });
   if (!link) return NextResponse.json({ error: "Accès non autorisé." }, { status: 403 });
+
+    const subscriptionDenied = await parentConnectDenial(srv, String((intent as any).student_id));
+    if (subscriptionDenied) return subscriptionDenied;
 
   const currentStatus = String((intent as any).status || "").trim();
   const expiresAt = (intent as any).expires_at ? new Date((intent as any).expires_at).getTime() : 0;

@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -73,6 +74,8 @@ export async function GET(req: NextRequest) {
     }
 
     const { srv } = access;
+    const subscriptionDenied = await parentConnectDenial(srv, studentId);
+    if (subscriptionDenied) return subscriptionDenied;
     let { data: enrollment, error: enrollmentError } = await srv
       .from("class_enrollments")
       .select("class_id,institution_id,classes:class_id(label,institution_id,academic_year)")

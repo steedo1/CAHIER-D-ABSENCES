@@ -20,6 +20,7 @@ const PATH_PREFIXES = [
   "/admin/classes",
   "/admin/affectations",
   "/admin/parents",
+  "/admin/parent-connect",
   "/admin/import",
   "/admin/import-emplois-du-temps",
   "/admin/notes/predictions",

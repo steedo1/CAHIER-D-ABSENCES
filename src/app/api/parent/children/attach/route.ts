@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
     const { data: rows, error: sErr } = await srv
       .from("students")
       .select("id, matricule, institution_id")
-      .ilike("matricule", matricule)
+      .ilike("matricule", matricule.replace(/[\\%_]/g, "\\$&"))
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -170,6 +171,9 @@ export async function POST(req: NextRequest) {
     if (!student) return NextResponse.json({ error: "MATRICULE_NOT_FOUND" }, { status: 404 });
     if (!student.institution_id)
       return NextResponse.json({ error: "STUDENT_MISSING_INSTITUTION" }, { status: 400 });
+
+    const subscriptionDenied = await parentConnectDenial(srv, student.id);
+    if (subscriptionDenied) return subscriptionDenied;
 
     // Cookie device
     const jar = await cookies();

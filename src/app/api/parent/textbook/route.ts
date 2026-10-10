@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/textbook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -61,6 +62,9 @@ export async function GET(req: NextRequest) {
       { status: 403 },
     );
   }
+
+    const subscriptionDenied = await parentConnectDenial(srv, studentId);
+    if (subscriptionDenied) return subscriptionDenied;
 
   const { data: enrollment, error: enrollmentErr } = await srv
     .from("class_enrollments")

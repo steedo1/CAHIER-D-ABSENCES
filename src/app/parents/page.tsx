@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { parentConnectMessage, type ParentConnectStatus } from "@/lib/parent-connect/domain";
 import { MON_CAHIER_SW_URL } from "@/lib/offline";
 
 const LOGOUT_PARENTS = "/parents/logout";
@@ -22,6 +23,7 @@ type Kid = {
   class_label: string | null;
   matricule?: string | null;
   institution_id?: string | null;
+  parent_connect?: ParentConnectStatus;
 };
 
 type AttendanceEvent = {
@@ -482,7 +484,9 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload?.error || payload?.message || "Données indisponibles.");
+    const error = new Error(payload?.error || payload?.message || "Données indisponibles.");
+    Object.assign(error, { code: payload?.code, parent_connect: payload?.parent_connect });
+    throw error;
   }
   return payload as T;
 }
@@ -805,6 +809,10 @@ export default function ParentPage() {
   }
 
   async function loadChildData(kidId: string, force = false) {
+    if (kids.find((kid) => kid.id === kidId)?.parent_connect?.allowed === false) {
+      setChildData((current) => ({ ...current, [kidId]: EMPTY_CHILD_DATA }));
+      return;
+    }
     const previous = childData[kidId];
     if (previous?.loading) return;
     if (!force && previous && !previous.error && previous.timetable) return;
@@ -855,6 +863,13 @@ export default function ParentPage() {
       const result = results[index];
       return result.status === "fulfilled" ? (result.value as T) : fallback;
     };
+
+    const subscriptionRejection = results.find((result) => result.status === "rejected" && result.reason?.code === "PARENT_CONNECT_REQUIRED") as PromiseRejectedResult | undefined;
+    if (subscriptionRejection?.reason?.parent_connect) {
+      setKids((current) => current.map((kid) => kid.id === kidId ? { ...kid, parent_connect: subscriptionRejection.reason.parent_connect } : kid));
+      setChildData((current) => ({ ...current, [kidId]: EMPTY_CHILD_DATA }));
+      return;
+    }
 
     const rejected = results.find((result) => result.status === "rejected") as
       | PromiseRejectedResult
@@ -926,7 +941,7 @@ export default function ParentPage() {
       preferredTimetableDay(childData[selectedKid.id]?.timetable?.items || []),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKid?.id, selectedPeriodId]);
+  }, [selectedKid?.id, selectedKid?.parent_connect?.allowed, selectedPeriodId]);
 
   function openPrimary(next: PrimaryScreen) {
     setScreen(next);
@@ -982,6 +997,7 @@ export default function ParentPage() {
       setAttachMessage(
         message === "MATRICULE_NOT_FOUND"
           ? "Matricule introuvable. Vérifiez-le puis réessayez."
+          : message.includes("Parent Connect") || message.includes("matricule n’est pas activé") ? message
           : "Impossible d’ajouter cet enfant pour le moment.",
       );
     } finally {
@@ -1103,6 +1119,7 @@ export default function ParentPage() {
                   <div className="mt-2 inline-flex rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">
                     {kid.class_label || "Classe non renseignée"}
                   </div>
+                  {kid.parent_connect?.status !== "legacy" && kid.parent_connect ? <div className={`mt-3 rounded-xl px-3 py-2 text-xs font-bold ${kid.parent_connect.allowed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>{kid.parent_connect.allowed ? `Parent Connect actif jusqu’au ${new Date(kid.parent_connect.ends_at!).toLocaleDateString("fr-FR")}` : kid.parent_connect.status === "expired" ? "Parent Connect expiré · Renouveler à l’établissement" : "Parent Connect non activé · Paiement à l’établissement"}</div> : null}
                   {kid.matricule ? (
                     <div className="mt-4 text-xs font-bold text-slate-400">Matricule : {kid.matricule}</div>
                   ) : null}
@@ -1927,6 +1944,7 @@ export default function ParentPage() {
     if (screen === "children") return renderChildren();
     if (screen === "attach") return renderAttach();
     if (screen === "messages") return renderMessages();
+    if (selectedKid?.parent_connect?.allowed === false) return <div><EmptyState icon="children" title="Abonnement Parent Connect" text={parentConnectMessage(selectedKid.parent_connect)} /><button type="button" onClick={() => void loadInitialData()} className="mx-auto mt-4 block rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white">Actualiser mon abonnement</button></div>;
     if (screen === "child") return renderChildDashboard();
     if (screen === "absences") return renderAbsences();
     if (screen === "notes") return renderNotes();

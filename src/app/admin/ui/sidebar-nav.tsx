@@ -174,6 +174,8 @@ function TextBadge({ text }: { text: string }) {
 /* =========================
    Hors groupes
 ========================= */
+const PARENT_CONNECT_ITEM: NavItem = { href: "/admin/parent-connect", label: "Parent Connect", Icon: Users };
+
 const TOP_LEVEL_ITEMS: NavItem[] = [
   { href: "/admin/dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
 ];
@@ -1057,7 +1059,7 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
   const organisationItems = React.useMemo(() => {
     if (isFileCorrespondent) {
-      return ORGANISATION_ITEMS.filter((item) => isFileCorrespondentPathAllowed(item.href));
+      return [...ORGANISATION_ITEMS, PARENT_CONNECT_ITEM].filter((item) => isFileCorrespondentPathAllowed(item.href));
     }
     if (isInfirmier || isFinanceOnlyShell) return [];
     if (isFinanceManager) {
@@ -1071,9 +1073,9 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
   const adminItems = React.useMemo(() => {
     if (isFileCorrespondent) return [];
-    if (isFinanceOnlyShell || isFinanceManager) return FINANCE_FULL_ITEMS;
+    if (isFinanceOnlyShell || isFinanceManager) return [...FINANCE_FULL_ITEMS, PARENT_CONNECT_ITEM];
 
-    return ADMIN_ITEMS.flatMap((item) => {
+    return [...ADMIN_ITEMS, ...(isEducator || isInfirmier ? [] : [PARENT_CONNECT_ITEM])].flatMap((item) => {
       if (item.href.startsWith("/admin/finance")) {
         if (isAdmin) return [ADMIN_PAYROLL_ITEM];
         if (isEducator) return [];

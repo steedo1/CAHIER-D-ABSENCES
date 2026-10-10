@@ -1,3 +1,4 @@
+import { getParentConnectStatuses } from "@/lib/parent-connect/server";
 // src/app/api/parent/children/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -66,11 +67,13 @@ export async function GET(_req: NextRequest) {
       if (instId) institutionByStudent.set(sid, instId);
     }
 
+    const statuses = await getParentConnectStatuses(srv, (studs ?? []).map(s => ({ id: String(s.id), institution_id: s.institution_id || institutionByStudent.get(String(s.id)) || null })));
     const items = (studs ?? []).map(s => ({
       id: String(s.id),
       full_name: full(s.first_name, s.last_name),
       class_label: clsByStudent.get(String(s.id)) || null,
       matricule: (s as any).matricule ?? null,
+      parent_connect: statuses.get(String(s.id)),
       institution_id: institutionByStudent.get(String(s.id)) || (s as any).institution_id || null,
     }));
 

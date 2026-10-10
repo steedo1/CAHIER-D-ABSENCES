@@ -1,3 +1,4 @@
+import { parentConnectDenial } from "@/lib/parent-connect/server";
 // src/app/api/parent/children/grades/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -257,6 +258,9 @@ export async function GET(req: NextRequest) {
   if (!institution_id) {
     return NextResponse.json({ ok: false, error: "Institution introuvable." }, { status: 404 });
   }
+
+    const subscriptionDenied = await parentConnectDenial(srv, studentId);
+    if (subscriptionDenied) return subscriptionDenied;
 
   // ────────── Détermination de la fenêtre (filtre) ──────────
   let from = fromParam;
