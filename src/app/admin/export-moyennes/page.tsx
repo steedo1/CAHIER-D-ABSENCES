@@ -63,10 +63,6 @@ function periodMatchesTerm(period: GradePeriodRow, term: 1 | 2 | 3) {
   return /(^|\s)(t3|trim3|trim\s*3|trimestre3|trimestre\s*3|3e|3eme|troisieme)(\s|$)/.test(raw);
 }
 
-function resolveFixedTermPeriod(periods: GradePeriodRow[], term: 1 | 2 | 3) {
-  return periods.find((period) => periodMatchesTerm(period, term)) || null;
-}
-
 function classDisplayLabel(cls: ClassRow) {
   const label = String(cls.label || cls.code || "Classe").trim();
   const level = String(cls.level || "").trim();
@@ -104,7 +100,7 @@ async function getAdminContext() {
 function TermExportCard({
   title,
   term,
-  period,
+  periodRefByYear,
   classes,
   academicYears,
   defaultAcademicYear,
@@ -113,7 +109,7 @@ function TermExportCard({
 }: {
   title: string;
   term: 1 | 2 | 3;
-  period: GradePeriodRow | null;
+  periodRefByYear: Record<string, string>;
   classes: ClassRow[];
   academicYears: string[];
   defaultAcademicYear: string;
@@ -136,13 +132,14 @@ function TermExportCard({
 
       <OfficialExportForm
         color="emerald"
-        disabled={!hasAcademicYears || !period}
+        disabled={!hasAcademicYears || !Object.values(periodRefByYear).some(Boolean)}
         fields={{
           export_kind: "desps_official_term",
           term: String(term),
-          period_ref: period ? `period:${period.id}` : "",
+          period_ref: periodRefByYear[defaultAcademicYear] || "",
           format: "xlsx",
         }}
+        periodRefByYear={periodRefByYear}
         academicYears={academicYears}
         defaultAcademicYear={defaultAcademicYear}
         classes={classes.map((cls) => ({ value: cls.id, label: classDisplayLabel(cls) }))}
@@ -276,9 +273,20 @@ export default async function ExportDespsPage() {
   const hasAcademicYears = academicYears.length > 0;
   const hasClasses = classes.length > 0;
 
-  const firstTermPeriod = resolveFixedTermPeriod(periods, 1);
-  const secondTermPeriod = resolveFixedTermPeriod(periods, 2);
-  const thirdTermPeriod = resolveFixedTermPeriod(periods, 3);
+  // Chaque année scolaire doit utiliser ses propres périodes, jamais celle d'une autre année.
+  const periodRefsForTerm = (term: 1 | 2 | 3): Record<string, string> =>
+    Object.fromEntries(
+      academicYears.map((year) => {
+        const period = periods.find(
+          (candidate) => candidate.academic_year === year && periodMatchesTerm(candidate, term)
+        );
+        return [year, period ? `period:${period.id}` : ""];
+      })
+    );
+
+  const firstTermRefs = periodRefsForTerm(1);
+  const secondTermRefs = periodRefsForTerm(2);
+  const thirdTermRefs = periodRefsForTerm(3);
 
   const cardProps = {
     classes,
@@ -342,9 +350,9 @@ export default async function ExportDespsPage() {
             <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900 lg:col-span-2">
               Secondaire général uniquement — les classes techniques, professionnelles et de cycle supérieur court sont volontairement exclues des modèles administratifs DESPS.
             </div>
-            <TermExportCard title="1er trimestre" term={1} period={firstTermPeriod} {...cardProps} />
-            <TermExportCard title="2e trimestre" term={2} period={secondTermPeriod} {...cardProps} />
-            <TermExportCard title="3e trimestre" term={3} period={thirdTermPeriod} {...cardProps} />
+            <TermExportCard title="1er trimestre" term={1} periodRefByYear={firstTermRefs} {...cardProps} />
+            <TermExportCard title="2e trimestre" term={2} periodRefByYear={secondTermRefs} {...cardProps} />
+            <TermExportCard title="3e trimestre" term={3} periodRefByYear={thirdTermRefs} {...cardProps} />
             <AnnualExportCard {...annualProps} />
             <RapportFCard {...annualProps} />
           </div>
