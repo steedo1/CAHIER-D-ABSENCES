@@ -299,10 +299,43 @@ export default function GeneralStatisticsPage() {
     [level, boarding, affectation, scholarship, gender, language, minAge, maxAge],
   );
 
-  const printTitle =
-    criteria === "Tous les élèves"
-      ? "STATISTIQUES GÉNÉRALES — TOUS LES ÉLÈVES"
-      : `LISTE DES ÉLÈVES — ${criteria.toUpperCase()}`;
+  // Le filtre d'âge compte pour un seul critère, même avec deux bornes.
+  // Pour quatre critères ou plus, le détail reste intégralement sous le titre.
+  const printTitle = useMemo(() => {
+    const filterCount = [
+      level !== "all",
+      boarding !== "all",
+      affectation !== "all",
+      scholarship !== "all",
+      gender !== "all",
+      language !== "all",
+      minAge !== "" || maxAge !== "",
+    ].filter(Boolean).length;
+
+    if (filterCount === 0) return "LISTE GÉNÉRALE DES ÉLÈVES";
+    if (filterCount >= 4) return "STATISTIQUES GÉNÉRALES";
+
+    const feminine = gender === "F";
+    const parts = [feminine ? "FILLES" : gender === "M" ? "GARÇONS" : "ÉLÈVES"];
+    if (boarding !== "all") parts.push(boarding === "yes" ? "INTERNES" : "EXTERNES");
+    if (affectation !== "all") {
+      parts.push(affectation === "yes" ? (feminine ? "AFFECTÉES" : "AFFECTÉS") : (feminine ? "NON AFFECTÉES" : "NON AFFECTÉS"));
+    }
+    if (scholarship !== "all") {
+      parts.push(scholarship === "yes" ? (feminine ? "BOURSIÈRES" : "BOURSIERS") : (feminine ? "NON BOURSIÈRES" : "NON BOURSIERS"));
+    }
+
+    let title = "LISTE DES " + parts.join(" ");
+    if (level !== "all") title += " DE " + level;
+    if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
+    if (minAge || maxAge) {
+      const ageAdjective = feminine ? "ÂGÉES" : "ÂGÉS";
+      title += minAge && maxAge ? ` ${ageAdjective} DE ${minAge} À ${maxAge} ANS`
+        : minAge ? ` ${ageAdjective} DE ${minAge} ANS ET PLUS`
+        : ` ${ageAdjective} DE ${maxAge} ANS AU PLUS`;
+    }
+    return title;
+  }, [level, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
 
   // Colonnes d'identification conservées. Les colonnes de détail reflètent
   // les filtres actifs ; sans filtre de détail, le PDF reste exhaustif.
