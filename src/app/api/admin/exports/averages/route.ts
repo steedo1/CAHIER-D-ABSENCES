@@ -3454,6 +3454,13 @@ async function collectOfficialTermStats(params: {
   return { resolvedPeriod, generalByLevel, subjectsByLevel, classes };
 }
 
+function officialPeriodMatchesTerm(period: GradePeriodRow, term: 1 | 2 | 3): boolean {
+  const label = normalizeForMatch([period.code, period.label, period.short_label].filter(Boolean).join(" "));
+  if (term === 1) return /\b(t1|trim1|trimestre 1|1er|premier)\b/.test(label);
+  if (term === 2) return /\b(t2|trim2|trimestre 2|2e|2eme|deuxieme)\b/.test(label);
+  return /\b(t3|trim3|trimestre 3|3e|3eme|troisieme)\b/.test(label);
+}
+
 async function prepareDespsOfficialTermExport(params: {
   req: NextRequest;
   supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>;
@@ -3475,6 +3482,9 @@ async function prepareDespsOfficialTermExport(params: {
     subjectsByLevel: Map<string, Map<string, OfficialSubjectStats>>;
     classes: ClassRow[];
   };
+  if (!officialPeriodMatchesTerm(resolvedPeriod.bulletinPeriod, params.term)) {
+    return { error: "INVALID_PERIOD_REF", status: 400 };
+  }
   return {
     templateFileName:
       params.term === 1
