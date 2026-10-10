@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       return result.error ? json({ error: "Installez Parent Connect pour accéder à son pilotage." }, 503) : json({ ...result.data, page });
     }
     if (!UUID.test(id)) return json({ error: "Établissement invalide." }, 400);
-    const [institution, year, settings, summary, grants, remittances, bulk, payments] = await Promise.all([
+    const [institution, year, settings, summary, grants, remittances, bulk, payments, channels, phoneChanges] = await Promise.all([
       access.srv.from("institutions").select("id,name").eq("id", id).single(),
       access.srv.from("academic_years").select("code,end_date").eq("institution_id", id).eq("is_current", true).maybeSingle(),
       access.srv.from("parent_connect_school_settings").select("enforcement_enabled,activations_paused,approved_academic_year,approved_ends_at").eq("institution_id", id).maybeSingle(),
@@ -26,12 +26,19 @@ export async function GET(req: NextRequest) {
       access.srv.from("parent_connect_credit_grants").select("id,academic_year,quantity,amount_received,reference,remittance_id,confirmed_by,confirmed_at").eq("institution_id", id).order("confirmed_at", { ascending: false }).limit(30),
       access.srv.from("parent_connect_remittances").select("id,academic_year,amount,reference,created_by,created_at,parent_connect_credit_grants(id)").eq("institution_id", id).order("created_at", { ascending: false }).limit(100),
       access.srv.from("parent_connect_bulk_operations").select("id,academic_year,reference,eligible_count,skipped_no_matricule,ends_at,created_by,created_at").eq("institution_id", id).order("created_at", { ascending: false }).limit(30),
-      access.srv.from("parent_connect_payments").select("id,academic_year,student_name,matricule,payer_name,receipt_no,amount,school_share,nexa_share,created_by,created_at").eq("institution_id", id).order("created_at", { ascending: false }).limit(30),
+      access.srv.from("parent_connect_payments").select("id,academic_year,student_name,matricule,payer_name,sms_phone_e164,receipt_no,amount,school_share,nexa_share,created_by,created_at").eq("institution_id", id).order("created_at", { ascending: false }).limit(30),
+      access.srv.from("institution_notification_channel_settings").select("sms_premium_enabled,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled,sms_communication_enabled,sms_finance_reminders_enabled").eq("institution_id", id).maybeSingle(),
+      access.srv.from("parent_connect_phone_changes").select("id,student_id,student_name,matricule,academic_year,previous_phone,phone_e164,changed_by,changed_at").eq("institution_id", id).order("changed_at", { ascending: false }).limit(30),
     ]);
-    if ([institution, year, settings, summary, grants, remittances, bulk, payments].some((r) => r.error)) return json({ error: "Impossible de charger cet établissement. Vérifiez l’installation et son année scolaire." }, 503);
+    if ([institution, year, settings, summary, grants, remittances, bulk, payments, channels, phoneChanges].some((r) => r.error)) return json({ error: "Impossible de charger cet établissement. Vérifiez l’installation et son année scolaire." }, 503);
     const roster = year.data?.code ? await access.srv.rpc("parent_connect_roster", { p_institution_id: id, p_academic_year: year.data.code }) : { data: { eligible_count: 0, skipped_no_matricule: 0 }, error: null };
     if (roster.error) throw roster.error;
-    return json({ institution: institution.data, year: year.data, settings: settings.data || { enforcement_enabled: false, activations_paused: false }, summary: summary.data, roster: roster.data, grants: grants.data || [], remittances: remittances.data || [], bulk: bulk.data || [], payments: payments.data || [] });
+    const actorIds = [...new Set((phoneChanges.data || []).map((r) => r.changed_by).filter(Boolean))];
+    const actors = actorIds.length ? await access.srv.from("profiles").select("id,display_name").in("id", actorIds) : { data: [], error: null };
+    if (actors.error) throw actors.error;
+    const actorNames = new Map((actors.data || []).map((r) => [r.id, r.display_name]));
+    const auditedPhones = (phoneChanges.data || []).map((r) => ({ ...r, changed_by_name: actorNames.get(r.changed_by) || "Compte supprimé" }));
+    return json({ sms_channels: channels.data || {}, phone_changes: auditedPhones, institution: institution.data, year: year.data, settings: settings.data || { enforcement_enabled: false, activations_paused: false }, summary: summary.data, roster: roster.data, grants: grants.data || [], remittances: remittances.data || [], bulk: bulk.data || [], payments: payments.data || [] });
   } catch { return json({ error: "Parent Connect est momentanément indisponible." }, 503); }
 }
 

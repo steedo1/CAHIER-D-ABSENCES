@@ -26,6 +26,7 @@ create table public.parent_connect_accounts (
   academic_year text not null, source text not null check(source in ('payment','school_cover')),
   bulk_operation_id uuid references public.parent_connect_bulk_operations(id),
   starts_at timestamptz not null, ends_at timestamptz not null,
+  sms_phone_e164 text check(sms_phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
   updated_at timestamptz not null default now(),
   primary key (institution_id,student_id,academic_year), check(ends_at>starts_at)
 );
@@ -36,6 +37,7 @@ create table public.parent_connect_payments (
   institution_id uuid not null references public.institutions(id) on delete cascade,
   student_id uuid references public.students(id) on delete set null,
   academic_year text not null, student_name text not null, matricule text not null,
+  sms_phone_e164 text not null check(sms_phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
   payer_name text not null check(length(trim(payer_name)) between 2 and 160),
   payment_method text not null check(payment_method in ('cash','wave','orange_money','mtn_money','bank_transfer')),
   payment_reference text not null default '' check(length(payment_reference)<=160),
@@ -100,17 +102,19 @@ end; $$;
 
 create function public.parent_connect_collect(p_institution_id uuid,p_student_id uuid,p_actor_id uuid,
   p_operation_id uuid,p_payer_name text,p_payment_method text,p_payment_reference text,
-  p_expected_ends_at timestamptz default null,p_academic_year text default null)
+  p_expected_ends_at timestamptz default null,p_academic_year text default null,p_sms_phone_e164 text default null)
 returns jsonb language plpgsql security invoker set search_path='' as $$
 declare v_student public.students%rowtype; v_existing public.parent_connect_payments%rowtype;
   v_current timestamptz; v_year jsonb; v_end timestamptz; v_credits bigint; v_payment public.parent_connect_payments%rowtype;
 begin
   perform public.parent_connect_assert_actor(p_actor_id,p_institution_id);
+  if p_sms_phone_e164 is null or p_sms_phone_e164 !~ '^\+[1-9][0-9]{7,14}$' then raise exception 'PARENT_CONNECT_PHONE_REQUIRED'; end if;
   if p_operation_id is null or p_student_id is null or p_academic_year is null then raise exception 'PARENT_CONNECT_INVALID_PAYMENT'; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_institution_id::text,2026));
   select * into v_existing from public.parent_connect_payments where id=p_operation_id;
   if found then
     if v_existing.institution_id<>p_institution_id or v_existing.student_id is distinct from p_student_id
+      or v_existing.sms_phone_e164 is distinct from p_sms_phone_e164
       or v_existing.academic_year<>p_academic_year or v_existing.payer_name<>trim(p_payer_name)
       or v_existing.payment_method<>p_payment_method or v_existing.payment_reference<>trim(coalesce(p_payment_reference,''))
     then raise exception 'PARENT_CONNECT_OPERATION_CONFLICT'; end if;
@@ -133,11 +137,11 @@ begin
   if v_credits<1 then raise exception 'PARENT_CONNECT_NO_CREDITS'; end if;
   select least(approved_ends_at,(v_year->>'ends_at')::timestamptz) into v_end from public.parent_connect_school_settings where institution_id=p_institution_id and approved_academic_year=p_academic_year and approved_ends_at>now();
   if v_end is null then raise exception 'PARENT_CONNECT_YEAR_REQUIRED'; end if;
-  insert into public.parent_connect_payments(id,institution_id,student_id,academic_year,student_name,matricule,payer_name,payment_method,payment_reference,receipt_no,starts_at,ends_at,created_by)
-    values(p_operation_id,p_institution_id,p_student_id,p_academic_year,coalesce(nullif(trim(concat_ws(' ',v_student.last_name,v_student.first_name)),''),'Élève'),v_student.matricule,trim(p_payer_name),p_payment_method,trim(coalesce(p_payment_reference,'')),
+  insert into public.parent_connect_payments(id,institution_id,student_id,academic_year,student_name,matricule,sms_phone_e164,payer_name,payment_method,payment_reference,receipt_no,starts_at,ends_at,created_by)
+    values(p_operation_id,p_institution_id,p_student_id,p_academic_year,coalesce(nullif(trim(concat_ws(' ',v_student.last_name,v_student.first_name)),''),'Élève'),v_student.matricule,p_sms_phone_e164,trim(p_payer_name),p_payment_method,trim(coalesce(p_payment_reference,'')),
       'PC-'||p_academic_year||'-'||upper(replace(p_operation_id::text,'-','')),now(),v_end,p_actor_id) returning * into v_payment;
-  insert into public.parent_connect_accounts(student_id,institution_id,academic_year,source,starts_at,ends_at)
-    values(p_student_id,p_institution_id,p_academic_year,'payment',now(),v_end);
+  insert into public.parent_connect_accounts(student_id,institution_id,academic_year,source,starts_at,ends_at,sms_phone_e164)
+    values(p_student_id,p_institution_id,p_academic_year,'payment',now(),v_end,p_sms_phone_e164);
   return to_jsonb(v_payment);
 end; $$;
 
@@ -239,8 +243,8 @@ create function public.parent_connect_access_status(p_student_id uuid) returns j
     left join public.academic_years yr on yr.institution_id=st.institution_id and yr.is_current
     left join public.parent_connect_accounts account on account.student_id=st.id and account.institution_id=st.institution_id and account.academic_year=yr.code where st.id=p_student_id;
 $$;
-revoke all on function public.parent_connect_assert_actor(uuid,uuid,boolean),public.parent_connect_current_year(uuid),public.parent_connect_collect(uuid,uuid,uuid,uuid,text,text,text,timestamptz,text),public.parent_connect_remit(uuid,uuid,uuid,integer,text,text),public.parent_connect_grant_credits(uuid,uuid,uuid,text,integer,text,uuid),public.parent_connect_bulk_activate(uuid,uuid,uuid,text,text,integer),public.parent_connect_summary(uuid),public.parent_connect_access_status(uuid) from public,anon,authenticated;
-grant execute on function public.parent_connect_assert_actor(uuid,uuid,boolean),public.parent_connect_current_year(uuid),public.parent_connect_collect(uuid,uuid,uuid,uuid,text,text,text,timestamptz,text),public.parent_connect_remit(uuid,uuid,uuid,integer,text,text),public.parent_connect_grant_credits(uuid,uuid,uuid,text,integer,text,uuid),public.parent_connect_bulk_activate(uuid,uuid,uuid,text,text,integer),public.parent_connect_summary(uuid),public.parent_connect_access_status(uuid) to service_role;
+revoke all on function public.parent_connect_assert_actor(uuid,uuid,boolean),public.parent_connect_current_year(uuid),public.parent_connect_collect(uuid,uuid,uuid,uuid,text,text,text,timestamptz,text,text),public.parent_connect_remit(uuid,uuid,uuid,integer,text,text),public.parent_connect_grant_credits(uuid,uuid,uuid,text,integer,text,uuid),public.parent_connect_bulk_activate(uuid,uuid,uuid,text,text,integer),public.parent_connect_summary(uuid),public.parent_connect_access_status(uuid) from public,anon,authenticated;
+grant execute on function public.parent_connect_assert_actor(uuid,uuid,boolean),public.parent_connect_current_year(uuid),public.parent_connect_collect(uuid,uuid,uuid,uuid,text,text,text,timestamptz,text,text),public.parent_connect_remit(uuid,uuid,uuid,integer,text,text),public.parent_connect_grant_credits(uuid,uuid,uuid,text,integer,text,uuid),public.parent_connect_bulk_activate(uuid,uuid,uuid,text,text,integer),public.parent_connect_summary(uuid),public.parent_connect_access_status(uuid) to service_role;
 
 create function public.parent_connect_super_overview(p_search text default '',p_offset integer default 0)
 returns jsonb language sql stable security invoker set search_path='' as $$
@@ -276,4 +280,105 @@ returns jsonb language sql stable security invoker set search_path='' as $$
 $$;
 revoke all on function public.parent_connect_students(uuid,text,text,uuid,text,integer) from public,anon,authenticated;
 grant execute on function public.parent_connect_students(uuid,text,text,uuid,text,integer) to service_role;
+-- SMS switches are writable only through verified super-admin server actions.
+-- Existing read access and every current push/SMS value remain unchanged.
+revoke insert,update,delete,truncate,references,trigger on public.institution_notification_channel_settings from public,anon,authenticated;
+
+-- Phone changes are independent of payment and never grant access or enable SMS.
+create table public.parent_connect_phone_changes (
+  id uuid primary key,
+  institution_id uuid not null references public.institutions(id) on delete cascade,
+  student_id uuid references public.students(id) on delete set null,
+  academic_year text not null,
+  student_name text not null, matricule text not null,
+  previous_phone text, phone_e164 text not null check(phone_e164 ~ '^\+[1-9][0-9]{7,14}$'),
+  changed_by uuid references public.profiles(id) on delete set null,
+  changed_at timestamptz not null default now()
+);
+create index parent_connect_phone_changes_school on public.parent_connect_phone_changes(institution_id,changed_at desc);
+alter table public.parent_connect_phone_changes enable row level security;
+revoke all on public.parent_connect_phone_changes from public,anon,authenticated;
+grant all on public.parent_connect_phone_changes to service_role;
+
+create function public.parent_connect_set_phone(p_institution_id uuid,p_student_id uuid,p_actor_id uuid,
+  p_operation_id uuid,p_academic_year text,p_phone_e164 text,p_expected_phone text default null)
+returns jsonb language plpgsql security invoker set search_path='' as $$
+declare v_account public.parent_connect_accounts%rowtype; v_existing public.parent_connect_phone_changes%rowtype; v_year jsonb;
+begin
+  perform public.parent_connect_assert_actor(p_actor_id,p_institution_id);
+  if p_operation_id is null or p_phone_e164 is null or p_phone_e164 !~ '^\+[1-9][0-9]{7,14}$' then raise exception 'PARENT_CONNECT_PHONE_REQUIRED'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_institution_id::text,2026));
+  select * into v_existing from public.parent_connect_phone_changes where id=p_operation_id;
+  if found then
+    if v_existing.institution_id<>p_institution_id or v_existing.student_id is distinct from p_student_id or v_existing.academic_year<>p_academic_year or v_existing.phone_e164<>p_phone_e164 then raise exception 'PARENT_CONNECT_OPERATION_CONFLICT'; end if;
+    return to_jsonb(v_existing);
+  end if;
+  v_year:=public.parent_connect_current_year(p_institution_id);
+  if v_year->>'code' is distinct from p_academic_year then raise exception 'PARENT_CONNECT_YEAR_CHANGED'; end if;
+  if not exists(select 1 from public.students where id=p_student_id and institution_id=p_institution_id and coalesce(lifecycle_status,'active')='active') then raise exception 'PARENT_CONNECT_STUDENT_NOT_FOUND'; end if;
+  select * into v_account from public.parent_connect_accounts where institution_id=p_institution_id and student_id=p_student_id and academic_year=p_academic_year for update;
+  if not found or v_account.ends_at<=now() then raise exception 'PARENT_CONNECT_STALE_SUBSCRIPTION'; end if;
+  if v_account.sms_phone_e164 is distinct from p_expected_phone then raise exception 'PARENT_CONNECT_STALE_SUBSCRIPTION'; end if;
+  insert into public.parent_connect_phone_changes(id,institution_id,student_id,academic_year,student_name,matricule,previous_phone,phone_e164,changed_by)
+    select p_operation_id,p_institution_id,p_student_id,p_academic_year,concat_ws(' ',last_name,first_name),matricule,v_account.sms_phone_e164,p_phone_e164,p_actor_id from public.students where id=p_student_id returning * into v_existing;
+  update public.parent_connect_accounts set sms_phone_e164=p_phone_e164,updated_at=now() where institution_id=p_institution_id and student_id=p_student_id and academic_year=p_academic_year;
+  return to_jsonb(v_existing);
+end; $$;
+
+-- Dispatch resolves the CURRENT phone, school and approved year. No parent login required.
+create function public.parent_connect_sms_contacts(p_institution_id uuid,p_student_ids uuid[])
+returns jsonb language sql stable security invoker set search_path='' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('student_id',a.student_id,'phone_e164',a.sms_phone_e164)),'[]'::jsonb)
+  from public.parent_connect_accounts a
+  join public.students s on s.id=a.student_id and s.institution_id=a.institution_id
+  join public.academic_years y on y.institution_id=a.institution_id and y.code=a.academic_year and y.is_current
+  join public.parent_connect_school_settings cfg on cfg.institution_id=a.institution_id and cfg.approved_academic_year=a.academic_year
+  where a.institution_id=p_institution_id and a.student_id=any(p_student_ids)
+    and coalesce(s.lifecycle_status,'active')='active' and nullif(trim(s.matricule),'') is not null
+    and a.sms_phone_e164 is not null and a.starts_at<=now()
+    and y.end_date is not null and cfg.approved_ends_at is not null
+    and least(a.ends_at,cfg.approved_ends_at,((y.end_date+1)::timestamp at time zone 'UTC'))>now()
+    and (select count(*) from public.academic_years cy where cy.institution_id=a.institution_id and cy.is_current)=1
+    and exists(select 1 from public.class_enrollments ce join public.classes cl on cl.id=ce.class_id
+      where ce.student_id=a.student_id and ce.institution_id=a.institution_id and ce.end_date is null and cl.institution_id=a.institution_id and cl.academic_year=a.academic_year);
+$$;
+revoke all on function public.parent_connect_set_phone(uuid,uuid,uuid,uuid,text,text,text),public.parent_connect_sms_contacts(uuid,uuid[]) from public,anon,authenticated;
+grant execute on function public.parent_connect_set_phone(uuid,uuid,uuid,uuid,text,text,text),public.parent_connect_sms_contacts(uuid,uuid[]) to service_role;
+
+-- An isolated internal trigger, after the existing trigger, leaves PUSH/INAPP untouched.
+-- Definer privilege is limited to reading the private subscription ledger and queuing
+-- SMS from an attendance mark already authorized by existing attendance RLS.
+create schema if not exists parent_connect_internal;
+revoke all on schema parent_connect_internal from public,anon,authenticated;
+create function parent_connect_internal.attendance_sms()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_inst uuid; v_phone jsonb; v_payload jsonb; v_name text; v_class text; v_when timestamptz;
+begin
+  select ts.institution_id,concat_ws(' ',st.last_name,st.first_name),cl.label,ts.started_at
+    into v_inst,v_name,v_class,v_when
+  from public.teacher_sessions ts join public.students st on st.id=new.student_id and st.institution_id=ts.institution_id
+  left join public.classes cl on cl.id=ts.class_id where ts.id=new.session_id;
+  if v_inst is null then return new; end if;
+  v_phone:=public.parent_connect_sms_contacts(v_inst,array[new.student_id]);
+  if jsonb_array_length(v_phone)=0 then return new; end if;
+  -- Remove only legacy SMS rows for this mark to avoid duplicate sends to profiles.
+  delete from public.notifications_queue where mark_id=new.id and channels='["sms"]'::jsonb and status='pending';
+  if new.status::text not in ('absent','late') or not exists(select 1 from public.institution_notification_channel_settings c
+    where c.institution_id=v_inst and c.sms_premium_enabled and
+      ((new.status::text='absent' and c.sms_absence_enabled) or (new.status::text='late' and c.sms_late_enabled))) then return new; end if;
+  v_payload:=jsonb_build_object('kind','attendance','event',new.status,'student',jsonb_build_object('id',new.student_id,'name',v_name),
+    'class',jsonb_build_object('label',v_class),'session',jsonb_build_object('started_at',v_when),
+    'minutes_late',new.minutes_late,'reason',new.reason);
+  insert into public.notifications_queue(institution_id,student_id,session_id,mark_id,channels,payload,status,meta)
+    values(v_inst,new.student_id,new.session_id,new.id,'["sms"]'::jsonb,v_payload,'pending',jsonb_build_object('source','parent_connect_attendance_sms'));
+  return new;
+exception when others then
+  -- An SMS failure must never roll back a valid attendance mark or its existing pushes.
+  raise warning 'Parent Connect SMS queue failed for mark %: %',new.id,sqlstate;
+  return new;
+end; $$;
+revoke all on function parent_connect_internal.attendance_sms() from public,anon,authenticated;
+create trigger z_parent_connect_attendance_sms after insert on public.attendance_marks
+for each row execute function parent_connect_internal.attendance_sms();
+
 commit;

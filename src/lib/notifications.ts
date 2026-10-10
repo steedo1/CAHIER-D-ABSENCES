@@ -1,3 +1,5 @@
+import { parentConnectSmsContacts } from "@/lib/parent-connect/sms";
+import { getInstitutionSmsPolicy, shouldSendSmsForEvent } from "@/lib/sms/policy";
 // src/lib/notifications.ts
 import { SupabaseClient } from "@supabase/supabase-js";
 
@@ -287,6 +289,16 @@ export async function queueAdminAttendanceNotifications(opts: {
 
   const studentIds = normalizedItems.map((i) => i.student_id);
   const names = await fetchStudentNames(srv, studentIds);
+  let phones = new Map<string, string>();
+  let smsPolicy: Awaited<ReturnType<typeof getInstitutionSmsPolicy>> | null = null;
+  let smsLookupFailed = false;
+  try {
+    phones = await parentConnectSmsContacts(srv, institution_id, studentIds);
+    smsPolicy = phones.size ? await getInstitutionSmsPolicy(srv, institution_id) : null;
+  } catch {
+    smsLookupFailed = true;
+    console.warn("[parent-connect] SMS lookup failed; existing attendance pushes preserved", { institution_id });
+  }
 
   const { data: sg } = await srv
     .from("student_guardians")
@@ -329,13 +341,14 @@ export async function queueAdminAttendanceNotifications(opts: {
   }
 
   const rows: any[] = [];
+  const smsRows: any[] = [];
   const seen = new Set<string>();
 
   for (const it of normalizedItems) {
     if (it.status !== "absent" && it.status !== "late") continue;
 
     const parents = linksByStudent.get(it.student_id) || [];
-    if (!parents.length) continue;
+    if (!parents.length && !phones.has(it.student_id)) continue;
 
     const studentName = names[it.student_id] || "Élève";
     const isLate = it.status === "late";
@@ -373,6 +386,10 @@ export async function queueAdminAttendanceNotifications(opts: {
       body,
     };
 
+    if (phones.has(it.student_id) && smsPolicy && shouldSendSmsForEvent(smsPolicy, it.status === "late" ? "late" : "absent")) {
+      smsRows.push({ institution_id, student_id: it.student_id, channels: ["sms"], payload, title, body,
+        status: WAIT, send_after: occurred_at, meta: { src: "api:queueAdminAttendanceNotifications", source: "parent_connect_admin_attendance_sms", admin_call_id } });
+    }
     for (const parent_id of parents) {
       const key = [
         parent_id,
@@ -390,7 +407,7 @@ export async function queueAdminAttendanceNotifications(opts: {
         institution_id,
         student_id: it.student_id,
         parent_id,
-        channels: ["inapp", "push", "sms"],
+        channels: phones.has(it.student_id) || smsLookupFailed ? ["inapp", "push"] : ["inapp", "push", "sms"],
         payload,
         title,
         body,
@@ -405,13 +422,19 @@ export async function queueAdminAttendanceNotifications(opts: {
     }
   }
 
-  if (!rows.length) return { queued: 0, cleared };
-
-  const { error, count } = await srv
-    .from("notifications_queue")
-    .insert(rows, { count: "exact" });
-
-  if (error) throw error;
-
-  return { queued: count || rows.length, cleared };
+  let queued = 0;
+  if (rows.length) {
+    const { error, count } = await srv.from("notifications_queue").insert(rows, { count: "exact" });
+    if (error) throw error;
+    queued += count || rows.length;
+  }
+  // Separate transaction: an SMS error must not discard the existing push/in-app rows.
+  if (smsRows.length) {
+    try {
+      const { error, count } = await srv.from("notifications_queue").insert(smsRows, { count: "exact" });
+      if (error) throw error;
+      queued += count || smsRows.length;
+    } catch { console.warn("[parent-connect] SMS queue failed; attendance pushes retained", { institution_id, admin_call_id }); }
+  }
+  return { queued, cleared };
 }

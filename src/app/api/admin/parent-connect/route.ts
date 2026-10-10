@@ -1,3 +1,4 @@
+import { parentConnectPhone } from "@/lib/parent-connect/phone";
 import { parentConnectOperationError as operationError } from "@/lib/parent-connect/errors";
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../_helpers/institutionAccess";
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
       srv.from("classes").select("id,label,level,formation_level_code,academic_year").eq("institution_id", institutionId).order("label").limit(1000),
       srv.from("institutions").select("name").eq("id", institutionId).single(),
       srv.rpc("parent_connect_summary", { p_institution_id: institutionId }),
-      srv.from("parent_connect_payments").select("id,student_id,student_name,matricule,payer_name,payment_method,payment_reference,amount,receipt_no,starts_at,ends_at,created_at").eq("institution_id", institutionId).order("created_at", { ascending: false }).limit(30),
+      srv.from("parent_connect_payments").select("id,student_id,student_name,matricule,payer_name,sms_phone_e164,payment_method,payment_reference,amount,receipt_no,starts_at,ends_at,created_at").eq("institution_id", institutionId).order("created_at", { ascending: false }).limit(30),
       srv.from("parent_connect_remittances").select("id,amount,reference,created_at,parent_connect_credit_grants(id)").eq("institution_id", institutionId).order("created_at", { ascending: false }).limit(30),
       srv.from("academic_years").select("code,end_date").eq("institution_id", institutionId).eq("is_current", true).maybeSingle(),
     ]);
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     if (students.error) throw students.error;
     const items: { id: string; matricule: string | null; first_name: string | null; last_name: string | null; class_label: string }[] = students.data?.items || [];
     const ids = items.map((s) => s.id);
-    const accounts = ids.length ? await srv.from("parent_connect_accounts").select("student_id,starts_at,ends_at,source").eq("institution_id", institutionId).eq("academic_year", year).in("student_id", ids) : { data: [], error: null };
+    const accounts = ids.length ? await srv.from("parent_connect_accounts").select("student_id,starts_at,ends_at,source,sms_phone_e164").eq("institution_id", institutionId).eq("academic_year", year).in("student_id", ids) : { data: [], error: null };
     if (accounts.error) throw accounts.error;
     const accountById = new Map((accounts.data || []).map((r) => [r.student_id, r]));
     const approvedEnd = settings.data?.approved_academic_year === year ? settings.data?.approved_ends_at : null;
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
       activations_paused: settings.data?.activations_paused === true,
       school_end_date: effectiveEnd ? new Date(Date.parse(effectiveEnd) - 1).toISOString().slice(0, 10) : null,
       classes: currentClasses.map((c) => ({ ...c, level: c.formation_level_code || c.level || "" })), academic_year: year, page, total: students.data?.total || 0,
-      items: items.map((s) => ({ ...s, full_name: `${s.last_name || ""} ${s.first_name || ""}`.trim(), coverage_source: accountById.get(s.id)?.source || null, parent_connect: parentConnectStatus(true, endFor(accountById.get(s.id)?.ends_at)) })),
+      items: items.map((s) => ({ ...s, full_name: `${s.last_name || ""} ${s.first_name || ""}`.trim(), coverage_source: accountById.get(s.id)?.source || null, sms_phone_e164: accountById.get(s.id)?.sms_phone_e164 || null, parent_connect: parentConnectStatus(true, endFor(accountById.get(s.id)?.ends_at)) })),
       summary: summary.data,
       payments: payments.data || [], remittances: remittances.data || [],
     });
@@ -70,6 +71,17 @@ export async function POST(req: NextRequest) {
     const { data, error } = await access.srv.rpc("parent_connect_remit", { p_institution_id: access.institutionId, p_actor_id: access.user.id, p_operation_id: body.operation_id, p_amount: amount, p_reference: reference, p_academic_year: String(body.academic_year || "") });
     return error ? json({ error: operationError(error.message) }, 409) : json({ remittance: data });
   }
+  const phone = parentConnectPhone(body.sms_phone);
+  if (!phone) return json({ error: "Renseignez un numéro de téléphone valide donné par le parent." }, 400);
+  if (body.action === "phone") {
+    if (!UUID.test(String(body.student_id || "")) || (body.expected_phone != null && !parentConnectPhone(body.expected_phone))) return json({ error: "Élève ou numéro invalide." }, 400);
+    const r = await access.srv.rpc("parent_connect_set_phone", {
+      p_institution_id: access.institutionId, p_student_id: body.student_id, p_actor_id: access.user.id,
+      p_operation_id: body.operation_id, p_academic_year: String(body.academic_year || ""), p_phone_e164: phone,
+      p_expected_phone: body.expected_phone ?? null,
+    });
+    return r.error ? json({ error: operationError(r.error.message) }, 409) : json({ phone_change: r.data });
+  }
   const payer = String(body.payer_name || "").trim();
   const reference = String(body.payment_reference || "").trim();
   const expected = body.expected_ends_at ?? null;
@@ -77,7 +89,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await access.srv.rpc("parent_connect_collect", {
     p_institution_id: access.institutionId, p_student_id: body.student_id,
     p_actor_id: access.user.id, p_operation_id: body.operation_id,
-    p_payer_name: payer, p_payment_method: body.payment_method,
+    p_sms_phone_e164: phone, p_payer_name: payer, p_payment_method: body.payment_method,
     p_payment_reference: reference, p_expected_ends_at: expected, p_academic_year: String(body.academic_year || ""),
   });
   return error ? json({ error: operationError(error.message) }, 409) : json({ payment: data });

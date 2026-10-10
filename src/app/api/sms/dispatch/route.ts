@@ -1,3 +1,4 @@
+import { parentConnectSmsContacts } from "@/lib/parent-connect/sms";
 import { filterParentConnectQueue } from "@/lib/parent-connect/server";
 // src/app/api/sms/dispatch/route.ts
 import { NextResponse } from "next/server";
@@ -190,9 +191,7 @@ function okAuth(req: Request) {
     : "";
   const fromVercelCron = req.headers.has("x-vercel-cron");
 
-  const allowed =
-    fromVercelCron ||
-    (!!secret && (xCron === secret || bearer === secret));
+  const allowed = !!secret && (xCron === secret || bearer === secret);
 
   console.info("[sms/dispatch] auth", {
     fromVercelCron,
@@ -234,15 +233,15 @@ type StudentGuardianRow = {
 };
 
 type ContactRow = {
-  id: string;
-  profile_id: string;
+  id: string | null;
+  profile_id: string | null;
   institution_id: string | null;
   phone_e164: string;
   sms_enabled: boolean;
   is_primary: boolean;
   verified_at: string | null;
   created_at: string;
-  source?: "contact" | "profile";
+  source?: "contact" | "profile" | "subscription";
 };
 
 /* ───────────────── Channels ───────────────── */
@@ -542,6 +541,7 @@ async function run(req: Request) {
       "id,institution_id,parent_id,student_id,profile_id,channels,payload,title,body,status,attempts,created_at,meta"
     )
     .eq("status", WAIT_STATUS)
+    .contains("channels", ["sms"])
     .order("created_at", { ascending: true })
     .limit(400);
 
@@ -599,7 +599,16 @@ async function run(req: Request) {
     });
   }
 
-  const targetProfilesByRow = await resolveTargetProfilesByRow(srv, rows);
+  const phonesBySchool = new Map<string, Map<string, string>>();
+  try {
+    for (const institutionId of new Set(rows.map((r) => r.institution_id).filter(Boolean) as string[])) {
+      const studentIds = [...new Set(rows.filter((r) => r.institution_id === institutionId && r.student_id && !r.parent_id && !r.profile_id).map((r) => r.student_id!))];
+      phonesBySchool.set(institutionId, await parentConnectSmsContacts(srv, institutionId, studentIds));
+    }
+  } catch { return NextResponse.json({ ok: false, error: "Numéros Parent Connect indisponibles. Aucun SMS envoyé.", id }, { status: 503 }); }
+  const subscriptionOnly = (row: QueueRow) => String(safeParse<any>(row.meta)?.source || "").startsWith("parent_connect_");
+  const hasSubscriptionPhone = (row: QueueRow) => !row.parent_id && !row.profile_id && row.student_id && phonesBySchool.get(s(row.institution_id))?.has(row.student_id);
+  const targetProfilesByRow = await resolveTargetProfilesByRow(srv, rows.filter((row) => !subscriptionOnly(row) && !hasSubscriptionPhone(row)));
 
   const allProfileIds = Array.from(
     new Set(Array.from(targetProfilesByRow.values()).flatMap((x) => x))
@@ -651,6 +660,10 @@ async function run(req: Request) {
     const core = safeParse<any>(n.payload) || {};
     const institutionId = s(n.institution_id);
     const targetProfiles = targetProfilesByRow.get(n.id) || [];
+    const directPhone = !n.parent_id && !n.profile_id && n.student_id ? phonesBySchool.get(institutionId)?.get(n.student_id) : null;
+    const targets: { profileId: string | null; best: ContactRow | null }[] = directPhone
+      ? [{ profileId: null, best: { id: null, profile_id: null, institution_id: institutionId, phone_e164: directPhone, sms_enabled: true, is_primary: true, verified_at: null, created_at: n.created_at, source: "subscription" } }]
+      : subscriptionOnly(n) ? [] : targetProfiles.map((profileId) => ({ profileId, best: pickBestContactForInstitution(contactsByProfile.get(profileId) || [], institutionId) }));
     const attempts = (Number(n.attempts) || 0) + 1;
 
     let successes = 0;
@@ -699,7 +712,7 @@ async function run(req: Request) {
           lastError = "sms_disabled_for_event";
         } else if (provider !== "orange_ci") {
           lastError = "unsupported_sms_provider";
-        } else if (!targetProfiles.length) {
+        } else if (!targets.length) {
           lastError = "no_target_profiles";
         } else {
           const institutionNameForSms = resolveInstitutionNameForSms(
@@ -740,9 +753,8 @@ async function run(req: Request) {
             });
           }
 
-          for (const profileId of targetProfiles) {
-            const contacts = contactsByProfile.get(profileId) || [];
-            const best = pickBestContactForInstitution(contacts, institutionId);
+          for (const { profileId, best } of targets) {
+            const contacts = profileId ? contactsByProfile.get(profileId) || [] : [];
 
             console.info("[sms/dispatch] target_resolution", {
               id,
@@ -780,7 +792,7 @@ async function run(req: Request) {
                 senderName: senderName || undefined,
               });
 
-              if (best.source !== "profile") usedContactIds.add(best.id);
+              if (best.source === "contact" && best.id) usedContactIds.add(best.id);
               successes++;
               acceptedSmsSends++;
 
@@ -979,6 +991,7 @@ async function run(req: Request) {
         processed_at: nowIso,
         institution_id: institutionId || null,
         sms_event: smsEvent ?? null,
+        recipient_source: directPhone ? "parent_connect_subscription" : "profile",
         provider,
         requested_sender_name: senderName || null,
         attempts,

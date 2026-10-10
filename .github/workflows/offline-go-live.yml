@@ -43,6 +43,9 @@ jobs:
       - name: Typecheck web
         run: npx tsc --noEmit
 
+      - name: Parent Connect subscriptions and SMS regression suite
+        run: npm run test:parent-connect
+
       - name: Critical offline regression suite
         run: |
           node --test \

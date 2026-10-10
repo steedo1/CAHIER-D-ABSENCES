@@ -16,6 +16,11 @@ await db.exec(`
  create table public.academic_years(id uuid primary key,institution_id uuid,code text,start_date date,end_date date,is_current boolean);
  create table public.classes(id uuid primary key,institution_id uuid,academic_year text,label text,level text,formation_level_code text);
  create table public.class_enrollments(student_id uuid,institution_id uuid,class_id uuid,end_date date);
+ create table public.institution_notification_channel_settings(institution_id uuid primary key,push_enabled boolean default true,sms_premium_enabled boolean default false,sms_absence_enabled boolean default false,sms_late_enabled boolean default false,sms_notes_digest_enabled boolean default false);
+ grant select,insert,update,delete,truncate,references,trigger on public.institution_notification_channel_settings to anon,authenticated,service_role;
+ create table public.teacher_sessions(id uuid primary key,institution_id uuid,class_id uuid,subject_id uuid,started_at timestamptz);
+ create table public.attendance_marks(id uuid primary key default gen_random_uuid(),session_id uuid,student_id uuid,status text,minutes_late integer,reason text);
+ create table public.notifications_queue(id uuid primary key default gen_random_uuid(),institution_id uuid,student_id uuid,session_id uuid,mark_id uuid,parent_id uuid,profile_id uuid,channels jsonb,payload jsonb,status text default 'pending',meta jsonb default '{}');
  create schema finance; create table finance.charges(id integer,amount integer); insert into finance.charges values(1,100000);
  create table public.student_grades(id integer,score integer); insert into public.student_grades values(1,17);
  insert into public.institutions values('${school}','École A'),('${otherSchool}','École B');
@@ -37,7 +42,7 @@ db.query = async (...args) => {
  catch (e) { await db.exec('rollback to savepoint pc_statement; release savepoint pc_statement'); throw e; }
 };
 const value=async(sql,args=[]) => (await db.query(sql,args)).rows[0].value;
-const collect=({actor=finance,schoolId=school,studentId=student,operation=op,payer='Parent Ange',academicYear=year}={}) => value('select parent_connect_collect($1,$2,$3,$4,$5,$6,$7,$8,$9) as value',[schoolId,studentId,actor,operation,payer,'cash','',null,academicYear]);
+const collect=({actor=finance,schoolId=school,studentId=student,operation=op,payer='Parent Ange',academicYear=year,phone='+2250700000000'}={}) => value('select parent_connect_collect($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as value',[schoolId,studentId,actor,operation,payer,'cash','',null,academicYear,phone]);
 const grant=({actor=superAdmin,schoolId=school,operation=grantOp,quantity=1,remittance=null,academicYear=year}={})=>value('select parent_connect_grant_credits($1,$2,$3,$4,$5,$6,$7) as value',[schoolId,actor,operation,academicYear,quantity,'Banque vérifiée',remittance]);
 const remit=(amount=1500,operation=op)=>value('select parent_connect_remit($1,$2,$3,$4,$5,$6) as value',[school,finance,operation,amount,'Wave TEST',year]);
 const bulk=({actor=superAdmin,count=2,operation=op,schoolId=school}={})=>value('select parent_connect_bulk_activate($1,$2,$3,$4,$5,$6) as value',[schoolId,actor,operation,year,'Contrat annuel déjà payé',count]);
@@ -162,4 +167,70 @@ await scenario('liste paginée : nom/prénoms, niveau et classe restent dans l�
 await scenario('période approuvée absente : un compte seul ne suffit pas à ouvrir les données',async()=>{
  await grant();await collect();await db.query('update parent_connect_school_settings set approved_ends_at=null where institution_id=$1',[school]);assert.equal((await access()).ends_at,null);
 });
+await scenario('numéro obligatoire à la collecte : crédit, reçu et téléphone sont atomiques',async()=>{
+ await grant();await assert.rejects(collect({phone:null}),/PHONE_REQUIRED/);assert.equal((await summary()).credits_available,1);
+ const p=await collect();assert.equal(p.sms_phone_e164,'+2250700000000');
+ assert.equal(await value('select sms_phone_e164 as value from parent_connect_accounts where student_id=$1',[student]),p.sms_phone_e164);
+ await assert.rejects(collect({phone:'+2250500000000'}),/OPERATION_CONFLICT/);
+});
+const setPhone=({actor=finance,studentId=student,operation=op2,phone='+2250700000000',expected=null}={})=>value('select parent_connect_set_phone($1,$2,$3,$4,$5,$6,$7) as value',[school,studentId,actor,operation,year,phone,expected]);
+const phones=(schoolId=school)=>value('select parent_connect_sms_contacts($1,$2) as value',[schoolId,[student,second]]);
+await scenario('CSCA collectif : numéro sans parent connecté, aucun paiement et journal rejouable',async()=>{
+ await bulk();await setPhone();await setPhone();assert.equal((await summary()).credits_used,0);assert.equal((await summary()).collected,0);
+ assert.deepEqual(await phones(),[{student_id:student,phone_e164:'+2250700000000'}]);
+ assert.equal(await value('select count(*)::int as value from parent_connect_phone_changes'),1);
+ await assert.rejects(setPhone({actor:correspondent,operation:op3}),/FORBIDDEN/);
+ await assert.rejects(setPhone({phone:'+2250500000000'}),/OPERATION_CONFLICT/);
+ await assert.rejects(setPhone({phone:'+2250500000000',operation:op3}),/STALE_SUBSCRIPTION/);
+ await setPhone({phone:'+2250500000000',expected:'+2250700000000',operation:op3});
+ assert.equal((await phones())[0].phone_e164,'+2250500000000');
+ assert.equal(await value('select previous_phone as value from parent_connect_phone_changes where id=$1',[op3]),'+2250700000000');
+});
+await scenario('SMS : aucun numéro transmis hors école, après transfert, expiration ou ambiguïté scolaire',async()=>{
+ await bulk();await setPhone();assert.deepEqual(await phones(otherSchool),[]);
+ await db.query('update students set institution_id=$1 where id=$2',[otherSchool,student]);assert.deepEqual(await phones(),[]);
+ await db.query('update students set institution_id=$1 where id=$2',[school,student]);
+ await db.query('update parent_connect_school_settings set approved_ends_at=now()-interval \'1 day\'');assert.deepEqual(await phones(),[]);
+ await db.query('update parent_connect_school_settings set approved_ends_at=now()+interval \'10 days\'');
+ await db.query('insert into academic_years values($1,$2,$3,current_date,current_date+400,true)',[op3,school,'other']);assert.deepEqual(await phones(),[]);
+});
+await scenario('SMS : clients anon/authenticated ne peuvent activer les réglages Nexa',async()=>{
+ await db.query('insert into institution_notification_channel_settings(institution_id) values($1)',[school]);
+ for(const role of ['anon','authenticated']) {
+  await db.exec(`savepoint sms_permission;set local role ${role}`);
+  await assert.rejects(db.query('update institution_notification_channel_settings set sms_premium_enabled=true'),/permission denied/);
+  assert.equal(await value('select sms_premium_enabled as value from institution_notification_channel_settings'),false);
+  await db.exec('rollback to sms_permission');
+ }
+});
+await scenario('crédit, collectif et numéro ne changent aucun réglage SMS/push',async()=>{
+ await db.query('insert into institution_notification_channel_settings(institution_id) values($1)',[school]);
+ await grant({quantity:20});await bulk();await setPhone();
+ assert.deepEqual((await db.query('select push_enabled,sms_premium_enabled,sms_absence_enabled,sms_late_enabled,sms_notes_digest_enabled from institution_notification_channel_settings')).rows,[{push_enabled:true,sms_premium_enabled:false,sms_absence_enabled:false,sms_late_enabled:false,sms_notes_digest_enabled:false}]);
+ assert.equal((await summary()).credits_available,20);
+});
+// Existing legacy trigger is a fixture: the new isolated trigger must preserve its push rows.
+await db.exec(`create function public.fixture_legacy_attendance() returns trigger language plpgsql as $$ begin
+ insert into notifications_queue(institution_id,student_id,mark_id,channels,payload,meta) values('${school}',new.student_id,new.id,'["inapp","push"]','{"existing_push":true}','{"device_id":"legacy-device"}');
+ return new;end; $$;create trigger t_aiu_mark_notify_guardians after insert on attendance_marks for each row execute function fixture_legacy_attendance();`);
+const mark=()=>value("insert into attendance_marks(session_id,student_id,status,minutes_late) values($1,$2,'absent',0) returning id as value",[school,student]);
+await scenario('absence sans compte parent : uniquement le SMS autorisé, push existant conservé',async()=>{
+ await bulk();await setPhone();await db.query('insert into teacher_sessions values($1,$1,$1,null,now())',[school]);
+ await db.query('insert into institution_notification_channel_settings(institution_id) values($1)',[school]);
+ await mark();assert.equal(await value("select count(*)::int as value from notifications_queue where channels='[\"sms\"]'"),0);
+ await db.query('update institution_notification_channel_settings set sms_premium_enabled=true,sms_absence_enabled=true');
+ await mark();const rows=(await db.query('select channels,payload,parent_id,profile_id,meta from notifications_queue')).rows;
+ assert.equal(rows.filter(r=>r.channels.includes('push')).length,2);
+ assert.deepEqual(rows.filter(r=>r.channels.includes('push')).map(r=>r.payload),[{existing_push:true},{existing_push:true}]);
+ const sms=rows.filter(r=>r.channels.includes('sms'));assert.equal(sms.length,1);assert.deepEqual(sms[0].channels,['sms']);assert.equal(sms[0].parent_id,null);assert.equal(sms[0].profile_id,null);assert.equal(sms[0].payload.event,'absent');
+});
+await scenario('SMS désactivé par événement et panne SMS : l’appel et ses push restent enregistrés',async()=>{
+ await bulk();await setPhone();await db.query('insert into teacher_sessions values($1,$1,$1,null,now())',[school]);
+ await db.query('insert into institution_notification_channel_settings(institution_id,sms_premium_enabled,sms_late_enabled) values($1,true,true)',[school]);
+ await mark();assert.equal(await value("select count(*)::int as value from notifications_queue where channels='[\"sms\"]'"),0);
+ await db.query('update institution_notification_channel_settings set sms_absence_enabled=true');
+ await db.exec(`alter table notifications_queue add constraint fixture_sms_failure check (channels <> '["sms"]'::jsonb)`);
+ await mark();assert.equal(await value('select count(*)::int as value from attendance_marks'),2);assert.equal(await value('select count(*)::int as value from notifications_queue'),2);
+});
+
 await db.close();

@@ -12,7 +12,8 @@ export function parentConnectOperationError(message: string) {
     PARENT_CONNECT_STUDENT_NOT_ENROLLED: "Cet élève n’est pas inscrit dans une classe de l’année scolaire actuelle.",
     PARENT_CONNECT_STUDENT_NOT_FOUND: "Élève introuvable dans cet établissement.",
     PARENT_CONNECT_MATRICULE_REQUIRED: "Renseignez le matricule de l’élève avant d’activer Parent Connect.",
-    PARENT_CONNECT_FORBIDDEN: "Vous n’êtes pas autorisé à enregistrer cette opération.",
+    PARENT_CONNECT_PHONE_REQUIRED: "Renseignez un numéro de téléphone valide donné par le parent.",
+  PARENT_CONNECT_FORBIDDEN: "Vous n’êtes pas autorisé à enregistrer cette opération.",
     PARENT_CONNECT_INVALID_GRANT: "Vérifiez le nombre de crédits et le versement reçu (1 500 FCFA par crédit).",
   };
   return errors[message] || "Parent Connect n’est pas disponible. Vérifiez son installation et les informations saisies.";

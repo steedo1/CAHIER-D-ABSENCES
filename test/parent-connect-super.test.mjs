@@ -12,6 +12,7 @@ function load(relative, overrides={}) {
  new Function('require','module','exports',code)(id=>{
   if(id in overrides)return overrides[id];
   if(id==='@/lib/parent-connect/domain')return load('src/lib/parent-connect/domain.ts');
+  if(id==='@/lib/parent-connect/phone')return load('src/lib/parent-connect/phone.ts');
   if(id==='@/lib/parent-connect/errors')return load('src/lib/parent-connect/errors.ts');
   if(id==='@/lib/parent-connect/super-access')return load('src/lib/parent-connect/super-access.ts',overrides);
   return require(id);

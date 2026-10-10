@@ -331,7 +331,8 @@ export async function enqueueNotesDigestSms(opts: {
       /**
        * ✅ On garde l'ancien comportement :
        * - si profileId/parentId sont fournis, le dispatcher cible directement ;
-       * - sinon, /api/sms/dispatch retrouve les parents via student_guardians.
+       * - sinon, le numéro Parent Connect de cet enfant est prioritaire, sans connexion parent ;
+       *   les écoles sans ce numéro gardent la résolution via student_guardians.
        */
       parent_id: parentId || null,
       profile_id: profileId || null,
