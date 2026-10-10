@@ -6,6 +6,7 @@ import { Download, Loader2 } from "lucide-react";
 type SelectOption = {
   value: string;
   label: string;
+  academicYear: string;
 };
 
 type ExportColor = "emerald" | "violet" | "amber";
@@ -51,7 +52,6 @@ export default function OfficialExportForm({
   defaultAcademicYear,
   classes,
   hasAcademicYears,
-  hasClasses,
   disabled = false,
   color = "emerald",
   className = "grid gap-3",
@@ -62,17 +62,25 @@ export default function OfficialExportForm({
   defaultAcademicYear: string;
   classes: SelectOption[];
   hasAcademicYears: boolean;
-  hasClasses: boolean;
   disabled?: boolean;
   color?: ExportColor;
   className?: string;
 }) {
   const [selectedAcademicYear, setSelectedAcademicYear] = useState(defaultAcademicYear);
+  const [selectedClassId, setSelectedClassId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedPeriodRef = periodRefByYear?.[selectedAcademicYear] || "";
-  const isDisabled = disabled || loading || !hasAcademicYears ||
+  const availableClasses = classes.filter((cls) => cls.academicYear === selectedAcademicYear);
+  const isDisabled = disabled || loading || !hasAcademicYears || !availableClasses.length ||
     (!!periodRefByYear && !selectedPeriodRef);
+
+  function handleYearChange(year: string) {
+    setSelectedAcademicYear(year);
+    // Une classe de l'année précédente ne doit jamais rester sélectionnée.
+    setSelectedClassId("");
+    setError(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -138,7 +146,7 @@ export default function OfficialExportForm({
         disabled={loading || !hasAcademicYears}
         className={`w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 ${selectColorClass[color]}`}
         value={selectedAcademicYear}
-        onChange={(event) => setSelectedAcademicYear(event.target.value)}
+        onChange={(event) => handleYearChange(event.target.value)}
       >
         {!hasAcademicYears ? (
           <option value="">Aucune année disponible</option>
@@ -153,12 +161,13 @@ export default function OfficialExportForm({
 
       <select
         name="class_id"
-        disabled={loading}
+        value={selectedClassId}
+        onChange={(event) => setSelectedClassId(event.target.value)}
+        disabled={loading || !availableClasses.length}
         className={`w-full rounded-2xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 ${selectColorClass[color]}`}
-        defaultValue=""
       >
-        <option value="">{hasClasses ? "Toutes les classes" : "Aucune classe disponible"}</option>
-        {classes.map((cls) => (
+        <option value="">{availableClasses.length ? "Toutes les classes" : "Aucune classe pour cette année"}</option>
+        {availableClasses.map((cls) => (
           <option key={`${fields.export_kind || "export"}-class-${cls.value}`} value={cls.value}>
             {cls.label}
           </option>
@@ -173,6 +182,12 @@ export default function OfficialExportForm({
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         {loading ? "Préparation du fichier…" : "Télécharger Excel officiel"}
       </button>
+
+      {hasAcademicYears && !availableClasses.length && (
+        <p className="text-xs font-semibold text-amber-700">
+          Aucune classe pour {selectedAcademicYear}. Le téléchargement est désactivé.
+        </p>
+      )}
 
       {periodRefByYear && !selectedPeriodRef && (
         <p className="text-xs font-semibold text-amber-700">
