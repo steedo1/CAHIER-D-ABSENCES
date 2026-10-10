@@ -59,7 +59,9 @@ export async function POST(req: NextRequest) {
   const common = { p_institution_id: id, p_actor_id: access.user.id, p_operation_id: body.operation_id, p_academic_year: year, p_reference: reference };
   if (body.action === "grant") {
     if (!Number.isSafeInteger(body.quantity) || body.quantity < 1 || body.quantity > 1000000 || (body.remittance_id && !UUID.test(body.remittance_id))) return json({ error: "Nombre de crédits invalide." }, 400);
-    const r = await access.srv.rpc("parent_connect_grant_credits", { ...common, p_quantity: body.quantity, p_remittance_id: body.remittance_id || null });
+    const amount = body.received_amount;
+    if (!Number.isSafeInteger(amount) || amount < body.quantity || amount > body.quantity * 2147483647) return json({ error: "Vérifiez le montant réellement reçu et le nombre de crédits." }, 400);
+    const r = await access.srv.rpc("parent_connect_grant_credits_at_price", { ...common, p_quantity: body.quantity, p_received_amount: amount, p_remittance_id: body.remittance_id || null });
     return r.error ? json({ error: parentConnectOperationError(r.error.message) }, 409) : json({ grant: r.data });
   }
   if (body.action === "bulk") {

@@ -34,11 +34,11 @@ function server({role='super_admin',loggedIn=true,rolesFail=false}={}) {
  };
  return {route:load('src/app/api/super/parent-connect/route.ts',overrides),calls};
 }
-const body={action:'grant',institution_id:school,operation_id:operation,academic_year:'2026-2027',quantity:2,reference:'Banque vérifiée',confirm_received:true};
+const body={action:'grant',institution_id:school,operation_id:operation,academic_year:'2026-2027',quantity:2,received_amount:2300,reference:'Banque vérifiée',confirm_received:true};
 const req=(data)=>new NextRequest('https://example.test/api/super/parent-connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
 await test('API super : utilisateur anonyme, admin et financier ne peuvent créer de crédits',async()=>{
  for(const options of [{loggedIn:false},{role:'admin'},{role:'finance_manager'},{role:'file_correspondent'}]) {
-  const s=server(options);const r=await s.route.POST(req(body));assert.equal(r.status,options.loggedIn===false?401:403);assert.ok(!s.calls.some(c=>c.table==='parent_connect_grant_credits'));
+  const s=server(options);const r=await s.route.POST(req(body));assert.equal(r.status,options.loggedIn===false?401:403);assert.ok(!s.calls.some(c=>c.table==='parent_connect_grant_credits_at_price'));
  }
 });
 await test('API super : refus d’une panne de vérification, sans faire confiance aux métadonnées',async()=>{
@@ -48,7 +48,7 @@ await test('API super : confirmation obligatoire, acteur issu de la session, qua
  const s=server();assert.equal((await s.route.POST(req({...body,confirm_received:false}))).status,400);
  assert.equal((await s.route.POST(req({...body,quantity:1.5}))).status,400);
  assert.equal((await s.route.POST(req({...body,actor_id:'forged'}))).status,200);
- const rpc=s.calls.find(c=>c.table==='parent_connect_grant_credits');assert.equal(rpc.body.p_actor_id,actor);assert.equal(rpc.body.p_quantity,2);assert.equal(rpc.body.p_academic_year,'2026-2027');
+ const rpc=s.calls.find(c=>c.table==='parent_connect_grant_credits_at_price');assert.equal(rpc.body.p_actor_id,actor);assert.equal(rpc.body.p_quantity,2);assert.equal(rpc.body.p_received_amount,2300);assert.equal(rpc.body.p_academic_year,'2026-2027');
 });
 await test('API super : le collectif transmet le nombre confirmé et ne crée pas de paiements parents',async()=>{
  const s=server();assert.equal((await s.route.POST(req({...body,action:'bulk',expected_count:1003}))).status,200);
@@ -57,6 +57,23 @@ await test('API super : le collectif transmet le nombre confirmé et ne crée pa
 await test('API admin : impossible de désactiver le contrôle par abonnement',async()=>{
  const route=load('src/app/api/admin/parent-connect/route.ts',{'../_helpers/institutionAccess':{requireInstitutionAccess:async()=>{throw Error('must not be called');}}});
  assert.equal((await route.PATCH()).status,403);
+});
+await test('API : montant école libre, pas de prix par défaut, aucun crédit accordé par un profil école',async()=>{
+ const calls=[];
+ const srv=createClient('https://supabase.test','test-key',{global:{fetch:async(input,init)=>{
+  calls.push({name:new URL(String(input)).pathname.split('/').at(-1),body:JSON.parse(init.body)});return Response.json({ends_at:'2027-07-12T00:00:00Z'});
+ }}});
+ const route=load('src/app/api/admin/parent-connect/route.ts',{'../_helpers/institutionAccess':{requireInstitutionAccess:async()=>({srv,institutionId:school,user:{id:actor}})}});
+ const payment={operation_id:operation,student_id:school,academic_year:'2026-2027',payer_name:'Parent Test',sms_phone:'07 00 00 00 00',payment_method:'cash',amount:3500};
+ assert.equal((await route.POST(req(payment))).status,200);assert.equal(calls[0].name,'parent_connect_collect_at_price');assert.equal(calls[0].body.p_amount,3500);
+ for(const amount of [undefined,null,0,-1,1.5,'3500',2147483648])assert.equal((await route.POST(req({...payment,amount}))).status,400);
+ assert.equal(calls.length,1);
+});
+await test('API super : montant réel exigé, tarif de lot libre, dépassement refusé',async()=>{
+ const s=server();
+ for(const received_amount of [undefined,null,0,-1,1.5,Number.MAX_SAFE_INTEGER])assert.equal((await s.route.POST(req({...body,received_amount}))).status,400);
+ assert.equal((await s.route.POST(req({...body,quantity:3,received_amount:4000}))).status,200);
+ const call=s.calls.find(c=>c.table==='parent_connect_grant_credits_at_price');assert.equal(call.body.p_quantity,3);assert.equal(call.body.p_received_amount,4000);
 });
 const window=new Window({url:'https://example.test/super/parent-connect'});
 for(const name of ['window','document','navigator','HTMLElement','HTMLInputElement','Event','MouseEvent'])Object.defineProperty(globalThis,name,{configurable:true,value:name==='window'?window:window[name]});
@@ -90,9 +107,9 @@ await test('super admin : collectif CSCA exige référence et confirmation, aucu
 });
 await test('super admin : crédits reçus et reprise après coupure gardent la même opération',async()=>{
  const ui=await mount({failOnce:true});try{
-  await click(button(ui,'Gérer'));await click(button(ui,'Attribuer des crédits'));await change(ui.container.querySelector('dialog input[type=number]'),'20');await change(ui.container.querySelector('dialog input:not([type])'),'Banque-20');await click(ui.container.querySelector('dialog input[type=checkbox]'));await submit(ui);
+  await click(button(ui,'Gérer'));await click(button(ui,'Attribuer des crédits'));await change(ui.container.querySelector('dialog input[type=number]'),'20');await change(ui.container.querySelector('dialog input[name=received_amount]'),'22000');await change(ui.container.querySelector('dialog input:not([type])'),'Banque-20');await click(ui.container.querySelector('dialog input[type=checkbox]'));await submit(ui);
   assert.ok(ui.container.textContent.includes('Connexion interrompue'));await submit(ui);
-  const sent=ui.calls.filter(c=>c.action==='grant');assert.equal(sent.length,2);assert.equal(sent[0].operation_id,sent[1].operation_id);assert.equal(sent[0].quantity,20);assert.equal(sent[0].confirm_received,true);
+  const sent=ui.calls.filter(c=>c.action==='grant');assert.equal(sent.length,2);assert.equal(sent[0].operation_id,sent[1].operation_id);assert.equal(sent[0].quantity,20);assert.equal(sent[0].received_amount,22000);assert.equal(sent[0].confirm_received,true);
  }finally{await ui.close();}
 });
 await window.happyDOM.abort();

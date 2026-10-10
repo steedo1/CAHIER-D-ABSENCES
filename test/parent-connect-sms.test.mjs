@@ -85,11 +85,11 @@ await test('panne numéro ou insertion SMS : push enregistrés dans leur transac
 await test('API encaissement : numéro exigé, normalisé et acteur/établissement vérifiés',async()=>{
  const calls=[];const access={srv:{rpc:async(name,body)=>{calls.push({name,body});return {data:{},error:null};}},institutionId:school,user:{id:actor}};
  const route=load('src/app/api/admin/parent-connect/route.ts',{'../_helpers/institutionAccess':{requireInstitutionAccess:async()=>access}});
- const body={operation_id:op,student_id:student,academic_year:'2026-2027',payer_name:'Parent Ange',payment_method:'cash'};
+ const body={operation_id:op,student_id:student,academic_year:'2026-2027',payer_name:'Parent Ange',payment_method:'cash',amount:3500};
  const req=(body)=>new (require('next/server').NextRequest)('https://example.test/api/admin/parent-connect',{method:'POST',body:JSON.stringify(body)});
  assert.equal((await route.POST(req(body))).status,400);assert.equal(calls.length,0);
  assert.equal((await route.POST(req({...body,sms_phone:'07 00 00 00 00',institution_id:'forged',actor_id:'forged'}))).status,200);
- assert.equal(calls[0].body.p_sms_phone_e164,phone);assert.equal(calls[0].body.p_institution_id,school);assert.equal(calls[0].body.p_actor_id,actor);
+ assert.equal(calls[0].name,'parent_connect_collect_at_price');assert.equal(calls[0].body.p_amount,3500);assert.equal(calls[0].body.p_sms_phone_e164,phone);assert.equal(calls[0].body.p_institution_id,school);assert.equal(calls[0].body.p_actor_id,actor);
  assert.equal((await route.POST(req({...body,action:'phone',sms_phone:phone,expected_phone:null}))).status,200);assert.equal(calls[1].name,'parent_connect_set_phone');
 });
 
