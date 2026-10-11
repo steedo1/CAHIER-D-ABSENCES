@@ -184,6 +184,42 @@ async function getGradePeriodById(
   return (data as GradePeriodRow | null) ?? null;
 }
 
+/**
+ * grade_adjustments.subject_id référence subjects.id.
+ * Les affectations de cours peuvent porter un institution_subjects.id :
+ * le convertir en identifiant canonique avant tout INSERT/UPDATE.
+ */
+async function resolveCanonicalSubjectId(
+  svc: SupabaseClient,
+  institutionId: string,
+  rawSubjectId: string | null,
+): Promise<string | null> {
+  if (!rawSubjectId) return null;
+  // Ne jamais transmettre un identifiant invalide à une comparaison uuid.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawSubjectId)) {
+    return null;
+  }
+
+  const { data: subject, error: subjectError } = await svc
+    .from("subjects")
+    .select("id")
+    .eq("id", rawSubjectId)
+    .maybeSingle();
+  if (subjectError) throw subjectError;
+  if (subject?.id) return String(subject.id);
+
+  const { data: institutionSubject, error: institutionSubjectError } = await svc
+    .from("institution_subjects")
+    .select("subject_id")
+    .eq("id", rawSubjectId)
+    .eq("institution_id", institutionId)
+    .maybeSingle();
+  if (institutionSubjectError) throw institutionSubjectError;
+  return institutionSubject?.subject_id
+    ? String(institutionSubject.subject_id)
+    : null;
+}
+
 function applyNullishEq<T extends { eq: Function; is: Function }>(
   query: T,
   column: string,
@@ -221,7 +257,7 @@ export async function POST(req: NextRequest) {
     };
 
     const class_id = String(body.class_id || "").trim();
-    const subject_id = toNullishSubjectId(body.subject_id);
+    const subject_id_raw = toNullishSubjectId(body.subject_id);
 
     const requested_period_id =
       toNullishId(body.gradingPeriodId) ?? toNullishId(body.grading_period_id);
@@ -246,6 +282,15 @@ export async function POST(req: NextRequest) {
 
     if (!institutionId) {
       return bad("CLASS_OR_INSTITUTION_NOT_FOUND", 400, { class_id });
+    }
+
+    const subject_id = await resolveCanonicalSubjectId(
+      svc,
+      institutionId,
+      subject_id_raw,
+    );
+    if (subject_id_raw && !subject_id) {
+      return bad("SUBJECT_NOT_FOUND", 400, { class_id });
     }
 
     let grading_period_id: string | null = null;
