@@ -9,6 +9,7 @@ import QRCode from "qrcode";
 
 // ✅ QR court stocké en DB (table bulletin_qr_codes)
 import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
+import { signBulletinQR } from "@/lib/bulletin-qr";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import {
@@ -602,22 +603,9 @@ type BulletinQRPayload = {
   iat: number; // ms
 };
 
-function b64urlEncode(buf: Buffer) {
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
 function signBulletinQRToken(payload: Omit<BulletinQRPayload, "v" | "iat">): string | null {
-  const secret = process.env.BULLETIN_QR_SECRET;
-  if (!secret) return null;
-
-  const full: BulletinQRPayload = { v: 1, iat: Date.now(), ...payload };
-  const payloadB64 = b64urlEncode(Buffer.from(JSON.stringify(full), "utf8"));
-  const sig = b64urlEncode(crypto.createHmac("sha256", secret).update(payloadB64).digest());
-  return `${payloadB64}.${sig}`;
+  if (!process.env.BULLETIN_QR_SECRET) return null;
+  return signBulletinQR(payload);
 }
 
 /** ✅ Origin PUBLIC (anti localhost / anti preview Vercel protégée) */
