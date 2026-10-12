@@ -32,6 +32,11 @@ new Function("require", "module", "exports", compile(readFileSync(
   new URL("../src/lib/bulletin-qr.ts", import.meta.url), "utf8",
 )))(require, qrModule, qrModule.exports);
 const { signBulletinQR, verifyBulletinQR } = qrModule.exports;
+const imageModule = { exports: {} };
+new Function("require", "module", "exports", compile(readFileSync(
+  new URL("../src/lib/bulletin-qr-image.ts", import.meta.url), "utf8",
+)))(require, imageModule, imageModule.exports);
+const { createBulletinQrDataUrl } = imageModule.exports;
 
 function loadQrRoute(existing = new Map()) {
   const source = readFileSync(new URL("../src/app/api/admin/grades/bulletin/route.ts", import.meta.url), "utf8");
@@ -41,13 +46,13 @@ function loadQrRoute(existing = new Map()) {
     ts.isFunctionDeclaration(statement) && functions.has(statement.name?.text),
   ).map((statement) => statement.getText(ast)).join("\n");
   const calls = { reads: 0, writes: 0 };
-  const route = new Function("crypto", "QRCode", "signBulletinQR", "findExistingBulletinShortCodes",
+  const route = new Function("crypto", "QRCode", "signBulletinQR", "createBulletinQrDataUrl", "findExistingBulletinShortCodes",
     "getOrCreateBulletinShortCode", "bulletinOfficialNumber", "cleanNumber", compile(`
       const BULLETIN_VERIFY_SHORT_PREFIX = "/v";
       const BULLETIN_VERIFY_LEGACY_PATH = "/verify/bulletin";
       ${snippet}
     `) + "\nreturn {addQrToItems, attachQrPng};")(
-    crypto, QRCode, signBulletinQR,
+    crypto, QRCode, signBulletinQR, createBulletinQrDataUrl,
     async (_srv, candidates) => {
       calls.reads++;
       assert.equal(candidates.length, 1);
@@ -87,6 +92,78 @@ function fixture() {
 function signedPart(part) {
   return `${part}.${crypto.createHmac("sha256", secret).update(part).digest("base64url")}`;
 }
+
+function groupedFixture() {
+  const data = fixture();
+  const names = ["Allemand", "Anglais", "Espagnol", "Français", "Philosophie", "Histoire-Géographie",
+    "Mathématiques", "Sciences de la Vie et de la Terre", "Education Physique Sportive", "MUSIQUE", "LATIN", "RELIGION"];
+  const teachers = ["ALBERT MARTIN", "BRIGITTE LEROY", "CHARLES DUPONT", "DENISE BERNARD", "EMILE ROBERT",
+    "FRANÇOISE MOREAU", "GEORGES SIMON", "HELENE LAURENT", "ISABELLE MICHEL", "JULIEN LEFEBVRE", "KARINE ROUX", "LOUIS VINCENT"];
+  const stableId = (label) => crypto.createHash("sha256").update(label).digest("hex").slice(0, 32)
+    .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
+  data.snapshot.subjects = names.map((name, i) => ({
+    subject_id: stableId(`subject-${i}`), subject_name: name, coeff_bulletin: i % 4 + 1,
+    include_in_average: i < 10, is_conduct_component_only: i >= 10,
+  }));
+  data.snapshot.per_subject = data.snapshot.subjects.map((subject, i) => ({
+    subject_id: subject.subject_id, avg20: null, bonus: 0, avg20_before_bonus: null,
+    has_grade: false, is_nc: true, is_assigned: true, rank: null,
+    teacher_id: stableId(`teacher-${i}`), teacher_name: teachers[i], teacher_signature_png: null,
+  }));
+  data.snapshot.subject_groups = ["LETTRES", "SCIENCES", "AUTRES"].map((code, i) => {
+    const id = stableId(`group-${i}`);
+    return { id, code, label: `BILAN ${code}`, short_label: null, order_index: i + 1,
+      is_active: true, annual_coeff: 1, items: data.snapshot.subjects.slice(i * 4, i * 4 + 4).map((s, j) => ({
+        id: `virt-${s.subject_id}`, group_id: id, subject_id: s.subject_id, subject_name: s.subject_name,
+        order_index: j + 1, subject_coeff_override: null, is_optional: false,
+      })) };
+  });
+  data.snapshot.per_group = data.snapshot.subject_groups.map((g) => ({
+    group_id: g.id, avg20: null, sum_coeff: 0, sum_total: 0, rank: null,
+  }));
+  Object.assign(data.snapshot, { g: null, a: null, c: null, r: null, ar: null, decision: null });
+  Object.assign(data.opts.periodMeta, { from: "2026-08-31", to: "2026-12-04", academic_year: "2026-2027",
+    label: "1er Trimestre", short_label: "T1" });
+  return data;
+}
+
+test("un bulletin NC avec professeurs et bilans garde un QR malgré un contenu plus dense", async () => {
+  const { item, opts, snapshot } = groupedFixture();
+  const route = loadQrRoute();
+  const output = await route.attachQrPng(await route.addQrToItems({}, [item], opts));
+  assert.throws(() => QRCode.create(output[0].qr_url, { errorCorrectionLevel: "M" }), /too big/i);
+  assert.ok(output[0].qr_png?.startsWith("data:image/png;base64,"));
+  assert.deepEqual(verifyBulletinQR(new URL(output[0].qr_url).searchParams.get("t")).s, snapshot);
+  assert.deepEqual(route.calls, { reads: 1, writes: 0 });
+});
+
+test("le secours navigateur essaie Q, M puis L sans modifier le texte à scanner", async () => {
+  const { item, opts } = groupedFixture();
+  const [output] = await loadQrRoute().addQrToItems({}, [item], opts);
+  const levels = [];
+  const png = await createBulletinQrDataUrl(output.qr_url, { width: 140, margin: 2, errorCorrectionLevel: "Q" },
+    async (text, options) => {
+      assert.equal(text, output.qr_url);
+      levels.push(options.errorCorrectionLevel);
+      return QRCode.toDataURL(text, options);
+    });
+  assert.ok(png.startsWith("data:image/png;base64,"));
+  assert.deepEqual(levels, ["Q", "M", "L"]);
+});
+
+test("un code court conserve Q et une panne de rendu ne déclenche pas un secours de capacité", async () => {
+  const levels = [];
+  await createBulletinQrDataUrl("https://www.mon-cahier.com/v/TEST-CODE", { width: 140, margin: 2, errorCorrectionLevel: "Q" },
+    async (text, options) => {
+      levels.push(options.errorCorrectionLevel);
+      return QRCode.toDataURL(text, options);
+    });
+  assert.deepEqual(levels, ["Q"]);
+  let calls = 0;
+  await assert.rejects(createBulletinQrDataUrl("text", { width: 140, margin: 2, errorCorrectionLevel: "Q" },
+    async () => { calls++; throw new Error("Canvas unavailable"); }), /Canvas unavailable/);
+  assert.equal(calls, 1);
+});
 
 test("un bulletin ancien sans code court conserve tout son contenu et reçoit un PNG sans écriture", async () => {
   const { item, opts, snapshot } = fixture();

@@ -11,6 +11,7 @@ import React, {
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal, flushSync } from "react-dom";
 import { bulletinDocumentTitle } from "@/lib/education-bulletins";
+import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import {
   EDUCATION_TYPE_OPTIONS,
   type EducationType,
@@ -619,11 +620,11 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
-    const url: string = await toDataURL(text, {
+    const url = await createBulletinQrDataUrl(text, {
       width: size,
       margin: 2,
       errorCorrectionLevel: "Q",
-    });
+    }, toDataURL);
 
     if (url) __QR_CACHE.set(cacheKey, url);
     return url || null;

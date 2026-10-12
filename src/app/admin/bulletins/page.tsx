@@ -17,6 +17,7 @@ import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassFormationCode,
@@ -684,16 +685,16 @@ async function generateQrDataUrl(
 
     if (typeof toDataURL !== "function") return null;
 
-    const url: string = await toDataURL(text, {
+    const url = await createBulletinQrDataUrl(text, {
       width: size,
       margin: 2,
       errorCorrectionLevel: "Q",
-    });
+    }, toDataURL);
 
     if (url) __QR_CACHE.set(cacheKey, url);
     return url || null;
   } catch (e) {
-    console.warn("[Bulletins] QR indisponible (import qrcode a échoué)", e);
+    console.warn("[Bulletins] génération du QR impossible", e);
     return null;
   }
 }

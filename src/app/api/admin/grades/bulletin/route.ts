@@ -10,6 +10,7 @@ import QRCode from "qrcode";
 // ✅ QR court stocké en DB (table bulletin_qr_codes)
 import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
 import { signBulletinQR } from "@/lib/bulletin-qr";
+import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import {
@@ -651,13 +652,17 @@ async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
       if (!it.qr_url) return { ...it, qr_png: null as string | null };
 
       try {
-        const png = await QRCode.toDataURL(it.qr_url, {
+        const png = await createBulletinQrDataUrl(it.qr_url, {
           width: size,
           margin, // ✅ quiet zone (CRITIQUE)
           errorCorrectionLevel: ecl,
-        });
+        }, (text, options) => QRCode.toDataURL(text, options));
         return { ...it, qr_png: png || null };
-      } catch (e) {
+      } catch {
+        console.warn("[bulletin] génération du QR impossible", {
+          url_length: it.qr_url.length,
+          error_correction_level: ecl,
+        });
         return { ...it, qr_png: null as string | null };
       }
     })
