@@ -27,11 +27,11 @@ function compile(source) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true },
   }).outputText;
 }
-const module = { exports: {} };
+const qrModule = { exports: {} };
 new Function("require", "module", "exports", compile(readFileSync(
   new URL("../src/lib/bulletin-qr.ts", import.meta.url), "utf8",
-)))(require, module, module.exports);
-const { signBulletinQR, verifyBulletinQR } = module.exports;
+)))(require, qrModule, qrModule.exports);
+const { signBulletinQR, verifyBulletinQR } = qrModule.exports;
 
 function loadQrRoute(existing = new Map()) {
   const source = readFileSync(new URL("../src/app/api/admin/grades/bulletin/route.ts", import.meta.url), "utf8");
@@ -51,8 +51,8 @@ function loadQrRoute(existing = new Map()) {
     async (_srv, candidates) => {
       calls.reads++;
       assert.equal(candidates.length, 1);
-      return new Map(candidates.filter((candidate) => existing.has("code"))
-        .map((candidate) => [candidate.bulletinKey, existing.get("code")]));
+      return new Map(existing.has("code")
+        ? candidates.map((candidate) => [candidate.bulletinKey, existing.get("code")]) : []);
     },
     async () => { calls.writes++; throw new Error("GET must not create a QR"); },
     (code, key) => `BUL-${code || key.slice(0, 12).toUpperCase()}`,
