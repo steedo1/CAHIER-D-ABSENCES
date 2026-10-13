@@ -28,6 +28,7 @@ type LoginMode = "email" | "phone";
 
 type OfflineCredentialRecord = {
   login_hash: string;
+  login_key_version?: 2;
   version: 1;
   grant_token: string;
   payload: OfflineAccessGrantPayload;
@@ -115,9 +116,14 @@ async function putRecord(record: OfflineCredentialRecord) {
 function normalizeLogin(mode: LoginMode, identifier: string) {
   const value = identifier.trim();
   if (!value) throw new Error("offline_login_required");
-  return mode === "email"
-    ? `email:${value.toLocaleLowerCase("fr")}`
-    : `phone:${value.replace(/\D/g, "")}`;
+  if (mode === "email") return `email:${value.toLocaleLowerCase("fr")}`;
+  const digits = value.replace(/\D/g, "");
+  if (/^[+\d\s().-]+$/u.test(value) && digits.length >= 6) {
+    return `phone:${digits}`;
+  }
+  // Le formulaire "Numéro" accepte aussi les identifiants de classe (TA1,
+  // TB1, TERMINALE A...). Retirer leurs lettres confondait plusieurs comptes.
+  return `class-identifier-v2:${value.replace(/\s+/gu, " ").toLowerCase()}`;
 }
 
 async function digestText(value: string) {
@@ -169,6 +175,7 @@ export async function provisionOfflineAccess(input: {
   const hash = await loginHash(input.mode, input.identifier);
   await putRecord({
     login_hash: hash,
+    login_key_version: 2,
     version: 1,
     grant_token: input.grantToken,
     payload,
@@ -212,6 +219,11 @@ export async function authenticateOfflineAccess(input: {
     payload.device_id !== getOrCreateOfflineDeviceId()
   ) {
     throw new Error("offline_access_expired");
+  }
+  if (payload.role === "class_device" && record.login_key_version !== 2) {
+    // Une ancienne empreinte ne permet pas de prouver quel identifiant de
+    // classe a été saisi. Ne pas la réutiliser avec un mot de passe partagé.
+    throw new Error("offline_class_identifier_requires_update");
   }
   const actual = await deriveOfflinePasswordVerifier(
     input.password,
