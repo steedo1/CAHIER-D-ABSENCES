@@ -195,6 +195,7 @@ type BulletinItemBase = {
 
   // ✅ QR renvoyé par l’API
   qr_url?: string | null;
+  qr_code?: string | null;
   qr_token?: string | null;
 
   // ✅ QR PNG généré côté serveur (PRIORITAIRE pour l’affichage)
