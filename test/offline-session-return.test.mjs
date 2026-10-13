@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
@@ -8,9 +9,9 @@ const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "
 const compile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
-function evaluate(path, imports) {
+function evaluate(path, imports, source = read(path)) {
   const exports = {};
-  new Function("exports", "require", compile(read(path)))(exports, (name) => {
+  new Function("exports", "require", compile(source))(exports, (name) => {
     if (name === "react/jsx-runtime") {
       const jsx = (type, props) => ({ type, props, children: Array.isArray(props.children) ? props.children : [props.children] });
       return { jsx, jsxs: jsx };
@@ -59,26 +60,71 @@ function browser() {
   window.localStorage.setItem(DEVICE, deviceId);
   return window;
 }
-async function credentials(role = "class_device") {
+async function credentials(role = "class_device", identifier = "07 01 02 03 04", legacy = false) {
   installFake(); browser();
   let prepared = true;
+  let useLegacy = legacy;
   const load = () => evaluate("src/lib/offline-auth-client.ts", {
     "@/lib/offline-auth-contract": contract,
     "@/lib/offline-auth-readiness": { assertOfflineFunctionPrepared: async () => {
       if (!prepared) throw new Error("offline_function_not_prepared");
     } },
-  });
+  }, useLegacy ? execFileSync("git", ["show", "3425eb52:src/lib/offline-auth-client.ts"],
+    { cwd: new URL("../", import.meta.url), encoding: "utf8" }) : read("src/lib/offline-auth-client.ts"));
   let api = load();
   const grant = await contract.issueOfflineAccessGrant({
     secret: "test-secret".padEnd(64, "s"), userId: "user-11111111", institutionId: "CSCA",
     classId: role === "class_device" ? "class-11111111" : null, deviceId, role, ttlMs: 60_000,
   });
-  const input = { mode: "phone", identifier: "07 01 02 03 04", password, grantToken: grant.token };
+  const input = { mode: "phone", identifier, password, grantToken: grant.token };
   await api.provisionOfflineAccess(input);
   window.location.pathname = grant.payload.destination;
   return { input, grant, get api() { return api; }, setPrepared: (value) => { prepared = value; },
-    reopen() { window.sessionStorage.clear(); api = load(); } };
+    reopen() { window.sessionStorage.clear(); api = load(); },
+    upgrade() { useLegacy = false; api = load(); } };
 }
+
+test("régression réelle : TA1 et TB1 étaient confondus par l'ancien identifiant hors ligne", async () => {
+  const fixture = await credentials("class_device", "TA1", true);
+  const wrongAccount = await fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "TB1" });
+  assert.equal(wrongAccount.payload.class_id, fixture.grant.payload.class_id);
+  fixture.upgrade();
+  await assert.rejects(fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "TB1" }), /offline_access_not_prepared/);
+});
+test("deux classes aux identifiants TA1/TB1 et au même mot de passe retrouvent chacune leur propre compte", async () => {
+  const fixture = await credentials("class_device", "TA1");
+  const second = await contract.issueOfflineAccessGrant({ secret: "test-secret".padEnd(64, "s"),
+    userId: "user-22222222", institutionId: "CSCA", classId: "class-22222222", deviceId, role: "class_device", ttlMs: 60_000 });
+  await fixture.api.provisionOfflineAccess({ ...fixture.input, identifier: "TB1", grantToken: second.token });
+  fixture.reopen();
+  const firstLogin = await fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: " ta1 " });
+  const secondLogin = await fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "tb1" });
+  assert.equal(firstLogin.payload.user_id, fixture.grant.payload.user_id);
+  assert.equal(firstLogin.payload.class_id, fixture.grant.payload.class_id);
+  assert.equal(secondLogin.payload.user_id, second.payload.user_id);
+  assert.equal(secondLogin.payload.class_id, second.payload.class_id);
+  await assert.rejects(fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "TC1" }), /offline_access_not_prepared/);
+});
+test("la remise à niveau d'un ancien compte classe conserve ses appels et exige une connexion vérifiée", async () => {
+  const fixture = await credentials("class_device", "0701020304", true);
+  window.localStorage.setItem("appel-en-attente", "conservé"); fixture.upgrade();
+  await assert.rejects(fixture.api.authenticateOfflineAccess(fixture.input), /offline_class_identifier_requires_update/);
+  await fixture.api.provisionOfflineAccess(fixture.input);
+  assert.equal((await fixture.api.authenticateOfflineAccess(fixture.input)).payload.class_id, fixture.grant.payload.class_id);
+  assert.equal(window.localStorage.getItem("appel-en-attente"), "conservé");
+});
+test("un ancien compte professeur à numéro de téléphone conserve sa reconnexion locale", async () => {
+  const fixture = await credentials("teacher", "0701020304", true);
+  fixture.upgrade();
+  assert.equal((await fixture.api.authenticateOfflineAccess(fixture.input)).payload.user_id, fixture.grant.payload.user_id);
+});
+test("même un identifiant de classe entièrement numérique reste exact et révocable", async () => {
+  const fixture = await credentials("class_device", "123456 789");
+  await assert.rejects(fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "123456789" }), /offline_access_not_prepared/);
+  assert.equal((await fixture.api.authenticateOfflineAccess(fixture.input)).payload.class_id, fixture.grant.payload.class_id);
+  await fixture.api.disableOfflineAccessForIdentifier(fixture.input);
+  await assert.rejects(fixture.api.authenticateOfflineAccess(fixture.input), /offline_access_disabled/);
+});
 
 for (const role of ["class_device", "teacher"]) {
   test(`${role} : fermeture complète de la PWA puis retour sans réseau conserve le même accès`, async () => {

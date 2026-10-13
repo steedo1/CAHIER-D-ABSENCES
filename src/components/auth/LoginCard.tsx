@@ -110,6 +110,9 @@ function humanError(error?: string | null) {
   if (value === "offline_access_not_prepared") {
     return "Cet appareil n’a pas encore été autorisé en ligne pour cette connexion.";
   }
+  if (value === "offline_class_identifier_requires_update") {
+    return "Reconnecte une fois ce compte de classe avec Internet pour sécuriser son identifiant hors ligne. Les appels conservés sur l’appareil restent intacts.";
+  }
   if (value === "offline_access_expired") {
     return "L’autorisation hors ligne de cet appareil a expiré. Reconnectez-le à Internet.";
   }
