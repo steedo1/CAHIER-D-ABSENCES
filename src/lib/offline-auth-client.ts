@@ -113,12 +113,12 @@ async function putRecord(record: OfflineCredentialRecord) {
   await transactionDone(transaction);
 }
 
-function normalizeLogin(mode: LoginMode, identifier: string) {
+function normalizeLogin(mode: LoginMode, identifier: string, role?: OfflineAccessRole) {
   const value = identifier.trim();
   if (!value) throw new Error("offline_login_required");
   if (mode === "email") return `email:${value.toLocaleLowerCase("fr")}`;
   const digits = value.replace(/\D/g, "");
-  if (/^[+\d\s().-]+$/u.test(value) && digits.length >= 6) {
+  if (role !== "class_device" && /^[+\d\s().-]+$/u.test(value) && digits.length >= 6) {
     return `phone:${digits}`;
   }
   // Le formulaire "Numéro" accepte aussi les identifiants de classe (TA1,
@@ -146,8 +146,8 @@ export function getOrCreateOfflineDeviceId() {
   return created;
 }
 
-async function loginHash(mode: LoginMode, identifier: string) {
-  return await digestText(normalizeLogin(mode, identifier));
+async function loginHash(mode: LoginMode, identifier: string, role?: OfflineAccessRole) {
+  return await digestText(normalizeLogin(mode, identifier, role));
 }
 
 export async function provisionOfflineAccess(input: {
@@ -172,7 +172,7 @@ export async function provisionOfflineAccess(input: {
     salt,
     OFFLINE_PBKDF2_ITERATIONS,
   );
-  const hash = await loginHash(input.mode, input.identifier);
+  const hash = await loginHash(input.mode, input.identifier, payload.role);
   await putRecord({
     login_hash: hash,
     login_key_version: 2,
@@ -197,9 +197,14 @@ export async function disableOfflineAccessForIdentifier(input: {
   mode: LoginMode;
   identifier: string;
 }) {
-  const hash = await loginHash(input.mode, input.identifier);
-  const record = await getRecord(hash);
-  if (record) await putRecord({ ...record, enabled: false });
+  const hashes = new Set([
+    await loginHash(input.mode, input.identifier, "class_device"),
+    await loginHash(input.mode, input.identifier),
+  ]);
+  for (const hash of hashes) {
+    const record = await getRecord(hash);
+    if (record) await putRecord({ ...record, enabled: false });
+  }
 }
 
 export async function authenticateOfflineAccess(input: {
@@ -207,8 +212,13 @@ export async function authenticateOfflineAccess(input: {
   identifier: string;
   password: string;
 }) {
-  const hash = await loginHash(input.mode, input.identifier);
-  const record = await getRecord(hash);
+  const classHash = await loginHash(input.mode, input.identifier, "class_device");
+  let hash = classHash;
+  let record = await getRecord(hash);
+  if (!record) {
+    hash = await loginHash(input.mode, input.identifier);
+    if (hash !== classHash) record = await getRecord(hash);
+  }
   if (!record) throw new Error("offline_access_not_prepared");
   if (!record.enabled) throw new Error("offline_access_disabled");
   const payload = decodeOfflineAccessGrant(record.grant_token);
@@ -220,7 +230,7 @@ export async function authenticateOfflineAccess(input: {
   ) {
     throw new Error("offline_access_expired");
   }
-  if (payload.role === "class_device" && record.login_key_version !== 2) {
+  if (payload.role === "class_device" && (record.login_key_version !== 2 || hash !== classHash)) {
     // Une ancienne empreinte ne permet pas de prouver quel identifiant de
     // classe a été saisi. Ne pas la réutiliser avec un mot de passe partagé.
     throw new Error("offline_class_identifier_requires_update");

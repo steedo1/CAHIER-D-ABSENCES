@@ -118,6 +118,13 @@ test("un ancien compte professeur à numéro de téléphone conserve sa reconnex
   fixture.upgrade();
   assert.equal((await fixture.api.authenticateOfflineAccess(fixture.input)).payload.user_id, fixture.grant.payload.user_id);
 });
+test("même un identifiant de classe entièrement numérique reste exact et révocable", async () => {
+  const fixture = await credentials("class_device", "123456 789");
+  await assert.rejects(fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "123456789" }), /offline_access_not_prepared/);
+  assert.equal((await fixture.api.authenticateOfflineAccess(fixture.input)).payload.class_id, fixture.grant.payload.class_id);
+  await fixture.api.disableOfflineAccessForIdentifier(fixture.input);
+  await assert.rejects(fixture.api.authenticateOfflineAccess(fixture.input), /offline_access_disabled/);
+});
 
 for (const role of ["class_device", "teacher"]) {
   test(`${role} : fermeture complète de la PWA puis retour sans réseau conserve le même accès`, async () => {
