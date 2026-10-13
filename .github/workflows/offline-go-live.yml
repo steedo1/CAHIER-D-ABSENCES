@@ -51,6 +51,7 @@ jobs:
           node --test \
             test/bulletin-qr-consumption.test.mjs \
             test/bulletin-qr-fallback.test.mjs \
+            test/bulletin-qr-preview.test.mjs \
             test/supabase-consumption-regression.test.mjs \
             test/supabase-server-auth-dedupe.test.mjs \
             test/supabase-reference-fetch.test.mjs \

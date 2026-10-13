@@ -83,8 +83,7 @@ export async function getOrCreateBulletinShortCode(
   const nowIso = new Date().toISOString();
   const payloadHash = hashOfficialSnapshot(opts.payload);
 
-  // 1) Réutilise un code existant seulement tant qu'il n'a pas été
-  // rattaché à un bulletin officiellement émis. Un QR officiel est immuable.
+  // 1) Réutilise uniquement un code portant exactement le même snapshot.
   const { data: existingRows, error: readError } = await srv
     .from("bulletin_qr_codes")
     .select("id, code, expires_at, revoked, payload_hash, official_issue_id")
@@ -129,29 +128,12 @@ export async function getOrCreateBulletinShortCode(
     if (legacyMatch?.code) return legacyMatch.code;
   }
 
-  // Un QR non encore émis peut être actualisé. Un QR officiel ne l'est jamais.
-  const editableDraft = usableRows.find((row: any) => !row.official_issue_id);
-  if (editableDraft?.code) {
-    const requestedExpiresAt = opts.expiresAt ?? null;
-    const existingExpiresAt = editableDraft.expires_at ?? null;
-    if (
-      String(editableDraft.payload_hash || "") === payloadHash &&
-      existingExpiresAt === requestedExpiresAt
-    ) {
-      return editableDraft.code;
-    }
-
-    const { error: updateError } = await srv
-      .from("bulletin_qr_codes")
-      .update({
-        payload: opts.payload,
-        payload_hash: payloadHash,
-        expires_at: requestedExpiresAt,
-      })
-      .eq("id", editableDraft.id);
-
-    if (!updateError) return editableDraft.code;
-  }
+  // Un aperçu peut déjà avoir été scanné ou conservé. Ne jamais remplacer
+  // son contenu : une nouvelle version obtient son propre code déterministe.
+  const draftMatch = usableRows.find((row: any) => !row.official_issue_id &&
+    String(row.payload_hash || "") === payloadHash &&
+    (row.expires_at ?? null) === (opts.expiresAt ?? null));
+  if (draftMatch?.code) return draftMatch.code;
 
   // 2) Sinon crée un code déterministe. Les tentatives simultanées convergent.
   for (let i = 0; i < 8; i++) {

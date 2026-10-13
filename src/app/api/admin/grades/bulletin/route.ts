@@ -11,6 +11,7 @@ import QRCode from "qrcode";
 import { findExistingBulletinShortCodes, getOrCreateBulletinShortCode } from "@/lib/bulletin-qr-store";
 import { signBulletinQR } from "@/lib/bulletin-qr";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
+import { prepareBulletinPreviewShortCodes } from "@/lib/bulletin-qr-preview";
 import { bulletinOfficialNumber } from "@/lib/official-documents";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import {
@@ -643,7 +644,7 @@ function pickPublicOrigin(fallbackOrigin: string) {
 async function attachQrPng<T extends { qr_url: string | null }>(items: T[]) {
   // ✅ défaut plus robuste à l'impression
   const size = Number(process.env.BULLETIN_QR_PNG_SIZE || "600");
-  const margin = Number(process.env.BULLETIN_QR_PNG_MARGIN || "2");
+  const margin = Math.max(4, Number(process.env.BULLETIN_QR_PNG_MARGIN || "4"));
   const ecl =
     (process.env.BULLETIN_QR_PNG_ECL || "M") as "L" | "M" | "Q" | "H";
 
@@ -4191,6 +4192,34 @@ export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin");
   if (origin && origin !== req.nextUrl.origin) {
     return NextResponse.json({ ok: false, error: "FORBIDDEN_ORIGIN" }, { status: 403 });
+  }
+  if (req.headers.get("content-type")?.includes("application/json")) {
+    const body = await req.json().catch(() => null);
+    if (body?.action !== "prepare_preview_qr") {
+      return NextResponse.json({ ok: false, error: "INVALID_PREVIEW_QR_REQUEST" }, { status: 400 });
+    }
+    const ctx = await getAdminAndInstitution(await getSupabaseServerClient());
+    if ("error" in ctx) {
+      return NextResponse.json({ ok: false, error: ctx.error }, {
+        status: ctx.error === "UNAUTHENTICATED" ? 401 : 403,
+      });
+    }
+    try {
+      const items = await prepareBulletinPreviewShortCodes(
+        getSupabaseServiceClient() as unknown as SupabaseClient,
+        body.tokens, ctx.institutionId, pickPublicOrigin(req.nextUrl.origin),
+      );
+      return NextResponse.json({ ok: true, items: await attachQrPng(items) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "PREVIEW_QR_UNAVAILABLE";
+      const rejected = message.startsWith("INVALID_") || message.startsWith("FORBIDDEN_");
+      if (!rejected) console.warn("[bulletin] préparation des QR courts indisponible", {
+        item_count: Array.isArray(body.tokens) ? body.tokens.length : 0,
+      });
+      return NextResponse.json({ ok: false, error: rejected ? message : "PREVIEW_QR_UNAVAILABLE" }, {
+        status: message.startsWith("FORBIDDEN_") ? 403 : rejected ? 400 : 503,
+      });
+    }
   }
   return loadBulletin(req, true);
 }

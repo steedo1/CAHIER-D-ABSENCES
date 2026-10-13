@@ -12,6 +12,7 @@ import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal, flushSync } from "react-dom";
 import { bulletinDocumentTitle } from "@/lib/education-bulletins";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
+import { prepareBulletinQrPreview } from "@/lib/bulletin-qr-preview-client";
 import {
   EDUCATION_TYPE_OPTIONS,
   type EducationType,
@@ -622,7 +623,7 @@ async function generateQrDataUrl(
 
     const url = await createBulletinQrDataUrl(text, {
       width: size,
-      margin: 2,
+      margin: 4,
       errorCorrectionLevel: "Q",
     }, toDataURL);
 
@@ -1968,6 +1969,7 @@ function StudentBulletinCard({
                   src={qrImgSrc}
                   alt="QR"
                   className="h-[104px] w-[104px] object-contain"
+                  style={{ imageRendering: "pixelated" }}
                 />
               ) : (
                 <div className="text-[9px] text-slate-500">QR</div>
@@ -2648,8 +2650,14 @@ export default function BulletinsPage() {
         );
       }
 
-      const json = (await resBulletin.json()) as BulletinResponse;
+      let json = (await resBulletin.json()) as BulletinResponse;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
+
+      try {
+        json = await prepareBulletinQrPreview(json, navigator.onLine);
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : "Préparation du QR indisponible.");
+      }
 
       const sigFromApi =
         (json as any)?.signatures &&
@@ -3467,13 +3475,14 @@ export default function BulletinsPage() {
               Recharger
             </Button>
 
-            <Button type="button" onClick={handlePrint} disabled={printPreparing}>
+            <Button type="button" onClick={handlePrint} disabled={printPreparing || bulletinLoading}>
               <Printer className="h-4 w-4" />
               {printPreparing ? "Préparation…" : "Imprimer"}
             </Button>
           </div>
 
           <div className="preview-pages flex flex-col gap-6 pb-6">
+            {errorMsg ? <div role="alert" className="rounded bg-amber-50 p-3 text-sm text-amber-900 print:hidden">{errorMsg}</div> : null}
             {items.map((it, idx) => (
               <StudentBulletinCard
                 key={it.student_id}
@@ -3559,8 +3568,12 @@ export default function BulletinsPage() {
 
                 <Button
                   type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  disabled={!items.length}
+                  onClick={() => {
+                    if (navigator.onLine && bulletinRaw?.items.some((item) => item.qr_token && !item.qr_code)) {
+                      void handleLoadBulletin();
+                    } else setPreviewOpen(true);
+                  }}
+                  disabled={!items.length || bulletinLoading}
                 >
                   <Printer className="h-4 w-4" />
                   Aperçu / Imprimer
