@@ -312,27 +312,29 @@ async function readActiveOfflineAccess(requirePathCookies: boolean) {
 
 
 export function setOfflineLogoutLock(destination: string) {
-  if (!browser()) return;
+  if (typeof window === "undefined") return;
   const normalized = String(destination || "").trim();
   if (!normalized.startsWith("/")) return;
-  window.localStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized);
+  try { window.localStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized); } catch { /* Le verrou de l'écran reste disponible ci-dessous. */ }
   window.sessionStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized);
   window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
 
 export function getOfflineLogoutLock() {
-  if (!browser()) return null;
-  const value = String(
-    window.localStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) ||
-      window.sessionStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || "",
-  ).trim();
+  if (typeof window === "undefined") return null;
+  let value = "";
+  try { value = window.localStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || ""; } catch {}
+  if (!value) {
+    try { value = window.sessionStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || ""; } catch {}
+  }
+  value = value.trim();
   return value.startsWith("/") ? value : null;
 }
 
 export function clearOfflineLogoutLock() {
-  if (!browser()) return;
-  window.localStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY);
-  window.sessionStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY);
+  if (typeof window === "undefined") return;
+  try { window.localStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY); } catch {}
+  try { window.sessionStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY); } catch {}
   window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
 
@@ -345,7 +347,7 @@ export async function getOfflineAccessIntent() {
 }
 
 export async function clearActiveOfflineAccess() {
-  if (!browser()) return;
+  if (typeof window === "undefined") return;
 
   // La déconnexion retire l'accès actif persistant. Le grant PBKDF2 reste intact afin
   // qu'un appareil déjà autorisé puisse se reconnecter sans Internet.
@@ -361,8 +363,8 @@ export async function clearActiveOfflineAccess() {
   } catch {
     decodedDestination = null;
   } finally {
-    window.localStorage.removeItem(ACTIVE_SESSION_KEY);
-    window.sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+    try { window.localStorage.removeItem(ACTIVE_SESSION_KEY); } catch {}
+    try { window.sessionStorage.removeItem(ACTIVE_SESSION_KEY); } catch {}
   }
 
   // Effacer toutes les variantes de chemin connues rend la déconnexion robuste

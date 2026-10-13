@@ -879,11 +879,8 @@ export default function TeacherDashboard() {
         });
         if (!cancelled) setOpen(restored);
       } catch {
-        try {
-          const localOpen = await cacheGet("teacher:local-open");
-          if (!cancelled) setOpen((localOpen as OpenSession) || null);
-        } catch {
-          if (!cancelled) setOpen(null);
+        if (!cancelled) {
+          setMsg("Impossible de vérifier la séance sauvegardée. Rechargez l’application avant de démarrer un autre appel ; les données locales sont conservées.");
         }
       }
     })();

@@ -101,6 +101,28 @@ test("une session ouverte v1 migre sans activer un autre compte préparé", asyn
   await fixture.api.clearActiveOfflineAccess();
   assert.equal(await fixture.api.getOfflineAccessIntent(), null);
 });
+test("l'autorisation en ligne Admin conserve son fonctionnement sans activation automatique", async () => {
+  const fixture = await credentials("admin");
+  assert.equal(await fixture.api.getOfflineAccessIntent(), null);
+  const authorized = await fixture.api.authenticateOfflineAccess(fixture.input);
+  fixture.api.activateOfflineAccess(authorized);
+  assert.equal((await fixture.api.getActiveOfflineAccess()).payload.role, "admin");
+});
+test("le verrou de déconnexion ne dépend pas d'IndexedDB et un stockage refusé ne casse pas le login Cloud", async () => {
+  const fixture = await credentials();
+  const idb = globalThis.indexedDB;
+  try {
+    globalThis.indexedDB = undefined;
+    fixture.api.setOfflineLogoutLock("/class");
+    await fixture.api.clearActiveOfflineAccess();
+    assert.equal(fixture.api.getOfflineLogoutLock(), "/class");
+    fixture.api.clearOfflineLogoutLock();
+    window.localStorage.getItem = () => { throw new Error("storage_denied"); };
+    window.localStorage.removeItem = () => { throw new Error("storage_denied"); };
+    assert.equal(fixture.api.getOfflineLogoutLock(), null);
+    assert.doesNotThrow(() => fixture.api.clearOfflineLogoutLock());
+  } finally { globalThis.indexedDB = idb; }
+});
 test("déconnexion puis fermeture : accès verrouillé, mauvais mot de passe refusé, reconnexion locale possible", async () => {
   const fixture = await credentials();
   window.localStorage.setItem("préparation-classe", "conservée");
