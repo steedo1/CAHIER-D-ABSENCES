@@ -71,7 +71,7 @@ test("CSCA : 110 000 F ne sont pas comptés deux fois à la frontière de pagina
     [0, [...monhin, ...other]],
     [1000, [monhin[1]]], // Lecture concurrente : un UUID revient sur la page 2.
   ]));
-  const rows = await loader("csca", ["3e3"]);
+  const rows = await loader({ institutionId: "csca", classIds: ["3e3"] });
   const matching = rows.filter((row) => row.student_id === "MONHIN");
 
   assert.equal(rows.length, 1000);
@@ -85,7 +85,7 @@ test("une seule page préserve l'ensemble des dettes et leurs montants", async (
   const { loader, orderedColumns } = makeLoader(new Map([
     [0, [{ id: "x", net_amount: 95000 }, { id: "y", net_amount: 110000 }]],
   ]));
-  const rows = await loader("csca", ["3e3"]);
+  const rows = await loader({ institutionId: "csca", classIds: ["3e3"] });
   assert.equal(rows.length, 2);
   assert.equal(rows.reduce((sum, row) => sum + row.net_amount, 0), 205000);
   assert.deepEqual(orderedColumns, ["due_date", "id"]);
