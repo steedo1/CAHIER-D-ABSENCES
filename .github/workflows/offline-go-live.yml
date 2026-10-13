@@ -78,6 +78,7 @@ jobs:
             test/offline-readiness-professional-status.test.mjs \
             test/class-session-manual-route.test.mjs \
             test/class-device-subject-transition.test.mjs \
+            test/finance-payments-pagination-csca.test.mjs \
             test/payroll-calculation.test.mjs \
             test/manual-course-payroll-flow.test.mjs \
             test/class-device-offline-lifecycle-wiring.test.mjs \
