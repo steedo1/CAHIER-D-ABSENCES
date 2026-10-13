@@ -89,6 +89,8 @@ test("régression réelle : TA1 et TB1 étaient confondus par l'ancien identifia
   const wrongAccount = await fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "TB1" });
   assert.equal(wrongAccount.payload.class_id, fixture.grant.payload.class_id);
   fixture.upgrade();
+  assert.equal(await fixture.api.getOfflineAccessIntent(), null,
+    "une ancienne session ambiguë ne doit pas imposer le cache TA1 après l’entrée TB1");
   await assert.rejects(fixture.api.authenticateOfflineAccess({ ...fixture.input, identifier: "TB1" }), /offline_access_not_prepared/);
 });
 test("deux classes aux identifiants TA1/TB1 et au même mot de passe retrouvent chacune leur propre compte", async () => {

@@ -312,6 +312,7 @@ async function readActiveOfflineAccess(requirePathCookies: boolean) {
       !record ||
       !payload ||
       !record.enabled ||
+      (payload.role === "class_device" && record.login_key_version !== 2) ||
       record.grant_token !== active.grant_token ||
       active.expires_at !== payload.expires_at ||
       (requirePathCookies &&
