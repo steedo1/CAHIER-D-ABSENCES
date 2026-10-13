@@ -2280,7 +2280,7 @@ async function fetchAllChargeBalancesForPayments({
 
   const admin = getSupabaseServiceClient();
   const pageSize = 1000;
-  const rows: ChargeBalanceRow[] = [];
+  const rowsById = new Map<string, ChargeBalanceRow>();
 
   // On filtre par classes affichées, pas par liste complète des élèves.
   // Cela évite une URL énorme avec plusieurs centaines de UUID student_id.
@@ -2297,6 +2297,9 @@ async function fetchAllChargeBalancesForPayments({
         .in("class_id", ids)
         .neq("computed_status", "cancelled")
         .order("due_date", { ascending: true, nullsFirst: false })
+        // L’échéance peut être NULL pour des milliers de dettes : le UUID
+        // assure un ordre stable entre les pages de 1 000 lignes.
+        .order("id", { ascending: true })
         .range(from, to);
 
       if (error) {
@@ -2306,13 +2309,15 @@ async function fetchAllChargeBalancesForPayments({
       }
 
       const pageRows = (data ?? []) as ChargeBalanceRow[];
-      rows.push(...pageRows);
+      // Filet de sécurité : une dette ne doit jamais être comptée deux fois,
+      // même si deux pages se chevauchent lors d’une lecture concurrente.
+      for (const row of pageRows) rowsById.set(row.id, row);
 
       if (pageRows.length < pageSize) break;
     }
   }
 
-  return rows;
+  return Array.from(rowsById.values());
 }
 
 function StatCard({
