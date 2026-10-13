@@ -6,7 +6,7 @@ import { attendanceCloudAvailableForSync, fetchAttendanceBackground } from "@/li
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { clearActiveOfflineAccess } from "@/lib/offline-auth-client";
+import { clearActiveOfflineAccess, setOfflineLogoutLock } from "@/lib/offline-auth-client";
 import InstallAndPushCTA from "@/components/InstallAndPushCTA";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
@@ -51,7 +51,9 @@ import {
   closeTeacherAttendanceSessionOnRelay,
   teacherSessionLifecycleDeliveryMessage,
   transitionTeacherAttendanceSessionOnRelay,
+  isTeacherSessionLocallyFinalized,
 } from "@/lib/teacher-session-lifecycle-delivery";
+import { selectTeacherSessionToResume } from "@/lib/teacher-session-resume";
 import {
   getTeacherAttendanceSyncStatus,
   syncTeacherAttendanceOperationsToCloud,
@@ -856,26 +858,36 @@ export default function TeacherDashboard() {
 
   /* Chargement initial de la séance ouverte — OFFLINE OK */
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const [os, localOpen] = await Promise.all([
+        const [os, localOpen, basics] = await Promise.all([
           offlineGetJson("/api/teacher/sessions/open", "teacher:open").catch(() => ({ item: null })),
           cacheGet("teacher:local-open").catch(() => null),
+          cacheGet<InstBasics>("teacher:inst:basics").catch(() => null),
         ]);
 
         const openServer = ((os as any)?.item as OpenSession) || null;
         const openLocal = (localOpen as OpenSession) || null;
 
-        setOpen(openServer || openLocal || null);
+        const restored = await selectTeacherSessionToResume({
+          localOpen: openLocal,
+          serverOpen: openServer,
+          isFinalized: (sessionId) => basics?.institution_id
+            ? isTeacherSessionLocallyFinalized(basics.institution_id, sessionId)
+            : Promise.resolve(false),
+        });
+        if (!cancelled) setOpen(restored);
       } catch {
         try {
           const localOpen = await cacheGet("teacher:local-open");
-          setOpen((localOpen as OpenSession) || null);
+          if (!cancelled) setOpen((localOpen as OpenSession) || null);
         } catch {
-          setOpen(null);
+          if (!cancelled) setOpen(null);
         }
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   // Charger paramètres & périodes (lecture côté prof) + config conduite — OFFLINE OK
@@ -1948,6 +1960,7 @@ export default function TeacherDashboard() {
       setRows({});
       setAttendanceDelivery(null);
       await cacheSet("teacher:local-open", null);
+      await cacheSet("teacher:open", { item: null });
       computeDefaultsForNow();
     };
 
@@ -2350,11 +2363,12 @@ export default function TeacherDashboard() {
 
   /* Déconnexion (avec nettoyage offline) */
   async function logout() {
+    const offlineLogout = !(await attendanceCloudAvailableForSync());
     let remaining = (await getTeacherAttendanceSyncStatus(
       inst.institution_id,
     ).catch(() => syncStatus)).total;
 
-    if (remaining > 0 && await attendanceCloudAvailableForSync()) {
+    if (remaining > 0 && !offlineLogout) {
       setMsg("Synchronisation des données avant déconnexion…");
       try {
         const result = await syncTeacherAttendanceOperationsToCloud(
@@ -2383,6 +2397,11 @@ export default function TeacherDashboard() {
       }
     }
 
+    if (offlineLogout) {
+      setOfflineLogoutLock("/attendance");
+      await clearActiveOfflineAccess().catch(() => {});
+      return;
+    }
     try {
       try {
         const supabase = getSupabaseBrowserClient();

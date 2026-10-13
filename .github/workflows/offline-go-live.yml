@@ -59,6 +59,8 @@ jobs:
             test/phone-offline-login-stability.test.mjs \
             test/offline-auth-contract.test.mjs \
             test/offline-auth-logout-wiring.test.mjs \
+            test/offline-session-return.test.mjs \
+            test/optional-student-finance-profile.test.mjs \
             test/offline-schedule-wiring.test.mjs \
             test/teacher-minimal-preparation.test.mjs \
             test/attendance-cache-isolation.test.mjs \

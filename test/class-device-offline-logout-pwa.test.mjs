@@ -7,17 +7,11 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 test("la déconnexion hors ligne du téléphone verrouille le PWA sans rechargement complet", async () => {
   const classPage = await read("src/app/class/page.tsx");
 
-  assert.match(classPage, /const offlineLogout =\s*typeof navigator !== "undefined" && navigator\.onLine === false;/);
-  assert.match(classPage, /if \(offlineLogout\) setOfflineLogoutLock\("\/class"\);/);
-  assert.match(
-    classPage,
-    /if \(offlineLogout\) \{\s*setLoggingOut\(false\);\s*return;\s*\}/,
-  );
-
-  const offlineBranch = classPage.slice(
-    classPage.indexOf('if (offlineLogout) setOfflineLogoutLock("/class")'),
-    classPage.indexOf('// En ligne, la déconnexion classique'),
-  );
+  assert.match(classPage, /const offlineLogout = !\(await attendanceCloudAvailableForSync\(\)\);/);
+  const beforeSdk = classPage.slice(classPage.indexOf("async function logout"), classPage.indexOf("// 1) Déconnexion Supabase"));
+  assert.match(beforeSdk, /if \(offlineLogout\) \{[\s\S]*?setOfflineLogoutLock\("\/class"\);[\s\S]*?clearActiveOfflineAccess\(\)[\s\S]*?return;/);
+  const offlineBranch = beforeSdk.slice(beforeSdk.indexOf("if (offlineLogout) {"));
+  assert.match(offlineBranch, /setLoggingOut\(false\);\s*return;/);
   assert.doesNotMatch(offlineBranch, /window\.location/);
 });
 
@@ -40,9 +34,8 @@ test("le guard affiche le même LoginCard dans le runtime PWA pour réauthentifi
   const guard = await read("src/components/OfflineAccessGuard.tsx");
 
   assert.match(guard, /import LoginCard from "@\/components\/auth\/LoginCard";/);
-  assert.match(guard, /logoutLock === pathname && pathname === "\/class"/);
-  assert.match(guard, /inline_reauth: true/);
-  assert.match(guard, /forcedMode="phoneOnly"/);
+  assert.match(guard, /logoutLock === pathname &&[\s\S]*?pathname === "\/class" \|\| pathname === "\/attendance"/);
+  assert.match(guard, /forcedMode=\{pathname === "\/class" \? "phoneOnly" : undefined\}/);
   assert.match(guard, /onAuthenticated=\{async \(destination\) =>/);
   assert.match(guard, /clearOfflineLogoutLock\(\);/);
   assert.match(guard, /setState\(\{ status: "allowed" \}\);/);

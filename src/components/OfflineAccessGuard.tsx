@@ -16,6 +16,7 @@ import {
   isOfflinePathAllowedForRole,
 } from "@/lib/offline-auth-contract";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
+import { assertOfflineFunctionPrepared } from "@/lib/offline-auth-readiness";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/recover", "/redirect"]);
 const CLIENT_PROTECTED_PREFIXES = [
@@ -74,18 +75,35 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
     const check = async () => {
       if (!pathname || PUBLIC_PATHS.has(pathname)) {
         if (!cancelled) setState({ status: "allowed" });
+        // Le worker ramène le démarrage / de la PWA vers le login préparé
+        // quand le Cloud ne répond pas, même si le Wi-Fi paraît connecté.
+        const offlineEntry = navigator.onLine === false ||
+          new URLSearchParams(window.location.search).get("offline_resume") === "1";
+        if ((pathname === "/" || pathname === "/login") && offlineEntry) {
+          const intent = await getOfflineAccessIntent();
+          if (!intent || cancelled || getOfflineLogoutLock()) return;
+          try {
+            await assertOfflineFunctionPrepared(intent.payload);
+            if (!cancelled && !getOfflineLogoutLock()) {
+              window.location.replace(intent.payload.destination);
+            }
+          } catch {
+            // Une préparation incomplète reste sur le formulaire de connexion.
+          }
+        }
         return;
       }
 
       const logoutLock = getOfflineLogoutLock();
-      if (logoutLock === pathname && pathname === "/class") {
+      if (logoutLock) {
         if (!cancelled) {
           setState({
             status: "blocked",
-            destination: pathname,
+            destination: logoutLock,
             reason:
               "Téléphone verrouillé après déconnexion. Saisis de nouveau les identifiants autorisés sur cet appareil.",
-            inline_reauth: true,
+            inline_reauth: logoutLock === pathname &&
+              (pathname === "/class" || pathname === "/attendance"),
           });
         }
         return;
@@ -133,6 +151,19 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
           });
           return;
         }
+        try {
+          if (intent.payload.role !== "admin") {
+            await assertOfflineFunctionPrepared(intent.payload);
+          }
+        } catch {
+          if (!cancelled) setState({
+            status: "blocked",
+            destination: null,
+            reason: "Cet espace doit être préparé avec Internet avant de reprendre l’appel hors ligne.",
+          });
+          return;
+        }
+        if (cancelled) return;
         setState({ status: "allowed" });
         return;
       }
@@ -146,6 +177,7 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
           reason: isOfflineAccessPath(pathname)
             ? "Reconnectez-vous sur cet appareil pour ouvrir cet espace."
             : "Cette page ne fait pas partie des fonctions autorisées hors ligne.",
+          inline_reauth: pathname === "/class" || pathname === "/attendance",
         });
         return;
       }
@@ -177,18 +209,19 @@ export default function OfflineAccessGuard({ children }: { children: ReactNode }
   if (
     state.status === "blocked" &&
     state.inline_reauth &&
-    pathname === "/class"
+    (pathname === "/class" || pathname === "/attendance")
   ) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
         <div className="w-full max-w-md">
           <LoginCard
-            forcedMode="phoneOnly"
-            redirectTo="/class"
+            forcedMode={pathname === "/class" ? "phoneOnly" : undefined}
+            redirectTo={pathname}
+            requiredDestination={pathname}
             onAuthenticated={async (destination) => {
-              if (destination !== "/class") {
+              if (destination !== pathname) {
                 throw new Error(
-                  "Cette autorisation hors ligne ne correspond pas au téléphone de classe.",
+                  "Ces identifiants ne correspondent pas à cet espace d’appel.",
                 );
               }
               clearOfflineLogoutLock();
