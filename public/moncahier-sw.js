@@ -44,6 +44,8 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/admin/absences/appels-matrice",
   "/founder/attendance-slots",
 ]);
+const ATTENDANCE_ENTRY_PATHS = new Set(["/", "/redirect", "/login", "/class", "/attendance"]);
+let attendanceNavigationOfflineUntil = 0;
 
 function isOfflinePagePath(pathname) {
   return (
@@ -765,8 +767,12 @@ async function classDeviceSubjectsResponse(request, url) {
 
 async function navigationResponse(request) {
   const cache = await caches.open(SHELL_CACHE);
+  const pathname = new URL(request.url).pathname;
+  const attendanceEntry = ATTENDANCE_ENTRY_PATHS.has(pathname);
+  const skipNetwork = self.navigator?.onLine === false ||
+    (attendanceEntry && Date.now() < attendanceNavigationOfflineUntil);
   try {
-    if (self.navigator?.onLine === false) throw new Error("offline_navigation");
+    if (skipNetwork) throw new Error("offline_navigation");
     const response = await fetchWithTimeout(request);
     if (response.status >= 500) throw new Error(`HTTP_${response.status}`);
 
@@ -777,7 +783,10 @@ async function navigationResponse(request) {
     // dont un chunk Next dynamique n'a pas encore été conservé.
     return response;
   } catch {
-    const pathname = new URL(request.url).pathname;
+    // Une perte du WAN sur un Wi-Fi encore connecté ne doit pas refaire le
+    // même timeout à chacune des étapes / -> /login -> /class. Les appels API
+    // et la synchronisation continuent à tester le réseau indépendamment.
+    if (attendanceEntry && !skipNetwork) attendanceNavigationOfflineUntil = Date.now() + 30_000;
     if (pathname === "/" || pathname === "/redirect") {
       // Le lancement d'une PWA installée vise /. Le login atomique est
       // toujours préparé ; son garde choisit ensuite le compte local valide.

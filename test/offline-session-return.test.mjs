@@ -332,7 +332,9 @@ test("le worker rouvre la PWA depuis / ou /redirect sans Internet et sert le doc
   const context = vm.createContext({ AbortController, Headers, Request, Response, URL, clearTimeout, setTimeout, console,
     fetch: async () => { fetches++; throw new TypeError("network_unavailable"); },
     caches: { open: async () => ({ match: async (request) => new URL(typeof request === "string" ? request : request.url,
-      "https://www.mon-cahier.com").pathname === "/class" ? new Response("prepared-class") : undefined }) },
+      "https://www.mon-cahier.com").pathname === "/class" ? new Response("prepared-class") :
+      new URL(typeof request === "string" ? request : request.url, "https://www.mon-cahier.com").pathname === "/login"
+        ? new Response("prepared-login") : undefined }) },
     self: { navigator: { onLine: false }, location: { origin: "https://www.mon-cahier.com" }, addEventListener() {} } });
   vm.runInContext(read("public/moncahier-sw.js"), context);
   for (const path of ["/", "/redirect"]) {
@@ -345,4 +347,9 @@ test("le worker rouvre la PWA depuis / ou /redirect sans Internet et sert le doc
   context.self.navigator.onLine = true;
   assert.equal((await vm.runInContext("navigationResponse(new Request(self.location.origin + '/'))", context)).status, 302);
   assert.equal(fetches, 1);
+  const login = await vm.runInContext("navigationResponse(new Request(self.location.origin + '/login?offline_resume=1'))", context);
+  assert.equal(await login.text(), "prepared-login");
+  const reopened = await vm.runInContext("navigationResponse(new Request(self.location.origin + '/class'))", context);
+  assert.equal(await reopened.text(), "prepared-class");
+  assert.equal(fetches, 1, "le Wi-Fi sans WAN ne doit pas imposer trois timeouts au redémarrage");
 });
