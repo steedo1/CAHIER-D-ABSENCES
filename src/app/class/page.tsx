@@ -1,7 +1,7 @@
 // src/app/class/page.tsx
 "use client";
 
-import { fetchAttendanceBackground } from "@/lib/attendance-network";
+import { attendanceCloudAvailableForSync, fetchAttendanceBackground } from "@/lib/attendance-network";
 import { knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance-cache-identity";
 import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
 
@@ -3837,17 +3837,13 @@ export default function ClassDevicePage() {
   async function logout() {
     if (loggingOut) return;
 
-    const offlineLogout =
-      typeof navigator !== "undefined" && navigator.onLine === false;
+    const offlineLogout = !(await attendanceCloudAvailableForSync());
     let remaining = await countPendingForCurrentClass();
 
     if (remaining > 0) {
       setMsg("Tentative de sécurisation des données avant déconnexion…");
       try {
-        if (
-          typeof navigator === "undefined" ||
-          navigator.onLine !== false
-        ) {
+        if (!offlineLogout) {
           await flushOutbox({ releaseNetworkBackoff: true });
         }
         const relay = selectedClass?.attendance_presence;
@@ -3889,6 +3885,14 @@ export default function ClassDevicePage() {
 
     setLoggingOut(true);
     clearReminderLoop();
+    if (offlineLogout) {
+      // Fermer l'accès local avant toute requête Supabase : le SDK peut attendre
+      // un refresh de jeton qui ne finira pas sur le réseau de la salle.
+      setOfflineLogoutLock("/class");
+      await clearActiveOfflineAccess().catch(() => {});
+      setLoggingOut(false);
+      return;
+    }
     try {
       // 1) Déconnexion Supabase côté navigateur
       try {
@@ -3917,18 +3921,7 @@ export default function ClassDevicePage() {
     } finally {
       // La session active est fermée, mais la préparation de la classe, les
       // opérations en attente et le grant appareil restent disponibles.
-      //
-      // En PWA sans Internet, on verrouille l'écran courant au lieu de forcer
-      // un rechargement complet vers /login. Le rechargement détruisait le
-      // runtime Next déjà chargé et pouvait redemander un chunk indisponible.
-      if (offlineLogout) setOfflineLogoutLock("/class");
       await clearActiveOfflineAccess().catch(() => {});
-
-      if (offlineLogout) {
-        setLoggingOut(false);
-        return;
-      }
-
       // En ligne, la déconnexion classique peut revenir au login global.
       window.location.href = "/login";
     }

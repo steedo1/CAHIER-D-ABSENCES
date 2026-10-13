@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-10-local-call-archive-v1";
+const VERSION = "2026-10-13-offline-session-return-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";
@@ -25,6 +25,8 @@ const PRECACHE_URLS = [
   "/icons/badge-72.png",
 ];
 const OFFLINE_PAGE_PATHS = new Set([
+  "/",
+  "/redirect",
   "/login",
   "/choose-book",
   "/attendance",
@@ -42,6 +44,8 @@ const OFFLINE_PAGE_PATHS = new Set([
   "/admin/absences/appels-matrice",
   "/founder/attendance-slots",
 ]);
+const ATTENDANCE_ENTRY_PATHS = new Set(["/", "/redirect", "/login", "/class", "/attendance"]);
+let attendanceNavigationOfflineUntil = 0;
 
 function isOfflinePagePath(pathname) {
   return (
@@ -763,7 +767,12 @@ async function classDeviceSubjectsResponse(request, url) {
 
 async function navigationResponse(request) {
   const cache = await caches.open(SHELL_CACHE);
+  const pathname = new URL(request.url).pathname;
+  const attendanceEntry = ATTENDANCE_ENTRY_PATHS.has(pathname);
+  const skipNetwork = self.navigator?.onLine === false ||
+    (attendanceEntry && Date.now() < attendanceNavigationOfflineUntil);
   try {
+    if (skipNetwork) throw new Error("offline_navigation");
     const response = await fetchWithTimeout(request);
     if (response.status >= 500) throw new Error(`HTTP_${response.status}`);
 
@@ -774,6 +783,15 @@ async function navigationResponse(request) {
     // dont un chunk Next dynamique n'a pas encore été conservé.
     return response;
   } catch {
+    // Une perte du WAN sur un Wi-Fi encore connecté ne doit pas refaire le
+    // même timeout à chacune des étapes / -> /login -> /class. Les appels API
+    // et la synchronisation continuent à tester le réseau indépendamment.
+    if (attendanceEntry && !skipNetwork) attendanceNavigationOfflineUntil = Date.now() + 30_000;
+    if (pathname === "/" || pathname === "/redirect") {
+      // Le lancement d'une PWA installée vise /. Le login atomique est
+      // toujours préparé ; son garde choisit ensuite le compte local valide.
+      return Response.redirect(`${self.location.origin}/login?offline_resume=1`, 302);
+    }
     return (
       (await cache.match(request, { ignoreSearch: true })) ||
       (await cache.match(OFFLINE_URL)) ||

@@ -7,6 +7,7 @@ import {
   activateOfflineAccess,
   authenticateOfflineAccess,
   clearActiveOfflineAccess,
+  clearOfflineLogoutLock,
   disableOfflineAccessForIdentifier,
   getOrCreateOfflineDeviceId,
   provisionOfflineAccess,
@@ -18,6 +19,7 @@ type LoginMode = "email" | "phone";
 type LoginCardProps = {
   redirectTo?: string;
   forcedMode?: ForcedMode;
+  requiredDestination?: "/class" | "/attendance";
   onAuthenticated?: (destination: string) => void | Promise<void>;
 };
 
@@ -142,7 +144,7 @@ function Spinner() {
   );
 }
 
-export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuthenticated }: LoginCardProps) {
+export default function LoginCard({ redirectTo = "/redirect", forcedMode, requiredDestination, onAuthenticated }: LoginCardProps) {
   const initialMode: LoginMode = forcedMode === "emailOnly" ? "email" : "phone";
 
   const [mode, setMode] = useState<LoginMode>(initialMode);
@@ -289,6 +291,9 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
       identifier: offlineIdentifier,
       password,
     });
+    if (requiredDestination && authorized.payload.destination !== requiredDestination) {
+      throw new Error("Ces identifiants ne correspondent pas à cet espace d’appel.");
+    }
     // Le nettoyage intervient seulement après une validation locale complète.
     clearPreviousBrowserSession();
     activateOfflineAccess(authorized);
@@ -312,6 +317,10 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
 
     try {
       setStatusText("Vérification…");
+      if (navigator.onLine === false) {
+        await openOfflineSession();
+        return;
+      }
       const loginRequest: RequestInit = {
         method: "POST",
         cache: "no-store",
@@ -385,6 +394,12 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
       );
 
       const grantToken = String(role?.offline_access?.token || "");
+      const destination = String(
+        role?.offline_access?.destination || redirectTo || "/redirect",
+      ).trim() || "/redirect";
+      if (requiredDestination && role?.offline_access?.destination !== requiredDestination) {
+        throw new Error("Ces identifiants ne correspondent pas à cet espace d’appel.");
+      }
       if (grantToken && deviceId) {
         setStatusText("Autorisation de cet appareil…");
         await provisionOfflineAccess({
@@ -396,10 +411,8 @@ export default function LoginCard({ redirectTo = "/redirect", forcedMode, onAuth
           console.warn("[offline-auth] provisioning_failed", cause);
         });
       }
+      clearOfflineLogoutLock();
 
-      const destination = String(
-        role?.offline_access?.destination || redirectTo || "/redirect",
-      ).trim() || "/redirect";
       if (onAuthenticated) {
         await onAuthenticated(destination);
         return;

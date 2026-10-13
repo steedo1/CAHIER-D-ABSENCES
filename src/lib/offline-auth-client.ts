@@ -178,6 +178,11 @@ export async function provisionOfflineAccess(input: {
     enabled: true,
     prepared_at: new Date().toISOString(),
   });
+  // Le login Cloud vient de vérifier ces identifiants. Conserver aussi l'accès
+  // actif permet de fermer puis rouvrir la PWA sans renouvellement réseau.
+  if (payload.role === "teacher" || payload.role === "class_device") {
+    activateOfflineAccess({ loginHash: hash, grantToken: input.grantToken, payload });
+  }
   return payload;
 }
 
@@ -256,7 +261,9 @@ export function activateOfflineAccess(input: {
     grant_token: input.grantToken,
     expires_at: input.payload.expires_at,
   };
+  window.localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(active));
   window.sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(active));
+  clearOfflineLogoutLock();
 }
 
 function readCookie(name: string) {
@@ -271,25 +278,33 @@ function readCookie(name: string) {
 async function readActiveOfflineAccess(requirePathCookies: boolean) {
   if (!browser()) return null;
   try {
+    if (getOfflineLogoutLock()) return null;
     const active = JSON.parse(
-      window.sessionStorage.getItem(ACTIVE_SESSION_KEY) || "null",
+      window.localStorage.getItem(ACTIVE_SESSION_KEY) ||
+        window.sessionStorage.getItem(ACTIVE_SESSION_KEY) || "null",
     ) as ActiveSession | null;
     if (!active || active.expires_at <= Date.now()) return null;
     const record = await getRecord(active.login_hash);
+    const payload = record ? decodeOfflineAccessGrant(record.grant_token) : null;
     if (
       !record ||
+      !payload ||
       !record.enabled ||
       record.grant_token !== active.grant_token ||
+      active.expires_at !== payload.expires_at ||
       (requirePathCookies &&
         readCookie(OFFLINE_ACCESS_COOKIE) !== active.grant_token) ||
       (requirePathCookies &&
-        readCookie(OFFLINE_DEVICE_COOKIE) !== record.payload.device_id) ||
-      record.payload.device_id !== getOrCreateOfflineDeviceId() ||
-      record.payload.expires_at <= Date.now()
+        readCookie(OFFLINE_DEVICE_COOKIE) !== payload.device_id) ||
+      payload.device_id !== getOrCreateOfflineDeviceId() ||
+      payload.expires_at <= Date.now()
     ) {
       return null;
     }
-    return { grantToken: record.grant_token, payload: record.payload };
+    // Migration des sessions déjà ouvertes avant cette version. Aucun grant
+    // inactif n'est activé simplement parce qu'il existe dans IndexedDB.
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(active));
+    return { grantToken: record.grant_token, payload };
   } catch {
     return null;
   }
@@ -297,24 +312,29 @@ async function readActiveOfflineAccess(requirePathCookies: boolean) {
 
 
 export function setOfflineLogoutLock(destination: string) {
-  if (!browser()) return;
+  if (typeof window === "undefined") return;
   const normalized = String(destination || "").trim();
   if (!normalized.startsWith("/")) return;
+  try { window.localStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized); } catch { /* Le verrou de l'écran reste disponible ci-dessous. */ }
   window.sessionStorage.setItem(OFFLINE_LOGOUT_LOCK_KEY, normalized);
   window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
 
 export function getOfflineLogoutLock() {
-  if (!browser()) return null;
-  const value = String(
-    window.sessionStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || "",
-  ).trim();
+  if (typeof window === "undefined") return null;
+  let value = "";
+  try { value = window.localStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || ""; } catch {}
+  if (!value) {
+    try { value = window.sessionStorage.getItem(OFFLINE_LOGOUT_LOCK_KEY) || ""; } catch {}
+  }
+  value = value.trim();
   return value.startsWith("/") ? value : null;
 }
 
 export function clearOfflineLogoutLock() {
-  if (!browser()) return;
-  window.sessionStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY);
+  if (typeof window === "undefined") return;
+  try { window.localStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY); } catch {}
+  try { window.sessionStorage.removeItem(OFFLINE_LOGOUT_LOCK_KEY); } catch {}
   window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
 
@@ -327,14 +347,15 @@ export async function getOfflineAccessIntent() {
 }
 
 export async function clearActiveOfflineAccess() {
-  if (!browser()) return;
+  if (typeof window === "undefined") return;
 
-  // La session active est éphémère. Le grant PBKDF2/IndexedDB reste intact afin
+  // La déconnexion retire l'accès actif persistant. Le grant PBKDF2 reste intact afin
   // qu'un appareil déjà autorisé puisse se reconnecter sans Internet.
   let decodedDestination: string | null = null;
   try {
     const active = JSON.parse(
-      window.sessionStorage.getItem(ACTIVE_SESSION_KEY) || "null",
+      window.localStorage.getItem(ACTIVE_SESSION_KEY) ||
+        window.sessionStorage.getItem(ACTIVE_SESSION_KEY) || "null",
     ) as ActiveSession | null;
     decodedDestination = active?.grant_token
       ? decodeOfflineAccessGrant(active.grant_token)?.destination || null
@@ -342,7 +363,8 @@ export async function clearActiveOfflineAccess() {
   } catch {
     decodedDestination = null;
   } finally {
-    window.sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+    try { window.localStorage.removeItem(ACTIVE_SESSION_KEY); } catch {}
+    try { window.sessionStorage.removeItem(ACTIVE_SESSION_KEY); } catch {}
   }
 
   // Effacer toutes les variantes de chemin connues rend la déconnexion robuste
@@ -359,4 +381,5 @@ export async function clearActiveOfflineAccess() {
     setPathCookie(OFFLINE_ACCESS_COOKIE, "", path, 0);
     setPathCookie(OFFLINE_DEVICE_COOKIE, "", path, 0);
   }
+  window.dispatchEvent(new Event(OFFLINE_AUTH_STATE_EVENT));
 }
