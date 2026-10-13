@@ -18,6 +18,8 @@ import OfflineSyncBar from "@/components/OfflineSyncBar";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { createBulletinQrDataUrl } from "@/lib/bulletin-qr-image";
+import { prepareBulletinQrPreview } from "@/lib/bulletin-qr-preview-client";
+import { cacheSet } from "@/lib/offline";
 import {
   DEFAULT_EDUCATION_SCOPE,
   getClassFormationCode,
@@ -32,6 +34,7 @@ import {
   getAdminBulletinConduct,
   getAdminBulletinPeriods,
   getAdminBulletinSettings,
+  adminBulletinDataKey,
 } from "@/lib/offline-bulletins";
 
 /* ───────── Types ───────── */
@@ -687,7 +690,7 @@ async function generateQrDataUrl(
 
     const url = await createBulletinQrDataUrl(text, {
       width: size,
-      margin: 2,
+      margin: 4,
       errorCorrectionLevel: "Q",
     }, toDataURL);
 
@@ -2173,6 +2176,7 @@ function StudentBulletinCard({
                   src={qrImgSrc}
                   alt="QR"
                   className="h-[104px] w-[104px] object-contain"
+                  style={{ imageRendering: "pixelated" }}
                 />
               ) : (
                 <div className="text-[9px] text-slate-500">QR</div>
@@ -2988,10 +2992,11 @@ function BulletinsPageContent() {
         params.set("active_only", "false");
       }
 
-      const [json, conductJson] = await Promise.all([
+      const [loaded, conductJson] = await Promise.all([
         getAdminBulletin<BulletinResponse>(params),
         getAdminBulletinConduct<ConductSummaryResponse>(params).catch(() => null),
       ]);
+      let json = loaded;
       if (!json.ok) throw new Error("Réponse bulletin invalide (ok = false).");
       if (
         liveDuplicateMode &&
@@ -3018,6 +3023,16 @@ function BulletinsPageContent() {
           ? (json as any).signatures.enabled
           : null;
       if (sigFromApi !== null) setSignaturesEnabled(sigFromApi);
+
+      try {
+        const prepared = await prepareBulletinQrPreview(json, isOnline);
+        if (prepared !== json) {
+          json = prepared;
+          await cacheSet(adminBulletinDataKey(params), json);
+        }
+      } catch (error) {
+        setErrorMsg(error instanceof Error ? error.message : "Préparation du QR indisponible.");
+      }
 
       // L’API bulletin lit déjà les décisions NC centralisées
       // depuis public.bulletin_nc_overrides.
@@ -4013,11 +4028,13 @@ function BulletinsPageContent() {
               </Button>
             ) : null}
 
-            <Button type="button" onClick={handlePrint} disabled={printPreparing}>
+            <Button type="button" onClick={handlePrint} disabled={printPreparing || bulletinLoading}>
               <Printer className="h-4 w-4" />
               {printPreparing ? "Préparation…" : "Imprimer"}
             </Button>
           </div>
+
+          {errorMsg ? <div role="alert" className="mb-3 rounded bg-amber-50 p-3 text-sm text-amber-900 print:hidden">{errorMsg}</div> : null}
 
           <div className="preview-pages flex flex-col gap-6 pb-6">
             {items.map((it, idx) => (
@@ -4108,8 +4125,12 @@ function BulletinsPageContent() {
 
                 <Button
                   type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  disabled={!items.length}
+                  onClick={() => {
+                    if (isOnline && bulletinRaw?.items.some((item) => item.qr_token && !item.qr_code)) {
+                      void handleLoadBulletin();
+                    } else setPreviewOpen(true);
+                  }}
+                  disabled={!items.length || bulletinLoading}
                 >
                   <Printer className="h-4 w-4" />
                   Aperçu / Imprimer
