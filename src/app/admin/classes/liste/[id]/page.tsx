@@ -10,6 +10,8 @@ import {
   type EducationType,
 } from "@/lib/education-organization";
 
+import { fitClassListName, estimateClassListNameWidth } from "@/lib/class-list-name";
+
 type ProfileMini = {
   id: string;
   display_name: string | null;
@@ -510,6 +512,17 @@ export default function ClassListPrintPage() {
     [students, editable],
   );
 
+  const studentsPerSheet = classEducationType === "general_secondary" ? 30 : 25;
+
+  // Each page repeats the header and places its watermark behind its own names.
+  const printedPages = useMemo(() => Array.from(
+    { length: Math.max(1, Math.ceil(printedStudents.length / studentsPerSheet)) },
+    (_, pageIndex) => ({
+      students: printedStudents.slice(pageIndex * studentsPerSheet, (pageIndex + 1) * studentsPerSheet),
+      startIndex: pageIndex * studentsPerSheet,
+    }),
+  ), [printedStudents, studentsPerSheet]);
+
   function updateStudent(id: string, patch: Partial<EditableStudent>) {
     setEditable((prev) => ({
       ...prev,
@@ -693,7 +706,7 @@ export default function ClassListPrintPage() {
       <style jsx global>{`
         @page {
           size: A4 portrait;
-          margin: 6mm;
+          margin: 8mm;
         }
 
         .class-list-sheet {
@@ -713,25 +726,29 @@ export default function ClassListPrintPage() {
 
         .class-list-watermark {
           position: absolute;
-          left: 50%;
-          top: 54%;
+          left: 32%;
+          top: 50%;
           width: min(40%, 340px);
-          max-height: 72%;
+          max-height: 90%;
           transform: translate(-50%, -50%);
           object-fit: contain;
           opacity: 0.12;
           filter: grayscale(0.08) saturate(0.9);
           pointer-events: none;
           user-select: none;
-          z-index: 4;
+          z-index: 0;
         }
+
+        .class-list-roster-region {
+          position: relative;
+          isolation: isolate;
+        }
+
+        .class-list-sheet + .class-list-sheet { margin-top: 24px; }
 
         .official-header {
           display: grid;
-          grid-template-columns: minmax(0, 39%) minmax(250px, 30%) minmax(
-              0,
-              31%
-            );
+          grid-template-columns: minmax(0, 1fr) auto;
           gap: 10px;
           align-items: start;
           margin-bottom: 10px;
@@ -767,18 +784,23 @@ export default function ClassListPrintPage() {
           line-height: 1.25;
         }
 
+        .class-list-title-block {
+          grid-column: 1 / -1;
+          grid-row: 2;
+          text-align: center;
+        }
+
         .list-title {
           display: inline-flex;
-          width: 100%;
-          max-width: 290px;
+          max-width: 100%;
           justify-content: center;
-          border: 4px solid #111827;
+          border: 2px solid #334155;
           padding: 7px 10px;
           font-size: 18px;
           font-weight: 900;
           letter-spacing: 0.02em;
           text-transform: uppercase;
-          white-space: nowrap;
+          white-space: normal;
         }
 
         .right-meta {
@@ -811,16 +833,20 @@ export default function ClassListPrintPage() {
         }
 
         .roster-table {
+          position: relative;
+          z-index: 1;
           width: 100%;
           border-collapse: collapse;
           table-layout: fixed;
+          border: 1px solid #475569;
           font-size: 10.5px;
         }
 
         .roster-table th,
         .roster-table td {
           border: 1px solid #475569;
-          padding: 3.5px 5px;
+          box-sizing: border-box;
+          padding: 5px 3px;
           vertical-align: middle;
           line-height: 1.12;
         }
@@ -832,52 +858,19 @@ export default function ClassListPrintPage() {
         }
 
         .roster-table tbody tr:nth-child(even) td {
-          background: #f8fafc;
+          background: transparent;
         }
 
-        .col-no {
-          width: 38px;
-          text-align: center;
+        .roster-table .col-no { width: 3%; text-align: center; }
+        .roster-table .col-matricule { width: 11.5%; white-space: nowrap; }
+        .roster-table .col-name {
+          width: 40.5%; font-weight: 700; white-space: nowrap;
+          overflow-wrap: break-word; word-break: normal;
         }
-        .col-matricule {
-          width: 98px;
-        }
-        .col-name {
-          width: auto;
-          font-weight: 800;
-        }
-        .col-series {
-          width: 62px;
-          text-align: center;
-        }
-        .col-affect {
-          width: 54px;
-          text-align: center;
-        }
-        .col-board {
-          width: 50px;
-          text-align: center;
-        }
-        .col-date {
-          width: 82px;
-          text-align: center;
-        }
-        .col-sex {
-          width: 38px;
-          text-align: center;
-        }
-        .col-red {
-          width: 38px;
-          text-align: center;
-        }
-        .col-lv2 {
-          width: 46px;
-          text-align: center;
-        }
-        .col-nat {
-          width: 44px;
-          text-align: center;
-        }
+        .roster-table .col-affect { width: 5%; text-align: center; }
+        .roster-table .col-date { width: 11.6%; white-space: nowrap; text-align: center; }
+        .roster-table .col-sex, .roster-table .col-red { width: 5%; text-align: center; }
+        .roster-table .col-note { width: 4.6%; text-align: center; white-space: nowrap; }
 
         .sheet-footer {
           display: grid;
@@ -915,151 +908,6 @@ export default function ClassListPrintPage() {
           text-align: right;
         }
 
-        @media print {
-          .class-list-watermark {
-            width: 78mm !important;
-            opacity: 0.14 !important;
-          }
-
-          html,
-          body {
-            background: white !important;
-          }
-
-          body * {
-            visibility: hidden !important;
-          }
-
-          .class-list-print-root,
-          .class-list-print-root * {
-            visibility: visible !important;
-          }
-
-          .class-list-print-root {
-            position: absolute !important;
-            inset: 0 auto auto 0 !important;
-            width: 100% !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: white !important;
-          }
-
-          .screen-toolbar,
-          .screen-toolbar * {
-            display: none !important;
-            visibility: hidden !important;
-          }
-
-          .class-list-sheet {
-            max-width: 198mm !important;
-            width: 198mm !important;
-            border: 0 !important;
-            box-shadow: none !important;
-            padding: 0 !important;
-            overflow: visible !important;
-          }
-
-          .official-header {
-            grid-template-columns: minmax(0, 37%) minmax(0, 36%) minmax(0, 27%) !important;
-            gap: 6px !important;
-          }
-
-          .list-title {
-            width: auto !important;
-            max-width: 100% !important;
-            white-space: normal !important;
-            line-height: 1.05 !important;
-          }
-
-          .staff-line {
-            grid-template-columns: 1fr 1fr 1fr !important;
-            gap: 5px !important;
-            font-size: 9px !important;
-          }
-
-          .roster-table {
-            font-size: 8.7px !important;
-          }
-
-          .col-no {
-            width: 26px !important;
-          }
-          .col-matricule {
-            width: 72px !important;
-          }
-          .col-series {
-            width: 43px !important;
-          }
-          .col-affect {
-            width: 36px !important;
-          }
-          .col-board {
-            width: 36px !important;
-          }
-          .col-date {
-            width: 62px !important;
-          }
-          .col-sex {
-            width: 30px !important;
-          }
-          .col-red {
-            width: 28px !important;
-          }
-          .col-lv2 {
-            width: 34px !important;
-          }
-          .col-nat {
-            width: 36px !important;
-          }
-
-          .roster-table th,
-          .roster-table td {
-            padding: 3px 2.5px !important;
-            overflow-wrap: anywhere;
-          }
-
-          .roster-table tr {
-            break-inside: avoid;
-            page-break-inside: avoid;
-          }
-
-          .school-logo {
-            width: 42px !important;
-            height: 42px !important;
-          }
-
-          .school-name {
-            font-size: 11.5px !important;
-          }
-
-          .school-meta {
-            font-size: 8.3px !important;
-          }
-
-          .list-title {
-            font-size: 13.5px !important;
-            padding: 5px 6px !important;
-            border-width: 3px !important;
-          }
-
-          .right-meta {
-            font-size: 9px !important;
-          }
-
-          .sheet-footer {
-            grid-template-columns: 1fr 1.35fr 1fr !important;
-            gap: 6px !important;
-            font-size: 8.2px !important;
-          }
-
-          .export-brand-site {
-            font-size: 8.8px !important;
-          }
-
-          .export-brand-slogan {
-            font-size: 8px !important;
-          }
-        }
       `}</style>
 
       <div className="screen-toolbar mx-auto mb-4 flex max-w-6xl flex-col gap-3 rounded-2xl border bg-white p-4 shadow-sm lg:flex-row lg:items-end lg:justify-between">
@@ -1539,15 +1387,8 @@ export default function ClassListPrintPage() {
         </div>
       ) : data ? (
         <section className="class-list-print-root">
-          <article className="class-list-sheet">
-            {data.institution.logo_url ? (
-              <img
-                src={data.institution.logo_url}
-                alt=""
-                aria-hidden="true"
-                className="class-list-watermark"
-              />
-            ) : null}
+          {printedPages.map(({ students: pageStudents, startIndex }, pageIndex) => (
+          <article className="class-list-sheet" key={pageIndex}>
             <header className="official-header">
               <div className="school-block">
                 {data.institution.logo_url ? (
@@ -1579,7 +1420,7 @@ export default function ClassListPrintPage() {
                 </div>
               </div>
 
-              <div className="text-center">
+              <div className="class-list-title-block">
                 <div className="list-title">
                   LISTE DE CLASSE {data.class.label}
                 </div>
@@ -1626,6 +1467,11 @@ export default function ClassListPrintPage() {
               </div>
             </div>
 
+            <div className="class-list-roster-region">
+              {data.institution.logo_url ? (
+                <img src={data.institution.logo_url} alt="" aria-hidden="true"
+                  className="class-list-watermark" />
+              ) : null}
             <table className="roster-table">
               <thead>
                 <tr>
@@ -1636,14 +1482,14 @@ export default function ClassListPrintPage() {
                   <th className="col-date">Né(e) le</th>
                   <th className="col-sex">Sexe</th>
                   <th className="col-red">Red</th>
-                  <th className="col-series">Note1</th>
-                  <th className="col-board">Note2</th>
-                  <th className="col-lv2">Note3</th>
-                  <th className="col-nat">Note4</th>
+                  <th className="col-note">Note 1</th>
+                  <th className="col-note">Note 2</th>
+                  <th className="col-note">Note 3</th>
+                  <th className="col-note">Note 4</th>
                 </tr>
               </thead>
               <tbody>
-                {printedStudents.length === 0 ? (
+                {pageStudents.length === 0 ? (
                   <tr>
                     <td
                       colSpan={11}
@@ -1653,14 +1499,22 @@ export default function ClassListPrintPage() {
                     </td>
                   </tr>
                 ) : (
-                  printedStudents.map((student, index) => (
+                  pageStudents.map((student, index) => (
                     <tr key={student.id}>
-                      <td className="col-no">{index + 1}</td>
+                      <td className="col-no">{startIndex + index + 1}</td>
                       <td className="col-matricule">
                         {student.matricule || ""}
                       </td>
-                      <td className="col-name">
-                        {formatTraditionalStudentName(student)}
+                      <td className="col-name"
+                        title={formatTraditionalStudentName(student)}
+                        data-full-name={formatTraditionalStudentName(student)}
+                        data-last-name={student.last_name || ""}
+                        data-first-name={student.first_name || ""}
+                      >
+                        {fitClassListName({
+                          fullName: formatTraditionalStudentName(student),
+                          lastName: student.last_name, firstName: student.first_name,
+                        }, 285, estimateClassListNameWidth).text}
                       </td>
                       <td className="col-affect">
                         {affectationShort(student.is_affecte)}
@@ -1672,15 +1526,16 @@ export default function ClassListPrintPage() {
                       <td className="col-red">
                         {student.is_repeater ? "R" : ""}
                       </td>
-                      <td className="col-series"></td>
-                      <td className="col-board"></td>
-                      <td className="col-lv2"></td>
-                      <td className="col-nat"></td>
+                      <td className="col-note"></td>
+                      <td className="col-note"></td>
+                      <td className="col-note"></td>
+                      <td className="col-note"></td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+            </div>
 
             <footer className="sheet-footer">
               <div>
@@ -1690,9 +1545,10 @@ export default function ClassListPrintPage() {
               <div className="export-brand-footer">
                 {MON_CAHIER_EXPORT_SIGNATURE}
               </div>
-              <div className="footer-right" aria-hidden="true" />
+              <div className="footer-right">Page {pageIndex + 1} / {printedPages.length}</div>
             </footer>
           </article>
+          ))}
         </section>
       ) : null}
     </main>

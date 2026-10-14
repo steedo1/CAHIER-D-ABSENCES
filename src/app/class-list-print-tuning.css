@@ -1,35 +1,140 @@
 @media print {
-  /* Evite le dépassement de quelques pixels qui créait une 2e page vide. */
-  body .class-list-print-root {
-    min-height: 0 !important;
+
+  /* Hidden navigation must not keep its height or produce empty pages. */
+  body:has(.class-list-print-root) *:not(.class-list-print-root):not(.class-list-print-root *):not(:has(.class-list-print-root)) {
+    display: none !important;
+  }
+  body:has(.class-list-print-root) *:has(.class-list-print-root) {
+    display: contents !important;
+  }
+  html:has(.class-list-print-root), body:has(.class-list-print-root) {
     height: auto !important;
+    min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    break-after: avoid-page !important;
-    page-break-after: avoid !important;
+    background: white !important;
   }
-
-  body .class-list-print-root .class-list-sheet {
-    min-height: 280mm !important;
+  body .class-list-print-root {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
     height: auto !important;
-    margin-bottom: 0 !important;
-    break-after: avoid-page !important;
-    page-break-after: avoid !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
-
-  /* "Sexe" reste sur une seule ligne malgré la colonne étroite. */
-  body .class-list-print-root .roster-table thead th:nth-child(6) {
-    white-space: nowrap !important;
+  body .class-list-print-root .class-list-sheet {
+    display: block !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+  body .class-list-print-root .class-list-sheet:not(:last-child) {
+    break-after: page !important;
+    page-break-after: always !important;
+  }
+  body .class-list-print-root .official-header {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 2mm 4mm !important;
+    margin-bottom: 2mm !important;
+    break-inside: avoid !important;
+  }
+  body .class-list-print-root .school-logo { width: 14mm !important; height: 14mm !important; }
+  body .class-list-print-root .school-name {
+    font-size: 13px !important;
+    line-height: 1.2 !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+  body .class-list-print-root .school-meta {
+    font-size: 10px !important;
+    line-height: 1.3 !important;
+    overflow-wrap: break-word !important;
+  }
+  body .class-list-print-root .right-meta { font-size: 11px !important; line-height: 1.4 !important; }
+  body .class-list-print-root .list-title {
+    font-size: 16px !important;
+    line-height: 1.2 !important;
+    padding: 1.5mm 4mm !important;
+    border-width: 2px !important;
+  }
+  body .class-list-print-root .staff-line {
+    gap: 3mm !important;
+    margin: 2mm 0 3mm !important;
+    padding: 1.5mm 2mm !important;
+    font-size: 10.5px !important;
+    line-height: 1.3 !important;
+    break-inside: avoid !important;
+  }
+  body .class-list-print-root .staff-line strong { display: block !important; }
+  body .class-list-print-root .roster-table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+  }
+  body .class-list-print-root .roster-table thead { display: table-header-group !important; }
+  body .class-list-print-root .roster-table th,
+  body .class-list-print-root .roster-table td {
+    box-sizing: border-box !important;
+    padding: 0.65mm 0.6mm !important;
+    line-height: 1.2 !important;
+    vertical-align: middle !important;
     word-break: normal !important;
     overflow-wrap: normal !important;
+  }
+  body .class-list-print-root .roster-table thead th {
+    height: 8mm !important;
+    font-size: 11px !important;
+    white-space: nowrap !important;
+    background: #edf2f7 !important;
+    print-color-adjust: exact;
+  }
+  body .class-list-print-root .roster-table thead th.col-note {
     font-size: 9px !important;
-    letter-spacing: -0.1px !important;
     padding-left: 0.2mm !important;
     padding-right: 0.2mm !important;
   }
-
-  /* Filigrane un peu plus présent sans gêner la lecture. */
+  body .class-list-print-root .roster-table tbody tr {
+    height: 6.5mm !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  body .class-list-print-root .roster-table .col-name {
+    white-space: nowrap !important;
+    overflow: visible !important;
+    overflow-wrap: normal !important;
+    text-overflow: initial !important;
+    font-weight: 700 !important;
+    font-size: var(--class-list-name-font-size, 12px) !important;
+  }
+  body .class-list-print-root .roster-table tbody td { background: transparent !important; }
+  /* The watermark belongs to the names region on each sheet, even a short one. */
   body .class-list-print-root .class-list-watermark {
-    opacity: 0.17 !important;
+    position: absolute !important;
+    left: 32% !important;
+    top: 50% !important;
+    width: 62mm !important;
+    max-height: 90% !important;
+    transform: translate(-50%, -50%) !important;
+    opacity: 0.12 !important;
+    z-index: 0 !important;
+  }
+  body .class-list-print-root .sheet-footer {
+    position: static !important;
+    margin-top: 3mm !important;
+    padding-top: 1.5mm !important;
+    font-size: 9.5px !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }
