@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { normalizePhone } from "@/lib/phone";
+import { canonicalEducatorLevel } from "@/lib/educator-level";
 import { isEducationType, type EducationType } from "@/lib/education-organization";
 
 const DEFAULT_TEMP_PASSWORD = process.env.DEFAULT_TEMP_PASSWORD || "Pass2025";
@@ -162,7 +163,8 @@ function educatorClassMatchesContext(
   if (opts.educationType === "general_secondary") {
     return (
       !String(row.formation_code || "").trim() &&
-      String(row.level || "").trim() === opts.level
+      canonicalEducatorLevel(row.level, opts.educationType) ===
+        canonicalEducatorLevel(opts.level, opts.educationType)
     );
   }
 
@@ -197,7 +199,7 @@ async function saveEducatorAssignments(opts: {
   classIds: string[];
 }) {
   const supaSrv = getSupabaseServiceClient();
-  const level = String(opts.level || "").trim();
+  const level = canonicalEducatorLevel(opts.level, opts.educationType);
   const formationCode = String(opts.formationCode || "").trim() || null;
   const formationLevelCode =
     String(opts.formationLevelCode || "").trim() || null;
