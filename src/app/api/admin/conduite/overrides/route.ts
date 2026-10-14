@@ -3,6 +3,7 @@ import { MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 function cleanText(v: unknown) {
   return String(v ?? "").normalize("NFKC").trim();
@@ -181,7 +182,7 @@ async function getAuthContext() {
   // Seule l'administration peut modifier les notes officielles.
   // L'éducateur saisit uniquement les heures d'absence via manual-absences.
   const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin"] });
-  if ("error" in access) return { error: access.error, srv: null, user: null, institution_id: null } as const;
+  if ("error" in access) return { error: access.error, srv: getSupabaseServiceClient(), user: null, institution_id: null } as const;
   return { error: null, srv: access.srv, user: access.user, institution_id: access.institutionId } as const;
 }
 
