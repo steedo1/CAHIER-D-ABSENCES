@@ -92,7 +92,7 @@ export async function startConductBrowserFixture() {
       else if(url.pathname==="/api/admin/institution/grading-periods")response=Response.json({ok:true,academic_year:url.searchParams.get("academic_year")||"2026-2027",items:state.tables.grade_periods});
       else if(url.pathname==="/api/admin/conduct/settings")response=Response.json(state.tables.conduct_settings[0]);
       else if(url.pathname==="/api/admin/institution/settings")response=Response.json({institution_name:"COLLÈGE DE TEST"});
-      else {res.setHeader("Content-Type","text/html; charset=utf-8");res.end('<!doctype html><html lang="fr"><head><link rel="stylesheet" href="/fixture.css"></head><body><main class="mx-auto max-w-6xl p-6"><div id="root"></div></main><script src="/fixture.js"></script></body></html>');return;}
+      else {res.setHeader("Content-Type","text/html; charset=utf-8");res.end('<!doctype html><html lang="fr"><head><link rel="stylesheet" href="/fixture.css"></head><body><main class="mx-auto max-w-6xl p-6"><div id="root"></div></main><script>window.__manualFixtureRole='+JSON.stringify(state.tables.user_roles[0].role)+'</script><script src="/fixture.js"></script></body></html>');return;}
       res.statusCode=response.status;res.setHeader("Content-Type","application/json");res.end(await response.text());
     }catch(error){res.statusCode=500;res.end(JSON.stringify({error:error.message}));}
   });

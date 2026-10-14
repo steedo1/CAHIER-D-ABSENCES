@@ -1,4 +1,4 @@
-import { MANUAL_ABSENCE_REASON_PREFIX, manualHoursForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
+import { deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
@@ -1148,9 +1148,13 @@ export async function GET(req: NextRequest) {
   }
 
   const manualHoursByStudent = new Map<string, number>();
+  const manualSanctionsByStudent = new Map<string, number>();
   for (const [studentId, row] of overridesByStudent) {
     const source = parseManualAbsenceReason(row.reason);
-    if (source) manualHoursByStudent.set(studentId, source.hours);
+    if (source) {
+      if (!source.useDigitalAbsences) manualHoursByStudent.set(studentId, source.hours);
+      manualSanctionsByStudent.set(studentId, source.sanctionPoints ?? 0);
+    }
   }
   // Date-only consultation can use the period totals; ordinary fixed-grade corrections still require a period.
   if ((!academic_year || !period_code) && studentIds.length) {
@@ -1163,8 +1167,11 @@ export async function GET(req: NextRequest) {
     const { data: sources, error: sourceError } = await query;
     if (sourceError) return NextResponse.json({ error: "manual_absences_read_failed" }, { status: 503 });
     for (const studentId of studentIds) {
-      const hours = manualHoursForRange((sources || []).filter(row => row.student_id === studentId), from, to);
-      if (hours !== null) manualHoursByStudent.set(studentId, hours);
+      const source = manualConductForRange((sources || []).filter(row => row.student_id === studentId), from, to);
+      if (source !== null) {
+        if (source.hours !== null) manualHoursByStudent.set(studentId, source.hours);
+        manualSanctionsByStudent.set(studentId, source.sanctionPoints);
+      }
     }
   }
 
@@ -1332,6 +1339,7 @@ export async function GET(req: NextRequest) {
 
       const manualAbsences = parseManualAbsenceReason(overridesByStudent.get(student_id)?.reason);
       const manualHours = manualHoursByStudent.get(student_id);
+      const manualSanctions = manualSanctionsByStudent.get(student_id) ?? 0;
       const absenceMinutes = manualHours !== undefined ? manualHours * 60 : Number(minutesRec.absenceMinutes || 0);
       const absenceCount = manualHours !== undefined ? manualHours : Number(minutesRec.absenceCount || 0);
       const tardyMinutes = Number(minutesRec.tardyMinutes || 0);
@@ -1524,12 +1532,15 @@ export async function GET(req: NextRequest) {
         subject_averages: conductSubjectAverageBySubject,
       });
 
-      const calculatedTotal = Number(
+      const calculatedTotalBeforeSanctions = Number(
         (conductPolicy.mode === "conduct_plus_subjects"
           ? automaticConduct.avg20
           : automaticConduct.total
         ).toFixed(2),
       );
+
+      // Deduct after the institution's calculation, preserving CSCA Religion/Latin composition.
+      const calculatedTotal = deductManualSanctions(calculatedTotalBeforeSanctions, manualSanctions);
 
       // ✅ 2) Ensuite seulement, la correction admin remplace la moyenne finale officielle.
       // Elle ne doit PAS être re-moyennée avec Religion/Latin.
@@ -1586,6 +1597,8 @@ export async function GET(req: NextRequest) {
         appreciation,
 
         manual_absence_hours: manualHours ?? null,
+        manual_sanction_points: manualSanctions,
+        manual_conduct_base_total: calculatedTotalBeforeSanctions,
         manual_absence_updated_at: manualAbsences ? override?.updated_at ?? null : null,
         conduct_has_council: hasCouncil,
         conduct_council_cap: conductSettings.rules.discipline.council_cap,

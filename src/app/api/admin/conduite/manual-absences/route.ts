@@ -4,7 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole, getRequestRoles } from "@/lib/auth/server-context";
 import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
-import { calculateAssiduity, DEFAULT_ASSIDUITY_RULES, MANUAL_CONDUCT_ROLES, manualAbsenceReason, parseAbsenceHours, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
+import { calculateAssiduity, deductManualSanctions, DEFAULT_ASSIDUITY_RULES, MANUAL_CONDUCT_ROLES, manualAbsenceReason, parseAbsenceHours, parseManualAbsenceReason, parseSanctionPoints } from "@/lib/manual-conduct-absences";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const text = (v: unknown) => typeof v === "string" ? v.trim() : "";
@@ -21,12 +21,15 @@ export async function POST(req: NextRequest) {
     const classId = text(body.class_id), year = text(body.academic_year), periodCode = text(body.period_code);
     if (!classId || !year || !periodCode) return failure("Choisissez une classe, une année scolaire et un trimestre.");
     if (!Array.isArray(body.items) || !body.items.length || body.items.length > 500) return failure("La liste d’absences à enregistrer est invalide.");
-    const entries: Array<{ studentId: string; hours: number }> = [];
+    const entries: Array<{ studentId: string; hours?: number; sanctionPoints?: number }> = [];
     const seen = new Set<string>();
     for (const item of body.items) {
-      const studentId = text(item?.student_id), hours = parseAbsenceHours(item?.absence_hours);
+      const studentId = text(item?.student_id), hours = item?.absence_hours === undefined ? undefined : parseAbsenceHours(item.absence_hours);
       if (!studentId || hours === null || seen.has(studentId)) return failure("Chaque élève doit apparaître une seule fois avec un nombre d’heures valide (0 à 5000).");
-      seen.add(studentId); entries.push({ studentId, hours });
+      const sanctionPoints = item?.sanction_points === undefined ? undefined : parseSanctionPoints(item.sanction_points);
+      if (sanctionPoints === null) return failure("Les sanctions doivent être un nombre de points entre 0 et 20.");
+      if (hours === undefined && sanctionPoints === undefined) return failure("Saisissez des heures d’absence ou des points de sanction.");
+      seen.add(studentId); entries.push({ studentId, hours, sanctionPoints });
     }
     const { data: classroom, error: classError } = await srv.from("classes").select("id,institution_id,academic_year,level,education_type").eq("id", classId).eq("institution_id", ctx.instId).maybeSingle();
     if (classError) throw classError;
@@ -56,21 +59,29 @@ export async function POST(req: NextRequest) {
     for (const result of [enrollment, previous, assOverrides, settings]) if (result.error) throw result.error;
     const enrolled = new Set((enrollment.data || []).map(r => String(r.student_id)));
     if (ids.some(id => !enrolled.has(id))) return failure("Un élève ne fait pas partie de cette classe pour la période choisie.");
-    if ((previous.data || []).some(r => !parseManualAbsenceReason(r.reason)) || (assOverrides.data || []).length) return failure("Une moyenne ou une note d’assiduité a déjà été corrigée manuellement. Réinitialisez cette correction dans le calcul automatique avant de saisir les absences.", 409);
+    const changedHours = new Set(entries.filter(entry => entry.hours !== undefined).map(entry => entry.studentId));
+    if ((previous.data || []).some(r => !parseManualAbsenceReason(r.reason)) || (assOverrides.data || []).some(row => changedHours.has(String(row.student_id)))) return failure("Une moyenne ou une note d’assiduité a déjà été corrigée manuellement. Réinitialisez cette correction dans le calcul automatique avant de saisir les absences.", 409);
     const s = settings.data;
     const number = (value: unknown, fallback: number) => value === null || value === undefined || !Number.isFinite(Number(value)) ? fallback : Number(value);
     const assMax = number(s?.assiduite_max, 6), other = number(s?.tenue_max, 3) + number(s?.moralite_max, 4) + number(s?.discipline_max, 7);
     const rules = { ...DEFAULT_ASSIDUITY_RULES, penalty_per_hour: number(s?.points_per_absent_hour, 0.5), max_hours_before_zero: number(s?.absent_hours_zero_threshold, 10), note_after_threshold: number(s?.absent_hours_note_after_threshold, 0) };
     const now = new Date().toISOString();
+    const previousSources = new Map((previous.data || []).map(row => [String(row.student_id), parseManualAbsenceReason(row.reason)]));
     // Store the source hours alongside a calculated snapshot; readers recalculate from the hours.
     const payload = entries.map(e => {
       const totalMax = assMax + other;
-      const raw = calculateAssiduity(e.hours, assMax, rules) + other;
+      // An older absence-only client must preserve sanctions already stored for this period.
+      const previousSource = previousSources.get(e.studentId);
+      const sanctionPoints = e.sanctionPoints ?? previousSource?.sanctionPoints ?? 0;
+      const hours = e.hours ?? previousSource?.hours ?? 0;
+      // Entering sanctions alone keeps attendance driven by the digital register.
+      const useDigitalAbsences = e.hours === undefined && (previousSource?.useDigitalAbsences ?? !previousSource);
+      const raw = deductManualSanctions(calculateAssiduity(hours, assMax, rules) + other, sanctionPoints);
       // Existing snapshot columns are constrained to /20; the hours remain authoritative.
       const snapshot = Number(Math.min(20, Math.max(0, totalMax > 0 ? raw / totalMax * 20 : 0)).toFixed(2));
       return { institution_id: ctx.instId, class_id: classId, student_id: e.studentId, academic_year: year, period_code: periodCode,
         from_date: period.start_date, to_date: period.end_date, calculated_total: snapshot, override_total: snapshot,
-        reason: manualAbsenceReason({ hours: e.hours, periodId: period.id }), edited_by: ctx.user.id, updated_at: now };
+        reason: manualAbsenceReason({ hours, periodId: period.id, sanctionPoints, useDigitalAbsences }), edited_by: ctx.user.id, updated_at: now };
     });
     const saved = await srv.from("conduct_average_overrides").upsert(payload, { onConflict: "institution_id,class_id,student_id,academic_year,period_code" }).select("student_id,updated_at");
     if (saved.error) throw saved.error;
