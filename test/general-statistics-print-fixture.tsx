@@ -16,6 +16,7 @@ const items = classes.flatMap((classroom) => ["M", "F"].flatMap((gender) =>
   }))),
 )).flatMap((student, index) => Array.from({ length: params.has("long") ? 14 : 1 }, (_, copy) => ({
   ...student, id: `${index}-${copy}`, matricule: `TEST${String(index * 14 + copy).padStart(4, "0")}`,
+  nationality: index % 4 === 0 ? "IVOIRIENNE" : index % 4 === 1 ? "MALIENNE" : index % 4 === 2 ? "BURKINABE" : null,
   full_name: `ÉLÈVE ${String(index * 14 + copy).padStart(4, "0")} Prénoms de démonstration`,
   first_name: "Prénoms de démonstration", last_name: "ÉLÈVE", regime: null,
 })));
