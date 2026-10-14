@@ -2,7 +2,7 @@ import { MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
 // src/app/api/admin/conduite/overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 function cleanText(v: unknown) {
