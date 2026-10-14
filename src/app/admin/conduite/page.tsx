@@ -358,7 +358,7 @@ export default function ConduitePage() {
   const [manualDirty, setManualDirty] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   function canChangeManualContext() {
-    return !manualSaving && (!manualDirty || window.confirm("Des absences ne sont pas encore enregistrées. Quitter cette saisie ?"));
+    return !manualSaving && (!manualDirty || window.confirm("Des absences ou sanctions ne sont pas encore enregistrées. Quitter cette saisie ?"));
   }
   // classes et filtres
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
@@ -1798,12 +1798,12 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">{conductDisplayLabel} — Moyennes par élève</h1>
         <p className="text-slate-600">
-          {manualMode ? "Choisissez une classe et un trimestre, puis saisissez uniquement les heures d’absence. La conduite se calcule automatiquement." : "Sélectionnez l’année scolaire, la période et la classe. Cliquez sur une rubrique pour la corriger."}
+          {manualMode ? "Choisissez une classe et un trimestre, puis saisissez les heures d’absence et les points de sanction. La conduite se calcule automatiquement." : "Sélectionnez l’année scolaire, la période et la classe. Cliquez sur une rubrique pour la corriger."}
         </p>
       </div>
 
       {!isEducator && <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
-        {([{ manual: false, label: "Calcul automatique" }, { manual: true, label: "Saisie des absences" }]).map(option => (
+        {([{ manual: false, label: "Calcul automatique" }, { manual: true, label: "Absences et sanctions" }]).map(option => (
           <button key={option.label} type="button" aria-pressed={manualMode === option.manual} disabled={manualSaving}
             onClick={() => {
               if (manualMode === option.manual) return;

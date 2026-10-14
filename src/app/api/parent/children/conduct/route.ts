@@ -1,4 +1,4 @@
-import { MANUAL_ABSENCE_REASON_PREFIX, manualHoursForRange } from "@/lib/manual-conduct-absences";
+import { deductManualSanctions, MANUAL_ABSENCE_REASON_PREFIX, manualConductForRange } from "@/lib/manual-conduct-absences";
 import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -603,7 +603,9 @@ export async function GET(req: NextRequest) {
       .eq("academic_year", `${firstYear}-${firstYear + 1}`)
       .like("reason", `${MANUAL_ABSENCE_REASON_PREFIX}%`);
     if (manualError) throw manualError;
-    const manualHours = manualHoursForRange(manualRows || [], from, to);
+    const manualSource = manualConductForRange(manualRows || [], from, to);
+    const manualHours = manualSource?.hours ?? null;
+    const manualSanctions = manualSource?.sanctionPoints ?? 0;
     if (manualHours !== null) { absence_count = manualHours; absence_minutes = Math.round(manualHours * 60); }
 
     // ── Calcul barème (avec réglages dynamiques alignés sur l’admin) ──
@@ -731,6 +733,7 @@ export async function GET(req: NextRequest) {
         conductSettings.rules.discipline.council_cap,
       );
 
+    total = deductManualSanctions(Number(total.toFixed(2)), manualSanctions);
     const appreciation = appreciationFromTotal(total);
 
     return NextResponse.json({
@@ -741,6 +744,7 @@ export async function GET(req: NextRequest) {
         discipline: Number(discipline.toFixed(2)),
       },
       total: Number(total.toFixed(2)),
+      manual_sanction_points: manualSanctions,
       appreciation,
       // 🔎 Barème réel renvoyé au front parent (cohérent avec réglages admin)
       rubric_max: conductSettings.rubric_max,

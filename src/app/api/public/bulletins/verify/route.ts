@@ -1,4 +1,4 @@
-import { parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
+import { deductManualSanctions, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 // src/app/api/public/bulletins/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -2716,7 +2716,7 @@ export async function GET(req: NextRequest) {
       for (const sid of studentIds) {
         const evs = byStudent.get(sid) ?? [];
         const manualAbsences = parseManualAbsenceReason(overridesByStudent.get(sid)?.reason);
-        const absenceCount = manualAbsences ? manualAbsences.hours : Number(absCountAgg.get(sid) || 0);
+        const absenceCount = manualAbsences && !manualAbsences.useDigitalAbsences ? manualAbsences.hours : Number(absCountAgg.get(sid) || 0);
         const tardyMinutes = Number(tarAgg.get(sid) || 0);
         const tardyCount = Number(tarCountAgg.get(sid) || 0);
 
@@ -2881,7 +2881,7 @@ export async function GET(req: NextRequest) {
           ? Number(
               clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2),
             )
-          : calculatedTotal;
+          : deductManualSanctions(calculatedTotal, manualAbsences?.sanctionPoints ?? 0);
 
         const finalAvg20 =
           officialTotalMax === 20
