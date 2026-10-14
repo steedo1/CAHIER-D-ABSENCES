@@ -1,3 +1,4 @@
+import { MANUAL_ABSENCE_REASON_PREFIX } from "@/lib/manual-conduct-absences";
 // src/app/api/admin/conduite/overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -256,6 +257,9 @@ export async function POST(req: NextRequest) {
 
     const overrideRaw = toNumber(body.override_total);
     const reason = cleanText(body.reason) || "Correction administrative";
+    if (reason.startsWith(MANUAL_ABSENCE_REASON_PREFIX)) {
+      return NextResponse.json({ error: "reserved_reason" }, { status: 400 });
+    }
 
     if (!class_id) {
       return NextResponse.json({ error: "class_id_required" }, { status: 400 });

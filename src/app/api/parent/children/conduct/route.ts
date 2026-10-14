@@ -1,3 +1,4 @@
+import { MANUAL_ABSENCE_REASON_PREFIX, manualHoursForRange } from "@/lib/manual-conduct-absences";
 import { parentConnectDenial } from "@/lib/parent-connect/server";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -593,6 +594,18 @@ export async function GET(req: NextRequest) {
         }));
     }
 
+    // Paper-register totals use the same source as the official class conduct calculation.
+    const reference = new Date((from || to || new Date().toISOString().slice(0, 10)) + "T12:00:00Z");
+    const firstYear = reference.getUTCMonth() >= 7 ? reference.getUTCFullYear() : reference.getUTCFullYear() - 1;
+    const { data: manualRows, error: manualError } = await srv.from("conduct_average_overrides")
+      .select("reason,period_code,from_date,to_date,updated_at")
+      .eq("institution_id", institution_id).eq("student_id", student_id)
+      .eq("academic_year", `${firstYear}-${firstYear + 1}`)
+      .like("reason", `${MANUAL_ABSENCE_REASON_PREFIX}%`);
+    if (manualError) throw manualError;
+    const manualHours = manualHoursForRange(manualRows || [], from, to);
+    if (manualHours !== null) { absence_count = manualHours; absence_minutes = Math.round(manualHours * 60); }
+
     // ── Calcul barème (avec réglages dynamiques alignés sur l’admin) ──
     const { rules } = conductSettings;
     const assRules = rules.assiduite;
@@ -732,6 +745,7 @@ export async function GET(req: NextRequest) {
       // 🔎 Barème réel renvoyé au front parent (cohérent avec réglages admin)
       rubric_max: conductSettings.rubric_max,
       minutes: {
+        manual_absence_hours: manualHours,
         absence_minutes,
         tardy_minutes,
         minutes_total,

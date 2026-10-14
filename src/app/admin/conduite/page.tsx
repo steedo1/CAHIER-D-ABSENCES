@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import ManualConductAbsences from "@/components/admin/ManualConductAbsences";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -347,6 +348,12 @@ function normalizeInstitutionSettings(json: any): InstitutionSettings {
 }
 
 export default function ConduitePage() {
+  const [manualMode, setManualMode] = useState(false);
+  const [manualDirty, setManualDirty] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  function canChangeManualContext() {
+    return !manualSaving && (!manualDirty || window.confirm("Des absences ne sont pas encore enregistrées. Quitter cette saisie ?"));
+  }
   // classes et filtres
   const [allClasses, setAllClasses] = useState<ClassItem[]>([]);
   const [educationScope, setEducationScope] =
@@ -493,6 +500,7 @@ export default function ConduitePage() {
   async function loadPeriods(
     academicYearOverride?: string,
     classIdOverride: string = classId,
+    forManual = manualMode,
   ) {
     setLoadingPeriods(true);
     setPeriodError(null);
@@ -537,6 +545,14 @@ export default function ConduitePage() {
 
       mapped.sort((a, b) => a.order_index - b.order_index);
       setPeriods(mapped);
+      if (forManual) {
+        const today = new Date().toISOString().slice(0, 10);
+        const per = mapped.find(p => p.is_active && p.code === selectedPeriodCode) ||
+          mapped.find(p => p.is_active && (!p.start_date || p.start_date <= today) && (!p.end_date || p.end_date >= today)) ||
+          mapped.find(p => p.is_active);
+        setSelectedPeriodCode(per?.code || "");
+        setFrom(per?.start_date || ""); setTo(per?.end_date || "");
+      }
     } catch (e: any) {
       setPeriodError(
         e?.message ||
@@ -587,6 +603,7 @@ export default function ConduitePage() {
   async function handleAcademicYearChange(
     e: React.ChangeEvent<HTMLSelectElement>,
   ) {
+    if (!canChangeManualContext()) return;
     const year = e.target.value;
     setSelectedAcademicYear(year);
     setEducationScope((current) => ({
@@ -608,6 +625,7 @@ export default function ConduitePage() {
   }
 
   function changeEducationScope(value: EducationScopeValue) {
+    if (!canChangeManualContext()) return;
     setEducationScope(value);
     setSelectedPeriodCode("");
     setFrom("");
@@ -620,6 +638,7 @@ export default function ConduitePage() {
 
   /* ───────── Changement de période bulletin → applique automatiquement Du / Au ───────── */
   function handlePeriodChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    if (!canChangeManualContext()) return;
     const code = e.target.value;
     setSelectedPeriodCode(code);
     setItems([]);
@@ -1773,27 +1792,49 @@ export default function ConduitePage() {
       <div>
         <h1 className="text-2xl font-semibold">{conductDisplayLabel} — Moyennes par élève</h1>
         <p className="text-slate-600">
-          Sélectionne l&apos;année scolaire, la période et le contexte de la classe.
-          Clique sur Assiduité, Tenue, Moralité ou Discipline pour corriger une rubrique.
-          La moyenne finale officielle est ensuite recalculée automatiquement.
+          {manualMode ? "Choisissez une classe et un trimestre, puis saisissez uniquement les heures d’absence. La conduite se calcule automatiquement." : "Sélectionnez l’année scolaire, la période et la classe. Cliquez sur une rubrique pour la corriger."}
         </p>
       </div>
 
+      <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
+        {([{ manual: false, label: "Calcul automatique" }, { manual: true, label: "Saisie des absences" }]).map(option => (
+          <button key={option.label} type="button" aria-pressed={manualMode === option.manual} disabled={manualSaving}
+            onClick={() => {
+              if (manualMode === option.manual) return;
+              if (!canChangeManualContext()) return;
+              setManualMode(option.manual);
+              if (option.manual) void loadPeriods(selectedAcademicYear, classId, true);
+            }}
+            className={`rounded-xl border px-4 py-2 text-sm font-semibold ${manualMode === option.manual ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "bg-white text-slate-600"}`}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+
       <Card title="Filtres">
-        <EducationScopeFilter
+        {manualMode ? (
+          <label className="block text-sm font-medium text-slate-700">Classe
+            <Select aria-label="Classe" value={classId} disabled={manualSaving || loadingPeriods}
+              onChange={event => changeEducationScope({ ...educationScope, classId: event.target.value })} className="mt-1">
+              <option value="">— Choisir une classe —</option>
+              {[...classesForSelectedYear].sort((a,b) => a.name.localeCompare(b.name, "fr", { numeric: true })).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+            </Select>
+          </label>
+        ) : <EducationScopeFilter
           value={educationScope}
           onChange={changeEducationScope}
           classes={classesForSelectedYear}
           title="Contexte de la conduite"
-        />
+        />}
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Année scolaire</div>
             <Select
+              aria-label="Année scolaire"
               value={selectedAcademicYear}
               onChange={handleAcademicYearChange}
-              disabled={loadingPeriods || academicYearOptions.length === 0}
+              disabled={manualSaving || loadingPeriods || academicYearOptions.length === 0}
             >
               {academicYearOptions.length === 0 ? (
                 <option value="">— Année scolaire non disponible —</option>
@@ -1812,11 +1853,12 @@ export default function ConduitePage() {
               Période d&apos;évaluation
             </div>
             <Select
+              aria-label="Trimestre"
               value={selectedPeriodCode}
               onChange={handlePeriodChange}
-              disabled={loadingPeriods || periods.length === 0}
+              disabled={manualSaving || loadingPeriods || periods.length === 0}
             >
-              <option value="">— Toutes les dates —</option>
+              <option value="">{manualMode ? "— Choisir un trimestre —" : "— Toutes les dates —"}</option>
               {periods
                 .filter((p) => p.is_active)
                 .map((p) => (
@@ -1826,12 +1868,13 @@ export default function ConduitePage() {
                 ))}
             </Select>
             <div className="mt-1 text-[11px] text-slate-500">
-              La modification officielle exige une période précise.
+              {manualMode ? "Les absences sont enregistrées pour le trimestre choisi." : "La modification officielle exige une période précise."}
             </div>
           </div>
 
         </div>
 
+        {!manualMode && (
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
           <div className="md:col-span-2">
             <div className="mb-1 text-xs text-slate-500">Du</div>
@@ -1886,6 +1929,7 @@ export default function ConduitePage() {
             </div>
           </div>
         </div>
+        )}
 
         {periodError && (
           <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
@@ -1899,6 +1943,7 @@ export default function ConduitePage() {
           </div>
         )}
 
+        {!manualMode && (
         <div className="mt-4 flex flex-wrap gap-2">
           <Button onClick={validate} disabled={!classId || loading}>
             {loading ? "…" : "Valider"}
@@ -1917,8 +1962,16 @@ export default function ConduitePage() {
             Exporter PDF
           </Button>
         </div>
+        )}
       </Card>
 
+      {manualMode ? (
+        classId && selectedAcademicYear && selectedPeriodCode && !loadingPeriods ? (
+          <ManualConductAbsences key={`${classId}:${selectedAcademicYear}:${selectedPeriodCode}`}
+            classId={classId} academicYear={selectedAcademicYear} periodCode={selectedPeriodCode}
+            from={from} to={to} onDirtyChange={setManualDirty} onSavingChange={setManualSaving} />
+        ) : <div className="rounded-2xl border bg-white p-5 text-sm text-slate-600">Choisissez une classe et un trimestre pour afficher les élèves.</div>
+      ) : (
       <Card title={classLabel ? `Classe — ${classLabel}` : "Résultats"}>
         {!classId ? (
           <div className="text-sm text-slate-600">—</div>
@@ -2035,6 +2088,7 @@ export default function ConduitePage() {
           </div>
         )}
       </Card>
+      )}
 
       {editingRubric && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
