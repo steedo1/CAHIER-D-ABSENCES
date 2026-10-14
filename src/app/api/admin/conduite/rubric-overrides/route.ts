@@ -1,7 +1,7 @@
 // src/app/api/admin/conduite/rubric-overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type RubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
