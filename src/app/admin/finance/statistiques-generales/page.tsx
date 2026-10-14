@@ -15,6 +15,7 @@ type Student = {
   level: string | null;
   gender: string | null;
   birthdate: string | null;
+  nationality?: string | null;
   lv2: string | null;
   is_boarder: boolean | null;
   is_affecte: boolean | null;
@@ -42,7 +43,7 @@ type SexChoice = "all" | "F" | "M";
 type Lv2Choice = "all" | "allemand" | "espagnol";
 type PrintColumnKey =
   | "number" | "matricule" | "full_name" | "class"
-  | "sex" | "age" | "boarding" | "affectation" | "scholarship" | "lv2";
+  | "sex" | "age" | "nationality" | "boarding" | "affectation" | "scholarship" | "lv2";
 
 const PRINT_COLUMN_META: Record<PrintColumnKey, { label: string; weight: number; center?: boolean }> = {
   number: { label: "N°", weight: 5, center: true },
@@ -51,6 +52,7 @@ const PRINT_COLUMN_META: Record<PrintColumnKey, { label: string; weight: number;
   class: { label: "Classe", weight: 10 },
   sex: { label: "Sexe", weight: 6, center: true },
   age: { label: "Âge", weight: 6, center: true },
+  nationality: { label: "Nationalité", weight: 13 },
   boarding: { label: "Régime", weight: 11 },
   affectation: { label: "Affectation", weight: 13 },
   scholarship: { label: "Bourse", weight: 11 },
@@ -85,6 +87,20 @@ function lv2(value: unknown): "allemand" | "espagnol" | null {
   if (v.includes("allem") || v === "all") return "allemand";
   if (v.includes("esp") || v === "esp") return "espagnol";
   return null;
+}
+
+/** Réunir les variantes de nationalité présentes dans les établissements. */
+function nationalityLabel(value: unknown): string {
+  const raw = clean(value);
+  const v = norm(value).replace(/[._-]+/g, " ").trim();
+  if (!v || ["unknown", "inconnue", "non renseignee", "n/a", "aucune", "-"].includes(v))
+    return "Non renseignée";
+  if (v === "iv" || v === "ci" || v === "cote d'ivoire" || v.startsWith("ivoir")) return "Ivoirienne";
+  if (v.startsWith("burkin")) return "Burkinabè";
+  if (v.startsWith("malien")) return "Malienne";
+  if (v.startsWith("nigerien")) return "Nigérienne";
+  if (v.startsWith("nigerian")) return "Nigériane";
+  return raw.charAt(0).toLocaleUpperCase("fr") + raw.slice(1).toLocaleLowerCase("fr");
 }
 
 function ageOf(value: string | null | undefined) {
@@ -122,6 +138,7 @@ function printCellValue(key: PrintColumnKey, student: Student, index: number): s
     case "class": return student.class_label || "—";
     case "sex": return sex(student.gender) || "—";
     case "age": return ageOf(student.birthdate) ?? "—";
+    case "nationality": return nationalityLabel(student.nationality);
     case "boarding": return labelBool(student.is_boarder, "Interne", "Externe");
     case "affectation": return labelBool(student.is_affecte, "Affecté", "Non affecté");
     case "scholarship": return labelBool(student.is_scholarship, "Boursier", "Non boursier");
@@ -148,6 +165,7 @@ function filterLabel(args: {
   scholarship: Choice;
   gender: SexChoice;
   language: Lv2Choice;
+  nationality: string;
   minAge: string;
   maxAge: string;
 }) {
@@ -164,6 +182,7 @@ function filterLabel(args: {
   if (args.gender === "M") out.push("Garçons");
   if (args.language === "allemand") out.push("Allemand");
   if (args.language === "espagnol") out.push("Espagnol");
+  if (args.nationality !== "all") out.push(`Nationalité : ${args.nationality}`);
   if (args.minAge && args.maxAge) out.push(`${args.minAge}–${args.maxAge} ans`);
   else if (args.minAge) out.push(`≥ ${args.minAge} ans`);
   else if (args.maxAge) out.push(`≤ ${args.maxAge} ans`);
@@ -212,6 +231,7 @@ export default function GeneralStatisticsPage() {
   const [scholarship, setScholarship] = useState<Choice>("all");
   const [gender, setGender] = useState<SexChoice>("all");
   const [language, setLanguage] = useState<Lv2Choice>("all");
+  const [nationality, setNationality] = useState("all");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
 
@@ -256,6 +276,7 @@ export default function GeneralStatisticsPage() {
   }, []);
 
   const levels = useMemo(() => sortedUnique(students.map((student) => student.level)), [students]);
+  const nationalities = useMemo(() => sortedUnique(students.map((student) => nationalityLabel(student.nationality))), [students]);
 
   const classes = useMemo(() => {
     const choices = new Map<string, string>();
@@ -282,6 +303,7 @@ export default function GeneralStatisticsPage() {
       if (!boolMatches(student.is_scholarship, scholarship)) return false;
       if (gender !== "all" && sex(student.gender) !== gender) return false;
       if (language !== "all" && lv2(student.lv2) !== language) return false;
+      if (nationality !== "all" && nationalityLabel(student.nationality) !== nationality) return false;
 
       if (min !== null || max !== null) {
         const age = ageOf(student.birthdate);
@@ -291,7 +313,7 @@ export default function GeneralStatisticsPage() {
       }
       return true;
     });
-  }, [students, level, classId, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
+  }, [students, level, classId, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
 
   const totals = useMemo(() => {
     let girls = 0;
@@ -304,6 +326,18 @@ export default function GeneralStatisticsPage() {
     return { girls, boys };
   }, [filtered]);
 
+  const nationalityBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const student of filtered) {
+      const label = nationalityLabel(student.nationality);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return Array.from(counts, ([label, count]) => ({ label, count })).sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label, "fr"),
+    );
+  }, [filtered]);
+  const nationalityRecap = nationalityBreakdown.map(({ label, count }) => `${label}: ${count}`).join(" · ");
+
   const criteria = useMemo(
     () =>
       filterLabel({
@@ -314,10 +348,11 @@ export default function GeneralStatisticsPage() {
         scholarship,
         gender,
         language,
+        nationality,
         minAge,
         maxAge,
       }),
-    [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, minAge, maxAge],
+    [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge],
   );
 
   // Le filtre d'âge compte pour un seul critère, même avec deux bornes.
@@ -331,6 +366,7 @@ export default function GeneralStatisticsPage() {
       scholarship !== "all",
       gender !== "all",
       language !== "all",
+      nationality !== "all",
       minAge !== "" || maxAge !== "",
     ].filter(Boolean).length;
 
@@ -359,8 +395,9 @@ export default function GeneralStatisticsPage() {
     if (classId !== "all") title += " — CLASSE " + selectedClassLabel;
     if (level !== "all") title += " — NIVEAU " + level;
     if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
+    if (nationality !== "all") title += " — NATIONALITÉ " + nationality.toLocaleUpperCase("fr");
     return title;
-  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, minAge, maxAge]);
+  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
 
   // Une sélection de niveau reste distincte d'une classe. Même sous d'autres
   // filtres, ne retirer CLASSE que si toutes les lignes ont la même classe connue.
@@ -372,6 +409,7 @@ export default function GeneralStatisticsPage() {
     ...(!singleClass ? ["class" as const] : []),
     ...(gender === "all" ? ["sex" as const] : []),
     ...(!exactAge ? ["age" as const] : []),
+    ...(nationality === "all" ? ["nationality" as const] : []),
     ...(boarding === "all" ? ["boarding" as const] : []),
     ...(affectation === "all" ? ["affectation" as const] : []),
     ...(scholarship === "all" ? ["scholarship" as const] : []),
@@ -393,6 +431,7 @@ export default function GeneralStatisticsPage() {
     setScholarship("all");
     setGender("all");
     setLanguage("all");
+    setNationality("all");
     setMinAge("");
     setMaxAge("");
   }
@@ -564,7 +603,7 @@ export default function GeneralStatisticsPage() {
           </header>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
               <Select label="Niveau" value={level} onChange={(value) => { setLevel(value); setClassId("all"); }}>
                 <option value="all">Tous</option>
                 {levels.map((item) => (
@@ -609,6 +648,11 @@ export default function GeneralStatisticsPage() {
                 <option value="espagnol">Espagnol</option>
               </Select>
 
+              <Select label="Nationalité" value={nationality} onChange={setNationality}>
+                <option value="all">Toutes</option>
+                {nationalities.map((item) => <option key={item} value={item}>{item}</option>)}
+              </Select>
+
               <label className="block min-w-0">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Âge min</span>
                 <input
@@ -637,6 +681,19 @@ export default function GeneralStatisticsPage() {
             </div>
           </section>
 
+          <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <h2 className="text-sm font-bold text-slate-700">Répartition par nationalité</h2>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {nationalityBreakdown.length > 0
+                ? nationalityBreakdown.map(({ label, count }) => (
+                  <span key={label} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                    {label} : <strong>{count}</strong>
+                  </span>
+                ))
+                : <span className="text-xs text-slate-500">Aucun élève pour ces filtres.</span>}
+            </div>
+          </section>
+
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <div className="truncate text-sm font-bold text-slate-700">{criteria}</div>
@@ -654,6 +711,7 @@ export default function GeneralStatisticsPage() {
                     <th className="px-3 py-2.5">Classe</th>
                     <th className="px-3 py-2.5 text-center">Sexe</th>
                     <th className="px-3 py-2.5 text-center">Âge</th>
+                    <th className="px-3 py-2.5">Nationalité</th>
                     <th className="px-3 py-2.5">Régime</th>
                     <th className="px-3 py-2.5">Affectation</th>
                     <th className="px-3 py-2.5">Bourse</th>
@@ -670,6 +728,7 @@ export default function GeneralStatisticsPage() {
                         <td className="px-3 py-2.5 text-slate-700">{student.class_label || "—"}</td>
                         <td className="px-3 py-2.5 text-center text-slate-700">{sex(student.gender) || "—"}</td>
                         <td className="px-3 py-2.5 text-center text-slate-700">{ageOf(student.birthdate) ?? "—"}</td>
+                        <td className="px-3 py-2.5 text-slate-700">{nationalityLabel(student.nationality)}</td>
                         <td className="px-3 py-2.5 text-slate-700">{labelBool(student.is_boarder, "Interne", "Externe")}</td>
                         <td className="px-3 py-2.5 text-slate-700">{labelBool(student.is_affecte, "Affecté", "Non affecté")}</td>
                         <td className="px-3 py-2.5 text-slate-700">{labelBool(student.is_scholarship, "Boursier", "Non boursier")}</td>
@@ -678,7 +737,7 @@ export default function GeneralStatisticsPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={10} className="px-4 py-12 text-center text-sm font-semibold text-slate-400">
+                      <td colSpan={11} className="px-4 py-12 text-center text-sm font-semibold text-slate-400">
                         Aucun élève pour ces filtres.
                       </td>
                     </tr>
@@ -761,7 +820,7 @@ export default function GeneralStatisticsPage() {
             <tr>
               <td colSpan={printColumns.length}>
                 <footer className="stats-sheet-footer">
-                  <div>Filles : {totals.girls} &nbsp;|&nbsp; Garçons : {totals.boys}</div>
+                  <div>Filles : {totals.girls} &nbsp;|&nbsp; Garçons : {totals.boys}<div className="mt-1 text-[8px]">Nationalités : {nationalityRecap || "—"}</div></div>
                   <div className="stats-export-brand-footer">{MON_CAHIER_EXPORT_SIGNATURE}</div>
                   <div aria-hidden="true" />
                 </footer>
