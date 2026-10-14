@@ -1,3 +1,4 @@
+import { MANUAL_ABSENCE_REASON_PREFIX, manualHoursForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -917,7 +918,7 @@ export async function GET(req: NextRequest) {
   // Classe
   const { data: cls, error: clsErr } = await srv
     .from("classes")
-    .select("id,label,institution_id")
+    .select("id,label,institution_id,academic_year")
     .eq("id", class_id)
     .maybeSingle();
 
@@ -1065,7 +1066,8 @@ export async function GET(req: NextRequest) {
         .eq("period_code", period_code)
         .in("student_id", studentIds);
 
-      if (!overrideErr && Array.isArray(overrideRows)) {
+      if (overrideErr) return NextResponse.json({ error: "conduct_sources_read_failed" }, { status: 503 });
+      if (Array.isArray(overrideRows)) {
         for (const row of overrideRows as any[]) {
           const sid = String(row.student_id || "");
           const overrideTotal = Number(row.override_total);
@@ -1086,8 +1088,7 @@ export async function GET(req: NextRequest) {
         }
       }
     } catch {
-      // Sécurité : si la table n'existe pas encore ou si une erreur survient,
-      // on n'empêche jamais le calcul automatique historique.
+      return NextResponse.json({ error: "conduct_sources_read_failed" }, { status: 503 });
     }
   }
 
@@ -1148,6 +1149,27 @@ export async function GET(req: NextRequest) {
       }
     } catch {
       // Sécurité : si la table n'existe pas encore, on garde l'ancien calcul.
+    }
+  }
+
+  const manualHoursByStudent = new Map<string, number>();
+  for (const [studentId, row] of overridesByStudent) {
+    const source = parseManualAbsenceReason(row.reason);
+    if (source) manualHoursByStudent.set(studentId, source.hours);
+  }
+  // Date-only consultation can use the period totals; ordinary fixed-grade corrections still require a period.
+  if ((!academic_year || !period_code) && studentIds.length) {
+    let query = srv.from("conduct_average_overrides")
+      .select("student_id,reason,period_code,from_date,to_date,updated_at")
+      .eq("institution_id", institution_id).eq("class_id", class_id)
+      .like("reason", `${MANUAL_ABSENCE_REASON_PREFIX}%`).in("student_id", studentIds);
+    const sourceYear = academic_year || String((cls as any).academic_year || "");
+    if (sourceYear) query = query.eq("academic_year", sourceYear);
+    const { data: sources, error: sourceError } = await query;
+    if (sourceError) return NextResponse.json({ error: "manual_absences_read_failed" }, { status: 503 });
+    for (const studentId of studentIds) {
+      const hours = manualHoursForRange((sources || []).filter(row => row.student_id === studentId), from, to);
+      if (hours !== null) manualHoursByStudent.set(studentId, hours);
     }
   }
 
@@ -1313,8 +1335,10 @@ export async function GET(req: NextRequest) {
         tardyCount: 0,
       };
 
-      const absenceMinutes = Number(minutesRec.absenceMinutes || 0);
-      const absenceCount = Number(minutesRec.absenceCount || 0);
+      const manualAbsences = parseManualAbsenceReason(overridesByStudent.get(student_id)?.reason);
+      const manualHours = manualHoursByStudent.get(student_id);
+      const absenceMinutes = manualHours !== undefined ? manualHours * 60 : Number(minutesRec.absenceMinutes || 0);
+      const absenceCount = manualHours !== undefined ? manualHours : Number(minutesRec.absenceCount || 0);
       const tardyMinutes = Number(minutesRec.tardyMinutes || 0);
       const tardyCount = Number(minutesRec.tardyCount || 0);
 
@@ -1517,7 +1541,7 @@ export async function GET(req: NextRequest) {
       const override = overridesByStudent.get(student_id);
       const rawOverrideTotal = Number(override?.override_total);
       const isOverridden =
-        !!override && Number.isFinite(rawOverrideTotal);
+        !!override && !manualAbsences && Number.isFinite(rawOverrideTotal);
 
       const finalTotal = isOverridden
         ? Number(clamp(rawOverrideTotal, 0, officialTotalMax).toFixed(2))
@@ -1565,6 +1589,11 @@ export async function GET(req: NextRequest) {
         conduct_policy_components: automaticConduct.components,
 
         appreciation,
+
+        manual_absence_hours: manualHours ?? null,
+        manual_absence_updated_at: manualAbsences ? override?.updated_at ?? null : null,
+        conduct_has_council: hasCouncil,
+        conduct_council_cap: conductSettings.rules.discipline.council_cap,
 
         // Infos absences/retards existantes
         absence_count: absenceCount,
@@ -1664,6 +1693,7 @@ export async function GET(req: NextRequest) {
     is_csca: conductPolicy.is_csca,
     institution_policy_code: conductPolicy.is_csca ? "CSCA" : null,
     rubric_max: RUBRIC_MAX,
+    assiduite_rules: conductSettings.rules.assiduite,
     total_max: officialTotalMax,
 
     // Infos utiles pour vérifier que la page envoie bien la période.

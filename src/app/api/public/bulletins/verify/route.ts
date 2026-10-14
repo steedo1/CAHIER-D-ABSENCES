@@ -1,3 +1,4 @@
+import { parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 // src/app/api/public/bulletins/verify/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -2331,6 +2332,7 @@ export async function GET(req: NextRequest) {
   async function fetchConductAverageMap(
     from: string,
     to: string,
+    periodCodeOverride?: string,
   ): Promise<Map<string, number | null>> {
     const out = new Map<string, number | null>();
     studentIds.forEach((sid) => out.set(sid, null));
@@ -2358,7 +2360,7 @@ export async function GET(req: NextRequest) {
           "",
       ).trim();
       let conductPeriodCode = String(
-        periodMeta.code || periodCodeToken || "",
+        periodCodeOverride || periodMeta.code || periodCodeToken || "",
       ).trim();
 
       try {
@@ -2443,7 +2445,7 @@ export async function GET(req: NextRequest) {
       const overridesByStudent = new Map<string, ConductOverride>();
       if (conductAcademicYear && conductPeriodCode && studentIds.length > 0) {
         try {
-          const { data: overrideRows } = await srv
+          const { data: overrideRows, error: overrideError } = await srv
             .from("conduct_average_overrides")
             .select(
               "student_id, override_total, calculated_total, reason, updated_at, edited_by",
@@ -2453,6 +2455,8 @@ export async function GET(req: NextRequest) {
             .eq("academic_year", conductAcademicYear)
             .eq("period_code", conductPeriodCode)
             .in("student_id", studentIds);
+
+          if (overrideError) return out;
 
           for (const row of (overrideRows || []) as any[]) {
             const sid = String(row.student_id || "");
@@ -2472,7 +2476,7 @@ export async function GET(req: NextRequest) {
             });
           }
         } catch {
-          // non bloquant
+          return out;
         }
       }
 
@@ -2711,7 +2715,8 @@ export async function GET(req: NextRequest) {
       const assRules = conductSettings.rules.assiduite;
       for (const sid of studentIds) {
         const evs = byStudent.get(sid) ?? [];
-        const absenceCount = Number(absCountAgg.get(sid) || 0);
+        const manualAbsences = parseManualAbsenceReason(overridesByStudent.get(sid)?.reason);
+        const absenceCount = manualAbsences ? manualAbsences.hours : Number(absCountAgg.get(sid) || 0);
         const tardyMinutes = Number(tarAgg.get(sid) || 0);
         const tardyCount = Number(tarCountAgg.get(sid) || 0);
 
@@ -2871,7 +2876,7 @@ export async function GET(req: NextRequest) {
 
         const override = overridesByStudent.get(sid);
         const rawOverrideTotal = Number(override?.override_total);
-        const isOverridden = !!override && Number.isFinite(rawOverrideTotal);
+        const isOverridden = !!override && !parseManualAbsenceReason(override.reason) && Number.isFinite(rawOverrideTotal);
         const finalTotal = isOverridden
           ? Number(
               clampConduct(rawOverrideTotal, 0, officialTotalMax).toFixed(2),
@@ -2905,7 +2910,7 @@ export async function GET(req: NextRequest) {
       if (!ps || !pe) continue;
       const key = `${ps}|${pe}`;
       if (conductByPeriodKey.has(key)) continue;
-      conductByPeriodKey.set(key, await fetchConductAverageMap(ps, pe));
+      conductByPeriodKey.set(key, await fetchConductAverageMap(ps, pe, String(p.code || "")));
     }
   }
 

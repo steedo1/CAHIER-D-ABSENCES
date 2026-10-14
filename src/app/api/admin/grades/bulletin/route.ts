@@ -2015,7 +2015,8 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
 
   async function fetchConductAverageMap(
     from: string,
-    to: string
+    to: string,
+    periodCodeOverride?: string
   ): Promise<Map<string, number | null>> {
     const out = new Map<string, number | null>();
     studentIds.forEach((sid) => out.set(sid, null));
@@ -2023,7 +2024,7 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
     try {
       const qs = new URLSearchParams({ class_id: classIdStr, from, to });
       const conductAcademicYear = String(periodMeta.academic_year || classRow.academic_year || "").trim();
-      const conductPeriodCode = String(periodMeta.code || "").trim();
+      const conductPeriodCode = String(periodCodeOverride || periodMeta.code || "").trim();
       if (conductAcademicYear) qs.set("academic_year", conductAcademicYear);
       if (conductPeriodCode) qs.set("period_code", conductPeriodCode);
       const cookie = req.headers.get("cookie") ?? "";
@@ -3897,7 +3898,7 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
       const w =
         p.coeff === null || p.coeff === undefined ? 1 : Math.max(0, Number(p.coeff) || 0) || 1;
 
-      const conductMapForPeriod = await fetchConductAverageMap(from, to);
+      const conductMapForPeriod = await fetchConductAverageMap(from, to, String(p.code || ""));
 
       const map = await computeGeneralAvgMapForRange(
         from,
