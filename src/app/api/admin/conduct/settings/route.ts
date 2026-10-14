@@ -6,7 +6,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Role = "super_admin" | "admin" | "educator" | string;
+type Role = "super_admin" | "admin" | string;
 
 type ConductSettingsRow = {
   institution_id: string;
@@ -102,7 +102,7 @@ async function getContext() {
     .from("user_roles")
     .select("institution_id, role")
     .eq("profile_id", user.id)
-    .in("role", ["super_admin", "admin", "educator"] as Role[])
+    .in("role", ["super_admin", "admin"] as Role[])
     .limit(1)
     .maybeSingle();
 
@@ -211,7 +211,7 @@ export async function GET(_req: NextRequest) {
 /* ───────────────── POST : sauvegarde / upsert (ADMIN ONLY) ───────────────── */
 
 export async function POST(req: NextRequest) {
-  const ctx = await getContext(); // ⚠️ ici on reste sur admin / super_admin / educator
+  const ctx = await getContext(); // seules les personnes administratrices modifient le barème
   if ("error" in ctx) return ctx.error;
   const { supabase, institutionId } = ctx;
 
