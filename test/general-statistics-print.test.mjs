@@ -15,7 +15,7 @@ catch (error) {
   playwright = require(join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES, "playwright"));
 }
 const { PDFParse } = require("pdf-parse");
-const allColumns = ["N°", "Matricule", "Nom et prénoms", "Classe", "Sexe", "Âge", "Régime", "Affectation", "Bourse", "LV2"];
+const allColumns = ["N°", "Matricule", "Nom et prénoms", "Classe", "Sexe", "Âge", "Nationalité", "Régime", "Affectation", "Bourse", "LV2"];
 const scenarios = [
   { name: "01-none", selections: {}, title: "LISTE GÉNÉRALE DES ÉLÈVES", criteria: "Tous les élèves", count: 24, columns: allColumns },
   { name: "02-girls", selections: { Sexe: "F" }, title: "LISTE DES FILLES", criteria: "Filles", count: 12, columns: allColumns.filter(x => x !== "Sexe") },
@@ -31,6 +31,8 @@ const scenarios = [
   { name: "12-general", query: "?general", selections: {}, title: "LISTE GÉNÉRALE DES ÉLÈVES", criteria: "Tous les élèves", count: 24, columns: allColumns, general: true },
   { name: "13-unknown-class", query: "?unknown", selections: {}, title: "LISTE GÉNÉRALE DES ÉLÈVES", criteria: "Tous les élèves", count: 24, columns: allColumns },
   { name: "14-single-class", query: "?single", selections: {}, title: "LISTE GÉNÉRALE DES ÉLÈVES", criteria: "Tous les élèves", count: 8, columns: allColumns.filter(x => x !== "Classe") },
+  { name: "15-nationality", selections: { Nationalité: "Malienne" }, title: "LISTE DES ÉLÈVES — NATIONALITÉ MALIENNE", criteria: "Nationalité : Malienne", count: 6, columns: allColumns.filter(x => x !== "Nationalité") },
+  { name: "16-nationality-missing", selections: { Nationalité: "Non renseignée" }, title: "LISTE DES ÉLÈVES — NATIONALITÉ NON RENSEIGNÉE", criteria: "Nationalité : Non renseignée", count: 6, columns: allColumns.filter(x => x !== "Nationalité") },
 ];
 test("Statistics: actual filtered UI, print layout and PDF", async (t) => {
   const { server, url } = await startStatisticsFixture();
@@ -57,7 +59,7 @@ test("Statistics: actual filtered UI, print layout and PDF", async (t) => {
         assert.equal(await page.locator(".stats-criteria-line").textContent(), `Critères : ${scenario.criteria}Effectif : ${scenario.count} élève${scenario.count > 1 ? "s" : ""}`);
         assert.equal(await page.locator(".stats-print-sheet tbody tr").count(), scenario.count);
         assert.deepEqual(await page.locator(".stats-print-sheet th").allTextContents(), scenario.columns);
-        assert.equal(await page.locator("#root table th").count(), 10, "screen keeps the complete table");
+        assert.equal(await page.locator("#root table th").count(), 11, "screen keeps the complete table");
         assert.equal(await page.locator("#root table tbody tr").count(), scenario.count);
         assert.equal(await page.locator(".stats-print-sheet").isVisible(), false, "print sheet hidden on screen");
         await page.emulateMedia({ media: "print" });
