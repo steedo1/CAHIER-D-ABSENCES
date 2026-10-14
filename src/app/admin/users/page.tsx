@@ -8,6 +8,7 @@ import EducationTeachingContextFields, {
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingContext";
 import type { EducationType } from "@/lib/education-organization";
+import { canonicalEducatorLevel } from "@/lib/educator-level";
 import { permanentWeeklyQuota, type PermanentCycle } from "@/lib/finance/payroll-permanents";
 import {
   ALL_EDUCATION_TYPES,
@@ -348,33 +349,42 @@ export default function UsersPage() {
       new Set<string>(
         educatorContextClasses
           .map((c) =>
-            String(c.formation_level_code || c.level || "").trim(),
+            canonicalEducatorLevel(
+              c.formation_level_code || c.level || "",
+              createEducationContext.educationType,
+            ),
           )
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
 
     return levels.sort((a, b) =>
-      a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" })
+      a.localeCompare(b, "fr", { numeric: true, sensitivity: "base" }),
     );
-  }, [educatorContextClasses]);
+  }, [educatorContextClasses, createEducationContext.educationType]);
 
   const educatorClassesForLevel = useMemo(() => {
-    const level = educatorLevel.trim();
+    const level = canonicalEducatorLevel(
+      educatorLevel,
+      createEducationContext.educationType,
+    );
     if (!level) return [] as ClassItem[];
 
     return educatorContextClasses
       .filter(
         (c) =>
-          String(c.formation_level_code || c.level || "").trim() === level,
+          canonicalEducatorLevel(
+            c.formation_level_code || c.level || "",
+            createEducationContext.educationType,
+          ) === level,
       )
       .sort((a, b) =>
         String(a.label || "").localeCompare(String(b.label || ""), "fr", {
           numeric: true,
           sensitivity: "base",
-        })
+        }),
       );
-  }, [educatorContextClasses, educatorLevel]);
+  }, [educatorContextClasses, educatorLevel, createEducationContext.educationType]);
 
   function findSubjectById(id: string | null | undefined) {
     if (!id) return null;
