@@ -26,6 +26,7 @@ const READABLE_ROLES = new Set([
   "founder",
   "finance_manager",
   "file_correspondent",
+  "educator", // consultation des niveaux, sans écriture des paramètres
 ]);
 const MAX_CUSTOM_FORMATIONS = 100;
 const MAX_LEVELS_PER_FORMATION = 12;

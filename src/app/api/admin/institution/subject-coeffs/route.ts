@@ -21,6 +21,7 @@ const SUBJECT_COEFF_READ_ROLES = [
   "founder",
   "finance_manager",
   "file_correspondent",
+  "educator", // lecture du contexte pédagogique pour la conduite
 ] as const;
 const SUBJECT_COEFF_WRITE_ROLES = ["admin", "super_admin", "file_correspondent"] as const;
 

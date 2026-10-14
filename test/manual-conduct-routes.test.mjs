@@ -12,6 +12,8 @@ test("Saisie des absences : routes réelles, droits et calcul officiel",async(t)
    const avg=await routes.averages.GET(request(`/api/admin/conduite/averages?class_id=${classroom}&academic_year=2026-2027&period_code=T1&from=2026-09-14&to=2026-12-04`));
    assert.equal(avg.status,200);const items=(await avg.json()).items;const record=items.find(r=>r.student_id===student);assert.equal(record.total,18);assert.equal(record.is_overridden,false);assert.equal(record.manual_absence_hours,4);
    state.tables.user_roles[0].role="educator";response=await routes.manual.POST(request("/api/admin/conduite/manual-absences",body("2,5")));assert.equal(response.status,200);
+   const unassigned=await routes.averages.GET(request(`/api/admin/conduite/averages?class_id=${otherClass}&academic_year=2026-2027&period_code=T1`));assert.equal(unassigned.status,403,"un éducateur ne peut consulter les élèves d'une autre classe");
+   const noWrite=await routes.manual.POST(request("/api/admin/conduite/manual-absences",{...body(),class_id:otherClass}));assert.equal(noWrite.status,403,"un éducateur ne peut écrire dans une classe non affectée");
    assert.equal(state.tables.conduct_average_overrides.length,2,"la modification ne crée pas un doublon");
   });
   await t.test("aucune double comptabilisation avec le cahier numérique ; changement du barème recalculé",async()=>{

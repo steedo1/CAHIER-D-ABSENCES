@@ -12,8 +12,9 @@ export function fixtureState() {
   const students=[{id:student,first_name:"MARIE",last_name:"KOFFI"},{id:second,first_name:"JEAN",last_name:"YAO"}];
   return { writes:[], failWrite:false, signedIn:true, digital:{}, tables:{
     profiles:[{id:user,institution_id:school}], user_roles:[{profile_id:user,role:"admin",institution_id:school}],
+    educator_class_assignments:[{profile_id:user,institution_id:school,class_id:classroom,level:"3e"}],
     institutions:[{id:school,name:"COLLÈGE DE TEST",default_session_minutes:60,settings_json:{}}],
-    classes:[{id:classroom,institution_id:school,label:"3e1",name:"3e1",academic_year:"2026-2027",education_type:"general_secondary"},{id:otherClass,institution_id:school,label:"3e2",name:"3e2",academic_year:"2026-2027",education_type:"general_secondary"}],
+    classes:[{id:classroom,institution_id:school,label:"3e1",name:"3e1",level:"3e",academic_year:"2026-2027",education_type:"general_secondary"},{id:otherClass,institution_id:school,label:"3e2",name:"3e2",level:"3e",academic_year:"2026-2027",education_type:"general_secondary"}],
     grade_periods:[1,2,3].map(n=>({id:`50000000-0000-0000-0000-00000000000${n}`,institution_id:school,academic_year:"2026-2027",code:`T${n}`,label:`Trimestre ${n}`,short_label:`T${n}`,is_active:true,scope_type:"common",order_index:n,start_date:n===1?"2026-09-14":n===2?"2026-12-07":"2027-03-15",end_date:n===1?"2026-12-04":n===2?"2027-03-12":"2027-06-11"})),
     students, class_enrollments:students.map(s=>({student_id:s.id,class_id:classroom,institution_id:school,start_date:"2026-09-14",end_date:null,students:s})),
     student_guardians:students.map(s=>({student_id:s.id,institution_id:school,guardian_profile_id:user})),

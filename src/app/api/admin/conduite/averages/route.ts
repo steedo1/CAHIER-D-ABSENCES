@@ -1,7 +1,8 @@
 import { MANUAL_ABSENCE_REASON_PREFIX, manualHoursForRange, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 //src/app/api/conduite/averages/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
+import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 /* ───────── Réglages par défaut + loader depuis conduct_settings ───────── */
@@ -869,29 +870,12 @@ function applyInstitutionConductPolicyToStudent(opts: {
 }
 
 export async function GET(req: NextRequest) {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
-
-  const {
-    data: { user },
-  } = await getVerifiedServerUser(supa);
-
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr) {
-    return NextResponse.json({ error: meErr.message }, { status: 400 });
-  }
-
-  const institution_id = (me?.institution_id as string) ?? null;
-  if (!institution_id) return NextResponse.json({ items: [] });
+  const access = await requireInstitutionAccess({
+    allowedRoles: ["admin", "super_admin", "educator", "founder", "file_correspondent", "finance_manager"],
+  });
+  if ("error" in access) return access.error;
+  const { srv, institutionId: institution_id } = access;
+  const educatorScoped = educatorNeedsAssignedClasses(access.roles);
 
   const { searchParams } = new URL(req.url);
 
@@ -918,7 +902,7 @@ export async function GET(req: NextRequest) {
   // Classe
   const { data: cls, error: clsErr } = await srv
     .from("classes")
-    .select("id,label,institution_id,academic_year")
+    .select("id,label,institution_id,academic_year,level,education_type")
     .eq("id", class_id)
     .maybeSingle();
 
@@ -928,6 +912,17 @@ export async function GET(req: NextRequest) {
 
   if (!cls || (cls as any).institution_id !== institution_id) {
     return NextResponse.json({ error: "invalid_class" }, { status: 400 });
+  }
+
+  if (educatorScoped) {
+    try {
+      const assignments = await loadEducatorAssignments(srv, institution_id, access.user.id);
+      if (!educatorAssignmentCoversClass(cls, assignments)) {
+        return NextResponse.json({ error: "educator_class_forbidden" }, { status: 403 });
+      }
+    } catch {
+      return NextResponse.json({ error: "educator_class_scope_unavailable" }, { status: 503 });
+    }
   }
 
   // Chargement des réglages de conduite

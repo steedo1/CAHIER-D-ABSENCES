@@ -1,6 +1,7 @@
 // src/app/api/admin/conduite/rubric-overrides/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { requireInstitutionAccess } from "../../_helpers/institutionAccess";
+
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 
 type RubricKey = "assiduite" | "tenue" | "moralite" | "discipline";
@@ -27,49 +28,11 @@ function isRubricKey(v: unknown): v is RubricKey {
 }
 
 async function getAuthContext() {
-  const supa = await getSupabaseServerClient();
-  const srv = getSupabaseServiceClient();
-
-  const {
-    data: { user },
-  } = await supa.auth.getUser();
-
-  if (!user) {
-    return {
-      error: NextResponse.json({ error: "unauthorized" }, { status: 401 }),
-      srv,
-      user: null,
-      institution_id: null,
-    };
-  }
-
-  const { data: me, error: meErr } = await supa
-    .from("profiles")
-    .select("institution_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr) {
-    return {
-      error: NextResponse.json({ error: meErr.message }, { status: 400 }),
-      srv,
-      user,
-      institution_id: null,
-    };
-  }
-
-  const institution_id = (me?.institution_id as string) ?? null;
-
-  if (!institution_id) {
-    return {
-      error: NextResponse.json({ error: "institution_required" }, { status: 400 }),
-      srv,
-      user,
-      institution_id: null,
-    };
-  }
-
-  return { error: null, srv, user, institution_id };
+  // Seule l'administration peut modifier les notes officielles.
+  // L'éducateur saisit uniquement les heures d'absence via manual-absences.
+  const access = await requireInstitutionAccess({ allowedRoles: ["admin", "super_admin"] });
+  if ("error" in access) return { error: access.error, srv: getSupabaseServiceClient(), user: null, institution_id: null } as const;
+  return { error: null, srv: access.srv, user: access.user, institution_id: access.institutionId } as const;
 }
 
 async function getRubricMax(

@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import ManualConductAbsences from "@/components/admin/ManualConductAbsences";
+import { useAdminRole } from "@/app/admin/ui/admin-role-context";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import {
   DEFAULT_EDUCATION_SCOPE,
@@ -348,7 +349,12 @@ function normalizeInstitutionSettings(json: any): InstitutionSettings {
 }
 
 export default function ConduitePage() {
-  const [manualMode, setManualMode] = useState(false);
+  const role = useAdminRole();
+  const isEducator = role === "educator";
+  const [manualMode, setManualMode] = useState(role === "educator");
+  useEffect(() => {
+    if (isEducator) setManualMode(true);
+  }, [isEducator]);
   const [manualDirty, setManualDirty] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   function canChangeManualContext() {
@@ -1796,7 +1802,7 @@ export default function ConduitePage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
+      {!isEducator && <div className="flex flex-wrap gap-2" aria-label="Mode de gestion de conduite">
         {([{ manual: false, label: "Calcul automatique" }, { manual: true, label: "Saisie des absences" }]).map(option => (
           <button key={option.label} type="button" aria-pressed={manualMode === option.manual} disabled={manualSaving}
             onClick={() => {
@@ -1809,7 +1815,7 @@ export default function ConduitePage() {
             {option.label}
           </button>
         ))}
-      </div>
+      </div>}
 
       <Card title="Filtres">
         {manualMode ? (
