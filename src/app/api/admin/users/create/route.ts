@@ -558,6 +558,56 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Prévalidation AVANT toute écriture Auth / profile :
+  // une mauvaise sélection ne doit jamais laisser un compte éducateur sans classes.
+  if (role === "educator" && educatorClassIds.length > 0) {
+    if (educatorClassIds.some((id) => !isUuid(id))) {
+      return NextResponse.json({ error: "educator_classes_invalid" }, { status: 400 });
+    }
+
+    const { data: candidateClasses, error: classesErr } = await supaSrv
+      .from("classes")
+      .select("id,level,academic_year,education_type,formation_code,formation_level_code")
+      .eq("institution_id", inst)
+      .in("id", educatorClassIds);
+
+    if (classesErr) {
+      return NextResponse.json({ error: classesErr.message }, { status: 400 });
+    }
+
+    const candidates = (candidateClasses || []) as EducatorClassRow[];
+    if (candidates.length !== educatorClassIds.length) {
+      return NextResponse.json({ error: "educator_classes_invalid" }, { status: 400 });
+    }
+
+    const canonicalLevel = canonicalEducatorLevel(educatorLevel, educationType);
+    if (
+      candidates.some(
+        (row) =>
+          !educatorClassMatchesContext(row, {
+            educationType,
+            formationCode,
+            level: canonicalLevel,
+          }),
+      )
+    ) {
+      return NextResponse.json(
+        { error: "educator_classes_out_of_context" },
+        { status: 400 },
+      );
+    }
+
+    const years = new Set(
+      candidates.map((row) => String(row.academic_year || "").trim()).filter(Boolean),
+    );
+    if (years.size > 1) {
+      return NextResponse.json(
+        { error: "educator_classes_multiple_years" },
+        { status: 400 },
+      );
+    }
+  }
+
   // 1) Résoudre / créer l'utilisateur (idempotent)
   let uid: string | null = null;
 
