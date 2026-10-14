@@ -153,6 +153,7 @@ export async function GET() {
           matricule,
           gender,
           birthdate,
+          nationality,
           lv2,
           regime,
           is_affecte,
@@ -222,6 +223,7 @@ export async function GET() {
       level: clean(cls?.level) || null,
       gender: clean(student?.gender) || null,
       birthdate: clean(student?.birthdate) || null,
+      nationality: clean(student?.nationality) || null,
       lv2: clean(student?.lv2) || null,
       is_boarder:
         typeof annual?.is_boarder === "boolean"
