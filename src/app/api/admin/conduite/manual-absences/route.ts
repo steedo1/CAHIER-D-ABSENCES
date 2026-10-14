@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
-import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { requireInstitutionRole, getRequestRoles } from "@/lib/auth/server-context";
+import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
 import { listApplicableGradePeriods } from "@/lib/education-grading-periods";
 import { calculateAssiduity, DEFAULT_ASSIDUITY_RULES, MANUAL_CONDUCT_ROLES, manualAbsenceReason, parseAbsenceHours, parseManualAbsenceReason } from "@/lib/manual-conduct-absences";
 export const runtime = "nodejs";
@@ -27,9 +28,18 @@ export async function POST(req: NextRequest) {
       if (!studentId || hours === null || seen.has(studentId)) return failure("Chaque élève doit apparaître une seule fois avec un nombre d’heures valide (0 à 5000).");
       seen.add(studentId); entries.push({ studentId, hours });
     }
-    const { data: classroom, error: classError } = await srv.from("classes").select("id,institution_id,academic_year").eq("id", classId).eq("institution_id", ctx.instId).maybeSingle();
+    const { data: classroom, error: classError } = await srv.from("classes").select("id,institution_id,academic_year,level,education_type").eq("id", classId).eq("institution_id", ctx.instId).maybeSingle();
     if (classError) throw classError;
     if (!classroom || (classroom.academic_year && classroom.academic_year !== year)) return failure("Classe ou année scolaire invalide.");
+    const rolesResult = await getRequestRoles(auth, srv, ctx.user.id);
+    if (rolesResult.error) return failure("Accès éducateur indisponible.", 503);
+    const roles = new Set((rolesResult.data || []).filter(row =>
+      row.role === "super_admin" || row.institution_id === ctx.instId,
+    ).map(row => row.role));
+    if (educatorNeedsAssignedClasses(roles)) {
+      const assigned = await loadEducatorAssignments(srv, ctx.instId, ctx.user.id);
+      if (!educatorAssignmentCoversClass(classroom, assigned)) return failure("Classe non affectée à cet éducateur.", 403);
+    }
     const resolved = await listApplicableGradePeriods(srv, ctx.instId, year, classId);
     const period = resolved.items.find(p => p.code === periodCode && p.is_active !== false);
     if (!period) return failure("Cette période n’est pas définie pour la classe et l’année choisies.");

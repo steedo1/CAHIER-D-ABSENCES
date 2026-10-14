@@ -1,4 +1,5 @@
 import { getRequestProfile, getRequestRoles } from "@/lib/auth/server-context";
+import { educatorNeedsAssignedClasses, educatorAssignmentCoversClass, loadEducatorAssignments } from "@/lib/auth/educator-class-scope";
 // src/app/api/admin/classes/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
@@ -133,7 +134,10 @@ async function requireReadableInstitution() {
     return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
-  return { srv, institutionId };
+  const applicableRoles = new Set(allowedRows.filter((row: any) =>
+    roleMatchesInstitution(String(row.role || ""), row.institution_id, institutionId),
+  ).map((row: any) => String(row.role)));
+  return { srv, institutionId, userId: user.id, educatorScoped: educatorNeedsAssignedClasses(applicableRoles) };
 }
 
 export async function GET(req: NextRequest) {
@@ -252,9 +256,18 @@ export async function GET(req: NextRequest) {
   }
 
   const sourceRows = (data ?? []) as any[];
+  let authorizedRows = sourceRows;
+  if (ctx.educatorScoped) {
+    try {
+      const assignments = await loadEducatorAssignments(srv, institutionId, ctx.userId);
+      authorizedRows = sourceRows.filter((row) => educatorAssignmentCoversClass(row, assignments));
+    } catch {
+      return NextResponse.json({ error: "educator_class_scope_unavailable" }, { status: 503 });
+    }
+  }
   const visibleRows = classIdParam
-    ? sourceRows
-    : dedupeGeneralSecondaryAliasesByAcademicYear(sourceRows);
+    ? authorizedRows
+    : dedupeGeneralSecondaryAliasesByAcademicYear(authorizedRows);
 
   const items = visibleRows.map((c: any) => ({
     id: c.id,

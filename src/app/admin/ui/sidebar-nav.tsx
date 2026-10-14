@@ -1045,8 +1045,12 @@ export default function SidebarNav({ role }: { role: AppRole | null }) {
 
   const conductManagementItems = React.useMemo(
     () =>
-      isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell ? [] : CONDUCT_MANAGEMENT_ITEMS,
-    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell],
+      isFileCorrespondent || isInfirmier || isFinanceManager || isFinanceOnlyShell
+        ? []
+        : isEducator
+          ? CONDUCT_MANAGEMENT_ITEMS.filter((item) => item.href === "/admin/conduite")
+          : CONDUCT_MANAGEMENT_ITEMS,
+    [isFileCorrespondent, isInfirmier, isFinanceManager, isFinanceOnlyShell, isEducator],
   );
 
   const distinctionItems = React.useMemo(
