@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 type StaffItem = {
   id: string;
@@ -48,6 +48,7 @@ function ErrorBox({ text }: { text: string | null }) {
 }
 
 export default function StaffManager() {
+  const [expanded, setExpanded] = useState(false);
   const [schoolCode, setSchoolCode] = useState("");
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [query, setQuery] = useState("");
@@ -84,10 +85,6 @@ export default function StaffManager() {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    void listStaff("", "");
-  }, []);
 
   async function openStaff(person: StaffItem) {
     if (!person.editable || !institution) return;
@@ -191,6 +188,14 @@ export default function StaffManager() {
         Les éducateurs peuvent aussi changer leurs classes de suivi.
       </p>
 
+      <button type="button" onClick={() => {
+        if (!expanded) void listStaff(query, schoolCode);
+        setExpanded((current) => !current);
+      }} className="mt-3 rounded-lg border border-sky-600 px-4 py-2 text-sm font-semibold text-sky-700">
+        {expanded ? "Masquer la gestion du personnel" : "Rechercher ou modifier un personnel"}
+      </button>
+      {expanded && (
+      <div>
       <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={(e) => {
         e.preventDefault();
         void listStaff(query, schoolCode);
@@ -320,6 +325,8 @@ export default function StaffManager() {
             {success && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
           </div>
         </div>
+      )}
+      </div>
       )}
     </section>
   );
