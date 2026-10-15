@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
+import { attendancePreparationSnapshotsMatch, readAttendancePreparationSnapshot } from "@/lib/attendance-schedule-revision-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -132,27 +133,7 @@ function noStoreJson(body: unknown, status = 200) {
   return response;
 }
 
-async function scheduleRevision(
-  srv: ReturnType<typeof getSupabaseServiceClient>,
-  institutionId: string,
-) {
-  const { data, error } = await srv
-    .from("attendance_schedule_revisions")
-    .select("revision,updated_at")
-    .eq("institution_id", institutionId)
-    .maybeSingle();
-  if (error) throw error;
-  const revision = Number(data?.revision ?? 0);
-  if (!Number.isSafeInteger(revision) || revision < 0) {
-    throw new Error("schedule_revision_invalid");
-  }
-  return {
-    revision,
-    generated_at: String(data?.updated_at || new Date().toISOString()),
-  };
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supa = await getSupabaseServerClient();
     const srv = getSupabaseServiceClient();
@@ -201,7 +182,8 @@ export async function GET() {
       return noStoreJson({ error: "active_academic_year_not_found" }, 409);
     }
 
-    const revisionBefore = await scheduleRevision(srv, institutionId);
+    const preparingOffline = new URL(request.url).searchParams.get("offline_preparation") === "v1";
+    const revisionBefore = await readAttendancePreparationSnapshot(srv, institutionId);
     const [periodResult, timetableResult, classResult, assignmentResult] =
       await Promise.all([
       srv
@@ -333,8 +315,10 @@ export async function GET() {
     const classIds = new Set(
       slots.flatMap((slot) => slot.items.map((item) => item.class_id)),
     );
-    const revisionAfter = await scheduleRevision(srv, institutionId);
-    if (revisionBefore.revision !== revisionAfter.revision) {
+    const revisionAfter = await readAttendancePreparationSnapshot(srv, institutionId);
+    if (preparingOffline
+      ? !attendancePreparationSnapshotsMatch(revisionBefore, revisionAfter)
+      : revisionBefore.schedule_revision !== revisionAfter.schedule_revision) {
       return noStoreJson({ error: "schedule_changed_during_prepare" }, 409);
     }
 
@@ -343,9 +327,10 @@ export async function GET() {
       web_release: MON_CAHIER_WEB_RELEASE,
       institution_id: institutionId,
       actor_profile_id: user.id,
-      schedule_revision: revisionAfter.revision,
+      schedule_revision: revisionAfter.schedule_revision,
+      ...(preparingOffline ? { preparation_revision: revisionAfter.preparation_revision } : {}),
       snapshot_completeness: "complete",
-      generated_at: revisionAfter.generated_at,
+      generated_at: new Date().toISOString(),
       source: "teacher_timetables",
       assignments,
       slots,

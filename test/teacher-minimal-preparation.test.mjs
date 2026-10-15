@@ -41,7 +41,8 @@ test("le paquet professeur et son marqueur prêt sont publiés atomiquement", as
 
   assert.match(preparation, /cacheSetMany\(entries\)/);
   assert.doesNotMatch(preparation, /await cacheSet\(/);
-  assert.match(preparation, /\[readinessKey\("teacher"\), readiness\]/);
+  assert.match(preparation, /teacherPreparedEntries\(bundle\)/);
+  assert.match(readiness, /\[readinessKey\("teacher"\), readiness\]/);
   assert.match(offline, /export async function cacheSetMany/);
   assert.match(offline, /db\.transaction\(\["kv"\], "readwrite"\)/);
 });

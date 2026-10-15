@@ -162,7 +162,9 @@ for (const cloudRevision of [1, null, 2]) {
       .map((node) => [node.moduleSpecifier.text, {}]));
     Object.assign(imports, {
       "@/lib/offline": { ...api, MON_CAHIER_OFFLINE_SCHEMA_VERSION: 1, getActiveOfflineWorkerInfo: async () => null },
-      "@/lib/cloud-availability": { probeCloudSchedule: async () => cloudRevision === null ? null : ({ institution_id: "CSCA", schedule_revision: cloudRevision }) },
+      "@/lib/cloud-availability": { probeCloudSchedule: async () => cloudRevision === null ? null : ({ institution_id: "CSCA", actor_profile_id: "A", schedule_revision: cloudRevision }) },
+      "@/lib/attendance-cache-identity": { attendanceCacheActor: async () => "A", knownScheduleRevision: () => null },
+      "@/lib/attendance-cache-contract": contract,
       "@/lib/relay-capability": { relayEnabledForInstitution: () => false },
       "@/lib/local-relay": { checkRelayTeacherConnectivity: async () => { assert.fail("aucun relais dans cet établissement"); } },
     });
