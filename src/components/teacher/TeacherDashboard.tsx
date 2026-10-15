@@ -2631,7 +2631,7 @@ export default function TeacherDashboard() {
         <InstallAndPushCTA />
       </section>
 
-      <OfflineReadinessCard role="teacher" />
+      <OfflineReadinessCard role="teacher" onReconnect={logout} />
 
       {/* Sélection + paramètres horaire */}
       <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-50/60 to-white p-5 space-y-4 ring-1 ring-emerald-100">

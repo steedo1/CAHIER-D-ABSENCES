@@ -1,7 +1,7 @@
 // src/app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { normalizePhone, canonicalPrefix, sanitize } from "@/lib/phone";
+import { resolvePhoneLoginCandidates } from "@/lib/phone-login";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { resolveClassDeviceLogin } from "@/lib/class-device-identity";
 
@@ -10,33 +10,6 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-/**
- * Génère des candidats de connexion à partir d'un numéro saisi :
- * - n1 : normalisation standard.
- * - n2 : préfixe pays + numéro tel que saisi, utile quand le 0 local doit être conservé.
- */
-function phoneCandidates(raw: string, country?: string): string[] {
-  const candidates: string[] = [];
-
-  const norm =
-    country && typeof country === "string" && country.trim()
-      ? normalizePhone(raw, { defaultCountryAlpha2: country.trim().toUpperCase() })
-      : normalizePhone(raw);
-  if (norm) candidates.push(norm);
-
-  const pref = canonicalPrefix(undefined); // lit ENV, défaut +225
-  const digitsOnly = sanitize(raw).replace(/^\+/, "");
-  if (digitsOnly) {
-    const keep0 = pref + digitsOnly;
-    const len = keep0.replace(/^\+/, "").length;
-    if (len >= 6 && len <= 15 && !candidates.includes(keep0)) {
-      candidates.push(keep0);
-    }
-  }
-
-  return candidates;
-}
 
 function projectRefFromUrl(url?: string | null) {
   const m = url?.match(/^https:\/\/([^.]+)\.supabase\.co/i);
@@ -126,7 +99,7 @@ async function signInWithPhone(phone: string, password: string, country?: string
     },
   });
 
-  const tries = phoneCandidates(phone, country);
+  const tries = await resolvePhoneLoginCandidates(getSupabaseServiceClient(), phone, country);
   if (tries.length === 0) {
     return { data: null, error: { message: "PHONE_INVALID" } as any };
   }

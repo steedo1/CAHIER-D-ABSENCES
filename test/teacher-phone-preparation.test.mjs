@@ -31,6 +31,7 @@ const snapshot = (revision = 100, preparation = 90, actor = "teacher-a") => ({
   institution_id: "school-a", actor_profile_id: actor,
   schedule_revision: revision, preparation_revision: preparation,
 });
+const phones = load("src/lib/phone-login.ts", { "@/lib/phone": load("src/lib/phone.ts") });
 function fixture(options = {}) {
   const undoDb = new Function(compile(declaration("test/offline-outbox-ordering.test.ts", "installFakeIndexedDb")) + "; return installFakeIndexedDb;")()();
   const previous = { window: globalThis.window, fetch: globalThis.fetch };
@@ -50,7 +51,7 @@ function fixture(options = {}) {
     "@/lib/offline-release": release,
     "@/lib/grade-write-capabilities": { isOfflineGradeMutation: () => false },
   });
-  const slots = [1, 2].map((day) => ({ key: `${day}|07:15|08:10`, weekday: day,
+  const slots = options.slots || [1, 2].map((day) => ({ key: `${day}|07:15|08:10`, weekday: day,
     start_time: "07:15", end_time: "08:10", items: [{ class_id: `class-${day}`, subject_id: "math" }] }));
   const requests = [], writes = [], warmed = [];
   globalThis.fetch = async (url) => {
@@ -116,6 +117,23 @@ test("a teacher phone finishes preparation while other calls advance the live re
     assert.equal(f.writes.length, 1, "the complete bundle is committed once");
     assert.ok(f.requests.filter((url) => /bootstrap|basics/.test(url)).every((url) => url.endsWith("offline_preparation=v1")));
     assert.equal((await f.offline.listOfflineOutboxEntries())[0].operationId, "pending-call");
+  } finally { f.close(); }
+});
+
+test("five weekly Tuesday courses can be fully prepared together regardless of today's course", async () => {
+  const slots = ["08:10", "09:05", "11:10", "14:30", "15:25"].map((start, index) => ({
+    key: `2|${start}`, weekday: 2, start_time: start, end_time: ["09:05", "10:00", "12:05", "15:25", "16:20"][index],
+    items: [{ class_id: `class-${index + 1}`, subject_id: "subject" }],
+  }));
+  const f = fixture({ slots });
+  try {
+    const ready = await f.api.prepareOffline("teacher");
+    assert.equal(ready.class_count, 5);
+    assert.equal(ready.slot_count, 5);
+    assert.equal(ready.student_count, 5);
+    assert.equal((await f.api.assessTeacherOfflineReadiness(ready)).status, "ready");
+    const bundle = await f.offline.cacheGet("teacher:prepared-bundle:v1");
+    assert.deepEqual(Object.keys(bundle.rosters).sort(), [1, 2, 3, 4, 5].map((id) => `class-${id}`));
   } finally { f.close(); }
 });
 
@@ -257,6 +275,7 @@ for (const [label, preparing, preparation, expected] of [
     "next/server": { NextResponse: { json: (body, options) => Response.json(body, options) } },
     "@/lib/supabase-server": { getSupabaseServerClient: async () => ({ auth: { getUser: async () => ({ data: { user: { id: "teacher-a" } } }) } }) },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => service },
+    "@/lib/phone-login": phones,
     "@/lib/offline-release": { MON_CAHIER_WEB_RELEASE: "test" },
     "@/lib/attendance-schedule-revision-server": load("src/lib/attendance-schedule-revision-server.ts"),
   });
@@ -270,8 +289,13 @@ for (const [label, preparing, preparation, expected] of [
   } else assert.equal(body.error, "schedule_changed_during_prepare");
 });
 
-test("the rendered teacher card reaches ready automatically from an unprepared phone", async () => {
-  const f = fixture();
+for (const conflict of [false, true]) test(conflict
+  ? "the connected duplicate renders a reconnect action, preserves pending calls and stops automatic retries"
+  : "the rendered teacher card reaches ready automatically from an unprepared phone", async () => {
+  const f = fixture(conflict ? { relay: true, respond: (url) => url.includes("offline/bootstrap")
+    ? Response.json({ error: "teacher_phone_account_conflict" }, { status: 409 }) : null } : {});
+  if (conflict) await f.offline.offlineMutateJson("/api/test-protected", { method: "POST", body: { value: "kept" } },
+    { queueOnly: true, operationId: "pending-old-account-call" });
   const { Window } = await import("happy-dom");
   const React = await import("react");
   const runtime = await import("react/jsx-runtime");
@@ -283,7 +307,7 @@ test("the rendered teacher card reaches ready automatically from an unprepared p
   let root;
   try {
     const { createRoot } = await import("react-dom/client");
-    const icons = Object.fromEntries(["AlertTriangle", "CloudDownload", "RefreshCcw", "ShieldCheck", "WifiOff"].map((name) => [name, () => null]));
+    const icons = Object.fromEntries(["AlertTriangle", "CloudDownload", "LogIn", "RefreshCcw", "ShieldCheck", "WifiOff"].map((name) => [name, () => null]));
     const Card = load("src/components/OfflineReadinessCard.tsx", {
       react: React, "react/jsx-runtime": runtime, "lucide-react": icons,
       "@/lib/offline-readiness": f.api, "@/lib/offline": f.offline,
@@ -293,14 +317,31 @@ test("the rendered teacher card reaches ready automatically from an unprepared p
     }).default;
     const host = browser.document.createElement("div"); browser.document.body.append(host);
     root = createRoot(host);
-    await React.act(async () => { root.render(React.createElement(Card, { role: "teacher" })); });
-    for (let i = 0; i < 100 && !host.textContent.includes("Préparation réussie"); i++) {
+    let reconnects = 0;
+    await React.act(async () => { root.render(React.createElement(Card, { role: "teacher", onReconnect: () => { reconnects++; } })); });
+    const expected = conflict ? "Reconnecter ce téléphone" : "Préparation réussie";
+    for (let i = 0; i < 100 && !host.textContent.includes(expected); i++) {
       await React.act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     }
-    assert.match(host.textContent, /Téléphone professeur prêt/);
-    assert.match(host.textContent, /Préparation réussie/);
-    assert.doesNotMatch(host.textContent, /pas encore prêt|Étape interrompue|relais/i);
-    assert.equal(f.writes.length, 1);
+    if (conflict) {
+      assert.match(host.textContent, /ancien compte sans cours/);
+      assert.match(host.textContent, /10 chiffres/);
+      assert.doesNotMatch(host.textContent, /Préparation réussie|Réessayer/);
+      assert.equal(f.writes.length, 0, "a relay must not override the verified account conflict");
+      await React.act(async () => {
+        browser.dispatchEvent(new browser.Event("online"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      assert.equal(f.requests.filter((url) => url.includes("offline/bootstrap")).length, 1);
+      await React.act(async () => host.querySelector("button").click());
+      assert.equal(reconnects, 1);
+      assert.equal((await f.offline.listOfflineOutboxEntries())[0].operationId, "pending-old-account-call");
+    } else {
+      assert.match(host.textContent, /Téléphone professeur prêt/);
+      assert.match(host.textContent, /Préparation réussie/);
+      assert.doesNotMatch(host.textContent, /pas encore prêt|Étape interrompue|relais/i);
+      assert.equal(f.writes.length, 1);
+    }
   } finally {
     if (root) await React.act(async () => root.unmount());
     await browser.close();

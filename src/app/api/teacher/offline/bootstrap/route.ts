@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { MON_CAHIER_WEB_RELEASE } from "@/lib/offline-release";
 import { attendancePreparationSnapshotsMatch, readAttendancePreparationSnapshot } from "@/lib/attendance-schedule-revision-server";
+import { canonicalIvorianPhoneFromLegacy, findCanonicalPhoneAccount } from "@/lib/phone-login";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -237,6 +238,28 @@ export async function GET(request: Request) {
     const assignments = ((assignmentResult.data || []) as any[]).filter(
       (row) => activeClassIds.has(String(row?.class_id || "").trim()),
     );
+
+    // An authenticated legacy duplicate has no schedule of its own. Do not
+    // impersonate the canonical account or tell the user to repair its courses.
+    const canonicalPhone = canonicalIvorianPhoneFromLegacy(user.phone);
+    if (preparingOffline && !timetables.length && !assignments.length && canonicalPhone) {
+      const canonicalId = await findCanonicalPhoneAccount(srv, canonicalPhone, institutionId);
+      if (canonicalId && canonicalId !== user.id && activeClassIds.size) {
+        const [roleResult, linkedResult] = await Promise.all([
+          srv.from("user_roles").select("profile_id").eq("profile_id", canonicalId)
+            .eq("institution_id", institutionId).eq("role", "teacher").limit(1),
+          srv.from("class_teachers").select("class_id").eq("teacher_id", canonicalId)
+            .eq("institution_id", institutionId).is("end_date", null)
+            .in("class_id", Array.from(activeClassIds)).limit(1),
+        ]);
+        if (roleResult.error || linkedResult.error) {
+          return noStoreJson({ error: "teacher_account_lookup_failed" }, 500);
+        }
+        if (roleResult.data?.length && linkedResult.data?.length) {
+          return noStoreJson({ error: "teacher_phone_account_conflict" }, 409);
+        }
+      }
+    }
 
     const subjectLookup = await buildSubjectLookup(
       srv,
