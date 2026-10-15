@@ -488,7 +488,7 @@ async function fetchAllChargeBalancesForReports({
   const pageSize = 1000;
 
   const fetchPages = async (mutate: (query: any) => any) => {
-    const rows: ChargeBalanceRow[] = [];
+    const rowsById = new Map<string, ChargeBalanceRow>();
 
     for (let from = 0; ; from += pageSize) {
       const to = from + pageSize - 1;
@@ -505,6 +505,7 @@ async function fetchAllChargeBalancesForReports({
 
       const { data, error } = await query
         .order("due_date", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true })
         .range(from, to);
 
       if (error) {
@@ -512,12 +513,12 @@ async function fetchAllChargeBalancesForReports({
       }
 
       const pageRows = (data ?? []) as ChargeBalanceRow[];
-      rows.push(...pageRows);
+      for (const row of pageRows) rowsById.set(row.id, row);
 
       if (pageRows.length < pageSize) break;
     }
 
-    return rows;
+    return Array.from(rowsById.values());
   };
 
   const yearId = String(academicYearId || "").trim();
