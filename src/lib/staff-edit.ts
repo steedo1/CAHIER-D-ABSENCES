@@ -1,6 +1,6 @@
 export const STAFF_ROLES = [
-  "teacher",
   "educator",
+  "teacher",
   "infirmier",
   "file_correspondent",
   "finance_manager",
