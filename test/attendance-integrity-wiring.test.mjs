@@ -14,7 +14,7 @@ test("tous les chemins UI transmettent captured_at_device au clic de validation"
   assert.match(classPage, /captured_at_device: attendanceCapturedAt/);
   assert.match(classPage, /captured_at_device: input\.attendanceCapturedAt/);
   assert.match(classPage, /capturedAtDevice: attendanceCapturedAt/);
-  assert.match(teacher, /const attendanceCapturedAt = observedNowIso\(\)/);
+  assert.match(teacher, /const attendanceCapturedAt = options\?\.automaticEndAt \|\| observedNowIso\(\)/);
   assert.ok((teacher.match(/capturedAtDevice: attendanceCapturedAt/g) || []).length >= 2);
   assert.match(delivery, /captured_at_device: capturedAtDevice/);
   assert.match(delivery, /capturedAtDevice: current\.captured_at_device/);

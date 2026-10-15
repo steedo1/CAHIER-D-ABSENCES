@@ -6,6 +6,8 @@ import { knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance
 import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { attendanceAutoCloseAt } from "@/lib/attendance-auto-close";
+import { useAttendanceAutoClose } from "@/hooks/useAttendanceAutoClose";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import {
@@ -700,6 +702,7 @@ export default function ClassDevicePage() {
 
   const [open, setOpen] = useState<OpenSession | null>(null);
   const openRef = useRef<OpenSession | null>(null);
+  const endSessionInFlight = useRef(false);
   const pendingSnapshotSubjectRef = useRef<string>("");
   useEffect(() => {
     openRef.current = open;
@@ -3477,9 +3480,9 @@ export default function ClassDevicePage() {
     }
   }
 
-  async function endSession() {
+  async function endSession(options?: { automaticEndAt?: string }) {
     const cur = openRef.current;
-    if (!cur || busy) return;
+    if (!cur || busy || endSessionInFlight.current) return;
     if (loadingRoster || roster.length === 0) {
       setMsg("La liste des élèves doit être chargée avant de terminer l’appel. La séance reste ouverte.");
       return;
@@ -3488,12 +3491,13 @@ export default function ClassDevicePage() {
     const finalMarksPreview = attendanceMarksFromRows(rows);
     const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
     const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
-    const confirmed = typeof window === "undefined" || window.confirm(
+    const confirmed = !!options?.automaticEndAt || typeof window === "undefined" || window.confirm(
       `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
       "L’appel sera enregistré avant la fermeture. L’heure réelle capturée sur cet appareil sera conservée pendant la synchronisation.",
     );
     if (!confirmed) return;
 
+    endSessionInFlight.current = true;
     setBusy(true);
     setSessionRuntimeState("closing");
     setMsg(null);
@@ -3695,7 +3699,7 @@ export default function ClassDevicePage() {
 
     try {
       const openId = String(cur.id || "");
-      const actualEndAt = observedNowIso();
+      const actualEndAt = options?.automaticEndAt || observedNowIso();
       // Même instant métier pour tous les chemins (téléphone, relais, Cloud/outbox).
       const attendanceCapturedAt = actualEndAt;
 
@@ -3742,6 +3746,7 @@ export default function ClassDevicePage() {
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
+              capturedAtDevice: actualEndAt,
               relayBaseUrl: classRelayBaseUrl(selectedClass),
               relayAccessToken: relayPolicy?.relay_access_token,
             })
@@ -3750,6 +3755,7 @@ export default function ClassDevicePage() {
               sessionId: cur.id,
               classId: cur.class_id,
               attendanceOperationId,
+              capturedAtDevice: actualEndAt,
             });
         const relayConfirmed = closed.state === "relay_confirmed";
         const cloudFallbackQueued = relayConfirmed
@@ -3830,9 +3836,18 @@ export default function ClassDevicePage() {
       setSessionRuntimeState("recoverable_error");
       setMsg(e?.message || "Échec fin de séance");
     } finally {
+      endSessionInFlight.current = false;
       setBusy(false);
     }
   }
+
+  useAttendanceAutoClose({
+    sessionId: open?.id || null,
+    deadline: attendanceAutoCloseAt(open, periodsByDay, inst.tz || "Africa/Abidjan"),
+    ready: !busy && !loadingRoster && roster.length > 0,
+    now: observedNowIso,
+    close: (automaticEndAt) => endSession({ automaticEndAt }),
+  });
 
   async function logout() {
     if (loggingOut) return;

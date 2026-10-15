@@ -42,7 +42,7 @@ function classCloseState({ sessionId = "client:open-a", failClose = false, roste
   const queued = [], saved = new Map();
   const open = { id: sessionId, class_id: "class-a", institution_id: "csca", subject_id: "eps", period_id: "p1", started_at: "2026-10-07T08:00:00.000Z" };
   const state = {
-    openRef: { current: open }, open, roster, rows: {}, busy: false, loadingRoster: false,
+    openRef: { current: open }, endSessionInFlight: { current: false }, open, roster, rows: {}, busy: false, loadingRoster: false,
     selectedClass: { id: "class-a", institution_id: "csca", actor_profile_id: "actor" },
     relayClassScheduleRef: { current: null }, periodsByDay: {}, duration: 60, inst: {}, penRubric: "discipline", msg: null,
     LAST_COMPLETION_KEY: "completion",
@@ -91,6 +91,63 @@ test("storage failure keeps the course displayed, and a missing roster cannot ce
   await missing.close();
   assert.ok(missing.state.open);
   assert.equal(missing.queued.length, 0);
+});
+
+test("automatic class close skips confirmation and keeps the deadline after a suspended/offline phone resumes", async () => {
+  const s = classCloseState();
+  s.state.window.confirm = () => { throw new Error("Automatic close must not prompt"); };
+  s.state.rows = { b: { absent: true, reason: "Malade" } };
+  const deadline = "2026-10-07T08:32:00.000Z";
+  await s.close({ automaticEndAt: deadline });
+  assert.equal(s.state.open, null);
+  assert.equal(s.queued[0].init.body.captured_at_device, deadline);
+  assert.equal(s.queued[1].init.body.actual_end_at, deadline);
+  assert.equal(s.queued[0].init.body.marks[1].status, "absent");
+});
+
+test("automatic class close and manual finish share one lock; failures remain retryable", async () => {
+  const s = classCloseState();
+  await Promise.all([s.close({ automaticEndAt: "2026-10-07T08:32:00.000Z" }), s.close()]);
+  assert.equal(s.queued.length, 2);
+  const failed = classCloseState({ failClose: true });
+  await failed.close({ automaticEndAt: "2026-10-07T08:32:00.000Z" });
+  assert.ok(failed.state.open);
+  assert.equal(failed.state.endSessionInFlight.current, false);
+});
+
+test("teacher automatic finish persists all pupils before the offline end, without confirmation", async () => {
+  const queued = [];
+  const open = { id: "client:teacher-a", class_id: "class-a", period_id: "p1" };
+  const state = {
+    open, openRef: { current: open }, endSessionInFlight: { current: false },
+    busy: false, loadingRoster: false, roster: [{ id: "a" }, { id: "b" }, { id: "c" }],
+    rows: { b: { absent: true }, c: { late: true, late_observed_at: "2026-10-07T08:05:00.000Z" } },
+    window: { confirm: () => { throw new Error("No automatic confirmation"); } },
+    inst: { institution_id: "school-a", actor_profile_id: "actor" }, relayBaseUrl: null,
+    observedNowIso: () => "2026-10-07T10:00:00.000Z",
+    clearReminderLoop() {}, setRoster() {}, setRows() {}, setAttendanceDelivery() {},
+    setOpen(value) { state.open = value; }, setBusy(value) { state.busy = value; },
+    setMsg(value) { state.msg = value; }, cacheSet: async () => {}, computeDefaultsForNow() {},
+    clientSessionIdFromOpen: () => "teacher-a", shouldTreatAsOffline: () => true, refreshPending: async () => {},
+    deliverTeacherAttendance: async (input) => ({
+      state: "device_pending", operation_id: "attendance-a", session_reference: open.id,
+      created_at: input.capturedAtDevice, captured_at_device: input.capturedAtDevice,
+      marks: input.marks, institution_id: "school-a", class_id: "class-a", period_id: "p1",
+    }),
+    offlineMutateJson: async (url, init, options) => {
+      queued.push({ url, init, options });
+      return { ok: false, queued: true, offline: true };
+    },
+  };
+  const source = method("src/components/teacher/TeacherDashboard.tsx", "attendanceMarksFromRows") + "\n" + method("src/components/teacher/TeacherDashboard.tsx", "endSession");
+  const close = scoped(source, "endSession", state);
+  const deadline = "2026-10-07T09:02:00.000Z";
+  await Promise.all([close({ automaticEndAt: deadline }), close()]);
+  assert.equal(state.open, null, state.msg);
+  assert.deepEqual(queued.map((q) => q.options.meta.operationType), ["attendance", "session-end"]);
+  assert.deepEqual(queued[0].init.body.marks.map((m) => m.status), ["present", "absent", "late"]);
+  assert.equal(queued[1].init.body.actual_end_at, deadline);
+  assert.equal(state.endSessionInFlight.current, false);
 });
 
 const fakeAst = ts.createSourceFile("fake.ts", read("test/offline-outbox-ordering.test.ts"), ts.ScriptTarget.Latest, true);

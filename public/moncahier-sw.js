@@ -1,5 +1,5 @@
 /* Mon Cahier — shell hors ligne stable + cache des assets + notifications push. */
-const VERSION = "2026-10-13-offline-session-return-v2";
+const VERSION = "2026-10-15-attendance-auto-close-v1";
 const OFFLINE_SCHEMA_VERSION = 1;
 const CACHE_VERSION = "v2";
 const CACHE_PREFIX = "moncahier-";

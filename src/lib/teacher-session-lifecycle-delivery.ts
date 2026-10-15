@@ -79,6 +79,7 @@ type BaseInput = {
 };
 
 export type CloseTeacherSessionInput = BaseInput & {
+  capturedAtDevice?: string | null;
   sessionId: string;
   classId?: string | null;
   attendanceOperationId?: string | null;
@@ -132,6 +133,7 @@ async function getOrCreate(
     attendanceOperationId: string | null;
     attemptKey: string;
     operationId?: string | null;
+    capturedAtDevice?: string | null;
   },
 ) {
   const records = await deps.store.list(input.institutionId);
@@ -148,6 +150,8 @@ async function getOrCreate(
     .at(-1);
   if (existing) return existing;
   const now = deps.now().toISOString();
+  const captured = input.capturedAtDevice ? Date.parse(input.capturedAtDevice) : NaN;
+  if (input.capturedAtDevice && !Number.isFinite(captured)) throw new Error("captured_at_device_invalid");
   const created: TeacherSessionLifecycleDeliveryRecord = {
     schema_version: 1,
     institution_id: input.institutionId,
@@ -160,7 +164,7 @@ async function getOrCreate(
     attendance_operation_id: input.attendanceOperationId,
     attempt_key: input.attemptKey,
     state: "device_pending",
-    device_requested_at: now,
+    device_requested_at: Number.isFinite(captured) ? new Date(captured).toISOString() : now,
     relay_requested_at: null,
     new_session: null,
     previous_session: null,
@@ -307,6 +311,7 @@ async function postCloseInternal(
     attendanceOperationId,
     attemptKey: sessionId,
     operationId: input.operationId,
+    capturedAtDevice: input.capturedAtDevice,
   });
   if (
     (!current.class_id && classId) ||
@@ -389,6 +394,7 @@ export async function stageTeacherAttendanceSessionCloseWithDependencies(
     attendanceOperationId,
     attemptKey: sessionId,
     operationId: input.operationId,
+    capturedAtDevice: input.capturedAtDevice,
   });
   if (
     (!current.class_id && classId) ||

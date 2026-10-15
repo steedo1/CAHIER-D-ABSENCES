@@ -36,7 +36,7 @@ test("le démarrage est sécurisé localement avant le relais et le Cloud", asyn
   const page = await read("src/app/class/page.tsx");
   const start = page.slice(
     page.indexOf("async function startSession()"),
-    page.indexOf("async function endSession()"),
+    page.indexOf("async function endSession("),
   );
 
   const localStage = start.indexOf("stageTeacherAttendanceSessionOpen");
@@ -60,7 +60,7 @@ test("un refus métier Cloud reste bloquant et ne contourne pas les contrôles",
   const page = await read("src/app/class/page.tsx");
   const start = page.slice(
     page.indexOf("async function startSession()"),
-    page.indexOf("async function endSession()"),
+    page.indexOf("async function endSession("),
   );
 
   assert.match(
