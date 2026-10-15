@@ -94,6 +94,8 @@ export default function StaffManager() {
     setSaving(false);
     setSavingClasses(false);
     setEditError(null);
+    setSearchError(null);
+    setDetail(null);
     setSuccess(null);
     try {
       const params = new URLSearchParams({ institution_id: institution.id });
@@ -107,7 +109,7 @@ export default function StaffManager() {
       setEmail(d.profile.email || "");
       setSelectedClasses(d.assigned_class_ids || []);
     } catch (e) {
-      setEditError(e instanceof Error ? e.message : "Lecture du personnel impossible.");
+      setSearchError(e instanceof Error ? e.message : "Lecture du personnel impossible.");
     }
   }
 
