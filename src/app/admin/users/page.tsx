@@ -9,6 +9,7 @@ import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
 import type { EducationAvailableSubject } from "@/hooks/useEducationTeachingContext";
 import type { EducationType } from "@/lib/education-organization";
 import { canonicalEducatorLevel } from "@/lib/educator-level";
+import StaffManager from "@/components/admin/StaffManager";
 import { permanentWeeklyQuota, type PermanentCycle } from "@/lib/finance/payroll-permanents";
 import {
   ALL_EDUCATION_TYPES,
@@ -1060,6 +1061,8 @@ export default function UsersPage() {
           uniquement pour les enseignants.
         </p>
       </div>
+
+      <StaffManager />
 
       <div className="rounded-2xl border bg-white p-5">
         <div className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-700">
