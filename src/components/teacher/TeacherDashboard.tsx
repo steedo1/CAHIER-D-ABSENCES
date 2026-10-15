@@ -4,6 +4,8 @@
 import { attendanceCloudAvailableForSync, fetchAttendanceBackground } from "@/lib/attendance-network";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { attendanceAutoCloseAt } from "@/lib/attendance-auto-close";
+import { useAttendanceAutoClose } from "@/hooks/useAttendanceAutoClose";
 import { Users, Clock, Play, Square, LogOut, WifiOff, RefreshCcw } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { clearActiveOfflineAccess, setOfflineLogoutLock } from "@/lib/offline-auth-client";
@@ -813,6 +815,7 @@ export default function TeacherDashboard() {
   // séance + liste élèves + marques
   const [open, setOpen] = useState<OpenSession | null>(null);
   const openRef = useRef<OpenSession | null>(null);
+  const endSessionInFlight = useRef(false);
   useEffect(() => {
     openRef.current = open;
   }, [open]);
@@ -1926,8 +1929,8 @@ export default function TeacherDashboard() {
     }
   }
 
-  async function endSession() {
-    if (!open || busy) return;
+  async function endSession(options?: { automaticEndAt?: string }) {
+    if (!open || busy || endSessionInFlight.current) return;
     if (loadingRoster || roster.length === 0) {
       setMsg("La liste des élèves doit être chargée avant de terminer l’appel. La séance reste ouverte.");
       return;
@@ -1936,7 +1939,7 @@ export default function TeacherDashboard() {
     const finalMarksPreview = attendanceMarksFromRows(rows);
     const absentCount = finalMarksPreview.filter((mark) => mark.status === "absent").length;
     const lateCount = finalMarksPreview.filter((mark) => mark.status === "late").length;
-    const confirmed = typeof window === "undefined" || window.confirm(
+    const confirmed = !!options?.automaticEndAt || typeof window === "undefined" || window.confirm(
       `Terminer cette séance ?\n\nAbsents : ${absentCount}\nRetards : ${lateCount}\n\n` +
       (institutionHasRelay
         ? "L’appel sera enregistré avant la fermeture. L’heure de fin du relais sera utilisée pour le suivi de la séance et la paie du professeur."
@@ -1945,13 +1948,15 @@ export default function TeacherDashboard() {
     if (!confirmed) return;
 
     // Figé au clic de validation, avant toute tentative relais/Cloud.
-    const attendanceCapturedAt = observedNowIso();
+    const attendanceCapturedAt = options?.automaticEndAt || observedNowIso();
 
+    endSessionInFlight.current = true;
     setBusy(true);
     setMsg(null);
 
     const finishLocal = async () => {
       clearReminderLoop();
+      openRef.current = null;
       setOpen(null);
       setRoster([]);
       setRows({});
@@ -1994,6 +1999,7 @@ export default function TeacherDashboard() {
         const closed = await closeTeacherAttendanceSessionOnRelay({
           institutionId: inst.institution_id,
           sessionId: open.id,
+          capturedAtDevice: attendanceCapturedAt,
           relayBaseUrl,
           relayAccessToken: inst.attendance_presence?.relay_access_token,
         });
@@ -2115,9 +2121,18 @@ export default function TeacherDashboard() {
     } catch (e: any) {
       setMsg(e?.message || "Échec fin de séance");
     } finally {
+      endSessionInFlight.current = false;
       setBusy(false);
     }
   }
+
+  useAttendanceAutoClose({
+    sessionId: open?.id || null,
+    deadline: attendanceAutoCloseAt(open, periodsByDay, inst.tz || "Africa/Abidjan"),
+    ready: !busy && !loadingRoster && roster.length > 0,
+    now: observedNowIso,
+    close: (automaticEndAt) => endSession({ automaticEndAt }),
+  });
 
   async function beginNextSessionTransition() {
     if (!transitionPrompt || !inst.institution_id) return;
@@ -2492,8 +2507,8 @@ export default function TeacherDashboard() {
               {openLifecycle ? hmInTZ(new Date(openLifecycle.endMs), inst.tz) : "—"}
             </p>
             <p className="mt-3 text-sm text-slate-600">
-              Vous pouvez vérifier votre propre appel pendant dix minutes. Cette fenêtre
-              n’ajoute aucune minute au temps payable.
+              L’appel sera enregistré et terminé automatiquement deux minutes après la fin du créneau.
+              Vous pouvez le vérifier et le terminer maintenant.
             </p>
             <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
               <GhostButton
@@ -2502,7 +2517,7 @@ export default function TeacherDashboard() {
               >
                 Finaliser ma séance
               </GhostButton>
-              <Button onClick={endSession} disabled={busy}>
+              <Button onClick={() => void endSession()} disabled={busy}>
                 Terminer maintenant
               </Button>
             </div>
