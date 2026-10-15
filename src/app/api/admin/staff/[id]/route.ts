@@ -154,12 +154,14 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     phone: phone || before.phone,
     email: email || before.email,
   };
-  const { error: profileError } = await service
+  const { data: changedProfile, error: profileError } = await service
     .from("profiles")
     .update(nextProfile)
     .eq("id", id)
-    .eq("institution_id", institutionId);
-  if (profileError) {
+    .eq("institution_id", institutionId)
+    .select("id")
+    .maybeSingle();
+  if (profileError || !changedProfile) {
     return NextResponse.json({ error: "Mise à jour du profil impossible." }, { status: 500 });
   }
 
@@ -201,7 +203,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
   }
 
   // Denormalized teacher labels are kept in sync; never alter assignments/history IDs.
-  if (nameChanged && target.role === "teacher") {
+  if (nameChanged && target.links.some((link) => link.role === "teacher" && link.institution_id === institutionId)) {
     await service
       .from("teacher_subjects")
       .update({ teacher_name: name })
