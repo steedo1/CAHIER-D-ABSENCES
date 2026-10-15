@@ -16,6 +16,7 @@ function recoveryFixture() {
   const journals = { opens: [], attendance: [], lifecycle: [] };
   let requests = 0;
   const api = load("src/lib/class-device-sync-reconcile-v2.ts", {
+    "@/lib/class-device-sync-state": load("src/lib/class-device-sync-state.ts"),
     "@/lib/offline": { cacheGet: async (key) => cached.get(key), listOfflineOutboxEntries: async () => [] },
     "@/lib/attendance-network": { fetchAttendanceBackground: async () => { requests++; return Response.json({ items: [] }); } },
     "@/lib/teacher-session-delivery": { listTeacherSessionOpenOperations: async () => journals.opens },

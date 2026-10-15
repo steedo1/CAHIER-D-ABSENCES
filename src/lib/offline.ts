@@ -90,6 +90,8 @@ type MutateOpts = {
 };
 
 export type FlushOutboxOptions = {
+  /** Limite aussi les compteurs à ces opérations, sans toucher aux autres comptes. */
+  includeOperationIds?: readonly string[];
   /** Ne rejoue que ces types d'opérations. */
   includeOperationTypes?: readonly string[];
   /** Ignore ces types d'opérations pendant cette passe. */
@@ -986,6 +988,25 @@ function archivedOperationKey(operationId: string) {
   return `offline:archived-operation:v1:${operationId}`;
 }
 
+function archivedSessionKey(sessionId: string) {
+  return `offline:archived-session:v1:${sessionId.replace(/^client:/, "")}`;
+}
+
+export async function isOfflineClassCallArchived(input: {
+  session_id?: string | null;
+  id?: string | null;
+  open_operation_id?: string | null;
+}) {
+  if (input.open_operation_id && await metaGet(archivedOperationKey(input.open_operation_id))) return true;
+  const reference = input.session_id || input.id;
+  if (!reference) return false;
+  const resolved = await resolveOfflineSessionReference(reference);
+  // Archives created before session tombstones still carry the opening operation ID.
+  if (resolved.sessionReference.startsWith("client:") &&
+      await metaGet(archivedOperationKey(resolved.sessionReference.slice(7)))) return true;
+  return Boolean(await metaGet(archivedSessionKey(resolved.serverSessionId || reference)));
+}
+
 export type OfflineCallArchivePreview = {
   operationIds: string[];
   snapshot: string;
@@ -1094,7 +1115,7 @@ async function callArchiveSnapshot(tx: IDBTransaction, requestedIds: string[]) {
       sessionReference: row ? outboxSessionDependencyKey(row, row.body) : record?.session_reference || record?.session_id || null,
     };
   });
-  return { rows, records, markers, journals, preview: {
+  return { rows, records, markers, journals, references: [...references], preview: {
     operationIds: [...selected].sort(), snapshot: JSON.stringify({ rows, records, markers }),
     outboxCount: rows.length, actions,
   } satisfies OfflineCallArchivePreview };
@@ -1131,6 +1152,9 @@ export async function archiveOfflineCalls(preview: OfflineCallArchivePreview): P
       for (const operationId of current.preview.operationIds) {
         tx.objectStore("meta").put({ key: archivedOperationKey(operationId), value: { archiveId: id, archivedAt } });
       }
+      for (const reference of current.references) {
+        tx.objectStore("meta").put({ key: archivedSessionKey(reference), value: { archiveId: id, archivedAt } });
+      }
       for (const journal of current.journals) {
         const value = journal.value.filter((record: any) => !current.preview.operationIds.includes(String(record.operation_id || "")));
         if (value.length !== journal.value.length) kv.put({ ...journal, value, updatedAt: Date.now() });
@@ -1153,7 +1177,9 @@ export async function archiveOfflineCalls(preview: OfflineCallArchivePreview): P
     locks ? await locks.request("moncahier-offline-outbox", run) : await run();
   const result = _flushTail.then(execute, execute);
   _flushTail = result.then(() => undefined, () => undefined);
-  return await result;
+  const archived = await result;
+  window.dispatchEvent?.(new Event("class-device-sync-updated"));
+  return archived;
 }
 
 export async function readOfflineCallArchive(id: string): Promise<unknown> {
@@ -1267,7 +1293,10 @@ export async function listOfflineOutboxEntries(): Promise<OfflineOutboxEntry[]> 
     lastAttemptAt: typeof row.lastAttemptAt === "number" ? row.lastAttemptAt : null,
     lastStatus: typeof row.lastStatus === "number" ? row.lastStatus : null,
     lastError: row.lastError || null,
-    meta: row.meta && typeof row.meta === "object" ? { ...row.meta } : {},
+    meta: {
+      ...(row.body?.class_id ? { classId: row.body.class_id } : {}),
+      ...(row.meta && typeof row.meta === "object" ? row.meta : {}),
+    },
   }));
 }
 
@@ -1546,6 +1575,7 @@ async function flushOutboxInternal(
 
   const rows = await outboxAll();
   if (rows.length === 0) return empty;
+  const includedIds = options.includeOperationIds ? new Set(options.includeOperationIds) : null;
 
   let flushed = 0;
   let authRequired = false;
@@ -1583,6 +1613,7 @@ async function flushOutboxInternal(
   );
 
   for (const row of rows) {
+    if (includedIds && !includedIds.has(row.operationId)) continue;
     const body = rewriteBodyWithSessionMap(row.body, map);
     const operationType = outboxOperationType(row);
     const dependencyKey = outboxSessionDependencyKey(row, body);
@@ -1857,15 +1888,18 @@ async function flushOutboxInternal(
     }
   }
 
-  const stats = await outboxStats();
+  const remainingRows = includedIds
+    ? (await outboxAll()).filter((row) => includedIds.has(row.operationId))
+    : await outboxAll();
+  const lastIssue = [...remainingRows].reverse().find((row) => row.lastError || typeof row.lastStatus === "number");
   return {
     flushed,
-    remaining: stats.total,
-    blocked: stats.blocked,
+    remaining: remainingRows.length,
+    blocked: remainingRows.filter((row) => row.state === "blocked").length,
     authRequired,
     retryableFailure,
-    lastError: lastError || stats.lastError,
-    lastStatus: lastStatus ?? stats.lastStatus,
+    lastError: lastError || lastIssue?.lastError || null,
+    lastStatus: lastStatus ?? lastIssue?.lastStatus ?? null,
     acknowledged,
   };
 }

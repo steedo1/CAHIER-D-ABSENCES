@@ -86,15 +86,15 @@ test("le prochain créneau est recalculé depuis le bundle v5 sans Internet", as
 
 test("la reprise LAN fonctionne même lorsque navigator.onLine vaut false", async () => {
   const page = await read("src/app/class/page.tsx");
+  const guard = await read("src/app/class/ClassDeviceSyncGuard.tsx");
 
   assert.match(page, /recoverClassDeviceAttendance/);
   assert.match(page, /window\.setInterval\(retry, 20_000\)/);
   assert.match(page, /document\.addEventListener\("visibilitychange", retry\)/);
-  assert.match(page, /disabled=\{syncing \|\| pendingSync === 0\}/);
-  assert.doesNotMatch(
-    page,
-    /disabled=\{syncing \|\| !isOnline \|\| pendingSync === 0\}/,
-  );
+  assert.match(page, /onRetry=\{syncNow\}/);
+  assert.match(guard, /await retryRef\.current\?\.\(\)/);
+  assert.match(guard, /disabled=\{!retryable\}/);
+  assert.doesNotMatch(guard, /disabled=\{[^}]*!isOnline/);
 });
 
 test("un redémarrage ne restaure pas une séance déjà terminée localement", async () => {
@@ -116,7 +116,7 @@ test("la déconnexion compte aussi les appels et fermetures du nouveau protocole
   const page = await read("src/app/class/page.tsx");
 
   assert.match(page, /countPendingForCurrentClass/);
-  assert.match(page, /countClassDeviceAttendanceRecovery/);
+  assert.match(page, /getClassDeviceLocalSyncStatus\(selectedClass\)/);
   assert.match(page, /Tentative de sécurisation des données avant déconnexion/);
   assert.match(page, /se déconnecter en conservant ces données/);
   assert.match(page, /clearActiveOfflineAccess/);
