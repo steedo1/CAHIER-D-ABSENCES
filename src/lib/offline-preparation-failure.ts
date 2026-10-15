@@ -8,6 +8,8 @@ export function retryableOfflinePreparationFailure(cause: unknown) {
 export function offlinePreparationFailureMessage(cause: unknown) {
   const message = messageOf(cause);
   const name = String((cause as { name?: unknown } | null)?.name || "");
+  if (message === "teacher_phone_account_conflict")
+    return "Ce téléphone est connecté à un ancien compte sans cours. Reconnectez-vous avec votre numéro complet à 10 chiffres, en conservant le zéro initial. Les actions locales restent conservées sur cet appareil.";
   if (/QuotaExceededError|quota|storage.*full|disk.*full/i.test(name + " " + message))
     return "L’espace disponible sur cet appareil est insuffisant. Libérez de l’espace sans effacer les données de Mon Cahier, puis réessayez.";
   if (/unauthorized|http 401/i.test(message))

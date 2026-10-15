@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CloudDownload,
+  LogIn,
   RefreshCcw,
   ShieldCheck,
   WifiOff,
@@ -32,6 +33,7 @@ type Props = {
   className?: string;
   classDeviceContext?: ClassDeviceAssessmentContext;
   onPrepared?: (readiness: OfflineReadiness) => void | Promise<void>;
+  onReconnect?: () => void | Promise<void>;
 };
 
 const AUTOMATIC_ATTENDANCE_RETRY_STATUSES = new Set([
@@ -131,6 +133,7 @@ export default function OfflineReadinessCard({
   className = "",
   classDeviceContext,
   onPrepared,
+  onReconnect,
 }: Props) {
   const { relayEnabled } = useRelayCapability();
   const [readiness, setReadiness] = useState<OfflineReadiness | null>(null);
@@ -138,6 +141,8 @@ export default function OfflineReadinessCard({
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [failureStep, setFailureStep] = useState<string | null>(null);
+  const [reconnectRequired, setReconnectRequired] = useState(false);
+  const reconnectRequiredRef = useRef(false);
   const [assessment, setAssessment] =
     useState<TeacherScheduleAssessment | ClassDeviceScheduleAssessment | null>(
       null,
@@ -199,6 +204,7 @@ export default function OfflineReadinessCard({
 
   const runPreparation = useCallback(
     async (automatic: boolean) => {
+      if (automatic && reconnectRequiredRef.current) return;
       if (preparationRef.current) {
         await preparationRef.current;
         return;
@@ -227,6 +233,8 @@ export default function OfflineReadinessCard({
           setPreparing(true);
           setError(null);
           setFailureStep(null);
+          setReconnectRequired(false);
+          reconnectRequiredRef.current = false;
           setProgress(
             automatic
               ? "Actualisation automatique des données d’appel…"
@@ -348,6 +356,9 @@ export default function OfflineReadinessCard({
           }
         } catch (cause: any) {
           if (mountedRef.current) {
+            const needsReconnect = role === "teacher" && cause?.message === "teacher_phone_account_conflict";
+            setReconnectRequired(needsReconnect);
+            reconnectRequiredRef.current = needsReconnect;
             setError(offlinePreparationFailureMessage(cause));
             setFailureStep(lastStep || null);
             setProgress("");
@@ -581,11 +592,12 @@ export default function OfflineReadinessCard({
             )}
             <button
               type="button"
-              onClick={() => void runPreparation(false)}
+              onClick={() => reconnectRequired && onReconnect ? void onReconnect() : void runPreparation(false)}
               className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800 focus:outline-none focus:ring-4 focus:ring-amber-500/25"
             >
-              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-              Réessayer
+              {reconnectRequired && onReconnect
+                ? <><LogIn className="h-4 w-4" aria-hidden="true" /> Reconnecter ce téléphone</>
+                : <><RefreshCcw className="h-4 w-4" aria-hidden="true" /> Réessayer</>}
             </button>
           </div>
         </div>

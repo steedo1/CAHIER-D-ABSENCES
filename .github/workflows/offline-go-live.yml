@@ -66,6 +66,9 @@ jobs:
             test/optional-student-finance-profile.test.mjs \
             test/offline-schedule-wiring.test.mjs \
             test/teacher-minimal-preparation.test.mjs \
+            test/teacher-phone-identity.test.mjs \
+            test/general-statistics-averages.test.mjs \
+            test/teacher-phone-preparation.test.mjs \
             test/attendance-cache-isolation.test.mjs \
             test/class-list-transfer-removal.test.mjs \
             test/student-permanent-removal.test.mjs \

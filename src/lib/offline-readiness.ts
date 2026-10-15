@@ -1964,6 +1964,7 @@ async function prepareTeacher(onProgress: ProgressCallback): Promise<OfflineRead
       rosters.set(classId, { items: roster.items });
     });
   } catch (cloudError) {
+    if (cloudError instanceof Error && cloudError.message === "teacher_phone_account_conflict") throw cloudError;
     preparationSource = "relay";
     basics = basics || await cacheGet<any>("teacher:inst:basics").catch(() => null);
     const institutionId = String(basics?.institution_id || "").trim();

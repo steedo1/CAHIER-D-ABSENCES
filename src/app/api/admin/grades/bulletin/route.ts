@@ -3489,7 +3489,7 @@ async function loadBulletin(req: NextRequest, createQr: boolean) {
   );
 
   // ✅ Signatures (uniquement si option établissement activée)
-  if (bulletinSignaturesEnabled) {
+  if (bulletinSignaturesEnabled && !exportLight) {
     const teacherIds: string[] = [];
     for (const it of items) {
       const ps = it.per_subject as any[] | undefined;
