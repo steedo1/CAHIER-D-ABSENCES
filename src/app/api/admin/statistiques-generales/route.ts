@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { loadStatisticsGradePeriods } from "@/lib/server/general-statistics-periods";
+import type { StatisticsGradePeriod } from "@/lib/general-statistics-averages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -125,14 +127,18 @@ async function requireContext() {
     return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
-  return { srv, institutionId };
+  const canReadAcademic = allowedRows.some((row: any) =>
+    ["admin", "super_admin", "file_correspondent"].includes(clean(row?.role)) &&
+    roleMatchesInstitution(clean(row?.role), row?.institution_id, institutionId),
+  );
+  return { srv, institutionId, canReadAcademic };
 }
 
 export async function GET() {
   const ctx = await requireContext();
   if ("error" in ctx) return ctx.error;
 
-  const { srv, institutionId } = ctx;
+  const { srv, institutionId, canReadAcademic } = ctx;
   const academicYear = await currentAcademicYear(institutionId);
 
   if (!academicYear) {
@@ -164,7 +170,10 @@ export async function GET() {
           label,
           level,
           academic_year,
-          institution_id
+          institution_id,
+          education_type,
+          formation_code,
+          formation_level_code
         )
       `)
       .eq("institution_id", institutionId)
@@ -259,8 +268,25 @@ export async function GET() {
     });
   });
 
+  let academicPeriods: StatisticsGradePeriod[] = [];
+  let academicFilterError: string | null = null;
+  if (canReadAcademic) {
+    try {
+      const classes = new Map<string, any>();
+      for (const row of enrollmentsResult.data || []) {
+        const cls = (row as any).classes;
+        if (cls?.id) classes.set(cls.id, cls);
+      }
+      academicPeriods = await loadStatisticsGradePeriods(srv, institutionId, academicYear, Array.from(classes.values()));
+    } catch {
+      academicFilterError = "Les périodes scolaires n’ont pas pu être chargées. Actualisez la page pour utiliser les filtres de moyenne.";
+    }
+  }
   return NextResponse.json({
     items,
     academic_year: academicYear,
+    can_filter_averages: canReadAcademic,
+    academic_periods: academicPeriods,
+    academic_filter_error: academicFilterError,
   });
 }

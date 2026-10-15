@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BarChart3, Printer, RotateCcw } from "lucide-react";
+import {
+  formatStatisticsAverage, loadStatisticsAcademicData, statisticsAverageBounds,
+  statisticsAverageMatches, statisticsStudentAverage,
+  type StatisticsAcademicData, type StatisticsAverage, type StatisticsBulletinCache, type StatisticsGradePeriod,
+} from "@/lib/general-statistics-averages";
 
 type Student = {
   id: string;
@@ -43,13 +48,14 @@ type SexChoice = "all" | "F" | "M";
 type Lv2Choice = "all" | "allemand" | "espagnol";
 type PrintColumnKey =
   | "number" | "matricule" | "full_name" | "class"
-  | "sex" | "age" | "nationality" | "boarding" | "affectation" | "scholarship" | "lv2";
+  | "sex" | "age" | "nationality" | "boarding" | "affectation" | "scholarship" | "lv2" | "average";
 
 const PRINT_COLUMN_META: Record<PrintColumnKey, { label: string; weight: number; center?: boolean }> = {
   number: { label: "N°", weight: 5, center: true },
   matricule: { label: "Matricule", weight: 14 },
   full_name: { label: "Nom et prénoms", weight: 32 },
   class: { label: "Classe", weight: 10 },
+  average: { label: "Moyenne /20", weight: 10, center: true },
   sex: { label: "Sexe", weight: 6, center: true },
   age: { label: "Âge", weight: 6, center: true },
   nationality: { label: "Nationalité", weight: 13 },
@@ -130,12 +136,13 @@ function labelBool(value: boolean | null, yes: string, no: string) {
   return "—";
 }
 
-function printCellValue(key: PrintColumnKey, student: Student, index: number): string | number {
+function printCellValue(key: PrintColumnKey, student: Student, index: number, average?: StatisticsAverage): string | number {
   switch (key) {
     case "number": return index + 1;
     case "matricule": return student.matricule || "—";
     case "full_name": return student.full_name;
     case "class": return student.class_label || "—";
+    case "average": return formatStatisticsAverage(average);
     case "sex": return sex(student.gender) || "—";
     case "age": return ageOf(student.birthdate) ?? "—";
     case "nationality": return nationalityLabel(student.nationality);
@@ -168,6 +175,10 @@ function filterLabel(args: {
   nationality: string;
   minAge: string;
   maxAge: string;
+  academicPeriod: string;
+  academicSubject: string;
+  minAverage: string;
+  maxAverage: string;
 }) {
   const out: string[] = [];
   if (args.level !== "all") out.push(`Niveau : ${args.level}`);
@@ -186,6 +197,13 @@ function filterLabel(args: {
   if (args.minAge && args.maxAge) out.push(`${args.minAge}–${args.maxAge} ans`);
   else if (args.minAge) out.push(`≥ ${args.minAge} ans`);
   else if (args.maxAge) out.push(`≤ ${args.maxAge} ans`);
+  if (args.academicPeriod) {
+    out.push(args.academicPeriod, args.academicSubject);
+    const min = args.minAverage.trim(), max = args.maxAverage.trim();
+    if (min && max) out.push(`Moyenne : ${min}–${max}/20`);
+    else if (min) out.push(`Moyenne ≥ ${min}/20`);
+    else if (max) out.push(`Moyenne ≤ ${max}/20`);
+  }
   return out.join(" · ") || "Tous les élèves";
 }
 
@@ -194,11 +212,13 @@ function Select({
   value,
   onChange,
   children,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <label className="block min-w-0">
@@ -206,7 +226,9 @@ function Select({
         {label}
       </span>
       <select
+        aria-label={label}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10"
       >
@@ -234,6 +256,19 @@ export default function GeneralStatisticsPage() {
   const [nationality, setNationality] = useState("all");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
+  const [canFilterAverages, setCanFilterAverages] = useState(false);
+  const [academicPeriods, setAcademicPeriods] = useState<StatisticsGradePeriod[]>([]);
+  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [academicPeriod, setAcademicPeriod] = useState("");
+  const [academicSubject, setAcademicSubject] = useState("all");
+  const [academicSubjects, setAcademicSubjects] = useState<{ id: string; label: string }[]>([]);
+  const [minAverage, setMinAverage] = useState("");
+  const [maxAverage, setMaxAverage] = useState("");
+  const [academicResult, setAcademicResult] = useState<{ key: string; data: StatisticsAcademicData } | null>(null);
+  const [academicError, setAcademicError] = useState<string | null>(null);
+  const [academicProgress, setAcademicProgress] = useState("");
+  const [academicRetry, setAcademicRetry] = useState(0);
+  const academicCache = useRef<StatisticsBulletinCache>(new Map());
 
   useEffect(() => {
     setPrintTarget(document.body);
@@ -261,6 +296,9 @@ export default function GeneralStatisticsPage() {
         if (!cancelled) {
           setStudents(Array.isArray(statsJson?.items) ? statsJson.items : []);
           setAcademicYear(clean(statsJson?.academic_year));
+          setCanFilterAverages(statsJson?.can_filter_averages === true);
+          setAcademicPeriods(Array.isArray(statsJson?.academic_periods) ? statsJson.academic_periods : []);
+          setPeriodError(statsJson?.academic_filter_error || null);
           setInstitution(institutionJson || {});
         }
       } catch (err: any) {
@@ -291,7 +329,7 @@ export default function GeneralStatisticsPage() {
   }, [students, level]);
   const selectedClassLabel = classes.find((item) => item.id === classId)?.label || "";
 
-  const filtered = useMemo(() => {
+  const baseFiltered = useMemo(() => {
     const min = minAge === "" ? null : Number(minAge);
     const max = maxAge === "" ? null : Number(maxAge);
 
@@ -314,6 +352,53 @@ export default function GeneralStatisticsPage() {
       return true;
     });
   }, [students, level, classId, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
+
+  const academicClassIds = useMemo(() => sortedUnique(baseFiltered.map((student) => student.class_id)), [baseFiltered]);
+  const academicKey = JSON.stringify([academicYear, academicPeriod, academicClassIds, academicRetry]);
+  const academicData = academicResult?.key === academicKey ? academicResult.data : null;
+  const academicBusy = Boolean(academicPeriod && !academicData && !academicError);
+  const averageBounds = statisticsAverageBounds(minAverage, maxAverage);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setAcademicResult(null);
+    setAcademicError(null);
+    if (academicPeriod && canFilterAverages) {
+      setAcademicProgress("Chargement des moyennes…");
+      void loadStatisticsAcademicData({ classIds: academicClassIds, selection: academicPeriod,
+        academicYear, periods: academicPeriods, cache: academicCache.current, signal: controller.signal,
+        onProgress: (done, total) => { if (active) setAcademicProgress(`Chargement des moyennes : ${done}/${total}…`); },
+      }).then((data) => {
+        if (!active) return;
+        setAcademicResult({ key: academicKey, data });
+        setAcademicSubjects((previous) => {
+          const known = new Map(previous.map((subject) => [subject.id, subject]));
+          for (const subject of data.subjects) known.set(subject.id, subject);
+          return Array.from(known.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+        });
+      })
+        .catch((cause) => {
+          if (active) setAcademicError(cause instanceof Error ? cause.message : "Impossible de charger les moyennes.");
+          controller.abort();
+        });
+    }
+    return () => { active = false; controller.abort(); };
+  }, [academicKey, academicClassIds, academicPeriod, academicPeriods, academicYear, canFilterAverages]);
+
+  const studentAverages = useMemo(() => new Map(baseFiltered.map((student) => [student.id,
+    statisticsStudentAverage(academicData, student.class_id, student.id, academicPeriod, academicSubject),
+  ])), [baseFiltered, academicData, academicPeriod, academicSubject]);
+  const filtered = useMemo(() => {
+    if (!academicPeriod) return baseFiltered;
+    if (!academicData || academicError || averageBounds.error) return [];
+    return baseFiltered.filter((student) => statisticsAverageMatches(studentAverages.get(student.id)!, averageBounds.min, averageBounds.max));
+  }, [baseFiltered, academicPeriod, academicData, academicError, averageBounds.error, averageBounds.min, averageBounds.max, studentAverages]);
+  const academicPeriodLabel = academicPeriod === "annual" ? "Année scolaire entière"
+    : academicPeriods.find((period) => period.id === academicPeriod)?.label || "";
+  const academicSubjectLabel = academicSubject === "all" ? "Moyenne générale"
+    : academicSubjects.find((subject) => subject.id === academicSubject)?.label || "Discipline";
+  const canPrint = !academicBusy && !academicError && !averageBounds.error;
 
   const totals = useMemo(() => {
     let girls = 0;
@@ -351,8 +436,12 @@ export default function GeneralStatisticsPage() {
         nationality,
         minAge,
         maxAge,
+        academicPeriod: academicPeriodLabel,
+        academicSubject: academicSubjectLabel,
+        minAverage,
+        maxAverage,
       }),
-    [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge],
+    [level, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriodLabel, academicSubjectLabel, minAverage, maxAverage],
   );
 
   // Le filtre d'âge compte pour un seul critère, même avec deux bornes.
@@ -368,6 +457,9 @@ export default function GeneralStatisticsPage() {
       language !== "all",
       nationality !== "all",
       minAge !== "" || maxAge !== "",
+      academicPeriod !== "",
+      academicPeriod !== "" && academicSubject !== "all",
+      academicPeriod !== "" && (minAverage !== "" || maxAverage !== ""),
     ].filter(Boolean).length;
 
     if (filterCount === 0) return "LISTE GÉNÉRALE DES ÉLÈVES";
@@ -396,8 +488,15 @@ export default function GeneralStatisticsPage() {
     if (level !== "all") title += " — NIVEAU " + level;
     if (language !== "all") title += " — LV2 " + (language === "allemand" ? "ALLEMAND" : "ESPAGNOL");
     if (nationality !== "all") title += " — NATIONALITÉ " + nationality.toLocaleUpperCase("fr");
+    if (academicPeriod) {
+      title += " — " + academicPeriodLabel.toLocaleUpperCase("fr");
+      if (academicSubject !== "all") title += " — " + academicSubjectLabel.toLocaleUpperCase("fr");
+      if (minAverage.trim() && maxAverage.trim()) title += ` — MOYENNE DE ${minAverage} À ${maxAverage}/20`;
+      else if (minAverage.trim()) title += ` — MOYENNE ≥ ${minAverage}/20`;
+      else if (maxAverage.trim()) title += ` — MOYENNE ≤ ${maxAverage}/20`;
+    }
     return title;
-  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge]);
+  }, [level, classId, selectedClassLabel, boarding, affectation, scholarship, gender, language, nationality, minAge, maxAge, academicPeriod, academicPeriodLabel, academicSubject, academicSubjectLabel, minAverage, maxAverage]);
 
   // Une sélection de niveau reste distincte d'une classe. Même sous d'autres
   // filtres, ne retirer CLASSE que si toutes les lignes ont la même classe connue.
@@ -407,6 +506,7 @@ export default function GeneralStatisticsPage() {
   const printColumns: PrintColumnKey[] = [
     "number", "matricule", "full_name",
     ...(!singleClass ? ["class" as const] : []),
+    ...(academicPeriod ? ["average" as const] : []),
     ...(gender === "all" ? ["sex" as const] : []),
     ...(!exactAge ? ["age" as const] : []),
     ...(nationality === "all" ? ["nationality" as const] : []),
@@ -434,6 +534,10 @@ export default function GeneralStatisticsPage() {
     setNationality("all");
     setMinAge("");
     setMaxAge("");
+    setAcademicPeriod("");
+    setAcademicSubject("all");
+    setMinAverage("");
+    setMaxAverage("");
   }
 
   const institutionName =
@@ -497,6 +601,9 @@ export default function GeneralStatisticsPage() {
           .stats-print-sheet td { border: 1px solid #64748b; padding: 3px 5px; vertical-align: middle; overflow-wrap: anywhere; }
           .stats-print-sheet th { background: #f1f5f9 !important; font-size: 10px; text-transform: uppercase; }
           .stats-print-sheet td { font-size: 10.5px; }
+          .stats-print-sheet.stats-with-averages th,
+          .stats-print-sheet.stats-with-averages td { padding: 2px 4px; }
+          .stats-print-sheet.stats-with-averages td { font-size: 10px; }
           .stats-print-sheet .stats-national-header {
             text-align: center;
             font-size: 10px;
@@ -550,6 +657,7 @@ export default function GeneralStatisticsPage() {
             overflow-wrap: anywhere;
             font-weight: 700;
           }
+          .stats-print-sheet .stats-criterion { display: inline-block; max-width: 100%; }
           .stats-print-sheet .stats-sheet-footer {
             display: grid;
             grid-template-columns: 1fr 1.45fr 1fr;
@@ -576,7 +684,7 @@ export default function GeneralStatisticsPage() {
               <div>
                 <h1 className="text-xl font-black text-slate-950">Statistiques générales</h1>
                 <div className="mt-0.5 text-sm font-semibold text-slate-500">
-                  {filtered.length} élève{filtered.length > 1 ? "s" : ""}
+                  {academicBusy ? "Chargement des moyennes…" : `${filtered.length} élève${filtered.length > 1 ? "s" : ""}`}
                   {academicYear ? ` · ${academicYear}` : ""}
                 </div>
               </div>
@@ -593,7 +701,7 @@ export default function GeneralStatisticsPage() {
               <button
                 type="button"
                 onClick={() => window.print()}
-                disabled={filtered.length === 0}
+                disabled={filtered.length === 0 || !canPrint}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Printer className="h-4 w-4" />
@@ -681,6 +789,36 @@ export default function GeneralStatisticsPage() {
             </div>
           </section>
 
+          {canFilterAverages && <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-busy={academicBusy}>
+            <h2 className="text-sm font-bold text-slate-800">Résultats scolaires</h2>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Select label="Période des moyennes" value={academicPeriod} disabled={Boolean(periodError) || !academicPeriods.length} onChange={(value) => {
+                setAcademicPeriod(value);
+                if (!value) { setAcademicSubject("all"); setMinAverage(""); setMaxAverage(""); }
+              }}>
+                <option value="">Sans filtre de moyenne</option>
+                {academicPeriods.map((period) => <option key={period.id} value={period.id}>{period.label}</option>)}
+                <option value="annual">Année scolaire entière</option>
+              </Select>
+              <Select label="Discipline" value={academicSubject} disabled={!academicData || academicBusy} onChange={setAcademicSubject}>
+                <option value="all">Toutes — moyenne générale</option>
+                {academicSubjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.label}</option>)}
+              </Select>
+              {([["Moyenne min", minAverage, setMinAverage], ["Moyenne max", maxAverage, setMaxAverage]] as const).map(([label, value, setter]) => (
+                <label key={label} className="block min-w-0">
+                  <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+                  <input type="text" inputMode="decimal" maxLength={6} value={value}
+                    disabled={!academicPeriod} onChange={(event) => setter(event.target.value)} placeholder="— /20"
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/10 disabled:bg-slate-50" />
+                </label>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Sans discipline sélectionnée : moyenne générale de la période. Avec une discipline : moyenne de cette discipline. Bornes inclusives sur 20 ; « — » indique une moyenne indisponible et * une moyenne provisoire.</p>
+            {(periodError || averageBounds.error) && <p role="alert" className="mt-2 text-sm text-rose-700">{periodError || averageBounds.error}</p>}
+            {academicBusy && <p role="status" className="mt-2 text-sm font-semibold text-emerald-700">{academicProgress}</p>}
+            {academicError && <div role="alert" className="mt-2 text-sm text-rose-700">{academicError} <button type="button" className="font-bold underline" onClick={() => setAcademicRetry((value) => value + 1)}>Réessayer les moyennes</button></div>}
+          </section>}
+
           <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <h2 className="text-sm font-bold text-slate-700">Répartition par nationalité</h2>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -709,6 +847,7 @@ export default function GeneralStatisticsPage() {
                     <th className="px-3 py-2.5">Matricule</th>
                     <th className="px-3 py-2.5">Nom et prénoms</th>
                     <th className="px-3 py-2.5">Classe</th>
+                    {academicPeriod && <th className="px-3 py-2.5 text-center">Moyenne /20</th>}
                     <th className="px-3 py-2.5 text-center">Sexe</th>
                     <th className="px-3 py-2.5 text-center">Âge</th>
                     <th className="px-3 py-2.5">Nationalité</th>
@@ -726,6 +865,7 @@ export default function GeneralStatisticsPage() {
                         <td className="px-3 py-2.5 font-semibold text-slate-700">{student.matricule || "—"}</td>
                         <td className="px-3 py-2.5 font-bold text-slate-950">{student.full_name}</td>
                         <td className="px-3 py-2.5 text-slate-700">{student.class_label || "—"}</td>
+                        {academicPeriod && <td className="px-3 py-2.5 text-center font-bold text-slate-800">{formatStatisticsAverage(studentAverages.get(student.id))}</td>}
                         <td className="px-3 py-2.5 text-center text-slate-700">{sex(student.gender) || "—"}</td>
                         <td className="px-3 py-2.5 text-center text-slate-700">{ageOf(student.birthdate) ?? "—"}</td>
                         <td className="px-3 py-2.5 text-slate-700">{nationalityLabel(student.nationality)}</td>
@@ -737,8 +877,8 @@ export default function GeneralStatisticsPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={11} className="px-4 py-12 text-center text-sm font-semibold text-slate-400">
-                        Aucun élève pour ces filtres.
+                      <td colSpan={academicPeriod ? 12 : 11} className="px-4 py-12 text-center text-sm font-semibold text-slate-400">
+                        {academicBusy ? academicProgress : academicError || averageBounds.error || "Aucun élève pour ces filtres."}
                       </td>
                     </tr>
                   )}
@@ -749,7 +889,7 @@ export default function GeneralStatisticsPage() {
         </div>
       </div>
 
-      {printTarget && createPortal(<section className="stats-print-sheet">
+      {printTarget && canPrint && createPortal(<section className={`stats-print-sheet${academicPeriod ? " stats-with-averages" : ""}`}>
         <div className="stats-national-header">
           <div>{clean(institution.country_name) || "République de Côte d’Ivoire"}</div>
           <div className="stats-motto">{clean(institution.country_motto) || "Union - Discipline - Travail"}</div>
@@ -774,7 +914,7 @@ export default function GeneralStatisticsPage() {
           <div>
             <div className="stats-list-title">{printTitle}</div>
             <div className="stats-criteria-line">
-              Critères : {criteria}<br />
+              Critères : {criteria.split(" · ").map((criterion, index) => <span key={index} className="stats-criterion">{index ? " · " : ""}{criterion}</span>)}<br />
               Effectif : {filtered.length} élève{filtered.length > 1 ? "s" : ""}
             </div>
           </div>
@@ -787,6 +927,7 @@ export default function GeneralStatisticsPage() {
           </div>
         </header>
 
+        {academicPeriod && <p className="mb-2 text-[9px]">Moyenne : {academicSubjectLabel} · {academicPeriodLabel} · /20. — : indisponible ; * : provisoire.</p>}
         <table>
           <colgroup>
             {printColumns.map((key) => (
@@ -810,7 +951,7 @@ export default function GeneralStatisticsPage() {
                     textAlign: PRINT_COLUMN_META[key].center ? "center" : "left",
                     fontWeight: key === "full_name" ? 700 : undefined,
                   }}>
-                    {printCellValue(key, student, index)}
+                    {printCellValue(key, student, index, studentAverages.get(student.id))}
                   </td>
                 ))}
               </tr>
