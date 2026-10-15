@@ -89,7 +89,10 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
   if (!name) return NextResponse.json({ error: "Nom invalide (2 à 160 caractères)." }, { status: 400 });
 
   const submittedPhone = body.phone.trim();
-  const phone = submittedPhone ? normalizeStaffPhone(submittedPhone) : null;
+  // Legacy imported profiles can contain short (+225 + 9 digits) numbers.
+  // Allow changing the name without rewriting an unchanged legacy phone.
+  const phoneUnchanged = samePhone(submittedPhone, before.phone);
+  const phone = phoneUnchanged ? before.phone : submittedPhone ? normalizeStaffPhone(submittedPhone) : null;
   if (submittedPhone && !phone) {
     return NextResponse.json({
       error: "Téléphone invalide. Pour la Côte d'Ivoire : 10 chiffres commençant par 0 (ex. 0701020304).",
@@ -114,7 +117,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Compte d'authentification introuvable." }, { status: 409 });
   }
   const authUser = authData.user;
-  const phoneChanged = !!phone && !samePhone(phone, authUser.phone);
+  const phoneChanged = !phoneUnchanged && !!phone && !samePhone(phone, authUser.phone);
   const emailChanged = !!email && email !== String(authUser.email || "").toLowerCase();
   const nameChanged = name !== String(before.display_name || "");
   const profileChanged =
