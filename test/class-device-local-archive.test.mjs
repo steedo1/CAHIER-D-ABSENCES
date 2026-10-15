@@ -175,3 +175,73 @@ test("un nouvel appel réel conservé s’envoie après le retrait des anciens e
     assert.equal(result.remaining, 0);
   } finally { f.restore(); }
 });
+
+test("un ancien écran sauvegardé ne restaure ni une séance archivée ni ses messages d’erreur", async () => {
+  const f = fixture();
+  try {
+    const o = f.offline;
+    await o.registerOfflineSessionReference("client:old-start", "old-cloud-session");
+    await f.queue("old-start", "session-start");
+    await f.queue("old-attendance", "attendance", "old-cloud-session");
+    const archived = await o.archiveOfflineCalls(await o.previewOfflineCallArchive(["old-attendance"]));
+    assert.equal(await o.isOfflineClassCallArchived({ id: "client:old-start" }), true);
+    assert.equal(await o.isOfflineClassCallArchived({ id: "old-cloud-session" }), true);
+    assert.equal(await o.isOfflineClassCallArchived({ id: "real-session" }), false);
+    // A phone that archived before this release only has operation tombstones.
+    const db = await o.testDb();
+    const tx = db.transaction(["meta"], "readwrite");
+    tx.objectStore("meta").delete("offline:archived-session:v1:old-cloud-session");
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
+    assert.equal(await o.isOfflineClassCallArchived({ id: "client:old-start" }), true);
+    assert.equal(await o.isOfflineClassCallArchived({ id: "old-cloud-session" }), true);
+    const source = ts.createSourceFile("page.tsx", read("src/app/class/page.tsx"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let declaration;
+    const visit = (node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "applySnapshotState") declaration = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    assert.ok(declaration);
+    const observed = { open: null, rows: null, message: "initial" };
+    const noop = () => {};
+    const args = {
+      isOfflineClassCallArchived: o.isOfflineClassCallArchived,
+      setClassId: noop, pendingSnapshotSubjectRef: { current: "" },
+      isRestorableClassDeviceOpen: () => true,
+      setOpen: (value) => { observed.open = value; }, setSessionRuntimeState: noop, runtimeStateForOpen: noop,
+      setRows: (value) => { observed.rows = value; }, setPenaltyOpen: noop,
+      setPenRubric: noop, coerceRubric: (value) => value, setPenRows: noop,
+      setMsg: (value) => { observed.message = value; },
+    };
+    const apply = new Function(...Object.keys(args), compile(declaration.getText(source)) + "\nreturn applySnapshotState;")(...Object.values(args));
+    await apply({ classId: "3e1", subjectId: "math", open: { id: "client:old-start" },
+      rows: { pupil: { absent: true } }, msg: "1 action(s) protégée(s) nécessitent une vérification." });
+    assert.equal(observed.open, null);
+    assert.deepEqual(observed.rows, {});
+    assert.equal(observed.message, null);
+    const backup = await o.readOfflineCallArchive(archived.id);
+    assert.equal(backup.outbox.length, 2);
+  } finally { f.restore(); }
+});
+
+test("un rejeu de classe ignore les anciennes actions et leurs compteurs d’erreur", async () => {
+  const f = fixture();
+  try {
+    await f.queue("old", "attendance", "old-session");
+    await f.queue("current", "attendance", "real-session");
+    globalThis.fetch = async () => Response.json({ error: "forbidden" }, { status: 403 });
+    await f.offline.flushOutbox({ includeOperationIds: ["old"] });
+    const preserved = (await f.offline.listOfflineOutboxEntries()).find((row) => row.operationId === "old");
+    const sent = [];
+    globalThis.fetch = async (_url, init) => {
+      sent.push(init.headers["X-Mon-Cahier-Operation-Id"]);
+      return Response.json({ ok: true, operation_id: "current" });
+    };
+    const result = await f.offline.flushOutbox({ includeOperationIds: ["current"] });
+    assert.deepEqual(sent, ["current"]);
+    assert.equal(result.remaining, 0);
+    assert.equal(result.blocked, 0);
+    assert.equal(result.lastError, null);
+    assert.deepEqual((await f.offline.listOfflineOutboxEntries())[0], preserved);
+  } finally { f.restore(); }
+});

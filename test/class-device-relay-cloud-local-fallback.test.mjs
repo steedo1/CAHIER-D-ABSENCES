@@ -110,7 +110,7 @@ test("l'interface distingue Cloud, relais et synchronisation de l'appel", async 
 
   assert.match(page, /Cloud : \{connectivityLabel\(cloudStatus\)\}/);
   assert.match(page, /Relais local : \{connectivityLabel\(relayStatus\)\}/);
-  assert.match(page, /Appel : \{callSyncLabel\}/);
+  assert.match(page, /ClassDeviceSyncGuard key=\{selectedClass\.id\} scope=\{selectedClass\}/);
   assert.match(page, /Relais local indisponible\. L'appel continue via le Cloud\./);
   assert.match(
     page,

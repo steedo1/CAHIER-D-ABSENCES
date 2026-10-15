@@ -6,6 +6,9 @@ import { knownScheduleRevision, observeScheduleRevision } from "@/lib/attendance
 import { scheduleIsCurrent } from "@/lib/attendance-cache-contract";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ClassDeviceSyncGuard from "./ClassDeviceSyncGuard";
+import { getClassDeviceLocalSyncStatus } from "@/lib/class-device-sync-reconcile-v2";
+import { classDeviceRecordInScope } from "@/lib/class-device-sync-state";
 import { attendanceAutoCloseAt } from "@/lib/attendance-auto-close";
 import { useAttendanceAutoClose } from "@/hooks/useAttendanceAutoClose";
 import { Users, BookOpen, Clock, Play, Square, LogOut, Loader2 } from "lucide-react";
@@ -18,7 +21,7 @@ import {
   registerServiceWorker,
   offlineGetJson,
   offlineMutateJson,
-  outboxCount,
+  isOfflineClassCallArchived,
   flushOutbox,
   cacheGet,
   cacheSet,
@@ -55,7 +58,6 @@ import {
   teacherSessionLifecycleDeliveryMessage,
 } from "@/lib/teacher-session-lifecycle-delivery";
 import {
-  countClassDeviceAttendanceRecovery,
   recoverClassDeviceAttendance,
   type ClassDeviceAttendanceRecoverySummary,
 } from "@/lib/class-device-attendance-recovery";
@@ -341,6 +343,7 @@ const LAST_COMPLETION_KEY = "classDevice:last-completion:v1";
 type ClassDeviceCompletion = {
   version: 1;
   institution_id: string;
+  actor_profile_id?: string | null;
   class_id: string;
   class_label: string;
   session_id: string;
@@ -763,7 +766,7 @@ export default function ClassDevicePage() {
       : "checking",
   );
   const [relayStatus, setRelayStatus] = useState<ConnectivityState>("checking");
-  const [sessionRuntimeState, setSessionRuntimeState] =
+  const [, setSessionRuntimeState] =
     useState<SessionRuntimeState>("idle");
 
   useEffect(() => {
@@ -1044,21 +1047,15 @@ export default function ClassDevicePage() {
   }
 
   async function countPendingForCurrentClass() {
-    const legacyPending = await outboxCount().catch(() => 0);
-    const relayPending = selectedClass?.institution_id && selectedClass.id
-      ? await countClassDeviceAttendanceRecovery({
-          institutionId: selectedClass.institution_id,
-          classId: selectedClass.id,
-        }).catch(() => 0)
-      : 0;
-    return legacyPending + relayPending;
+    return selectedClass ? (await getClassDeviceLocalSyncStatus(selectedClass)).total : 0;
   }
 
   async function refreshPending() {
     const next = await countPendingForCurrentClass();
     setPendingSync(next);
     const completion = await cacheGet<ClassDeviceCompletion>(LAST_COMPLETION_KEY).catch(() => null);
-    if (completion) setLastCompletion(completion);
+    setLastCompletion(classDeviceRecordInScope(completion, selectedClass) &&
+      !await isOfflineClassCallArchived(completion!) ? completion : null);
     return next;
   }
   const refreshPendingRef = useRef(refreshPending);
@@ -1155,11 +1152,12 @@ export default function ClassDevicePage() {
       // Ancien marqueur sans identité : ne jamais risquer de fermer le cours suivant.
       const clientSessionId = String(pending.client_session_id || "").trim();
       if (!clientSessionId) {
-        setMsg(
-          "Une ancienne fin de séance locale ne contient pas assez d’informations pour être rejouée automatiquement. Elle reste conservée pour vérification.",
-        );
         return;
       }
+      if (!selectedClass || await isOfflineClassCallArchived({ session_id: clientSessionId })) return;
+      const status = await getClassDeviceLocalSyncStatus(selectedClass);
+      if (status.localOpen?.id !== clientSessionId && status.completion?.session_id !== clientSessionId &&
+          !status.entries.some((entry) => entry.sessionDependencyKey === clientSessionId)) return;
 
       const resolved = await resolveOfflineSessionReference(clientSessionId);
       const srvId = resolved.serverSessionId || "";
@@ -1175,7 +1173,9 @@ export default function ClassDevicePage() {
             actual_end_at: pending.actual_end_at,
           },
         },
-        { mergeKey: `end:${srvId}` }
+        { mergeKey: `end:${srvId}`, meta: {
+          operationType: "session-end", classId: selectedClass.id, institutionId: selectedClass.institution_id,
+        } }
       );
 
       // si réussi OU si mis en attente offline, on purge le pending
@@ -1210,7 +1210,7 @@ export default function ClassDevicePage() {
           signal: controller.signal,
         },
       );
-      const reachable = response.status < 500;
+      const reachable = response.ok;
       setCloudStatus(reachable ? "connected" : "unavailable");
       return reachable;
     } catch {
@@ -1252,6 +1252,9 @@ export default function ClassDevicePage() {
   }
 
   async function syncNow() {
+    if (!selectedClass) return;
+    const pending = await getClassDeviceLocalSyncStatus(selectedClass);
+    if (!pending.retryable) return;
     await runClassDeviceSingleFlight(syncingRef, async () => {
       setSyncing(true);
       let result: Awaited<ReturnType<typeof flushOutbox>> | null = null;
@@ -1262,7 +1265,11 @@ export default function ClassDevicePage() {
           typeof window === "undefined" ? true : await probeCloudAvailability();
 
         if (cloudReachable) {
-          result = await flushOutbox({ releaseNetworkBackoff: true });
+          const status = await getClassDeviceLocalSyncStatus(selectedClass);
+          result = await flushOutbox({
+            releaseNetworkBackoff: true,
+            includeOperationIds: status.entries.map((entry) => entry.operationId),
+          });
           await applyCloudOutboxAcknowledgements(result);
 
           const active = openRef.current;
@@ -1357,11 +1364,8 @@ export default function ClassDevicePage() {
         }
 
         await processPendingEnd();
-      } catch (e: any) {
-        setMsg(
-          e?.message ||
-            "Synchronisation interrompue. Les données restent conservées.",
-        );
+      } catch {
+        // The scoped journals keep the error and the guard presents the retry state.
       } finally {
         setSyncing(false);
         const remaining = await refreshPending();
@@ -1393,42 +1397,10 @@ export default function ClassDevicePage() {
           await cacheSet(LAST_COMPLETION_KEY, confirmedCompletion);
         }
 
-        if (recovery.pending_after === 0) {
-          setMsg(
-            "Appel et fin de séance transmis au relais local dans le bon ordre.",
-          );
-        } else if (recovery.requires_attention > 0) {
-          setMsg(
-            `${recovery.pending_after} opération(s) restent conservées sur cet appareil et nécessitent une vérification.`,
-          );
-        } else if (recovery.relay_unreachable) {
-          setMsg(
-            "Appel et fin de séance conservés sur cet appareil. Le relais local sera réessayé automatiquement.",
-          );
-        } else if (recovery.closes_waiting_for_attendance > 0) {
-          setMsg(
-            "L’appel reste en attente sur cet appareil ; sa fermeture ne sera envoyée qu’après les marques.",
-          );
-        }
-        return;
       }
 
-      if (!result) return;
-      if (result.authRequired) {
-        setMsg(
-          "Synchronisation suspendue : la session doit être renouvelée. Les données restent conservées sur cet appareil.",
-        );
-      } else if (result.blocked > 0) {
-        setMsg(
-          `${result.blocked} action(s) protégée(s) nécessitent une vérification. Aucune donnée n’a été supprimée.`,
-        );
-      } else if (result.remaining > 0) {
-        setMsg(
-          `Réseau encore instable : ${result.remaining} action(s) restent en attente sur cet appareil.`,
-        );
-      } else if (result.flushed > 0) {
-        setMsg(`Synchronisation terminée (${result.flushed} action(s)).`);
-      }
+      // Visible sync state is derived from the current class journals, never a persisted message.
+      window.dispatchEvent(new Event("class-device-sync-updated"));
     });
   }
 
@@ -1520,28 +1492,30 @@ export default function ClassDevicePage() {
   );
 
 
-  function applySnapshotState(
+  async function applySnapshotState(
     snapState: ClassPageSnapshotState | null | undefined,
     opts?: { restoreOpen?: boolean }
   ) {
     if (!snapState) return;
+    const archived = snapState.open ? await isOfflineClassCallArchived(snapState.open) : false;
 
     if (snapState.classId) setClassId(snapState.classId);
-    if (snapState.subjectId) pendingSnapshotSubjectRef.current = snapState.subjectId;
+    if (snapState.subjectId && !archived) pendingSnapshotSubjectRef.current = snapState.subjectId;
 
     if (
       opts?.restoreOpen !== false &&
+      !archived &&
       isRestorableClassDeviceOpen(snapState.open)
     ) {
       setOpen(snapState.open);
       setSessionRuntimeState(runtimeStateForOpen(snapState.open));
     }
 
-    if (snapState.rows) setRows(snapState.rows);
+    if (snapState.rows) setRows(archived ? {} : snapState.rows);
     setPenaltyOpen(!!snapState.penaltyOpen);
     setPenRubric(coerceRubric(snapState.penRubric));
     if (snapState.penRows) setPenRows(snapState.penRows);
-    if (typeof snapState.msg === "string") setMsg(snapState.msg);
+    setMsg(null);
   }
 
   const snapshotClassId = open?.class_id || classId;
@@ -1557,11 +1531,11 @@ export default function ClassDevicePage() {
       penaltyOpen,
       penRubric,
       penRows,
-      msg,
+      msg: null,
     };
 
     saveClassDeviceSnapshot(snapshotClassId, snapshotState);
-  }, [snapshotClassId, subjectId, open, rows, penaltyOpen, penRubric, penRows, msg]);
+  }, [snapshotClassId, subjectId, open, rows, penaltyOpen, penRubric, penRows]);
 
   // 🔒 Empêche d'envoyer un session_id "client:*" à une API serveur qui attend un UUID
   async function ensureServerSessionOrExplain(): Promise<OpenSession | null> {
@@ -1800,7 +1774,7 @@ export default function ClassDevicePage() {
   useEffect(() => {
     (async () => {
       try {
-        const [cls, os, localOpenRaw, completionRaw] = await Promise.all([
+        const [cls, os, localOpenRaw, completionCandidate] = await Promise.all([
           offlineGetJson(
             "/api/class/my-classes?offline_contract=v5",
             "classDevice:my-classes",
@@ -1811,19 +1785,21 @@ export default function ClassDevicePage() {
           cacheGet("classDevice:local-open"),
           cacheGet<ClassDeviceCompletion | null>(LAST_COMPLETION_KEY),
         ]);
-        if (completionRaw?.version === 1) {
-          setLastCompletion(completionRaw);
-        }
-
         const mappedContext = mapClassDeviceItems(
           Array.isArray(cls?.items) ? cls.items : [],
         );
         const mapped = mappedContext.classes;
         setClasses(mapped);
+        const completionRaw = completionCandidate?.version === 1 &&
+          mapped.some((item) => classDeviceRecordInScope(completionCandidate, item)) &&
+          !await isOfflineClassCallArchived(completionCandidate) ? completionCandidate : null;
+        setLastCompletion(completionRaw);
 
         const serverOpen = (os?.item as OpenSession) || null;
         const localOpenCandidate = (localOpenRaw as OpenSession) || null;
-        const localOpen = isRestorableClassDeviceOpen(localOpenCandidate)
+        const localOpen = isRestorableClassDeviceOpen(localOpenCandidate) &&
+          mapped.some((item) => classDeviceRecordInScope(localOpenCandidate, item)) &&
+          !await isOfflineClassCallArchived(localOpenCandidate!)
           ? localOpenCandidate
           : null;
         if (localOpenCandidate && !localOpen) {
@@ -1901,7 +1877,7 @@ export default function ClassDevicePage() {
               };
               saveClassDeviceSnapshot(initialClassId, snapshotState);
             }
-            applySnapshotState(snapshotState, {
+            await applySnapshotState(snapshotState, {
               restoreOpen: !restoredOpen,
             });
           }
@@ -1931,10 +1907,11 @@ export default function ClassDevicePage() {
         const completion = await cacheGet<ClassDeviceCompletion | null>(
           LAST_COMPLETION_KEY,
         );
-        if (completion?.version === 1) {
+        if (completion?.version === 1 && !await isOfflineClassCallArchived(completion)) {
           setLastCompletion(completion);
         }
-        let localOpen = isRestorableClassDeviceOpen(localOpenCandidate)
+        let localOpen = isRestorableClassDeviceOpen(localOpenCandidate) &&
+          !await isOfflineClassCallArchived(localOpenCandidate!)
           ? localOpenCandidate
           : null;
         if (
@@ -1954,7 +1931,7 @@ export default function ClassDevicePage() {
           setSessionRuntimeState(runtimeStateForOpen(localOpen));
           const snap = loadClassDeviceSnapshot<ClassPageSnapshotState>(localOpen.class_id);
           if (snap?.state) {
-            applySnapshotState(snap.state, { restoreOpen: false });
+            await applySnapshotState(snap.state, { restoreOpen: false });
           }
         } else if (classId || completion?.class_id) {
           const fallbackClassId = classId || completion?.class_id || "";
@@ -1977,7 +1954,7 @@ export default function ClassDevicePage() {
             if (snapshotAlreadyFinished) {
               saveClassDeviceSnapshot(fallbackClassId, safeSnapshot);
             }
-            applySnapshotState(safeSnapshot, {
+            await applySnapshotState(safeSnapshot, {
               restoreOpen: !snapshotAlreadyFinished,
             });
           }
@@ -2831,7 +2808,7 @@ export default function ClassDevicePage() {
       penaltyOpen,
       penRubric,
       penRows,
-      msg,
+      msg: null,
     });
   }
 
@@ -3534,6 +3511,7 @@ export default function ClassDevicePage() {
         version: 1,
         institution_id:
           selectedClass?.institution_id || cur.institution_id || "",
+        actor_profile_id: selectedClass?.actor_profile_id || cur.actor_profile_id || null,
         class_id: cur.class_id,
         class_label: cur.class_label,
         session_id: cur.id,
@@ -3567,7 +3545,7 @@ export default function ClassDevicePage() {
         penaltyOpen: false,
         penRubric,
         penRows: {},
-        msg: input.message,
+        msg: null,
       });
       clearReminderLoop();
       setSubjects([]);
@@ -3859,7 +3837,10 @@ export default function ClassDevicePage() {
       setMsg("Tentative de sécurisation des données avant déconnexion…");
       try {
         if (!offlineLogout) {
-          await flushOutbox({ releaseNetworkBackoff: true });
+          const status = selectedClass ? await getClassDeviceLocalSyncStatus(selectedClass) : null;
+          await flushOutbox({ releaseNetworkBackoff: true,
+            includeOperationIds: status?.entries.map((entry) => entry.operationId) || [],
+          });
         }
         const relay = selectedClass?.attendance_presence;
         if (
@@ -3966,23 +3947,6 @@ export default function ClassDevicePage() {
         : status === "unavailable"
           ? "bg-rose-500/20 text-rose-100"
           : "bg-slate-500/30 text-slate-100";
-  const callSyncLabel =
-    syncing
-      ? "synchronisation"
-      : sessionRuntimeState === "open_local_pending" ||
-          sessionRuntimeState === "closed_pending_sync" ||
-          pendingSync > 0
-        ? "en attente"
-        : sessionRuntimeState === "recoverable_error"
-          ? "à vérifier"
-          : "synchronisé";
-  const callSyncTone =
-    callSyncLabel === "synchronisé"
-      ? "bg-emerald-500/20 text-emerald-100"
-      : callSyncLabel === "à vérifier"
-        ? "bg-rose-500/20 text-rose-100"
-        : "bg-amber-500/20 text-amber-100";
-
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
       {/* Header compact avec établissement + année scolaire */}
@@ -4026,28 +3990,7 @@ export default function ClassDevicePage() {
                 Relais local : {connectivityLabel(relayStatus)}
               </span>
             ) : null}
-            <span
-              className={[
-                "rounded-full px-3 py-1 text-xs font-semibold",
-                callSyncTone,
-              ].join(" ")}
-              title="État de conservation et de synchronisation de l’appel"
-            >
-              Appel : {callSyncLabel}
-            </span>
-
-            <button
-              onClick={() => void syncNow()}
-              disabled={syncing || pendingSync === 0}
-              className="rounded-full border border-white/20 px-3 py-1 text-xs text-white/90 hover:bg-white/10 disabled:opacity-50"
-              title={
-                relayUiEnabled
-                  ? "Réessayer le relais local et, si Internet est disponible, le Cloud"
-                  : "Réessayer la synchronisation avec le Cloud"
-              }
-            >
-              {syncing ? "Sync..." : `Sync (${pendingSync})`}
-            </button>
+            {selectedClass ? <ClassDeviceSyncGuard key={selectedClass.id} scope={selectedClass} syncing={syncing} onRetry={syncNow} /> : null}
 
             {/* Bouton déconnexion or, très visible */}
             <GhostButton

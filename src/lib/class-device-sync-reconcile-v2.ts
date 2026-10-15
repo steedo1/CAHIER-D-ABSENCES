@@ -5,12 +5,14 @@ import {
   confirmClassDeviceCompletionInCloud,
   flushOutbox,
   listOfflineOutboxEntries,
+  isOfflineClassCallArchived,
   registerOfflineSessionReference,
   removeQueuedOfflineMutation,
   type FlushedMutationAcknowledgement,
   type OfflineOutboxEntry,
 } from "@/lib/offline";
 import { fetchAttendanceBackground } from "@/lib/attendance-network";
+import { classDeviceRecordInScope, type ClassDeviceSyncScope } from "@/lib/class-device-sync-state";
 import {
   listTeacherAttendanceOperations,
   markTeacherAttendanceSyncedInCloud,
@@ -28,7 +30,7 @@ import {
 } from "@/lib/teacher-session-lifecycle-delivery";
 
 type OperationType = "session-start" | "attendance" | "session-end";
-type ClassItem = { id: string; label?: string | null; institution_id: string };
+type ClassItem = ClassDeviceSyncScope & { label?: string | null };
 type RawOutboxRow = { id?: string; body?: any };
 type ReconcileOperation = {
   operationId: string;
@@ -36,6 +38,10 @@ type ReconcileOperation = {
   dependencyKey: string;
   body: Record<string, any>;
   outboxIds: string[];
+  blocked?: boolean;
+  createdAt?: number;
+  lastError?: string | null;
+  lastStatus?: number | null;
 };
 type ReconcileResult = {
   operation_id: string;
@@ -134,17 +140,9 @@ async function fetchClasses(): Promise<ClassItem[]> {
       id: text(item?.id),
       label: item?.label || null,
       institution_id: text(item?.institution_id),
+      actor_profile_id: text(item?.actor_profile_id) || null,
     }))
     .filter((item: ClassItem) => item.id && item.institution_id);
-}
-
-function scopedOutbox(entry: OfflineOutboxEntry, cls: ClassItem, classCount: number) {
-  if (!isCallType(entry.operationType)) return false;
-  const classId = text(entry.meta?.classId);
-  const institutionId = text(entry.meta?.institutionId);
-  if (classId && classId !== cls.id) return false;
-  if (institutionId && institutionId !== cls.institution_id) return false;
-  return Boolean(classId || institutionId || classCount === 1);
 }
 
 function outboxBody(entry: OfflineOutboxEntry, raw: RawOutboxRow | undefined) {
@@ -213,13 +211,16 @@ function upsertOperation(
     return;
   }
   existing.outboxIds = Array.from(new Set([...existing.outboxIds, ...value.outboxIds]));
+  existing.blocked = preferBody ? value.blocked : existing.blocked || value.blocked;
+  existing.createdAt ||= value.createdAt;
+  existing.lastError = value.lastError || existing.lastError;
+  existing.lastStatus = value.lastStatus ?? existing.lastStatus;
   if (preferBody || Object.keys(existing.body).length === 0) existing.body = value.body;
   if (!existing.dependencyKey && value.dependencyKey) existing.dependencyKey = value.dependencyKey;
 }
 
 async function classOperations(
   cls: ClassItem,
-  classes: ClassItem[],
   outbox: OfflineOutboxEntry[],
   rawRows: Map<string, RawOutboxRow>,
 ) {
@@ -231,23 +232,27 @@ async function classOperations(
   const map = new Map<string, ReconcileOperation>();
 
   for (const record of opens) {
-    if (record.class_id !== cls.id || terminalOpen(record)) continue;
+    if (!classDeviceRecordInScope(record, cls) || terminalOpen(record)) continue;
     upsertOperation(map, {
       operationId: record.operation_id,
       operationType: "session-start",
       dependencyKey: `client:${record.operation_id}`,
       body: durableOpenBody(record),
       outboxIds: [],
+      blocked: record.state === "blocked",
+      createdAt: Date.parse(record.created_at), lastError: record.last_error, lastStatus: record.last_status,
     });
   }
   for (const record of attendance) {
-    if (record.class_id !== cls.id || terminalAttendance(record)) continue;
+    if (!classDeviceRecordInScope(record, cls) || terminalAttendance(record)) continue;
     upsertOperation(map, {
       operationId: record.operation_id,
       operationType: "attendance",
       dependencyKey: record.session_reference || record.session_id,
       body: durableAttendanceBody(record),
       outboxIds: [],
+      blocked: record.state === "blocked" || record.state === "conflict",
+      createdAt: Date.parse(record.created_at), lastError: record.last_error, lastStatus: record.last_status,
     });
   }
   for (const record of lifecycle) {
@@ -267,17 +272,24 @@ async function classOperations(
       dependencyKey: record.session_id || "",
       body: durableCloseBody(record),
       outboxIds: [],
+      blocked: record.state === "blocked",
+      createdAt: Date.parse(record.created_at), lastError: record.last_error, lastStatus: record.last_status,
     });
   }
 
   for (const entry of outbox) {
-    if (!scopedOutbox(entry, cls, classes.length) || !isCallType(entry.operationType)) continue;
+    if (!isCallType(entry.operationType)) continue;
+    // Legacy rows without a class require an existing scoped durable operation.
+    if (!classDeviceRecordInScope(entry, cls) &&
+        (text(entry.meta?.classId) || !map.has(entry.operationId))) continue;
     upsertOperation(map, {
       operationId: entry.operationId,
       operationType: entry.operationType,
       dependencyKey: entry.sessionDependencyKey || "",
       body: outboxBody(entry, rawRows.get(entry.id)),
       outboxIds: [entry.id],
+      blocked: entry.state === "blocked",
+      createdAt: entry.createdAt, lastError: entry.lastError, lastStatus: entry.lastStatus,
     }, true);
   }
   return Array.from(map.values());
@@ -316,11 +328,10 @@ async function terminalizeResult(cls: ClassItem, result: ReconcileResult) {
 
 async function reconcileClass(
   cls: ClassItem,
-  classes: ClassItem[],
   outbox: OfflineOutboxEntry[],
   rawRows: Map<string, RawOutboxRow>,
 ) {
-  const operations = await classOperations(cls, classes, outbox, rawRows);
+  const operations = await classOperations(cls, outbox, rawRows);
   if (!operations.length) return 0;
   const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
     method: "POST",
@@ -411,7 +422,7 @@ async function unresolvedAttendanceDependencies(classes: ClassItem[]) {
 
 async function pendingLogicalCount(classes: ClassItem[]) {
   const outbox = (await listOfflineOutboxEntries()).filter((entry) =>
-    isCallType(entry.operationType),
+    isCallType(entry.operationType) && classes.some((cls) => classDeviceRecordInScope(entry, cls)),
   );
   const ids = new Set(outbox.map((entry) => entry.operationId));
   for (const cls of classes) {
@@ -448,7 +459,8 @@ async function reconcileLastCompletion(classes: ClassItem[]) {
     open_operation_id?: string | null; relay_state?: string;
   }>("classDevice:last-completion:v1");
   if (!completion || completion.relay_state !== "device_pending") return false;
-  if (!classes.some((cls) => cls.id === completion.class_id)) return true;
+  if (!classes.some((cls) => classDeviceRecordInScope(completion, cls))) return false;
+  if (await isOfflineClassCallArchived(completion)) return false;
   const response = await fetchAttendanceBackground("/api/class/sync/reconcile-v2", {
     method: "POST", credentials: "include", cache: "no-store",
     headers: { "content-type": "application/json" },
@@ -465,7 +477,13 @@ async function reconcileLastCompletion(classes: ClassItem[]) {
 
 /** Local journals decide whether background recovery has work. They never
  * authorize an API operation or prove that an attendance call reached Cloud. */
-export async function classDeviceSyncHasPendingWork(outbox: OfflineOutboxEntry[]) {
+export async function classDeviceSyncHasPendingWork(outbox: OfflineOutboxEntry[], scope?: ClassDeviceSyncScope) {
+  if (scope) {
+    const status = await getClassDeviceLocalSyncStatus(scope);
+    return status.total > 0 || status.completion?.relay_state === "device_pending" ||
+      (status.localOpen?.session_state !== "closed" &&
+        (status.localOpen?.delivery_origin === "local_pending" || status.localOpen?.id?.startsWith("client:")));
+  }
   if (outbox.some((entry) => isCallType(entry.operationType))) return true;
   try {
     const [cached, completion, localOpen] = await Promise.all([
@@ -494,23 +512,51 @@ export async function classDeviceSyncHasPendingWork(outbox: OfflineOutboxEntry[]
   } catch { return true; }
 }
 
-export async function repairClassDeviceSyncV2(options: { force?: boolean } = {}): Promise<ClassDeviceSyncRepairV2Summary> {
+export async function getClassDeviceLocalSyncStatus(scope: ClassDeviceSyncScope) {
+  const [outbox, completion, localOpen] = await Promise.all([
+    listOfflineOutboxEntries(),
+    cacheGet<{ class_id: string; session_id: string; open_operation_id?: string; relay_state?: string }>("classDevice:last-completion:v1"),
+    cacheGet<{ class_id: string; id: string; open_operation_id?: string; session_state?: string; delivery_origin?: string }>("classDevice:local-open"),
+  ]);
+  const operations = await classOperations(scope, outbox, new Map());
+  const operationIds = new Set(operations.map((operation) => operation.operationId));
+  const entries = outbox.filter((entry) => classDeviceRecordInScope(entry, scope) ||
+    (!text(entry.meta?.classId) && operationIds.has(entry.operationId)));
+  const blockedIds = new Set(operations.filter((operation) => operation.blocked).map((operation) => operation.operationId));
+  for (const entry of entries) {
+    operationIds.add(entry.operationId);
+    if (entry.state === "blocked") blockedIds.add(entry.operationId);
+  }
+  return {
+    entries,
+    operations,
+    total: operationIds.size,
+    blocked: blockedIds.size,
+    retryable: operationIds.size > blockedIds.size,
+    completion: classDeviceRecordInScope(completion, scope) && !await isOfflineClassCallArchived(completion!) ? completion : null,
+    localOpen: classDeviceRecordInScope(localOpen, scope) && !await isOfflineClassCallArchived(localOpen!) ? localOpen : null,
+  };
+}
+
+export async function repairClassDeviceSyncV2(options: { force?: boolean; scope?: ClassDeviceSyncScope } = {}): Promise<ClassDeviceSyncRepairV2Summary> {
   const initialOutbox = await listOfflineOutboxEntries();
-  if (!options.force && !(await classDeviceSyncHasPendingWork(initialOutbox))) {
+  if (!options.force && !(await classDeviceSyncHasPendingWork(initialOutbox, options.scope))) {
     return { before: 0, after: 0, flushed: 0, reconciled: 0, blocked: 0, last_error: null };
   }
-  const classes = await fetchClasses();
-  const before = classes.length
-    ? await pendingLogicalCount(classes)
-    : initialOutbox.filter((entry) => isCallType(entry.operationType)).length;
+  const discovered = await fetchClasses();
+  const classes = options.scope
+    ? discovered.filter((cls) => cls.id === options.scope!.id && cls.institution_id === options.scope!.institution_id)
+    : discovered;
+  const scopedInitial = initialOutbox.filter((entry) => !options.scope || classDeviceRecordInScope(entry, options.scope));
+  const before = classes.length ? await pendingLogicalCount(classes) : scopedInitial.length;
   if (!classes.length || typeof navigator === "undefined" || !navigator.onLine) {
     return {
       before,
       after: before,
       flushed: 0,
       reconciled: 0,
-      blocked: initialOutbox.filter((entry) => isCallType(entry.operationType) && entry.state === "blocked").length,
-      last_error: latestError(initialOutbox),
+      blocked: scopedInitial.filter((entry) => isCallType(entry.operationType) && entry.state === "blocked").length,
+      last_error: latestError(scopedInitial),
     };
   }
 
@@ -523,13 +569,15 @@ export async function repairClassDeviceSyncV2(options: { force?: boolean } = {})
     const rawRows = await rawOutboxRows(outboxBefore.map((entry) => entry.id));
     let passProgress = 0;
     for (const cls of classes) {
-      const resolved = await reconcileClass(cls, classes, outboxBefore, rawRows);
+      const resolved = await reconcileClass(cls, outboxBefore, rawRows);
       reconciled += resolved;
       passProgress += resolved;
     }
 
     const deferredEnds = await unresolvedAttendanceDependencies(classes);
     const flush = await flushOutbox({
+      includeOperationIds: (await Promise.all(classes.map(getClassDeviceLocalSyncStatus)))
+        .flatMap((status) => status.entries.map((entry) => entry.operationId)),
       includeOperationTypes: CALL_TYPE_LIST,
       deferSessionEndKeys: deferredEnds,
       releaseNetworkBackoff: true,
@@ -543,7 +591,7 @@ export async function repairClassDeviceSyncV2(options: { force?: boolean } = {})
     const outboxAfter = await listOfflineOutboxEntries();
     const rawAfter = await rawOutboxRows(outboxAfter.map((entry) => entry.id));
     for (const cls of classes) {
-      const resolved = await reconcileClass(cls, classes, outboxAfter, rawAfter);
+      const resolved = await reconcileClass(cls, outboxAfter, rawAfter);
       reconciled += resolved;
       passProgress += resolved;
     }
@@ -551,7 +599,7 @@ export async function repairClassDeviceSyncV2(options: { force?: boolean } = {})
     if ((await pendingLogicalCount(classes)) === 0 || passProgress === 0) break;
   }
 
-  const finalOutbox = await listOfflineOutboxEntries();
+  const finalOutbox = (await listOfflineOutboxEntries()).filter((entry) => classes.some((cls) => classDeviceRecordInScope(entry, cls)));
   const after = await pendingLogicalCount(classes);
   const completionPending = await reconcileLastCompletion(classes).catch(() => true);
   return {
