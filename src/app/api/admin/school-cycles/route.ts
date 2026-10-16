@@ -6,6 +6,8 @@ import { aggregateSchoolCycleRoster } from "@/lib/school-cycle-roster";
 import {
   groupScopedClassesByCycle,
   parseSchoolCyclesSettings,
+  inferSchoolCycleFromLevel,
+  resolveSchoolCycleForClass,
 } from "@/lib/school-cycles";
 
 export const runtime = "nodejs";
@@ -82,6 +84,14 @@ export async function GET() {
   }
 
   const grouped = groupScopedClassesByCycle(classes, institutionId, year, configuration);
+  const reviewNeeded = classes
+    .filter((row) => !configuration.classCycleById[row.id] &&
+      !inferSchoolCycleFromLevel(row.level))
+    .map(({ id, label, level }) => ({ id, label, level }));
+  const outsideEnabledCycles = classes
+    .filter((row) => !configuration.enabledCycles.includes(
+      resolveSchoolCycleForClass(row, configuration)))
+    .map(({ id, label, level }) => ({ id, label, level }));
 
   const enrollments: Array<{ class_id: string; student_id: string; end_date: string | null }> = [];
   const teachers: Array<{ class_id: string; teacher_id: string; end_date: string | null }> = [];
@@ -145,6 +155,8 @@ export async function GET() {
     totalClasses: classes.length,
     uniqueStudents: headcount.uniqueStudents,
     uniqueTeachers: headcount.uniqueTeachers,
+    reviewNeeded,
+    outsideEnabledCycles,
     cycles: Object.fromEntries(configuration.enabledCycles.map((cycle) => [
       cycle,
       {
