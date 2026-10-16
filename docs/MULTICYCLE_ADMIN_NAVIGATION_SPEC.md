@@ -77,6 +77,18 @@ Connexion Admin
 6. Adapter primaire/preschool pédagogiquement avec modèles approuvés, traductions PDF arabes testées séparément.
 7. Vérifier TypeScript, tests CI, Preview Vercel READY, sécurité multi-établissements; seulement ensuite envisager fusion en PROD.
 
+## Règle métier définitive — moyennes franco-arabes
+
+Décision confirmée : **ne jamais mélanger les moyennes de l'enseignement français et de l'enseignement arabe**.
+
+- Un élève dispose d'une seule identité et inscription administrative, mais de deux parcours pédagogiques possibles.
+- Pour chaque parcours, le calcul utilise uniquement ses propres matières, notes, barèmes et coefficients validés ; un classement éventuel est propre à ce parcours.
+- Un document imprimé peut comporter les deux bulletins côte à côte ou l'un à la suite de l'autre, mais ne présente **aucune moyenne franco-arabe générale**. `format: combined` signifie seulement « présentation regroupée », pas « fusion mathématique ».
+- La valeur `combinedAverage` du contrat de préparation reste strictement `null` pour empêcher les présentations de déduire une moyenne commune.
+- Ne jamais faire une moyenne des deux moyennes, même pondérée et même si elles sont toutes deux sur /20.
+- Les contrôles de préparation (actuellement hors production) doivent être conservés dans les futures API et modèles PDF.
+- **Ne pas modifier** les règles des bulletins historiques des établissements non activés (notamment CSCA).
+
 ## 7. Non-objectifs / garde-fous
 - Ne pas créer l'EPC ou aucune de ses classes avant stabilisation du code.
 - Ne pas supposer que « CP1 Français » et « CP1 Arabe » sont deux cohortes distinctes.
