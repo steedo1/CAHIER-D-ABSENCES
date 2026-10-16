@@ -8,12 +8,18 @@
 export type PrintableTeachingTrack = "french" | "arabic";
 export type PrintableBulletinVariant = PrintableTeachingTrack | "combined";
 
+type PrintableProgramBase = {
+  track: PrintableTeachingTrack;
+  generalAverage: number | null;
+};
+
 export function selectPrintablePrograms<
-  T extends { track: PrintableTeachingTrack; generalAverage: number | null }
+  F extends PrintableProgramBase,
+  A extends PrintableProgramBase
 >(
-  model: { french?: T | null; arabic?: T | null },
+  model: { french?: F | null; arabic?: A | null },
   variant: PrintableBulletinVariant,
-): T[] | null {
+): Array<F | A> | null {
   const french = model.french?.track === "french" ? model.french : null;
   const arabic = model.arabic?.track === "arabic" ? model.arabic : null;
 
