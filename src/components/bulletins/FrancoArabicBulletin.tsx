@@ -243,7 +243,7 @@ export default function FrancoArabicBulletin({
 
   const compact = variant === "combined";
   const context = programs[0];
-  return <article className={`${styles.page} ${printRoot ? styles.printRoot : ""} ${compact ? styles.combinedPage : ""}`}
+  return <article className={`${styles.page} ${printRoot ? "fa-report-print-root" : ""} ${compact ? styles.combinedPage : ""}`}
     aria-label={`Bulletin ${variant}`}>
     <Head model={model} variant={variant}/>
     <div className={styles.body}>
