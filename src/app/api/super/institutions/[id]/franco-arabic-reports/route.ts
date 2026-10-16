@@ -73,6 +73,24 @@ export async function PUT(req: NextRequest, context: Ctx) {
     return json({ error: "scale_outside_enabled_program" }, 400);
   }
 
+  if (settings.enabled && settings.coefficients.length) {
+    const programMapping = cycles.subjectTracksByCycle;
+    if (settings.coefficients.some((entry) =>
+      !programMapping[entry.cycle]?.[entry.subjectId]?.includes(entry.track))) {
+      return json({ error: "coefficient_subject_not_in_program" }, 400);
+    }
+    const ids = [...new Set(settings.coefficients.map((entry) => entry.subjectId))];
+    // School-owned subjects only: prohibit cross-institution subject coefficients.
+    const result = await access.srv.from("institution_subjects")
+      .select("subject_id")
+      .eq("institution_id", id).eq("is_active", true).in("subject_id", ids).limit(501);
+    if (result.error) return json({ error: "subject_scope_check_failed" }, 503);
+    const allowed = new Set((result.data || []).map((row) => row.subject_id));
+    if (ids.some((subjectId) => !allowed.has(subjectId))) {
+      return json({ error: "subject_not_enabled_for_school" }, 403);
+    }
+  }
+
   const nextJson = { ...oldJson, [FRANCO_ARABIC_REPORTS_SETTINGS_KEY]: settings };
   const updated = await access.srv.from("institutions")
     .update({ settings_json: nextJson }).eq("id", id).select("id").single();
