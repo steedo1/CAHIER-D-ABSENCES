@@ -121,3 +121,26 @@ test("legacy institution cannot accidentally generate a bilingual report", () =>
   assert.equal(result.generalAverage, null);
   assert.equal(combineProgramBulletins(calc("arabic"), calc("french")), null);
 });
+
+test("shared French/Arabic discipline cannot leak the same evaluation into both reports", () => {
+  const shared = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1, enabled: true, enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["french", "arabic"] },
+      subjectTracksByCycle: {
+        primary: {
+          [math]: ["french", "arabic"],
+          [quran]: ["arabic"],
+          [french]: ["french"],
+        },
+      },
+    },
+  });
+  const report = buildProgramBulletinDraft({
+    studentId: "A", cycle: "primary", level: "CP1", track: "french",
+    school: shared, reports, subjectPolicies: policies, officialScores: scores,
+  });
+  assert.equal(report.status, "incomplete");
+  assert.equal(report.generalAverage, null);
+  assert.ok(report.problems.includes("shared_subject_requires_program_specific_evaluations"));
+});
