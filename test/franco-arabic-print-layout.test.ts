@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import {
   printableAverageFields,
   selectPrintablePrograms,
@@ -43,4 +43,27 @@ test("approved print templates contain no red mixed-average warning banner", () 
   );
   assert.doesNotMatch(code, /Aucune moyenne franco-arabe globale/i);
   assert.doesNotMatch(code, /bandeau rouge/i);
+});
+
+test("an ordinary primary school uses only its normal teaching results", () => {
+  const ordinary = selectPrintablePrograms({ french, arabic }, "ordinary");
+  assert.ok(ordinary);
+  assert.deepEqual(ordinary, [french]);
+  assert.deepEqual(printableAverageFields(ordinary), { french: 14.55 });
+  const source = readFileSync(
+    new URL("../src/components/bulletins/FrancoArabicBulletin.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /variant === "ordinary" \? "Bulletin de notes"/);
+  assert.match(source, /ordinary \? "Résultats scolaires"/);
+  assert.match(source, /ordinary \? "Moyenne générale"/);
+  assert.match(source, /ordinary \? "Direction de l’établissement"/);
+});
+
+test("Super Admin has no bulletin editor or preview route", () => {
+  const path = (relative: string) => new URL(relative, import.meta.url);
+  assert.equal(existsSync(path("../src/app/super/cycles/bulletins-preview/page.tsx")), false);
+  assert.equal(existsSync(path("../src/app/api/super/institutions/[id]/franco-arabic-reports/route.ts")), false);
+  const superPage = readFileSync(path("../src/app/super/cycles/page.tsx"), "utf8");
+  assert.doesNotMatch(superPage, /bulletins-preview|maquettes professionnelles de bulletins/i);
 });
