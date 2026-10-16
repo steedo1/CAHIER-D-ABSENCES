@@ -64,16 +64,7 @@ export async function GET(_req: NextRequest, context: Params) {
     classRows = result.data || [];
   }
 
-  // Institution-specific subjects only. The global subject catalogue
-  // must not be exposed as if every school offered every subject.
-  const assignedSubjects = await access.srv.from("institution_subjects")
-    .select("subject_id,custom_name,is_active")
-    .eq("institution_id", id)
-    .eq("is_active", true)
-    .limit(501);
-  if (assignedSubjects.error) return reply({ error: "subjects_load_failed" }, 503);
-  if ((assignedSubjects.data || []).length > 500) {
-    return reply({ error: "too_many_subjects_for_editor" }, 503);
+  return reply({ error: "too_many_subjects_for_editor" }, 503);
   }
   const subjectIds = Array.from(new Set(
     (assignedSubjects.data || []).map((row) => row.subject_id).filter(Boolean)));
@@ -99,7 +90,6 @@ export async function GET(_req: NextRequest, context: Params) {
     configuration: parseSchoolCyclesSettings(data.settings_json),
     academicYear: academicYear || null,
     classes: classRows,
-    subjects: subjectRows,
   });
 }
 
@@ -242,23 +232,6 @@ export async function PUT(req: NextRequest, context: Params) {
     if (rows.error) return reply({ error: "class_scope_check_failed" }, 503);
     if ((rows.data || []).length !== classIds.length) {
       return reply({ error: "class_outside_institution" }, 403);
-    }
-  }
-
-  const subjectIds = Array.from(new Set(
-    Object.values(incoming.subjectTracksByCycle)
-      .flatMap((perCycle) => Object.keys(perCycle || {}))));
-  if (subjectIds.length) {
-    const allowedSubjects = await access.srv.from("institution_subjects")
-      .select("subject_id")
-      .eq("institution_id", id)
-      .eq("is_active", true)
-      .in("subject_id", subjectIds)
-      .limit(501);
-    if (allowedSubjects.error) return reply({ error: "subject_scope_check_failed" }, 503);
-    const actualIds = new Set((allowedSubjects.data || []).map((row) => row.subject_id));
-    if (subjectIds.some((subjectId) => !actualIds.has(subjectId))) {
-      return reply({ error: "subject_outside_institution" }, 403);
     }
   }
 
