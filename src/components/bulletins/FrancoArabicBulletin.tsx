@@ -1,4 +1,5 @@
 import styles from "./FrancoArabicBulletin.module.css";
+import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
 
 /**
  * Pure A4 document views. Only render already-authorized data from server.
@@ -235,16 +236,10 @@ export default function FrancoArabicBulletin({
   variant: BulletinVariant;
   printRoot?: boolean;
 }) {
-  const programs = variant === "combined"
-    ? [model.french, model.arabic].filter((p): p is BulletinProgram => Boolean(p))
-    : [variant === "french" ? model.french : model.arabic]
-        .filter((p): p is BulletinProgram => Boolean(p));
-  // Never silently print an incomplete or mismatched program layout.
-  const valid = programs.length === (variant === "combined" ? 2 : 1) &&
-    programs.every((p, i) => variant === "combined"
-      ? p.track === (i === 0 ? "french" : "arabic")
-      : p.track === variant);
-  if (!valid) return <p role="alert">Bulletin indisponible : données des enseignements incomplètes.</p>;
+  const programs = selectPrintablePrograms(model, variant);
+  // A combined A4 document is only the juxtaposition of two subject reports.
+  // The policy helper returns no "global average" and never merges results.
+  if (!programs) return <p role="alert">Bulletin indisponible : données des enseignements incomplètes.</p>;
 
   const compact = variant === "combined";
   const context = programs[0];
