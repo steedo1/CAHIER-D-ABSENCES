@@ -28,12 +28,17 @@ type Data = {
   outsideEnabledCycles?: SchoolClass[];
   uniqueStudents?: number;
   uniqueTeachers?: number;
+  programs?: Partial<Record<SchoolCycle, Partial<Record<TeachingTrack, {
+    subjects: Array<{ id: string; name: string }>;
+    uniqueTeachers: number;
+  }>>>>;
   error?: string;
 };
 
 export default function CycleOverviewClient({ initialCycle }: { initialCycle: SchoolCycle | null }) {
   const [data, setData] = useState<Data | null>(null);
   const [cycle, setCycle] = useState<SchoolCycle | "all">(initialCycle || "all");
+  const [programForCycle, setProgramForCycle] = useState<Partial<Record<SchoolCycle, TeachingTrack | "all">>>({});
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -138,6 +143,8 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
         const cycleName = SCHOOL_CYCLE_OPTIONS.find((option) => option.id === id)?.label || id;
         const classes = data.cycles?.[id]?.classes || [];
         const programs = data.configuration?.teachingTracksByCycle[id] || ["french"];
+        const selectedProgram = programForCycle[id] || "all";
+        const teachingData = selectedProgram === "all" ? null : data.programs?.[id]?.[selectedProgram];
         return (
           <section key={id} className="rounded-2xl border bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -149,13 +156,52 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
                 Gérer les classes
               </Link>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2" aria-label={`Enseignement de ${cycleName}`}>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedProgram === "all"
+                  ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700"}`}
+                onClick={() => setProgramForCycle((current) => ({ ...current, [id]: "all" }))}
+              >
+                Tous les enseignements
+              </button>
               {programs.map((program) => (
-                <span key={program} className="rounded-lg bg-sky-50 px-2 py-1 text-xs text-sky-800">
+                <button
+                  key={program}
+                  type="button"
+                  onClick={() => setProgramForCycle((current) => ({ ...current, [id]: program }))}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold ${selectedProgram === program
+                    ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700"}`}
+                >
                   {TEACHING_TRACK_OPTIONS.find((option) => option.id === program)?.label || program}
-                </span>
+                </button>
               ))}
             </div>
+            {selectedProgram !== "all" && (
+              <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-4">
+                <p className="text-sm font-bold text-sky-900">
+                  {teachingData?.uniqueTeachers ?? 0} enseignant(s) affecté(s) aux disciplines classées
+                </p>
+                {teachingData?.subjects?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {teachingData.subjects.map((subject) => (
+                      <span key={subject.id} className="rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700">
+                        {subject.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-amber-900">
+                    Aucune discipline encore classée pour cet enseignement.
+                    La configuration se fait dans Super Admin.
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-slate-600">
+                  Les classes et les élèves ci-dessous restent communs aux enseignements :
+                  ce choix ne crée pas de deuxième inscription.
+                </p>
+              </div>
+            )}
             <p className="mt-2 text-xs text-slate-500">
               Programmes autorisés pour ce cycle ; la répartition des élèves et des enseignants
               sera définie séparément lors de la configuration pédagogique.
