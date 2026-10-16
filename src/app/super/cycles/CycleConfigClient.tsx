@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BilingualReportingSettings from "./BilingualReportingSettings";
+
 import {
   SCHOOL_CYCLE_OPTIONS,
   TEACHING_TRACK_OPTIONS,
@@ -451,6 +453,8 @@ export default function CycleConfigClient() {
               )}
             </section>
           )}
+
+          <BilingualReportingSettings schoolId={schoolId} />
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             Cette configuration prépare la navigation. Elle ne crée aucun élève,
