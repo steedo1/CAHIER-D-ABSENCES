@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import styles from "./FrancoArabicBulletin.module.css";
 
 /**
@@ -223,7 +222,7 @@ function Footer({ model, programs, compact }: {
     <div className={styles.footerLine}>
       <span>Mon Cahier · Document scolaire</span>
       {model.sample && <strong>MAQUETTE · DONNÉES FICTIVES</strong>}
-      <span>{compact ? "Résultats indépendants" : "Édition A4"}</span>
+      <span>Édition A4</span>
     </div>
   </footer>;
 }
