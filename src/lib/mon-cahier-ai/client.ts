@@ -3,6 +3,21 @@ type AiRequestOptions = RequestInit & {
   timeoutMessage?: string;
 };
 
+/** Conversational text only: nominal school cards are never sent back to the model. */
+export function buildConversationHistory(messages: Array<{
+  role: "user" | "assistant"; text?: string; answer?: { summary: string }; error?: boolean;
+}>, question: string) {
+  let history = messages.filter((message, index) => !message.error && !(message.role === "user" && messages[index + 1]?.error))
+    .map(message => ({ role: message.role, content: String(message.answer?.summary || message.text || "").trim().slice(0, 6000) }))
+    .filter(message => message.content).slice(-10);
+  while (history[0]?.role === "assistant") history.shift();
+  while (history.length && history.reduce((sum, message) => sum + message.content.length, question.length) > 16000) {
+    history = history.slice(1);
+    while (history[0]?.role === "assistant") history = history.slice(1);
+  }
+  return [...history, { role: "user" as const, content: question }];
+}
+
 /** Bound both the request and its JSON body, including on an unstable connection. */
 export async function fetchAiJson<T>(url: string, options: AiRequestOptions = {}): Promise<T> {
   const {

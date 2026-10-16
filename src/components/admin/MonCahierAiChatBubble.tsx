@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, MessageCircle, Send, Sparkles, X } from "lucide-react";
-import { fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
+import { buildConversationHistory, fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
 import type { AiDataQuality, MonCahierAiAnswer } from "@/lib/mon-cahier-ai/core";
 
 type AcademicYear = {
@@ -36,6 +36,7 @@ type ChatMessage =
 
 const QUICK_QUESTIONS = [
   "Combien d’élèves compte l’établissement ?",
+  "Quels enseignants interviennent dans mes classes ?",
   "Quels élèves doivent être suivis en priorité ?",
   "Quelles classes sont les plus fragiles ?",
   "Résume-moi la situation pédagogique.",
@@ -194,7 +195,7 @@ export default function MonCahierAiChatBubble() {
     {
       id: "welcome",
       role: "assistant",
-      text: "Bonjour. Pose-moi simplement ta question sur la situation pédagogique de l’établissement.",
+      text: "Bonjour ! Je suis Cahier IA. Comment puis-je t’aider aujourd’hui ?",
     },
   ]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -267,19 +268,19 @@ export default function MonCahierAiChatBubble() {
     setAsking(true);
 
     try {
-      const json = await fetchAiJson<AssistantResponse>("/api/admin/mon-cahier-ia/assistant", {
+      const json = await fetchAiJson<AssistantResponse>("/api/admin/mon-cahier-ia/chat", {
         method: "POST",
         signal: controller.signal,
-        timeoutMs: 60_000,
-        timeoutMessage: "L’analyse prend trop de temps. Précise une classe dans ta question, puis réessaie.",
+        timeoutMs: 120_000,
+        timeoutMessage: "La réponse prend trop de temps. Réessaie dans un instant.",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: q,
+          messages: buildConversationHistory(messages, q),
           academic_year: academicYear,
           exam_date: examDate,
           class_id: null,
           level: null,
-          core_completion_percent: 60,
         }),
       });
 

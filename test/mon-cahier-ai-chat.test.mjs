@@ -137,9 +137,11 @@ test("a question sends the active year and chosen date once and renders every co
     });
     const post = ui.requests.filter((request) => request.options.method === "POST");
     assert.equal(post.length, 1, "rapid taps must not duplicate the analysis");
+    assert.equal(post[0].url, "/api/admin/mon-cahier-ia/chat");
     assert.deepEqual(JSON.parse(post[0].options.body), {
       question: "Prépare le conseil de la 3e3", academic_year: "2026-2027", exam_date: "2026-11-10",
-      class_id: null, level: null, core_completion_percent: 60,
+      class_id: null, level: null,
+      messages: [{ role: "user", content: "Prépare le conseil de la 3e3" }],
     });
     assert.equal(ui.host.querySelector("textarea").disabled, true);
     await act(async () => { pending.resolve(Response.json({ ok: true, answer: {

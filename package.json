@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:mon-cahier-ai": "node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-api.test.mjs test/mon-cahier-ai-server.test.mjs",
+    "test:mon-cahier-ai": "node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-api.test.mjs test/mon-cahier-ai-server.test.mjs && node --import tsx --test test/mon-cahier-ai-conversation.test.mjs",
     "test:parent-connect": "node --test test/parent-connect-navigation.test.mjs && node --import tsx --test test/parent-connect-server.test.ts && node --test test/parent-connect-db.test.mjs && node --test test/parent-connect-super.test.mjs && node --test test/parent-connect-sms.test.mjs"
   },
   "dependencies": {
@@ -16,6 +16,7 @@
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.75.0",
     "@types/pdfkit": "^0.17.3",
+    "ai": "7.0.142",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "libphonenumber-js": "^1.12.24",
