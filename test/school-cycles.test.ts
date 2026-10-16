@@ -7,7 +7,7 @@ import {
   inferSchoolCycleFromLevel,
   parseSchoolCyclesSettings,
   resolveSchoolCycleForClass,
-} from "../src/lib/school-cycles.ts";
+} from "../src/lib/school-cycles";
 
 const classId = "11111111-1111-4111-8111-111111111111";
 
