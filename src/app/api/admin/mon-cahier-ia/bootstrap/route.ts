@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { conversationContext } from "@/lib/mon-cahier-ai/conversation-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,6 +108,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
+      conversation_context: conversationContext(ctx.user.id, ctx.institution_id),
       model: {
         key: "mon_cahier_ai_pedagogy",
         version: "2.0.0",

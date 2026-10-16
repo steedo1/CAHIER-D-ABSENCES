@@ -154,8 +154,9 @@ export type MonCahierAiAnswer = {
   model: {
     key: string;
     version: string;
-    source: MonCahierAiContext["model_source"];
+    source: MonCahierAiContext["model_source"] | "language_model";
   };
+  sources?: string[];
   ethics_notice: string;
 };
 

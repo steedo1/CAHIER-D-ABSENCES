@@ -24,7 +24,10 @@ import {
   type AiProgramProgressionSignal,
   type MonCahierAiContext,
 } from "@/lib/mon-cahier-ai/core";
-import { buildRosterCountAnswer, isRosterCountQuestion, loadRosterCount } from "@/lib/mon-cahier-ai/roster-stats";
+import { answerDirectFact, greetingAnswer, isExplicitPedagogicalQuestion } from "@/lib/mon-cahier-ai/direct-answers";
+import { answerConversation, configuredConversationModel, conversationFailure, sanitizeConversationHistory } from "@/lib/mon-cahier-ai/conversation";
+import { createSchoolData } from "@/lib/mon-cahier-ai/school-data";
+import { conversationContext } from "@/lib/mon-cahier-ai/conversation-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +41,8 @@ type Body = {
   class_id?: string | null;
   level?: string | null;
   core_completion_percent?: number | string | null;
+  history?: unknown;
+  history_scope?: unknown;
 };
 
 type PredictionRow = {
@@ -1502,6 +1507,251 @@ async function saveInteraction(args: {
   }
 }
 
+async function runPedagogicalAnalysis(args: {
+  req: NextRequest;
+  ctx: { srv: ReturnType<typeof getSupabaseServiceClient>; institution_id: string; user: { id: string } };
+  question: string;
+  academic_year: string;
+  exam_date: string;
+  class_id: string | null;
+  core_completion_percent: number;
+  classes: ClassRow[];
+  scopeStats: ReturnType<typeof buildScopeStats>;
+  persist: boolean;
+}) {
+  const { req, ctx, question, academic_year, exam_date, class_id, core_completion_percent, classes, scopeStats, persist } = args;
+  const predictionResult = await loadPredictionRows({
+    srv: ctx.srv,
+    institution_id: ctx.institution_id,
+    classes,
+    academic_year,
+    exam_date,
+    core_completion_percent,
+  });
+
+  const officialAverages = await loadOfficialBulletinAverages({
+    req,
+    srv: ctx.srv,
+    institution_id: ctx.institution_id,
+    classes,
+    academic_year,
+    exam_date,
+    warnings: predictionResult.warnings,
+  });
+
+  const analysisRows = buildAnalysisRowsFromPredictionsAndBulletins({
+    classes,
+    predictionRows: predictionResult.rows,
+    officialAverages,
+  });
+
+  const mlRows = buildMlRowsWithOfficialAverages(analysisRows, officialAverages);
+
+  const ml = await callMlService({
+    institution_id: ctx.institution_id,
+    academic_year,
+    exam_date,
+    core_completion_percent,
+    rows: mlRows,
+  });
+
+  const students: AiStudentSignal[] = analysisRows.map((row) => {
+    const mlRow = ml.byId.get(row.student_id);
+    const officialAverage = officialAverages.get(row.student_id);
+    const officialGeneralAvg = chooseOfficialAverage(officialAverage);
+    const general_avg_20 = officialGeneralAvg == null
+      ? row.general_avg_20 == null
+        ? null
+        : round2(Number(row.general_avg_20))
+      : round2(officialGeneralAvg);
+    const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
+    const officialConductAvg = getOfficialConductAverage(officialAverage);
+    const conduct_total_20 = officialConductAvg == null
+      ? row.conduct_total_20 == null
+        ? row.conduct_norm == null
+          ? null
+          : round2(Number(row.conduct_norm) * 20)
+        : round2(Number(row.conduct_total_20))
+      : officialConductAvg;
+    const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
+    const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
+    const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
+    const officialBaselineSuccess = general_avg_20 == null
+      ? null
+      : computeOfficialBaselineSuccess({
+          official_avg_20: general_avg_20,
+          core_avg_20,
+          presence_rate,
+          conduct_total_20,
+          total_absent_hours,
+          nb_lates,
+          core_completion_percent,
+        });
+    const p_success = mlRow
+      ? mlRow.p_success
+      : officialBaselineSuccess != null
+        ? officialBaselineSuccess
+        : row.p_success == null
+          ? null
+          : clamp(Number(row.p_success), 0, 1);
+    const risk_level = normalizeRisk(mlRow?.risk_level, p_success);
+
+    const priority_score = computePriorityScore({
+      p_success,
+      general_avg_20,
+      core_avg_20,
+      presence_rate,
+      conduct_total_20,
+      total_absent_hours,
+      nb_lates,
+    });
+
+    const reasons = buildStudentReasons({
+      p_success,
+      general_avg_20,
+      core_avg_20,
+      presence_rate,
+      conduct_total_20,
+      total_absent_hours,
+      nb_lates,
+    });
+
+    return {
+      student_id: String(row.student_id),
+      full_name: fullName(row),
+      matricule: row.matricule || null,
+      class_id: String(row.class_id),
+      class_label: row.class_label || "Classe",
+      class_level: row.class_level || null,
+      general_avg_20,
+      core_avg_20,
+      presence_rate,
+      total_absent_hours,
+      nb_lates,
+      conduct_total_20,
+      p_success,
+      risk_level,
+      priority_score,
+      reasons,
+    };
+  });
+
+  const classSignals = buildClassSignals(classes, students);
+  const subjectResult = await loadSubjectSignals({
+    srv: ctx.srv,
+    classSignals,
+    academic_year,
+  }).catch((err: any) => {
+    predictionResult.warnings.push(`Analyse des matières indisponible : ${err?.message || "erreur"}`);
+    return {
+      subjects: [] as AiSubjectSignal[],
+      stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
+    };
+  });
+
+  const bulletinSubjectSignals = buildSubjectSignalsFromBulletins({
+    officialAverages,
+    classSignals,
+  });
+
+  const subjectsByKey = new Map<string, AiSubjectSignal>();
+
+  // Règle métier v16 : quand les moyennes matière officielles du bulletin
+  // existent, elles sont la vérité de référence pour les matières bloquantes.
+  // Les notes brutes publiées peuvent être incomplètes ou porter sur un autre
+  // agrégat ; elles ne doivent donc jamais écraser une moyenne matière bulletin.
+  for (const signal of subjectResult.subjects) {
+    const key = `${signal.class_id}::${signal.subject_id}`;
+    subjectsByKey.set(key, signal);
+  }
+
+  for (const signal of bulletinSubjectSignals) {
+    const key = `${signal.class_id}::${signal.subject_id}`;
+    subjectsByKey.set(key, signal);
+  }
+
+  const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
+
+  const textbookProgressionResult = await loadTextbookProgressions({
+    srv: ctx.srv,
+    institution_id: ctx.institution_id,
+    classes,
+    academic_year,
+    warnings: predictionResult.warnings,
+  });
+
+  const dataQuality = buildDataQuality({
+    classes,
+    predictionRows: predictionResult.rows,
+    students,
+    officialAverages,
+    subjectStats: subjectResult.stats,
+    core_completion_percent,
+    textbookProgressionStats: textbookProgressionResult.stats,
+    model_source: ml.source,
+    warnings: predictionResult.warnings,
+  });
+
+  const aiContext: MonCahierAiContext = {
+    institution_id: ctx.institution_id,
+    academic_year,
+    exam_date,
+    model_key: MODEL_KEY,
+    model_version: ml.version || MODEL_VERSION,
+    model_source: ml.source,
+    classes: classSignals,
+    students,
+    subjects: subjectSignals,
+    warnings: predictionResult.warnings,
+    data_quality: dataQuality,
+    scope_stats: scopeStats,
+    progressions: textbookProgressionResult.progressions,
+  };
+
+  const answer = buildAiAnswer(aiContext, question);
+  if (persist) {
+    await saveRunAndStudents({
+      srv: ctx.srv,
+      institution_id: ctx.institution_id,
+      user_id: ctx.user.id,
+      class_id,
+      academic_year,
+      exam_date,
+      core_completion_percent,
+      question,
+      answer,
+      context: aiContext,
+    });
+
+    await saveInteraction({
+      srv: ctx.srv,
+      institution_id: ctx.institution_id,
+      user_id: ctx.user.id,
+      academic_year,
+      question,
+      answer,
+      context: aiContext,
+    });
+
+  }
+
+  return {
+    ok: true,
+    context: aiContext,
+    answer,
+    context_meta: {
+      classes_count: aiContext.classes.length,
+      students_count: aiContext.students.length,
+      subjects_count: aiContext.subjects.length,
+      warnings: aiContext.warnings,
+      model_source: aiContext.model_source,
+      model_version: aiContext.model_version,
+      data_quality: aiContext.data_quality,
+      scope_stats: aiContext.scope_stats,
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const ctx = await getAdminContext();
@@ -1517,6 +1767,10 @@ export async function POST(req: NextRequest) {
     const levelHint = raw.level ? String(raw.level).trim() : null;
     const core_completion_percent = clamp(Number(raw.core_completion_percent ?? 60), 0, 100);
 
+    if (question.length > 2_000) {
+      return NextResponse.json({ ok: false, error: "question_too_long", message: "La question doit contenir au maximum 2 000 caractères." }, { status: 400 });
+    }
+
     if (!academic_year) {
       return NextResponse.json(
         { ok: false, error: "academic_year_required", message: "L’année scolaire est obligatoire." },
@@ -1531,17 +1785,78 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const greeting = greetingAnswer(question);
+    if (greeting) return NextResponse.json({ ok: true, answer: greeting });
+
+    const yearClasses = await loadClasses({ srv: ctx.srv, institution_id: ctx.institution_id, academic_year, class_id: null, levelHint: null });
+    const allowedClasses = yearClasses.filter((cls) => (!class_id || cls.id === class_id) && (!levelHint || levelMatches(cls.level, levelHint)));
+    if ((class_id || levelHint) && !allowedClasses.length) {
+      return NextResponse.json({ ok: true, answer: { title: "Aucune classe trouvée", summary: "Aucune classe ne correspond aux filtres choisis pour cette année scolaire." } });
+    }
+
+    const signal = AbortSignal.any([req.signal, AbortSignal.timeout(50_000)]);
+    const data = createSchoolData({ srv: ctx.srv, institutionId: ctx.institution_id, academicYear: academic_year,
+      referenceDate: exam_date, classes: allowedClasses, restricted: Boolean(class_id || levelHint), signal });
+    const history = sanitizeConversationHistory(raw.history, raw.history_scope, { academic_year, exam_date,
+      context_key: conversationContext(ctx.user.id, ctx.institution_id) });
+    const conversationModel = configuredConversationModel();
+    const contextual = conversationModel && history.some((message) => message.role === "user" && !greetingAnswer(message.content));
+    const direct = contextual ? null : await answerDirectFact({ question, academicYear: academic_year, data, classes: allowedClasses });
+    if (direct) {
+      const named = classesNamedInQuestion(question, allowedClasses, (cls) => cls.label);
+      const directClasses = named.length ? named : allowedClasses;
+      return NextResponse.json({ ok: true, answer: direct, context_meta: {
+        classes_count: directClasses.length, model_source: "rules_baseline", sources: direct.sources || [],
+        scope_stats: buildScopeStats({ classes: directClasses, allClasses: yearClasses,
+          class_id: directClasses.length === 1 ? directClasses[0].id : null, levelHint,
+          selectedClass: directClasses.length === 1 ? directClasses[0] : null }),
+      } });
+    }
+
+    if (conversationModel) {
+      try {
+        const result = await answerConversation({
+          question, academicYear: academic_year, referenceDate: exam_date, data, classes: allowedClasses, signal,
+          history,
+          analyzePedagogy: async (analysisClasses, focus) => {
+            const analysisScope = buildScopeStats({ classes: analysisClasses, allClasses: yearClasses,
+              class_id: analysisClasses.length === 1 ? analysisClasses[0].id : null, levelHint: null,
+              selectedClass: analysisClasses.length === 1 ? analysisClasses[0] : null });
+            const analysisQuestion = focus === "council" ? `Prépare une note pour le conseil de classe. ${question}` : question;
+            const analysis = await runPedagogicalAnalysis({
+              req: new NextRequest(req.url, { headers: req.headers, signal }), ctx, question: analysisQuestion, academic_year, exam_date,
+              class_id: analysisClasses.length === 1 ? analysisClasses[0].id : null, core_completion_percent,
+              classes: analysisClasses, scopeStats: analysisScope, persist: false,
+            });
+            return {
+              academic_year, reference_date: exam_date,
+              classes: analysis.context.classes,
+              data_quality: analysis.context.data_quality,
+              warnings: analysis.context.warnings,
+              ...(focus === "subjects" || focus === "summary" ? { subjects: analysis.context.subjects.slice(0, 20) } : {}),
+              ...(focus === "progressions" ? { progressions: analysis.context.progressions?.slice(0, 20) } : {}),
+              ...(focus === "council" ? { council_note: analysis.answer.council_note, recommendations: analysis.answer.recommendations } : {}),
+              ...(focus === "students" ? { students: analysis.context.students.slice().sort((a, b) => b.priority_score - a.priority_score).slice(0, 20).map((student) => ({
+                name: student.full_name, class_label: student.class_label, average_20: student.general_avg_20,
+                presence_rate: student.presence_rate, absent_hours: student.total_absent_hours,
+                lates: student.nb_lates, risk_level: student.risk_level, reasons: student.reasons,
+              })), student_details_truncated: analysis.context.students.length > 20 } : {}),
+            };
+          },
+        });
+        return NextResponse.json(result);
+      } catch (error) {
+        return NextResponse.json({ ok: false, error: "conversation_unavailable", message: conversationFailure(error) }, { status: 503 });
+      }
+    }
+
+    if (!isExplicitPedagogicalQuestion(question)) {
+      return NextResponse.json({ ok: false, error: "conversation_not_configured", message: "Le mode conversationnel n’est pas encore activé. Je peux déjà donner les effectifs, le nombre d’enseignants ou d’internes, les dates des trimestres et les bilans pédagogiques explicites." }, { status: 503 });
+    }
+
     const questionLevelHint = extractLevelHint(question);
 
-    const selectedClasses = class_id
-      ? await loadClasses({
-          srv: ctx.srv,
-          institution_id: ctx.institution_id,
-          academic_year,
-          class_id,
-          levelHint: null,
-        })
-      : [];
+    const selectedClasses = class_id ? allowedClasses : [];
 
     const selectedClass = selectedClasses[0] || null;
     const selectedScopeLevel = selectedClass?.level || levelHint || null;
@@ -1575,15 +1890,7 @@ export async function POST(req: NextRequest) {
 
     const scopeLevelHint = class_id ? null : levelHint || questionLevelHint;
 
-    const availableClasses = class_id
-      ? selectedClasses
-      : await loadClasses({
-          srv: ctx.srv,
-          institution_id: ctx.institution_id,
-          academic_year,
-          class_id,
-          levelHint: null,
-        });
+    const availableClasses = class_id ? selectedClasses : yearClasses;
     const namedClasses = class_id ? [] : classesNamedInQuestion(question, availableClasses, (cls) => cls.label);
     const classes = namedClasses.length ? namedClasses
       : scopeLevelHint ? availableClasses.filter((cls) => levelMatches(cls.level, scopeLevelHint)) : availableClasses;
@@ -1606,15 +1913,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const allClassesForYear = class_id
-      ? await loadClasses({
-          srv: ctx.srv,
-          institution_id: ctx.institution_id,
-          academic_year,
-          class_id: null,
-          levelHint: null,
-        })
-      : availableClasses;
+    const allClassesForYear = yearClasses;
 
     const scopeStats = buildScopeStats({
       classes,
@@ -1624,247 +1923,8 @@ export async function POST(req: NextRequest) {
       selectedClass: selectedClass || (namedClasses.length === 1 ? namedClasses[0] : null),
     });
 
-    if (isRosterCountQuestion(question, classes.map((cls) => cls.label || ""))) {
-      const studentsCount = await loadRosterCount(ctx.srv, ctx.institution_id, classes.map((cls) => cls.id));
-      const answer = buildRosterCountAnswer({
-        academicYear: academic_year,
-        scopeLabel: namedClasses.length ? namedClasses.map((cls) => cls.label || "Classe").join(", ")
-          : classes.length === 1 ? classes[0].label || "Classe" : scopeLevelHint ? `Niveau ${scopeLevelHint}` : "Établissement",
-        classesCount: classes.length,
-        studentsCount,
-      });
-      return NextResponse.json({ ok: true, answer, context_meta: {
-        classes_count: classes.length, students_count: studentsCount, subjects_count: 0,
-        warnings: [], model_source: "rules_baseline", model_version: MODEL_VERSION, scope_stats: scopeStats,
-      } });
-    }
-
-    const predictionResult = await loadPredictionRows({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      exam_date,
-      core_completion_percent,
-    });
-
-    const officialAverages = await loadOfficialBulletinAverages({
-      req,
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      exam_date,
-      warnings: predictionResult.warnings,
-    });
-
-    const analysisRows = buildAnalysisRowsFromPredictionsAndBulletins({
-      classes,
-      predictionRows: predictionResult.rows,
-      officialAverages,
-    });
-
-    const mlRows = buildMlRowsWithOfficialAverages(analysisRows, officialAverages);
-
-    const ml = await callMlService({
-      institution_id: ctx.institution_id,
-      academic_year,
-      exam_date,
-      core_completion_percent,
-      rows: mlRows,
-    });
-
-    const students: AiStudentSignal[] = analysisRows.map((row) => {
-      const mlRow = ml.byId.get(row.student_id);
-      const officialAverage = officialAverages.get(row.student_id);
-      const officialGeneralAvg = chooseOfficialAverage(officialAverage);
-      const general_avg_20 = officialGeneralAvg == null
-        ? row.general_avg_20 == null
-          ? null
-          : round2(Number(row.general_avg_20))
-        : round2(officialGeneralAvg);
-      const core_avg_20 = row.raw_core_avg_20 == null ? null : round2(Number(row.raw_core_avg_20));
-      const officialConductAvg = getOfficialConductAverage(officialAverage);
-      const conduct_total_20 = officialConductAvg == null
-        ? row.conduct_total_20 == null
-          ? row.conduct_norm == null
-            ? null
-            : round2(Number(row.conduct_norm) * 20)
-          : round2(Number(row.conduct_total_20))
-        : officialConductAvg;
-      const presence_rate = row.presence_rate == null ? null : round2(Number(row.presence_rate));
-      const total_absent_hours = row.total_absent_hours == null ? null : round2(Number(row.total_absent_hours));
-      const nb_lates = row.nb_lates == null ? null : Number(row.nb_lates);
-      const officialBaselineSuccess = general_avg_20 == null
-        ? null
-        : computeOfficialBaselineSuccess({
-            official_avg_20: general_avg_20,
-            core_avg_20,
-            presence_rate,
-            conduct_total_20,
-            total_absent_hours,
-            nb_lates,
-            core_completion_percent,
-          });
-      const p_success = mlRow
-        ? mlRow.p_success
-        : officialBaselineSuccess != null
-          ? officialBaselineSuccess
-          : row.p_success == null
-            ? null
-            : clamp(Number(row.p_success), 0, 1);
-      const risk_level = normalizeRisk(mlRow?.risk_level, p_success);
-
-      const priority_score = computePriorityScore({
-        p_success,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        conduct_total_20,
-        total_absent_hours,
-        nb_lates,
-      });
-
-      const reasons = buildStudentReasons({
-        p_success,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        conduct_total_20,
-        total_absent_hours,
-        nb_lates,
-      });
-
-      return {
-        student_id: String(row.student_id),
-        full_name: fullName(row),
-        matricule: row.matricule || null,
-        class_id: String(row.class_id),
-        class_label: row.class_label || "Classe",
-        class_level: row.class_level || null,
-        general_avg_20,
-        core_avg_20,
-        presence_rate,
-        total_absent_hours,
-        nb_lates,
-        conduct_total_20,
-        p_success,
-        risk_level,
-        priority_score,
-        reasons,
-      };
-    });
-
-    const classSignals = buildClassSignals(classes, students);
-    const subjectResult = await loadSubjectSignals({
-      srv: ctx.srv,
-      classSignals,
-      academic_year,
-    }).catch((err: any) => {
-      predictionResult.warnings.push(`Analyse des matières indisponible : ${err?.message || "erreur"}`);
-      return {
-        subjects: [] as AiSubjectSignal[],
-        stats: { published_evaluations_count: 0, notes_count: 0, evaluated_subjects_count: 0 },
-      };
-    });
-
-    const bulletinSubjectSignals = buildSubjectSignalsFromBulletins({
-      officialAverages,
-      classSignals,
-    });
-
-    const subjectsByKey = new Map<string, AiSubjectSignal>();
-
-    // Règle métier v16 : quand les moyennes matière officielles du bulletin
-    // existent, elles sont la vérité de référence pour les matières bloquantes.
-    // Les notes brutes publiées peuvent être incomplètes ou porter sur un autre
-    // agrégat ; elles ne doivent donc jamais écraser une moyenne matière bulletin.
-    for (const signal of subjectResult.subjects) {
-      const key = `${signal.class_id}::${signal.subject_id}`;
-      subjectsByKey.set(key, signal);
-    }
-
-    for (const signal of bulletinSubjectSignals) {
-      const key = `${signal.class_id}::${signal.subject_id}`;
-      subjectsByKey.set(key, signal);
-    }
-
-    const subjectSignals = Array.from(subjectsByKey.values()).sort((a, b) => b.blocker_score - a.blocker_score);
-
-    const textbookProgressionResult = await loadTextbookProgressions({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      classes,
-      academic_year,
-      warnings: predictionResult.warnings,
-    });
-
-    const dataQuality = buildDataQuality({
-      classes,
-      predictionRows: predictionResult.rows,
-      students,
-      officialAverages,
-      subjectStats: subjectResult.stats,
-      core_completion_percent,
-      textbookProgressionStats: textbookProgressionResult.stats,
-      model_source: ml.source,
-      warnings: predictionResult.warnings,
-    });
-
-    const aiContext: MonCahierAiContext = {
-      institution_id: ctx.institution_id,
-      academic_year,
-      exam_date,
-      model_key: MODEL_KEY,
-      model_version: ml.version || MODEL_VERSION,
-      model_source: ml.source,
-      classes: classSignals,
-      students,
-      subjects: subjectSignals,
-      warnings: predictionResult.warnings,
-      data_quality: dataQuality,
-      scope_stats: scopeStats,
-      progressions: textbookProgressionResult.progressions,
-    };
-
-    const answer = buildAiAnswer(aiContext, question);
-    await saveRunAndStudents({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      user_id: ctx.user.id,
-      class_id,
-      academic_year,
-      exam_date,
-      core_completion_percent,
-      question,
-      answer,
-      context: aiContext,
-    });
-
-    await saveInteraction({
-      srv: ctx.srv,
-      institution_id: ctx.institution_id,
-      user_id: ctx.user.id,
-      academic_year,
-      question,
-      answer,
-      context: aiContext,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      answer,
-      context_meta: {
-        classes_count: aiContext.classes.length,
-        students_count: aiContext.students.length,
-        subjects_count: aiContext.subjects.length,
-        warnings: aiContext.warnings,
-        model_source: aiContext.model_source,
-        model_version: aiContext.model_version,
-        data_quality: aiContext.data_quality,
-        scope_stats: aiContext.scope_stats,
-      },
-    });
+    const result = await runPedagogicalAnalysis({ req, ctx, question, academic_year, exam_date, class_id, core_completion_percent, classes, scopeStats, persist: true });
+    return NextResponse.json({ ok: true, answer: result.answer, context_meta: result.context_meta });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "mon_cahier_ai_assistant_failed" },

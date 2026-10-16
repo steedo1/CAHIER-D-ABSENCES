@@ -57,6 +57,7 @@ function fixture({ roles = ["educator", "admin"], signedIn = true, failCounts = 
         eq(key, value) { filters.push({ op: "eq", key, value }); return query; },
         in(key, value) { filters.push({ op: "in", key, value }); return query; },
         is(key, value) { filters.push({ op: "is", key, value }); return query; },
+        abortSignal(signal) { call.signal = signal; return query; },
         order() { return query; },
         limit(value) { rowLimit = value; return query; },
         range(start, end) { page = [start, end]; call.range = page; return query; },
@@ -127,7 +128,7 @@ test("the actual assistant counts unique active students using a single minimal 
   assert.equal(json.answer.quick_stats.cards.find((card) => card.key === "scope_classes").value, "2");
   const roster = f.calls.filter((call) => call.table === "class_enrollments");
   assert.equal(roster.length, 1);
-  assert.equal(roster[0].columns, "student_id");
+  assert.equal(roster[0].columns, "student_id,class_id");
   assert.ok(roster[0].filters.some((filter) => filter.key === "institution_id" && filter.value === "school-1"));
   assert.deepEqual(roster[0].filters.find((filter) => filter.key === "class_id").value, ["class-1", "class-2"]);
   assert.ok(!f.calls.some((call) => call.rpc || call.method === "insert" || call.table === "grade_periods"));
