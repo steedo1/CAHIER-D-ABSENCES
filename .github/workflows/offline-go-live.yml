@@ -43,6 +43,9 @@ jobs:
       - name: Typecheck web
         run: npx tsc --noEmit
 
+      - name: School cycle compatibility regression suite
+        run: node --import tsx --test test/school-cycles.test.ts
+
       - name: Mon Cahier IA regression suite
         run: npm run test:mon-cahier-ai
 
