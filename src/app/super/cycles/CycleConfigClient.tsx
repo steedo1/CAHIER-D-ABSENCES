@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import BilingualReportingSettings from "./BilingualReportingSettings";
 
 import {
   SCHOOL_CYCLE_OPTIONS,
@@ -406,55 +405,6 @@ export default function CycleConfigClient() {
               )}
             </section>
           )}
-
-          {settings.enabled && loadedSchoolId === schoolId && (
-            <section className="rounded-2xl border bg-white p-5 shadow-sm">
-              <h2 className="font-bold text-slate-900">Disciplines françaises et arabes</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Pour chaque cycle, indiquez les enseignements auxquels appartient une discipline.
-                Une discipline peut relever des deux programmes. Les matières sans classification
-                ne seront pas présentées comme françaises ou arabes dans les vues filtrées.
-              </p>
-              {!subjects.length ? (
-                <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  Aucune discipline active n'est encore enregistrée pour cet établissement.
-                  Créez les disciplines avant de répartir leurs programmes.
-                </p>
-              ) : (
-                <div className="mt-4 space-y-4">
-                  {settings.enabledCycles.map((cycle) => (
-                    <div key={cycle} className="rounded-xl border border-slate-200 p-4">
-                      <h3 className="font-semibold">
-                        {SCHOOL_CYCLE_OPTIONS.find((item) => item.id === cycle)?.label}
-                      </h3>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {subjects.map((subject) => (
-                          <div key={subject.id} className="rounded-lg bg-slate-50 p-3">
-                            <p className="text-sm font-semibold text-slate-900">{subject.name}</p>
-                            <div className="mt-2 flex flex-wrap gap-3">
-                              {(settings.teachingTracksByCycle[cycle] || ["french"]).map((track) => (
-                                <label key={track} className="flex items-center gap-1.5 text-xs text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={(settings.subjectTracksByCycle[cycle]?.[subject.id] || [])
-                                      .includes(track)}
-                                    onChange={() => toggleSubjectTrack(cycle, subject.id, track)}
-                                  />
-                                  {track === "french" ? "Français" : "Arabe"}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          <BilingualReportingSettings schoolId={schoolId} />
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             Cette configuration prépare la navigation. Elle ne crée aucun élève,
