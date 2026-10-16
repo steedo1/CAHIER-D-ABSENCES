@@ -36,6 +36,8 @@ export type SchoolCyclesSettings = {
   classCycleById: Record<string, SchoolCycle>;
   /** Teaching programs offered per enabled cycle; not user interface languages. */
   teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+  /** Per-cycle and per-subject classifications. No automatic language guessing. */
+  subjectTracksByCycle: Partial<Record<SchoolCycle, Record<string, TeachingTrack[]>>>;
   /** Default landing view for an eligible school administrator. */
   defaultView: "all" | SchoolCycle;
   /** A preference only. It does not imply translated/RTL pages exist yet. */
@@ -66,6 +68,7 @@ export function getDefaultSchoolCyclesSettings(): SchoolCyclesSettings {
     enabledCycles: ["secondary"],
     classCycleById: {},
     teachingTracksByCycle: {},
+    subjectTracksByCycle: {},
     defaultView: "all",
     preferredLanguage: "fr",
   };
@@ -112,6 +115,23 @@ export function parseSchoolCyclesSettings(settingsJson: unknown): SchoolCyclesSe
     teachingTracksByCycle[cycle] = accepted.length ? accepted : ["french"];
   }
 
+  const subjectTracksByCycle: SchoolCyclesSettings["subjectTracksByCycle"] = {};
+  const rawSubjectTracks = isRecord(stored.subjectTracksByCycle)
+    ? stored.subjectTracksByCycle : {};
+  for (const cycle of enabledCycles) {
+    const perCycle = rawSubjectTracks[cycle];
+    const mapped: Record<string, TeachingTrack[]> = {};
+    if (isRecord(perCycle)) {
+      for (const [subjectId, tracks] of Object.entries(perCycle).slice(0, 250)) {
+        if (!CLASS_ID_PATTERN.test(subjectId) || !Array.isArray(tracks)) continue;
+        const accepted = Array.from(new Set(tracks.filter(isTeachingTrack)))
+          .filter((track) => teachingTracksByCycle[cycle]?.includes(track));
+        if (accepted.length) mapped[subjectId] = accepted;
+      }
+    }
+    subjectTracksByCycle[cycle] = mapped;
+  }
+
   const defaultView =
     stored.defaultView === "all" ||
     (isSchoolCycle(stored.defaultView) && enabledCycles.includes(stored.defaultView))
@@ -124,6 +144,7 @@ export function parseSchoolCyclesSettings(settingsJson: unknown): SchoolCyclesSe
     enabledCycles,
     classCycleById,
     teachingTracksByCycle,
+    subjectTracksByCycle,
     defaultView,
     preferredLanguage: stored.preferredLanguage === "ar" ? "ar" : "fr",
   };
