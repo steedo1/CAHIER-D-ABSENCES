@@ -14,12 +14,14 @@ import {
 
 type Institution = { id: string; name: string; code_unique: string };
 type CycleClass = { id: string; label: string; level: string | null };
+type CycleSubject = { id: string; name: string; code: string | null };
 type ListResponse = { items?: Institution[]; error?: string };
 type DetailsResponse = {
   ok?: boolean;
   configuration?: SchoolCyclesSettings;
   institution?: Institution;
   classes?: CycleClass[];
+  subjects?: CycleSubject[];
   academicYear?: string | null;
   error?: string;
 };
@@ -31,6 +33,7 @@ export default function CycleConfigClient() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [classes, setClasses] = useState<CycleClass[]>([]);
+  const [subjects, setSubjects] = useState<CycleSubject[]>([]);
   const [academicYear, setAcademicYear] = useState<string | null>(null);
   const [loadedSchoolId, setLoadedSchoolId] = useState("");
   const [error, setError] = useState("");
@@ -64,6 +67,7 @@ export default function CycleConfigClient() {
     setLoading(true);
     setLoadedSchoolId("");
     setClasses([]);
+    setSubjects([]);
     setAcademicYear(null);
     setError("");
     setNotice("");
@@ -80,6 +84,7 @@ export default function CycleConfigClient() {
         if (alive) {
           setSettings(data.configuration);
           setClasses(data.classes || []);
+          setSubjects(data.subjects || []);
           setAcademicYear(data.academicYear || null);
           setLoadedSchoolId(schoolId);
         }
@@ -120,6 +125,9 @@ export default function CycleConfigClient() {
         classCycleById: Object.fromEntries(
           Object.entries(current.classCycleById).filter(([, value]) =>
             enabledCycles.includes(value))),
+        subjectTracksByCycle: Object.fromEntries(
+          Object.entries(current.subjectTracksByCycle).filter(([key]) =>
+            enabledCycles.includes(key as SchoolCycle))),
         defaultView: current.defaultView !== "all" &&
           !enabledCycles.includes(current.defaultView) ? "all" : current.defaultView,
       };
@@ -140,6 +148,13 @@ export default function CycleConfigClient() {
           ...current.teachingTracksByCycle,
           [cycle]: next,
         },
+        subjectTracksByCycle: {
+          ...current.subjectTracksByCycle,
+          [cycle]: Object.fromEntries(Object.entries(
+            current.subjectTracksByCycle[cycle] || {}).map(([subjectId, tracks]) =>
+            [subjectId, tracks.filter((item) => next.includes(item))]).filter(
+            ([, tracks]) => (tracks as TeachingTrack[]).length > 0)),
+        },
       };
     });
   }
@@ -151,6 +166,26 @@ export default function CycleConfigClient() {
       if (!cycle) delete updated[classId];
       else updated[classId] = cycle;
       return { ...current, classCycleById: updated };
+    });
+  }
+
+  function toggleSubjectTrack(cycle: SchoolCycle, subjectId: string, track: TeachingTrack) {
+    setNotice("");
+    setSettings((current) => {
+      const oldTracks = current.subjectTracksByCycle[cycle]?.[subjectId] || [];
+      const nextTracks = oldTracks.includes(track)
+        ? oldTracks.filter((item) => item !== track)
+        : [...oldTracks, track];
+      const nextSubjects = { ...current.subjectTracksByCycle[cycle] };
+      if (nextTracks.length) nextSubjects[subjectId] = nextTracks;
+      else delete nextSubjects[subjectId];
+      return {
+        ...current,
+        subjectTracksByCycle: {
+          ...current.subjectTracksByCycle,
+          [cycle]: nextSubjects,
+        },
+      };
     });
   }
 
@@ -176,6 +211,7 @@ export default function CycleConfigClient() {
             enabledCycles: settings.enabledCycles,
             teachingTracksByCycle: nextTracks,
             classCycleById: settings.classCycleById,
+            subjectTracksByCycle: settings.subjectTracksByCycle,
             defaultView: settings.defaultView,
             preferredLanguage: settings.preferredLanguage,
           }),
@@ -364,6 +400,53 @@ export default function CycleConfigClient() {
                       </label>
                     );
                   })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {settings.enabled && loadedSchoolId === schoolId && (
+            <section className="rounded-2xl border bg-white p-5 shadow-sm">
+              <h2 className="font-bold text-slate-900">Disciplines françaises et arabes</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Pour chaque cycle, indiquez les enseignements auxquels appartient une discipline.
+                Une discipline peut relever des deux programmes. Les matières sans classification
+                ne seront pas présentées comme françaises ou arabes dans les vues filtrées.
+              </p>
+              {!subjects.length ? (
+                <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  Aucune discipline active n'est encore enregistrée pour cet établissement.
+                  Créez les disciplines avant de répartir leurs programmes.
+                </p>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  {settings.enabledCycles.map((cycle) => (
+                    <div key={cycle} className="rounded-xl border border-slate-200 p-4">
+                      <h3 className="font-semibold">
+                        {SCHOOL_CYCLE_OPTIONS.find((item) => item.id === cycle)?.label}
+                      </h3>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {subjects.map((subject) => (
+                          <div key={subject.id} className="rounded-lg bg-slate-50 p-3">
+                            <p className="text-sm font-semibold text-slate-900">{subject.name}</p>
+                            <div className="mt-2 flex flex-wrap gap-3">
+                              {(settings.teachingTracksByCycle[cycle] || ["french"]).map((track) => (
+                                <label key={track} className="flex items-center gap-1.5 text-xs text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={(settings.subjectTracksByCycle[cycle]?.[subject.id] || [])
+                                      .includes(track)}
+                                    onChange={() => toggleSubjectTrack(cycle, subject.id, track)}
+                                  />
+                                  {track === "french" ? "Français" : "Arabe"}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
