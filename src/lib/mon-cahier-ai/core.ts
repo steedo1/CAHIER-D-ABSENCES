@@ -8,7 +8,7 @@
   | "quick_stats"
   | "general_analysis";
 
-export type RiskLevel = "low" | "medium" | "high";
+export type RiskLevel = "low" | "medium" | "high" | "unknown";
 
 export type AiStudentSignal = {
   student_id: string;
@@ -190,6 +190,12 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function cleanNumberOrNull(value: unknown, precision = 2): number | null {
+  if ((typeof value !== "number" && typeof value !== "string") || (typeof value === "string" && !value.trim())) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(precision)) : null;
+}
+
 export function round1(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(Number(value))) return null;
   return Math.round(Number(value) * 10) / 10;
@@ -299,6 +305,7 @@ export function isQuickStatsQuestion(cleanedQuestion: string): boolean {
   if (!asksCount) return false;
 
   return (
+    q.includes("effectif") ||
     q.includes("classe") ||
     q.includes("classes") ||
     q.includes("niveau") ||
@@ -431,8 +438,9 @@ export function levelMatches(level: string | null | undefined, hint: string | nu
 }
 
 export function getRiskLevel(pSuccess: number | null | undefined): RiskLevel {
+  if (pSuccess == null) return "unknown";
   const p = Number(pSuccess);
-  if (!Number.isFinite(p)) return "medium";
+  if (!Number.isFinite(p)) return "unknown";
   if (p < 0.45) return "high";
   if (p < 0.7) return "medium";
   return "low";
@@ -558,11 +566,23 @@ function topKeywords(question: string) {
     .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
 }
 
+export function classesNamedInQuestion<T>(question: string, classes: T[], label: (item: T) => string | null): T[] {
+  const text = cleanText(question);
+  return classes.filter((item) => {
+    const name = cleanText(label(item));
+    if (!name) return false;
+    // Accept "3e3" and "3e 3", without confusing 3e3 with 3e30.
+    const pattern = name.replace(/\s/g, "").split("").join("\\s*");
+    return new RegExp(`(?:^|\\s)${pattern}(?=\\s|$)`).test(text);
+  });
+}
+
 export function selectContextByQuestion(context: MonCahierAiContext, question: string) {
   const levelHint = extractLevelHint(question);
   const keywords = topKeywords(question);
+  const namedClasses = classesNamedInQuestion(question, context.classes, (cls) => cls.class_label);
 
-  const matchingClasses = context.classes.filter((cls) => {
+  const matchingClasses = namedClasses.length ? namedClasses : context.classes.filter((cls) => {
     if (!levelMatches(cls.class_level, levelHint)) return false;
     if (!keywords.length) return true;
     const hay = cleanText(`${cls.class_label} ${cls.class_level || ""}`);
@@ -806,9 +826,10 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
   const totalStudents = scoped.students.length;
   const highRisk = scoped.students.filter((s) => s.risk_level === "high").length;
   const mediumRisk = scoped.students.filter((s) => s.risk_level === "medium").length;
+  const scoredClasses = scoped.classes.filter((cls) => cls.avg_success_probability != null);
   const avgSuccess =
-    scoped.classes.length > 0
-      ? scoped.classes.reduce((acc, cls) => acc + (cls.avg_success_probability ?? 0), 0) / scoped.classes.length
+    scoredClasses.length > 0
+      ? scoredClasses.reduce((acc, cls) => acc + cls.avg_success_probability!, 0) / scoredClasses.length
       : null;
   const scopedProgressions = selectProgressionsForScope(context, scoped);
   const avgTextbookProgression = averageProgressionRate(scopedProgressions);

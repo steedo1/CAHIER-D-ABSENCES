@@ -5,6 +5,8 @@ import {
   buildAiAnswer,
   buildStudentReasons,
   cleanText,
+  cleanNumberOrNull,
+  classesNamedInQuestion,
   classifySubjectSignal,
   clamp,
   computePriorityScore,
@@ -22,6 +24,7 @@ import {
   type AiProgramProgressionSignal,
   type MonCahierAiContext,
 } from "@/lib/mon-cahier-ai/core";
+import { buildRosterCountAnswer, isRosterCountQuestion, loadRosterCount } from "@/lib/mon-cahier-ai/roster-stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -158,12 +161,6 @@ function normalizeRisk(raw: unknown, pSuccess: number | null | undefined) {
   return getRiskLevel(pSuccess);
 }
 
-function cleanNumberOrNull(value: unknown, precision = 2): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Number(n.toFixed(precision));
-}
-
 function isOfficialConductSubjectName(value: unknown): boolean {
   const text = cleanText(value);
   if (!text) return false;
@@ -297,6 +294,8 @@ async function getAdminContext() {
     .select("role")
     .eq("profile_id", user.id)
     .eq("institution_id", institution_id)
+    .in("role", ["admin", "super_admin", "educator"])
+    .limit(1)
     .maybeSingle();
 
   const role = ((roleRow?.role as Role | undefined) || "") as Role;
@@ -323,6 +322,7 @@ async function callMlService(args: {
     const endpoint = AI_SERVICE_URL.endsWith("/predict") ? AI_SERVICE_URL : `${AI_SERVICE_URL.replace(/\/$/, "")}/predict`;
     const res = await fetch(endpoint, {
       method: "POST",
+      signal: AbortSignal.timeout(5_000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         institution_id: args.institution_id,
@@ -425,7 +425,9 @@ function buildScopeStats(args: {
     ? args.selectedClass.label
     : args.levelHint
       ? `niveau ${normalizeScopeLabel(args.levelHint)}`
-      : "toutes les classes";
+      : args.classes.length !== args.allClasses.length
+        ? args.classes.map((cls) => cls.label || "Classe").join(", ")
+        : "toutes les classes";
 
   const byLevel = new Map<string, number>();
   for (const cls of args.allClasses) {
@@ -435,7 +437,7 @@ function buildScopeStats(args: {
 
   return {
     active_label,
-    is_filtered: Boolean(args.class_id || args.levelHint),
+    is_filtered: Boolean(args.class_id || args.levelHint || args.classes.length !== args.allClasses.length),
     selected_class_label: args.selectedClass?.label || null,
     selected_level: args.selectedClass?.level || args.levelHint || null,
     total_classes_count: args.allClasses.length,
@@ -523,11 +525,10 @@ async function loadClasses(args: {
 
   let classes = ((data || []) as ClassRow[]).filter((cls) => cls.id).map(normalizeClassRow);
   if (args.levelHint) {
-    const filtered = classes.filter((cls) => levelMatches(cls.level, args.levelHint));
-    if (filtered.length) classes = filtered;
+    classes = classes.filter((cls) => levelMatches(cls.level, args.levelHint));
   }
 
-  return classes.slice(0, 80);
+  return classes;
 }
 
 async function loadOfficialBulletinAverages(args: {
@@ -566,7 +567,7 @@ async function loadOfficialBulletinAverages(args: {
   const cookie = args.req.headers.get("cookie") || "";
   const authorization = args.req.headers.get("authorization") || "";
 
-  for (const cls of args.classes) {
+  const loadClassBulletin = async (cls: ClassRow) => {
     try {
       const url = new URL("/api/admin/grades/bulletin", origin);
       url.searchParams.set("class_id", cls.id);
@@ -575,6 +576,7 @@ async function loadOfficialBulletinAverages(args: {
       url.searchParams.set("export_light", "1");
 
       const res = await fetch(url.toString(), {
+        signal: AbortSignal.any([args.req.signal, AbortSignal.timeout(12_000)]),
         headers: {
           ...(cookie ? { cookie } : {}),
           ...(authorization ? { authorization } : {}),
@@ -584,7 +586,7 @@ async function loadOfficialBulletinAverages(args: {
 
       if (!res.ok) {
         args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : HTTP ${res.status}`);
-        continue;
+        return;
       }
 
       const json = (await res.json().catch(() => null)) as any;
@@ -657,6 +659,10 @@ async function loadOfficialBulletinAverages(args: {
     } catch (err: any) {
       args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : ${err?.message || "erreur"}`);
     }
+  };
+
+  for (const batch of chunks(args.classes, 4)) {
+    await Promise.all(batch.map(loadClassBulletin));
   }
 
   return out;
@@ -730,8 +736,9 @@ function buildClassSignals(classes: ClassRow[], students: AiStudentSignal[]): Ai
     const high = bucket.filter((s) => s.risk_level === "high").length;
     const medium = bucket.filter((s) => s.risk_level === "medium").length;
     const low = bucket.filter((s) => s.risk_level === "low").length;
-    const avgSuccess = bucket.length
-      ? bucket.reduce((acc, s) => acc + (s.p_success ?? 0), 0) / bucket.length
+    const scoredStudents = bucket.filter((s) => s.p_success != null);
+    const avgSuccess = scoredStudents.length
+      ? scoredStudents.reduce((acc, s) => acc + s.p_success!, 0) / scoredStudents.length
       : null;
     const avgGeneral = bucket.filter((s) => s.general_avg_20 != null).length
       ? bucket.reduce((acc, s) => acc + (s.general_avg_20 ?? 0), 0) /
@@ -1568,15 +1575,18 @@ export async function POST(req: NextRequest) {
 
     const scopeLevelHint = class_id ? null : levelHint || questionLevelHint;
 
-    const classes = class_id
+    const availableClasses = class_id
       ? selectedClasses
       : await loadClasses({
           srv: ctx.srv,
           institution_id: ctx.institution_id,
           academic_year,
           class_id,
-          levelHint: scopeLevelHint,
+          levelHint: null,
         });
+    const namedClasses = class_id ? [] : classesNamedInQuestion(question, availableClasses, (cls) => cls.label);
+    const classes = namedClasses.length ? namedClasses
+      : scopeLevelHint ? availableClasses.filter((cls) => levelMatches(cls.level, scopeLevelHint)) : availableClasses;
 
     if (!classes.length) {
       return NextResponse.json({
@@ -1596,7 +1606,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const allClassesForYear = class_id || scopeLevelHint
+    const allClassesForYear = class_id
       ? await loadClasses({
           srv: ctx.srv,
           institution_id: ctx.institution_id,
@@ -1604,15 +1614,30 @@ export async function POST(req: NextRequest) {
           class_id: null,
           levelHint: null,
         })
-      : classes;
+      : availableClasses;
 
     const scopeStats = buildScopeStats({
       classes,
       allClasses: allClassesForYear,
-      class_id,
+      class_id: class_id || (namedClasses.length === 1 ? namedClasses[0].id : null),
       levelHint: scopeLevelHint,
-      selectedClass,
+      selectedClass: selectedClass || (namedClasses.length === 1 ? namedClasses[0] : null),
     });
+
+    if (isRosterCountQuestion(question, classes.map((cls) => cls.label || ""))) {
+      const studentsCount = await loadRosterCount(ctx.srv, ctx.institution_id, classes.map((cls) => cls.id));
+      const answer = buildRosterCountAnswer({
+        academicYear: academic_year,
+        scopeLabel: namedClasses.length ? namedClasses.map((cls) => cls.label || "Classe").join(", ")
+          : classes.length === 1 ? classes[0].label || "Classe" : scopeLevelHint ? `Niveau ${scopeLevelHint}` : "Établissement",
+        classesCount: classes.length,
+        studentsCount,
+      });
+      return NextResponse.json({ ok: true, answer, context_meta: {
+        classes_count: classes.length, students_count: studentsCount, subjects_count: 0,
+        warnings: [], model_source: "rules_baseline", model_version: MODEL_VERSION, scope_stats: scopeStats,
+      } });
+    }
 
     const predictionResult = await loadPredictionRows({
       srv: ctx.srv,

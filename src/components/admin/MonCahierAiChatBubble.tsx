@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, MessageCircle, Send, Sparkles, X } from "lucide-react";
+import { fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
+import type { AiDataQuality, MonCahierAiAnswer } from "@/lib/mon-cahier-ai/core";
 
 type AcademicYear = {
   code: string;
   label?: string | null;
+  start_date?: string | null;
   end_date?: string | null;
   is_current?: boolean | null;
 };
@@ -17,49 +20,22 @@ type BootstrapResponse = {
   academic_years?: AcademicYear[];
 };
 
-type StudentSignal = {
-  student_id: string;
-  full_name: string;
-  general_avg_20?: number | null;
-  p_success?: number | null;
-};
-
-type ClassSignal = {
-  class_id: string;
-  class_label: string;
-  avg_success_probability?: number | null;
-};
-
-type SubjectSignal = {
-  class_id: string;
-  class_label: string;
-  subject_id: string;
-  subject_name: string;
-  avg_score_20?: number | null;
-};
-
-type AiAnswer = {
-  title: string;
-  summary: string;
-  confidence?: number;
-  recommendations?: string[];
-  students_to_follow?: StudentSignal[];
-  classes_at_risk?: ClassSignal[];
-  blocking_subjects?: SubjectSignal[];
-};
+type AiAnswer = Pick<MonCahierAiAnswer, "title" | "summary"> & Partial<MonCahierAiAnswer>;
 
 type AssistantResponse = {
   ok: boolean;
   error?: string;
   message?: string;
   answer?: AiAnswer;
+  context_meta?: { data_quality?: AiDataQuality };
 };
 
 type ChatMessage =
   | { id: string; role: "user"; text: string }
-  | { id: string; role: "assistant"; text?: string; answer?: AiAnswer; error?: boolean };
+  | { id: string; role: "assistant"; text?: string; answer?: AiAnswer; quality?: AiDataQuality; error?: boolean };
 
 const QUICK_QUESTIONS = [
+  "Combien d’élèves compte l’établissement ?",
   "Quels élèves doivent être suivis en priorité ?",
   "Quelles classes sont les plus fragiles ?",
   "Résume-moi la situation pédagogique.",
@@ -67,12 +43,6 @@ const QUICK_QUESTIONS = [
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function todayPlusMonths(months: number) {
-  const d = new Date();
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
 }
 
 function pct(value: number | null | undefined) {
@@ -85,7 +55,7 @@ function avg(value: number | null | undefined) {
   return `${Number(value).toFixed(1).replace(".", ",")}/20`;
 }
 
-function AnswerContent({ answer }: { answer: AiAnswer }) {
+function AnswerContent({ answer, quality }: { answer: AiAnswer; quality?: AiDataQuality }) {
   const students = (answer.students_to_follow || []).slice(0, 5);
   const classes = (answer.classes_at_risk || []).slice(0, 4);
   const subjects = (answer.blocking_subjects || []).slice(0, 4);
@@ -99,6 +69,39 @@ function AnswerContent({ answer }: { answer: AiAnswer }) {
           {answer.summary}
         </p>
       </div>
+
+      {answer.quick_stats ? (
+        <div className="space-y-2" aria-label="Statistiques demandées">
+          {answer.quick_stats.cards.map((card) => (
+            <div key={card.key} className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+              <div className="text-xs text-slate-600">{card.label}</div>
+              <div className="text-lg font-black text-slate-900">{card.value}</div>
+              {card.details ? <p className="text-xs text-slate-600">{card.details}</p> : null}
+            </div>
+          ))}
+          {answer.quick_stats.breakdown?.map((item) => (
+            <p key={item.label} className="text-sm text-slate-700">
+              {item.label} : <strong>{item.value}</strong>{item.details ? ` — ${item.details}` : ""}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      {answer.council_note ? (
+        <details open>
+          <summary className="cursor-pointer text-xs font-black text-slate-700">Note pour le conseil</summary>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-700">{answer.council_note}</p>
+        </details>
+      ) : null}
+
+      {answer.remediation_plan?.length ? (
+        <div>
+          <div className="text-xs font-black text-slate-700">Plan de remédiation</div>
+          <ol className="mt-2 list-decimal space-y-2 pl-4 text-sm text-slate-700">
+            {answer.remediation_plan.map((item, index) => <li key={index}>{item}</li>)}
+          </ol>
+        </div>
+      ) : null}
 
       {students.length > 0 ? (
         <div>
@@ -166,6 +169,12 @@ function AnswerContent({ answer }: { answer: AiAnswer }) {
           </ul>
         </div>
       ) : null}
+
+      {quality && quality.status !== "ok" ? (
+        <p role="status" className="rounded-xl bg-amber-50 p-2 text-xs leading-5 text-amber-900">
+          {quality.summary}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -177,7 +186,9 @@ export default function MonCahierAiChatBubble() {
   const [asking, setAsking] = useState(false);
   const [academicYear, setAcademicYear] = useState("");
   const [academicYearLabel, setAcademicYearLabel] = useState("");
-  const [examDate, setExamDate] = useState(todayPlusMonths(3));
+  const [examDate, setExamDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [preparationAttempt, setPreparationAttempt] = useState(0);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -187,24 +198,21 @@ export default function MonCahierAiChatBubble() {
     },
   ]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const bootstrapAttemptedRef = useRef(false);
+  const questionRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!open || ready || loadingContext || bootstrapAttemptedRef.current) return;
+    if (!open || ready) return;
 
     let cancelled = false;
-    bootstrapAttemptedRef.current = true;
+    const controller = new AbortController();
     setLoadingContext(true);
+    setContextError(null);
 
     void (async () => {
       try {
-        const res = await fetch("/api/admin/mon-cahier-ia/bootstrap", {
-          cache: "no-store",
+        const json = await fetchAiJson<BootstrapResponse>("/api/admin/mon-cahier-ia/bootstrap", {
+          signal: controller.signal,
         });
-        const json = (await res.json().catch(() => null)) as BootstrapResponse | null;
-        if (!res.ok || !json?.ok) {
-          throw new Error(json?.error || "Contexte IA indisponible.");
-        }
 
         if (cancelled) return;
         const year =
@@ -219,19 +227,11 @@ export default function MonCahierAiChatBubble() {
 
         setAcademicYear(year.code);
         setAcademicYearLabel(year.label || year.code);
-        setExamDate(year.end_date ? String(year.end_date).slice(0, 10) : todayPlusMonths(3));
+        setExamDate(referenceDateForAcademicYear(year));
         setReady(true);
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (cancelled) return;
-        setMessages((current) => [
-          ...current,
-          {
-            id: makeId("context-error"),
-            role: "assistant",
-            text: error?.message || "Impossible de préparer Cahier IA.",
-            error: true,
-          },
-        ]);
+        setContextError(error instanceof Error ? error.message : "Impossible de préparer Cahier IA.");
       } finally {
         if (!cancelled) setLoadingContext(false);
       }
@@ -239,8 +239,11 @@ export default function MonCahierAiChatBubble() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [loadingContext, open, ready]);
+  }, [open, ready, preparationAttempt]);
+
+  useEffect(() => () => { questionRequestRef.current?.abort(); }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -251,7 +254,10 @@ export default function MonCahierAiChatBubble() {
 
   async function ask(rawQuestion?: string) {
     const q = String(rawQuestion ?? question).trim();
-    if (!q || asking || !ready || !academicYear) return;
+    if (!q || questionRequestRef.current || !ready || !academicYear || !examDate) return;
+
+    const controller = new AbortController();
+    questionRequestRef.current = controller;
 
     setQuestion("");
     setMessages((current) => [
@@ -261,8 +267,11 @@ export default function MonCahierAiChatBubble() {
     setAsking(true);
 
     try {
-      const res = await fetch("/api/admin/mon-cahier-ia/assistant", {
+      const json = await fetchAiJson<AssistantResponse>("/api/admin/mon-cahier-ia/assistant", {
         method: "POST",
+        signal: controller.signal,
+        timeoutMs: 60_000,
+        timeoutMessage: "L’analyse prend trop de temps. Précise une classe dans ta question, puis réessaie.",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: q,
@@ -274,36 +283,30 @@ export default function MonCahierAiChatBubble() {
         }),
       });
 
-      const rawText = await res.text();
-      let json: AssistantResponse | null = null;
-      try {
-        json = rawText ? (JSON.parse(rawText) as AssistantResponse) : null;
-      } catch {
-        json = null;
+      if (!json.answer || typeof json.answer.title !== "string" || typeof json.answer.summary !== "string") {
+        throw new Error("Réponse IA indisponible. Réessaie dans un instant.");
       }
-
-      if (!res.ok || !json?.ok || !json.answer) {
-        throw new Error(
-          json?.message || json?.error || rawText.slice(0, 240) || "Réponse IA indisponible.",
-        );
-      }
+      if (controller.signal.aborted) return;
 
       setMessages((current) => [
         ...current,
-        { id: makeId("assistant"), role: "assistant", answer: json.answer },
+        { id: makeId("assistant"), role: "assistant", answer: json.answer, quality: json.context_meta?.data_quality },
       ]);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      if (controller.signal.aborted) return;
+      setQuestion(q);
       setMessages((current) => [
         ...current,
         {
           id: makeId("assistant-error"),
           role: "assistant",
-          text: error?.message || "Je n’ai pas pu répondre à cette question.",
+          text: error instanceof Error ? error.message : "Je n’ai pas pu répondre à cette question.",
           error: true,
         },
       ]);
     } finally {
-      setAsking(false);
+      questionRequestRef.current = null;
+      if (!controller.signal.aborted) setAsking(false);
     }
   }
 
@@ -353,7 +356,7 @@ export default function MonCahierAiChatBubble() {
                     ].join(" ")}
                   >
                     {message.answer ? (
-                      <AnswerContent answer={message.answer} />
+                      <AnswerContent answer={message.answer} quality={message.quality} />
                     ) : (
                       <p
                         className={[
@@ -380,6 +383,16 @@ export default function MonCahierAiChatBubble() {
           </div>
 
           <div className="border-t border-slate-200 bg-white p-3">
+            {contextError ? (
+              <div role="alert" className="mb-2 rounded-xl bg-rose-50 p-2.5 text-sm text-rose-800">
+                <p>{contextError}</p>
+                <button type="button" onClick={() => setPreparationAttempt((value) => value + 1)}
+                  className="mt-2 font-bold underline" disabled={loadingContext}>
+                  Réessayer la préparation
+                </button>
+              </div>
+            ) : null}
+
             {messages.length === 1 ? (
               <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
                 {QUICK_QUESTIONS.map((item) => (
@@ -396,6 +409,15 @@ export default function MonCahierAiChatBubble() {
               </div>
             ) : null}
 
+            {ready ? (
+              <label className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500">
+                Date de référence
+                <input type="date" aria-label="Date de référence" value={examDate}
+                  disabled={asking} onChange={(event) => setExamDate(event.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-slate-700" />
+              </label>
+            ) : null}
+
             <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-100">
               <textarea
                 value={question}
@@ -407,6 +429,8 @@ export default function MonCahierAiChatBubble() {
                   }
                 }}
                 rows={2}
+                aria-label="Question pour Cahier IA"
+                maxLength={2000}
                 placeholder={loadingContext ? "Préparation…" : "Pose ta question…"}
                 disabled={!ready || asking}
                 className="max-h-28 min-h-10 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-wait"
@@ -414,7 +438,7 @@ export default function MonCahierAiChatBubble() {
               <button
                 type="button"
                 onClick={() => void ask()}
-                disabled={!ready || asking || !question.trim()}
+                disabled={!ready || asking || !question.trim() || !examDate}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-600 text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 aria-label="Envoyer la question"
               >
@@ -434,6 +458,7 @@ export default function MonCahierAiChatBubble() {
         onClick={() => setOpen((value) => !value)}
         className="ml-auto flex h-14 items-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-black text-white shadow-xl ring-1 ring-slate-800 transition hover:-translate-y-0.5 hover:bg-blue-950"
         aria-label={open ? "Fermer Cahier IA" : "Ouvrir Cahier IA"}
+        aria-expanded={open}
       >
         <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-400/15 text-emerald-300">
           {open ? <X className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}

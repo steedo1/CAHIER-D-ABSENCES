@@ -43,6 +43,9 @@ jobs:
       - name: Typecheck web
         run: npx tsc --noEmit
 
+      - name: Mon Cahier IA regression suite
+        run: npm run test:mon-cahier-ai
+
       - name: Staff profile editing regression suite
         run: node --import tsx --test test/staff-edit.test.ts
 
