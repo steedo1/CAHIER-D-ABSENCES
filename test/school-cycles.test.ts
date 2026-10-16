@@ -60,6 +60,7 @@ test("explicit class mapping supports custom franco-Arabic levels", () => {
 test("unambiguous preschool/primary codes are recognized", () => {
   assert.equal(inferSchoolCycleFromLevel("Petite section"), "preschool");
   assert.equal(inferSchoolCycleFromLevel("CM2"), "primary");
+  assert.equal(inferSchoolCycleFromLevel("Maternelle"), "preschool");
   assert.equal(inferSchoolCycleFromLevel("1re D"), null);
   assert.equal(inferSchoolCycleFromLevel(""), null);
 });
@@ -88,4 +89,49 @@ test("defaults are fresh objects, not mutable shared singletons", () => {
   const one = getDefaultSchoolCyclesSettings();
   one.enabledCycles.push("preschool");
   assert.deepEqual(getDefaultSchoolCyclesSettings().enabledCycles, ["secondary"]);
+});
+
+test("per-cycle teaching tracks are independent of interface language", () => {
+  const settings = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1,
+      enabled: true,
+      enabledCycles: ["preschool", "primary", "secondary"],
+      teachingTracksByCycle: {
+        preschool: ["french", "arabic"],
+        primary: ["french", "arabic"],
+        secondary: ["arabic"],
+      },
+      defaultView: "primary",
+      preferredLanguage: "fr",
+    },
+  });
+  assert.deepEqual(settings.teachingTracksByCycle.primary, ["french", "arabic"]);
+  assert.deepEqual(settings.teachingTracksByCycle.secondary, ["arabic"]);
+  assert.equal(settings.defaultView, "primary");
+  assert.equal(settings.preferredLanguage, "fr");
+});
+
+test("disabled or malformed options cannot activate school cycles", () => {
+  const legacy = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1,
+      enabled: false,
+      enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["arabic"] },
+    },
+  });
+  assert.equal(legacy.enabled, false);
+  assert.deepEqual(legacy.enabledCycles, ["secondary"]);
+  const invalidView = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1,
+      enabled: true,
+      enabledCycles: ["primary"],
+      defaultView: "preschool",
+      teachingTracksByCycle: { primary: ["arabic", "invalid-track"] },
+    },
+  });
+  assert.equal(invalidView.defaultView, "all");
+  assert.deepEqual(invalidView.teachingTracksByCycle.primary, ["arabic"]);
 });
