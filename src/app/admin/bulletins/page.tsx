@@ -13,6 +13,7 @@ import React, {
 import { Printer, RefreshCw, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import OfflineReadinessCard from "@/components/OfflineReadinessCard";
 import OfflineSyncBar from "@/components/OfflineSyncBar";
 import EducationScopeFilter from "@/components/admin/EducationScopeFilter";
@@ -4074,6 +4075,12 @@ function BulletinsPageContent() {
               <p className="text-sm text-slate-500">
                 Charger une classe + période, puis ouvrir l’aperçu A4.
               </p>
+              {institution?.settings_json?.school_cycles_v1?.enabled === true && (
+                <Link href="/admin/bulletins/modeles"
+                  className="mt-2 inline-flex rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100">
+                  Modèles et paramètres des bulletins
+                </Link>
+              )}
               <p className={`mt-1 text-xs font-semibold ${isOnline ? "text-emerald-700" : "text-amber-700"}`}>
                 {isOnline ? "En ligne" : "Hors connexion — bulletins préparés disponibles"}
               </p>
