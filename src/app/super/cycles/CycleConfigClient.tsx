@@ -5,17 +5,22 @@ import {
   SCHOOL_CYCLE_OPTIONS,
   TEACHING_TRACK_OPTIONS,
   getDefaultSchoolCyclesSettings,
+  inferSchoolCycleFromLevel,
+  resolveSchoolCycleForClass,
   type SchoolCycle,
   type SchoolCyclesSettings,
   type TeachingTrack,
 } from "@/lib/school-cycles";
 
 type Institution = { id: string; name: string; code_unique: string };
+type CycleClass = { id: string; label: string; level: string | null };
 type ListResponse = { items?: Institution[]; error?: string };
 type DetailsResponse = {
   ok?: boolean;
   configuration?: SchoolCyclesSettings;
   institution?: Institution;
+  classes?: CycleClass[];
+  academicYear?: string | null;
   error?: string;
 };
 
@@ -25,6 +30,9 @@ export default function CycleConfigClient() {
   const [settings, setSettings] = useState<SchoolCyclesSettings>(getDefaultSchoolCyclesSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [classes, setClasses] = useState<CycleClass[]>([]);
+  const [academicYear, setAcademicYear] = useState<string | null>(null);
+  const [loadedSchoolId, setLoadedSchoolId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -54,6 +62,9 @@ export default function CycleConfigClient() {
     if (!schoolId) return;
     let alive = true;
     setLoading(true);
+    setLoadedSchoolId("");
+    setClasses([]);
+    setAcademicYear(null);
     setError("");
     setNotice("");
     (async () => {
@@ -66,7 +77,12 @@ export default function CycleConfigClient() {
         if (!response.ok || !data.ok || !data.configuration) {
           throw new Error(data.error || "Impossible de charger cette configuration.");
         }
-        if (alive) setSettings(data.configuration);
+        if (alive) {
+          setSettings(data.configuration);
+          setClasses(data.classes || []);
+          setAcademicYear(data.academicYear || null);
+          setLoadedSchoolId(schoolId);
+        }
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : "Chargement impossible.");
       } finally {
@@ -101,6 +117,9 @@ export default function CycleConfigClient() {
         ...current,
         enabledCycles,
         teachingTracksByCycle: nextTracks,
+        classCycleById: Object.fromEntries(
+          Object.entries(current.classCycleById).filter(([, value]) =>
+            enabledCycles.includes(value))),
         defaultView: current.defaultView !== "all" &&
           !enabledCycles.includes(current.defaultView) ? "all" : current.defaultView,
       };
@@ -125,8 +144,18 @@ export default function CycleConfigClient() {
     });
   }
 
+  function changeClassCycle(classId: string, cycle: SchoolCycle | "") {
+    setNotice("");
+    setSettings((current) => {
+      const updated = { ...current.classCycleById };
+      if (!cycle) delete updated[classId];
+      else updated[classId] = cycle;
+      return { ...current, classCycleById: updated };
+    });
+  }
+
   async function save() {
-    if (!schoolId || loading || saving) return;
+    if (!schoolId || loadedSchoolId !== schoolId || loading || saving) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -146,6 +175,7 @@ export default function CycleConfigClient() {
             enabled: settings.enabled,
             enabledCycles: settings.enabledCycles,
             teachingTracksByCycle: nextTracks,
+            classCycleById: settings.classCycleById,
             defaultView: settings.defaultView,
             preferredLanguage: settings.preferredLanguage,
           }),
@@ -288,6 +318,57 @@ export default function CycleConfigClient() {
             )}
           </section>
 
+          {settings.enabled && loadedSchoolId === schoolId && (
+            <section className="rounded-2xl border bg-white p-5 shadow-sm">
+              <h2 className="font-bold text-slate-900">Rattachement des classes aux cycles</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Année scolaire : {academicYear || "non définie"}. La détection automatique
+                reconnaît les niveaux usuels ; choisissez un cycle manuellement si nécessaire.
+              </p>
+              {!classes.length ? (
+                <p className="mt-3 text-sm text-slate-500">
+                  Aucune classe trouvée pour l'année active. La configuration des cycles
+                  peut être sauvegardée avant la création des classes.
+                </p>
+              ) : (
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {classes.map((schoolClass) => {
+                    const selected = settings.classCycleById[schoolClass.id] || "";
+                    const inferred = inferSchoolCycleFromLevel(schoolClass.level);
+                    const fallback = resolveSchoolCycleForClass(schoolClass, {
+                      ...settings,
+                      classCycleById: {},
+                    });
+                    return (
+                      <label key={schoolClass.id} className="block rounded-xl border bg-slate-50 p-3">
+                        <span className="block text-sm font-semibold">
+                          {schoolClass.label} · {schoolClass.level || "niveau non défini"}
+                        </span>
+                        <span className="mt-1 block text-xs text-slate-500">
+                          Cycle automatique : {SCHOOL_CYCLE_OPTIONS.find((c) => c.id === fallback)?.label}
+                          {!inferred ? " (à vérifier)" : ""}
+                        </span>
+                        <select
+                          value={selected}
+                          onChange={(event) => changeClassCycle(
+                            schoolClass.id,
+                            event.target.value as SchoolCycle | "",
+                          )}
+                          aria-label={`Cycle de ${schoolClass.label}`}
+                          className="mt-2 min-h-10 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">Détection automatique</option>
+                          {SCHOOL_CYCLE_OPTIONS.filter((c) => settings.enabledCycles.includes(c.id))
+                            .map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             Cette configuration prépare la navigation. Elle ne crée aucun élève,
             enseignant, compte directeur ni classe. Les accès séparés des directeurs
@@ -299,7 +380,7 @@ export default function CycleConfigClient() {
           <button
             type="button"
             onClick={() => void save()}
-            disabled={loading || saving || !settings.enabledCycles.length}
+            disabled={loading || saving || loadedSchoolId !== schoolId || !settings.enabledCycles.length}
             className="min-h-11 rounded-xl bg-violet-700 px-6 py-3 font-semibold text-white disabled:opacity-50"
           >
             {saving ? "Enregistrement…" : "Enregistrer la configuration"}
