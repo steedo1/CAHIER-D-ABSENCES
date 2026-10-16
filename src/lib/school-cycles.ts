@@ -18,6 +18,14 @@ export const SCHOOL_CYCLE_OPTIONS = [
 
 export type SchoolCycle = (typeof SCHOOL_CYCLE_OPTIONS)[number]["id"];
 export type SchoolLanguage = "fr" | "ar";
+export type TeachingTrack = "french" | "arabic";
+export const TEACHING_TRACK_OPTIONS = [
+  { id: "french", label: "Enseignement français" },
+  { id: "arabic", label: "Enseignement arabe" },
+] as const;
+export function isTeachingTrack(value: unknown): value is TeachingTrack {
+  return value === "french" || value === "arabic";
+}
 
 export type SchoolCyclesSettings = {
   version: 1;
@@ -26,6 +34,10 @@ export type SchoolCyclesSettings = {
   enabledCycles: SchoolCycle[];
   /** Explicit override keyed by the UUID of a class of THIS institution. */
   classCycleById: Record<string, SchoolCycle>;
+  /** Teaching programs offered per enabled cycle; not user interface languages. */
+  teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+  /** Default landing view for an eligible school administrator. */
+  defaultView: "all" | SchoolCycle;
   /** A preference only. It does not imply translated/RTL pages exist yet. */
   preferredLanguage: SchoolLanguage;
 };
@@ -53,6 +65,8 @@ export function getDefaultSchoolCyclesSettings(): SchoolCyclesSettings {
     enabled: false,
     enabledCycles: ["secondary"],
     classCycleById: {},
+    teachingTracksByCycle: {},
+    defaultView: "all",
     preferredLanguage: "fr",
   };
 }
@@ -86,11 +100,31 @@ export function parseSchoolCyclesSettings(settingsJson: unknown): SchoolCyclesSe
     }
   }
 
+  const teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>> = {};
+  const rawTracks = isRecord(stored.teachingTracksByCycle)
+    ? stored.teachingTracksByCycle
+    : {};
+  for (const cycle of enabledCycles) {
+    const configured = rawTracks[cycle];
+    const accepted = Array.isArray(configured)
+      ? Array.from(new Set(configured.filter(isTeachingTrack)))
+      : [];
+    teachingTracksByCycle[cycle] = accepted.length ? accepted : ["french"];
+  }
+
+  const defaultView =
+    stored.defaultView === "all" ||
+    (isSchoolCycle(stored.defaultView) && enabledCycles.includes(stored.defaultView))
+      ? stored.defaultView
+      : "all";
+
   return {
     version: 1,
     enabled: true,
     enabledCycles,
     classCycleById,
+    teachingTracksByCycle,
+    defaultView,
     preferredLanguage: stored.preferredLanguage === "ar" ? "ar" : "fr",
   };
 }
