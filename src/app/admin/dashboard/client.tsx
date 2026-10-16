@@ -2,6 +2,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import MulticycleEntryPanel from "@/components/admin/MulticycleEntryPanel";
+import { parseSchoolCyclesSettings, type SchoolCyclesSettings } from "@/lib/school-cycles";
 import Link from "next/link";
 import {
   School,
@@ -286,6 +288,7 @@ export default function AdminDashboardClient() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
+  const [schoolCycles, setSchoolCycles] = useState<SchoolCyclesSettings | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
   const role = useAdminRole();
   const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
@@ -328,6 +331,10 @@ export default function AdminDashboardClient() {
         setUpdatedAt(new Date(metricsResult.saved_at));
 
         const instJson = institutionResult.data;
+        // Never expose stale/foreign local cache configuration as current school's navigation.
+        setSchoolCycles(institutionResult.source === "cloud"
+          ? parseSchoolCyclesSettings(instJson?.settings_json)
+          : null);
         const name = String(instJson?.institution_name || "").trim();
         const logo =
           typeof instJson?.institution_logo_url === "string"
@@ -394,6 +401,15 @@ export default function AdminDashboardClient() {
 
   return (
     <div className="space-y-6">
+      {schoolCycles?.enabled &&
+        (schoolCycles.enabledCycles.length > 1 ||
+          schoolCycles.enabledCycles.some((cycle) =>
+            (schoolCycles.teachingTracksByCycle[cycle] || []).length > 1
+          ) ||
+          schoolCycles.enabledCycles[0] !== "secondary") &&
+        role === "admin" ? (
+          <MulticycleEntryPanel configuration={schoolCycles} />
+        ) : null}
       {/* En-tête gradient (section héro) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-emerald-600 via-lime-500 to-amber-500 p-5 text-white sm:p-6">
         <div
