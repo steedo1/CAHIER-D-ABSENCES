@@ -205,8 +205,8 @@ function Panel({ program, compact }: { program: BulletinProgram; compact: boolea
   </section>;
 }
 
-function Footer({ model, programs, compact }: {
-  model: BulletinDocument; programs: BulletinProgram[]; compact: boolean;
+function Footer({ model, programs }: {
+  model: BulletinDocument; programs: BulletinProgram[];
 }) {
   return <footer className={styles.footer}>
     <div className={styles.signatures}>
@@ -252,7 +252,7 @@ export default function FrancoArabicBulletin({
       <div className={`${styles.panels} ${compact ? styles.twoPanels : ""}`}>
         {programs.map(p=><Panel key={p.track} program={p} compact={compact}/>)}
       </div>
-      <Footer model={model} programs={programs} compact={compact}/>
+      <Footer model={model} programs={programs}/>
     </div>
   </article>;
 }
