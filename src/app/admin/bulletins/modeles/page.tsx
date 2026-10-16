@@ -4,7 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
 import DemoBulletinClient from "./DemoBulletinClient";
-import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolBulletinConfiguration from "./SchoolBulletinConfiguration";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -49,7 +49,7 @@ export default async function AdminBulletinTemplatesPage() {
         Les aperçus utilisent des données fictives et ne publient aucune note.
       </p>
     </div>
-    <SchoolBulletinSettings />
+    <SchoolBulletinConfiguration />
     <DemoBulletinClient
       hasArabic={hasArabic}
       schoolName={institution.name || "Établissement"}
