@@ -107,7 +107,10 @@ export async function GET() {
     let offset = 0;
     while (!enrollComplete || !teacherComplete) {
       if (offset >= 20000) return reply({ error: "cycle_roster_too_large" }, 503);
-      const [enroll, assigned] = await Promise.all([
+      const pages: [
+        { data: typeof enrollments | null; error: { message: string } | null },
+        { data: typeof teachers | null; error: { message: string } | null },
+      ] = await Promise.all([
         enrollComplete
           ? Promise.resolve({ data: [], error: null })
           : srv.from("class_enrollments")
@@ -125,6 +128,8 @@ export async function GET() {
             .order("id")
             .range(offset, offset + 499),
       ]);
+      const enroll = pages[0];
+      const assigned = pages[1];
       if (enroll.error || assigned.error || !enroll.data || !assigned.data) {
         return reply({ error: "cycle_roster_load_failed" }, 503);
       }
