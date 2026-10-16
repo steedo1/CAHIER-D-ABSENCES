@@ -71,7 +71,11 @@ export default function MulticycleEntryPanel({
         </span>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
-        {configuration.enabledCycles.map((cycle) => {
+        {configuration.enabledCycles
+          .slice()
+          .sort((a, b) => Number(b === configuration.defaultView) -
+            Number(a === configuration.defaultView))
+          .map((cycle) => {
           const config = SCHOOL_CYCLE_OPTIONS.find((item) => item.id === cycle);
           const count = summary?.cycles?.[cycle]?.count;
           const programs = configuration.teachingTracksByCycle[cycle] || ["french"];
