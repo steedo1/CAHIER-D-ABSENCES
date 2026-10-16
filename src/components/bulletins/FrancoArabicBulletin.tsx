@@ -7,7 +7,7 @@ import { selectPrintablePrograms } from "@/lib/franco-arabic-print-layout";
  * A two-program sheet is a LAYOUT choice, never a grading calculation.
  */
 export type BulletinTrack = "french" | "arabic";
-export type BulletinVariant = BulletinTrack | "combined";
+export type BulletinVariant = BulletinTrack | "combined" | "ordinary";
 
 export type BulletinSchool = {
   name: string;
