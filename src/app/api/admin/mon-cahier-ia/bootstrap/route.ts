@@ -61,6 +61,8 @@ async function getAdminContext() {
     .select("role")
     .eq("profile_id", user.id)
     .eq("institution_id", institution_id)
+    .in("role", ["admin", "super_admin", "educator"])
+    .limit(1)
     .maybeSingle();
 
   const role = ((roleRow?.role as Role | undefined) || "") as Role;

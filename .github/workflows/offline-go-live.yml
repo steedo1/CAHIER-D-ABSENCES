@@ -46,6 +46,9 @@ jobs:
       - name: Staff profile editing regression suite
         run: node --import tsx --test test/staff-edit.test.ts
 
+      - name: Mon Cahier IA conversation regression suite
+        run: node --test test/mon-cahier-ai-chat.test.mjs test/mon-cahier-ai-server.test.mjs
+
       - name: Parent Connect subscriptions and SMS regression suite
         run: npm run test:parent-connect
 
