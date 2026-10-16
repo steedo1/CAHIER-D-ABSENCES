@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import "./print.css";
 import Link from "next/link";
 import FrancoArabicBulletin, {
   type BulletinDocument,
