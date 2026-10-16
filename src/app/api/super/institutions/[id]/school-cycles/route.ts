@@ -262,7 +262,21 @@ export async function PUT(req: NextRequest, context: Params) {
     }
   }
 
-  const updated: SchoolCyclesSettings = incoming;
+  // Super Admin provisions available cycles only. Assignment of subjects to
+  // French/Arabic teaching programs is a PEDAGOGICAL school-admin decision.
+  // Ignore any subject classification submitted via this Super Admin route.
+  const previous = parseSchoolCyclesSettings(oldJson);
+  const subjectTracksByCycle: SchoolCyclesSettings["subjectTracksByCycle"] = {};
+  for (const cycle of incoming.enabledCycles) {
+    const supported = incoming.teachingTracksByCycle[cycle] || [];
+    subjectTracksByCycle[cycle] = Object.fromEntries(
+      Object.entries(previous.subjectTracksByCycle[cycle] || {})
+        .map(([subjectId, tracks]) => [
+          subjectId, tracks.filter(track => supported.includes(track)),
+        ]).filter(([, tracks]) => (tracks as TeachingTrack[]).length > 0),
+    ) as Record<string, TeachingTrack[]>;
+  }
+  const updated: SchoolCyclesSettings = { ...incoming, subjectTracksByCycle };
   const settings_json = { ...oldJson, [SCHOOL_CYCLES_SETTINGS_KEY]: updated };
 
   const { error: writeError } = await access.srv
