@@ -8,6 +8,7 @@ import {
   type FrancoArabicReportsSettings,
   type LevelScoringScale,
   type ReportFormat,
+  type SubjectReportCoefficient,
 } from "@/lib/franco-arabic-reporting";
 import {
   SCHOOL_CYCLE_OPTIONS,
@@ -23,10 +24,12 @@ type ReportResponse = {
 };
 type CycleResponse = {
   ok?: boolean;
+  subjects?: Array<{ id: string; name: string }>;
   configuration?: {
     enabled: boolean;
     enabledCycles: SchoolCycle[];
     teachingTracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+    subjectTracksByCycle: Partial<Record<SchoolCycle, Record<string, TeachingTrack[]>>>;
   };
   error?: string;
 };
@@ -37,6 +40,8 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
     defaultFrancoArabicReportsSettings,
   );
   const [programs, setPrograms] = useState<AllowedProgram[]>([]);
+  const [subjects, setSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [subjectTracksByCycle, setSubjectTracksByCycle] = useState<Partial<Record<SchoolCycle, Record<string, TeachingTrack[]>>>>({});
   const [multicycleReady, setMulticycleReady] = useState(false);
   const [loadedFor, setLoadedFor] = useState("");
   const [loading, setLoading] = useState(true);
@@ -52,6 +57,8 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
     setLoadedFor("");
     setSettings(defaultFrancoArabicReportsSettings());
     setPrograms([]);
+    setSubjects([]);
+    setSubjectTracksByCycle({});
     setError("");
     setNotice("");
     (async () => {
@@ -69,6 +76,8 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
         }
         if (!active) return;
         setSettings(reports.reporting);
+        setSubjects(cycles.subjects || []);
+        setSubjectTracksByCycle(cycles.configuration.subjectTracksByCycle || {});
         const config = cycles.configuration;
         setMulticycleReady(config.enabled);
         setPrograms(config.enabledCycles.flatMap((cycle) =>
@@ -110,6 +119,40 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
     }));
   }
 
+  function availableSubjects(cycle: SchoolCycle, track: TeachingTrack) {
+    return subjects.filter((subject) =>
+      subjectTracksByCycle[cycle]?.[subject.id]?.includes(track));
+  }
+
+  function updateCoefficient(index: number, update: Partial<SubjectReportCoefficient>) {
+    setNotice("");
+    setSettings((old) => ({
+      ...old,
+      coefficients: old.coefficients.map((entry, i) =>
+        i === index ? { ...entry, ...update } : entry),
+    }));
+  }
+
+  function appendCoefficient() {
+    if (settings.coefficients.length >= 500) return;
+    const scale = settings.scales.find((entry) =>
+      entry.level.trim() && availableSubjects(entry.cycle, entry.track).length > 0);
+    if (!scale) {
+      setError("Définissez un barème puis rattachez des disciplines à cet enseignement.");
+      return;
+    }
+    const subject = availableSubjects(scale.cycle, scale.track)[0];
+    if (!subject) return;
+    setError("");
+    setSettings((old) => ({
+      ...old,
+      coefficients: [...old.coefficients, {
+        cycle: scale.cycle, level: scale.level, track: scale.track,
+        subjectId: subject.id, coefficient: 0, includeInAverage: false,
+      }],
+    }));
+  }
+
   async function save() {
     if (blocked) return;
     const seen = new Set<string>();
@@ -123,6 +166,25 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
         return;
       }
       seen.add(key);
+    }
+    const coefficientKeys = new Set<string>();
+    for (const policy of settings.coefficients) {
+      const key = [
+        policy.cycle, policy.track, policy.level.toLocaleLowerCase("fr"),
+        policy.subjectId,
+      ].join("|");
+      const scaleAvailable = settings.scales.some((entry) =>
+        entry.cycle === policy.cycle && entry.track === policy.track &&
+        entry.level.toLocaleLowerCase("fr") === policy.level.toLocaleLowerCase("fr"));
+      if (!scaleAvailable || !availableSubjects(policy.cycle, policy.track)
+        .some((subject) => subject.id === policy.subjectId) ||
+        !Number.isFinite(policy.coefficient) ||
+        policy.coefficient <= 0 || policy.coefficient > 100 ||
+        coefficientKeys.has(key)) {
+        setError("Vérifiez les coefficients : niveau, discipline, valeurs et doublons.");
+        return;
+      }
+      coefficientKeys.add(key);
     }
     setSaving(true);
     setError("");
@@ -242,6 +304,84 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
                   disabled={blocked || !firstProgram || settings.scales.length >= 120}
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un barème
+                </button>
+              </div>
+              <div className="border-t pt-4">
+                <h3 className="font-semibold text-slate-900">
+                  Coefficients par discipline et par programme
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Choisissez le niveau et la discipline, puis renseignez le coefficient
+                  confirmé par l'établissement. Les coefficients du secondaire existant
+                  et du CSCA ne sont pas modifiés.
+                </p>
+                <div className="mt-3 space-y-3">
+                  {settings.coefficients.map((policy, index) => {
+                    const selectedKey = [
+                      policy.cycle, policy.track, policy.level,
+                    ].join("|");
+                    const possibleSubjects = availableSubjects(policy.cycle, policy.track);
+                    return (
+                      <div key={index} className="grid gap-2 rounded-xl border bg-slate-50 p-3 sm:grid-cols-5">
+                        <select
+                          aria-label={`Niveau-programme du coefficient ${index + 1}`}
+                          value={selectedKey}
+                          disabled={blocked}
+                          className="min-h-10 rounded-lg border px-2 text-sm"
+                          onChange={(event) => {
+                            const scale = settings.scales.find((entry) =>
+                              [entry.cycle, entry.track, entry.level].join("|") === event.target.value);
+                            if (!scale) return;
+                            updateCoefficient(index, {
+                              cycle: scale.cycle, track: scale.track, level: scale.level,
+                              subjectId: availableSubjects(scale.cycle, scale.track)[0]?.id || "",
+                            });
+                          }}
+                        >
+                          {settings.scales.filter((entry) => entry.level.trim()).map((entry, idx) =>
+                            <option key={idx} value={[entry.cycle, entry.track, entry.level].join("|")}>
+                              {entry.level} — {entry.track === "french" ? "Français" : "Arabe"}
+                            </option>)}
+                        </select>
+                        <select aria-label={`Matière du coefficient ${index + 1}`}
+                          value={policy.subjectId} disabled={blocked}
+                          className="min-h-10 rounded-lg border px-2 text-sm"
+                          onChange={(event) => updateCoefficient(index, {
+                            subjectId: event.target.value,
+                          })}>
+                          {possibleSubjects.map((subject) => (
+                            <option key={subject.id} value={subject.id}>{subject.name}</option>
+                          ))}
+                        </select>
+                        <input aria-label={`Coefficient de la matière ${index + 1}`}
+                          type="number" min={0.01} max={100} step="any"
+                          value={policy.coefficient || ""} disabled={blocked}
+                          className="min-h-10 rounded-lg border px-2 text-sm"
+                          onChange={(event) => updateCoefficient(index, {
+                            coefficient: Number(event.target.value),
+                          })}
+                        />
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={policy.includeInAverage}
+                            disabled={blocked}
+                            onChange={(event) => updateCoefficient(index, {
+                              includeInAverage: event.target.checked,
+                            })} />
+                          Compte dans la moyenne
+                        </label>
+                        <button type="button" disabled={blocked}
+                          className="rounded-lg border px-3 py-2 text-sm font-medium text-red-700"
+                          onClick={() => setSettings((old) => ({
+                            ...old, coefficients: old.coefficients.filter((_, i) => i !== index),
+                          }))}>Retirer</button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button type="button" onClick={appendCoefficient}
+                  disabled={blocked || settings.coefficients.length >= 500}
+                  className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
+                  + Ajouter un coefficient
                 </button>
               </div>
               {settings.scales.length > 0 && (() => {
