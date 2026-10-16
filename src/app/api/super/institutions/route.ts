@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 
 function addMonthsISO(dateISO: string, months: number) {
   const d = new Date(dateISO);
@@ -41,8 +42,18 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = getSupabaseServiceClient();
-  const { name, code_unique, subscription_expires_at, settings_json, duration_months, start_date } = await req.json();
+  const access = await requireSuperAdminAccess();
+  if ("error" in access) return access.error;
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) {
+    return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
+  }
+  const supabase = access.srv;
+  const payload = await req.json().catch(() => null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+  const { name, code_unique, subscription_expires_at, settings_json, duration_months, start_date } = payload;
 
   if (!name || !code_unique)
     return NextResponse.json({ error: "name et code_unique requis" }, { status: 400 });
