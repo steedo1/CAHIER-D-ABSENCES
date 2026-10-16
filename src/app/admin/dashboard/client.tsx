@@ -402,11 +402,7 @@ export default function AdminDashboardClient() {
   return (
     <div className="space-y-6">
       {schoolCycles?.enabled &&
-        (schoolCycles.enabledCycles.length > 1 ||
-          schoolCycles.enabledCycles.some((cycle) =>
-            (schoolCycles.teachingTracksByCycle[cycle] || []).length > 1
-          ) ||
-          schoolCycles.enabledCycles[0] !== "secondary") &&
+        schoolCycles.enabledCycles.length > 1 &&
         role === "admin" ? (
           <MulticycleEntryPanel configuration={schoolCycles} />
         ) : null}
