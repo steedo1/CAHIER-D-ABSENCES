@@ -15,14 +15,12 @@ import {
 
 type Institution = { id: string; name: string; code_unique: string };
 type CycleClass = { id: string; label: string; level: string | null };
-type CycleSubject = { id: string; name: string; code: string | null };
 type ListResponse = { items?: Institution[]; error?: string };
 type DetailsResponse = {
   ok?: boolean;
   configuration?: SchoolCyclesSettings;
   institution?: Institution;
   classes?: CycleClass[];
-  subjects?: CycleSubject[];
   academicYear?: string | null;
   error?: string;
 };
@@ -34,7 +32,6 @@ export default function CycleConfigClient() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [classes, setClasses] = useState<CycleClass[]>([]);
-  const [subjects, setSubjects] = useState<CycleSubject[]>([]);
   const [academicYear, setAcademicYear] = useState<string | null>(null);
   const [loadedSchoolId, setLoadedSchoolId] = useState("");
   const [error, setError] = useState("");
@@ -68,7 +65,6 @@ export default function CycleConfigClient() {
     setLoading(true);
     setLoadedSchoolId("");
     setClasses([]);
-    setSubjects([]);
     setAcademicYear(null);
     setError("");
     setNotice("");
@@ -85,7 +81,6 @@ export default function CycleConfigClient() {
         if (alive) {
           setSettings(data.configuration);
           setClasses(data.classes || []);
-          setSubjects(data.subjects || []);
           setAcademicYear(data.academicYear || null);
           setLoadedSchoolId(schoolId);
         }
@@ -167,26 +162,6 @@ export default function CycleConfigClient() {
       if (!cycle) delete updated[classId];
       else updated[classId] = cycle;
       return { ...current, classCycleById: updated };
-    });
-  }
-
-  function toggleSubjectTrack(cycle: SchoolCycle, subjectId: string, track: TeachingTrack) {
-    setNotice("");
-    setSettings((current) => {
-      const oldTracks = current.subjectTracksByCycle[cycle]?.[subjectId] || [];
-      const nextTracks = oldTracks.includes(track)
-        ? oldTracks.filter((item) => item !== track)
-        : [...oldTracks, track];
-      const nextSubjects = { ...current.subjectTracksByCycle[cycle] };
-      if (nextTracks.length) nextSubjects[subjectId] = nextTracks;
-      else delete nextSubjects[subjectId];
-      return {
-        ...current,
-        subjectTracksByCycle: {
-          ...current.subjectTracksByCycle,
-          [cycle]: nextSubjects,
-        },
-      };
     });
   }
 
