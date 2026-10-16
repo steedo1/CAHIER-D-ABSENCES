@@ -7,7 +7,14 @@ import {
   parseFrancoArabicReportsSettings,
   validateFrancoArabicReportsInput,
 } from "@/lib/franco-arabic-reporting";
-import { parseSchoolCyclesSettings } from "@/lib/school-cycles";
+import {
+  SCHOOL_CYCLES_SETTINGS_KEY,
+  isTeachingTrack,
+  parseSchoolCyclesSettings,
+  type SchoolCycle,
+  type SchoolCyclesSettings,
+  type TeachingTrack,
+} from "@/lib/school-cycles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -123,4 +130,83 @@ export async function PUT(req: NextRequest) {
     .eq("id", auth.institutionId).select("id").single();
   if (updated.error) return json({ error: "save_failed" }, 503);
   return json({ ok: true, reporting: incoming });
+}
+
+/**
+ * School-only assignment of disciplines to the available teaching tracks.
+ * Super Admin can open school cycles during onboarding, but cannot configure
+ * these curricular mappings. No mutation of class/student/grade tables.
+ */
+export async function PATCH(req: NextRequest) {
+  const auth = await schoolAdmin();
+  if ("error" in auth) return auth.error;
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) return json({ error: "invalid_origin" }, 403);
+  if (!req.headers.get("content-type")?.includes("application/json")) {
+    return json({ error: "expected_json" }, 415);
+  }
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "invalid_subject_classification" }, 400);
+  }
+  const root = (body as Record<string, unknown>).subjectTracksByCycle;
+  if (!root || typeof root !== "object" || Array.isArray(root)) {
+    return json({ error: "invalid_subject_classification" }, 400);
+  }
+
+  const { data: school, error } = await auth.service.from("institutions")
+    .select("settings_json").eq("id", auth.institutionId).maybeSingle();
+  if (error) return json({ error: "institution_load_failed" }, 503);
+  if (!school) return json({ error: "institution_not_found" }, 404);
+  const stored = asSettingsJson(school.settings_json);
+  const current = parseSchoolCyclesSettings(stored);
+  if (!current.enabled) return json({ error: "school_cycles_not_enabled" }, 409);
+
+  const supplied = root as Record<string, unknown>;
+  if (Object.keys(supplied).some(key => !current.enabledCycles.includes(key as SchoolCycle))) {
+    return json({ error: "cycle_not_allowed" }, 400);
+  }
+  const mapping: SchoolCyclesSettings["subjectTracksByCycle"] = {};
+  const referenced = new Set<string>();
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const cycle of current.enabledCycles) {
+    const perCycle = supplied[cycle] ?? {};
+    if (!perCycle || typeof perCycle !== "object" || Array.isArray(perCycle)) {
+      return json({ error: "invalid_cycle_subjects" }, 400);
+    }
+    const rows = Object.entries(perCycle as Record<string, unknown>);
+    if (rows.length > 250) return json({ error: "too_many_cycle_subjects" }, 400);
+    const items: Record<string, TeachingTrack[]> = {};
+    for (const [subjectId, tracks] of rows) {
+      if (!uuid.test(subjectId) || !Array.isArray(tracks) || !tracks.length ||
+          !tracks.every(isTeachingTrack) ||
+          tracks.some(track => !current.teachingTracksByCycle[cycle]?.includes(track))) {
+        return json({ error: "invalid_program_subject" }, 400);
+      }
+      referenced.add(subjectId);
+      items[subjectId] = [...new Set(tracks)];
+    }
+    mapping[cycle] = items;
+  }
+
+  if (referenced.size) {
+    const ids = Array.from(referenced);
+    const result = await auth.service.from("institution_subjects")
+      .select("subject_id").eq("institution_id", auth.institutionId)
+      .eq("is_active", true).in("subject_id", ids).limit(501);
+    if (result.error) return json({ error: "subjects_load_failed" }, 503);
+    const allowed = new Set((result.data || []).map(row => row.subject_id));
+    if (ids.some(id => !allowed.has(id))) {
+      return json({ error: "foreign_or_inactive_subject" }, 403);
+    }
+  }
+
+  // Maintain stable cycle provision, class assignments and unrelated settings.
+  const updated: SchoolCyclesSettings = { ...current, subjectTracksByCycle: mapping };
+  const write = await auth.service.from("institutions")
+    .update({ settings_json: { ...stored, [SCHOOL_CYCLES_SETTINGS_KEY]: updated } })
+    .eq("id", auth.institutionId).select("id").single();
+  if (write.error) return json({ error: "save_failed" }, 503);
+
+  return json({ ok: true, configuration: updated });
 }
