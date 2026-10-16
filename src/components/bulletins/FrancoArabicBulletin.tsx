@@ -82,7 +82,7 @@ function BrandMark() {
 
 function Head({ model, variant }: { model: BulletinDocument; variant: BulletinVariant }) {
   const kind = variant === "combined" ? "Bulletin des deux enseignements" : 
-    variant === "french" ? "Bulletin de notes · Français" : "Bulletin de notes · Arabe";
+    variant === "ordinary" ? "Bulletin de notes" : variant === "french" ? "Bulletin de notes · Français" : "Bulletin de notes · Arabe";
   const first = variant === "arabic" ? model.arabic : (model.french || model.arabic);
   return <>
     <div className={styles.upperPattern} aria-hidden="true" />
@@ -135,10 +135,10 @@ function Identity({ model, context }: { model: BulletinDocument; context?: Bulle
   </section>;
 }
 
-function Heading({ track, compact }: { track: BulletinTrack; compact: boolean }) {
+function Heading({ track, compact, ordinary }: { track: BulletinTrack; compact: boolean; ordinary: boolean }) {
   return <div className={`${styles.panelHeading} ${track === "arabic" ? styles.arabicHeading : ""}`}>
     <div><span className={styles.panelKicker}>Résultats pédagogiques</span>
-      <h2>{trackLabels[track]}</h2></div>
+      <h2>{ordinary ? "Résultats scolaires" : trackLabels[track]}</h2></div>
     {!compact && <span className={styles.panelSymbol} aria-hidden="true">
       {track === "french" ? "✦" : "۞"}
     </span>}
@@ -169,13 +169,13 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
   </table>;
 }
 
-function Summary({ program, compact }: { program: BulletinProgram; compact: boolean }) {
+function Summary({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
   const score = number(program.generalAverage);
   const rank = program.rank != null && program.classSize != null
     ? `${program.rank} / ${program.classSize}` : "—";
   return <div className={`${styles.summary} ${compact ? styles.compactSummary : ""}`}>
     <div className={styles.summaryMetric}>
-      <span>Moyenne {program.track === "arabic" ? "arabe" : "française"}</span>
+      <span>{ordinary ? "Moyenne générale" : `Moyenne ${program.track === "arabic" ? "arabe" : "française"}`}</span>
       <strong>{score}<small> / {program.denominator}</small></strong>
     </div>
     <div className={styles.summaryMetric}><span>Rang</span><strong>{rank}</strong></div>
@@ -193,11 +193,11 @@ function Signature({ name, title }: { name?: string | null; title: string }) {
   </div>;
 }
 
-function Panel({ program, compact }: { program: BulletinProgram; compact: boolean }) {
+function Panel({ program, compact, ordinary }: { program: BulletinProgram; compact: boolean; ordinary: boolean }) {
   return <section className={`${styles.program} ${program.track === "arabic" ? styles.arabicProgram : ""}`}>
-    <Heading track={program.track} compact={compact}/>
+    <Heading track={program.track} compact={compact} ordinary={ordinary}/>
     <CourseTable program={program} compact={compact}/>
-    <Summary program={program} compact={compact}/>
+    <Summary program={program} compact={compact} ordinary={ordinary}/>
     <div className={styles.appreciation}>
       <span>Appréciation générale</span>
       <p>{program.appreciation || "—"}</p>
@@ -205,15 +205,15 @@ function Panel({ program, compact }: { program: BulletinProgram; compact: boolea
   </section>;
 }
 
-function Footer({ model, programs }: {
-  model: BulletinDocument; programs: BulletinProgram[];
+function Footer({ model, programs, ordinary }: {
+  model: BulletinDocument; programs: BulletinProgram[]; ordinary: boolean;
 }) {
   return <footer className={styles.footer}>
     <div className={styles.signatures}>
       {programs.map(p => <Signature
         key={p.track}
         name={p.directorName}
-        title={p.track === "french" ? "Direction française" : "Direction arabe"}
+        title={ordinary ? "Direction de l’établissement" : (p.track === "french" ? "Direction française" : "Direction arabe")}
       />)}
       <div className={styles.stampBox}>
         <span>Cachet de l’établissement</span><div className={styles.stampSpace}/>
@@ -250,9 +250,9 @@ export default function FrancoArabicBulletin({
       {model.sample && <div className={styles.sampleTag}>MAQUETTE · DONNÉES FICTIVES</div>}
       <Identity model={model} context={context}/>
       <div className={`${styles.panels} ${compact ? styles.twoPanels : ""}`}>
-        {programs.map(p=><Panel key={p.track} program={p} compact={compact}/>)}
+        {programs.map(p=><Panel key={p.track} program={p} compact={compact} ordinary={variant === "ordinary"}/>)}
       </div>
-      <Footer model={model} programs={programs}/>
+      <Footer model={model} programs={programs} ordinary={variant === "ordinary"}/>
     </div>
   </article>;
 }
