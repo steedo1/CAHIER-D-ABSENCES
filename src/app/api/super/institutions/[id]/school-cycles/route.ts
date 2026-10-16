@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseServerClient, getVerifiedServerUser } from "@/lib/supabase-server";
-import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
+import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 import {
   SCHOOL_CYCLES_SETTINGS_KEY,
   getDefaultSchoolCyclesSettings,
@@ -24,24 +23,10 @@ function reply(data: unknown, status = 200) {
   });
 }
 
-async function superAccess() {
-  const supa = await getSupabaseServerClient();
-  const { data: { user }, error } = await getVerifiedServerUser(supa);
-  if (error || !user) return { error: reply({ error: "unauthorized" }, 401) } as const;
-
-  const srv = getSupabaseServiceClient();
-  const roles = await srv.from("user_roles").select("role").eq("profile_id", user.id);
-  if (roles.error) return { error: reply({ error: "permission_check_unavailable" }, 503) } as const;
-  if (!roles.data?.some((r) => r.role === "super_admin")) {
-    return { error: reply({ error: "forbidden" }, 403) } as const;
-  }
-  return { srv, user } as const;
-}
-
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, context: Params) {
-  const access = await superAccess();
+  const access = await requireSuperAdminAccess();
   if ("error" in access) return access.error;
   const { id } = await context.params;
   if (!UUID.test(id)) return reply({ error: "invalid_institution" }, 400);
@@ -119,7 +104,7 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
  * The old JSON settings keys are preserved; no database migration is required.
  */
 export async function PUT(req: NextRequest, context: Params) {
-  const access = await superAccess();
+  const access = await requireSuperAdminAccess();
   if ("error" in access) return access.error;
 
   // Same-origin browser requests only (defense against cross-site mutations).
