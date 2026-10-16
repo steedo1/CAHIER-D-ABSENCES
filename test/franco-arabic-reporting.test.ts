@@ -5,6 +5,7 @@ import {
   convertScoreScale,
   defaultFrancoArabicReportsSettings,
   getConfiguredScoringScale,
+  getConfiguredSubjectCoefficients,
   parseFrancoArabicReportsSettings,
   validateFrancoArabicReportsInput,
 } from "../src/lib/franco-arabic-reporting";
@@ -69,4 +70,49 @@ test("score conversion works without mutating source values and validates bounds
   assert.equal(convertScoreScale(-1, 10, 20), null);
   assert.equal(convertScoreScale(8, 0, 20), null);
   assert.equal(convertScoreScale(Number.NaN, 10, 20), null);
+});
+
+test("program-specific coefficients can differ by French/Arabic and by grade", () => {
+  const subject = "11111111-1111-4111-8111-111111111111";
+  const config = validateFrancoArabicReportsInput({
+    enabled: true, format: "both",
+    scales: [
+      { cycle: "primary", level: "CP1", track: "french", maxScore: 10 },
+      { cycle: "primary", level: "CP1", track: "arabic", maxScore: 20 },
+    ],
+    coefficients: [
+      { cycle: "primary", level: "CP1", track: "french", subjectId: subject,
+        coefficient: 2, includeInAverage: true },
+      { cycle: "primary", level: "CP1", track: "arabic", subjectId: subject,
+        coefficient: 3, includeInAverage: false },
+    ],
+  });
+  assert.ok(config);
+  assert.equal(getConfiguredSubjectCoefficients(config, "primary", "CP1", "french")[0]?.coefficient, 2);
+  assert.equal(getConfiguredSubjectCoefficients(config, "primary", "CP1", "arabic")[0]?.coefficient, 3);
+  assert.equal(getConfiguredSubjectCoefficients(config, "primary", "CM1", "arabic").length, 0);
+});
+
+test("invalid or duplicate teaching coefficients are rejected", () => {
+  const valid = {
+    enabled: true, format: "separate",
+    scales: [{ cycle: "primary", level: "CP1", track: "french", maxScore: 10 }],
+    coefficients: [
+      { cycle: "primary", level: "CP1", track: "french",
+        subjectId: "11111111-1111-4111-8111-111111111111",
+        coefficient: 2, includeInAverage: true },
+    ],
+  };
+  assert.equal(validateFrancoArabicReportsInput({
+    ...valid, coefficients: [...valid.coefficients, valid.coefficients[0]],
+  }), null);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...valid, coefficients: [{ ...valid.coefficients[0], level: "CM1" }],
+  }), null);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...valid, coefficients: [{ ...valid.coefficients[0], coefficient: 0 }],
+  }), null);
+  assert.equal(validateFrancoArabicReportsInput({
+    ...valid, coefficients: [{ ...valid.coefficients[0], subjectId: "outside" }],
+  }), null);
 });
