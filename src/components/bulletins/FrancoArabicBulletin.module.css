@@ -194,12 +194,15 @@
 @media screen and (max-width: 850px) {
   .page { transform-origin: top left; }
 }
-@page { size: A4 portrait; margin: 0; }
+/* Print-only global visibility lives in the internal preview route stylesheet.
+   Keeping this file local avoids leaking print rules into the legacy bulletins. */
 @media print {
-  :global(html), :global(body) { margin: 0 !important; padding: 0 !important; background: white !important; }
-  :global(body *) { visibility: hidden !important; }
-  .printRoot, .printRoot * { visibility: visible !important; }
-  .printRoot { position: fixed !important; top: 0 !important; left: 0 !important; }
-  .page { margin: 0; box-shadow: none; width: 210mm; min-height: 297mm; overflow: visible; }
+  .page {
+    margin: 0;
+    box-shadow: none;
+    width: 210mm;
+    min-height: 297mm;
+    overflow: visible;
+  }
   .marks tr { break-inside: avoid; page-break-inside: avoid; }
 }
