@@ -89,6 +89,15 @@ Décision confirmée : **ne jamais mélanger les moyennes de l'enseignement fran
 - Les contrôles de préparation (actuellement hors production) doivent être conservés dans les futures API et modèles PDF.
 - **Ne pas modifier** les règles des bulletins historiques des établissements non activés (notamment CSCA).
 
+## Maquettes A4 de bulletin — décision d'interface
+
+- Trois présentations professionnelles, avec typographie institutionnelle, palette vert foncé / bleu / or et impression A4 : bulletin **français**, bulletin **arabe**, et **document regroupé**.
+- La présentation regroupée n'agrège **jamais** les moyennes des deux programmes : chaque tableau, chaque moyenne et chaque classement restent dans son enseignement.
+- **Ne pas afficher le bandeau d'avertissement rouge « Aucune moyenne franco-arabe globale » sur les bulletins.** La séparation s'exprime par les sections et l'absence de moyenne commune, sans explication alarmiste.
+- Le modèle peut être prévisualisé par le Super Admin depuis `/super/cycles/bulletins-preview` avec des **données fictives** clairement signalées. Les signatures, tampons et logos réels seront fournis/configurés par l'établissement ; ne jamais inventer de tampon officiel.
+- Le composant réutilisable `FrancoArabicBulletin` consomme des données de bulletin **déjà autorisées côté serveur**. Il ne cherche pas les notes, ne crée pas d'élèves, ne remplace pas le bulletin historique et n'autorise pas les nouveaux directeurs.
+- L'impression utilise une mise en page A4 CSS. La vérification visuelle des sauts de page, la connexion au moteur de notes et l'export PDF métier restent des étapes distinctes, avant toute fusion en production.
+
 ## 7. Non-objectifs / garde-fous
 - Ne pas créer l'EPC ou aucune de ses classes avant stabilisation du code.
 - Ne pas supposer que « CP1 Français » et « CP1 Arabe » sont deux cohortes distinctes.
