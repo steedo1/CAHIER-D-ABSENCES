@@ -198,7 +198,17 @@ export function buildProgramBulletinDraft(params: {
   };
 }
 
-/** A combined bilingual report contains two independent averages by default. */
+/**
+ * Product rule (confirmed): NEVER mix the French and Arabic averages.
+ *
+ * A "combined" bulletin is only a common presentation of two INDEPENDENT
+ * report cards, not a combined pedagogical result. This applies even if
+ * both individual averages use the same /20 scale, and even if a school
+ * chooses the "combined" or "both" PDF presentation.
+ *
+ * Preserve the explicit null field as a backward-compatible guard for
+ * future report renderers; do not calculate or show a school-wide mean.
+ */
 export function combineProgramBulletins(
   french: ProgramBulletinDraft,
   arabic: ProgramBulletinDraft,
@@ -215,7 +225,7 @@ export function combineProgramBulletins(
     level: french.level,
     french,
     arabic,
-    // No invented "global franco-Arabic average": weighting is school-specific.
+    // Business invariant: there is NO global French+Arabic mean, ever.
     combinedAverage: null as null,
     ready: french.status === "ready" && arabic.status === "ready",
   };
