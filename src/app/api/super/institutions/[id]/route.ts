@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { getSupabaseActionClient } from "@/lib/supabase-server";
+import { requireSuperAdminAccess } from "@/lib/super-admin-access";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +14,14 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  const access = await requireSuperAdminAccess();
+  if ("error" in access) return access.error;
+  const origin = req.headers.get("origin");
+  if (origin && origin !== req.nextUrl.origin) {
+    return NextResponse.json({ error: "invalid_origin" }, { status: 403 });
+  }
   const { id } = await context.params;
-  const supabase = getSupabaseServiceClient();
+  const supabase = access.srv;
 
   try {
     const body = (await req.json().catch(() => ({}))) as {
