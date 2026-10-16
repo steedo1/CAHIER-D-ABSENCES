@@ -1,12 +1,12 @@
 /**
  * Print layout policy for Franco-Arabic bulletins.
  *
- * One student record may be presented through one of three layouts, while
+ * One student record may be presented through distinct layouts, while
  * program-specific results remain separate. There is deliberately no
  * "combinedAverage" field in the printable view.
  */
 export type PrintableTeachingTrack = "french" | "arabic";
-export type PrintableBulletinVariant = PrintableTeachingTrack | "combined";
+export type PrintableBulletinVariant = PrintableTeachingTrack | "combined" | "ordinary";
 
 type PrintableProgramBase = {
   track: PrintableTeachingTrack;
@@ -23,7 +23,7 @@ export function selectPrintablePrograms<
   const french = model.french?.track === "french" ? model.french : null;
   const arabic = model.arabic?.track === "arabic" ? model.arabic : null;
 
-  if (variant === "french") return french ? [french] : null;
+  if (variant === "french" || variant === "ordinary") return french ? [french] : null;
   if (variant === "arabic") return arabic ? [arabic] : null;
   if (variant === "combined") return french && arabic ? [french, arabic] : null;
   return null;
