@@ -44,7 +44,7 @@ jobs:
         run: npx tsc --noEmit
 
       - name: School cycle compatibility regression suite
-        run: node --import tsx --test test/school-cycles.test.ts test/school-cycle-roster.test.ts
+        run: node --import tsx --test test/school-cycles.test.ts test/school-cycle-roster.test.ts test/school-director-scope.test.ts
 
       - name: Mon Cahier IA regression suite
         run: npm run test:mon-cahier-ai
