@@ -12,6 +12,8 @@ import {
 type CycleSummary = {
   classes: Array<{ id: string; label: string; level: string | null }>;
   count: number;
+  students: number;
+  teachers: number;
 };
 
 type SummaryResponse = {
@@ -93,6 +95,10 @@ export default function MulticycleEntryPanel({
                 {typeof count === "number" ? count : "—"}
                 <span className="ml-2 text-xs font-medium text-slate-500">classes</span>
               </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                <span>{summary?.cycles?.[cycle]?.students ?? "—"} élèves</span>
+                <span>{summary?.cycles?.[cycle]?.teachers ?? "—"} enseignants</span>
+              </div>
               <div className="mt-3 flex flex-wrap gap-1">
                 {programs.map((program) => (
                   <span key={program} className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">
@@ -105,6 +111,12 @@ export default function MulticycleEntryPanel({
           );
         })}
       </div>
+      {summary?.enabled && (
+        <p className="mt-3 text-xs text-slate-500">
+          Effectifs dédoublonnés : un élève ou un enseignant partagé entre plusieurs groupes
+          est compté une seule fois dans chaque cycle.
+        </p>
+      )}
       {error && (
         <div role="alert" className="mt-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-900">
           Les effectifs par cycle sont momentanément indisponibles : {error}
