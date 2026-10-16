@@ -77,6 +77,25 @@ test("two programs use the same student identity but entirely different subjects
   assert.equal(combined?.combinedAverage, null);
 });
 
+test("never blend French and Arabic averages in any report presentation", () => {
+  const fr = calc("french");
+  const ar = calc("arabic");
+  assert.equal(fr.generalAverage, 7.4);
+  assert.equal(ar.generalAverage, 15);
+  // The PDF layout is not an instruction to calculate a new mean.
+  for (const format of ["separate", "combined", "both"] as const) {
+    const chosenReports = { ...reports, format };
+    const frenchPart = calc("french", scores, chosenReports);
+    const arabicPart = calc("arabic", scores, chosenReports);
+    const sheet = combineProgramBulletins(frenchPart, arabicPart);
+    assert.ok(sheet, `missing report for ${format}`);
+    assert.equal(sheet.french.generalAverage, 7.4);
+    assert.equal(sheet.arabic.generalAverage, 15);
+    assert.equal(sheet.combinedAverage, null);
+    assert.notEqual(sheet.french.generalAverage, sheet.arabic.generalAverage);
+  }
+});
+
 test("missing coefficients cannot be guessed and produce no mean", () => {
   const ar = calc("arabic", scores, {
     ...reports, coefficients: reports.coefficients.filter((p) => p.subjectId !== quran),
