@@ -259,7 +259,7 @@ export default function SchoolBulletinSettings() {
                 </p>
               )}
               <div className="border-t pt-4">
-                <h3 className="font-semibold text-slate-900">Barèmes par niveau et enseignement</h3>
+                <h3 className="font-semibold text-slate-900">Barèmes par niveau</h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Laissez vide tant que l'établissement n'a pas confirmé ses barèmes.
                   Un CP1 peut utiliser /10 et un CM1 /20 : rien n'est imposé automatiquement.
@@ -287,7 +287,7 @@ export default function SchoolBulletinSettings() {
                           })}>
                           {availableTracks.map((p) =>
                             <option key={p.track} value={p.track}>
-                              {TEACHING_TRACK_OPTIONS.find((t) => t.id === p.track)?.label || p.track}
+                              {!hasArabic ? "Enseignement ordinaire" : TEACHING_TRACK_OPTIONS.find((t) => t.id === p.track)?.label || p.track}
                             </option>)}
                         </select>
                         <input aria-label={`Niveau ${index + 1}`} value={scale.level}
@@ -317,7 +317,7 @@ export default function SchoolBulletinSettings() {
               </div>
               <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">
-                  Coefficients par discipline et par programme
+                  Coefficients par matière et par niveau
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Choisissez le niveau et la discipline, puis renseignez le coefficient
