@@ -195,7 +195,7 @@
   .page { transform-origin: top left; }
 }
 @media print {
-  :global(@page) { size: A4 portrait; margin: 0; }
+  @page { size: A4 portrait; margin: 0; }
   :global(html), :global(body) { margin: 0 !important; padding: 0 !important; background: white !important; }
   :global(body *) { visibility: hidden !important; }
   .printRoot, .printRoot * { visibility: visible !important; }
