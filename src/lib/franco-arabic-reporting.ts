@@ -21,15 +21,26 @@ export type LevelScoringScale = {
   maxScore: number;
 };
 
+export type SubjectReportCoefficient = {
+  cycle: SchoolCycle;
+  level: string;
+  track: TeachingTrack;
+  subjectId: string;
+  coefficient: number;
+  includeInAverage: boolean;
+};
+
 export type FrancoArabicReportsSettings = {
   version: 1;
   enabled: boolean;
   format: ReportFormat;
   scales: LevelScoringScale[];
+  /** Each coefficient belongs to a cycle + level + teaching program + subject. */
+  coefficients: SubjectReportCoefficient[];
 };
 
 export function defaultFrancoArabicReportsSettings(): FrancoArabicReportsSettings {
-  return { version: 1, enabled: false, format: "separate", scales: [] };
+  return { version: 1, enabled: false, format: "separate", scales: [], coefficients: [] };
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -86,7 +97,39 @@ export function validateFrancoArabicReportsInput(
       maxScore: entry.maxScore as number,
     });
   }
-  return { version: 1, enabled: true, format: data.format, scales };
+  const rawCoefficients = data.coefficients ?? [];
+  if (!Array.isArray(rawCoefficients) || rawCoefficients.length > 500) return null;
+  const coefficients: SubjectReportCoefficient[] = [];
+  const policySeen = new Set<string>();
+  for (const raw of rawCoefficients) {
+    const entry = asObject(raw);
+    if (!entry || !isSchoolCycle(entry.cycle) || !isTeachingTrack(entry.track) ||
+        typeof entry.subjectId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.subjectId) ||
+        typeof entry.includeInAverage !== "boolean" ||
+        typeof entry.coefficient !== "number" ||
+        !Number.isFinite(entry.coefficient) ||
+        entry.coefficient <= 0 || entry.coefficient > 100) return null;
+    const level = normalizedLevel(entry.level);
+    if (!level) return null;
+    const scalePresent = scales.some((scale) =>
+      scale.cycle === entry.cycle &&
+      scale.track === entry.track &&
+      scale.level.toLocaleLowerCase("fr") === level.toLocaleLowerCase("fr"));
+    if (!scalePresent) return null;
+    const key = [entry.cycle, level.toLocaleLowerCase("fr"), entry.track, entry.subjectId].join("|");
+    if (policySeen.has(key)) return null;
+    policySeen.add(key);
+    coefficients.push({
+      cycle: entry.cycle,
+      level,
+      track: entry.track,
+      subjectId: entry.subjectId,
+      coefficient: entry.coefficient,
+      includeInAverage: entry.includeInAverage,
+    });
+  }
+  return { version: 1, enabled: true, format: data.format, scales, coefficients };
 }
 
 export function getConfiguredScoringScale(
@@ -101,6 +144,21 @@ export function getConfiguredScoringScale(
   return settings.scales.find((entry) =>
     entry.cycle === cycle && entry.track === track &&
     entry.level.toLocaleLowerCase("fr") === normalized.toLocaleLowerCase("fr"))?.maxScore ?? null;
+}
+
+/** No default coefficient is inferred from language, cycle or subject name. */
+export function getConfiguredSubjectCoefficients(
+  settings: FrancoArabicReportsSettings,
+  cycle: SchoolCycle,
+  level: string,
+  track: TeachingTrack,
+): SubjectReportCoefficient[] {
+  if (!settings.enabled) return [];
+  const normalized = normalizedLevel(level)?.toLocaleLowerCase("fr");
+  if (!normalized) return [];
+  return settings.coefficients.filter((policy) =>
+    policy.cycle === cycle && policy.track === track &&
+    policy.level.toLocaleLowerCase("fr") === normalized);
 }
 
 /**
