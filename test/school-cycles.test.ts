@@ -137,3 +137,38 @@ test("disabled or malformed options cannot activate school cycles", () => {
   assert.equal(invalidView.defaultView, "all");
   assert.deepEqual(invalidView.teachingTracksByCycle.primary, ["arabic"]);
 });
+
+test("subject teaching classifications are scoped by cycle and allowed programs", () => {
+  const subject = "11111111-1111-4111-8111-111111111111";
+  const settings = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1,
+      enabled: true,
+      enabledCycles: ["primary", "secondary"],
+      teachingTracksByCycle: {
+        primary: ["french", "arabic"],
+        secondary: ["arabic"],
+      },
+      subjectTracksByCycle: {
+        primary: { [subject]: ["french", "arabic", "untrusted"] },
+        secondary: { [subject]: ["french", "arabic"], "not-a-uuid": ["arabic"] },
+      },
+      defaultView: "all",
+    },
+  });
+  assert.deepEqual(settings.subjectTracksByCycle.primary?.[subject], ["french", "arabic"]);
+  assert.deepEqual(settings.subjectTracksByCycle.secondary?.[subject], ["arabic"]);
+  assert.equal(settings.subjectTracksByCycle.secondary?.["not-a-uuid"], undefined);
+});
+
+test("schools without subject mappings remain safely empty", () => {
+  const settings = parseSchoolCyclesSettings({
+    [SCHOOL_CYCLES_SETTINGS_KEY]: {
+      version: 1, enabled: true,
+      enabledCycles: ["primary"],
+      teachingTracksByCycle: { primary: ["french", "arabic"] },
+    },
+  });
+  assert.deepEqual(settings.subjectTracksByCycle.primary, {});
+  assert.equal(getDefaultSchoolCyclesSettings().subjectTracksByCycle.primary, undefined);
+});
