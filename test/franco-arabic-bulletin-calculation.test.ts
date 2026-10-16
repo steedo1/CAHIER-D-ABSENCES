@@ -102,7 +102,7 @@ test("missing coefficients cannot be guessed and produce no mean", () => {
   });
   assert.equal(ar.status, "incomplete");
   assert.equal(ar.generalAverage, null);
-  assert.ok(ar.problems.includes("subject_policy_missing_or_invalid"));
+  assert.ok(ar.problems.includes("level_subjects_not_configured"));
 });
 
 test("no implicit mean from a partially marked student", () => {
@@ -163,4 +163,31 @@ test("shared French/Arabic discipline cannot leak the same evaluation into both 
   assert.equal(report.status, "incomplete");
   assert.equal(report.generalAverage, null);
   assert.ok(report.problems.includes("shared_subject_requires_program_specific_evaluations"));
+});
+
+test("primary grades have independent subjects, never inherit all primary cycle subjects", () => {
+  const cp = calc("french");
+  assert.deepEqual(cp.subjects.map(row => row.subjectId), [math, french].sort());
+
+  // A school's CM1 plan differs from its CP1 plan; not all primary
+  // subjects are automatically placed on every class bulletin.
+  const cm1 = buildProgramBulletinDraft({
+    studentId: "A", cycle: "primary", level: "CM1", track: "french",
+    school,
+    reports: {
+      ...reports,
+      scales: [
+        ...reports.scales,
+        { cycle: "primary", level: "CM1", track: "french", maxScore: 20 },
+      ],
+      coefficients: [
+        ...reports.coefficients,
+        { cycle: "primary", level: "CM1", track: "french",
+          subjectId: math, coefficient: 4, includeInAverage: true },
+      ],
+    },
+    officialScores: scores,
+  });
+  assert.deepEqual(cm1.subjects.map(row => row.subjectId), [math]);
+  assert.equal(cm1.maximumScore, 20);
 });
