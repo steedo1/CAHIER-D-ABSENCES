@@ -528,7 +528,7 @@ async function loadClasses(args: {
     classes = classes.filter((cls) => levelMatches(cls.level, args.levelHint));
   }
 
-  return classes.slice(0, 80);
+  return classes;
 }
 
 async function loadOfficialBulletinAverages(args: {
@@ -567,7 +567,7 @@ async function loadOfficialBulletinAverages(args: {
   const cookie = args.req.headers.get("cookie") || "";
   const authorization = args.req.headers.get("authorization") || "";
 
-  for (const cls of args.classes) {
+  async function loadClassBulletin(cls: ClassRow) {
     try {
       const url = new URL("/api/admin/grades/bulletin", origin);
       url.searchParams.set("class_id", cls.id);
@@ -576,6 +576,7 @@ async function loadOfficialBulletinAverages(args: {
       url.searchParams.set("export_light", "1");
 
       const res = await fetch(url.toString(), {
+        signal: AbortSignal.any([args.req.signal, AbortSignal.timeout(12_000)]),
         headers: {
           ...(cookie ? { cookie } : {}),
           ...(authorization ? { authorization } : {}),
@@ -585,7 +586,7 @@ async function loadOfficialBulletinAverages(args: {
 
       if (!res.ok) {
         args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : HTTP ${res.status}`);
-        continue;
+        return;
       }
 
       const json = (await res.json().catch(() => null)) as any;
@@ -660,6 +661,10 @@ async function loadOfficialBulletinAverages(args: {
     }
   }
 
+  for (const batch of chunks(args.classes, 4)) {
+    await Promise.all(batch.map(loadClassBulletin));
+  }
+
   return out;
 }
 
@@ -731,8 +736,9 @@ function buildClassSignals(classes: ClassRow[], students: AiStudentSignal[]): Ai
     const high = bucket.filter((s) => s.risk_level === "high").length;
     const medium = bucket.filter((s) => s.risk_level === "medium").length;
     const low = bucket.filter((s) => s.risk_level === "low").length;
-    const avgSuccess = bucket.length
-      ? bucket.reduce((acc, s) => acc + (s.p_success ?? 0), 0) / bucket.length
+    const scoredStudents = bucket.filter((s) => s.p_success != null);
+    const avgSuccess = scoredStudents.length
+      ? scoredStudents.reduce((acc, s) => acc + s.p_success!, 0) / scoredStudents.length
       : null;
     const avgGeneral = bucket.filter((s) => s.general_avg_20 != null).length
       ? bucket.reduce((acc, s) => acc + (s.general_avg_20 ?? 0), 0) /

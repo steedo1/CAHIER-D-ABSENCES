@@ -8,7 +8,7 @@
   | "quick_stats"
   | "general_analysis";
 
-export type RiskLevel = "low" | "medium" | "high";
+export type RiskLevel = "low" | "medium" | "high" | "unknown";
 
 export type AiStudentSignal = {
   student_id: string;
@@ -438,8 +438,9 @@ export function levelMatches(level: string | null | undefined, hint: string | nu
 }
 
 export function getRiskLevel(pSuccess: number | null | undefined): RiskLevel {
+  if (pSuccess == null) return "unknown";
   const p = Number(pSuccess);
-  if (!Number.isFinite(p)) return "medium";
+  if (!Number.isFinite(p)) return "unknown";
   if (p < 0.45) return "high";
   if (p < 0.7) return "medium";
   return "low";
@@ -825,9 +826,10 @@ export function buildAiAnswer(context: MonCahierAiContext, question: string): Mo
   const totalStudents = scoped.students.length;
   const highRisk = scoped.students.filter((s) => s.risk_level === "high").length;
   const mediumRisk = scoped.students.filter((s) => s.risk_level === "medium").length;
+  const scoredClasses = scoped.classes.filter((cls) => cls.avg_success_probability != null);
   const avgSuccess =
-    scoped.classes.length > 0
-      ? scoped.classes.reduce((acc, cls) => acc + (cls.avg_success_probability ?? 0), 0) / scoped.classes.length
+    scoredClasses.length > 0
+      ? scoredClasses.reduce((acc, cls) => acc + cls.avg_success_probability!, 0) / scoredClasses.length
       : null;
   const scopedProgressions = selectProgressionsForScope(context, scoped);
   const avgTextbookProgression = averageProgressionRate(scopedProgressions);
