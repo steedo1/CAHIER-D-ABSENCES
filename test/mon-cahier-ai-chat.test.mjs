@@ -31,7 +31,7 @@ function load(path) {
 }
 
 const Chat = load("src/components/admin/MonCahierAiChatBubble.tsx").default;
-const context = { ok: true, current_academic_year: {
+const context = { ok: true, conversation_context: "context-school-a", current_academic_year: {
   code: "2026-2027", label: "2026–2027", is_current: true,
   start_date: "2026-09-01", end_date: "2027-07-31",
 } };
@@ -140,6 +140,7 @@ test("a question sends the active year and chosen date once and renders every co
     assert.deepEqual(JSON.parse(post[0].options.body), {
       question: "Prépare le conseil de la 3e3", academic_year: "2026-2027", exam_date: "2026-11-10",
       class_id: null, level: null, core_completion_percent: 60,
+      history: [], history_scope: { academic_year: "2026-2027", exam_date: "2026-11-10", context_key: "context-school-a" },
     });
     assert.equal(ui.host.querySelector("textarea").disabled, true);
     await act(async () => { pending.resolve(Response.json({ ok: true, answer: {
@@ -169,6 +170,38 @@ test("an interrupted answer preserves the question and allows sending it again",
     await click(button(ui.host, "Envoyer la question"));
     assert.match(ui.host.textContent, /Reprise réussie/);
     assert.equal(analyses, 2);
+  } finally { await ui.close(); }
+});
+
+test("a follow-up sends completed conversation turns and displays sources; a new date or discussion resets history", async () => {
+  const ui = await mount((url) => url.endsWith("bootstrap") ? Response.json(context) : Response.json({ ok: true, answer: {
+    title: "Enseignants", summary: "Deux enseignants sont inscrits dans l’établissement.", sources: ["Annuaire des enseignants"],
+    students_to_follow: [{ student_id: "test", full_name: "CARTE NOMINATIVE CONFIDENTIELLE", class_label: "3e3" }],
+  } }));
+  try {
+    await click(button(ui.host, "Ouvrir Cahier IA"));
+    await change(ui.host.querySelector("textarea"), "Combien d’enseignants ?");
+    await click(button(ui.host, "Envoyer la question"));
+    assert.match(ui.host.querySelector('[aria-label="Sources consultées"]').textContent, /Annuaire/);
+    await change(ui.host.querySelector("textarea"), "Et dans la 3e3 ?");
+    await click(button(ui.host, "Envoyer la question"));
+    let posts = ui.requests.filter((request) => request.options.method === "POST");
+    assert.deepEqual(JSON.parse(posts[1].options.body).history, [
+      { role: "user", content: "Combien d’enseignants ?" },
+      { role: "assistant", content: "Deux enseignants sont inscrits dans l’établissement." },
+    ]);
+    assert.ok(!posts[1].options.body.includes("CARTE NOMINATIVE CONFIDENTIELLE"));
+    await change(ui.host.querySelector('input[type="date"]'), "2026-11-11");
+    await change(ui.host.querySelector("textarea"), "Quand finit le trimestre ?");
+    await click(button(ui.host, "Envoyer la question"));
+    posts = ui.requests.filter((request) => request.options.method === "POST");
+    assert.deepEqual(JSON.parse(posts[2].options.body).history, []);
+    assert.equal(JSON.parse(posts[2].options.body).history_scope.exam_date, "2026-11-11");
+    await click(button(ui.host, "Nouvelle discussion"));
+    await change(ui.host.querySelector("textarea"), "Bonjour");
+    await click(button(ui.host, "Envoyer la question"));
+    posts = ui.requests.filter((request) => request.options.method === "POST");
+    assert.deepEqual(JSON.parse(posts[3].options.body).history, []);
   } finally { await ui.close(); }
 });
 

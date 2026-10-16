@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, MessageCircle, Send, Sparkles, X } from "lucide-react";
+import { Bot, Loader2, MessageCircle, RotateCcw, Send, Sparkles, X } from "lucide-react";
 import { fetchAiJson, referenceDateForAcademicYear } from "@/lib/mon-cahier-ai/client";
 import type { AiDataQuality, MonCahierAiAnswer } from "@/lib/mon-cahier-ai/core";
+import type { ConversationMessage } from "@/lib/mon-cahier-ai/conversation";
 
 type AcademicYear = {
   code: string;
@@ -18,6 +19,7 @@ type BootstrapResponse = {
   error?: string;
   current_academic_year?: AcademicYear | null;
   academic_years?: AcademicYear[];
+  conversation_context?: string;
 };
 
 type AiAnswer = Pick<MonCahierAiAnswer, "title" | "summary"> & Partial<MonCahierAiAnswer>;
@@ -36,10 +38,38 @@ type ChatMessage =
 
 const QUICK_QUESTIONS = [
   "Combien d’élèves compte l’établissement ?",
+  "Combien d’enseignants ?",
+  "Nombre total d’internes ?",
+  "La date de fin du trimestre",
   "Quels élèves doivent être suivis en priorité ?",
   "Quelles classes sont les plus fragiles ?",
   "Résume-moi la situation pédagogique.",
 ];
+
+const welcomeMessage: ChatMessage = {
+  id: "welcome", role: "assistant",
+  text: "Bonjour ! Pose-moi ta question sur les effectifs, les enseignants, les internes, le calendrier ou la situation pédagogique de l’établissement.",
+};
+
+function historyForMessages(messages: ChatMessage[]): ConversationMessage[] {
+  const history: ConversationMessage[] = [];
+  let pending: string | null = null;
+  for (const message of messages) {
+    if (message.role === "user") { pending = message.text; continue; }
+    if (message.error) { pending = null; continue; }
+    if (!pending || !message.answer) continue;
+    const answer = message.answer;
+    const content = [answer.summary,
+      ...(answer.quick_stats?.cards || []).map((card) => `${card.label} : ${card.value}`),
+      ...(answer.quick_stats?.breakdown || []).map((item) => `${item.label} : ${item.value}`),
+      answer.council_note || "",
+      ...(answer.classes_at_risk || []).slice(0, 4).map((cls) => cls.class_label),
+    ].filter(Boolean).join("\n").slice(0, 2_000);
+    history.push({ role: "user", content: pending.slice(0, 2_000) }, { role: "assistant", content });
+    pending = null;
+  }
+  return history.slice(-12);
+}
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -175,6 +205,12 @@ function AnswerContent({ answer, quality }: { answer: AiAnswer; quality?: AiData
           {quality.summary}
         </p>
       ) : null}
+
+      {answer.sources?.length ? (
+        <p aria-label="Sources consultées" className="border-t border-slate-100 pt-2 text-[11px] leading-4 text-slate-500">
+          Sources : {answer.sources.join(" · ")}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -186,17 +222,12 @@ export default function MonCahierAiChatBubble() {
   const [asking, setAsking] = useState(false);
   const [academicYear, setAcademicYear] = useState("");
   const [academicYearLabel, setAcademicYearLabel] = useState("");
+  const [conversationContextKey, setConversationContextKey] = useState("");
   const [examDate, setExamDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [contextError, setContextError] = useState<string | null>(null);
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      text: "Bonjour. Pose-moi simplement ta question sur la situation pédagogique de l’établissement.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const questionRequestRef = useRef<AbortController | null>(null);
 
@@ -226,6 +257,7 @@ export default function MonCahierAiChatBubble() {
         }
 
         setAcademicYear(year.code);
+        setConversationContextKey(json.conversation_context || "");
         setAcademicYearLabel(year.label || year.code);
         setExamDate(referenceDateForAcademicYear(year));
         setReady(true);
@@ -280,6 +312,8 @@ export default function MonCahierAiChatBubble() {
           class_id: null,
           level: null,
           core_completion_percent: 60,
+          history: historyForMessages(messages),
+          history_scope: { academic_year: academicYear, exam_date: examDate, context_key: conversationContextKey },
         }),
       });
 
@@ -329,14 +363,21 @@ export default function MonCahierAiChatBubble() {
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded-full p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
-              aria-label="Fermer Cahier IA"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button type="button" aria-label="Nouvelle discussion" title="Nouvelle discussion"
+                disabled={asking} onClick={() => setMessages([welcomeMessage])}
+                className="rounded-full p-2 text-slate-300 transition hover:bg-white/10 hover:text-white disabled:opacity-40">
+                <RotateCcw className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-full p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
+                aria-label="Fermer Cahier IA"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </header>
 
           <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-3">
@@ -376,7 +417,7 @@ export default function MonCahierAiChatBubble() {
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-2 rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-sm">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Analyse en cours…
+                  Je prépare la réponse…
                 </div>
               </div>
             ) : null}
@@ -413,7 +454,7 @@ export default function MonCahierAiChatBubble() {
               <label className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500">
                 Date de référence
                 <input type="date" aria-label="Date de référence" value={examDate}
-                  disabled={asking} onChange={(event) => setExamDate(event.target.value)}
+                  disabled={asking} onChange={(event) => { setExamDate(event.target.value); setMessages([welcomeMessage]); }}
                   className="rounded-lg border border-slate-200 px-2 py-1 text-slate-700" />
               </label>
             ) : null}
