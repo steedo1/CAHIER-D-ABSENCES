@@ -28,9 +28,27 @@ import { answerDirectFact, greetingAnswer, isExplicitPedagogicalQuestion } from 
 import { answerConversation, configuredConversationModel, conversationFailure, sanitizeConversationHistory } from "@/lib/mon-cahier-ai/conversation";
 import { createSchoolData } from "@/lib/mon-cahier-ai/school-data";
 import { conversationContext } from "@/lib/mon-cahier-ai/conversation-scope";
+import { readTeachers } from "@/lib/mon-cahier-ai/teacher-data";
+import { summarizeBulletin } from "@/lib/mon-cahier-ai/official-bulletin";
+import { GET as getOfficialBulletin } from "@/app/api/admin/grades/bulletin/route";
+import { GET as getDashboard } from "@/app/api/admin/dashboard/metrics/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+// Per-instance burst control complements the Gateway team's spending budget.
+const conversationRequests = new Map<string, number[]>();
+function allowConversationRequest(key: string) {
+  const now = Date.now();
+  if (conversationRequests.size > 2_000) for (const [id, times] of conversationRequests) {
+    if (!times.some((time) => time > now - 3_600_000)) conversationRequests.delete(id);
+  }
+  const recent = (conversationRequests.get(key) || []).filter((time) => time > now - 3_600_000);
+  if (recent.length >= 60 || recent.filter((time) => time > now - 60_000).length >= 8) return false;
+  conversationRequests.set(key, [...recent, now]);
+  return true;
+}
 
 type Role = "super_admin" | "admin" | "educator" | string;
 
@@ -1759,7 +1777,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
     }
 
-    const raw = (await req.json().catch(() => ({}))) as Body;
+    const requestText = await req.text();
+    if (requestText.length > 35_000) return NextResponse.json({ ok: false, error: "request_too_large", message: "Cette discussion est trop longue. Démarre une nouvelle discussion." }, { status: 413 });
+    let raw: Body;
+    try {
+      raw = JSON.parse(requestText);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid_body");
+    } catch {
+      return NextResponse.json({ ok: false, error: "invalid_request", message: "La question est invalide. Réessaie." }, { status: 400 });
+    }
     const question = String(raw.question || "").trim() || "Résume-moi la situation pédagogique de cette école.";
     const academic_year = String(raw.academic_year || "").trim();
     const exam_date = String(raw.exam_date || "").slice(0, 10);
@@ -1778,7 +1804,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!exam_date || Number.isNaN(new Date(exam_date).getTime())) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(exam_date) || Number.isNaN(new Date(exam_date).getTime())
+      || new Date(exam_date).toISOString().slice(0, 10) !== exam_date) {
       return NextResponse.json(
         { ok: false, error: "exam_date_required", message: "La date de référence/examen est obligatoire." },
         { status: 400 },
@@ -1787,6 +1814,12 @@ export async function POST(req: NextRequest) {
 
     const greeting = greetingAnswer(question);
     if (greeting) return NextResponse.json({ ok: true, answer: greeting });
+
+    const { data: configuredYear, error: yearError } = await ctx.srv.from("academic_years").select("code")
+      .eq("institution_id", ctx.institution_id).eq("code", academic_year)
+      .abortSignal(AbortSignal.any([req.signal, AbortSignal.timeout(8_000)])).maybeSingle();
+    if (yearError) return NextResponse.json({ ok: false, error: "academic_year_unavailable", message: "L’année scolaire est momentanément indisponible." }, { status: 503 });
+    if (!configuredYear) return NextResponse.json({ ok: true, answer: { title: "Aucune classe trouvée", summary: "Cette année scolaire n’est pas configurée pour ton établissement." } });
 
     const yearClasses = await loadClasses({ srv: ctx.srv, institution_id: ctx.institution_id, academic_year, class_id: null, levelHint: null });
     const allowedClasses = yearClasses.filter((cls) => (!class_id || cls.id === class_id) && (!levelHint || levelMatches(cls.level, levelHint)));
@@ -1814,37 +1847,74 @@ export async function POST(req: NextRequest) {
     }
 
     if (conversationModel) {
+      if (!allowConversationRequest(`${ctx.institution_id}:${ctx.user.id}`)) {
+        return NextResponse.json({ ok: false, error: "conversation_rate_limited", message: "Tu as envoyé plusieurs questions rapidement. Réessaie dans une minute." }, { status: 429 });
+      }
       try {
+        const follow = new Map<string, AiStudentSignal>();
         const result = await answerConversation({
           question, academicYear: academic_year, referenceDate: exam_date, data, classes: allowedClasses, signal,
           history,
-          analyzePedagogy: async (analysisClasses, focus) => {
-            const analysisScope = buildScopeStats({ classes: analysisClasses, allClasses: yearClasses,
-              class_id: analysisClasses.length === 1 ? analysisClasses[0].id : null, levelHint: null,
-              selectedClass: analysisClasses.length === 1 ? analysisClasses[0] : null });
-            const analysisQuestion = focus === "council" ? `Prépare une note pour le conseil de classe. ${question}` : question;
-            const analysis = await runPedagogicalAnalysis({
-              req: new NextRequest(req.url, { headers: req.headers, signal }), ctx, question: analysisQuestion, academic_year, exam_date,
-              class_id: analysisClasses.length === 1 ? analysisClasses[0].id : null, core_completion_percent,
-              classes: analysisClasses, scopeStats: analysisScope, persist: false,
-            });
-            return {
-              academic_year, reference_date: exam_date,
-              classes: analysis.context.classes,
-              data_quality: analysis.context.data_quality,
-              warnings: analysis.context.warnings,
-              ...(focus === "subjects" || focus === "summary" ? { subjects: analysis.context.subjects.slice(0, 20) } : {}),
-              ...(focus === "progressions" ? { progressions: analysis.context.progressions?.slice(0, 20) } : {}),
-              ...(focus === "council" ? { council_note: analysis.answer.council_note, recommendations: analysis.answer.recommendations } : {}),
-              ...(focus === "students" ? { students: analysis.context.students.slice().sort((a, b) => b.priority_score - a.priority_score).slice(0, 20).map((student) => ({
-                name: student.full_name, class_label: student.class_label, average_20: student.general_avg_20,
-                presence_rate: student.presence_rate, absent_hours: student.total_absent_hours,
-                lates: student.nb_lates, risk_level: student.risk_level, reasons: student.reasons,
-              })), student_details_truncated: analysis.context.students.length > 20 } : {}),
-            };
+          teacherDetails: async (selected, question) => readTeachers({ srv: ctx.srv, institutionId: ctx.institution_id,
+            academicYear: academic_year, referenceDate: exam_date,
+            classes: selected.map((cls) => ({ ...cls, label: cls.label || "Classe" })), question, signal }),
+          studentAttendance: async (days) => {
+            if (class_id || levelHint || exam_date !== new Date().toISOString().slice(0, 10)) {
+              return { unavailable: true, message: "Ces totaux concernent l’établissement à la date actuelle. Le périmètre ou la date demandée ne peut pas être respecté." };
+            }
+            const url = new URL("/api/admin/dashboard/metrics", req.url);
+            url.searchParams.set("days", String(days));
+            const response = await getDashboard(new NextRequest(url, { headers: req.headers, signal }));
+            const json = response.ok ? await response.json() : null;
+            if (!json?.ok || json.meta?.academic_year !== academic_year) return { unavailable: true, message: "Le tableau de bord ne correspond pas à l’année sélectionnée." };
+            return { source: "Tableau de bord établissement", academic_year, as_of: exam_date, days,
+              absences_recorded: json.kpis?.absences ?? null, lates_recorded: json.kpis?.retards ?? null,
+              definition: "Enregistrements d’appel ; ce ne sont ni des élèves distincts ni des heures." };
+          },
+          analyzePedagogy: async (analysisClasses, focus, requestedPeriod) => {
+            if (focus === "progressions") {
+              const warnings: string[] = [];
+              const progress = await loadTextbookProgressions({ srv: ctx.srv, institution_id: ctx.institution_id,
+                classes: analysisClasses, academic_year, warnings });
+              return { academic_year, reference_date: exam_date, progressions: progress.progressions, stats: progress.stats, warnings };
+            }
+            const facts: Record<string, unknown>[] = [];
+            const unavailable: string[] = [];
+            for (let start = 0; start < analysisClasses.length; start += 4) {
+              signal.throwIfAborted();
+              await Promise.all(analysisClasses.slice(start, start + 4).map(async (cls) => {
+                try {
+                  const calendar = await data.calendar({ class_label: cls.label });
+                  const periods = calendar.periods.filter((period) => period.start_date && period.end_date)
+                    .sort((a, b) => a.start_date!.localeCompare(b.start_date!));
+                  const annual = requestedPeriod === "annual";
+                  const period = annual ? periods.at(-1) : requestedPeriod === "current"
+                    ? periods.find((item) => item.contains_reference_date) || periods.filter((item) => item.end_date! < exam_date).at(-1)
+                    : periods.find((item) => item.code === requestedPeriod);
+                  if (!period || (annual && exam_date < period.end_date!)) {
+                    unavailable.push(`${cls.label} : ${annual ? "l’année scolaire n’est pas terminée" : "période de notes non configurée à cette date"}`);
+                    return;
+                  }
+                  const url = new URL("/api/admin/grades/bulletin", req.url);
+                  url.searchParams.set("class_id", cls.id); url.searchParams.set("from", period.start_date!);
+                  url.searchParams.set("to", period.end_date!); url.searchParams.set("export_light", "1");
+                  const response = await getOfficialBulletin(new NextRequest(url, { headers: req.headers,
+                    signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]) }));
+                  const json = response.ok ? await response.json() : null;
+                  if (!json?.ok) throw new Error("bulletin_unavailable");
+                  const summary = summarizeBulletin(json, { ...cls, label: cls.label || "Classe" }, annual);
+                  facts.push({ ...summary.facts, period: annual ? "Année complète" : period.label, from: period.start_date, to: period.end_date });
+                  if (focus === "students") for (const student of summary.follow) follow.set(student.student_id, student);
+                } catch { unavailable.push(`${cls.label} : bulletin indisponible`); }
+              }));
+            }
+            return { academic_year, reference_date: exam_date, classes: facts, unavailable,
+              nominal_cards_displayed_separately: focus === "students" && follow.size > 0 };
           },
         });
-        return NextResponse.json(result);
+        return NextResponse.json({ ...result, answer: { ...result.answer,
+          students_to_follow: [...follow.values()].sort((a, b) => a.general_avg_20! - b.general_avg_20!).slice(0, 8),
+        } });
       } catch (error) {
         return NextResponse.json({ ok: false, error: "conversation_unavailable", message: conversationFailure(error) }, { status: 503 });
       }

@@ -176,6 +176,7 @@ test("an interrupted answer preserves the question and allows sending it again",
 test("a follow-up sends completed conversation turns and displays sources; a new date or discussion resets history", async () => {
   const ui = await mount((url) => url.endsWith("bootstrap") ? Response.json(context) : Response.json({ ok: true, answer: {
     title: "Enseignants", summary: "Deux enseignants sont inscrits dans l’établissement.", sources: ["Annuaire des enseignants"],
+    students_to_follow: [{ student_id: "test", full_name: "CARTE NOMINATIVE CONFIDENTIELLE", class_label: "3e3" }],
   } }));
   try {
     await click(button(ui.host, "Ouvrir Cahier IA"));
@@ -189,6 +190,7 @@ test("a follow-up sends completed conversation turns and displays sources; a new
       { role: "user", content: "Combien d’enseignants ?" },
       { role: "assistant", content: "Deux enseignants sont inscrits dans l’établissement." },
     ]);
+    assert.ok(!posts[1].options.body.includes("CARTE NOMINATIVE CONFIDENTIELLE"));
     await change(ui.host.querySelector('input[type="date"]'), "2026-11-11");
     await change(ui.host.querySelector("textarea"), "Quand finit le trimestre ?");
     await click(button(ui.host, "Envoyer la question"));

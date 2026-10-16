@@ -40,10 +40,12 @@ function harness(options = {}) {
       calls.push(call);
       let rows = [...(tables[table] ?? [])];
       const query = {
-        select() { return query; },
+        select(columns) { call.columns = columns; return query; },
         eq(key, value) { call.filters.push([key, value]); rows = rows.filter((row) => row[key] === value); return query; },
         in(key, values) { call.filters.push([key, values]); rows = rows.filter((row) => values.includes(row[key])); return query; },
         is(key, value) { call.filters.push([key, value]); rows = rows.filter((row) => row[key] === value); return query; },
+        gte(key, value) { call.filters.push([key, value]); rows = rows.filter((row) => row[key] >= value); return query; },
+        lt(key, value) { call.filters.push([key, value]); rows = rows.filter((row) => row[key] < value); return query; },
         or(expression) { rows = rows.filter((row) => expression.split(",").some((term) => {
           const [key, op, value] = term.split(".");
           return op === "is" && value === "null" ? row[key] == null : String(row[key]) === value;
@@ -71,6 +73,11 @@ function harness(options = {}) {
     new Function("require", "module", "exports", "process", code)((id) => {
       if (id === "@/lib/supabase-server") return { getSupabaseServerClient: async () => db };
       if (id === "@/lib/supabaseAdmin") return { getSupabaseServiceClient: () => db };
+      if (id === "@/app/api/admin/grades/bulletin/route") return { GET: async (req) => globalThis.fetch(req.url, { signal: req.signal }) };
+      if (id === "@/app/api/admin/dashboard/metrics/route") return { GET: async (req) => {
+        calls.push({ dashboard: true });
+        return Response.json({ ok: true, meta: { academic_year: year, days: Number(new URL(req.url).searchParams.get("days")) }, kpis: { absences: 3, retards: 2 } });
+      } };
       if (id === "ai" && options.model) {
         const sdk = require("ai");
         return { ...sdk, ToolLoopAgent: class extends sdk.ToolLoopAgent {

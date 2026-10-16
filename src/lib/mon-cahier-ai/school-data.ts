@@ -174,7 +174,7 @@ export function createSchoolData(scope: SchoolDataScope) {
     });
   }
 
-  async function teacherDirectory(input: { class_labels?: string[]; level?: string | null; include_names?: boolean; name?: string | null } = {}) {
+  async function teacherDirectory(input: { class_labels?: string[]; level?: string | null } = {}) {
     const selected = selectClasses(input.class_labels, input.level);
     const [registered, assignments] = await Promise.all([registeredTeacherIds(), teacherAssignments(selected)]);
     const assigned = [...new Set(assignments.map((row) => row.teacher_id).filter(Boolean))];
@@ -191,37 +191,8 @@ export function createSchoolData(scope: SchoolDataScope) {
       count_basis: classScope ? "Enseignants distincts affectés aux classes du périmètre à la date de référence."
         : "Comptes avec le rôle enseignant dans cet établissement ; les affectations concernent l’année sélectionnée.",
     };
-    if (!input.include_names && !input.name) return base;
 
-    const names = new Map<string, string>();
-    for (const batch of chunks(ids)) {
-      // IDs originate exclusively from this school's roles/assignments. Some
-      // shared teachers have a home profile in another school: no broad lookup.
-      const { data, error } = await srv.from("profiles").select("id,display_name").in("id", batch).abortSignal(signal());
-      if (error) throw new Error("school_data_unavailable");
-      for (const row of data || []) names.set(String(row.id), String(row.display_name || "Enseignant sans nom"));
-    }
-    const matching = ids.filter((id) => !input.name || cleanText(names.get(id) || "").includes(cleanText(input.name)));
-    const shown = matching.slice(0, 50);
-    const subjectIds = [...new Set(assignments.filter((row) => shown.includes(row.teacher_id)).map((row) => row.subject_id).filter((id): id is string => Boolean(id)))];
-    const subjectNames = new Map<string, string>();
-    for (const batch of chunks(subjectIds)) {
-      const { data, error } = await srv.from("subjects").select("id,name").in("id", batch).abortSignal(signal());
-      if (error) throw new Error("school_data_unavailable");
-      for (const row of data || []) subjectNames.set(String(row.id), String(row.name || "Matière"));
-    }
-    return {
-      ...base,
-      matching_count: matching.length,
-      truncated: matching.length > shown.length,
-      teachers: shown.map((id) => ({
-        name: names.get(id) || "Enseignant sans nom",
-        assignments: assignments.filter((row) => row.teacher_id === id).map((row) => ({
-          class_label: selected.find((cls) => cls.id === row.class_id)?.label || "Classe",
-          subject: row.subject_id ? subjectNames.get(row.subject_id) || "Matière" : null,
-        })),
-      })),
-    };
+    return base;
   }
 
   async function calendar(input: { class_label?: string | null } = {}) {

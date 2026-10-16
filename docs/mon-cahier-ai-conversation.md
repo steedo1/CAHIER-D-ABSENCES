@@ -16,12 +16,13 @@ Sans modèle configuré, les décomptes directs et les demandes pédagogiques ex
 | Outil | Source et définition |
 | --- | --- |
 | `student_statistics` | Inscriptions actives dans les classes de l’année, élèves distincts ; indicateurs des fiches élèves pour les internes, le genre, les redoublants et l’affectation. Les statuts inconnus sont décomptés séparément. |
-| `teacher_directory` | Comptes avec le rôle enseignant pour l’établissement ; enseignants distincts affectés aux classes de l’année à la date de référence. Pour une classe, seul le second indicateur est utilisé. Les noms, classes et matières peuvent être demandés. |
+| `teacher_directory` | Comptes avec le rôle enseignant pour l’établissement ; enseignants distincts affectés aux classes de l’année. Les consultations détaillées donnent les noms, matières et horaires actuels, ou les séances d’appel horodatées sur 1, 7, 30 ou 90 jours. Un nom ambigu demande une précision et un appel manquant ne prouve pas une absence. |
 | `school_calendar` | Année scolaire et périodes applicables, en réutilisant la résolution des calendriers par formation de Mon Cahier. |
-| `pedagogical_analysis` | Moyennes officielles des bulletins, assiduité, matières et progressions du moteur pédagogique existant. Consultation seulement, sans enregistrement de simulation ni d’interaction par cet outil. |
+| `pedagogical_analysis` | Constats anonymisés tirés des bulletins officiels, distinction des moyennes partielles et des zéros vides ; aucune probabilité de réussite ou indice de préparation. Les progressions du cahier de texte sont également consultables. |
+| `student_attendance` | Totaux d’enregistrements d’absences et retards dans l’établissement, pour l’année en cours et la date actuelle. Une demande sur une classe ou une date historique ne reçoit pas ces totaux généraux. |
 | `available_data` | Classes autorisées et domaines consultables, pour préciser une demande. |
 
-L’établissement est déduit de l’utilisateur authentifié. Une classe passée à un outil doit appartenir à ce périmètre et à l’année choisie. Les lectures ne portent pas sur les contacts parentaux, mots de passe, codes d’activation ou coordonnées des enseignants. Les détails d’élèves transmis pour une demande de suivi sont limités à vingt ; la troncature est explicite. Une analyse pédagogique est limitée à douze classes par outil.
+L’établissement est déduit de l’utilisateur authentifié. Une classe passée à un outil doit appartenir à ce périmètre et à l’année choisie. Les lectures ne portent pas sur les contacts parentaux, mots de passe, codes d’activation ou coordonnées des enseignants. Les identités d’élèves ne sont pas envoyées au modèle : au maximum huit cartes nominatives sont affichées séparément dans l’application, uniquement si le suivi d’élèves est demandé. Une analyse pédagogique est limitée à douze classes par outil.
 
 Les comptes enseignants inscrits ne constituent pas un historique annuel des contrats. Les inscriptions sont celles actuellement actives, et les statuts d’internat sont ceux des fiches actuelles. La date de référence ne reconstitue pas des statuts passés.
 
@@ -29,7 +30,7 @@ Les comptes enseignants inscrits ne constituent pas un historique annuel des con
 
 Le navigateur envoie au plus six échanges terminés. Le serveur limite chaque message à 2 000 caractères et l’historique à 12 000 caractères. Il ignore les rôles privilégiés et l’historique d’un autre utilisateur, établissement, année ou date, via une empreinte de contexte renvoyée au démarrage. Cette empreinte ne remplace pas les droits : chaque requête est authentifiée et les outils restent strictement bornés par le serveur. Une nouvelle discussion ou un changement de date efface l’historique local. Les faits sont relus à chaque tour ; les réponses précédentes servent seulement à comprendre le contexte.
 
-Un tour peut comporter quatre appels de modèle au maximum, 1 200 jetons de sortie par appel et six lectures d’outils distinctes. Les appels identiques sont réutilisés pendant ce tour. Les lectures paginées refusent un résultat incomplet ; un dépassement ne devient pas un faux total. Les délais sont bornés, sans nouvelle tentative automatique du modèle. Ces limites par requête ne remplacent pas un budget Gateway global.
+Un tour peut comporter quatre appels de modèle au maximum, 1 200 jetons de sortie par appel et six lectures d’outils distinctes. Les appels identiques sont réutilisés pendant ce tour. Les lectures paginées refusent un résultat incomplet ; un dépassement ne devient pas un faux total. Les délais sont bornés, sans nouvelle tentative automatique du modèle. Un contrôle par instance limite les tours conversationnels à huit par minute et soixante par heure pour un utilisateur et un établissement. Ces limites ne remplacent pas un budget Gateway global ni une limitation de débit distribuée.
 
 ## Vérification
 

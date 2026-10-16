@@ -87,6 +87,8 @@ function fixture({ roles = ["educator", "admin"], signedIn = true, failCounts = 
   const overrides = {
     "@/lib/supabase-server": { getSupabaseServerClient: async () => db },
     "@/lib/supabaseAdmin": { getSupabaseServiceClient: () => db },
+    "@/app/api/admin/grades/bulletin/route": { GET: async () => { throw new Error("unexpected model bulletin"); } },
+    "@/app/api/admin/dashboard/metrics/route": { GET: async () => { throw new Error("unexpected model dashboard"); } },
   };
   const bootstrap = load("src/app/api/admin/mon-cahier-ia/bootstrap/route.ts", overrides);
   const assistant = load("src/app/api/admin/mon-cahier-ia/assistant/route.ts", overrides);

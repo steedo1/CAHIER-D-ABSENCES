@@ -126,11 +126,11 @@ function toolModel(name, input, inspect, answer) {
 }
 
 test("a real SDK tool loop reads the authorized teacher directory and answers a contextual follow-up", async () => {
-  const model = toolModel("teacher_directory", { class_labels: ["3e3"], include_names: true }, (result, options) => {
+  const model = toolModel("teacher_directory", { class_labels: ["3e3"], detail: "assignments" }, (result, options) => {
     assert.equal(result.ok, true);
-    assert.equal(result.data.teachers_count, 1);
-    assert.equal(result.data.teachers[0].name, "Mme Test");
-    assert.deepEqual(result.data.teachers[0].assignments, [{ class_label: "3e3", subject: "Mathématiques" }]);
+    assert.equal(result.data.enseignants_correspondants, 1);
+    assert.equal(result.data.enseignants[0].nom, "Mme Test");
+    assert.deepEqual(result.data.enseignants[0].affectations, [{ classe: "3e3", discipline: "Mathématiques" }]);
     const prompt = JSON.stringify(options.prompt);
     assert.ok(prompt.includes("Qui enseigne dans notre école ?"), "the previous turn reaches the model");
     assert.ok(prompt.includes("Et dans la 3e3 ?"));
@@ -165,7 +165,7 @@ test("a foreign or unknown class tool argument cannot widen a query or produce a
 });
 
 test("a bare count following a class question keeps its conversational scope", async () => {
-  const model = toolModel("teacher_directory", { class_labels: ["3e3"], include_names: false }, (result) => {
+  const model = toolModel("teacher_directory", { class_labels: ["3e3"], detail: "count" }, (result) => {
     assert.equal(result.data.teachers_count, 1);
     assert.equal(result.data.scope_label, "3e3");
   }, "La 3e3 compte un enseignant affecté.");
@@ -184,8 +184,9 @@ test("the model can consult the official pedagogical pipeline without persisting
   const model = toolModel("pedagogical_analysis", { class_labels: ["3e3"], focus: "students" }, (result) => {
     assert.equal(result.ok, true);
     assert.equal(result.data.classes.length, 1);
-    assert.equal(result.data.classes[0].class_label, "3e3");
-    assert.equal(result.data.students[0].average_20, 0);
+    assert.equal(result.data.classes[0].classe, "3e3");
+    assert.equal(result.data.classes[0].moyenne_des_moyennes_disponibles_sur_20, 0);
+    assert.ok(!JSON.stringify(result).includes("Élève test"));
     assert.ok(!JSON.stringify(result).includes("PRIVATE-MATRICULE"));
   }, "Un élève de 3e3 a une moyenne publiée de 0/20 ; un échange avec son professeur aidera à comprendre la situation.");
   const app = harness({ tables, model, env: { AI_GATEWAY_MODEL: modelId }, bulletinItems: [
@@ -193,8 +194,10 @@ test("the model can consult the official pedagogical pipeline without persisting
   ] });
   const response = await app.ask("Qui faudrait-il accompagner dans la 3e3 ?");
   const result = await response.json();
-  assert.equal(response.status, 200, JSON.stringify(result));
+  const toolOutput = model.doGenerateCalls.at(-1)?.prompt.flatMap((message) => message.content).find((part) => part.type === "tool-result")?.output.value;
+  assert.equal(response.status, 200, JSON.stringify({ result, toolOutput }));
   assert.match(result.answer.summary, /0\/20/);
+  assert.equal(result.answer.students_to_follow[0].full_name, "Élève test");
   assert.deepEqual(app.calls.filter((call) => call.bulletin).map((call) => call.bulletin), ["a3"]);
   assert.ok(app.calls.every((call) => call.operation !== "insert"));
 });
@@ -221,4 +224,25 @@ test("model failures explain availability, quota or throttling without exposing 
   assert.equal(response.status, 503);
   assert.match(result.message, /crédit|budget/);
   assert.ok(!JSON.stringify(result).includes("SECRET PROVIDER DETAILS"));
+});
+
+test("a class attendance request never receives the whole school's totals", async () => {
+  const model = toolModel("student_attendance", { class_labels: ["3e3"], days: 7 }, (result) => {
+    assert.equal(result.ok, false);
+    assert.equal(result.data.unavailable, true);
+  }, "Les totaux disponibles couvrent l’établissement ; je ne peux pas les attribuer à la 3e3.");
+  const app = harness({ tables, model, env: { AI_GATEWAY_MODEL: modelId } });
+  assert.equal((await app.ask("Quelles sont les absences de la 3e3 ?")).status, 200);
+  assert.ok(!app.calls.some((call) => call.dashboard));
+});
+
+test("rapid repeated conversations stop before making a ninth model request", async () => {
+  let step = 0;
+  const model = new MockLanguageModelV4({ doGenerate: async () => step++ % 2
+    ? generated([{ type: "text", text: "Je peux t’aider à consulter ces informations." }])
+    : generated([{ type: "tool-call", toolCallId: `available-${step}`, toolName: "available_data", input: "{}" }], "tool-calls") });
+  const app = harness({ tables, model, env: { AI_GATEWAY_MODEL: modelId } });
+  for (let i = 0; i < 8; i++) assert.equal((await app.ask("Quelles informations peux-tu consulter ?")).status, 200);
+  assert.equal((await app.ask("Quelles informations peux-tu consulter ?")).status, 429);
+  assert.equal(model.doGenerateCalls.length, 16);
 });

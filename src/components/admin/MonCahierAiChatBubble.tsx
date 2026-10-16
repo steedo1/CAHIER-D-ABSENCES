@@ -63,7 +63,6 @@ function historyForMessages(messages: ChatMessage[]): ConversationMessage[] {
       ...(answer.quick_stats?.cards || []).map((card) => `${card.label} : ${card.value}`),
       ...(answer.quick_stats?.breakdown || []).map((item) => `${item.label} : ${item.value}`),
       answer.council_note || "",
-      ...(answer.students_to_follow || []).slice(0, 5).map((student) => `${student.full_name} (${student.class_label})`),
       ...(answer.classes_at_risk || []).slice(0, 4).map((cls) => cls.class_label),
     ].filter(Boolean).join("\n").slice(0, 2_000);
     history.push({ role: "user", content: pending.slice(0, 2_000) }, { role: "assistant", content });
