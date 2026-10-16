@@ -141,7 +141,7 @@ export function inferSchoolCycleFromLevel(level: unknown): SchoolCycle | null {
     .toUpperCase()
     .replace(/[\s_-]+/g, "");
 
-  if (/^(PS|MS|GS)$/.test(normalized)) return "preschool";
+  if (/^(PS|MS|GS|MATERNELLE)$/.test(normalized)) return "preschool";
   if (/^(PETITESECTION|MOYENNESECTION|GRANDESECTION)$/.test(normalized)) {
     return "preschool";
   }
