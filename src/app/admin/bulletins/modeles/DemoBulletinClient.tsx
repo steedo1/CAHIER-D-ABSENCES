@@ -87,7 +87,16 @@ export default function DemoBulletinClient({
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
   const preview: BulletinDocument = {
     ...demo,
-    school: { ...demo.school, name: schoolName, code: schoolCode },
+    school: {
+      ...demo.school,
+      name: schoolName,
+      code: schoolCode,
+      subtitle: hasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique primaire",
+    },
+    french: demo.french ? {
+      ...demo.french,
+      directorName: hasArabic ? demo.french.directorName : "Direction de l’établissement",
+    } : undefined,
   };
   const visibleOptions = hasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
   return (
