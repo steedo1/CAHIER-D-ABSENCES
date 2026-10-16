@@ -55,7 +55,7 @@ export async function GET() {
   let subjects: Array<{ id: string; name: string }> = [];
   if (configuration.enabled) {
     const relation = await auth.service.from("institution_subjects")
-      .select("subject_id").eq("institution_id", auth.institutionId)
+      .select("subject_id,custom_name").eq("institution_id", auth.institutionId)
       .eq("is_active", true).limit(501);
     if (relation.error) return json({ error: "subjects_load_failed" }, 503);
     if ((relation.data || []).length >= 501) return json({ error: "too_many_subjects" }, 503);
@@ -64,7 +64,11 @@ export async function GET() {
       const results = await auth.service.from("subjects").select("id,name")
         .in("id", ids).limit(501);
       if (results.error) return json({ error: "subjects_load_failed" }, 503);
-      subjects = results.data || [];
+      const byId = new Map((results.data || []).map(row => [row.id, row.name]));
+      subjects = (relation.data || []).map(row => ({
+        id: row.subject_id,
+        name: String(row.custom_name || byId.get(row.subject_id) || row.subject_id),
+      })).sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
   }
 
