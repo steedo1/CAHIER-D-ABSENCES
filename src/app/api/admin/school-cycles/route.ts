@@ -14,9 +14,6 @@ const ALLOWED_ROLES = [
   "admin",
   "super_admin",
   "founder",
-  "finance_manager",
-  "file_correspondent",
-  "educator",
 ] as const;
 
 function reply(body: unknown, status = 200) {
