@@ -40,10 +40,36 @@ export async function GET(_req: NextRequest, context: Params) {
   if (error) return reply({ error: "institution_load_failed" }, 503);
   if (!data) return reply({ error: "institution_not_found" }, 404);
 
+  const yearResult = await access.srv.from("academic_years")
+    .select("code")
+    .eq("institution_id", id)
+    .eq("is_current", true)
+    .order("start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (yearResult.error) return reply({ error: "academic_year_load_failed" }, 503);
+  const academicYear = String(yearResult.data?.code || "");
+  let classRows: Array<{ id: string; label: string; level: string | null }> = [];
+  if (academicYear) {
+    const result = await access.srv.from("classes")
+      .select("id,label,level")
+      .eq("institution_id", id)
+      .eq("academic_year", academicYear)
+      .order("level", { ascending: true })
+      .limit(501);
+    if (result.error) return reply({ error: "classes_load_failed" }, 503);
+    if ((result.data || []).length > 500) {
+      return reply({ error: "too_many_classes_for_cycle_editor" }, 503);
+    }
+    classRows = result.data || [];
+  }
+
   return reply({
     ok: true,
     institution: { id: data.id, name: data.name, code_unique: data.code_unique },
     configuration: parseSchoolCyclesSettings(data.settings_json),
+    academicYear: academicYear || null,
+    classes: classRows,
   });
 }
 
@@ -78,6 +104,21 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
     return null;
   }
 
+  const classCycleById: Record<string, SchoolCycle> = {};
+  if (input.classCycleById !== undefined) {
+    if (!input.classCycleById || typeof input.classCycleById !== "object" ||
+      Array.isArray(input.classCycleById)) return null;
+    const provided = input.classCycleById as Record<string, unknown>;
+    const entries = Object.entries(provided);
+    if (entries.length > 250) return null;
+    for (const [classId, cycle] of entries) {
+      if (!UUID.test(classId) || !isSchoolCycle(cycle) || !enabledCycles.includes(cycle)) {
+        return null;
+      }
+      classCycleById[classId] = cycle;
+    }
+  }
+
   const defaultView = input.defaultView;
   if (defaultView !== "all" &&
     !(isSchoolCycle(defaultView) && enabledCycles.includes(defaultView))) {
@@ -93,7 +134,7 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
     enabled: true,
     enabledCycles,
     teachingTracksByCycle,
-    classCycleById: {}, // existing class assignments are re-applied server-side only
+    classCycleById,
     defaultView,
     preferredLanguage: input.preferredLanguage,
   };
@@ -136,17 +177,21 @@ export async function PUT(req: NextRequest, context: Params) {
     !Array.isArray(institution.settings_json)
     ? institution.settings_json as Record<string, unknown>
     : {};
-  const previous = parseSchoolCyclesSettings(oldJson);
-
-  // Preserve any explicit per-class assignments that remain within active cycles.
-  const classCycleById: Record<string, SchoolCycle> = {};
-  if (incoming.enabled) {
-    for (const [classId, cycle] of Object.entries(previous.classCycleById)) {
-      if (incoming.enabledCycles.includes(cycle)) classCycleById[classId] = cycle;
+  // Reject ID mappings for classes belonging to another institution.
+  const classIds = Object.keys(incoming.classCycleById);
+  if (classIds.length) {
+    const rows = await access.srv.from("classes")
+      .select("id")
+      .eq("institution_id", id)
+      .in("id", classIds)
+      .limit(251);
+    if (rows.error) return reply({ error: "class_scope_check_failed" }, 503);
+    if ((rows.data || []).length !== classIds.length) {
+      return reply({ error: "class_outside_institution" }, 403);
     }
   }
 
-  const updated: SchoolCyclesSettings = { ...incoming, classCycleById };
+  const updated: SchoolCyclesSettings = incoming;
   const settings_json = { ...oldJson, [SCHOOL_CYCLES_SETTINGS_KEY]: updated };
 
   const { error: writeError } = await access.srv
