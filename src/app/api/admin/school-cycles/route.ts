@@ -86,27 +86,44 @@ export async function GET() {
   const enrollments: Array<{ class_id: string; student_id: string; end_date: string | null }> = [];
   const teachers: Array<{ class_id: string; teacher_id: string; end_date: string | null }> = [];
   const allClassIds = classes.map((row) => row.id);
-  // Only run these queries for opt-in schools and a single active school year.
-  // Request narrow columns and fail if a chunk reaches the safety cap.
-  for (let i = 0; i < allClassIds.length; i += 50) {
-    const ids = allClassIds.slice(i, i + 50);
-    const [enroll, assigned] = await Promise.all([
-      srv.from("class_enrollments")
-        .select("class_id,student_id,end_date")
-        .in("class_id", ids)
-        .limit(10000),
-      srv.from("class_teachers")
-        .select("class_id,teacher_id,end_date")
-        .eq("institution_id", institutionId)
-        .in("class_id", ids)
-        .limit(10000),
-    ]);
-    if (enroll.error || assigned.error || !enroll.data || !assigned.data ||
-        enroll.data.length >= 10000 || assigned.data.length >= 10000) {
-      return reply({ error: "cycle_roster_load_failed" }, 503);
+
+  // Pagination is mandatory here. Supabase may cap requested rows at 1,000,
+  // even when a larger .limit() is supplied. A partial result is NOT a
+  // trustworthy headcount. Use stable UUID ordering and 500-row pages.
+  for (let i = 0; i < allClassIds.length; i += 40) {
+    const ids = allClassIds.slice(i, i + 40);
+    let enrollComplete = false;
+    let teacherComplete = false;
+    let offset = 0;
+    while (!enrollComplete || !teacherComplete) {
+      if (offset >= 20000) return reply({ error: "cycle_roster_too_large" }, 503);
+      const [enroll, assigned] = await Promise.all([
+        enrollComplete
+          ? Promise.resolve({ data: [], error: null })
+          : srv.from("class_enrollments")
+            .select("class_id,student_id,end_date")
+            .eq("institution_id", institutionId)
+            .in("class_id", ids)
+            .order("id")
+            .range(offset, offset + 499),
+        teacherComplete
+          ? Promise.resolve({ data: [], error: null })
+          : srv.from("class_teachers")
+            .select("class_id,teacher_id,end_date")
+            .eq("institution_id", institutionId)
+            .in("class_id", ids)
+            .order("id")
+            .range(offset, offset + 499),
+      ]);
+      if (enroll.error || assigned.error || !enroll.data || !assigned.data) {
+        return reply({ error: "cycle_roster_load_failed" }, 503);
+      }
+      enrollments.push(...enroll.data);
+      teachers.push(...assigned.data);
+      enrollComplete ||= enroll.data.length < 500;
+      teacherComplete ||= assigned.data.length < 500;
+      offset += 500;
     }
-    enrollments.push(...enroll.data);
-    teachers.push(...assigned.data);
   }
 
   const headcount = aggregateSchoolCycleRoster(
