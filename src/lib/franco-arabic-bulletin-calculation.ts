@@ -5,6 +5,7 @@ import {
 } from "@/lib/school-cycles";
 import {
   getConfiguredScoringScale,
+  getConfiguredSubjectCoefficients,
   type FrancoArabicReportsSettings,
 } from "@/lib/franco-arabic-reporting";
 
@@ -66,10 +67,13 @@ export function buildProgramBulletinDraft(params: {
   track: TeachingTrack;
   school: SchoolCyclesSettings;
   reports: FrancoArabicReportsSettings;
-  subjectPolicies: readonly SubjectBulletinPolicy[];
   officialScores: readonly OfficialEvaluationScore[];
 }): ProgramBulletinDraft {
-  const { studentId, cycle, level, track, school, reports, subjectPolicies, officialScores } = params;
+  const { studentId, cycle, level, track, school, reports, officialScores } = params;
+  // Source of coefficient truth: this institution’s validated, program-specific
+  // report settings. Do not trust arbitrary client-supplied coefficients.
+  const subjectPolicies: readonly SubjectBulletinPolicy[] =
+    getConfiguredSubjectCoefficients(reports, cycle, level, track);
   const problems: string[] = [];
   const mapped = school.subjectTracksByCycle[cycle] || {};
   const subjectIds = Object.entries(mapped)
