@@ -105,7 +105,7 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
         cycle: firstProgram.cycle,
         track: firstProgram.track,
         level: "",
-        maxScore: 20,
+        maxScore: 0,
       }],
     }));
   }
@@ -224,7 +224,7 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
                           className="min-h-10 rounded-lg border px-2"
                           onChange={(event) => updateScale(index, { level: event.target.value })} />
                         <input aria-label={`Barème ${index + 1}`} type="number"
-                          min={1} max={100} step={1} value={scale.maxScore}
+                          min={1} max={100} step={1} value={scale.maxScore || ""}
                           disabled={blocked} className="min-h-10 rounded-lg border px-2"
                           onChange={(event) => updateScale(index, {
                             maxScore: Number(event.target.value),
