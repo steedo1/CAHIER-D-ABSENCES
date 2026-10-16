@@ -94,7 +94,7 @@ export async function GET() {
     .map(({ id, label, level }) => ({ id, label, level }));
 
   const enrollments: Array<{ class_id: string; student_id: string; end_date: string | null }> = [];
-  const teachers: Array<{ class_id: string; teacher_id: string; end_date: string | null }> = [];
+  const teachers: Array<{ class_id: string; teacher_id: string; subject_id: string | null; end_date: string | null }> = [];
   const allClassIds = classes.map((row) => row.id);
 
   // Pagination is mandatory here. Supabase may cap requested rows at 1,000,
@@ -122,7 +122,7 @@ export async function GET() {
         teacherComplete
           ? Promise.resolve({ data: [], error: null })
           : srv.from("class_teachers")
-            .select("class_id,teacher_id,end_date")
+            .select("class_id,teacher_id,subject_id,end_date")
             .eq("institution_id", institutionId)
             .in("class_id", ids)
             .order("id")
@@ -147,6 +147,60 @@ export async function GET() {
     enrollments,
     teachers,
   );
+  const classifiedSubjectIds = Array.from(new Set(Object.values(
+    configuration.subjectTracksByCycle).flatMap((mappings) =>
+      Object.keys(mappings || {}))));
+  let subjects: Array<{ id: string; name: string }> = [];
+  if (classifiedSubjectIds.length) {
+    const allowed = await srv.from("institution_subjects")
+      .select("subject_id,custom_name")
+      .eq("institution_id", institutionId)
+      .eq("is_active", true)
+      .in("subject_id", classifiedSubjectIds)
+      .limit(501);
+    if (allowed.error) return reply({ error: "subjects_load_failed" }, 503);
+    const active = allowed.data || [];
+    const actualIds = Array.from(new Set(active.map((row) => row.subject_id)));
+    if (actualIds.length) {
+      const global = await srv.from("subjects")
+        .select("id,name").in("id", actualIds).limit(501);
+      if (global.error) return reply({ error: "subjects_load_failed" }, 503);
+      const globalNames = new Map((global.data || [])
+        .map((row) => [row.id, row.name]));
+      subjects = active.map((row) => ({
+        id: row.subject_id,
+        name: String(row.custom_name || globalNames.get(row.subject_id) || ""),
+      })).filter((row) => Boolean(row.name));
+    }
+  }
+
+  const namesById = new Map(subjects.map((subject) => [subject.id, subject.name]));
+  const cycleForClass = new Map(configuration.enabledCycles.flatMap((cycle) =>
+    grouped[cycle].map((row) => [row.id, cycle] as const)));
+  const byProgram = Object.fromEntries(configuration.enabledCycles.map((cycle) => [
+    cycle,
+    Object.fromEntries((configuration.teachingTracksByCycle[cycle] || [])
+      .map((track) => {
+        const activeIds = Object.entries(configuration.subjectTracksByCycle[cycle] || {})
+          .filter(([subjectId, tracks]) => tracks.includes(track) && namesById.has(subjectId))
+          .map(([subjectId]) => subjectId);
+        const activeSet = new Set(activeIds);
+        const assignedTeacherIds = new Set(teachers
+          .filter((row) => !row.end_date && cycleForClass.get(row.class_id) === cycle &&
+            Boolean(row.subject_id && activeSet.has(row.subject_id)))
+          .map((row) => row.teacher_id));
+        return [
+          track,
+          {
+            subjects: activeIds.map((subjectId) =>
+              ({ id: subjectId, name: namesById.get(subjectId) || "" }))
+              .sort((a, b) => a.name.localeCompare(b.name, "fr")),
+            uniqueTeachers: assignedTeacherIds.size,
+          },
+        ];
+      })),
+  ]));
+
   return reply({
     ok: true,
     enabled: true,
@@ -160,6 +214,7 @@ export async function GET() {
     totalClasses: classes.length,
     uniqueStudents: headcount.uniqueStudents,
     uniqueTeachers: headcount.uniqueTeachers,
+    programs: byProgram,
     reviewNeeded,
     outsideEnabledCycles,
     cycles: Object.fromEntries(configuration.enabledCycles.map((cycle) => [
