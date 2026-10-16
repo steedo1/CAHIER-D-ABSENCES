@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
+import { aggregateSchoolCycleRoster } from "@/lib/school-cycle-roster";
 import {
   groupScopedClassesByCycle,
   parseSchoolCyclesSettings,
@@ -81,6 +82,39 @@ export async function GET() {
   }
 
   const grouped = groupScopedClassesByCycle(classes, institutionId, year, configuration);
+
+  const enrollments: Array<{ class_id: string; student_id: string; end_date: string | null }> = [];
+  const teachers: Array<{ class_id: string; teacher_id: string; end_date: string | null }> = [];
+  const allClassIds = classes.map((row) => row.id);
+  // Only run these queries for opt-in schools and a single active school year.
+  // Request narrow columns and fail if a chunk reaches the safety cap.
+  for (let i = 0; i < allClassIds.length; i += 50) {
+    const ids = allClassIds.slice(i, i + 50);
+    const [enroll, assigned] = await Promise.all([
+      srv.from("class_enrollments")
+        .select("class_id,student_id,end_date")
+        .in("class_id", ids)
+        .limit(10000),
+      srv.from("class_teachers")
+        .select("class_id,teacher_id,end_date")
+        .eq("institution_id", institutionId)
+        .in("class_id", ids)
+        .limit(10000),
+    ]);
+    if (enroll.error || assigned.error || !enroll.data || !assigned.data ||
+        enroll.data.length >= 10000 || assigned.data.length >= 10000) {
+      return reply({ error: "cycle_roster_load_failed" }, 503);
+    }
+    enrollments.push(...enroll.data);
+    teachers.push(...assigned.data);
+  }
+
+  const headcount = aggregateSchoolCycleRoster(
+    configuration.enabledCycles.flatMap((cycle) =>
+      grouped[cycle].map((row) => ({ id: row.id, cycle }))),
+    enrollments,
+    teachers,
+  );
   return reply({
     ok: true,
     enabled: true,
@@ -92,6 +126,8 @@ export async function GET() {
       defaultView: configuration.defaultView,
     },
     totalClasses: classes.length,
+    uniqueStudents: headcount.uniqueStudents,
+    uniqueTeachers: headcount.uniqueTeachers,
     cycles: Object.fromEntries(configuration.enabledCycles.map((cycle) => [
       cycle,
       {
@@ -101,6 +137,8 @@ export async function GET() {
           level: row.level,
         })),
         count: grouped[cycle].length,
+        students: headcount.byCycle[cycle].students,
+        teachers: headcount.byCycle[cycle].teachers,
       },
     ])),
   });
