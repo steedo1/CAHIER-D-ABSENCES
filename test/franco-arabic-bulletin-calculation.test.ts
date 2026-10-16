@@ -4,7 +4,6 @@ import {
   buildProgramBulletinDraft,
   combineProgramBulletins,
   type OfficialEvaluationScore,
-  type SubjectBulletinPolicy,
 } from "../src/lib/franco-arabic-bulletin-calculation";
 import {
   parseSchoolCyclesSettings,
@@ -35,13 +34,13 @@ const reports = parseFrancoArabicReportsSettings({
       { cycle: "primary", level: "CP1", track: "french", maxScore: 10 },
       { cycle: "primary", level: "CP1", track: "arabic", maxScore: 20 },
     ],
+    coefficients: [
+      { cycle: "primary", level: "CP1", track: "french", subjectId: math, coefficient: 2, includeInAverage: true },
+      { cycle: "primary", level: "CP1", track: "french", subjectId: french, coefficient: 3, includeInAverage: true },
+      { cycle: "primary", level: "CP1", track: "arabic", subjectId: quran, coefficient: 1, includeInAverage: true },
+    ],
   },
 });
-const policies: SubjectBulletinPolicy[] = [
-  { subjectId: math, coefficient: 2, includeInAverage: true },
-  { subjectId: french, coefficient: 3, includeInAverage: true },
-  { subjectId: quran, coefficient: 1, includeInAverage: true },
-];
 const scores: OfficialEvaluationScore[] = [
   { studentId: "A", subjectId: math, evaluationId: "e-m1", score: 8, scale: 10, evaluationCoefficient: 1, isCurrentPublished: true },
   { studentId: "A", subjectId: math, evaluationId: "e-m2", score: 12, scale: 20, evaluationCoefficient: 3, isCurrentPublished: true },
@@ -53,10 +52,10 @@ const scores: OfficialEvaluationScore[] = [
   { studentId: "A", subjectId: math, evaluationId: "e-draft", score: 0, scale: 10, evaluationCoefficient: 1, isCurrentPublished: false },
 ];
 
-const calc = (track: "french" | "arabic", input = scores, rules = policies) =>
+const calc = (track: "french" | "arabic", input = scores, config = reports) =>
   buildProgramBulletinDraft({
     studentId: "A", cycle: "primary", level: "CP1",
-    track, school, reports, subjectPolicies: rules, officialScores: input,
+    track, school, reports: config, officialScores: input,
   });
 
 test("two programs use the same student identity but entirely different subjects", () => {
@@ -79,7 +78,9 @@ test("two programs use the same student identity but entirely different subjects
 });
 
 test("missing coefficients cannot be guessed and produce no mean", () => {
-  const ar = calc("arabic", scores, policies.filter((p) => p.subjectId !== quran));
+  const ar = calc("arabic", scores, {
+    ...reports, coefficients: reports.coefficients.filter((p) => p.subjectId !== quran),
+  });
   assert.equal(ar.status, "incomplete");
   assert.equal(ar.generalAverage, null);
   assert.ok(ar.problems.includes("subject_policy_missing_or_invalid"));
@@ -115,7 +116,7 @@ test("legacy institution cannot accidentally generate a bilingual report", () =>
   const result = buildProgramBulletinDraft({
     studentId: "A", cycle: "primary", level: "CP1", track: "french",
     school: parseSchoolCyclesSettings({}),
-    reports, subjectPolicies: policies, officialScores: scores,
+    reports, officialScores: scores,
   });
   assert.equal(result.status, "not_configured");
   assert.equal(result.generalAverage, null);
