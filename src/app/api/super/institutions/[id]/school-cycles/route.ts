@@ -42,7 +42,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, context: Params) {
   const access = await superAccess();
-  if (access.error) return access.error;
+  if ("error" in access) return access.error;
   const { id } = await context.params;
   if (!UUID.test(id)) return reply({ error: "invalid_institution" }, 400);
 
@@ -120,7 +120,7 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
  */
 export async function PUT(req: NextRequest, context: Params) {
   const access = await superAccess();
-  if (access.error) return access.error;
+  if ("error" in access) return access.error;
 
   // Same-origin browser requests only (defense against cross-site mutations).
   const origin = req.headers.get("origin");
