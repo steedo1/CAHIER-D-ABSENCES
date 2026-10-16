@@ -64,12 +64,42 @@ export async function GET(_req: NextRequest, context: Params) {
     classRows = result.data || [];
   }
 
+  // Institution-specific subjects only. The global subject catalogue
+  // must not be exposed as if every school offered every subject.
+  const assignedSubjects = await access.srv.from("institution_subjects")
+    .select("subject_id,custom_name,is_active")
+    .eq("institution_id", id)
+    .eq("is_active", true)
+    .limit(501);
+  if (assignedSubjects.error) return reply({ error: "subjects_load_failed" }, 503);
+  if ((assignedSubjects.data || []).length > 500) {
+    return reply({ error: "too_many_subjects_for_editor" }, 503);
+  }
+  const subjectIds = Array.from(new Set(
+    (assignedSubjects.data || []).map((row) => row.subject_id).filter(Boolean)));
+  let subjectRows: Array<{ id: string; name: string; code: string | null }> = [];
+  if (subjectIds.length) {
+    const subjects = await access.srv.from("subjects")
+      .select("id,name,code").in("id", subjectIds).limit(501);
+    if (subjects.error) return reply({ error: "subjects_load_failed" }, 503);
+    const globalById = new Map((subjects.data || []).map((row) => [row.id, row]));
+    subjectRows = (assignedSubjects.data || []).map((row) => {
+      const global = globalById.get(row.subject_id);
+      return {
+        id: row.subject_id,
+        name: String(row.custom_name || global?.name || global?.code || row.subject_id),
+        code: global?.code || null,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  }
+
   return reply({
     ok: true,
     institution: { id: data.id, name: data.name, code_unique: data.code_unique },
     configuration: parseSchoolCyclesSettings(data.settings_json),
     academicYear: academicYear || null,
     classes: classRows,
+    subjects: subjectRows,
   });
 }
 
@@ -119,6 +149,29 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
     }
   }
 
+  const subjectTracksByCycle: SchoolCyclesSettings["subjectTracksByCycle"] = {};
+  const perCycleSubjects = input.subjectTracksByCycle;
+  if (perCycleSubjects !== undefined &&
+      (!perCycleSubjects || typeof perCycleSubjects !== "object" ||
+       Array.isArray(perCycleSubjects))) return null;
+  const rawSubjectMappings = (perCycleSubjects || {}) as Record<string, unknown>;
+  if (Object.keys(rawSubjectMappings).some((cycle) =>
+    !enabledCycles.includes(cycle as SchoolCycle))) return null;
+  for (const cycle of enabledCycles) {
+    const records = rawSubjectMappings[cycle] || {};
+    if (typeof records !== "object" || Array.isArray(records)) return null;
+    const assignments = Object.entries(records as Record<string, unknown>);
+    if (assignments.length > 250) return null;
+    const configured: Record<string, TeachingTrack[]> = {};
+    for (const [subjectId, tracks] of assignments) {
+      if (!UUID.test(subjectId) || !Array.isArray(tracks) || !tracks.length ||
+        !tracks.every(isTeachingTrack) || tracks.some((track) =>
+          !teachingTracksByCycle[cycle]?.includes(track))) return null;
+      configured[subjectId] = Array.from(new Set(tracks as TeachingTrack[]));
+    }
+    subjectTracksByCycle[cycle] = configured;
+  }
+
   const defaultView = input.defaultView;
   if (defaultView !== "all" &&
     !(isSchoolCycle(defaultView) && enabledCycles.includes(defaultView))) {
@@ -134,6 +187,7 @@ function parsePayload(value: unknown): SchoolCyclesSettings | null {
     enabled: true,
     enabledCycles,
     teachingTracksByCycle,
+    subjectTracksByCycle,
     classCycleById,
     defaultView,
     preferredLanguage: input.preferredLanguage,
@@ -188,6 +242,23 @@ export async function PUT(req: NextRequest, context: Params) {
     if (rows.error) return reply({ error: "class_scope_check_failed" }, 503);
     if ((rows.data || []).length !== classIds.length) {
       return reply({ error: "class_outside_institution" }, 403);
+    }
+  }
+
+  const subjectIds = Array.from(new Set(
+    Object.values(incoming.subjectTracksByCycle)
+      .flatMap((perCycle) => Object.keys(perCycle || {}))));
+  if (subjectIds.length) {
+    const allowedSubjects = await access.srv.from("institution_subjects")
+      .select("subject_id")
+      .eq("institution_id", id)
+      .eq("is_active", true)
+      .in("subject_id", subjectIds)
+      .limit(501);
+    if (allowedSubjects.error) return reply({ error: "subject_scope_check_failed" }, 503);
+    const actualIds = new Set((allowedSubjects.data || []).map((row) => row.subject_id));
+    if (subjectIds.some((subjectId) => !actualIds.has(subjectId))) {
+      return reply({ error: "subject_outside_institution" }, 403);
     }
   }
 
