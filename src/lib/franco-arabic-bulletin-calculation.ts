@@ -76,9 +76,12 @@ export function buildProgramBulletinDraft(params: {
     getConfiguredSubjectCoefficients(reports, cycle, level, track);
   const problems: string[] = [];
   const mapped = school.subjectTracksByCycle[cycle] || {};
-  const subjectIds = Object.entries(mapped)
-    .filter(([, tracks]) => tracks.includes(track))
-    .map(([subjectId]) => subjectId).sort();
+  // The PRIMARY curriculum can differ between CP1, CP2, CE1, CE2, CM1
+  // and CM2. Only a level's explicitly configured subject/coefficient entries
+  // belong on its bulletin. A cycle-wide catalog is not the level curriculum.
+  const subjectIds = Array.from(
+    new Set(subjectPolicies.map(rule => rule.subjectId)),
+  ).sort();
 
   const authorizedConfig = school.enabled &&
     school.enabledCycles.includes(cycle) &&
@@ -91,7 +94,10 @@ export function buildProgramBulletinDraft(params: {
 
   if (!authorizedConfig) problems.push("program_not_configured");
   if (authorizedConfig && targetScale === null) problems.push("level_scale_not_configured");
-  if (authorizedConfig && subjectIds.length === 0) problems.push("subjects_not_classified");
+  if (authorizedConfig && subjectIds.length === 0) problems.push("level_subjects_not_configured");
+  if (subjectIds.some(subjectId => !mapped[subjectId]?.includes(track))) {
+    problems.push("level_subject_not_classified_for_program");
+  }
   // Current evaluations do not identify a French/Arabic teaching track.
   // A shared subject cannot be assigned to both bulletins without an explicit
   // link from each evaluation to its program.
