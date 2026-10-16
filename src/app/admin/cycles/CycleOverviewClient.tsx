@@ -24,6 +24,8 @@ type Data = {
   };
   cycles?: Partial<Record<SchoolCycle, CycleSummary>>;
   totalClasses?: number;
+  reviewNeeded?: SchoolClass[];
+  outsideEnabledCycles?: SchoolClass[];
   uniqueStudents?: number;
   uniqueTeachers?: number;
   error?: string;
@@ -110,6 +112,27 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
           ))}
         </div>
       </div>
+
+      {(data.outsideEnabledCycles?.length || 0) > 0 && (
+        <div role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-bold">{data.outsideEnabledCycles?.length} classe(s) hors des cycles autorisés</p>
+          <p className="mt-1">
+            Ces classes ne sont pas incluses dans les effectifs ci-dessous.
+            Le Super Admin doit revoir leur rattachement.
+          </p>
+          <p className="mt-2">{data.outsideEnabledCycles?.map((c) => c.label).join(", ")}</p>
+        </div>
+      )}
+      {(data.reviewNeeded?.length || 0) > 0 && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          <p className="font-bold">{data.reviewNeeded?.length} classe(s) à vérifier</p>
+          <p className="mt-1">
+            Leur intitulé de niveau n'est pas reconnu automatiquement.
+            Un rattachement explicite dans Super Admin évitera un mauvais classement.
+          </p>
+          <p className="mt-2">{data.reviewNeeded?.map((c) => c.label).join(", ")}</p>
+        </div>
+      )}
 
       {shownCycles.map((id) => {
         const cycleName = SCHOOL_CYCLE_OPTIONS.find((option) => option.id === id)?.label || id;
