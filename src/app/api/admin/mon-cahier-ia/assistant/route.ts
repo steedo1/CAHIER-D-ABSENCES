@@ -567,7 +567,7 @@ async function loadOfficialBulletinAverages(args: {
   const cookie = args.req.headers.get("cookie") || "";
   const authorization = args.req.headers.get("authorization") || "";
 
-  async function loadClassBulletin(cls: ClassRow) {
+  const loadClassBulletin = async (cls: ClassRow) => {
     try {
       const url = new URL("/api/admin/grades/bulletin", origin);
       url.searchParams.set("class_id", cls.id);
@@ -659,7 +659,7 @@ async function loadOfficialBulletinAverages(args: {
     } catch (err: any) {
       args.warnings.push(`Moyenne bulletin non chargée pour ${cls.label || "une classe"} : ${err?.message || "erreur"}`);
     }
-  }
+  };
 
   for (const batch of chunks(args.classes, 4)) {
     await Promise.all(batch.map(loadClassBulletin));
