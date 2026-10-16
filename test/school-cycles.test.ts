@@ -61,7 +61,9 @@ test("unambiguous preschool/primary codes are recognized", () => {
   assert.equal(inferSchoolCycleFromLevel("Petite section"), "preschool");
   assert.equal(inferSchoolCycleFromLevel("CM2"), "primary");
   assert.equal(inferSchoolCycleFromLevel("Maternelle"), "preschool");
-  assert.equal(inferSchoolCycleFromLevel("1re D"), null);
+  assert.equal(inferSchoolCycleFromLevel("6ème"), "secondary");
+  assert.equal(inferSchoolCycleFromLevel("3ème"), "secondary");
+  assert.equal(inferSchoolCycleFromLevel("1re D"), "secondary");
   assert.equal(inferSchoolCycleFromLevel(""), null);
 });
 
