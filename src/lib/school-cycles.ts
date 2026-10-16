@@ -146,6 +146,10 @@ export function inferSchoolCycleFromLevel(level: unknown): SchoolCycle | null {
     return "preschool";
   }
   if (/^(CP[12]|CE[12]|CM[12])$/.test(normalized)) return "primary";
+  if (/^(6E|6EME|5E|5EME|4E|4EME|3E|3EME|2NDE|2DE|SECONDE|TERMINALE|TLE)$/.test(normalized)) {
+    return "secondary";
+  }
+  if (/^(1RE|1ERE|PREMIERE)([A-E0-9]*)$/.test(normalized)) return "secondary";
   return null;
 }
 
