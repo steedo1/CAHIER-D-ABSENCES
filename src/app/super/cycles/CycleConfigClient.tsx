@@ -249,7 +249,7 @@ export default function CycleConfigClient() {
                 })}
                 <div>
                   <label className="mb-1 block text-sm font-semibold" htmlFor="default-cycle">
-                    Vue d'accueil du directeur
+                    Cycle favori (affiché en premier)
                   </label>
                   <select
                     id="default-cycle"
