@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   printableAverageFields,
   selectPrintablePrograms,
@@ -33,4 +34,13 @@ test("an unavailable average is not silently converted to zero", () => {
   const view = selectPrintablePrograms({ french, arabic: ungraded }, "combined");
   assert.ok(view);
   assert.equal(printableAverageFields(view).arabic, null);
+});
+
+test("approved print templates contain no red mixed-average warning banner", () => {
+  const code = readFileSync(
+    new URL("../src/components/bulletins/FrancoArabicBulletin.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(code, /Aucune moyenne franco-arabe globale/i);
+  assert.doesNotMatch(code, /bandeau rouge/i);
 });
