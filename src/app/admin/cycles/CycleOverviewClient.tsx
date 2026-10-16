@@ -11,7 +11,7 @@ import {
 } from "@/lib/school-cycles";
 
 type SchoolClass = { id: string; label: string; level: string | null };
-type CycleSummary = { classes: SchoolClass[]; count: number };
+type CycleSummary = { classes: SchoolClass[]; count: number; students: number; teachers: number };
 type Data = {
   ok?: boolean;
   enabled?: boolean;
@@ -24,6 +24,8 @@ type Data = {
   };
   cycles?: Partial<Record<SchoolCycle, CycleSummary>>;
   totalClasses?: number;
+  uniqueStudents?: number;
+  uniqueTeachers?: number;
   error?: string;
 };
 
@@ -85,6 +87,9 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
         <p className="mt-1 text-sm text-slate-600">
           {data.institution?.name} · {data.academicYear || "Année scolaire non définie"}
         </p>
+        <div className="mt-3 text-sm text-slate-700">
+          {data.uniqueStudents ?? "—"} élèves distincts · {data.uniqueTeachers ?? "—"} enseignants distincts
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
@@ -115,7 +120,7 @@ export default function CycleOverviewClient({ initialCycle }: { initialCycle: Sc
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold">{cycleName}</h2>
-                <p className="mt-1 text-sm text-slate-600">{classes.length} classe(s) pour l'année active</p>
+                <p className="mt-1 text-sm text-slate-600">{classes.length} classe(s) · {data.cycles?.[id]?.students ?? "—"} élèves · {data.cycles?.[id]?.teachers ?? "—"} enseignants</p>
               </div>
               <Link href="/admin/classes" className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white">
                 Gérer les classes
