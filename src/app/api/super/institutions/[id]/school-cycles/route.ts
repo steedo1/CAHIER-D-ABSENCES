@@ -64,25 +64,6 @@ export async function GET(_req: NextRequest, context: Params) {
     classRows = result.data || [];
   }
 
-  return reply({ error: "too_many_subjects_for_editor" }, 503);
-  }
-  const subjectIds = Array.from(new Set(
-    (assignedSubjects.data || []).map((row) => row.subject_id).filter(Boolean)));
-  let subjectRows: Array<{ id: string; name: string; code: string | null }> = [];
-  if (subjectIds.length) {
-    const subjects = await access.srv.from("subjects")
-      .select("id,name,code").in("id", subjectIds).limit(501);
-    if (subjects.error) return reply({ error: "subjects_load_failed" }, 503);
-    const globalById = new Map((subjects.data || []).map((row) => [row.id, row]));
-    subjectRows = (assignedSubjects.data || []).map((row) => {
-      const global = globalById.get(row.subject_id);
-      return {
-        id: row.subject_id,
-        name: String(row.custom_name || global?.name || global?.code || row.subject_id),
-        code: global?.code || null,
-      };
-    }).sort((a, b) => a.name.localeCompare(b.name, "fr"));
-  }
 
   return reply({
     ok: true,
