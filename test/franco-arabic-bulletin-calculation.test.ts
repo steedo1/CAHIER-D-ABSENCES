@@ -139,7 +139,7 @@ test("shared French/Arabic discipline cannot leak the same evaluation into both 
   });
   const report = buildProgramBulletinDraft({
     studentId: "A", cycle: "primary", level: "CP1", track: "french",
-    school: shared, reports, subjectPolicies: policies, officialScores: scores,
+    school: shared, reports, officialScores: scores,
   });
   assert.equal(report.status, "incomplete");
   assert.equal(report.generalAverage, null);
