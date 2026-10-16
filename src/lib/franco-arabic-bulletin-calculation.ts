@@ -88,6 +88,12 @@ export function buildProgramBulletinDraft(params: {
   if (!authorizedConfig) problems.push("program_not_configured");
   if (authorizedConfig && targetScale === null) problems.push("level_scale_not_configured");
   if (authorizedConfig && subjectIds.length === 0) problems.push("subjects_not_classified");
+  // Current evaluations do not identify a French/Arabic teaching track.
+  // A shared subject cannot be assigned to both bulletins without an explicit
+  // link from each evaluation to its program.
+  if (subjectIds.some((subjectId) => (mapped[subjectId] || []).length > 1)) {
+    problems.push("shared_subject_requires_program_specific_evaluations");
+  }
 
   const policiesById = new Map<string, SubjectBulletinPolicy>();
   const duplicatePolicyIds = new Set<string>();
@@ -147,12 +153,13 @@ export function buildProgramBulletinDraft(params: {
     const totalEvaluationCoefficient = evaluations.reduce(
       (sum, row) => sum + row.evaluationCoefficient, 0,
     );
-    const average = targetScale !== null && evaluations.length > 0 &&
+    const preciseAverage = targetScale !== null && evaluations.length > 0 &&
       totalEvaluationCoefficient > 0
-      ? round2(evaluations.reduce((sum, row) =>
+      ? evaluations.reduce((sum, row) =>
           sum + row.score / row.scale * targetScale * row.evaluationCoefficient, 0,
-        ) / totalEvaluationCoefficient)
+        ) / totalEvaluationCoefficient
       : null;
+    const average = preciseAverage === null ? null : round2(preciseAverage);
 
     subjects.push({
       subjectId, coefficient: rule.coefficient, includeInAverage: rule.includeInAverage,
@@ -161,7 +168,7 @@ export function buildProgramBulletinDraft(params: {
     if (rule.includeInAverage) {
       if (average === null) problems.push("included_subject_without_score");
       else {
-        generalSum += average * rule.coefficient;
+        generalSum += (preciseAverage as number) * rule.coefficient;
         generalCoefficientSum += rule.coefficient;
       }
     }
