@@ -245,9 +245,14 @@ export default function BilingualReportingSettings({ schoolId }: { schoolId: str
                     ...old, format: event.target.value as ReportFormat,
                   }))} className="min-h-11 w-full rounded-xl border px-3 py-2">
                   <option value="separate">Deux bulletins distincts : français / arabe</option>
-                  <option value="combined">Un bulletin bilingue regroupé</option>
-                  <option value="both">Les deux présentations disponibles</option>
+                  <option value="combined">Un document regroupé, deux moyennes distinctes</option>
+                  <option value="both">Les deux présentations, sans moyenne commune</option>
                 </select>
+                <p className="mt-2 text-sm font-semibold text-slate-700">
+                  Règle obligatoire : la moyenne française et la moyenne arabe
+                  restent indépendantes. Aucun calcul de moyenne franco-arabe globale,
+                  même sur un document regroupé.
+                </p>
               </div>
               <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">Barèmes par niveau et enseignement</h3>
