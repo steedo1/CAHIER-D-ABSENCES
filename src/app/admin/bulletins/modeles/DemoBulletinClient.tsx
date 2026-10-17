@@ -110,6 +110,7 @@ export default function DemoBulletinClient({
       subjects: demo.french.subjects.map(subject => ({
         ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
       })),
+      generalAverage: cycle === "secondary" ? demo.french.generalAverage : 14.6,
       directorName: cycleHasArabic ? demo.french.directorName : "Direction de l’établissement",
     } : undefined,
     arabic: demo.arabic ? {
@@ -119,6 +120,7 @@ export default function DemoBulletinClient({
       subjects: demo.arabic.subjects.map(subject => ({
         ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
       })),
+      generalAverage: cycle === "secondary" ? demo.arabic.generalAverage : 16,
     } : undefined,
   };
   const visibleOptions = cycleHasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
