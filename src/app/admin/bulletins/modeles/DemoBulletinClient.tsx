@@ -121,7 +121,7 @@ export default function DemoBulletinClient({
       })),
     } : undefined,
   };
-  const visibleOptions = hasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
+  const visibleOptions = cycleHasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 rounded-2xl border bg-white p-5 shadow-sm print:hidden">
