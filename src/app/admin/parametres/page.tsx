@@ -17,6 +17,7 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolBulletinModelPicker from "@/components/admin/SchoolBulletinModelPicker";
 import SchoolGradingPeriodsEditor from "@/components/admin/SchoolGradingPeriodsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
@@ -318,7 +319,7 @@ const SETTINGS_TABS: Array<{
   {
     key: "bulletin-models",
     label: "Modèles de bulletins",
-    description: "Barèmes et présentations par cycle et enseignement.",
+    description: "Choix, aperçu et enregistrement du modèle de bulletin.",
   },
 ];
 
@@ -4729,25 +4730,7 @@ export default function AdminSettingsPage() {
         )}
 
         {hasSpecializedSettings && activeTab === "bulletin-models" && (
-          <section className="space-y-5">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5">
-              <h2 className="text-xl font-bold text-slate-900">
-                Modèles de bulletins par cycle et enseignement
-              </h2>
-              <p className="mt-2 text-sm text-slate-600">
-                Au secondaire, gérez les coefficients ; au primaire, les barèmes ;
-                au préscolaire, les modalités d’évaluation adaptées.
-                Les matières proviennent du catalogue actif de l’établissement.
-              </p>
-              <a
-                href="/admin/bulletins/modeles"
-                className="mt-3 inline-flex rounded-xl border border-sky-200 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50"
-              >
-                Prévisualiser les modèles A4
-              </a>
-            </div>
-            <SchoolBulletinSettings />
-          </section>
+          <SchoolBulletinModelPicker />
         )}
       </main>
 
