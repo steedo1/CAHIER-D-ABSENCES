@@ -46,7 +46,7 @@ export default async function AdminBulletinTemplatesPage() {
       hasArabic={hasArabic}
       enabledCycles={school.enabledCycles}
       tracksByCycle={school.teachingTracksByCycle}
-      schoolName={institution.name || "Établissement"
+      schoolName={institution.name || "Établissement"}
       schoolCode={institution.code || institution.code_unique || "—"}
     />
   </div>;
