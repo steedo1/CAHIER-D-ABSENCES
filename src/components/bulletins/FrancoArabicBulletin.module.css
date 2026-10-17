@@ -206,3 +206,17 @@
   }
   .marks tr { break-inside: avoid; page-break-inside: avoid; }
 }
+
+/* A standard primary school keeps the elegant A4 identity, not an
+ * Islamic/franco-Arabic emblem or geometric religious pattern. */
+.ordinaryPage .upperPattern {
+  background: #07584e;
+  background-image: none;
+}
+.ordinaryPage .brandMark {
+  border-radius: 2mm;
+}
+.ordinaryPage .brandMarkBook {
+  font-size: 24pt;
+  line-height: 15mm;
+}
