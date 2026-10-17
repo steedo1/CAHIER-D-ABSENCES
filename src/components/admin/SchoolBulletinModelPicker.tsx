@@ -101,9 +101,11 @@ export default function SchoolBulletinModelPicker() {
       setReport(result.reporting);
       setRevision(result.revision || "");
       setDraftFormats(result.reporting.formatsByCycle || {});
-      setNotice(result.active
-        ? "Le modèle est enregistré et sera utilisé pour les bulletins spécialisés de ce cycle."
-        : "Présentation enregistrée. L'édition des bulletins spécialisés doit être activée dans les paramètres pédagogiques.");
+      setNotice(cycle === "preschool"
+        ? "Préférence enregistrée pour le livret préscolaire. L'impression officielle attend la disponibilité du moteur de compétences."
+        : result.active
+          ? "Le modèle est enregistré et sera utilisé pour les bulletins spécialisés de ce cycle."
+          : "Présentation enregistrée. L'édition des bulletins spécialisés doit être activée dans les paramètres pédagogiques.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur lors de l'enregistrement.");
     } finally {
@@ -175,7 +177,7 @@ export default function SchoolBulletinModelPicker() {
           </p>
         </div>
         <button type="button" onClick={() => void save()}
-          disabled={!changed || saving || isPreschool}
+          disabled={!changed || saving}
           className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white disabled:opacity-40">
           {saving ? "Enregistrement…" : changed ? "Enregistrer ce modèle" : "Modèle enregistré"}
         </button>
