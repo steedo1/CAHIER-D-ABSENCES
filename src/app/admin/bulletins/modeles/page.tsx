@@ -31,10 +31,9 @@ export default async function AdminBulletinTemplatesPage({
   const school = parseSchoolCyclesSettings(institution.settings_json);
 
   if (!school.enabled) redirect("/admin/bulletins");
-  // The only editor now lives in the existing Paramètres navigation.
-  // Keep this route as a preview-only destination for old bookmarks.
-  const { preview } = await searchParams;
-  if (preview !== "1") redirect("/admin/parametres?tab=bulletin-models");
+  // Both the historic direct link and the preview link must show the
+  // templates. The editor itself remains in Paramètres.
+  void searchParams;
 
   const hasArabic = school.enabledCycles.some(cycle =>
     school.teachingTracksByCycle[cycle]?.includes("arabic"));
