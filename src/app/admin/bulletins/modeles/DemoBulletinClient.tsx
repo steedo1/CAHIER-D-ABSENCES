@@ -148,7 +148,7 @@ export default function DemoBulletinClient({
           </label>
           {visibleOptions.map(option => (
             <button key={option.id} type="button"
-              aria-pressed={variant === option.id}
+              aria-pressed={selectedVariant === option.id}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${variant === option.id
                 ? "bg-emerald-800 text-white"
                 : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
