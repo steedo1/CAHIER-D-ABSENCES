@@ -3,6 +3,12 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import {
+  isScopedDashboardSelection,
+  resolveScopedDashboardCounts,
+  type CycleDashboardSummary,
+} from "@/lib/multicycle-dashboard";
 import {
   School,
   Users,
@@ -117,7 +123,7 @@ function StatCard({
   sub,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   Icon: any;
   accent?: "emerald" | "teal" | "sky" | "violet" | "amber";
   loading?: boolean;
@@ -145,7 +151,7 @@ function StatCard({
           <div className="space-y-1">
             <div className="text-sm text-slate-500">{label}</div>
             <div className="text-3xl font-semibold tracking-tight">
-              {loading ? <Skeleton className="h-8 w-16" /> : <CountUp value={value} />}
+              {loading ? <Skeleton className="h-8 w-16" /> : value === null ? <span aria-label="Non disponible">—</span> : <CountUp value={value} />}
             </div>
             {sub && <div className="text-xs text-slate-500">{sub}</div>}
           </div>
@@ -167,7 +173,7 @@ function KpiCard({
   loading,
 }: {
   title: string;
-  value: number;
+  value: number | null;
   hint?: string;
   tone?: "red" | "amber" | "emerald";
   periodLabel?: string;
@@ -216,7 +222,7 @@ function KpiCard({
       </CardHeader>
       <CardContent className="pt-0">
         <div className="text-3xl font-semibold">
-          {loading ? <Skeleton className="h-8 w-20" /> : <CountUp value={value} />}
+          {loading ? <Skeleton className="h-8 w-20" /> : value === null ? <span aria-label="Non disponible">—</span> : <CountUp value={value} />}
         </div>
         {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
       </CardContent>
@@ -288,7 +294,35 @@ export default function AdminDashboardClient() {
   const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
   const role = useAdminRole();
+  const schoolNavigation = useSchoolNavigation();
+  const multicycleEnabled = Boolean(schoolNavigation);
+  const [cycleSummary, setCycleSummary] = useState<CycleDashboardSummary | null>(null);
+  const [cycleLoading, setCycleLoading] = useState(false);
+  const [cycleError, setCycleError] = useState("");
   const [dataSource, setDataSource] = useState<LocalDataSource>("cloud");
+
+  useEffect(() => {
+    if (!multicycleEnabled) return;
+    const controller = new AbortController();
+    let live = true;
+    setCycleLoading(true);
+    setCycleError("");
+    fetch("/api/admin/school-cycles", { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        const result = await response.json() as CycleDashboardSummary & { error?: string };
+        if (!response.ok || !result.ok || !result.enabled) {
+          throw new Error(result.error || "Effectifs pédagogiques indisponibles");
+        }
+        if (live) setCycleSummary(result);
+      })
+      .catch(error => {
+        if (!live) return;
+        setCycleSummary(null);
+        setCycleError(error instanceof Error ? error.message : "Effectifs indisponibles");
+      })
+      .finally(() => { if (live) setCycleLoading(false); });
+    return () => { live = false; controller.abort(); };
+  }, [multicycleEnabled]);
 
   const nfmt = useMemo(() => new Intl.NumberFormat(), []);
   void nfmt;
@@ -391,6 +425,15 @@ export default function AdminDashboardClient() {
   const girls = counts.girls ?? 0;
   const genderUnknown = counts.gender_unknown ?? 0;
   const isFinanceManager = role === "finance_manager";
+  const selection = schoolNavigation?.selection;
+  const scoped = selection ? isScopedDashboardSelection(selection) : false;
+  const scopedCounts = selection && scoped
+    ? resolveScopedDashboardCounts(selection, cycleSummary)
+    : null;
+  const countLoading = loading || (scoped && cycleLoading);
+  // Only cycle-wide roster counts and mapped teaching assignments are verified.
+  // No other school-wide counts may silently carry over under a teaching filter.
+  const unavailableHint = "Non disponible pour ce filtre";
 
   return (
     <div className="space-y-6">
@@ -493,40 +536,55 @@ export default function AdminDashboardClient() {
         )}
       </div>
 
+      {scoped && (
+        <div role="status" className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          <strong>Vue pédagogique filtrée.</strong> Les effectifs affichés correspondent aux
+          inscriptions du cycle ou aux enseignants affectés aux matières de l’enseignement.
+          Les statistiques non attribuables de façon certaine restent « — », et non zéro.
+          {cycleError && <p className="mt-1 text-amber-900">Chargement : {cycleError}</p>}
+          <p className="mt-1 text-xs">
+            Les absences, finances et autres modules ne sont pas encore filtrés par ce sélecteur.
+          </p>
+        </div>
+      )}
+
       {/* Cartes compteurs (vue globale simple, 1 colonne mobile) */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Classes"
-          value={counts.classes}
+          value={scoped ? scopedCounts?.classes ?? null : counts.classes}
+          sub={scoped && scopedCounts?.classes === null ? unavailableHint : undefined}
           Icon={School}
           accent="emerald"
-          loading={loading}
+          loading={countLoading}
         />
         <StatCard
           label="Enseignants"
-          value={counts.teachers}
+          value={scoped ? scopedCounts?.teachers ?? null : counts.teachers}
+          sub={scoped && scopedCounts?.teachers === null ? unavailableHint : undefined}
           Icon={Users}
           accent="teal"
-          loading={loading}
+          loading={countLoading}
         />
         <StatCard
           label="Parents"
-          value={counts.parents}
+          value={scoped ? null : counts.parents}
+          sub={scoped ? unavailableHint : undefined}
           Icon={UserRoundCheck}
           accent="sky"
-          loading={loading}
+          loading={countLoading}
         />
         <StatCard
           label="Élèves"
-          value={counts.students}
-          sub={
+          value={scoped ? scopedCounts?.students ?? null : counts.students}
+          sub={scoped ? scopedCounts?.students === null ? unavailableHint : undefined : (
             counts.students_total !== undefined && counts.students_total !== counts.students
               ? `Total : ${counts.students_total}`
-              : undefined
+              : undefined)
           }
           Icon={GraduationCap}
           accent="violet"
-          loading={loading}
+          loading={countLoading}
         />
       </section>
 
@@ -534,7 +592,7 @@ export default function AdminDashboardClient() {
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
           label="Affectés"
-          value={assignedStudents}
+          value={scoped ? null : assignedStudents}
           Icon={UserRoundCheck}
           accent="emerald"
           loading={loading}
@@ -542,14 +600,14 @@ export default function AdminDashboardClient() {
         />
         <StatCard
           label="Non affectés"
-          value={notAssignedStudents}
+          value={scoped ? null : notAssignedStudents}
           Icon={Users}
           accent="amber"
           loading={loading}
         />
         <StatCard
           label="Internes"
-          value={boarderStudents}
+          value={scoped ? null : boarderStudents}
           Icon={School}
           accent="teal"
           loading={loading}
@@ -557,14 +615,14 @@ export default function AdminDashboardClient() {
         />
         <StatCard
           label="Non internes"
-          value={notBoarderStudents}
+          value={scoped ? null : notBoarderStudents}
           Icon={School}
           accent="sky"
           loading={loading}
         />
         <StatCard
           label="Garçons"
-          value={boys}
+          value={scoped ? null : boys}
           Icon={GraduationCap}
           accent="violet"
           loading={loading}
@@ -572,7 +630,7 @@ export default function AdminDashboardClient() {
         />
         <StatCard
           label="Filles"
-          value={girls}
+          value={scoped ? null : girls}
           Icon={GraduationCap}
           accent="emerald"
           loading={loading}
@@ -583,7 +641,7 @@ export default function AdminDashboardClient() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <KpiCard
           title="Absences / période"
-          value={absences}
+          value={scoped ? null : absences}
           hint="Total des absences enregistrées sur la période sélectionnée."
           tone="red"
           periodLabel={periodLabel}
@@ -591,7 +649,7 @@ export default function AdminDashboardClient() {
         />
         <KpiCard
           title="Retards / période"
-          value={retards}
+          value={scoped ? null : retards}
           hint="Total des retards enregistrés sur la période sélectionnée."
           tone="amber"
           periodLabel={periodLabel}
