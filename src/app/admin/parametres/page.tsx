@@ -11,6 +11,9 @@ import {
 import AttendancePresenceSettings from "@/components/admin/AttendancePresenceSettings";
 import { getRelayConfig, syncRelayBootstrap } from "@/lib/local-relay";
 import { useRelayCapability } from "@/components/RelayCapabilityProvider";
+import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
+import SchoolSubjectProgramsEditor from "@/components/admin/SchoolSubjectProgramsEditor";
+import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
@@ -270,7 +273,8 @@ type SettingsTabKey =
   | "academic-years"
   | "grading-periods"
   | "coefficients"
-  | "rapport-f";
+  | "rapport-f"
+  | "bulletin-models";
 
 const SETTINGS_TABS: Array<{
   key: SettingsTabKey;
@@ -306,6 +310,11 @@ const SETTINGS_TABS: Array<{
     key: "coefficients",
     label: "Coefficients & sous-matières",
     description: "Coefficients par niveau et ventilation par composantes.",
+  },
+  {
+    key: "bulletin-models",
+    label: "Modèles de bulletins",
+    description: "Barèmes et présentations par cycle et enseignement.",
   },
 ];
 
@@ -728,6 +737,8 @@ function computeAcademicYearFromDate(d: Date = new Date()): string {
 ========================= */
 export default function AdminSettingsPage() {
   const { relayEnabled } = useRelayCapability();
+  const schoolNavigation = useSchoolNavigation();
+  const hasSpecializedSettings = Boolean(schoolNavigation);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -752,7 +763,7 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     const nextTab = searchParams.get("tab");
-    if (isSettingsTabKey(nextTab)) {
+    if (isSettingsTabKey(nextTab) && (nextTab !== "bulletin-models" || hasSpecializedSettings)) {
       setActiveTab(nextTab);
       return;
     }
@@ -760,7 +771,7 @@ export default function AdminSettingsPage() {
     if (pathname === "/admin/parametres") {
       router.replace("/admin/parametres?tab=security", { scroll: false });
     }
-  }, [pathname, router, searchParams]);
+  }, [pathname, router, searchParams, hasSpecializedSettings]);
 
   /* ----- Mon mot de passe ----- */
   const [pwd1, setPwd1] = useState("");
@@ -2677,14 +2688,14 @@ export default function AdminSettingsPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Onglet actif :
                 <span className="ml-2 font-semibold text-slate-900">
-                  {SETTINGS_TABS.find((tab) => tab.key === activeTab)?.label ||
+                  {SETTINGS_TABS.find((tab) => tab.key === activeTab && (tab.key !== "bulletin-models" || hasSpecializedSettings))?.label ||
                     "Accès & sécurité"}
                 </span>
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-              {SETTINGS_TABS.map((tab) => {
+              {SETTINGS_TABS.filter(tab => tab.key !== "bulletin-models" || hasSpecializedSettings).map((tab) => {
                 const active = activeTab === tab.key;
                 return (
                   <button
@@ -4668,7 +4679,43 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
             </SectionCard>
+            {hasSpecializedSettings && (
+              <details className="rounded-2xl border border-slate-200 bg-white p-5">
+                <summary className="cursor-pointer text-base font-semibold text-slate-900">
+                  Répartition des matières entre les enseignements et les cycles
+                </summary>
+                <p className="mt-2 text-sm text-slate-600">
+                  Cette configuration utilise les matières déjà actives de l’établissement.
+                  Elle ne crée pas un second catalogue.
+                </p>
+                <div className="mt-4">
+                  <SchoolSubjectProgramsEditor onSaved={() => undefined} />
+                </div>
+              </details>
+            )}
           </>
+        )}
+
+        {hasSpecializedSettings && activeTab === "bulletin-models" && (
+          <section className="space-y-5">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="text-xl font-bold text-slate-900">
+                Modèles de bulletins par cycle et enseignement
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Au secondaire, gérez les coefficients ; au primaire, les barèmes ;
+                au préscolaire, les modalités d’évaluation adaptées.
+                Les matières proviennent du catalogue actif de l’établissement.
+              </p>
+              <a
+                href="/admin/bulletins/modeles?preview=1"
+                className="mt-3 inline-flex rounded-xl border border-sky-200 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50"
+              >
+                Prévisualiser les modèles A4
+              </a>
+            </div>
+            <SchoolBulletinSettings />
+          </section>
         )}
       </main>
 
