@@ -74,6 +74,9 @@ test("school periods reuse actual grade_periods and teacher evaluation APIs", ()
   assert.match(route, /requireInstitutionRole\(browser, service, \["admin"\]\)/);
   assert.match(helper, /schoolPeriodProgramForClass/);
   assert.match(helper, /listSchoolProgramPeriods/);
+  assert.match(helper, /if \(scoped\.length > 0\)/);
+  assert.match(helper, /items: await listCommonPeriods\(srv, institutionId, academicYear\)/);
+  assert.match(helper, /fallbackToCommon: true/);
   assert.match(evaluation, /autoDetectApplicableGradePeriod/);
   assert.match(evaluation, /getApplicableGradePeriodById/);
   assert.match(page, /<SchoolGradingPeriodsEditor academicYear=\{selectedAcademicYear\}/);
