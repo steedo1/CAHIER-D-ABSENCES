@@ -3,6 +3,9 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getSupabaseServiceClient } from "@/lib/supabaseAdmin";
 import { requireInstitutionRole } from "@/lib/auth/server-context";
 import { aggregateSchoolCycleRoster } from "@/lib/school-cycle-roster";
+import {
+  aggregateStudentProgramRoster, readStudentProgramSettings,
+} from "@/lib/school-student-programs";
 import { createSchoolSubjectResolver } from "@/lib/school-subject-identifiers";
 import {
   groupScopedClassesByCycle,
@@ -152,11 +155,14 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  const scopedClasses = configuration.enabledCycles.flatMap((cycle) =>
+    grouped[cycle].map((row) => ({ id: row.id, cycle })));
   const headcount = aggregateSchoolCycleRoster(
-    configuration.enabledCycles.flatMap((cycle) =>
-      grouped[cycle].map((row) => ({ id: row.id, cycle }))),
-    enrollments,
-    teachers,
+    scopedClasses, enrollments, teachers,
+  );
+  const schoolPrograms = readStudentProgramSettings(institution.settings_json);
+  const studentPrograms = aggregateStudentProgramRoster(
+    configuration, schoolPrograms.years[year], scopedClasses, enrollments,
   );
   const classifiedSubjectIds = Array.from(new Set(Object.values(
     configuration.subjectTracksByCycle).flatMap((mappings) =>
@@ -228,6 +234,7 @@ export async function GET(request: NextRequest) {
     totalClasses: classes.length,
     uniqueStudents: headcount.uniqueStudents,
     uniqueTeachers: headcount.uniqueTeachers,
+    studentPrograms,
     programs: byProgram,
     reviewNeeded,
     outsideEnabledCycles,
