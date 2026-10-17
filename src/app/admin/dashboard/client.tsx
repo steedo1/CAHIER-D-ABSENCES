@@ -596,7 +596,7 @@ export default function AdminDashboardClient() {
           Icon={UserRoundCheck}
           accent="emerald"
           loading={loading}
-          sub={assignmentUnknown > 0 ? `${assignmentUnknown} non renseigné(s)` : undefined}
+          sub={!scoped && assignmentUnknown > 0 ? `${assignmentUnknown} non renseigné(s)` : undefined}
         />
         <StatCard
           label="Non affectés"
@@ -611,7 +611,7 @@ export default function AdminDashboardClient() {
           Icon={School}
           accent="teal"
           loading={loading}
-          sub={boardingUnknown > 0 ? `${boardingUnknown} internat non renseigné` : undefined}
+          sub={!scoped && boardingUnknown > 0 ? `${boardingUnknown} internat non renseigné` : undefined}
         />
         <StatCard
           label="Non internes"
@@ -626,7 +626,7 @@ export default function AdminDashboardClient() {
           Icon={GraduationCap}
           accent="violet"
           loading={loading}
-          sub={genderUnknown > 0 ? `${genderUnknown} sexe non renseigné` : undefined}
+          sub={!scoped && genderUnknown > 0 ? `${genderUnknown} sexe non renseigné` : undefined}
         />
         <StatCard
           label="Filles"
