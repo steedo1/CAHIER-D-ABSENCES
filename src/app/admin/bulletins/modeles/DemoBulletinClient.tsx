@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { SchoolCycle, TeachingTrack } from "@/lib/school-cycles";
+import PreschoolBookletDemo from "./PreschoolBookletDemo";
 import "./print.css";
 import Link from "next/link";
 import FrancoArabicBulletin, {
@@ -82,41 +84,74 @@ const options: { id: BulletinVariant; label: string }[] = [
 ];
 
 export default function DemoBulletinClient({
-  hasArabic, schoolName, schoolCode,
-}: { hasArabic: boolean; schoolName: string; schoolCode: string }) {
+  hasArabic, schoolName, schoolCode, enabledCycles, tracksByCycle,
+}: { hasArabic: boolean; schoolName: string; schoolCode: string;
+  enabledCycles: SchoolCycle[];
+  tracksByCycle: Partial<Record<SchoolCycle, TeachingTrack[]>>;
+}) {
   const [variant, setVariant] = useState<BulletinVariant>(hasArabic ? "combined" : "ordinary");
+  const [cycle, setCycle] = useState<SchoolCycle>(enabledCycles.includes("primary") ? "primary" : enabledCycles[0] || "secondary");
+  // Authorized teaching programs are cycle-specific, not globally interchangeable.
+  const cycleHasArabic = hasArabic && tracksByCycle[cycle]?.includes("arabic") === true;
+  const selectedVariant: BulletinVariant = cycleHasArabic ? variant : "ordinary";
+  const label = cycle === "secondary" ? "Secondaire" : "Primaire";
   const preview: BulletinDocument = {
     ...demo,
     school: {
       ...demo.school,
       name: schoolName,
       code: schoolCode,
-      subtitle: hasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique primaire",
+      subtitle: cycleHasArabic ? "Maquette pédagogique franco-arabe" : "Maquette pédagogique scolaire",
     },
     french: demo.french ? {
       ...demo.french,
-      directorName: hasArabic ? demo.french.directorName : "Direction de l’établissement",
+      cycle: label, level: cycle === "secondary" ? "6ème" : "CM1",
+      className: cycle === "secondary" ? "6ème" : "CM1",
+      subjects: demo.french.subjects.map(subject => ({
+        ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
+      })),
+      generalAverage: cycle === "secondary" ? demo.french.generalAverage : 14.6,
+      directorName: cycleHasArabic ? demo.french.directorName : "Direction de l’établissement",
+    } : undefined,
+    arabic: demo.arabic ? {
+      ...demo.arabic,
+      cycle: label, level: cycle === "secondary" ? "6ème" : "CM1",
+      className: cycle === "secondary" ? "6ème" : "CM1",
+      subjects: demo.arabic.subjects.map(subject => ({
+        ...subject, coefficient: cycle === "secondary" ? subject.coefficient : null,
+      })),
+      generalAverage: cycle === "secondary" ? demo.arabic.generalAverage : 16,
     } : undefined,
   };
-  const visibleOptions = hasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
+  const visibleOptions = cycleHasArabic ? options : [{ id: "ordinary" as BulletinVariant, label: "Bulletin de notes" }];
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-5 rounded-2xl border bg-white p-5 shadow-sm print:hidden">
-        <Link href="/admin/bulletins" className="text-sm font-semibold text-emerald-800">
-          ← Retour aux bulletins
+        <Link href="/admin/parametres?tab=bulletin-models" className="text-sm font-semibold text-emerald-800">
+          ← Retour aux paramètres des bulletins
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-slate-900">Maquettes de bulletins A4</h1>
         <p className="mt-1 text-sm leading-6 text-slate-600">
-          {hasArabic
+          {cycleHasArabic
             ? "Bulletins français, arabe et regroupé ; les résultats ne sont jamais fusionnés."
             : "Bulletin ordinaire, sans étiquette « Programme français ». Aucun enseignement arabe n'est ajouté."
-          } Les élèves, notes, classements et coefficients présentés ci-dessous sont fictifs.
+          } Toutes les données de démonstration présentées ci-dessous sont fictives.
+          Le primaire présente des barèmes sans coefficients et le préscolaire un livret de compétences.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            Cycle
+            <select value={cycle} onChange={event => setCycle(event.target.value as SchoolCycle)}
+              className="rounded-lg border px-3 py-2">
+              {enabledCycles.map(item => <option value={item} key={item}>
+                {item === "preschool" ? "Préscolaire" : item === "primary" ? "Primaire" : "Secondaire"}
+              </option>)}
+            </select>
+          </label>
           {visibleOptions.map(option => (
             <button key={option.id} type="button"
-              aria-pressed={variant === option.id}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${variant === option.id
+              aria-pressed={selectedVariant === option.id}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${selectedVariant === option.id
                 ? "bg-emerald-800 text-white"
                 : "border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"}`}
               onClick={() => setVariant(option.id)}>
@@ -130,7 +165,9 @@ export default function DemoBulletinClient({
         </div>
       </div>
       <div className="w-full overflow-x-auto pb-8 print:overflow-visible print:p-0">
-        <FrancoArabicBulletin model={preview} variant={variant} printRoot />
+        {cycle === "preschool"
+          ? <PreschoolBookletDemo variant={selectedVariant} schoolName={schoolName} schoolCode={schoolCode} hasArabic={cycleHasArabic} />
+          : <FrancoArabicBulletin model={preview} variant={selectedVariant} printRoot />}
       </div>
     </div>
   );

@@ -56,12 +56,14 @@ test("class with empty curriculum cannot produce an apparently completed report"
   assert.deepEqual(result.policies, []);
   assert.ok(result.problems.includes("class_curriculum_not_configured"));
 });
-test("a configured class subject without a validated coefficient stays incomplete", () => {
+test("primary class curriculum requires no subject coefficients, only explicit barèmes", () => {
   const result = resolveProgramCoefficients({
     cycle: "primary", level: "CP1", track: "arabic", settingsJson: settings,
     activeSubjectIds: [quran], levelSubjectIds: [quran],
     classSubjectIds: [quran], institutionCoefficients: [],
   });
-  assert.ok(result.problems.includes("institution_coefficient_missing"));
-  assert.equal(result.policies.length, 0);
+  assert.deepEqual(result.problems, []);
+  assert.equal(result.source, "barèmes");
+  assert.equal(result.policies.length, 1);
+  assert.equal(result.policies[0].coefficient, 1);
 });

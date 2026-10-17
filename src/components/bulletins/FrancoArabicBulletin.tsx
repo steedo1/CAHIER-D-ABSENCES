@@ -148,10 +148,12 @@ function Heading({ track, compact, ordinary }: { track: BulletinTrack; compact: 
 }
 
 function CourseTable({ program, compact }: { program: BulletinProgram; compact: boolean }) {
+  // Only secondary-school report cards present disciplinary coefficients.
+  const secondary = /^(secondaire|secondary)$/i.test(program.cycle.trim());
   return <table className={`${styles.marks} ${compact ? styles.compactMarks : ""}`}>
     <thead><tr>
       <th scope="col" className={styles.subjectColumn}>Discipline</th>
-      <th scope="col">Coef.</th>
+      {secondary && <th scope="col">Coef.</th>}
       <th scope="col">Moy. /{program.denominator}</th>
       {!compact && <th scope="col">Classe</th>}
       {!compact && <th scope="col">Observation</th>}
@@ -162,7 +164,7 @@ function CourseTable({ program, compact }: { program: BulletinProgram; compact: 
           <span dir="auto">{row.name}</span>
           {row.arabicName && <small lang="ar" dir="rtl">{row.arabicName}</small>}
         </td>
-        <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>
+        {secondary && <td>{number(row.coefficient, row.coefficient !== null && row.coefficient % 1 !== 0 ? 1 : 0)}</td>}
         <td className={styles.markCell}>{number(row.average)}</td>
         {!compact && <td>{number(row.classAverage)}</td>}
         {!compact && <td className={styles.observation}>{row.observation || "—"}</td>}

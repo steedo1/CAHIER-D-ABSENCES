@@ -193,3 +193,26 @@ export function convertScoreScale(
       score < 0 || score > fromScale) return null;
   return Math.round((score / fromScale) * toScale * 100) / 100;
 }
+
+
+/**
+ * New preschool numeric scales and new primary/preschool coefficients are
+ * forbidden. Previously saved rows remain readable and can be retained
+ * unchanged for compatibility, but are ignored by the specialized engine.
+ */
+export function validateNewCycleScoringRules(
+  previous: FrancoArabicReportsSettings,
+  incoming: FrancoArabicReportsSettings,
+): "ok" | "preschool_numeric_scale_forbidden" | "nonsecondary_coefficient_forbidden" {
+  const unchanged = (oldRows: readonly unknown[], candidate: unknown) =>
+    oldRows.some(old => JSON.stringify(old) === JSON.stringify(candidate));
+  if (incoming.scales.some(row =>
+    row.cycle === "preschool" && !unchanged(previous.scales, row))) {
+    return "preschool_numeric_scale_forbidden";
+  }
+  if (incoming.coefficients.some(row =>
+    row.cycle !== "secondary" && !unchanged(previous.coefficients, row))) {
+    return "nonsecondary_coefficient_forbidden";
+  }
+  return "ok";
+}

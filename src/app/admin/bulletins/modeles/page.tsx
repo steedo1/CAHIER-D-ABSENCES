@@ -9,11 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /** Pedagogical bulletin templates are owned by the current school's admin. */
-export default async function AdminBulletinTemplatesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ preview?: string }>;
-}) {
+export default async function AdminBulletinTemplatesPage() {
   const client = await getSupabaseServerClient();
   const service = getSupabaseServiceClient();
   const access = await requireInstitutionRole(client, service, ["admin"]);
@@ -31,10 +27,9 @@ export default async function AdminBulletinTemplatesPage({
   const school = parseSchoolCyclesSettings(institution.settings_json);
 
   if (!school.enabled) redirect("/admin/bulletins");
-  // The only editor now lives in the existing Paramètres navigation.
-  // Keep this route as a preview-only destination for old bookmarks.
-  const { preview } = await searchParams;
-  if (preview !== "1") redirect("/admin/parametres?tab=bulletin-models");
+  // Both the historic direct link and the preview link must show the
+  // templates. The editor itself remains in Paramètres.
+
 
   const hasArabic = school.enabledCycles.some(cycle =>
     school.teachingTracksByCycle[cycle]?.includes("arabic"));
@@ -49,6 +44,8 @@ export default async function AdminBulletinTemplatesPage({
     </div>
     <DemoBulletinClient
       hasArabic={hasArabic}
+      enabledCycles={school.enabledCycles}
+      tracksByCycle={school.teachingTracksByCycle}
       schoolName={institution.name || "Établissement"}
       schoolCode={institution.code || institution.code_unique || "—"}
     />
