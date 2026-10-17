@@ -37,9 +37,20 @@ type CycleResponse = {
   error?: string;
 };
 type AllowedProgram = { cycle: SchoolCycle; track: TeachingTrack };
+type TeachingClass = { id: string; label: string; level: string | null;
+  cycle: SchoolCycle | null; track: TeachingTrack | null };
 
-export default function SchoolBulletinSettings() {
+/** The coefficients tab uses only the program-specific rules; legacy settings remain unchanged. */
+export default function SchoolBulletinSettings({
+  mode = "full",
+}: { mode?: "full" | "coefficients" } = {}) {
   const navigation = useSchoolNavigation();
+  const [focusedProgram, setFocusedProgram] = useState("");
+  const [teachingClasses, setTeachingClasses] = useState<TeachingClass[]>([]);
+  const [focusedClassId, setFocusedClassId] = useState("");
+  const [classSubjectIds, setClassSubjectIds] = useState<string[] | null>(null);
+  const [loadingClassSubjects, setLoadingClassSubjects] = useState(false);
+  const [classError, setClassError] = useState("");
   const [settings, setSettings] = useState<FrancoArabicReportsSettings>(
     defaultFrancoArabicReportsSettings,
   );
@@ -99,10 +110,88 @@ export default function SchoolBulletinSettings() {
 
   const allowedKeys = useMemo(() =>
     new Set(programs.map(({ cycle, track }) => `${cycle}|${track}`)), [programs]);
-  // UI scopes are display filters only. Server verifies all writes independently.
-  const scopedPrograms = programs.filter(row =>
-    (navigation?.selection.cycle === "all" || !navigation || row.cycle === navigation.selection.cycle) &&
-    (navigation?.selection.track === "all" || !navigation || row.track === navigation.selection.track));
+
+  // In the scoped coefficients tab select one real (cycle, teaching) pair.
+  // The server still validates every save independently.
+  useEffect(() => {
+    if (mode !== "coefficients") return;
+    if (!programs.some(row => `${row.cycle}|${row.track}` === focusedProgram)) {
+      const preferred = programs.find(row =>
+        (!navigation || navigation.selection.cycle === "all" || navigation.selection.cycle === row.cycle) &&
+        (!navigation || navigation.selection.track === "all" || navigation.selection.track === row.track));
+      const first = preferred || programs[0];
+      setFocusedProgram(first ? `${first.cycle}|${first.track}` : "");
+    }
+  }, [mode, programs, focusedProgram, navigation]);
+
+  useEffect(() => {
+    if (mode !== "coefficients") return;
+    const controller = new AbortController();
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/school-class-subjects", {
+          cache: "no-store", signal: controller.signal,
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || "Classes indisponibles");
+        if (active) setTeachingClasses(Array.isArray(data.classes) ? data.classes : []);
+      } catch (err) {
+        if (active && !controller.signal.aborted) {
+          setClassError(err instanceof Error ? err.message : "Chargement des classes impossible.");
+        }
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [mode]);
+
+  const scopedPrograms = mode === "coefficients"
+    ? programs.filter(row => `${row.cycle}|${row.track}` === focusedProgram)
+    : programs.filter(row =>
+      (navigation?.selection.cycle === "all" || !navigation || row.cycle === navigation.selection.cycle) &&
+      (navigation?.selection.track === "all" || !navigation || row.track === navigation.selection.track));
+  const activeProgram = scopedPrograms[0];
+  const classesForProgram = teachingClasses.filter(row =>
+    row.cycle === activeProgram?.cycle && row.track === activeProgram?.track);
+
+  useEffect(() => {
+    if (mode !== "coefficients") return;
+    if (!classesForProgram.some(row => row.id === focusedClassId)) {
+      setFocusedClassId(classesForProgram[0]?.id || "");
+      setClassSubjectIds(null);
+    }
+  }, [mode, focusedClassId, classesForProgram.map(row => row.id).join("|")]);
+
+  useEffect(() => {
+    if (mode !== "coefficients" || !focusedClassId) {
+      setClassSubjectIds(null);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setClassSubjectIds(null);
+    setLoadingClassSubjects(true);
+    (async () => {
+      try {
+        const response = await fetch(
+          "/api/admin/school-class-subjects?class_id=" + encodeURIComponent(focusedClassId),
+          { cache: "no-store", signal: controller.signal },
+        );
+        const data = await response.json();
+        if (!response.ok || !data.ok || data.selectedClassId !== focusedClassId) {
+          throw new Error(data.error || "Matières de la classe indisponibles.");
+        }
+        if (active) setClassSubjectIds(Array.isArray(data.selectedSubjectIds) ? data.selectedSubjectIds : []);
+      } catch (err) {
+        if (active && !controller.signal.aborted) {
+          setClassError(err instanceof Error ? err.message : "Chargement des matières impossible.");
+        }
+      } finally {
+        if (active) setLoadingClassSubjects(false);
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [mode, focusedClassId]);
   const visibleProgram = (cycle: SchoolCycle, track: TeachingTrack) =>
     scopedPrograms.some(p => p.cycle === cycle && p.track === track);
   const firstProgram = scopedPrograms.find(row => row.cycle === "primary") ||
@@ -136,6 +225,11 @@ export default function SchoolBulletinSettings() {
     return subjects.filter((subject) =>
       subjectTracksByCycle[cycle]?.[subject.id]?.includes(track));
   }
+
+  const displayedSubjects = activeProgram
+    ? availableSubjects(activeProgram.cycle, activeProgram.track).filter(subject =>
+        !focusedClassId || classSubjectIds === null || classSubjectIds.includes(subject.id))
+    : [];
 
   function updateCoefficient(index: number, update: Partial<SubjectReportCoefficient>) {
     setNotice("");
@@ -229,7 +323,7 @@ export default function SchoolBulletinSettings() {
   return (
     <section className="space-y-4 rounded-2xl border bg-white p-5 shadow-sm">
       <div>
-        <h2 className="text-lg font-bold text-slate-900">Paramètres des bulletins</h2>
+        <h2 className="text-lg font-bold text-slate-900">{mode === "coefficients" ? "Coefficients et matières par cycle / enseignement" : "Paramètres des bulletins"}</h2>
         <a href="/admin/bulletins/modeles" className="mt-2 inline-block rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white">
           Voir les modèles de bulletins et livrets
         </a>
@@ -238,6 +332,70 @@ export default function SchoolBulletinSettings() {
           Le calcul adapté nécessite une activation explicite ci-dessous.
         </p>
       </div>
+      {mode === "coefficients" && !loading && multicycleReady && (
+        <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50/50 p-4">
+          <label className="block text-sm font-semibold text-slate-900">
+            Cycle et enseignement à configurer
+            <select className="mt-2 block w-full rounded-lg border bg-white p-2"
+              aria-label="Cycle et enseignement" value={focusedProgram}
+              onChange={event => { setFocusedProgram(event.target.value); setClassError(""); }}>
+              {programs.map(row => <option key={`${row.cycle}|${row.track}`} value={`${row.cycle}|${row.track}`}>
+                {SCHOOL_CYCLE_OPTIONS.find(x => x.id === row.cycle)?.label || row.cycle}
+                {" — "}
+                {TEACHING_TRACK_OPTIONS.find(x => x.id === row.track)?.label || row.track}
+              </option>)}
+            </select>
+          </label>
+          {classesForProgram.length > 0 && (
+            <label className="block text-sm font-semibold text-slate-900">
+              Classe / niveau
+              <select className="mt-2 block w-full rounded-lg border bg-white p-2"
+                aria-label="Classe de l'enseignement" value={focusedClassId}
+                onChange={event => { setFocusedClassId(event.target.value); setClassError(""); }}>
+                {classesForProgram.map(row =>
+                  <option key={row.id} value={row.id}>{row.label}{row.level ? ` — ${row.level}` : ""}</option>)}
+              </select>
+            </label>
+          )}
+          {classError && <p role="alert" className="text-sm text-red-800">{classError}</p>}
+          <div className="rounded-lg border bg-white p-3">
+            <p className="text-sm font-bold">
+              Matières de {activeProgram?.track === "arabic" ? "l'enseignement arabe" : "l'enseignement français"}
+              {" — "}{SCHOOL_CYCLE_OPTIONS.find(x => x.id === activeProgram?.cycle)?.label || ""}
+            </p>
+            {loadingClassSubjects && <p className="text-xs text-slate-600">Chargement des matières de la classe…</p>}
+            {focusedClassId && classSubjectIds !== null && classSubjectIds.length === 0 && (
+              <p className="text-sm text-amber-900">
+                Aucune matière affectée à cette classe : utilisez « Matières par classe » ci-dessous.
+              </p>
+            )}
+            <p className="mt-2 text-sm text-slate-700">
+              {displayedSubjects.length} matière(s) dans le périmètre affiché.
+            </p>
+            <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+              {displayedSubjects.map(subject => (
+                <li key={subject.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                  {subject.name}
+                </li>
+              ))}
+            </ul>
+            {displayedSubjects.length === 0 && (
+              <p className="mt-2 text-sm text-amber-900">
+                Les matières doivent d'abord être attribuées au cycle et à l'enseignement dans la répartition ci-dessous.
+              </p>
+            )}
+          </div>
+          <p className="text-xs text-slate-700">
+            Préscolaire : compétences, sans coefficients. Primaire : barèmes par niveau, sans coefficient de matière.
+            Secondaire : coefficients propres à chaque niveau et enseignement.
+          </p>
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Les sous-matières historiques sont stockées uniquement par matière et niveau, sans distinction français/arabe.
+            Leur modification est volontairement indisponible ici afin de ne pas modifier par erreur les évaluations d'un autre enseignement.
+            Les sous-matières existantes restent intactes.
+          </p>
+        </div>
+      )}
       {loading ? <p className="text-sm text-slate-600">Chargement des paramètres…</p> : (
         <>
           {!multicycleReady && (
