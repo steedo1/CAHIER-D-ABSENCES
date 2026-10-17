@@ -72,6 +72,7 @@ export default function SchoolBulletinModelPicker() {
 
   const tracks = config?.teachingTracksByCycle[cycle] || [];
   const bilingual = tracks.includes("french") && tracks.includes("arabic");
+  const onlyArabic = tracks.includes("arabic") && !tracks.includes("french");
   const chosen = bilingual ? (draftFormats[cycle] || report?.format || "separate") : "separate";
   const saved = bilingual ? (report?.formatsByCycle?.[cycle] || report?.format || "separate") : "separate";
   const changed = chosen !== saved;
@@ -79,10 +80,12 @@ export default function SchoolBulletinModelPicker() {
     cycle !== "preschool";
   const isPreschool = cycle === "preschool";
   const options = useMemo(() => bilingual ? layouts :
-    [{ id: "separate" as ReportFormat, title: isPreschool ? "Livret de compétences" : "Bulletin de notes",
+    [{ id: "separate" as ReportFormat,
+      title: isPreschool ? "Livret de compétences" : onlyArabic ? "Bulletin arabe" : "Bulletin de notes",
       summary: isPreschool ? "Compétences et observations, sans notes ni classement." :
-        "La présentation ordinaire du cycle, sans division français/arabe.", symbol: "▤" }],
-    [bilingual, isPreschool]);
+        onlyArabic ? "Le bulletin propre à l'enseignement arabe." :
+          "La présentation ordinaire du cycle, sans division français/arabe.", symbol: "▤" }],
+    [bilingual, isPreschool, onlyArabic]);
 
   async function save() {
     if (!report || !config || !revision || !changed || saving) return;
