@@ -228,7 +228,7 @@ export default function SchoolBulletinSettings({
 
   const displayedSubjects = activeProgram
     ? availableSubjects(activeProgram.cycle, activeProgram.track).filter(subject =>
-        !focusedClassId || classSubjectIds === null || classSubjectIds.includes(subject.id))
+        !focusedClassId || (classSubjectIds !== null && classSubjectIds.includes(subject.id)))
     : [];
 
   function updateCoefficient(index: number, update: Partial<SubjectReportCoefficient>) {
