@@ -2703,7 +2703,7 @@ export default function AdminSettingsPage() {
                     type="button"
                     onClick={() => {
                       setActiveTab(tab.key);
-                      router.replace(`/admin/parametres?tab=${tab.key}`, {
+                      router.replace(schoolNavigation?.href(`/admin/parametres?tab=${tab.key}`) ?? `/admin/parametres?tab=${tab.key}`, {
                         scroll: false,
                       });
                     }}
