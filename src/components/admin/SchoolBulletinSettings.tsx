@@ -97,7 +97,9 @@ export default function SchoolBulletinSettings() {
 
   const allowedKeys = useMemo(() =>
     new Set(programs.map(({ cycle, track }) => `${cycle}|${track}`)), [programs]);
-  const firstProgram = programs[0];
+  const firstProgram = programs.find(row => row.cycle === "primary") ||
+    programs.find(row => row.cycle === "secondary");
+  const hasSecondary = programs.some(program => program.cycle === "secondary");
   const blocked = loading || saving || !loaded || !multicycleReady;
   const hasArabic = programs.some((program) => program.track === "arabic");
 
@@ -139,6 +141,7 @@ export default function SchoolBulletinSettings() {
   function appendCoefficient() {
     if (settings.coefficients.length >= 500) return;
     const scale = settings.scales.find((entry) =>
+      entry.cycle === "secondary" &&
       entry.level.trim() && availableSubjects(entry.cycle, entry.track).length > 0);
     if (!scale) {
       setError("Définissez un barème puis rattachez des disciplines à cet enseignement.");
@@ -219,6 +222,9 @@ export default function SchoolBulletinSettings() {
     <section className="space-y-4 rounded-2xl border bg-white p-5 shadow-sm">
       <div>
         <h2 className="text-lg font-bold text-slate-900">Paramètres des bulletins</h2>
+        <a href="/admin/bulletins/modeles" className="mt-2 inline-block rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white">
+          Voir les modèles de bulletins et livrets
+        </a>
         <p className="mt-1 text-sm text-slate-600">
           Définir les barèmes et la présentation par niveau et enseignement.
           Le calcul adapté nécessite une activation explicite ci-dessous.
@@ -246,14 +252,16 @@ export default function SchoolBulletinSettings() {
                 Utiliser ces règles pour les bulletins des cycles configurés
               </label>
               <p className="text-sm text-slate-600">Sans cette activation, les bulletins habituels restent utilisés. Les matières communes aux deux enseignements nécessitent un rattachement explicite des évaluations avant tout calcul.</p>
-              <label htmlFor="coefficient-authority" className="block text-sm font-medium">Règles de coefficients utilisées pour ces bulletins</label>
+              {hasSecondary && <>
+              <label htmlFor="coefficient-authority" className="block text-sm font-medium">Coefficients des matières du secondaire</label>
               <select id="coefficient-authority" disabled={blocked} className="rounded-lg border p-2"
                 value={settings.coefficientSource || "institution"}
                 onChange={event => setSettings(old => ({ ...old, coefficientSource: event.target.value as "institution" | "program" }))}>
                 <option value="institution">Coefficients existants de l’établissement</option>
                 <option value="program">Coefficients définis ici par niveau et enseignement</option>
               </select>
-              <p className="text-sm text-slate-600">Une seule règle est utilisée pour chaque bulletin. Avec les coefficients existants, les valeurs ci-dessous ne participent pas au calcul ; les disciplines proviennent du programme de niveau déjà configuré.</p>
+              <p className="text-sm text-slate-600">Une seule règle est utilisée au secondaire. Le primaire utilise ses barèmes et le préscolaire ses compétences sans coefficients.</p>
+              </>}
               {hasArabic ? (
               <div>
                 <label htmlFor="report-format" className="mb-1 block text-sm font-medium">
@@ -280,13 +288,17 @@ export default function SchoolBulletinSettings() {
                 </p>
               )}
               <div className="border-t pt-4">
-                <h3 className="font-semibold text-slate-900">Barèmes par niveau</h3>
+                <h3 className="font-semibold text-slate-900">Barèmes par niveau — primaire</h3>
+                <p className="mt-1 text-xs text-slate-600">Au secondaire, la notation et les coefficients suivent le modèle déjà déployé dans Mon Cahier. Au préscolaire, seules les compétences et les observations sont évaluées.</p>
                 <p className="mt-1 text-sm text-slate-600">
                   Laissez vide tant que l’établissement n’a pas confirmé ses barèmes.
                   Aucun barème national n’est deviné : confirmez chaque valeur avec l’établissement avant de l’utiliser.
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.scales.map((scale, index) => {
+                    // Historical preschool scoring rules are left in stored settings
+                    // for compatibility, but cannot be edited or added here.
+                    if (scale.cycle === "preschool") return null;
                     const availableTracks = programs.filter((p) => p.cycle === scale.cycle);
                     return (
                       <div key={index} className="grid gap-2 rounded-xl border bg-slate-50 p-3 sm:grid-cols-5">
@@ -298,7 +310,7 @@ export default function SchoolBulletinSettings() {
                             updateScale(index, { cycle, track });
                           }}>
                           {SCHOOL_CYCLE_OPTIONS.filter((c) =>
-                            programs.some((p) => p.cycle === c.id))
+                            c.id !== "preschool" && programs.some((p) => p.cycle === c.id))
                             .map((c) => <option value={c.id} key={c.id}>{c.label}</option>)}
                         </select>
                         <select aria-label={`Enseignement ${index + 1}`} value={scale.track}
@@ -336,9 +348,9 @@ export default function SchoolBulletinSettings() {
                   + Ajouter un barème
                 </button>
               </div>
-              {(settings.coefficientSource || "institution") === "program" ? <div className="border-t pt-4">
+              {hasSecondary && (settings.coefficientSource || "institution") === "program" ? <div className="border-t pt-4">
                 <h3 className="font-semibold text-slate-900">
-                  Coefficients par matière et par niveau
+                  Coefficients par matière et par niveau — secondaire uniquement
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
                   Choisissez le niveau et la discipline, puis renseignez le coefficient
@@ -347,6 +359,7 @@ export default function SchoolBulletinSettings() {
                 </p>
                 <div className="mt-3 space-y-3">
                   {settings.coefficients.map((policy, index) => {
+                    if (policy.cycle !== "secondary") return null;
                     const selectedKey = [
                       policy.cycle, policy.track, policy.level,
                     ].join("|");
@@ -368,7 +381,7 @@ export default function SchoolBulletinSettings() {
                             });
                           }}
                         >
-                          {settings.scales.filter((entry) => entry.level.trim()).map((entry, idx) =>
+                          {settings.scales.filter((entry) => entry.cycle === "secondary" && entry.level.trim()).map((entry, idx) =>
                             <option key={idx} value={[entry.cycle, entry.track, entry.level].join("|")}>
                               {entry.level} — {!hasArabic ? "Enseignement ordinaire" : entry.track === "french" ? "Français" : "Arabe"}
                             </option>)}
@@ -413,7 +426,11 @@ export default function SchoolBulletinSettings() {
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un coefficient
                 </button>
-              </div> : <a href="/admin/parametres?tab=coefficients#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
+              </div> : hasSecondary ? <a href="/admin/parametres?tab=coefficients#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients du secondaire dans les paramètres existants de l’établissement</a> : null}
+              {programs.some(p => p.cycle === "preschool") && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                Préscolaire : un livret de compétences et d’observations, sans notes chiffrées, coefficients ni rang.
+                Les compétences officielles doivent être validées par la direction.
+              </div>}
               {settings.scales.length > 0 && (() => {
                 const first = settings.scales[0];
                 const scale = getConfiguredScoringScale(settings,
