@@ -14,6 +14,7 @@ import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import SchoolSubjectProgramsEditor from "@/components/admin/SchoolSubjectProgramsEditor";
 import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgramsEditor";
+import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import EducationScopeSwitcher, {
@@ -4698,6 +4699,7 @@ export default function AdminSettingsPage() {
                 </div>
               </details>
             )}
+            {hasBilingualPrograms && <SchoolClassSubjectsEditor />}
             {hasBilingualPrograms && <SchoolStudentProgramsEditor />}
           </>
         )}

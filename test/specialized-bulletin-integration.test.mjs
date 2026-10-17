@@ -185,3 +185,40 @@ test("a student follows both French and Arabic classes with one identity in the 
   assert.equal(db.tables.class_enrollments.filter(row => row.student_id === virtualStudent).length, 1);
   assert.equal(db.calls.some(row => row.op !== "read"), false);
 });
+
+test("explicit class-level subjects prevent another Arabic/French level's subjects from leaking into its bulletin", async () => {
+  const db = setup();
+  db.tables.institutions[0].settings_json.school_student_programs_v1 = {
+    version: 1, years: { "2026-2027": { classes: {
+      [classId]: { tracks: ["french"], students: {} },
+    } } },
+  };
+  db.tables.institutions[0].settings_json.school_class_subjects_v1 = {
+    version: 1, years: { "2026-2027": { classes: { [classId]: [french] } } },
+  };
+  const api = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const response = await api.GET(url());
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const data = await response.json();
+  assert.deepEqual(data.specialized.programs, ["french"]);
+  assert.ok(data.specialized.documents[0].ready);
+  assert.deepEqual(data.specialized.documents[0].document.french.subjects.map(row => row.id), [french]);
+  assert.equal(data.specialized.documents[0].document.arabic, undefined);
+  assert.equal(db.calls.some(row => row.op !== "read"), false);
+});
+
+test("a class explicitly missing its curriculum never produces an official-looking completed bulletin", async () => {
+  const db = setup();
+  db.tables.institutions[0].settings_json.school_student_programs_v1 = {
+    version: 1, years: { "2026-2027": { classes: {
+      [classId]: { tracks: ["french"], students: {} },
+    } } },
+  };
+  db.tables.institutions[0].settings_json.school_class_subjects_v1 = {
+    version: 1, years: { "2026-2027": { classes: {} } },
+  };
+  const data = await (await createFixtureRouteLoader(db, db.legacyAdminId)(routePath).GET(url())).json();
+  assert.equal(data.specialized.documents[0].ready, false);
+  assert.equal(data.specialized.documents[0].document.french.generalAverage, null);
+  assert.ok(data.specialized.documents[0].problems.includes("class_curriculum_not_configured"));
+});

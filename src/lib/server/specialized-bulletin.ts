@@ -9,6 +9,7 @@ import { buildPedagogicalRanks } from "@/lib/pedagogical-ranking";
 import { programsForStudent, readStudentProgramSettings } from "@/lib/school-student-programs";
 import { sameSchoolLevel } from "@/lib/school-levels";
 import { inferSchoolCycleFromLevel } from "@/lib/school-cycles";
+import { classSubjectIds } from "@/lib/school-class-subjects";
 
 export type SpecializedBulletinPayload = {
   engine: "specialized"; cycle: SchoolCycle; format: "separate" | "combined" | "both";
@@ -168,6 +169,7 @@ export async function loadSpecializedBulletin(input: {
     const resolved = programs.map(track => ({ track, ...resolveProgramCoefficients({
       cycle, level, track, settingsJson: input.settingsJson,
       activeSubjectIds: activeSubjects.map(row => row.subject_id),
+      classSubjectIds: classSubjectIds(input.settingsJson, year, schoolClass.id),
       hasLevelCurriculumCatalog: curriculum.length > 0,
       levelSubjectIds: curriculum.filter(row => normalizePedagogicalLevel(row.level_code, cycle) === normalizePedagogicalLevel(level, cycle)).map(row => row.subject_id),
       institutionCoefficients: coefficientRows,
