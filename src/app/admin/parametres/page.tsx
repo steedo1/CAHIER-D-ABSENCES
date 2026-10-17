@@ -14,6 +14,7 @@ import { useRelayCapability } from "@/components/RelayCapabilityProvider";
 import { useSchoolNavigation } from "@/components/admin/SchoolNavigationProvider";
 import SchoolSubjectProgramsEditor from "@/components/admin/SchoolSubjectProgramsEditor";
 import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgramsEditor";
+import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
@@ -740,6 +741,9 @@ export default function AdminSettingsPage() {
   const { relayEnabled } = useRelayCapability();
   const schoolNavigation = useSchoolNavigation();
   const hasSpecializedSettings = Boolean(schoolNavigation);
+  const hasBilingualPrograms = Boolean(
+    schoolNavigation && isBilingualSchool(schoolNavigation.settings),
+  );
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -4694,7 +4698,7 @@ export default function AdminSettingsPage() {
                 </div>
               </details>
             )}
-            {hasSpecializedSettings && <SchoolStudentProgramsEditor />}
+            {hasBilingualPrograms && <SchoolStudentProgramsEditor />}
           </>
         )}
 
