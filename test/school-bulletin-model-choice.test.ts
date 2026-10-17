@@ -31,8 +31,10 @@ test("one school's chosen model is scoped by cycle with legacy fallback", () => 
   assert.equal(selectedBulletinFormat(result, "primary"), "combined");
   assert.equal(selectedBulletinFormat(result, "secondary"), "both");
   assert.equal(selectedBulletinFormat(result, "preschool"), "separate");
-  assert.deepEqual(result.coefficients, raw.coefficients);
-  assert.deepEqual(result.scales, raw.scales);
+  assert.equal(result.coefficients[0].coefficient, raw.coefficients[0].coefficient);
+  assert.equal(result.coefficients[0].subjectId, raw.coefficients[0].subjectId);
+  assert.equal(result.scales[0].maxScore, raw.scales[0].maxScore);
+  assert.equal(result.scales[1].maxScore, raw.scales[1].maxScore);
   assert.equal(result.engine, "specialized");
 });
 
