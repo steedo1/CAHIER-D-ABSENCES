@@ -119,3 +119,19 @@ test("existing schools and unauthorized actors cannot edit bilingual memberships
   }
   assert.equal(db.calls.some(row => row.op !== "read"), false);
 });
+
+test("unrecognized Arabic school level needs explicit cycle assignment, never defaults to secondary", async () => {
+  const db = setup();
+  db.tables.classes[0].level = "Niveau arabe spécifique";
+  const handler = createFixtureRouteLoader(db, db.legacyAdminId)(routePath);
+  const read = await (await handler.GET(request(`${api}?class_id=${c1}`))).json();
+  assert.equal(read.classes.find(row => row.id === c1).cycle, null);
+  assert.deepEqual(read.availableTracks, []);
+  const response = await handler.PUT(request(api, "PUT", {
+    classId: c1, revision: read.revision,
+    defaultTracks: ["arabic"], overrides: {},
+  }));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, "class_cycle_requires_configuration");
+  assert.equal(db.calls.some(row => row.op !== "read"), false);
+});
