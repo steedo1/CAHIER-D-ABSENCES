@@ -17,6 +17,7 @@ import SchoolStudentProgramsEditor from "@/components/admin/SchoolStudentProgram
 import SchoolClassSubjectsEditor from "@/components/admin/SchoolClassSubjectsEditor";
 import { isBilingualSchool } from "@/lib/school-student-programs";
 import SchoolBulletinSettings from "@/components/admin/SchoolBulletinSettings";
+import SchoolProgramPeriodsEditor from "@/components/admin/SchoolProgramPeriodsEditor";
 import EducationScopeSwitcher, {
   type EducationSettingsScope,
 } from "@/components/admin/EducationScopeSwitcher";
