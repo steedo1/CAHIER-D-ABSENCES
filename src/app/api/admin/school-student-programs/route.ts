@@ -41,6 +41,9 @@ async function authorizedSchool() {
     .select("code").eq("institution_id", auth.instId).eq("is_current", true)
     .order("start_date", { ascending: false }).limit(1).maybeSingle();
   if (yearError || !current?.code) return { error: json({ error: "active_year_required" }, 409) } as const;
+  if (!/^[0-9]{4}[-/_][0-9]{4}$/.test(String(current.code))) {
+    return { error: json({ error: "unsupported_academic_year_code" }, 409) } as const;
+  }
   return {
     service, institutionId: auth.instId, rawSettings: institution.settings_json,
     settings, year: String(current.code),
