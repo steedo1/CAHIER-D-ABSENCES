@@ -133,6 +133,7 @@ export async function GET(request: NextRequest) {
   return json({
     ok: true, academicYear: year, revision: schoolSettingsRevision(rawSettings),
     classes: choices, selectedClassId: selected?.id || null,
+    availableTracks: selected ? settings.teachingTracksByCycle[selected.cycle] || [] : [],
     defaultTracks: selected ? stored.years[year]?.classes[selected.id]?.tracks || [] : [],
     students,
   });
