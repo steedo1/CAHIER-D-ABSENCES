@@ -4719,7 +4719,7 @@ export default function AdminSettingsPage() {
                 Les matières proviennent du catalogue actif de l’établissement.
               </p>
               <a
-                href="/admin/bulletins/modeles?preview=1"
+                href="/admin/bulletins/modeles"
                 className="mt-3 inline-flex rounded-xl border border-sky-200 px-3 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50"
               >
                 Prévisualiser les modèles A4
