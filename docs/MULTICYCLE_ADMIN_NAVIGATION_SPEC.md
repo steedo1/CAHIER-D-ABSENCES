@@ -98,6 +98,42 @@ Décision confirmée : **ne jamais mélanger les moyennes de l'enseignement fran
 - Le composant réutilisable `FrancoArabicBulletin` consomme des données de bulletin **déjà autorisées côté serveur**. Il ne cherche pas les notes, ne crée pas d'élèves, ne remplace pas le bulletin historique et n'autorise pas les nouveaux directeurs.
 - L'impression utilise une mise en page A4 CSS. La vérification visuelle des sauts de page, la connexion au moteur de notes et l'export PDF métier restent des étapes distinctes, avant toute fusion en production.
 
+## Correction de gouvernance des bulletins — 16 octobre 2026
+
+Le Super Admin est le gestionnaire **commercial et technique de la plateforme** :
+établissements, abonnements et activation initiale des cycles proposés. Il ne gère
+**aucun bulletin**, matière évaluée, moyenne, coefficient pédagogique ou maquette
+d'élève. L'ancien éditeur et les anciennes API `/super/.../franco-arabic-reports`
+ainsi que la prévisualisation Super Admin ont été supprimés.
+
+La **direction / administration scolaire** autorisée possède l'organisation
+pédagogique : disciplines enseignées par cycle/track, règles de coefficient par
+niveau, formats de bulletin, responsables et validations. Ces opérations sont
+scopées côté serveur sur l'`institution_id` de sa session et ne prennent
+jamais un identifiant d'établissement depuis le navigateur.
+
+- École primaire **ordinaire** : document « Bulletin de notes », section
+  « Résultats scolaires », « Moyenne générale », « Direction de l'établissement ».
+  Aucune étiquette « Programme français » ni page arabe.
+- École **franco-arabe** : deux ensembles pédagogiques autonomes, avec option
+  de présentation regroupée qui n'agrège jamais les deux moyennes.
+- Les matières ne sont pas codées en dur sur le bulletin : elles proviennent du
+  catalogue **activé pour l'établissement**. Les listes effectivement prises en
+  compte sur un bulletin donné sont définies par `cycle + niveau (CP1, CP2,
+  CE1, CE2, CM1, CM2...) + enseignement + coefficient`. On n'étend pas à
+  un CP1 l'ensemble des matières déclarées pour tout le primaire.
+- Les noms de disciplines et coefficients montrés dans les **maquettes**
+  restent fictifs. **La conformité aux programmes officiels français et arabes
+  de chaque niveau n'est PAS encore vérifiée ou renseignée automatiquement.**
+  Ne pas revendiquer un référentiel national exhaustif tant qu'il n'a pas été
+  validé à partir de documents officiels et de bulletins de l'établissement.
+- Entrée admin seulement si cycles activés : `/admin/bulletins/modeles`.
+  Les anciens établissements continuent d'utiliser `/admin/bulletins` ;
+  le moteur de notes existant n'est pas remplacé à ce stade.
+- Un rôle Super Admin ne dispose plus de route dédiée pour sauvegarder ou
+  prévisualiser les modèles ; et la route de provisionnement des cycles conserve
+  les répartitions pédagogiques existantes sans pouvoir les modifier.
+
 ## 7. Non-objectifs / garde-fous
 - Ne pas créer l'EPC ou aucune de ses classes avant stabilisation du code.
 - Ne pas supposer que « CP1 Français » et « CP1 Arabe » sont deux cohortes distinctes.
