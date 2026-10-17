@@ -413,7 +413,7 @@ export default function SchoolBulletinSettings() {
                   className="mt-3 min-h-10 rounded-xl border px-4 py-2 text-sm font-semibold">
                   + Ajouter un coefficient
                 </button>
-              </div> : <a href="/admin/parametres#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
+              </div> : <a href="/admin/parametres?tab=coefficients#subject-coeffs" className="block text-sm font-semibold text-sky-800 underline">Configurer les coefficients dans les paramètres existants de l’établissement</a>}
               {settings.scales.length > 0 && (() => {
                 const first = settings.scales[0];
                 const scale = getConfiguredScoringScale(settings,
